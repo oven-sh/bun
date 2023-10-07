@@ -192,7 +192,7 @@ it("should handle empty string in dependencies", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@0.0.2",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -380,7 +380,7 @@ it("should handle `workspace:` specifier", async () => {
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + Bar@workspace:path/to/bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited1).toBe(0);
   expect(requested).toBe(0);
@@ -409,7 +409,7 @@ it("should handle `workspace:` specifier", async () => {
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + Bar@workspace:path/to/bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited2).toBe(0);
   expect(requested).toBe(0);
@@ -453,7 +453,7 @@ it("should handle workspaces with packages array", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + Bar@workspace:bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
@@ -675,7 +675,7 @@ it("should ignore peerDependencies within workspaces", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + Baz@workspace:packages/baz",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
@@ -727,7 +727,7 @@ it("should handle life-cycle scripts within workspaces", async () => {
     " + Bar@workspace:bar",
     "[scripts:run] Foo",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
@@ -784,7 +784,7 @@ it("should handle life-cycle scripts during re-installation", async () => {
     " + Bar@workspace:bar",
     "[scripts:run] Foo",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited1).toBe(0);
   expect(requested).toBe(0);
@@ -816,7 +816,7 @@ it("should handle life-cycle scripts during re-installation", async () => {
     " + Bar@workspace:bar",
     "[scripts:run] Foo",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited2).toBe(0);
   expect(requested).toBe(0);
@@ -848,7 +848,7 @@ it("should handle life-cycle scripts during re-installation", async () => {
     " + Bar@workspace:bar",
     "[scripts:run] Foo",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited3).toBe(0);
   expect(requested).toBe(0);
@@ -903,7 +903,7 @@ it("should use updated life-cycle scripts in root during re-installation", async
     " + Bar@workspace:bar",
     "[scripts:run] Foo",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited1).toBe(0);
   expect(requested).toBe(0);
@@ -948,7 +948,7 @@ it("should use updated life-cycle scripts in root during re-installation", async
     "[scripts:run] Moo",
     "[scripts:run] Foo",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited2).toBe(0);
   expect(requested).toBe(0);
@@ -982,7 +982,7 @@ it("should use updated life-cycle scripts in root during re-installation", async
     "[scripts:run] Moo",
     "[scripts:run] Foo",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited3).toBe(0);
   expect(requested).toBe(0);
@@ -1037,7 +1037,7 @@ it("should use updated life-cycle scripts in dependency during re-installation",
     " + Bar@workspace:bar",
     "[scripts:run] Foo",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited1).toBe(0);
   expect(requested).toBe(0);
@@ -1081,7 +1081,7 @@ it("should use updated life-cycle scripts in dependency during re-installation",
     "[scripts:run] Foo",
     "[scripts:run] Bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited2).toBe(0);
   expect(requested).toBe(0);
@@ -1115,7 +1115,7 @@ it("should use updated life-cycle scripts in dependency during re-installation",
     "[scripts:run] Foo",
     "[scripts:run] Bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited3).toBe(0);
   expect(requested).toBe(0);
@@ -1158,7 +1158,7 @@ it("should ignore workspaces within workspaces", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@workspace:bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
@@ -1196,7 +1196,7 @@ it("should handle ^0 in dependencies", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@0.0.2",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -1276,7 +1276,7 @@ it("should handle ^0.0 in dependencies", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@0.0.2",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -1394,7 +1394,7 @@ it("should handle ^0.0.2 in dependencies", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@0.0.2",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -1438,7 +1438,7 @@ it("should handle ^0.0.2-rc in dependencies", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@0.0.2-rc",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -1482,7 +1482,7 @@ it("should handle ^0.0.2-alpha.3+b4d in dependencies", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@0.0.2-alpha.3",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -1570,7 +1570,7 @@ it("should handle ^0.0.2rc1 in dependencies", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@0.0.2-rc1",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -1614,7 +1614,7 @@ it("should handle ^0.0.2_pre3 in dependencies", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@0.0.2-_pre3",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -1658,7 +1658,7 @@ it("should handle ^0.0.2b_4+cafe_b0ba in dependencies", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@0.0.2-b_4+cafe_b0ba",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -1702,7 +1702,7 @@ it("should handle caret range in dependencies when the registry has prereleased 
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@6.3.0",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -1759,7 +1759,7 @@ it("should prefer latest-tagged dependency", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + baz@0.0.3",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
@@ -1815,7 +1815,7 @@ it("should handle dependency aliasing", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + Bar@0.0.3",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
@@ -1871,7 +1871,7 @@ it("should handle dependency aliasing (versioned)", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + Bar@0.0.3",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
@@ -1927,7 +1927,7 @@ it("should handle dependency aliasing (dist-tagged)", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + Bar@0.0.3",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
@@ -1987,7 +1987,7 @@ it("should not reinstall aliased dependencies", async () => {
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + Bar@0.0.3",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited1).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
@@ -2025,7 +2025,7 @@ it("should not reinstall aliased dependencies", async () => {
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    "Checked 1 installs across 2 packages (no changes)",
+    "Checked 1 install across 2 packages (no changes)",
   ]);
   expect(await exited2).toBe(0);
   expect(urls.sort()).toBeEmpty();
@@ -2238,7 +2238,7 @@ it("should handle unscoped alias on scoped dependency", async () => {
     " + @barn/moo@0.1.0",
     " + moo@0.1.0",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/@barn%2fmoo`, `${root_url}/@barn/moo-0.1.0.tgz`]);
@@ -2298,7 +2298,7 @@ it("should handle scoped alias on unscoped dependency", async () => {
     " + @baz/bar@0.0.2",
     " + bar@0.0.2",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -2493,7 +2493,7 @@ it("should handle GitHub URL in dependencies (user/repo)", async () => {
   let out = await new Response(stdout).text();
   out = out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "");
   out = out.replace(/(github:[^#]+)#[a-f0-9]+/, "$1");
-  expect(out.split(/\r?\n/)).toEqual([" + uglify@github:mishoo/UglifyJS", "", " 1 packages installed"]);
+  expect(out.split(/\r?\n/)).toEqual([" + uglify@github:mishoo/UglifyJS", "", " 1 package installed"]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
   expect(requested).toBe(0);
@@ -2547,7 +2547,7 @@ it("should handle GitHub URL in dependencies (user/repo#commit-id)", async () =>
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + uglify@github:mishoo/UglifyJS#e219a9a",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
@@ -2613,7 +2613,7 @@ it("should handle GitHub URL in dependencies (user/repo#tag)", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + uglify@github:mishoo/UglifyJS#e219a9a",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
@@ -2842,7 +2842,7 @@ it("should handle GitHub URL in dependencies (github:user/repo#tag)", async () =
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + uglify@github:mishoo/UglifyJS#e219a9a",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
@@ -2910,7 +2910,7 @@ it("should handle GitHub URL in dependencies (https://github.com/user/repo.git)"
   let out = await new Response(stdout).text();
   out = out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "");
   out = out.replace(/(github:[^#]+)#[a-f0-9]+/, "$1");
-  expect(out.split(/\r?\n/)).toEqual([" + uglify@github:mishoo/UglifyJS", "", " 1 packages installed"]);
+  expect(out.split(/\r?\n/)).toEqual([" + uglify@github:mishoo/UglifyJS", "", " 1 package installed"]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
   expect(requested).toBe(0);
@@ -2964,7 +2964,7 @@ it("should handle GitHub URL in dependencies (git://github.com/user/repo.git#com
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + uglify@github:mishoo/UglifyJS#e219a9a",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
@@ -3032,7 +3032,7 @@ it("should handle GitHub URL in dependencies (git+https://github.com/user/repo.g
   let out = await new Response(stdout).text();
   out = out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "");
   out = out.replace(/(github:[^#]+)#[a-f0-9]+/, "$1");
-  expect(out.split(/\r?\n/)).toEqual([" + uglify@github:mishoo/UglifyJS", "", " 1 packages installed"]);
+  expect(out.split(/\r?\n/)).toEqual([" + uglify@github:mishoo/UglifyJS", "", " 1 package installed"]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
   expect(requested).toBe(0);
@@ -3088,7 +3088,7 @@ it("should handle GitHub tarball URL in dependencies (https://github.com/user/re
   expect(out.split(/\r?\n/)).toEqual([
     " + when@https://github.com/cujojs/when/tarball/1.0.2",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
@@ -3147,7 +3147,7 @@ it("should handle GitHub tarball URL in dependencies (https://github.com/user/re
   expect(out.split(/\r?\n/)).toEqual([
     " + when@https://github.com/cujojs/when/tarball/1.0.2",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
@@ -3166,6 +3166,54 @@ it("should handle GitHub tarball URL in dependencies (https://github.com/user/re
     "timed.js",
     "timeout.js",
     "when.js",
+  ]);
+  const package_json = await file(join(package_dir, "node_modules", "when", "package.json")).json();
+  expect(package_json.name).toBe("when");
+  await access(join(package_dir, "bun.lockb"));
+});
+
+it("should treat non-GitHub http(s) URLs as tarballs (https://some.url/path?stuff)", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "Foo",
+      version: "0.0.1",
+      dependencies: {
+        "@vercel/turbopack-node": "https://gitpkg-fork.vercel.sh/vercel/turbo/crates/turbopack-node/js?turbopack-230922.2"
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  let out = await new Response(stdout).text();
+  out = out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "");
+  out = out.replace(/(github:[^#]+)#[a-f0-9]+/, "$1");
+  expect(out.split(/\r?\n/)).toEqual([
+    " + @vercel/turbopack-node@https://gitpkg-fork.vercel.sh/vercel/turbo/crates/turbopack-node/js?turbopack-230922.2",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toBeEmpty();
+  expect(requested).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "@vercel", "loader-runner"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "@vercel"))).toEqual(["turbopack-node"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "@vercel", "turbopack-node"))).toEqual([
+    "package.json",
+    "src",
+    "tsconfig.json",
   ]);
   const package_json = await file(join(package_dir, "node_modules", "when", "package.json")).json();
   expect(package_json.name).toBe("when");
@@ -3430,7 +3478,7 @@ it("should not regard peerDependencies declarations as duplicates", async () => 
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@0.0.2",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -3672,7 +3720,7 @@ it("should handle Git URL in dependencies", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + uglify-js@git+https://git@github.com/mishoo/UglifyJS.git",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
@@ -3733,7 +3781,7 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + uglify@git+ssh://github.com:mishoo/UglifyJS.git",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
@@ -3792,7 +3840,7 @@ it("should handle Git URL with committish in dependencies", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + uglify@git+https://git@github.com/mishoo/UglifyJS.git#e219a9a78a0d2251e4dcbd4bb9034207eb484fe8",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
@@ -3935,7 +3983,7 @@ it("should de-duplicate committish in Git URLs", async () => {
     " + uglify-hash@git+https://git@github.com/mishoo/UglifyJS.git#e219a9a78a0d2251e4dcbd4bb9034207eb484fe8",
     " + uglify-ver@git+https://git@github.com/mishoo/UglifyJS.git#e219a9a78a0d2251e4dcbd4bb9034207eb484fe8",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
@@ -4223,7 +4271,7 @@ it("should prefer optionalDependencies over dependencies of the same name", asyn
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + baz@0.0.3",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
@@ -4276,7 +4324,7 @@ it("should prefer dependencies over peerDependencies of the same name", async ()
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + baz@0.0.5",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.5.tgz`]);
@@ -4321,7 +4369,7 @@ it("should handle tarball URL", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     ` + baz@${root_url}/baz-0.0.3.tgz`,
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz-0.0.3.tgz`]);
@@ -4369,7 +4417,7 @@ it("should handle tarball path", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     ` + baz@${join(import.meta.dir, "baz-0.0.3.tgz")}`,
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
@@ -4416,7 +4464,7 @@ it("should handle tarball URL with aliasing", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     ` + bar@${root_url}/baz-0.0.3.tgz`,
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz-0.0.3.tgz`]);
@@ -4464,7 +4512,7 @@ it("should handle tarball path with aliasing", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     ` + bar@${join(import.meta.dir, "baz-0.0.3.tgz")}`,
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
@@ -5091,7 +5139,7 @@ it("should ignore invalid workspaces from parent directory", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@0.0.2",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -5147,7 +5195,7 @@ it("should handle --cwd", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@0.0.2",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -5510,7 +5558,7 @@ it("should handle `workspaces:*` and `workspace:*` gracefully", async () => {
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@workspace:bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited1).toBe(0);
   expect(requested).toBe(0);
@@ -5540,7 +5588,7 @@ it("should handle `workspaces:*` and `workspace:*` gracefully", async () => {
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@workspace:bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited2).toBe(0);
   expect(requested).toBe(0);
@@ -5583,7 +5631,7 @@ it("should handle `workspaces:bar` and `workspace:*` gracefully", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@workspace:bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
@@ -5626,7 +5674,7 @@ it("should handle `workspaces:*` and `workspace:bar` gracefully", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@workspace:bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
@@ -5669,7 +5717,7 @@ it("should handle `workspaces:bar` and `workspace:bar` gracefully", async () => 
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@workspace:bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
@@ -6265,7 +6313,7 @@ it("should override npm dependency by matching workspace", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@workspace:bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
@@ -6355,7 +6403,7 @@ it("should override @scoped npm dependency by matching workspace", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + @bar/baz@workspace:packages/bar-baz",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
@@ -6404,7 +6452,7 @@ it("should override aliased npm dependency by matching workspace", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@workspace:baz",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();

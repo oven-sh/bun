@@ -137,8 +137,6 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importJwk(CryptoAlgorithmIdentifier identifie
             return nullptr;
         if (keyData.crv != "Ed25519"_s)
             return nullptr;
-        if (!keyData.alg.isEmpty() && keyData.alg != "EdDSA"_s)
-            return nullptr;
         if (usages && !keyData.use.isEmpty() && keyData.use != "sig"_s)
             return nullptr;
         if (keyData.key_ops && ((keyData.usages & usages) != usages))

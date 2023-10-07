@@ -102,7 +102,7 @@ it("should remove existing package", async () => {
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]/, "").split(/\r?\n/)).toEqual([
     ` + pkg2@${pkg2_path}`,
     "",
-    " 1 packages installed",
+    " 1 package installed",
     "  Removed: 1",
     "",
   ]);

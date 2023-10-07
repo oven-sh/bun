@@ -3181,7 +3181,8 @@ it("should treat non-GitHub http(s) URLs as tarballs (https://some.url/path?stuf
       name: "Foo",
       version: "0.0.1",
       dependencies: {
-        "@vercel/turbopack-node": "https://gitpkg-fork.vercel.sh/vercel/turbo/crates/turbopack-node/js?turbopack-230922.2"
+        "@vercel/turbopack-node":
+          "https://gitpkg-fork.vercel.sh/vercel/turbo/crates/turbopack-node/js?turbopack-230922.2",
       },
     }),
   );

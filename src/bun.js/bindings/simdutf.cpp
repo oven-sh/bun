@@ -30403,4 +30403,3 @@ SIMDUTF_UNTARGET_REGION
 #endif
 
 SIMDUTF_POP_DISABLE_WARNINGS
-/* end file src/simdutf.cpp */

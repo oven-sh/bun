@@ -307,10 +307,11 @@
       "name": "bun install",
       "program": "bun-debug",
       "args": ["install"],
-      "cwd": "/Users/dave/contoso-real-estate",
+      "cwd": "/tmp/scratchpad_20231006T234743",
       "console": "internalConsole",
       "env": {
-        "BUN_DEBUG_QUIET_LOGS": "1"
+        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_DEBUG_StringBuilder": "1"
       }
     },
 

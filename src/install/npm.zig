@@ -327,12 +327,18 @@ pub const OperatingSystem = enum(u16) {
             return (@intFromEnum(this) & linux) != 0;
         } else if (comptime Environment.isMac) {
             return (@intFromEnum(this) & darwin) != 0;
+        } else if (comptime Environment.isWindows) {
+            return (@intFromEnum(this) & win32) != 0;
         } else {
             return false;
         }
     }
 
-    const NameMap = ComptimeStringMap(u16, .{
+    pub inline fn has(this: OperatingSystem, other: u16) bool {
+        return (@intFromEnum(this) & other) != 0;
+    }
+
+    pub const NameMap = ComptimeStringMap(u16, .{
         .{ "aix", aix },
         .{ "darwin", darwin },
         .{ "freebsd", freebsd },
@@ -383,7 +389,7 @@ pub const Architecture = enum(u16) {
 
     pub const all_value: u16 = arm | arm64 | ia32 | mips | mipsel | ppc | ppc64 | s390 | s390x | x32 | x64;
 
-    const NameMap = ComptimeStringMap(u16, .{
+    pub const NameMap = ComptimeStringMap(u16, .{
         .{ "arm", arm },
         .{ "arm64", arm64 },
         .{ "ia32", ia32 },
@@ -396,6 +402,10 @@ pub const Architecture = enum(u16) {
         .{ "x32", x32 },
         .{ "x64", x64 },
     });
+
+    pub inline fn has(this: Architecture, other: u16) bool {
+        return (@intFromEnum(this) & other) != 0;
+    }
 
     pub fn isMatch(this: Architecture) bool {
         if (comptime Environment.isAarch64) {

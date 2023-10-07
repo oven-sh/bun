@@ -36,11 +36,14 @@ const S = JSAst.S;
 
 const debug = Output.scoped(.migrate, false);
 
-pub fn detectAndLoadOtherLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Log, dirname: string) LoadFromDiskResult {
+pub fn detectAndLoadOtherLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Log, bun_lockfile_path: stringZ) LoadFromDiskResult {
+    const dirname = bun_lockfile_path[0 .. strings.lastIndexOfChar(bun_lockfile_path, '/') orelse 0];
     // check for package-lock.json, yarn.lock, etc...
     // if it exists, do an in-memory migration
     var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
     @memcpy(buf[0..dirname.len], dirname);
+
+    const cwd = std.fs.cwd();
 
     npm: {
         const npm_lockfile_name = "package-lock.json";
@@ -48,7 +51,7 @@ pub fn detectAndLoadOtherLockfile(this: *Lockfile, allocator: Allocator, log: *l
         buf[dirname.len + npm_lockfile_name.len] = 0;
         const lockfile_path = buf[0 .. dirname.len + npm_lockfile_name.len :0];
         var timer = std.time.Timer.start() catch unreachable;
-        const file = std.fs.cwd().openFileZ(lockfile_path, .{ .mode = .read_only }) catch break :npm;
+        const file = cwd.openFileZ(lockfile_path, .{ .mode = .read_only }) catch break :npm;
         defer file.close();
         var data = file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
             return LoadFromDiskResult{ .err = .{ .step = .migrating, .value = err } };
@@ -61,7 +64,7 @@ pub fn detectAndLoadOtherLockfile(this: *Lockfile, allocator: Allocator, log: *l
                 if (maybe_trace) |trace| {
                     std.debug.dumpStackTrace(trace.*);
                 }
-                Output.prettyErrorln("Invalid NPM package-lock.json\nIn release build, this would continue and do a fresh install.\nDebug bun will exit now.", .{});
+                Output.prettyErrorln("Invalid NPM package-lock.json\nIn a release build, this would ignore and do a fresh install.\nAborting", .{});
                 Global.exit(1);
             }
             return LoadFromDiskResult{ .err = .{ .step = .migrating, .value = err } };
@@ -75,6 +78,26 @@ pub fn detectAndLoadOtherLockfile(this: *Lockfile, allocator: Allocator, log: *l
         }
 
         return lockfile;
+    }
+
+    unsupported: {
+        inline for (.{
+            .{ "yarn.lock", "yarn" },
+            .{ "pnpm-lock.yaml", "pnpm" },
+        }) |check| {
+            const check_file = check[0];
+            const check_name = check[1];
+
+            @memcpy(buf[dirname.len .. dirname.len + check_file.len], check_file);
+            buf[dirname.len + check_file.len] = 0;
+            const lockfile_path = buf[0 .. dirname.len + check_file.len :0];
+            if (cwd.accessZ(lockfile_path, .{}) catch null) |_| {
+                Output.prettyErrorln("<yellow><b>warn<r>: Auto-migrating lockfiles from {s} is not yet supported.", .{check_name});
+                Output.prettyErrorln("      Bun may install slightly newer versions of your dependencies.", .{});
+                Output.flush();
+                break :unsupported;
+            }
+        }
     }
 
     return LoadFromDiskResult{ .not_found = {} };
@@ -103,21 +126,6 @@ const dependency_keys = .{
     .peerDependencies,
     .optionalDependencies,
 };
-
-// pub const MigrateError = error{
-//     /// The package-lock.json was not version 3
-//     NPMLockfileVersionMismatch,
-//     /// The package-lock.json was invalid.
-//     InvalidNPMLockfile,
-//     /// The package-lock.json was missing information on how to build a resolution for
-//     /// a certain package.
-//     NotAllPackagesGotResolved,
-//     /// A case we dont handle where a linked package does not have a resolution
-//     /// TODO: handle this internally
-//     LockfileWorkspaceMissingResolved,
-//     /// A path was too long
-//     PathTooLong,
-// } || Allocator.Error;
 
 pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Log, data: string, path: string) !LoadFromDiskResult {
     debug("begin lockfile migration", .{});
@@ -234,11 +242,6 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
         );
         package_idx += 1;
 
-        const pkg_name = if (entry.value.?.get("name")) |set_name|
-            (set_name.asString(this.allocator) orelse return error.InvalidNPMLockfile)
-        else
-            packageNameFromPath(pkg_path);
-
         inline for (dependency_keys) |dep_key| {
             if (pkg.get(@tagName(dep_key))) |deps| {
                 if (deps.data != .e_object) {
@@ -269,6 +272,12 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                 1 => {
                     const first_bin = bin.data.e_object.properties.at(0);
                     const key = first_bin.key.?.asString(allocator).?;
+
+                    const pkg_name = if (entry.value.?.get("name")) |set_name|
+                        (set_name.asString(this.allocator) orelse return error.InvalidNPMLockfile)
+                    else
+                        packageNameFromPath(pkg_path);
+
                     if (!strings.eql(key, pkg_name)) {
                         builder.count(key);
                     }
@@ -454,7 +463,13 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
 
             .scripts = .{},
         });
-        try this.getOrPutID(package_id, name_hash);
+
+        if (is_workspace) {
+            std.debug.assert(package_id != 0); // root package should not be in it's own workspace
+
+            // we defer doing getOrPutID for non-workspace packages because it depends on the resolution being set.
+            try this.getOrPutID(package_id, name_hash);
+        }
     }
 
     if (Environment.allow_assert) {
@@ -486,6 +501,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
     // Root resolution isn't hit through dependency tracing.
     resolutions[0] = Resolution.init(.{ .root = {} });
     metas[0].origin = .local;
+    try this.getOrPutID(0, this.packages.items(.name_hash)[0]);
 
     // made it longer than max path just in case something stupid happens
     var name_checking_buf: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
@@ -678,7 +694,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                                             .workspace = input.value(),
                                         });
                                     },
-                                    .git, .github => res: {
+                                    .git => res: {
                                         const str = (if (strings.hasPrefixComptime(dep_resolved, "git+"))
                                             builder.append(String, dep_resolved[4..])
                                         else
@@ -690,7 +706,27 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                                         const commit = str.sub(str.slice[hash_index + 1 ..]).value();
                                         break :res Resolution.init(.{
                                             .git = .{
-                                                .owner = .{},
+                                                .owner = version.value.git.owner,
+                                                .repo = str.sub(str.slice[0..hash_index]).value(),
+                                                .committish = commit,
+                                                .resolved = commit,
+                                                .package_name = dep_name,
+                                            },
+                                        });
+                                    },
+                                    .github => res: {
+                                        const str = (if (strings.hasPrefixComptime(dep_resolved, "git+"))
+                                            builder.append(String, dep_resolved[4..])
+                                        else
+                                            builder.append(String, dep_resolved))
+                                            .sliced(this.buffers.string_bytes.items);
+
+                                        const hash_index = strings.lastIndexOfChar(str.slice, '#') orelse return error.InvalidNPMLockfile;
+
+                                        const commit = str.sub(str.slice[hash_index + 1 ..]).value();
+                                        break :res Resolution.init(.{
+                                            .git = .{
+                                                .owner = version.value.github.owner,
                                                 .repo = str.sub(str.slice[0..hash_index]).value(),
                                                 .committish = commit,
                                                 .resolved = commit,
@@ -713,6 +749,8 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                                     .root => .local,
                                     else => .npm,
                                 };
+
+                                try this.getOrPutID(id, this.packages.items(.name_hash)[id]);
                             }
 
                             continue :dep_loop;
@@ -795,19 +833,34 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
     }
 
     // A package not having a resolution, however, is not our fault.
-    // This can be triggered by a bad lockfile.
-    var had_failures = false;
+    // This can be triggered by a bad lockfile with extra packages. NPM should trim packages out automatically.
+    var is_missing_resolutions = false;
     for (resolutions, 0..) |r, i| {
         if (r.tag == .uninitialized) {
-            Output.printErrorln("could not resolve package '{s}' in lockfile.", .{this.packages.items(.name)[i].slice(this.buffers.string_bytes.items)});
-            had_failures = true;
+            Output.printErrorln("Could not resolve package '{s}' in lockfile.", .{this.packages.items(.name)[i].slice(this.buffers.string_bytes.items)});
+            is_missing_resolutions = true;
+        } else if (Environment.allow_assert) {
+            // Assertion from appendPackage. If we do this too early it will always fail as we dont have the resolution written
+            // but after we write all the data, there is no excuse for this to fail.
+            //
+            // If this is hit, it means getOrPutID was not called on this package id. Look for where 'resolution[i]' is set
+            std.debug.assert(this.getPackageID(this.packages.items(.name_hash)[i], null, &r) != null);
         }
     }
-    if (had_failures) {
+    if (is_missing_resolutions) {
         return error.NotAllPackagesGotResolved;
     }
 
-    this.format = .migrated;
+    // This is definetly a memory leak, but it's fine because there is no install api, so this can only be leaked once per process.
+    // This operation is neccecary because callers of `loadFromDisk` assume the data is written into the passed `this`.
+    // You'll find that not cleaning the lockfile will cause `bun install` to not actually install anything since it doesnt have any hoisted trees.
+    this.* = (try this.cleanWithLogger(&[_]Install.PackageManager.UpdateRequest{}, log, false)).*;
+
+    if (Environment.isDebug) {
+        for (this.packages.items(.name), 0..) |name_, i| {
+            debug("package {d}: {s}", .{ i, name_.slice(this.buffers.string_bytes.items) });
+        }
+    }
 
     if (Environment.allow_assert) {
         try this.verifyData();

@@ -3458,6 +3458,11 @@ pub const PackageManager = struct {
                 }
             },
             .tarball => {
+                Output.debug("loser {}\n", .{
+                    dependency.version.value.tarball.uri.remote.fmt(
+                        this.lockfile.buffers.string_bytes.items,
+                    ),
+                });
                 const res: Resolution = switch (dependency.version.value.tarball.uri) {
                     .local => |path| .{
                         .tag = .local_tarball,
@@ -4356,6 +4361,9 @@ pub const PackageManager = struct {
                     manager.setPreinstallState(package_id, manager.lockfile, .done);
 
                     if (comptime @TypeOf(callbacks.onExtract) != void) {
+                        if (ExtractCompletionContext == *PackageInstaller) {
+                            extract_ctx.fixCachedLockfilePackageSlices();
+                        }
                         callbacks.onExtract(extract_ctx, dependency_id, task.data.extract, comptime log_level);
                     }
 
@@ -6779,6 +6787,15 @@ pub const PackageManager = struct {
             node_modules_folder: std.fs.IterableDir,
         };
 
+        /// Call when you mutate the length of `lockfile.packages`
+        pub fn fixCachedLockfilePackageSlices(this: *PackageInstaller) void {
+            Output.debug("LOSER FIXUP TIME", .{});
+            this.metas = this.lockfile.packages.items(.meta);
+            this.names = this.lockfile.packages.items(.name);
+            this.bins = this.lockfile.packages.items(.bin);
+            this.resolutions = this.lockfile.packages.items(.resolution);
+        }
+
         /// Install versions of a package which are waiting on a network request
         pub fn installEnqueuedPackages(
             this: *PackageInstaller,
@@ -6786,7 +6803,6 @@ pub const PackageManager = struct {
             data: ExtractData,
             comptime log_level: Options.LogLevel,
         ) void {
-            Output.debug("-! {} {any}", .{ dependency_id, this.lockfile.buffers.resolutions.items });
             const package_id = this.lockfile.buffers.resolutions.items[dependency_id];
             const name = this.lockfile.str(&this.names[package_id]);
             const resolution = &this.resolutions[package_id];

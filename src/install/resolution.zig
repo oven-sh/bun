@@ -115,7 +115,7 @@ pub const Resolution = extern struct {
                 }),
                 .root => Value.init(.{ .root = {} }),
                 else => {
-                    std.debug.panic("Internal error: unexpected resolution tag:,) {}", .{this.tag});
+                    std.debug.panic("Internal error: unexpected resolution tag: {}", .{this.tag});
                 },
             },
         };

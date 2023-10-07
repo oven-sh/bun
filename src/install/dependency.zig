@@ -221,12 +221,16 @@ pub inline fn isGitHubRepoPath(dependency: string) bool {
     return hash_index != dependency.len - 1 and first_slash_index > 0 and first_slash_index != dependency.len - 1;
 }
 
-// Github allows for the following format of URL:
-// https://github.com/<org>/<repo>/tarball/<ref>
-// This is a legacy (but still supported) method of retrieving a tarball of an
-// entire source tree at some git reference. (ref = branch, tag, etc. Note: branch
-// can have arbitrary number of slashes)
+/// Github allows for the following format of URL:
+/// https://github.com/<org>/<repo>/tarball/<ref>
+/// This is a legacy (but still supported) method of retrieving a tarball of an
+/// entire source tree at some git reference. (ref = branch, tag, etc. Note: branch
+/// can have arbitrary number of slashes)
+///
+/// This also checks for a github url that ends with ".tar.gz"
 pub inline fn isGitHubTarballPath(dependency: string) bool {
+    if (strings.endsWithComptime(dependency, ".tar.gz")) return true;
+
     var parts = strings.split(dependency, "/");
 
     var n_parts: usize = 0;
@@ -610,7 +614,7 @@ pub const Version = struct {
         }
     };
 
-    const NpmInfo = struct {
+    pub const NpmInfo = struct {
         name: String,
         version: Semver.Query.Group,
 
@@ -619,7 +623,7 @@ pub const Version = struct {
         }
     };
 
-    const TagInfo = struct {
+    pub const TagInfo = struct {
         name: String,
         tag: String,
 
@@ -628,7 +632,7 @@ pub const Version = struct {
         }
     };
 
-    const TarballInfo = struct {
+    pub const TarballInfo = struct {
         uri: URI,
         package_name: String = .{},
 

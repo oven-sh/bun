@@ -3334,3 +3334,4 @@ extern SIMDUTF_DLLIMPORTEXPORT internal::atomic_ptr<const implementation>& get_a
 SIMDUTF_POP_DISABLE_WARNINGS
 
 #endif // SIMDUTF_H
+/* end file include/simdutf.h */

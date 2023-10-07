@@ -22,6 +22,7 @@ import {
   generateKey,
 } from "crypto";
 import { test, it, expect, describe } from "bun:test";
+import { createContext, Script } from "node:vm";
 import fs from "fs";
 import path from "path";
 
@@ -1399,6 +1400,79 @@ describe("crypto.KeyObjects", () => {
     const { publicKey, privateKey } = await (promise as Promise<{ publicKey: KeyObject; privateKey: KeyObject }>);
     expect(publicKey.asymmetricKeyDetails?.modulusLength).toBe(513);
     expect(privateKey.asymmetricKeyDetails?.modulusLength).toBe(513);
+  });
+
+  function testRunInContext(fn: any) {
+    test("can generate key", () => {
+      const context = createContext({ generateKeySync });
+      const result = fn(`generateKeySync("aes", { length: 128 })`, context);
+      expect(result).toBeDefined();
+      const keybuf = result.export();
+      expect(keybuf.byteLength).toBe(128 / 8);
+    });
+    test("can be used on another context", () => {
+      const context = createContext({ generateKeyPairSync, assertApproximateSize, testEncryptDecrypt, testSignVerify });
+      const result = fn(
+        `
+        const { publicKey: publicKeyDER, privateKey: privateKeyDER } = generateKeyPairSync(
+          "rsa",
+          {
+            publicExponent: 0x10001,
+            modulusLength: 512,
+            publicKeyEncoding: {
+              type: "pkcs1",
+              format: "der",
+            },
+            privateKeyEncoding: {
+              type: "pkcs8",
+              format: "der",
+            },
+          }
+        );
+
+        
+        assertApproximateSize(publicKeyDER, 74);
+
+        const publicKey = {
+          key: publicKeyDER,
+          type: "pkcs1",
+          format: "der",
+        };
+        const privateKey = {
+          key: privateKeyDER,
+          format: "der",
+          type: "pkcs8",
+          passphrase: "secret",
+        };
+        testEncryptDecrypt(publicKey, privateKey);
+        testSignVerify(publicKey, privateKey);
+      `,
+        context,
+      );
+    });
+  }
+  describe("Script", () => {
+    describe("runInContext()", () => {
+      testRunInContext((code, context, options) => {
+        // @ts-expect-error
+        const script = new Script(code, options);
+        return script.runInContext(context);
+      });
+    });
+    describe("runInNewContext()", () => {
+      testRunInContext((code, context, options) => {
+        // @ts-expect-error
+        const script = new Script(code, options);
+        return script.runInNewContext(context);
+      });
+    });
+    describe("runInThisContext()", () => {
+      testRunInContext((code, context, options) => {
+        // @ts-expect-error
+        const script = new Script(code, options);
+        return script.runInThisContext(context);
+      });
+    });
   });
 });
 

@@ -6927,6 +6927,39 @@ it("should handle `workspace:*` on both root & child", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
+it("should install peer dependencies from root package", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      peerDependencies: {
+        bar: "0.0.2",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    env,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", " 1 package installed"]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
+  expect(requested).toBe(2);
+
+  await access(join(package_dir, "bun.lockb"));
+});
+
 describe("Registry URLs", () => {
   // Some of the non failing URLs are invalid, but bun's URL parser ignores
   // the validation error and returns a valid serialized URL anyway.

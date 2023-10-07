@@ -6147,7 +6147,7 @@ pub const PackageManager = struct {
         clap.parseParam("--help                            Print this help menu") catch unreachable,
     };
 
-    const install_params = install_params_ ++ [_]ParamType{
+    pub const install_params = install_params_ ++ [_]ParamType{
         clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
         clap.parseParam("-D, --development") catch unreachable,
         clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
@@ -6155,15 +6155,15 @@ pub const PackageManager = struct {
         clap.parseParam("<POS> ...                         ") catch unreachable,
     };
 
-    const update_params = install_params_ ++ [_]ParamType{
+    pub const update_params = install_params_ ++ [_]ParamType{
         clap.parseParam("<POS> ...                         \"name\" of packages to update") catch unreachable,
     };
 
-    const pm_params = install_params_ ++ [_]ParamType{
+    pub const pm_params = install_params_ ++ [_]ParamType{
         clap.parseParam("<POS> ...                         ") catch unreachable,
     };
 
-    const add_params = install_params_ ++ [_]ParamType{
+    pub const add_params = install_params_ ++ [_]ParamType{
         clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
         clap.parseParam("-D, --development") catch unreachable,
         clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
@@ -6171,15 +6171,15 @@ pub const PackageManager = struct {
         clap.parseParam("<POS> ...                         \"name\" or \"name@version\" of package(s) to install") catch unreachable,
     };
 
-    const remove_params = install_params_ ++ [_]ParamType{
+    pub const remove_params = install_params_ ++ [_]ParamType{
         clap.parseParam("<POS> ...                         \"name\" of package(s) to remove from package.json") catch unreachable,
     };
 
-    const link_params = install_params_ ++ [_]ParamType{
+    pub const link_params = install_params_ ++ [_]ParamType{
         clap.parseParam("<POS> ...                         \"name\" install package as a link") catch unreachable,
     };
 
-    const unlink_params = install_params_ ++ [_]ParamType{
+    pub const unlink_params = install_params_ ++ [_]ParamType{
         clap.parseParam("<POS> ...                         \"name\" uninstall package as a link") catch unreachable,
     };
 

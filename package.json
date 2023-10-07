@@ -30,5 +30,11 @@
     "bun-webkit": "0.0.1-1a49a1f94bf42ab4f8c6b11d7bbbb21e491d2d62"
   },
   "version": "0.0.0",
-  "prettier": "./.prettierrc.cjs"
+  "prettier": "./.prettierrc.cjs",
+  "name": "core",
+  "module": "index.ts",
+  "type": "module",
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  }
 }

@@ -68,3 +68,6 @@ fetchRecurseSubmodules = false
 	ignore = dirty
 	depth = 1
 	shallow = true
+[submodule "src/deps/SDL"]
+	path = src/deps/SDL
+	url = https://github.com/libsdl-org/SDL

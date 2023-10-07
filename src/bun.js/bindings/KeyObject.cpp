@@ -2046,7 +2046,7 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
     // TODO: rsa-pss
     if (type_str == "rsa"_s) {
         if (count == 1) {
-            JSC::throwTypeError(lexicalGlobalObject, scope, "options.modulusLength and options.publicExponentVector are required for rsa"_s);
+            JSC::throwTypeError(lexicalGlobalObject, scope, "options.modulusLength are required for rsa"_s);
             return JSC::JSValue::encode(JSC::JSValue {});
         }
         auto* options = jsDynamicCast<JSC::JSObject*>(callFrame->argument(1));
@@ -2060,52 +2060,19 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
             return JSC::JSValue::encode(JSC::JSValue {});
         }
         auto publicExponentJS = options->getIfPropertyExists(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "publicExponent"_s)));
-        if (publicExponentJS.isUndefinedOrNull() || publicExponentJS.isEmpty() || !publicExponentJS.isCell()) {
-            JSC::throwTypeError(lexicalGlobalObject, scope, "options.publicExponent is expected to be a Buffer"_s);
+        uint32_t publicExponent = 0x10001;
+        if (publicExponentJS.isNumber()) {
+            publicExponent = publicExponentJS.toUInt32(lexicalGlobalObject);
+        } else if (!publicExponentJS.isUndefinedOrNull() && !publicExponentJS.isEmpty()) {
+            JSC::throwTypeError(lexicalGlobalObject, scope, "options.publicExponent is expected to be a number"_s);
             return JSC::JSValue::encode(JSC::JSValue {});
         }
-        void* data;
-        size_t byteLength;
-
-        auto publicExponentJSCell = publicExponentJS.asCell();
-        auto type = publicExponentJSCell->type();
-
-        switch (type) {
-
-        case DataViewType:
-        case Uint8ArrayType:
-        case Uint8ClampedArrayType:
-        case Uint16ArrayType:
-        case Uint32ArrayType:
-        case Int8ArrayType:
-        case Int16ArrayType:
-        case Int32ArrayType:
-        case Float32ArrayType:
-        case Float64ArrayType:
-        case BigInt64ArrayType:
-        case BigUint64ArrayType: {
-            JSC::JSArrayBufferView* view = jsCast<JSC::JSArrayBufferView*>(publicExponentJSCell);
-
-            data = view->vector();
-            byteLength = view->length();
-            break;
-        }
-        case ArrayBufferType: {
-            auto* jsBuffer = jsDynamicCast<JSC::JSArrayBuffer*>(publicExponentJSCell);
-            if (UNLIKELY(!jsBuffer)) {
-                JSC::throwTypeError(lexicalGlobalObject, scope, "options.publicExponent is expected to be a Buffer"_s);
-                return JSC::JSValue::encode(JSC::JSValue {});
-            }
-            auto* buffer = jsBuffer->impl();
-            data = buffer->data();
-            byteLength = buffer->byteLength();
-            break;
-        }
-        default: {
-            JSC::throwTypeError(lexicalGlobalObject, scope, "options.publicExponent is expected to be a Buffer"_s);
-            return JSC::JSValue::encode(JSC::JSValue {});
-        }
-        }
+        uint8_t publicExponentArray[4];
+        publicExponentArray[0] = (uint8_t)(publicExponent >> 24);
+        publicExponentArray[1] = (uint8_t)(publicExponent >> 16);
+        publicExponentArray[2] = (uint8_t)(publicExponent >> 8);
+        publicExponentArray[3] = (uint8_t)publicExponent;           
+        
         int modulusLength = modulusLengthJS.toUInt32(lexicalGlobalObject);
         auto returnValue = JSC::JSValue {};
         auto keyPairCallback = [&](CryptoKeyPair&& pair) {
@@ -2121,7 +2088,7 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
             throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Failed to generate key pair"_s));
         };
         // this is actually sync
-        CryptoKeyRSA::generatePair(CryptoAlgorithmIdentifier::RSA_OAEP, CryptoAlgorithmIdentifier::SHA_1, false, modulusLength, Vector<uint8_t>((uint8_t*)data, byteLength), true, CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt, WTFMove(keyPairCallback), WTFMove(failureCallback), zigGlobalObject->scriptExecutionContext());
+        CryptoKeyRSA::generatePair(CryptoAlgorithmIdentifier::RSA_OAEP, CryptoAlgorithmIdentifier::SHA_1, false, modulusLength, Vector<uint8_t>((uint8_t*)&publicExponentArray, 4), true, CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt, WTFMove(keyPairCallback), WTFMove(failureCallback), zigGlobalObject->scriptExecutionContext());
         return JSValue::encode(returnValue);
     } else if (type_str == "ec"_s) {
         if (count == 1) {
@@ -2140,6 +2107,17 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
         }
         auto namedCurve = namedCurveJS.toWTFString(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        if(namedCurve == "P-384"_s || namedCurve == "p384"_s || namedCurve == "secp384r1"_s) {
+            namedCurve = "P-384"_s;
+        } else if(namedCurve == "P-256"_s || namedCurve == "p256"_s || namedCurve == "prime256v1"_s) {
+            namedCurve = "P-256"_s;
+        } else if(namedCurve == "P-521"_s || namedCurve == "p521"_s || namedCurve == "secp521r1"_s) {
+            namedCurve = "P-521"_s;
+        }else {
+            throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "curve not supported"_s));
+            return JSValue::encode(JSC::jsUndefined());    
+        }
+        
         auto result = CryptoKeyEC::generatePair(CryptoAlgorithmIdentifier::ECDSA, namedCurve, true, CryptoKeyUsageSign | CryptoKeyUsageVerify);
         if (result.hasException()) {
             WebCore::propagateException(*lexicalGlobalObject, scope, result.releaseException());

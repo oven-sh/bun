@@ -10,6 +10,14 @@ var Buffer = globalThis.Buffer;
 const EMPTY_BUFFER = Buffer.alloc(0);
 const { isAnyArrayBuffer, isArrayBufferView } = require("node:util/types");
 
+function exportIfKeyObject(key) {
+  if (key instanceof KeyObject) {
+    key = key.export();
+  } else if (key instanceof CryptoKey) {
+    key = KeyObject.from(key).export();
+  }
+  return key;
+}
 function getKeyFrom(key, type) {
   if (key instanceof KeyObject) {
     key = key.export();
@@ -1308,11 +1316,7 @@ var require_legacy = __commonJS({
       ZEROS = Buffer2.alloc(128),
       blocksize = 64;
     function Hmac(alg, key) {
-      if (key instanceof KeyObject) {
-        key = key.export();
-      } else if (key instanceof CryptoKey) {
-        key = KeyObject.from(key).export();
-      }
+      key = exportIfKeyObject(key);
 
       Base.call(this, "digest"),
         typeof key == "string" && (key = Buffer2.from(key)),
@@ -1367,11 +1371,7 @@ var require_browser3 = __commonJS({
     var sha = require_sha2();
     var ZEROS = Buffer2.alloc(128);
     function Hmac(alg, key) {
-      if (key instanceof KeyObject) {
-        key = key.export();
-      } else if (key instanceof CryptoKey) {
-        key = KeyObject.from(key).export();
-      }
+      key = exportIfKeyObject(key);
 
       Base.call(this, "digest"), typeof key == "string" && (key = Buffer2.from(key));
       var blocksize = alg === "sha512" || alg === "sha384" ? 128 : 64;
@@ -1400,11 +1400,7 @@ var require_browser3 = __commonJS({
       return hash.update(this._opad).update(h).digest();
     };
     module.exports = function (alg, key) {
-      if (key instanceof KeyObject) {
-        key = key.export();
-      } else if (key instanceof CryptoKey) {
-        key = KeyObject.from(key).export();
-      }
+      key = exportIfKeyObject(key);
       return (
         (alg = alg.toLowerCase()),
         alg === "rmd160" || alg === "ripemd160"
@@ -1650,11 +1646,7 @@ var require_sync_browser = __commonJS({
         ripemd160: 20,
       };
     function Hmac(alg, key, saltLen) {
-      if (key instanceof KeyObject) {
-        key = key.export();
-      } else if (key instanceof CryptoKey) {
-        key = KeyObject.from(key).export();
-      }
+      key = exportIfKeyObject(key);
       var hash = getDigest(alg),
         blocksize = alg === "sha512" || alg === "sha384" ? 128 : 64;
       key.length > blocksize
@@ -7960,11 +7952,7 @@ var require_hmac = __commonJS({
     var utils = require_utils4(),
       assert = require_minimalistic_assert();
     function Hmac(hash, key, enc) {
-      if (key instanceof KeyObject) {
-        key = key.export();
-      } else if (key instanceof CryptoKey) {
-        key = KeyObject.from(key).export();
-      }
+      key = exportIfKeyObject(key);
 
       if (!(this instanceof Hmac)) return new Hmac(hash, key, enc);
       (this.Hash = hash),

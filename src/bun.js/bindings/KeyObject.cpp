@@ -1,3 +1,25 @@
+// Attribution: Some parts of of this module are derived from code originating from the Node.js
+// crypto module which is licensed under an MIT license:
+//
+// Copyright Node.js contributors. All rights reserved.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to
+// deal in the Software without restriction, including without limitation the
+// rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+// sell copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+// FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+// IN THE SOFTWARE.
 
 #include "KeyObject.h"
 #include "webcrypto/JSCryptoKey.h"
@@ -222,7 +244,8 @@ JSC::EncodedJSValue KeyObject__createPrivateKey(JSC::JSGlobalObject* globalObjec
     void* data;
     size_t byteLength;
 
-    auto type = keyJSValue.asCell()->type();
+    auto keyJSValueCell = keyJSValue.asCell();
+    auto type = keyJSValueCell->type();
 
     switch (type) {
 
@@ -238,14 +261,14 @@ JSC::EncodedJSValue KeyObject__createPrivateKey(JSC::JSGlobalObject* globalObjec
     case Float64ArrayType:
     case BigInt64ArrayType:
     case BigUint64ArrayType: {
-        JSC::JSArrayBufferView* view = jsCast<JSC::JSArrayBufferView*>(keyJSValue.asCell());
+        JSC::JSArrayBufferView* view = jsCast<JSC::JSArrayBufferView*>(keyJSValueCell);
 
         data = view->vector();
         byteLength = view->length();
         break;
     }
     case ArrayBufferType: {
-        auto* jsBuffer = jsDynamicCast<JSC::JSArrayBuffer*>(keyJSValue.asCell());
+        auto* jsBuffer = jsDynamicCast<JSC::JSArrayBuffer*>(keyJSValueCell);
         if (UNLIKELY(!jsBuffer)) {
             throwException(globalObject, scope, createTypeError(globalObject, "ERR_INVALID_ARG_TYPE: expected key to be Buffer or array-like object"_s));
             return JSValue::encode(JSC::jsUndefined());
@@ -806,7 +829,8 @@ JSC::EncodedJSValue KeyObject__createPublicKey(JSC::JSGlobalObject* globalObject
     auto format = formatJSValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-    auto type = keyJSValue.asCell()->type();
+    auto keyJSValueCell = keyJSValue.asCell();
+    auto type = keyJSValueCell->type();
 
     switch (type) {
 
@@ -822,14 +846,14 @@ JSC::EncodedJSValue KeyObject__createPublicKey(JSC::JSGlobalObject* globalObject
     case Float64ArrayType:
     case BigInt64ArrayType:
     case BigUint64ArrayType: {
-        JSC::JSArrayBufferView* view = jsCast<JSC::JSArrayBufferView*>(keyJSValue.asCell());
+        JSC::JSArrayBufferView* view = jsCast<JSC::JSArrayBufferView*>(keyJSValueCell);
 
         data = view->vector();
         byteLength = view->length();
         break;
     }
     case ArrayBufferType: {
-        auto* jsBuffer = jsDynamicCast<JSC::JSArrayBuffer*>(keyJSValue.asCell());
+        auto* jsBuffer = jsDynamicCast<JSC::JSArrayBuffer*>(keyJSValueCell);
         if (UNLIKELY(!jsBuffer)) {
             auto scope = DECLARE_THROW_SCOPE(vm);
             throwException(globalObject, scope, createTypeError(globalObject, "ERR_INVALID_ARG_TYPE: expected key to be Buffer or array-like object"_s));
@@ -1166,7 +1190,8 @@ JSC::EncodedJSValue KeyObject__createSecretKey(JSC::JSGlobalObject* lexicalGloba
         return JSValue::encode(JSC::jsUndefined());
     }
 
-    auto type = bufferArg.asCell()->type();
+    auto bufferArgCell = bufferArg.asCell();
+    auto type = bufferArgCell->type();
 
     switch (type) {
 
@@ -1182,7 +1207,7 @@ JSC::EncodedJSValue KeyObject__createSecretKey(JSC::JSGlobalObject* lexicalGloba
     case Float64ArrayType:
     case BigInt64ArrayType:
     case BigUint64ArrayType: {
-        JSC::JSArrayBufferView* view = jsCast<JSC::JSArrayBufferView*>(bufferArg.asCell());
+        JSC::JSArrayBufferView* view = jsCast<JSC::JSArrayBufferView*>(bufferArgCell);
 
         void* data = view->vector();
         size_t byteLength = view->length();
@@ -1193,7 +1218,7 @@ JSC::EncodedJSValue KeyObject__createSecretKey(JSC::JSGlobalObject* lexicalGloba
         return JSC::JSValue::encode(JSCryptoKey::create(structure, globalObject, WTFMove(impl)));
     }
     case ArrayBufferType: {
-        auto* jsBuffer = jsDynamicCast<JSC::JSArrayBuffer*>(bufferArg.asCell());
+        auto* jsBuffer = jsDynamicCast<JSC::JSArrayBuffer*>(bufferArgCell);
         if (UNLIKELY(!jsBuffer)) {
             break;
         }
@@ -2030,7 +2055,7 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
             return JSC::JSValue::encode(JSC::JSValue {});
         }
         auto modulusLengthJS = options->getIfPropertyExists(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "modulusLength"_s)));
-        if (modulusLengthJS.isUndefinedOrNull() || modulusLengthJS.isEmpty() || !modulusLengthJS.isNumber()) {
+        if (!modulusLengthJS.isNumber()) {
             JSC::throwTypeError(lexicalGlobalObject, scope, "options.modulusLength is expected to be a number"_s);
             return JSC::JSValue::encode(JSC::JSValue {});
         }
@@ -2042,7 +2067,8 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
         void* data;
         size_t byteLength;
 
-        auto type = publicExponentJS.asCell()->type();
+        auto publicExponentJSCell = publicExponentJS.asCell();
+        auto type = publicExponentJSCell->type();
 
         switch (type) {
 
@@ -2058,14 +2084,14 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
         case Float64ArrayType:
         case BigInt64ArrayType:
         case BigUint64ArrayType: {
-            JSC::JSArrayBufferView* view = jsCast<JSC::JSArrayBufferView*>(publicExponentJS.asCell());
+            JSC::JSArrayBufferView* view = jsCast<JSC::JSArrayBufferView*>(publicExponentJSCell);
 
             data = view->vector();
             byteLength = view->length();
             break;
         }
         case ArrayBufferType: {
-            auto* jsBuffer = jsDynamicCast<JSC::JSArrayBuffer*>(publicExponentJS.asCell());
+            auto* jsBuffer = jsDynamicCast<JSC::JSArrayBuffer*>(publicExponentJSCell);
             if (UNLIKELY(!jsBuffer)) {
                 JSC::throwTypeError(lexicalGlobalObject, scope, "options.publicExponent is expected to be a Buffer"_s);
                 return JSC::JSValue::encode(JSC::JSValue {});
@@ -2176,7 +2202,7 @@ JSC::EncodedJSValue KeyObject__generateKeySync(JSC::JSGlobalObject* lexicalGloba
         auto* structure = zigGlobalObject->JSCryptoKeyStructure();
         size_t lengthBits = 0;
         auto length = callFrame->argument(1);
-        if (length.isUndefinedOrNull() || length.isEmpty() || !length.isNumber()) {
+        if (!length.isNumber()) {
             JSC::throwTypeError(lexicalGlobalObject, scope, "length is expected to be a number"_s);
             return JSC::JSValue::encode(JSC::JSValue {});
         }
@@ -2193,7 +2219,7 @@ JSC::EncodedJSValue KeyObject__generateKeySync(JSC::JSGlobalObject* lexicalGloba
         size_t lengthBits = 0;
         if (count > 1) {
             auto length = callFrame->argument(1);
-            if (length.isUndefinedOrNull() || length.isEmpty() || !length.isNumber()) {
+            if (!length.isNumber()) {
                 JSC::throwTypeError(lexicalGlobalObject, scope, "length is expected to be a number"_s);
                 return JSC::JSValue::encode(JSC::JSValue {});
             }

@@ -673,6 +673,110 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
 
 pub const SocketTCP = NewSocketHandler(false);
 pub const SocketTLS = NewSocketHandler(true);
+pub const AnySocket = union(enum) {
+    SocketTCP: SocketTCP,
+    SocketTLS: SocketTLS,
+
+    pub fn shutdown(this: AnySocket) void {
+        debug("us_socket_shutdown({d})", .{@intFromPtr(this.socket())});
+        return us_socket_shutdown(
+            @intFromBool(this.isSSL()),
+            this.socket(),
+        );
+    }
+    pub fn shutdownRead(this: AnySocket) void {
+        debug("us_socket_shutdown_read({d})", .{@intFromPtr(this.socket())});
+        return us_socket_shutdown_read(
+            @intFromBool(this.isSSL()),
+            this.socket(),
+        );
+    }
+    pub fn isShutdown(this: AnySocket) bool {
+        return us_socket_is_shut_down(
+            @intFromBool(this.isSSL()),
+            this.socket(),
+        ) > 0;
+    }
+    pub fn isClosed(this: AnySocket) bool {
+        return us_socket_is_closed(
+            @intFromBool(this.isSSL()),
+            this.socket(),
+        ) > 0;
+    }
+    pub fn close(this: AnySocket) void {
+        debug("us_socket_close({d})", .{@intFromPtr(this.socket())});
+        _ = us_socket_close(
+            @intFromBool(this.isSSL()),
+            this.socket(),
+            0,
+            null,
+        );
+    }
+
+    pub fn write(this: AnySocket, data: []const u8, msg_more: bool) i32 {
+        const result = us_socket_write(
+            @intFromBool(this.isSSL()),
+            this.socket(),
+            data.ptr,
+            // truncate to 31 bits since sign bit exists
+            @as(i32, @intCast(@as(u31, @truncate(data.len)))),
+            @as(i32, @intFromBool(msg_more)),
+        );
+
+        if (comptime Environment.allow_assert) {
+            debug("us_socket_write({d}) = {d}", .{ this.getNativeHandle(), data.len, result });
+        }
+
+        return result;
+    }
+
+    pub fn rawWrite(this: AnySocket, data: []const u8, msg_more: bool) i32 {
+        return us_socket_raw_write(
+            @intFromBool(this.isSSL()),
+            this.socket(),
+            data.ptr,
+            // truncate to 31 bits since sign bit exists
+            @as(i32, @intCast(@as(u31, @truncate(data.len)))),
+            @as(i32, @intFromBool(msg_more)),
+        );
+    }
+
+    pub fn localPort(this: AnySocket) i32 {
+        return us_socket_local_port(
+            @intFromBool(this.isSSL()),
+            this.socket(),
+        );
+    }
+
+    pub fn isSSL(this: AnySocket) bool {
+        return switch (this) {
+            .SocketTCP => false,
+            .SocketTLS => true,
+        };
+    }
+
+    pub fn socket(this: AnySocket) *Socket {
+        return switch (this) {
+            .SocketTCP => this.SocketTCP.socket,
+            .SocketTLS => this.SocketTLS.socket,
+        };
+    }
+
+    pub fn ext(this: AnySocket, comptime ContextType: type) ?*ContextType {
+        var ptr = us_socket_ext(
+            this.isSSL(),
+            this.socket(),
+        ) orelse return null;
+
+        return @ptrCast(@alignCast(ptr));
+    }
+    pub fn context(this: AnySocket) *SocketContext {
+        return us_socket_context(
+            this.isSSL(),
+            this.socket(),
+        ).?;
+    }
+};
 
 pub const Timer = opaque {
     pub fn create(loop: *Loop, ptr: anytype) *Timer {

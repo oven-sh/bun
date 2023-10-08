@@ -1,9 +1,10 @@
 cmake_minimum_required(VERSION 3.10)
 
-project(bun VERSION 1.0.4 LANGUAGES CXX)
-
+set(BUN_BASE_VERSION "1.0")
+file(READ "./src/build-id" BUILD_ID)
+set(PACKAGE_JSON_VERSION "${BUN_BASE_VERSION}.${BUILD_ID}")
+project(bun VERSION ${PACKAGE_JSON_VERSION} LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
-
 
 if (NOT CI)
     string(APPEND CMAKE_CXX_FLAGS "-MMD")
@@ -30,8 +31,6 @@ unset(EXE_BUN CACHE)
 unset(EXE_NODE CACHE)
 
 
-set(BUN_BASE_VERSION "1.0")
-
 set(TRIPLET ${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR})
 string(TOLOWER ${TRIPLET} TRIPLET)
 
@@ -42,8 +41,6 @@ set(DEBUG_PACKAGE_DIR "${PACKAGES_REALPATH}/debug-${PACKAGE_NAME}")
 set(RELEASE_BUN "${PACKAGE_DIR}/bun")
 set(DEBUG_BIN "${DEBUG_PACKAGE_DIR}")
 set(DEBUG_BUN "${DEBUG_BIN}/bun-debug")
-file(READ "./src/build-id" BUILD_ID)
-set(PACKAGE_JSON_VERSION "${BUN_BASE_VERSION}.${BUILD_ID}")
 set(BUN_BUILD_TAG "bun-v${PACKAGE_JSON_VERSION}")
 set(BUN_RELEASE_BIN "${PACKAGE_DIR}/bun")
 
@@ -104,5 +101,5 @@ if(CCACHE)
 endif()
 
 
-message(STATUS "#### : ${CCACHE}")
+message(STATUS "#### : ${CMAKE_PROJECT_VERSION}")
 

@@ -3588,6 +3588,12 @@ pub const JSValue = enum(JSValueReprInt) {
         return JSC.GetJSPrivateData(ZigType, value.asObjectRef());
     }
 
+    extern fn JSC__JSValue__dateInstanceFromNullTerminatedString(*JSGlobalObject, [*:0]const u8) JSValue;
+    pub fn fromDateString(globalObject: *JSGlobalObject, str: [*:0]const u8) JSValue {
+        JSC.markBinding(@src());
+        return JSC__JSValue__dateInstanceFromNullTerminatedString(globalObject, str);
+    }
+
     extern fn JSBuffer__isBuffer(*JSGlobalObject, JSValue) bool;
     pub fn isBuffer(value: JSValue, global: *JSGlobalObject) bool {
         JSC.markBinding(@src());

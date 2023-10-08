@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "CryptoKeyEC.h"
+#include "../wtf-bindings.h"
 
 #if ENABLE(WEB_CRYPTO)
 
@@ -408,15 +409,15 @@ bool CryptoKeyEC::platformAddFieldElements(JsonWebKey& jwk) const
         auto x = BIGNUMPtr(BN_new());
         auto y = BIGNUMPtr(BN_new());
         if (1 == EC_POINT_get_affine_coordinates_GFp(EC_KEY_get0_group(key), publicKey, x.get(), y.get(), ctx.get())) {
-            jwk.x = base64URLEncodeToString(convertToBytesExpand(x.get(), keySizeInBytes));
-            jwk.y = base64URLEncodeToString(convertToBytesExpand(y.get(), keySizeInBytes));
+            jwk.x = Bun::base64URLEncodeToString(convertToBytesExpand(x.get(), keySizeInBytes));
+            jwk.y = Bun::base64URLEncodeToString(convertToBytesExpand(y.get(), keySizeInBytes));
         }
     }
 
     if (type() == Type::Private) {
         const BIGNUM* privateKey = EC_KEY_get0_private_key(key);
         if (privateKey)
-            jwk.d = base64URLEncodeToString(convertToBytes(privateKey));
+            jwk.d = Bun::base64URLEncodeToString(convertToBytes(privateKey));
     }
     return true;
 }

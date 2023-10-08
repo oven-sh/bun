@@ -4584,46 +4584,8 @@ pub const NodeFS = struct {
         var to = args.new_path.sliceZ(&to_buf);
         return Syscall.rename(from, to);
     }
-    pub fn rmdir(this: *NodeFS, args: Arguments.RmDir, comptime flavor: Flavor) Maybe(Return.Rmdir) {
-        _ = flavor;
-
-        if (comptime Environment.isMac) {
-            if (args.recursive) {
-                var dest = args.path.sliceZ(&this.sync_error_buf);
-
-                var flags: u32 = bun.C.darwin.RemoveFileFlags.cross_mount |
-                    bun.C.darwin.RemoveFileFlags.allow_long_paths |
-                    bun.C.darwin.RemoveFileFlags.recursive;
-
-                while (true) {
-                    if (Maybe(Return.Rmdir).errnoSys(bun.C.darwin.removefileat(std.os.AT.FDCWD, dest, null, flags), .rmdir)) |errno| {
-                        switch (@as(os.E, @enumFromInt(errno.err.errno))) {
-                            .AGAIN, .INTR => continue,
-                            .NOENT => return Maybe(Return.Rmdir).success,
-                            .MLINK => {
-                                var copy: [bun.MAX_PATH_BYTES]u8 = undefined;
-                                @memcpy(copy[0..dest.len], dest);
-                                copy[dest.len] = 0;
-                                var dest_copy = copy[0..dest.len :0];
-                                switch (Syscall.unlink(dest_copy).getErrno()) {
-                                    .AGAIN, .INTR => continue,
-                                    .NOENT => return errno,
-                                    .SUCCESS => continue,
-                                    else => return errno,
-                                }
-                            },
-                            .SUCCESS => unreachable,
-                            else => return errno,
-                        }
-                    }
-
-                    return Maybe(Return.Rmdir).success;
-                }
-            }
-
-            return Maybe(Return.Rmdir).errnoSysP(system.rmdir(args.path.sliceZ(&this.sync_error_buf)), .rmdir, args.path.slice()) orelse
-                Maybe(Return.Rmdir).success;
-        } else if (comptime Environment.isLinux) {
+    pub fn rmdir(this: *NodeFS, args: Arguments.RmDir, comptime _: Flavor) Maybe(Return.Rmdir) {
+        if (comptime Environment.isPosix) {
             if (args.recursive) {
                 std.fs.cwd().deleteTree(args.path.slice()) catch |err| {
                     const errno: std.os.E = switch (err) {
@@ -4663,59 +4625,16 @@ pub const NodeFS = struct {
             return Maybe(Return.Rmdir).errnoSysP(system.rmdir(args.path.sliceZ(&this.sync_error_buf)), .rmdir, args.path.slice()) orelse
                 Maybe(Return.Rmdir).success;
         }
+
+        return Maybe(Return.Rmdir).todo;
     }
     pub fn rm(this: *NodeFS, args: Arguments.RmDir, comptime flavor: Flavor) Maybe(Return.Rm) {
         _ = flavor;
 
-        if (comptime Environment.isMac) {
-            var dest = args.path.sliceZ(&this.sync_error_buf);
-
-            while (true) {
-                var flags: u32 = 0;
-                if (args.recursive) {
-                    flags |= bun.C.darwin.RemoveFileFlags.cross_mount;
-                    flags |= bun.C.darwin.RemoveFileFlags.allow_long_paths;
-                    flags |= bun.C.darwin.RemoveFileFlags.recursive;
-                }
-
-                if (Maybe(Return.Rm).errnoSys(bun.C.darwin.removefileat(std.os.AT.FDCWD, dest, null, flags), .unlink)) |errno| {
-                    switch (@as(os.E, @enumFromInt(errno.err.errno))) {
-                        .AGAIN, .INTR => continue,
-                        .NOENT => {
-                            if (args.force) {
-                                return Maybe(Return.Rm).success;
-                            }
-
-                            return errno;
-                        },
-
-                        .MLINK => {
-                            var copy: [bun.MAX_PATH_BYTES]u8 = undefined;
-                            @memcpy(copy[0..dest.len], dest);
-                            copy[dest.len] = 0;
-                            var dest_copy = copy[0..dest.len :0];
-                            switch (Syscall.unlink(dest_copy).getErrno()) {
-                                .AGAIN, .INTR => continue,
-                                .NOENT => {
-                                    if (args.force) {
-                                        continue;
-                                    }
-
-                                    return errno;
-                                },
-                                .SUCCESS => continue,
-                                else => return errno,
-                            }
-                        },
-                        .SUCCESS => unreachable,
-                        else => return errno,
-                    }
-                }
-
-                return Maybe(Return.Rm).success;
-            }
-        } else if (comptime Environment.isLinux or Environment.isWindows) {
+        if (comptime Environment.isPosix) {
+            // We cannot use removefileat() on macOS because it does not handle write-protected files as expected.
             if (args.recursive) {
+                // TODO: switch to an implementation which does not use any "unreachable"
                 std.fs.cwd().deleteTree(args.path.slice()) catch |err| {
                     const errno: E = switch (err) {
                         error.InvalidHandle => .BADF,
@@ -4752,10 +4671,9 @@ pub const NodeFS = struct {
                 };
                 return Maybe(Return.Rm).success;
             }
-        }
 
-        if (comptime Environment.isPosix) {
-            var dest = args.path.osPath(&this.sync_error_buf);
+            var dest = args.path.sliceZ(&this.sync_error_buf);
+
             std.os.unlinkZ(dest) catch |er| {
                 // empircally, it seems to return AccessDenied when the
                 // file is actually a directory on macOS.

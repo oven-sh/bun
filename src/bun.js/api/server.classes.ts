@@ -24,6 +24,10 @@ function generate(name) {
         fn: "doStop",
         length: 1,
       },
+      requestIP: {
+        fn: "doRequestIP",
+        length: 1,
+      },
       port: {
         getter: "getPort",
       },

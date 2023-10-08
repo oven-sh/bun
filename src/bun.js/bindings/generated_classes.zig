@@ -1327,6 +1327,8 @@ pub const JSDebugHTTPSServer = struct {
             @compileLog("Expected DebugHTTPSServer.doPublish to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPSServer.doPublish)));
         if (@TypeOf(DebugHTTPSServer.doReload) != CallbackType)
             @compileLog("Expected DebugHTTPSServer.doReload to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPSServer.doReload)));
+        if (@TypeOf(DebugHTTPSServer.doRequestIP) != CallbackType)
+            @compileLog("Expected DebugHTTPSServer.doRequestIP to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPSServer.doRequestIP)));
         if (@TypeOf(DebugHTTPSServer.doStop) != CallbackType)
             @compileLog("Expected DebugHTTPSServer.doStop to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPSServer.doStop)));
         if (@TypeOf(DebugHTTPSServer.doUpgrade) != CallbackType)
@@ -1335,6 +1337,7 @@ pub const JSDebugHTTPSServer = struct {
             @export(DebugHTTPSServer.doFetch, .{ .name = "DebugHTTPSServerPrototype__doFetch" });
             @export(DebugHTTPSServer.doPublish, .{ .name = "DebugHTTPSServerPrototype__doPublish" });
             @export(DebugHTTPSServer.doReload, .{ .name = "DebugHTTPSServerPrototype__doReload" });
+            @export(DebugHTTPSServer.doRequestIP, .{ .name = "DebugHTTPSServerPrototype__doRequestIP" });
             @export(DebugHTTPSServer.doStop, .{ .name = "DebugHTTPSServerPrototype__doStop" });
             @export(DebugHTTPSServer.doUpgrade, .{ .name = "DebugHTTPSServerPrototype__doUpgrade" });
             @export(DebugHTTPSServer.finalize, .{ .name = "DebugHTTPSServerClass__finalize" });
@@ -1470,6 +1473,8 @@ pub const JSDebugHTTPServer = struct {
             @compileLog("Expected DebugHTTPServer.doPublish to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPServer.doPublish)));
         if (@TypeOf(DebugHTTPServer.doReload) != CallbackType)
             @compileLog("Expected DebugHTTPServer.doReload to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPServer.doReload)));
+        if (@TypeOf(DebugHTTPServer.doRequestIP) != CallbackType)
+            @compileLog("Expected DebugHTTPServer.doRequestIP to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPServer.doRequestIP)));
         if (@TypeOf(DebugHTTPServer.doStop) != CallbackType)
             @compileLog("Expected DebugHTTPServer.doStop to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPServer.doStop)));
         if (@TypeOf(DebugHTTPServer.doUpgrade) != CallbackType)
@@ -1478,6 +1483,7 @@ pub const JSDebugHTTPServer = struct {
             @export(DebugHTTPServer.doFetch, .{ .name = "DebugHTTPServerPrototype__doFetch" });
             @export(DebugHTTPServer.doPublish, .{ .name = "DebugHTTPServerPrototype__doPublish" });
             @export(DebugHTTPServer.doReload, .{ .name = "DebugHTTPServerPrototype__doReload" });
+            @export(DebugHTTPServer.doRequestIP, .{ .name = "DebugHTTPServerPrototype__doRequestIP" });
             @export(DebugHTTPServer.doStop, .{ .name = "DebugHTTPServerPrototype__doStop" });
             @export(DebugHTTPServer.doUpgrade, .{ .name = "DebugHTTPServerPrototype__doUpgrade" });
             @export(DebugHTTPServer.finalize, .{ .name = "DebugHTTPServerClass__finalize" });
@@ -3277,6 +3283,8 @@ pub const JSHTTPSServer = struct {
             @compileLog("Expected HTTPSServer.doPublish to be a callback but received " ++ @typeName(@TypeOf(HTTPSServer.doPublish)));
         if (@TypeOf(HTTPSServer.doReload) != CallbackType)
             @compileLog("Expected HTTPSServer.doReload to be a callback but received " ++ @typeName(@TypeOf(HTTPSServer.doReload)));
+        if (@TypeOf(HTTPSServer.doRequestIP) != CallbackType)
+            @compileLog("Expected HTTPSServer.doRequestIP to be a callback but received " ++ @typeName(@TypeOf(HTTPSServer.doRequestIP)));
         if (@TypeOf(HTTPSServer.doStop) != CallbackType)
             @compileLog("Expected HTTPSServer.doStop to be a callback but received " ++ @typeName(@TypeOf(HTTPSServer.doStop)));
         if (@TypeOf(HTTPSServer.doUpgrade) != CallbackType)
@@ -3285,6 +3293,7 @@ pub const JSHTTPSServer = struct {
             @export(HTTPSServer.doFetch, .{ .name = "HTTPSServerPrototype__doFetch" });
             @export(HTTPSServer.doPublish, .{ .name = "HTTPSServerPrototype__doPublish" });
             @export(HTTPSServer.doReload, .{ .name = "HTTPSServerPrototype__doReload" });
+            @export(HTTPSServer.doRequestIP, .{ .name = "HTTPSServerPrototype__doRequestIP" });
             @export(HTTPSServer.doStop, .{ .name = "HTTPSServerPrototype__doStop" });
             @export(HTTPSServer.doUpgrade, .{ .name = "HTTPSServerPrototype__doUpgrade" });
             @export(HTTPSServer.finalize, .{ .name = "HTTPSServerClass__finalize" });
@@ -3420,6 +3429,8 @@ pub const JSHTTPServer = struct {
             @compileLog("Expected HTTPServer.doPublish to be a callback but received " ++ @typeName(@TypeOf(HTTPServer.doPublish)));
         if (@TypeOf(HTTPServer.doReload) != CallbackType)
             @compileLog("Expected HTTPServer.doReload to be a callback but received " ++ @typeName(@TypeOf(HTTPServer.doReload)));
+        if (@TypeOf(HTTPServer.doRequestIP) != CallbackType)
+            @compileLog("Expected HTTPServer.doRequestIP to be a callback but received " ++ @typeName(@TypeOf(HTTPServer.doRequestIP)));
         if (@TypeOf(HTTPServer.doStop) != CallbackType)
             @compileLog("Expected HTTPServer.doStop to be a callback but received " ++ @typeName(@TypeOf(HTTPServer.doStop)));
         if (@TypeOf(HTTPServer.doUpgrade) != CallbackType)
@@ -3428,6 +3439,7 @@ pub const JSHTTPServer = struct {
             @export(HTTPServer.doFetch, .{ .name = "HTTPServerPrototype__doFetch" });
             @export(HTTPServer.doPublish, .{ .name = "HTTPServerPrototype__doPublish" });
             @export(HTTPServer.doReload, .{ .name = "HTTPServerPrototype__doReload" });
+            @export(HTTPServer.doRequestIP, .{ .name = "HTTPServerPrototype__doRequestIP" });
             @export(HTTPServer.doStop, .{ .name = "HTTPServerPrototype__doStop" });
             @export(HTTPServer.doUpgrade, .{ .name = "HTTPServerPrototype__doUpgrade" });
             @export(HTTPServer.finalize, .{ .name = "HTTPServerClass__finalize" });
@@ -6862,6 +6874,9 @@ pub const JSTextDecoder = struct {
         if (@TypeOf(TextDecoder.getFatal) != GetterType)
             @compileLog("Expected TextDecoder.getFatal to be a getter");
 
+        if (@TypeOf(TextDecoder.getIgnoreBOM) != GetterType)
+            @compileLog("Expected TextDecoder.getIgnoreBOM to be a getter");
+
         if (!JSC.is_bindgen) {
             @export(TextDecoder.constructor, .{ .name = "TextDecoderClass__construct" });
             @export(TextDecoder.decode, .{ .name = "TextDecoderPrototype__decode" });
@@ -6869,6 +6884,7 @@ pub const JSTextDecoder = struct {
             @export(TextDecoder.finalize, .{ .name = "TextDecoderClass__finalize" });
             @export(TextDecoder.getEncoding, .{ .name = "TextDecoderPrototype__getEncoding" });
             @export(TextDecoder.getFatal, .{ .name = "TextDecoderPrototype__getFatal" });
+            @export(TextDecoder.getIgnoreBOM, .{ .name = "TextDecoderPrototype__getIgnoreBOM" });
         }
     }
 };

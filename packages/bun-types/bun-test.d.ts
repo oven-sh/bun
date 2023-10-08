@@ -174,11 +174,12 @@ declare module "bun:test" {
      *
      * @param table Array of Arrays with the arguments that are passed into the test fn for each row.
      */
-    each<T extends Readonly<Readonly<[any, ...any[]]>[]>>(
-      table: T,
+
+    each<T extends Readonly<[any, ...any[]]>>(
+      table: ReadonlyArray<T>,
     ): (
       label: string,
-      fn: (...args: Readonly<T>[number]) => void | Promise<unknown>,
+      fn: (...args: [...T]) => void | Promise<unknown>,
       options?: number | TestOptions,
     ) => void;
     each<T extends Array<any>>(
@@ -186,6 +187,13 @@ declare module "bun:test" {
     ): (
       label: string,
       fn: (...args: Readonly<T>) => void | Promise<unknown>,
+      options?: number | TestOptions,
+    ) => void;
+    each<T>(
+      table: Array<T>,
+    ): (
+      label: string,
+      fn: (...args: T[]) => void | Promise<unknown>,
       options?: number | TestOptions,
     ) => void;
   };
@@ -419,11 +427,11 @@ declare module "bun:test" {
      *
      * @param table Array of Arrays with the arguments that are passed into the test fn for each row.
      */
-    each<T extends Readonly<Readonly<[any, ...any[]]>[]>>(
-      table: T,
+    each<T extends Readonly<[any, ...any[]]>>(
+      table: ReadonlyArray<T>,
     ): (
       label: string,
-      fn: (...args: Readonly<T>[number]) => void | Promise<unknown>,
+      fn: (...args: [...T]) => void | Promise<unknown>,
       options?: number | TestOptions,
     ) => void;
     each<T extends Array<any>>(
@@ -431,6 +439,13 @@ declare module "bun:test" {
     ): (
       label: string,
       fn: (...args: Readonly<T>) => void | Promise<unknown>,
+      options?: number | TestOptions,
+    ) => void;
+    each<T>(
+      table: Array<T>,
+    ): (
+      label: string,
+      fn: (...args: T[]) => void | Promise<unknown>,
       options?: number | TestOptions,
     ) => void;
   };

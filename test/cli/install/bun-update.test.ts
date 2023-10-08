@@ -67,7 +67,7 @@ it("should update to latest version of dependency", async () => {
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + baz@0.0.3",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited1).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
@@ -113,7 +113,7 @@ it("should update to latest version of dependency", async () => {
     "  - baz-exec",
     "",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited2).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.5.tgz`]);
@@ -296,7 +296,7 @@ it("lockfile should not be modified when there are no version changes, issue#588
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + baz@0.0.3",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
 
   // Test if the lockb has been modified by `bun update`.
@@ -314,9 +314,14 @@ it("lockfile should not be modified when there are no version changes, issue#588
   };
 
   let prev = await getLockbContent();
-  for (let i = 0; i < 5; i++) {
+  urls.length = 0;
+  const count = 5;
+  for (let i = 0; i < count; i++) {
     const content = await getLockbContent();
     expect(prev).toStrictEqual(content);
     prev = content;
   }
+
+  // Assert we actually made a request to the registry for each update
+  expect(urls).toHaveLength(count);
 });

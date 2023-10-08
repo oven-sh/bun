@@ -1658,6 +1658,9 @@ pub const PackageManager = struct {
     cpu_count: u32 = 0,
     package_json_updates: []UpdateRequest = &[_]UpdateRequest{},
 
+    // used for looking up workspaces that aren't loaded into Lockfile.workspace_paths
+    workspaces: std.StringArrayHashMap(?Semver.Version),
+
     // progress bar stuff when not stack allocated
     root_progress_node: *std.Progress.Node = undefined,
     root_download_node: std.Progress.Node = undefined,
@@ -1764,7 +1767,7 @@ pub const PackageManager = struct {
 
     pub fn sleep(this: *PackageManager) void {
         if (this.wait_count.swap(0, .Monotonic) > 0) return;
-        bun.Mimalloc.mi_collect(false);
+        Output.flush();
         _ = this.waiter.wait() catch 0;
     }
 
@@ -1829,7 +1832,7 @@ pub const PackageManager = struct {
                 switch (this.options.log_level) {
                     inline else => |log_level| {
                         if (log_level.showProgress()) this.startProgressBarIfNone();
-                        while (this.pending_tasks > 0) : (this.sleep()) {
+                        while (this.pending_tasks > 0) {
                             this.runTasks(
                                 void,
                                 {},
@@ -1843,6 +1846,13 @@ pub const PackageManager = struct {
                             ) catch |err| {
                                 return .{ .failure = err };
                             };
+
+                            if (PackageManager.verbose_install and this.pending_tasks > 0) {
+                                Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{this.pending_tasks});
+                            }
+
+                            if (this.pending_tasks > 0)
+                                this.sleep();
                         }
                     },
                 }
@@ -1895,18 +1905,24 @@ pub const PackageManager = struct {
         @memset(this.preinstall_state.items[offset..], PreinstallState.unknown);
     }
 
-    pub fn laterVersionInCache(this: *PackageManager, name: []const u8, name_hash: PackageNameHash, resolution: Resolution) ?Semver.Version {
+    pub fn formatLaterVersionInCache(
+        this: *PackageManager,
+        name: []const u8,
+        name_hash: PackageNameHash,
+        resolution: Resolution,
+    ) ?Semver.Version.Formatter {
         switch (resolution.tag) {
             Resolution.Tag.npm => {
                 if (resolution.value.npm.version.tag.hasPre())
                     // TODO:
                     return null;
 
-                const manifest: *const Npm.PackageManifest = this.manifests.getPtr(name_hash) orelse brk: {
-                    // We skip this in CI because we don't want any performance impact in an environment you'll probably never use
-                    if (this.isContinuousIntegration())
-                        return null;
+                // We skip this in CI because we don't want any performance impact in an environment you'll probably never use
+                // and it makes tests more consistent
+                if (this.isContinuousIntegration())
+                    return null;
 
+                const manifest: *const Npm.PackageManifest = this.manifests.getPtr(name_hash) orelse brk: {
                     if (Npm.PackageManifest.Serializer.load(this.allocator, this.getCacheDirectory(), name) catch null) |manifest_| {
                         this.manifests.put(this.allocator, name_hash, manifest_) catch return null;
                         break :brk this.manifests.getPtr(name_hash).?;
@@ -1916,8 +1932,12 @@ pub const PackageManager = struct {
                 };
 
                 if (manifest.findByDistTag("latest")) |latest_version| {
-                    if (latest_version.version.order(resolution.value.npm.version, this.lockfile.buffers.string_bytes.items, this.lockfile.buffers.string_bytes.items) != .gt) return null;
-                    return latest_version.version;
+                    if (latest_version.version.order(
+                        resolution.value.npm.version,
+                        manifest.string_buf,
+                        this.lockfile.buffers.string_bytes.items,
+                    ) != .gt) return null;
+                    return latest_version.version.fmt(manifest.string_buf);
                 }
 
                 return null;
@@ -2123,10 +2143,10 @@ pub const PackageManager = struct {
     }
 
     fn allocGitHubURL(this: *const PackageManager, repository: *const Repository) string {
-        var github_api_domain: string = "api.github.com";
-        if (this.env.map.get("GITHUB_API_DOMAIN")) |api_domain| {
-            if (api_domain.len > 0) {
-                github_api_domain = api_domain;
+        var github_api_url: string = "https://api.github.com";
+        if (this.env.map.get("GITHUB_API_URL")) |url| {
+            if (url.len > 0) {
+                github_api_url = url;
             }
         }
 
@@ -2136,9 +2156,9 @@ pub const PackageManager = struct {
 
         return std.fmt.allocPrint(
             this.allocator,
-            "https://{s}/repos/{s}/{s}{s}tarball/{s}",
+            "{s}/repos/{s}/{s}{s}tarball/{s}",
             .{
-                github_api_domain,
+                strings.withoutTrailingSlash(github_api_url),
                 owner,
                 repo,
                 // repo might be empty if dep is https://github.com/... style
@@ -2638,6 +2658,27 @@ pub const PackageManager = struct {
 
         switch (version.tag) {
             .npm, .dist_tag => {
+                if (version.tag == .npm) {
+                    if (this.lockfile.workspace_versions.count() > 0) resolve_from_workspace: {
+                        if (this.lockfile.workspace_versions.get(@truncate(name_hash))) |workspace_version| {
+                            if (version.value.npm.version.satisfies(workspace_version)) {
+                                const root_package = this.lockfile.rootPackage() orelse break :resolve_from_workspace;
+                                const root_dependencies = root_package.dependencies.get(this.lockfile.buffers.dependencies.items);
+                                const root_resolutions = root_package.resolutions.get(this.lockfile.buffers.resolutions.items);
+
+                                for (root_dependencies, root_resolutions) |root_dep, workspace_package_id| {
+                                    if (workspace_package_id != invalid_package_id and root_dep.version.tag == .workspace and root_dep.name_hash == name_hash) {
+                                        return .{
+                                            .package = this.lockfile.packages.get(workspace_package_id),
+                                            .is_first_time = false,
+                                        };
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Resolve the version from the loaded NPM manifest
                 const manifest = this.manifests.getPtr(name_hash) orelse return null; // manifest might still be downloading. This feels unreliable.
                 const find_result: Npm.PackageManifest.FindResult = switch (version.tag) {
@@ -2680,8 +2721,8 @@ pub const PackageManager = struct {
                 }
             },
             .workspace => {
-                // relative to cwd
-                const workspace_path: *const String = this.lockfile.workspace_paths.getPtr(@truncate(String.Builder.stringHash(this.lockfile.str(&version.value.workspace)))) orelse &version.value.workspace;
+                // package name hash should be used to find workspace path from map
+                const workspace_path: *const String = this.lockfile.workspace_paths.getPtr(@truncate(name_hash)) orelse &version.value.workspace;
 
                 const res = FolderResolution.getOrPut(.{ .relative = .workspace }, version, this.lockfile.str(workspace_path), this);
 
@@ -2941,6 +2982,8 @@ pub const PackageManager = struct {
         );
     }
 
+    const debug = Output.scoped(.PackageManager, true);
+
     /// Q: "What do we do with a dependency in a package.json?"
     /// A: "We enqueue it!"
     fn enqueueDependencyWithMainAndSuccessFn(
@@ -2955,7 +2998,7 @@ pub const PackageManager = struct {
         const name = dependency.realname();
 
         const name_hash = switch (dependency.version.tag) {
-            .dist_tag, .git, .github, .npm, .tarball => String.Builder.stringHash(this.lockfile.str(&name)),
+            .dist_tag, .git, .github, .npm, .tarball, .workspace => String.Builder.stringHash(this.lockfile.str(&name)),
             else => dependency.name_hash,
         };
         const version = dependency.version;
@@ -3067,11 +3110,35 @@ pub const PackageManager = struct {
                                     this.enqueueNetworkTask(network_task);
                                 }
                             }
+
+                            if (comptime Environment.allow_assert)
+                                debug(
+                                    "enqueueDependency({d}, {s}, {s}, {s}) = {d}",
+                                    .{
+                                        id,
+                                        @tagName(dependency.version.tag),
+                                        this.lockfile.str(&name),
+                                        this.lockfile.str(&version.literal),
+                                        result.package.meta.id,
+                                    },
+                                );
                         } else if (dependency.version.tag.isNPM()) {
                             const name_str = this.lockfile.str(&name);
                             const task_id = Task.Id.forManifest(name_str);
 
                             if (comptime Environment.allow_assert) std.debug.assert(task_id != 0);
+
+                            if (comptime Environment.allow_assert)
+                                debug(
+                                    "enqueueDependency({d}, {s}, {s}, {s}) = task {d}",
+                                    .{
+                                        id,
+                                        @tagName(dependency.version.tag),
+                                        this.lockfile.str(&name),
+                                        this.lockfile.str(&version.literal),
+                                        task_id,
+                                    },
+                                );
 
                             if (!dependency.behavior.isPeer()) {
                                 var network_entry = try this.network_dedupe_map.getOrPutContext(this.allocator, task_id, .{});
@@ -3173,6 +3240,18 @@ pub const PackageManager = struct {
                     id,
                 );
 
+                if (comptime Environment.allow_assert)
+                    debug(
+                        "enqueueDependency({d}, {s}, {s}, {s}) = {s}",
+                        .{
+                            id,
+                            @tagName(dependency.version.tag),
+                            this.lockfile.str(&name),
+                            this.lockfile.str(&version.literal),
+                            url,
+                        },
+                    );
+
                 if (this.git_repositories.get(clone_id)) |repo_fd| {
                     const resolved = try Repository.findCommit(
                         this.allocator,
@@ -3238,6 +3317,18 @@ pub const PackageManager = struct {
                 if (!entry.found_existing) {
                     entry.value_ptr.* = TaskCallbackList{};
                 }
+
+                if (comptime Environment.allow_assert)
+                    debug(
+                        "enqueueDependency({d}, {s}, {s}, {s}) = {s}",
+                        .{
+                            id,
+                            @tagName(dependency.version.tag),
+                            this.lockfile.str(&name),
+                            this.lockfile.str(&version.literal),
+                            url,
+                        },
+                    );
 
                 const callback_tag = comptime if (successFn == assignRootResolution) "root_dependency" else "dependency";
                 try entry.value_ptr.append(this.allocator, @unionInit(TaskCallbackContext, callback_tag, id));
@@ -3306,6 +3397,18 @@ pub const PackageManager = struct {
 
                     // should not trigger a network call
                     if (comptime Environment.allow_assert) std.debug.assert(result.network_task == null);
+
+                    if (comptime Environment.allow_assert)
+                        debug(
+                            "enqueueDependency({d}, {s}, {s}, {s}) = {d}",
+                            .{
+                                id,
+                                @tagName(dependency.version.tag),
+                                this.lockfile.str(&name),
+                                this.lockfile.str(&version.literal),
+                                result.package.meta.id,
+                            },
+                        );
                 } else if (dependency.behavior.isRequired()) {
                     if (comptime dependency_tag == .workspace) {
                         this.log.addErrorFmt(
@@ -3385,6 +3488,18 @@ pub const PackageManager = struct {
                 if (!entry.found_existing) {
                     entry.value_ptr.* = TaskCallbackList{};
                 }
+
+                if (comptime Environment.allow_assert)
+                    debug(
+                        "enqueueDependency({d}, {s}, {s}, {s}) = {s}",
+                        .{
+                            id,
+                            @tagName(dependency.version.tag),
+                            this.lockfile.str(&name),
+                            this.lockfile.str(&version.literal),
+                            url,
+                        },
+                    );
 
                 const callback_tag = comptime if (successFn == assignRootResolution) "root_dependency" else "dependency";
                 try entry.value_ptr.append(this.allocator, @unionInit(TaskCallbackContext, callback_tag, id));
@@ -4548,6 +4663,7 @@ pub const PackageManager = struct {
             env: *DotEnv.Loader,
             cli_: ?CommandLineArguments,
             bun_install_: ?*Api.BunInstall,
+            subcommand: Subcommand,
         ) !void {
             var base = Api.NpmRegistry{
                 .url = "",
@@ -4762,6 +4878,12 @@ pub const PackageManager = struct {
 
             if (env.map.get("BUN_CONFIG_NO_VERIFY")) |check_bool| {
                 this.do.verify_integrity = !strings.eqlComptime(check_bool, "0");
+            }
+
+            // Update should never read from manifest cache
+            if (subcommand == .update) {
+                this.enable.manifest_cache = false;
+                this.enable.manifest_cache_control = false;
             }
 
             if (cli_) |cli| {
@@ -5195,21 +5317,22 @@ pub const PackageManager = struct {
 
         bun.copy(u8, &cwd_buf, original_cwd);
 
+        var workspace_names = Package.WorkspaceMap.init(ctx.allocator);
+
         // Step 1. Find the nearest package.json directory
         //
-        // We will walk up from the cwd, calling chdir on each directory until we find a package.json
-        // If we fail to find one, we will report an error saying no packages to install
+        // We will walk up from the cwd, trying to find the nearest package.json file.
         const package_json_file = brk: {
             var this_cwd = original_cwd;
             const child_json = child: {
                 while (true) {
-                    var dir = std.fs.openDirAbsolute(this_cwd, .{}) catch |err| {
-                        Output.prettyErrorln("Error {s} accessing {s}", .{ @errorName(err), this_cwd });
-                        Output.flush();
-                        return err;
-                    };
-                    defer dir.close();
-                    break :child dir.openFileZ("package.json", .{ .mode = .read_write }) catch {
+                    const this_cwd_without_trailing_slash = strings.withoutTrailingSlash(this_cwd);
+                    var buf2: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+                    @memcpy(buf2[0..this_cwd_without_trailing_slash.len], this_cwd_without_trailing_slash);
+                    buf2[this_cwd_without_trailing_slash.len..buf2.len][0.."/package.json".len].* = "/package.json".*;
+                    buf2[this_cwd_without_trailing_slash.len + "/package.json".len] = 0;
+
+                    break :child std.fs.cwd().openFileZ(buf2[0 .. this_cwd_without_trailing_slash.len + "/package.json".len :0].ptr, .{ .mode = .read_write }) catch {
                         if (std.fs.path.dirname(this_cwd)) |parent| {
                             this_cwd = parent;
                             continue;
@@ -5225,9 +5348,13 @@ pub const PackageManager = struct {
             // Check if this is a workspace; if so, use root package
             var found = false;
             while (std.fs.path.dirname(this_cwd)) |parent| : (this_cwd = parent) {
-                var dir = std.fs.openDirAbsolute(parent, .{}) catch break;
-                defer dir.close();
-                const json_file = dir.openFileZ("package.json", .{ .mode = .read_write }) catch {
+                const parent_without_trailing_slash = strings.withoutTrailingSlash(parent);
+                var buf2: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+                @memcpy(buf2[0..parent_without_trailing_slash.len], parent_without_trailing_slash);
+                buf2[parent_without_trailing_slash.len..buf2.len][0.."/package.json".len].* = "/package.json".*;
+                buf2[parent_without_trailing_slash.len + "/package.json".len] = 0;
+
+                const json_file = std.fs.cwd().openFileZ(buf2[0 .. parent_without_trailing_slash.len + "/package.json".len :0].ptr, .{ .mode = .read_write }) catch {
                     continue;
                 };
                 defer if (!found) json_file.close();
@@ -5240,8 +5367,6 @@ pub const PackageManager = struct {
                 initializeStore();
                 const json = try json_parser.ParseJSONUTF8(&json_source, ctx.log, ctx.allocator);
                 if (json.asProperty("workspaces")) |prop| {
-                    var workspace_names = Package.WorkspaceMap.init(ctx.allocator);
-                    defer workspace_names.deinit();
                     const json_array = switch (prop.expr.data) {
                         .e_array => |arr| arr,
                         .e_object => |obj| if (obj.get("packages")) |packages| switch (packages.data) {
@@ -5252,7 +5377,7 @@ pub const PackageManager = struct {
                     };
                     var log = logger.Log.init(ctx.allocator);
                     defer log.deinit();
-                    _ = Package.processWorkspaceNamesArray(
+                    const workspace_packages_count = Package.processWorkspaceNamesArray(
                         &workspace_names,
                         ctx.allocator,
                         &log,
@@ -5261,6 +5386,7 @@ pub const PackageManager = struct {
                         prop.loc,
                         null,
                     ) catch break;
+                    _ = workspace_packages_count;
                     for (workspace_names.keys()) |path| {
                         if (strings.eql(child_cwd, path)) {
                             fs.top_level_dir = parent;
@@ -5323,6 +5449,13 @@ pub const PackageManager = struct {
             } else |_| {}
         }
 
+        var workspaces = std.StringArrayHashMap(?Semver.Version).init(ctx.allocator);
+        for (workspace_names.values()) |entry| {
+            try workspaces.put(entry.name, entry.version);
+        }
+
+        workspace_names.map.deinit();
+
         var manager = &instance;
         // var progress = Progress{};
         // var node = progress.start(name: []const u8, estimated_total_items: usize)
@@ -5341,6 +5474,7 @@ pub const PackageManager = struct {
             .lockfile = undefined,
             .root_package_json_file = package_json_file,
             .waiter = try Waker.init(ctx.allocator),
+            .workspaces = workspaces,
             // .progress
         };
         manager.lockfile = try ctx.allocator.create(Lockfile);
@@ -5369,6 +5503,7 @@ pub const PackageManager = struct {
             env,
             cli,
             ctx.install,
+            subcommand,
         );
 
         manager.timestamp_for_manifest_cache_control = @as(u32, @truncate(@as(u64, @intCast(@max(std.time.timestamp(), 0)))));
@@ -5418,6 +5553,7 @@ pub const PackageManager = struct {
             .lockfile = undefined,
             .root_package_json_file = undefined,
             .waiter = try Waker.init(allocator),
+            .workspaces = std.StringArrayHashMap(?Semver.Version).init(allocator),
         };
         manager.lockfile = try allocator.create(Lockfile);
 
@@ -5454,6 +5590,7 @@ pub const PackageManager = struct {
             env,
             cli,
             bun_install,
+            .install,
         );
 
         manager.timestamp_for_manifest_cache_control = @as(
@@ -5852,11 +5989,11 @@ pub const PackageManager = struct {
         clap.parseParam("-D, --development") catch unreachable,
         clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
         clap.parseParam("-E, --exact                  Add the exact version instead of the ^range") catch unreachable,
-        clap.parseParam("<POS> ...                         \"name\" or \"name@version\" of packages to install") catch unreachable,
+        clap.parseParam("<POS> ...                         \"name\" or \"name@version\" of package(s) to install") catch unreachable,
     };
 
     const remove_params = install_params_ ++ [_]ParamType{
-        clap.parseParam("<POS> ...                         \"name\" of packages to remove from package.json") catch unreachable,
+        clap.parseParam("<POS> ...                         \"name\" of package(s) to remove from package.json") catch unreachable,
     };
 
     const link_params = install_params_ ++ [_]ParamType{
@@ -6079,7 +6216,7 @@ pub const PackageManager = struct {
 
                 var value = input;
                 var alias: ?string = null;
-                if (strings.isNPMPackageName(input)) {
+                if (!Dependency.isTarball(input) and strings.isNPMPackageName(input)) {
                     alias = input;
                     value = input[input.len..];
                 } else if (input.len > 1) {
@@ -6138,6 +6275,9 @@ pub const PackageManager = struct {
                     request.is_aliased = true;
                     request.name = allocator.dupe(u8, name) catch unreachable;
                     request.name_hash = String.Builder.stringHash(name);
+                } else if (version.tag == .github and version.value.github.committish.isEmpty()) {
+                    request.name = input;
+                    request.name_hash = String.Builder.stringHash(version.literal.slice(input));
                 } else {
                     request.name_hash = String.Builder.stringHash(version.literal.slice(input));
                 }
@@ -7287,7 +7427,10 @@ pub const PackageManager = struct {
                 // We use this file descriptor to know where to put it.
                 installer.node_modules_folder = cwd.openIterableDir(node_modules.relative_path, .{}) catch brk: {
                     // Avoid extra mkdir() syscall
-                    try cwd.makePath(bun.span(node_modules.relative_path));
+                    //
+                    // note: this will recursively delete any dangling symlinks
+                    // in the next.js repo, it encounters a dangling symlink in node_modules/@next/codemod/node_modules/cheerio
+                    try bun.makePath(cwd, bun.span(node_modules.relative_path));
                     break :brk try cwd.openIterableDir(node_modules.relative_path, .{});
                 };
 
@@ -7341,7 +7484,7 @@ pub const PackageManager = struct {
                 if (!installer.options.do.install_packages) return error.InstallFailed;
             }
 
-            while (this.pending_tasks > 0 and installer.options.do.install_packages) : (this.sleep()) {
+            while (this.pending_tasks > 0 and installer.options.do.install_packages) {
                 try this.runTasks(
                     *PackageInstaller,
                     &installer,
@@ -7353,6 +7496,13 @@ pub const PackageManager = struct {
                     },
                     log_level,
                 );
+
+                if (PackageManager.verbose_install and this.pending_tasks > 0) {
+                    Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{this.pending_tasks});
+                }
+
+                if (this.pending_tasks > 0)
+                    this.sleep();
             }
 
             if (!installer.options.do.install_packages) return error.InstallFailed;
@@ -7649,6 +7799,7 @@ pub const PackageManager = struct {
 
                             _ = manager.getCacheDirectory();
                             _ = manager.getTemporaryDirectory();
+
                             while (counter_i < changes) : (counter_i += 1) {
                                 if (mapping[counter_i] == invalid_package_id) {
                                     const dependency_i = counter_i + off;
@@ -7723,7 +7874,7 @@ pub const PackageManager = struct {
                 Output.flush();
             }
 
-            while (manager.pending_tasks > 0) : (manager.sleep()) {
+            while (manager.pending_tasks > 0) {
                 try manager.runTasks(
                     *PackageManager,
                     manager,
@@ -7736,6 +7887,13 @@ pub const PackageManager = struct {
                     },
                     log_level,
                 );
+
+                if (PackageManager.verbose_install and manager.pending_tasks > 0) {
+                    Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{manager.pending_tasks});
+                }
+
+                if (manager.pending_tasks > 0)
+                    manager.sleep();
             }
 
             if (comptime log_level.showProgress()) {
@@ -7928,13 +8086,14 @@ pub const PackageManager = struct {
 
                 if (install_summary.success > 0) {
                     // it's confusing when it shows 3 packages and says it installed 1
-                    Output.pretty("\n <green>{d}<r> packages<r> installed ", .{@max(
+                    const pkgs_installed = @max(
                         install_summary.success,
                         @as(
                             u32,
                             @truncate(manager.package_json_updates.len),
                         ),
-                    )});
+                    );
+                    Output.pretty("\n <green>{d}<r> package{s}<r> installed ", .{ pkgs_installed, if (pkgs_installed == 1) "" else "s" });
                     Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
                     printed_timestamp = true;
                     Output.pretty("<r>\n", .{});
@@ -7949,7 +8108,7 @@ pub const PackageManager = struct {
                         }
                     }
 
-                    Output.pretty("\n <r><b>{d}<r> packages removed ", .{manager.summary.remove});
+                    Output.pretty("\n <r><b>{d}<r> package{s} removed ", .{ manager.summary.remove, if (manager.summary.remove == 1) "" else "s" });
                     Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
                     printed_timestamp = true;
                     Output.pretty("<r>\n", .{});
@@ -7958,16 +8117,19 @@ pub const PackageManager = struct {
 
                     const count = @as(PackageID, @truncate(manager.lockfile.packages.len));
                     if (count != install_summary.skipped) {
-                        Output.pretty("Checked <green>{d} installs<r> across {d} packages <d>(no changes)<r> ", .{
+                        Output.pretty("Checked <green>{d} install{s}<r> across {d} package{s} <d>(no changes)<r> ", .{
                             install_summary.skipped,
+                            if (install_summary.skipped == 1) "" else "s",
                             count,
+                            if (count == 1) "" else "s",
                         });
                         Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
                         printed_timestamp = true;
                         Output.pretty("<r>\n", .{});
                     } else {
-                        Output.pretty("<r> <green>Done<r>! Checked {d} packages<r> <d>(no changes)<r> ", .{
+                        Output.pretty("<r> <green>Done<r>! Checked {d} package{s}<r> <d>(no changes)<r> ", .{
                             install_summary.skipped,
+                            if (install_summary.skipped == 1) "" else "s",
                         });
                         Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
                         printed_timestamp = true;
@@ -7976,7 +8138,7 @@ pub const PackageManager = struct {
                 }
 
                 if (install_summary.fail > 0) {
-                    Output.prettyln("<r>Failed to install <red><b>{d}<r> packages\n", .{install_summary.fail});
+                    Output.prettyln("<r>Failed to install <red><b>{d}<r> package{s}\n", .{ install_summary.fail, if (install_summary.fail == 1) "" else "s" });
                     Output.flush();
                 }
             }
@@ -8033,6 +8195,7 @@ test "UpdateRequests.parse" {
         "baz",
         "boo@1.0.0",
         "bing@latest",
+        "github:bar/foo",
     };
     var reqs = PackageManager.UpdateRequest.parse(default_allocator, &log, updates, &array, .add);
 
@@ -8041,11 +8204,12 @@ test "UpdateRequests.parse" {
     try std.testing.expectEqualStrings(reqs[2].name, "bar");
     try std.testing.expectEqualStrings(reqs[3].name, "baz");
     try std.testing.expectEqualStrings(reqs[4].name, "boo");
+    try std.testing.expectEqualStrings(reqs[7].name, "github:bar/foo");
     try std.testing.expectEqual(reqs[4].version.tag, Dependency.Version.Tag.npm);
     try std.testing.expectEqualStrings(reqs[4].version.literal.slice("boo@1.0.0"), "1.0.0");
     try std.testing.expectEqual(reqs[5].version.tag, Dependency.Version.Tag.dist_tag);
     try std.testing.expectEqualStrings(reqs[5].version.literal.slice("bing@1.0.0"), "latest");
-    try std.testing.expectEqual(updates.len, 6);
+    try std.testing.expectEqual(updates.len, 7);
 }
 
 test "PackageManager.Options - default registry, default values" {

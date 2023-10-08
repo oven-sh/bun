@@ -221,6 +221,26 @@ pub inline fn isGitHubRepoPath(dependency: string) bool {
     return hash_index != dependency.len - 1 and first_slash_index > 0 and first_slash_index != dependency.len - 1;
 }
 
+// Github allows for the following format of URL:
+// https://github.com/<org>/<repo>/tarball/<ref>
+// This is a legacy (but still supported) method of retrieving a tarball of an
+// entire source tree at some git reference. (ref = branch, tag, etc. Note: branch
+// can have arbitrary number of slashes)
+pub inline fn isGitHubTarballPath(dependency: string) bool {
+    var parts = strings.split(dependency, "/");
+
+    var n_parts: usize = 0;
+
+    while (parts.next()) |part| {
+        n_parts += 1;
+        if (n_parts == 3) {
+            return strings.eql(part, "tarball");
+        }
+    }
+
+    return false;
+}
+
 // This won't work for query string params, but I'll let someone file an issue
 // before I add that.
 pub inline fn isTarball(dependency: string) bool {
@@ -493,8 +513,33 @@ pub const Version = struct {
                                 },
                                 else => {},
                             }
+
                             if (strings.hasPrefixComptime(url, "github.com/")) {
-                                if (isGitHubRepoPath(url["github.com/".len..])) return .github;
+                                const path = url["github.com/".len..];
+                                if (isGitHubTarballPath(path)) return .tarball;
+                                if (isGitHubRepoPath(path)) return .github;
+                            }
+
+                            if (strings.indexOfChar(url, '.')) |dot| {
+                                if (Repository.Hosts.has(url[0..dot])) return .git;
+                            }
+
+                            return .tarball;
+                        }
+                    }
+                },
+                's' => {
+                    if (strings.hasPrefixComptime(dependency, "ssh")) {
+                        var url = dependency["ssh".len..];
+                        if (url.len > 2) {
+                            if (url[0] == ':') {
+                                if (strings.hasPrefixComptime(url, "://")) {
+                                    url = url["://".len..];
+                                }
+                            }
+
+                            if (strings.indexOfChar(url, '.')) |dot| {
+                                if (Repository.Hosts.has(url[0..dot])) return .git;
                             }
                         }
                     }

@@ -1969,6 +1969,12 @@ pub const AbortSignal = extern opaque {
         return cppFn("create", .{global});
     }
 
+    extern fn WebCore__AbortSignal__new(*JSGlobalObject) *AbortSignal;
+    pub fn new(global: *JSGlobalObject) *AbortSignal {
+        JSC.markBinding(@src());
+        return WebCore__AbortSignal__new(global);
+    }
+
     pub fn createAbortError(message: *const ZigString, code: *const ZigString, global: *JSGlobalObject) JSValue {
         return cppFn("createAbortError", .{ message, code, global });
     }
@@ -5496,6 +5502,7 @@ pub const URL = opaque {
     extern fn URL__getHref(*String) String;
     extern fn URL__getFileURLString(*String) String;
     extern fn URL__getHrefJoin(*String, *String) String;
+    extern fn URL__pathFromFileURL(*String) String;
 
     pub fn hrefFromString(str: bun.String) String {
         JSC.markBinding(@src());
@@ -5514,6 +5521,12 @@ pub const URL = opaque {
         JSC.markBinding(@src());
         var input = str;
         return URL__getFileURLString(&input);
+    }
+
+    pub fn pathFromFileURL(str: bun.String) String {
+        JSC.markBinding(@src());
+        var input = str;
+        return URL__pathFromFileURL(&input);
     }
 
     /// This percent-encodes the URL, punycode-encodes the hostname, and returns the result

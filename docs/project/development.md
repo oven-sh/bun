@@ -46,8 +46,7 @@ $ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 16 all
 ```
 
 ```bash#Arch
-$ sudo pacman -S llvm16 clang16 lld
-
+$ sudo pacman -S llvm clang lld
 ```
 
 {% /codetabs %}
@@ -376,34 +375,12 @@ $ valgrind --fair-sched=try --track-origins=yes bun-debug <args>
 
 ## Updating `WebKit`
 
-The Bun team will occasionally bump the version of WebKit used in Bun. When this happens, you may see something like this with you run `git status`.
-
-```bash
-$ git status
-On branch my-branch
-Changes not staged for commit:
-  (use "git add <file>..." to update what will be committed)
-  (use "git restore <file>..." to discard changes in working directory)
-	modified:   src/bun.js/WebKit (new commits)
-```
-
-For performance reasons, `make submodule` does not automatically update the WebKit submodule. To update, run the following commands from the root of the Bun repo:
+The Bun team will occasionally bump the version of WebKit used in Bun. When this happens, you may see errors in `src/bun.js/bindings` during builds. When you see this, install the latest version of `bun-webkit` and re-compile.
 
 ```bash
 $ bun install
 $ make cpp
 ```
-
-<!-- Check the [Bun repo](https://github.com/oven-sh/bun/tree/main/src/bun.js) to get the hash of the commit of WebKit is currently being used.
-
-{% image width="270" src="https://github.com/oven-sh/bun/assets/3084745/51730b73-89ef-4358-9a41-9563a60a54be" /%} -->
-
-<!--
-```bash
-$ cd src/bun.js/WebKit
-$ git fetch
-$ git checkout <hash>
-``` -->
 
 ## Troubleshooting
 
@@ -464,7 +441,7 @@ If you see an error about `cmakeconfig.h` not being found, this is because the p
 $ bun install
 ```
 
-Check to see the command installed webkit, and you can manully look for `node_modules/bun-webkit-{platform}-{arch}`:
+Check to see the command installed webkit, and you can manually look for `node_modules/bun-webkit-{platform}-{arch}`:
 
 ```bash
 # this should reveal two directories. if not, something went wrong

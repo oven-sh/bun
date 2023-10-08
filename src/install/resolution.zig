@@ -8,6 +8,7 @@ const string = @import("../string_types.zig").string;
 const ExtractTarball = @import("./extract_tarball.zig");
 const strings = @import("../string_immutable.zig");
 const VersionedURL = @import("./versioned_url.zig").VersionedURL;
+const bun = @import("root").bun;
 
 pub const Resolution = extern struct {
     tag: Tag = .uninitialized,
@@ -73,41 +74,41 @@ pub const Resolution = extern struct {
     }
 
     pub fn clone(this: *const Resolution, buf: []const u8, comptime Builder: type, builder: Builder) Resolution {
-        return Resolution{
+        return .{
             .tag = this.tag,
             .value = switch (this.tag) {
-                .npm => .{
-                    .npm = this.value.npm.clone(buf, Builder, builder),
-                },
-                .local_tarball => .{
+                .npm => Value.init(.{ .npm = this.value.npm.clone(buf, Builder, builder) }),
+                .local_tarball => Value.init(.{
                     .local_tarball = builder.append(String, this.value.local_tarball.slice(buf)),
-                },
-                .folder => .{
+                }),
+                .folder => Value.init(.{
                     .folder = builder.append(String, this.value.folder.slice(buf)),
-                },
-                .remote_tarball => .{
+                }),
+                .remote_tarball => Value.init(.{
                     .remote_tarball = builder.append(String, this.value.remote_tarball.slice(buf)),
-                },
-                .workspace => .{
+                }),
+                .workspace => Value.init(.{
                     .workspace = builder.append(String, this.value.workspace.slice(buf)),
-                },
-                .symlink => .{
+                }),
+                .symlink => Value.init(.{
                     .symlink = builder.append(String, this.value.symlink.slice(buf)),
-                },
-                .single_file_module => .{
+                }),
+                .single_file_module => Value.init(.{
                     .single_file_module = builder.append(String, this.value.single_file_module.slice(buf)),
-                },
-                .git => .{
+                }),
+                .git => Value.init(.{
                     .git = this.value.git.clone(buf, Builder, builder),
-                },
-                .github => .{
+                }),
+                .github => Value.init(.{
                     .github = this.value.github.clone(buf, Builder, builder),
-                },
-                .gitlab => .{
+                }),
+                .gitlab => Value.init(.{
                     .gitlab = this.value.gitlab.clone(buf, Builder, builder),
+                }),
+                .root => Value.init(.{ .root = {} }),
+                else => {
+                    std.debug.panic("Internal error: unexpected resolution tag:,) {}", .{this.tag});
                 },
-                .root => .{ .root = {} },
-                else => unreachable,
             },
         };
     }
@@ -248,6 +249,11 @@ pub const Resolution = extern struct {
         symlink: String,
 
         single_file_module: String,
+
+        /// To avoid undefined memory between union values, we must zero initialize the union first.
+        pub fn init(field: anytype) Value {
+            return bun.serializableInto(Value, field);
+        }
     };
 
     pub const Tag = enum(u8) {

@@ -62,7 +62,7 @@ registry = "http://${server.hostname}:${server.port}/"
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err.split(/\r?\n/)).toContain("error: ConnectionRefused downloading package manifest bar");
+  expect(err).toMatch(/error: (ConnectionRefused|ConnectionClosed) downloading package manifest bar/gm);
   expect(stdout).toBeDefined();
   expect(await new Response(stdout).text()).toBeEmpty();
   expect(await exited).toBe(1);
@@ -192,7 +192,7 @@ it("should handle empty string in dependencies", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@0.0.2",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -380,7 +380,7 @@ it("should handle `workspace:` specifier", async () => {
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + Bar@workspace:path/to/bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited1).toBe(0);
   expect(requested).toBe(0);
@@ -409,7 +409,7 @@ it("should handle `workspace:` specifier", async () => {
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + Bar@workspace:path/to/bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited2).toBe(0);
   expect(requested).toBe(0);
@@ -453,7 +453,7 @@ it("should handle workspaces with packages array", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + Bar@workspace:bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
@@ -675,7 +675,7 @@ it("should ignore peerDependencies within workspaces", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + Baz@workspace:packages/baz",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
@@ -727,7 +727,7 @@ it("should handle life-cycle scripts within workspaces", async () => {
     " + Bar@workspace:bar",
     "[scripts:run] Foo",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
@@ -784,7 +784,7 @@ it("should handle life-cycle scripts during re-installation", async () => {
     " + Bar@workspace:bar",
     "[scripts:run] Foo",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited1).toBe(0);
   expect(requested).toBe(0);
@@ -816,7 +816,7 @@ it("should handle life-cycle scripts during re-installation", async () => {
     " + Bar@workspace:bar",
     "[scripts:run] Foo",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited2).toBe(0);
   expect(requested).toBe(0);
@@ -848,7 +848,7 @@ it("should handle life-cycle scripts during re-installation", async () => {
     " + Bar@workspace:bar",
     "[scripts:run] Foo",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited3).toBe(0);
   expect(requested).toBe(0);
@@ -903,7 +903,7 @@ it("should use updated life-cycle scripts in root during re-installation", async
     " + Bar@workspace:bar",
     "[scripts:run] Foo",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited1).toBe(0);
   expect(requested).toBe(0);
@@ -948,7 +948,7 @@ it("should use updated life-cycle scripts in root during re-installation", async
     "[scripts:run] Moo",
     "[scripts:run] Foo",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited2).toBe(0);
   expect(requested).toBe(0);
@@ -982,7 +982,7 @@ it("should use updated life-cycle scripts in root during re-installation", async
     "[scripts:run] Moo",
     "[scripts:run] Foo",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited3).toBe(0);
   expect(requested).toBe(0);
@@ -1037,7 +1037,7 @@ it("should use updated life-cycle scripts in dependency during re-installation",
     " + Bar@workspace:bar",
     "[scripts:run] Foo",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited1).toBe(0);
   expect(requested).toBe(0);
@@ -1081,7 +1081,7 @@ it("should use updated life-cycle scripts in dependency during re-installation",
     "[scripts:run] Foo",
     "[scripts:run] Bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited2).toBe(0);
   expect(requested).toBe(0);
@@ -1115,7 +1115,7 @@ it("should use updated life-cycle scripts in dependency during re-installation",
     "[scripts:run] Foo",
     "[scripts:run] Bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited3).toBe(0);
   expect(requested).toBe(0);
@@ -1158,7 +1158,7 @@ it("should ignore workspaces within workspaces", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@workspace:bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
@@ -1196,7 +1196,7 @@ it("should handle ^0 in dependencies", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@0.0.2",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -1276,7 +1276,7 @@ it("should handle ^0.0 in dependencies", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@0.0.2",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -1394,7 +1394,7 @@ it("should handle ^0.0.2 in dependencies", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@0.0.2",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -1438,7 +1438,7 @@ it("should handle ^0.0.2-rc in dependencies", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@0.0.2-rc",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -1482,7 +1482,51 @@ it("should handle ^0.0.2-alpha.3+b4d in dependencies", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@0.0.2-alpha.3",
     "",
-    " 1 packages installed",
+    " 1 package installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
+  expect(requested).toBe(2);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
+    name: "bar",
+    version: "0.0.2",
+  });
+  await access(join(package_dir, "bun.lockb"));
+});
+
+it("should choose the right version with prereleases", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.2-alpha.3": { as: "0.0.2" } }));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        bar: "^0.0.2-alpha.3+b4d",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + bar@0.0.2-alpha.3",
+    "",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -1526,7 +1570,7 @@ it("should handle ^0.0.2rc1 in dependencies", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@0.0.2-rc1",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -1570,7 +1614,7 @@ it("should handle ^0.0.2_pre3 in dependencies", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@0.0.2-_pre3",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -1614,7 +1658,7 @@ it("should handle ^0.0.2b_4+cafe_b0ba in dependencies", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@0.0.2-b_4+cafe_b0ba",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -1658,7 +1702,7 @@ it("should handle caret range in dependencies when the registry has prereleased 
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@6.3.0",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -1715,7 +1759,7 @@ it("should prefer latest-tagged dependency", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + baz@0.0.3",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
@@ -1771,7 +1815,7 @@ it("should handle dependency aliasing", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + Bar@0.0.3",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
@@ -1827,7 +1871,7 @@ it("should handle dependency aliasing (versioned)", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + Bar@0.0.3",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
@@ -1883,7 +1927,7 @@ it("should handle dependency aliasing (dist-tagged)", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + Bar@0.0.3",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
@@ -1943,7 +1987,7 @@ it("should not reinstall aliased dependencies", async () => {
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + Bar@0.0.3",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited1).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
@@ -1981,7 +2025,7 @@ it("should not reinstall aliased dependencies", async () => {
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    "Checked 1 installs across 2 packages (no changes)",
+    "Checked 1 install across 2 packages (no changes)",
   ]);
   expect(await exited2).toBe(0);
   expect(urls.sort()).toBeEmpty();
@@ -2194,7 +2238,7 @@ it("should handle unscoped alias on scoped dependency", async () => {
     " + @barn/moo@0.1.0",
     " + moo@0.1.0",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/@barn%2fmoo`, `${root_url}/@barn/moo-0.1.0.tgz`]);
@@ -2254,7 +2298,7 @@ it("should handle scoped alias on unscoped dependency", async () => {
     " + @baz/bar@0.0.2",
     " + bar@0.0.2",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -2449,7 +2493,7 @@ it("should handle GitHub URL in dependencies (user/repo)", async () => {
   let out = await new Response(stdout).text();
   out = out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "");
   out = out.replace(/(github:[^#]+)#[a-f0-9]+/, "$1");
-  expect(out.split(/\r?\n/)).toEqual([" + uglify@github:mishoo/UglifyJS", "", " 1 packages installed"]);
+  expect(out.split(/\r?\n/)).toEqual([" + uglify@github:mishoo/UglifyJS", "", " 1 package installed"]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
   expect(requested).toBe(0);
@@ -2503,7 +2547,7 @@ it("should handle GitHub URL in dependencies (user/repo#commit-id)", async () =>
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + uglify@github:mishoo/UglifyJS#e219a9a",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
@@ -2569,7 +2613,7 @@ it("should handle GitHub URL in dependencies (user/repo#tag)", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + uglify@github:mishoo/UglifyJS#e219a9a",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
@@ -2606,6 +2650,169 @@ it("should handle GitHub URL in dependencies (user/repo#tag)", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
+it("should handle bitbucket git dependencies", async () => {
+  const deps = [
+    "bitbucket:dylan-conway/public-install-test",
+    "bitbucket.org:dylan-conway/public-install-test",
+    "bitbucket.com:dylan-conway/public-install-test",
+    "git@bitbucket.org:dylan-conway/public-install-test",
+  ];
+  for (const dep of deps) {
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls));
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          "public-install-test": dep,
+        },
+      }),
+    );
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    expect(stderr).toBeDefined();
+    const err = await new Response(stderr).text();
+    expect(err).toContain("Saved lockfile");
+    expect(stdout).toBeDefined();
+    const out = await new Response(stdout).text();
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      ` + public-install-test@git+ssh://${dep}#79265e2d9754c60b60f97cc8d859fb6da073b5d2`,
+      "",
+      " 1 package installed",
+    ]);
+    expect(await exited).toBe(0);
+    await access(join(package_dir, "bun.lockb"));
+    dummyAfterEach();
+    dummyBeforeEach();
+  }
+
+  for (const dep of deps) {
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls));
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+      }),
+    );
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "add", dep],
+      cwd: package_dir,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    expect(stderr).toBeDefined();
+    const err = await new Response(stderr).text();
+    expect(err).toContain("Saved lockfile");
+    expect(stdout).toBeDefined();
+    const out = await new Response(stdout).text();
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      ` installed publicinstalltest@git+ssh://${dep}#79265e2d9754c60b60f97cc8d859fb6da073b5d2`,
+      "",
+      "",
+      " 1 package installed",
+    ]);
+    expect(await exited).toBe(0);
+    await access(join(package_dir, "bun.lockb"));
+    dummyAfterEach();
+    dummyBeforeEach();
+  }
+}, 20000);
+
+it("should handle gitlab git dependencies", async () => {
+  const deps = ["gitlab:dylan-conway/public-install-test", "gitlab.com:dylan-conway/public-install-test"];
+  for (const dep of deps) {
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls));
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          "public-install-test": dep,
+        },
+      }),
+    );
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    expect(stderr).toBeDefined();
+    const err = await new Response(stderr).text();
+    expect(err).toContain("Saved lockfile");
+    expect(stdout).toBeDefined();
+    const out = await new Response(stdout).text();
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      ` + public-install-test@git+ssh://${dep}#93f3aa4ec9ca8a0bacc010776db48bfcd915c44c`,
+      "",
+      " 1 package installed",
+    ]);
+    expect(await exited).toBe(0);
+    await access(join(package_dir, "bun.lockb"));
+    dummyAfterEach();
+    dummyBeforeEach();
+  }
+
+  for (const dep of deps) {
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls));
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+      }),
+    );
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "add", dep],
+      cwd: package_dir,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    expect(stderr).toBeDefined();
+    const err = await new Response(stderr).text();
+    expect(err).toContain("Saved lockfile");
+    expect(stdout).toBeDefined();
+    const out = await new Response(stdout).text();
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      ` installed public-install-test@git+ssh://${dep}#93f3aa4ec9ca8a0bacc010776db48bfcd915c44c`,
+      "",
+      "",
+      " 1 package installed",
+    ]);
+    expect(await exited).toBe(0);
+    await access(join(package_dir, "bun.lockb"));
+    dummyAfterEach();
+    dummyBeforeEach();
+  }
+}, 10000);
+
 it("should handle GitHub URL in dependencies (github:user/repo#tag)", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
@@ -2635,7 +2842,7 @@ it("should handle GitHub URL in dependencies (github:user/repo#tag)", async () =
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + uglify@github:mishoo/UglifyJS#e219a9a",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
@@ -2703,7 +2910,7 @@ it("should handle GitHub URL in dependencies (https://github.com/user/repo.git)"
   let out = await new Response(stdout).text();
   out = out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "");
   out = out.replace(/(github:[^#]+)#[a-f0-9]+/, "$1");
-  expect(out.split(/\r?\n/)).toEqual([" + uglify@github:mishoo/UglifyJS", "", " 1 packages installed"]);
+  expect(out.split(/\r?\n/)).toEqual([" + uglify@github:mishoo/UglifyJS", "", " 1 package installed"]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
   expect(requested).toBe(0);
@@ -2757,7 +2964,7 @@ it("should handle GitHub URL in dependencies (git://github.com/user/repo.git#com
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + uglify@github:mishoo/UglifyJS#e219a9a",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
@@ -2825,7 +3032,7 @@ it("should handle GitHub URL in dependencies (git+https://github.com/user/repo.g
   let out = await new Response(stdout).text();
   out = out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "");
   out = out.replace(/(github:[^#]+)#[a-f0-9]+/, "$1");
-  expect(out.split(/\r?\n/)).toEqual([" + uglify@github:mishoo/UglifyJS", "", " 1 packages installed"]);
+  expect(out.split(/\r?\n/)).toEqual([" + uglify@github:mishoo/UglifyJS", "", " 1 package installed"]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
   expect(requested).toBe(0);
@@ -2847,6 +3054,170 @@ it("should handle GitHub URL in dependencies (git+https://github.com/user/repo.g
   ]);
   const package_json = await file(join(package_dir, "node_modules", "uglify", "package.json")).json();
   expect(package_json.name).toBe("uglify-js");
+  await access(join(package_dir, "bun.lockb"));
+});
+
+it("should handle GitHub tarball URL in dependencies (https://github.com/user/repo/tarball/ref)", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "Foo",
+      version: "0.0.1",
+      dependencies: {
+        when: "https://github.com/cujojs/when/tarball/1.0.2",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  let out = await new Response(stdout).text();
+  out = out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "");
+  out = out.replace(/(github:[^#]+)#[a-f0-9]+/, "$1");
+  expect(out.split(/\r?\n/)).toEqual([
+    " + when@https://github.com/cujojs/when/tarball/1.0.2",
+    "",
+    " 1 package installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toBeEmpty();
+  expect(requested).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "when"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "when"))).toEqual([
+    ".gitignore",
+    ".gitmodules",
+    "LICENSE.txt",
+    "README.md",
+    "apply.js",
+    "cancelable.js",
+    "delay.js",
+    "package.json",
+    "test",
+    "timed.js",
+    "timeout.js",
+    "when.js",
+  ]);
+  const package_json = await file(join(package_dir, "node_modules", "when", "package.json")).json();
+  expect(package_json.name).toBe("when");
+  await access(join(package_dir, "bun.lockb"));
+});
+
+it("should handle GitHub tarball URL in dependencies (https://github.com/user/repo/tarball/ref) with custom GITHUB_API_URL", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "Foo",
+      version: "0.0.1",
+      dependencies: {
+        when: "https://github.com/cujojs/when/tarball/1.0.2",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env: {
+      ...env,
+      GITHUB_API_URL: "https://example.com/github/api",
+    },
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  let out = await new Response(stdout).text();
+  out = out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "");
+  out = out.replace(/(github:[^#]+)#[a-f0-9]+/, "$1");
+  expect(out.split(/\r?\n/)).toEqual([
+    " + when@https://github.com/cujojs/when/tarball/1.0.2",
+    "",
+    " 1 package installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toBeEmpty();
+  expect(requested).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "when"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "when"))).toEqual([
+    ".gitignore",
+    ".gitmodules",
+    "LICENSE.txt",
+    "README.md",
+    "apply.js",
+    "cancelable.js",
+    "delay.js",
+    "package.json",
+    "test",
+    "timed.js",
+    "timeout.js",
+    "when.js",
+  ]);
+  const package_json = await file(join(package_dir, "node_modules", "when", "package.json")).json();
+  expect(package_json.name).toBe("when");
+  await access(join(package_dir, "bun.lockb"));
+});
+
+it("should treat non-GitHub http(s) URLs as tarballs (https://some.url/path?stuff)", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "Foo",
+      version: "0.0.1",
+      dependencies: {
+        "@vercel/turbopack-node":
+          "https://gitpkg-fork.vercel.sh/vercel/turbo/crates/turbopack-node/js?turbopack-230922.2",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  let out = await new Response(stdout).text();
+  out = out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "");
+  out = out.replace(/(github:[^#]+)#[a-f0-9]+/, "$1");
+  expect(out.split(/\r?\n/)).toEqual([
+    " + @vercel/turbopack-node@https://gitpkg-fork.vercel.sh/vercel/turbo/crates/turbopack-node/js?turbopack-230922.2",
+    "",
+    " 1 package installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toBeEmpty();
+  expect(requested).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "@vercel", "loader-runner"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "@vercel"))).toEqual(["turbopack-node"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "@vercel", "turbopack-node"))).toEqual([
+    "package.json",
+    "src",
+    "tsconfig.json",
+  ]);
+  const package_json = await file(join(package_dir, "node_modules", "when", "package.json")).json();
+  expect(package_json.name).toBe("when");
   await access(join(package_dir, "bun.lockb"));
 });
 
@@ -3108,7 +3479,7 @@ it("should not regard peerDependencies declarations as duplicates", async () => 
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@0.0.2",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -3350,7 +3721,7 @@ it("should handle Git URL in dependencies", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + uglify-js@git+https://git@github.com/mishoo/UglifyJS.git",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
@@ -3411,7 +3782,7 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + uglify@git+ssh://github.com:mishoo/UglifyJS.git",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
@@ -3470,7 +3841,7 @@ it("should handle Git URL with committish in dependencies", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + uglify@git+https://git@github.com/mishoo/UglifyJS.git#e219a9a78a0d2251e4dcbd4bb9034207eb484fe8",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
@@ -3613,7 +3984,7 @@ it("should de-duplicate committish in Git URLs", async () => {
     " + uglify-hash@git+https://git@github.com/mishoo/UglifyJS.git#e219a9a78a0d2251e4dcbd4bb9034207eb484fe8",
     " + uglify-ver@git+https://git@github.com/mishoo/UglifyJS.git#e219a9a78a0d2251e4dcbd4bb9034207eb484fe8",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
@@ -3901,7 +4272,7 @@ it("should prefer optionalDependencies over dependencies of the same name", asyn
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + baz@0.0.3",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
@@ -3954,7 +4325,7 @@ it("should prefer dependencies over peerDependencies of the same name", async ()
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + baz@0.0.5",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.5.tgz`]);
@@ -3999,7 +4370,7 @@ it("should handle tarball URL", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     ` + baz@${root_url}/baz-0.0.3.tgz`,
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz-0.0.3.tgz`]);
@@ -4047,7 +4418,7 @@ it("should handle tarball path", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     ` + baz@${join(import.meta.dir, "baz-0.0.3.tgz")}`,
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
@@ -4094,7 +4465,7 @@ it("should handle tarball URL with aliasing", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     ` + bar@${root_url}/baz-0.0.3.tgz`,
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz-0.0.3.tgz`]);
@@ -4142,7 +4513,7 @@ it("should handle tarball path with aliasing", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     ` + bar@${join(import.meta.dir, "baz-0.0.3.tgz")}`,
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
@@ -4769,7 +5140,7 @@ it("should ignore invalid workspaces from parent directory", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@0.0.2",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -4825,7 +5196,7 @@ it("should handle --cwd", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@0.0.2",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -4938,7 +5309,7 @@ cache = false
     " + tsd@0.22.0",
     " + typescript@5.0.4",
     "",
-    " 119 packages installed",
+    " 118 packages installed",
   ]);
   expect(await exited1).toBe(0);
   expect(await readdirSorted(package_dir)).toEqual(["bun.lockb", "bunfig.toml", "node_modules", "package.json"]);
@@ -4974,7 +5345,6 @@ cache = false
     "fastq",
     "fill-range",
     "find-up",
-    "function-bind",
     "glob-parent",
     "globby",
     "hard-rejection",
@@ -5189,7 +5559,7 @@ it("should handle `workspaces:*` and `workspace:*` gracefully", async () => {
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@workspace:bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited1).toBe(0);
   expect(requested).toBe(0);
@@ -5219,7 +5589,7 @@ it("should handle `workspaces:*` and `workspace:*` gracefully", async () => {
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@workspace:bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited2).toBe(0);
   expect(requested).toBe(0);
@@ -5262,7 +5632,7 @@ it("should handle `workspaces:bar` and `workspace:*` gracefully", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@workspace:bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
@@ -5305,7 +5675,7 @@ it("should handle `workspaces:*` and `workspace:bar` gracefully", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@workspace:bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
@@ -5348,7 +5718,7 @@ it("should handle `workspaces:bar` and `workspace:bar` gracefully", async () => 
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@workspace:bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
@@ -5356,6 +5726,557 @@ it("should handle `workspaces:bar` and `workspace:bar` gracefully", async () => 
   expect(await readlink(join(package_dir, "node_modules", "bar"))).toBe(join("..", "bar"));
   expect(await file(join(package_dir, "node_modules", "bar", "package.json")).text()).toEqual(bar_package);
   await access(join(package_dir, "bun.lockb"));
+});
+
+it("should handle installing packages from inside a workspace with `*`", async () => {
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "main",
+      workspaces: ["packages/*"],
+      private: true,
+    }),
+  );
+  await mkdir(join(package_dir, "packages", "yolo"), { recursive: true });
+  const yolo_package = JSON.stringify({
+    name: "yolo",
+    version: "0.0.1",
+    dependencies: {
+      swag: "workspace:*",
+    },
+  });
+  await writeFile(join(package_dir, "packages", "yolo", "package.json"), yolo_package);
+  await mkdir(join(package_dir, "packages", "swag"));
+  const swag_package = JSON.stringify({
+    name: "swag",
+    version: "0.0.1",
+  });
+  await writeFile(join(package_dir, "packages", "swag", "package.json"), swag_package);
+  const {
+    stdout: stdout1,
+    stderr: stderr1,
+    exited: exited1,
+  } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: join(package_dir, "packages", "yolo"),
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr1).toBeDefined();
+  const err1 = await new Response(stderr1).text();
+  expect(err1).toContain("Saved lockfile");
+  expect(stdout1).toBeDefined();
+  const out1 = await new Response(stdout1).text();
+  expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + swag@workspace:packages/swag",
+    " + yolo@workspace:packages/yolo",
+    "",
+    " 2 packages installed",
+  ]);
+  expect(await exited1).toBe(0);
+  expect(requested).toBe(0);
+  await access(join(package_dir, "bun.lockb"));
+
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+
+  const {
+    stdout: stdout2,
+    stderr: stderr2,
+    exited: exited2,
+  } = spawn({
+    cmd: [bunExe(), "install", "bar"],
+    cwd: join(package_dir, "packages", "yolo"),
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr1).toBeDefined();
+  const err2 = await new Response(stderr2).text();
+  expect(err2).toContain("Saved lockfile");
+  expect(stdout2).toBeDefined();
+  const out2 = await new Response(stdout2).text();
+  expect(out2).toContain("installed bar");
+  expect(await exited2).toBe(0);
+  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
+  await access(join(package_dir, "bun.lockb"));
+});
+
+it("should handle installing packages from inside a workspace without prefix", async () => {
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "main",
+      workspaces: ["packages/*"],
+      private: true,
+    }),
+  );
+  await mkdir(join(package_dir, "packages", "p1"), { recursive: true });
+  const p1_package = JSON.stringify({
+    name: "p1",
+    version: "0.0.1",
+    dependencies: {
+      p2: "0.1.0",
+    },
+  });
+  await writeFile(join(package_dir, "packages", "p1", "package.json"), p1_package);
+
+  await mkdir(join(package_dir, "packages", "p2"));
+  const p2_package = JSON.stringify({
+    name: "p2",
+    version: "0.1.0",
+  });
+  await writeFile(join(package_dir, "packages", "p2", "package.json"), p2_package);
+
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+
+  const {
+    stdout: stdout1,
+    stderr: stderr1,
+    exited: exited1,
+  } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: join(package_dir, "packages", "p1"),
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr1).toBeDefined();
+  const err1 = await new Response(stderr1).text();
+  expect(err1).toContain("Saved lockfile");
+  expect(stdout1).toBeDefined();
+  const out1 = await new Response(stdout1).text();
+  expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + p1@workspace:packages/p1",
+    " + p2@workspace:packages/p2",
+    "",
+    " 2 packages installed",
+  ]);
+  expect(await exited1).toBe(0);
+  expect(requested).toBe(0);
+  await access(join(package_dir, "bun.lockb"));
+
+  const {
+    stdout: stdout2,
+    stderr: stderr2,
+    exited: exited2,
+  } = spawn({
+    cmd: [bunExe(), "install", "bar"],
+    cwd: join(package_dir, "packages", "p1"),
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr1).toBeDefined();
+  const err2 = await new Response(stderr2).text();
+  expect(err2).toContain("Saved lockfile");
+  expect(stdout2).toBeDefined();
+  const out2 = await new Response(stdout2).text();
+  expect(out2).toContain("installed bar");
+  expect(await exited2).toBe(0);
+  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
+  await access(join(package_dir, "bun.lockb"));
+});
+
+it("should handle installing packages inside workspaces with difference versions", async () => {
+  let package_jsons = [
+    JSON.stringify({
+      name: "main",
+      workspaces: ["packages/*"],
+      private: true,
+    }),
+    JSON.stringify({
+      name: "main",
+      private: true,
+      workspaces: [
+        "packages/package1",
+        "packages/package2",
+        "packages/package3",
+        "packages/package4",
+        "packages/package5",
+      ],
+    }),
+  ];
+  await mkdir(join(package_dir, "packages", "package1"), { recursive: true });
+  await mkdir(join(package_dir, "packages", "package2"));
+  await mkdir(join(package_dir, "packages", "package3"));
+  await mkdir(join(package_dir, "packages", "package4"));
+  await mkdir(join(package_dir, "packages", "package5"));
+  {
+    const package1 = JSON.stringify({
+      name: "package1",
+      version: "0.0.2",
+    });
+    await writeFile(join(package_dir, "packages", "package1", "package.json"), package1);
+  }
+  {
+    const package2 = JSON.stringify({
+      name: "package2",
+      version: "0.0.1",
+      dependencies: {
+        package1: "workspace:*",
+      },
+    });
+    await writeFile(join(package_dir, "packages", "package2", "package.json"), package2);
+  }
+  {
+    const package3 = JSON.stringify({
+      name: "package3",
+      version: "0.0.1",
+      dependencies: {
+        package1: "workspace:^",
+      },
+    });
+    await writeFile(join(package_dir, "packages", "package3", "package.json"), package3);
+  }
+  {
+    const package4 = JSON.stringify({
+      name: "package4",
+      version: "0.0.1",
+      dependencies: {
+        package1: "workspace:../package1",
+      },
+    });
+    await writeFile(join(package_dir, "packages", "package4", "package.json"), package4);
+  }
+  {
+    const package5 = JSON.stringify({
+      name: "package5",
+      version: "0.0.1",
+      dependencies: {
+        package1: "workspace:0.0.2",
+      },
+    });
+    await writeFile(join(package_dir, "packages", "package5", "package.json"), package5);
+  }
+  for (const package_json of package_jsons) {
+    await writeFile(join(package_dir, "package.json"), package_json);
+
+    {
+      const package1 = JSON.stringify({
+        name: "package1",
+        version: "0.0.2",
+      });
+      await writeFile(join(package_dir, "packages", "package1", "package.json"), package1);
+    }
+    {
+      const package2 = JSON.stringify({
+        name: "package2",
+        version: "0.0.1",
+        dependencies: {
+          package1: "workspace:*",
+        },
+      });
+      await writeFile(join(package_dir, "packages", "package2", "package.json"), package2);
+    }
+    {
+      const package3 = JSON.stringify({
+        name: "package3",
+        version: "0.0.1",
+        dependencies: {
+          package1: "workspace:^",
+        },
+      });
+      await writeFile(join(package_dir, "packages", "package3", "package.json"), package3);
+    }
+    {
+      const package4 = JSON.stringify({
+        name: "package4",
+        version: "0.0.1",
+        dependencies: {
+          package1: "workspace:../package1",
+        },
+      });
+      await writeFile(join(package_dir, "packages", "package4", "package.json"), package4);
+    }
+    {
+      const package5 = JSON.stringify({
+        name: "package5",
+        version: "0.0.1",
+        dependencies: {
+          package1: "workspace:0.0.2",
+        },
+      });
+      await writeFile(join(package_dir, "packages", "package5", "package.json"), package5);
+    }
+
+    const {
+      stdout: stdout1,
+      stderr: stderr1,
+      exited: exited1,
+    } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: join(package_dir, "packages", "package2"),
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(stderr1).toBeDefined();
+    const err1 = await new Response(stderr1).text();
+    expect(err1).toContain("Saved lockfile");
+    const out1 = await new Response(stdout1).text();
+    expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      " + package1@workspace:packages/package1",
+      " + package2@workspace:packages/package2",
+      " + package3@workspace:packages/package3",
+      " + package4@workspace:packages/package4",
+      " + package5@workspace:packages/package5",
+      "",
+      " 5 packages installed",
+    ]);
+    expect(await exited1).toBe(0);
+    await access(join(package_dir, "bun.lockb"));
+
+    var urls: string[] = [];
+    setHandler(dummyRegistry(urls));
+
+    const {
+      stdout: stdout1_2,
+      stderr: stderr1_2,
+      exited: exited1_2,
+    } = spawn({
+      cmd: [bunExe(), "install", "bar"],
+      cwd: join(package_dir, "packages", "package2"),
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(stderr1_2).toBeDefined();
+    expect(stderr1_2).toBeDefined();
+    const err1_2 = await new Response(stderr1_2).text();
+    expect(err1_2).toContain("Saved lockfile");
+    expect(stdout1_2).toBeDefined();
+    const out1_2 = await new Response(stdout1_2).text();
+    expect(out1_2).toContain("installed bar");
+    expect(await exited1_2).toBe(0);
+    expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
+    await access(join(package_dir, "bun.lockb"));
+
+    await rm(join(package_dir, "node_modules"), { force: true, recursive: true });
+    await rm(join(package_dir, "bun.lockb"), { force: true, recursive: true });
+
+    const {
+      stdout: stdout2,
+      stderr: stderr2,
+      exited: exited2,
+    } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: join(package_dir, "packages", "package3"),
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(stderr2).toBeDefined();
+    const err2 = await new Response(stderr2).text();
+    expect(err2).toContain("Saved lockfile");
+    expect(stdout2).toBeDefined();
+    const out2 = await new Response(stdout2).text();
+    expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      " + package1@workspace:packages/package1",
+      " + package2@workspace:packages/package2",
+      " + package3@workspace:packages/package3",
+      " + package4@workspace:packages/package4",
+      " + package5@workspace:packages/package5",
+      "",
+      " 6 packages installed",
+    ]);
+    expect(await exited2).toBe(0);
+
+    const {
+      stdout: stdout2_2,
+      stderr: stderr2_2,
+      exited: exited2_2,
+    } = spawn({
+      cmd: [bunExe(), "install", "bar"],
+      cwd: join(package_dir, "packages", "package3"),
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(stderr2_2).toBeDefined();
+    expect(stderr2_2).toBeDefined();
+    const err2_2 = await new Response(stderr2_2).text();
+    expect(err2_2).toContain("Saved lockfile");
+    expect(stdout2_2).toBeDefined();
+    const out2_2 = await new Response(stdout2_2).text();
+    expect(out2_2).toContain("installed bar");
+    expect(await exited2_2).toBe(0);
+    await access(join(package_dir, "bun.lockb"));
+
+    await rm(join(package_dir, "node_modules"), { force: true, recursive: true });
+    await rm(join(package_dir, "bun.lockb"), { force: true, recursive: true });
+
+    const {
+      stdout: stdout3,
+      stderr: stderr3,
+      exited: exited3,
+    } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: join(package_dir, "packages", "package4"),
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(stderr2).toBeDefined();
+    const err3 = await new Response(stderr3).text();
+    expect(err3).toContain("Saved lockfile");
+    expect(stdout3).toBeDefined();
+    const out3 = await new Response(stdout3).text();
+    expect(out3.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      " + package1@workspace:packages/package1",
+      " + package2@workspace:packages/package2",
+      " + package3@workspace:packages/package3",
+      " + package4@workspace:packages/package4",
+      " + package5@workspace:packages/package5",
+      "",
+      " 6 packages installed",
+    ]);
+    expect(await exited3).toBe(0);
+
+    const {
+      stdout: stdout3_2,
+      stderr: stderr3_2,
+      exited: exited3_2,
+    } = spawn({
+      cmd: [bunExe(), "install", "bar"],
+      cwd: join(package_dir, "packages", "package4"),
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(stderr3_2).toBeDefined();
+    expect(stderr3_2).toBeDefined();
+    const err3_2 = await new Response(stderr3_2).text();
+    expect(err3_2).toContain("Saved lockfile");
+    expect(stdout3_2).toBeDefined();
+    const out3_2 = await new Response(stdout3_2).text();
+    expect(out3_2).toContain("installed bar");
+    expect(await exited3_2).toBe(0);
+    await access(join(package_dir, "bun.lockb"));
+
+    await rm(join(package_dir, "node_modules"), { force: true, recursive: true });
+    await rm(join(package_dir, "bun.lockb"), { force: true, recursive: true });
+
+    const {
+      stdout: stdout4,
+      stderr: stderr4,
+      exited: exited4,
+    } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: join(package_dir, "packages", "package5"),
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(stderr4).toBeDefined();
+    const err4 = await new Response(stderr4).text();
+    expect(err4).toContain("Saved lockfile");
+    expect(stdout4).toBeDefined();
+    const out4 = await new Response(stdout4).text();
+    expect(out4.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      " + package1@workspace:packages/package1",
+      " + package2@workspace:packages/package2",
+      " + package3@workspace:packages/package3",
+      " + package4@workspace:packages/package4",
+      " + package5@workspace:packages/package5",
+      "",
+      " 6 packages installed",
+    ]);
+    expect(await exited4).toBe(0);
+
+    const {
+      stdout: stdout4_2,
+      stderr: stderr4_2,
+      exited: exited4_2,
+    } = spawn({
+      cmd: [bunExe(), "install", "bar"],
+      cwd: join(package_dir, "packages", "package5"),
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(stderr4_2).toBeDefined();
+    expect(stderr4_2).toBeDefined();
+    const err4_2 = await new Response(stderr4_2).text();
+    expect(err4_2).toContain("Saved lockfile");
+    expect(stdout4_2).toBeDefined();
+    const out4_2 = await new Response(stdout4_2).text();
+    expect(out4_2).toContain("installed bar");
+    expect(await exited4_2).toBe(0);
+    await access(join(package_dir, "bun.lockb"));
+
+    // from the root
+    await rm(join(package_dir, "node_modules"), { force: true, recursive: true });
+    await rm(join(package_dir, "bun.lockb"), { force: true, recursive: true });
+
+    const {
+      stdout: stdout5,
+      stderr: stderr5,
+      exited: exited5,
+    } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: join(package_dir),
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(stderr5).toBeDefined();
+    const err5 = await new Response(stderr5).text();
+    expect(err5).toContain("Saved lockfile");
+    expect(stdout5).toBeDefined();
+    const out5 = await new Response(stdout5).text();
+    expect(out5.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      " + package1@workspace:packages/package1",
+      " + package2@workspace:packages/package2",
+      " + package3@workspace:packages/package3",
+      " + package4@workspace:packages/package4",
+      " + package5@workspace:packages/package5",
+      "",
+      " 6 packages installed",
+    ]);
+    expect(await exited5).toBe(0);
+
+    const {
+      stdout: stdout5_2,
+      stderr: stderr5_2,
+      exited: exited5_2,
+    } = spawn({
+      cmd: [bunExe(), "install", "bar"],
+      cwd: join(package_dir),
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(stderr5_2).toBeDefined();
+    expect(stderr5_2).toBeDefined();
+    const err5_2 = await new Response(stderr5_2).text();
+    expect(err5_2).toContain("Saved lockfile");
+    expect(stdout5_2).toBeDefined();
+    const out5_2 = await new Response(stdout5_2).text();
+    expect(out5_2).toContain("installed bar");
+    expect(await exited5_2).toBe(0);
+    await access(join(package_dir, "bun.lockb"));
+
+    await rm(join(package_dir, "node_modules"), { force: true, recursive: true });
+    await rm(join(package_dir, "bun.lockb"), { force: true, recursive: true });
+    await rm(join(package_dir, "package.json"));
+  }
 });
 
 it("should override npm dependency by matching workspace", async () => {
@@ -5393,7 +6314,7 @@ it("should override npm dependency by matching workspace", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@workspace:bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
@@ -5483,7 +6404,7 @@ it("should override @scoped npm dependency by matching workspace", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + @bar/baz@workspace:packages/bar-baz",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
@@ -5532,7 +6453,7 @@ it("should override aliased npm dependency by matching workspace", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@workspace:baz",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();

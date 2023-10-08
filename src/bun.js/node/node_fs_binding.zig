@@ -67,7 +67,7 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
                 args,
                 comptime Flavor.sync,
             );
-            
+
             switch (result) {
                 .err => |err| {
                     globalObject.throwValue(JSC.JSValue.c(err.toJS(globalObject)));

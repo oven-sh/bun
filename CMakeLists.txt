@@ -49,11 +49,11 @@ set(BUN_RELEASE_BIN "${PACKAGE_DIR}/bun")
 
 find_program(PRETTIER "prettier")
 if (NOT PRETTIER)
-    set(PRETTIER "./node_modules/.bin/prettier" CACHE)
+    set(PRETTIER "./node_modules/.bin/prettier" CACHE STRING "Prettier executable")
 endif()
 find_program(ESBUILD "esbuild")
 if (NOT ESBUILD)
-    set(ESBUILD "./node_modules/.bin/esbuild" CACHE)
+    set(ESBUILD "./node_modules/.bin/esbuild" CACHE STRING "esbuild executable")
 endif()
 find_program(DSYMUTIL "dsymutil")
 if (NOT DSYMUTIL)
@@ -64,5 +64,45 @@ set(WEBKIT_RELEASE_DIR "${WEBKIT_DIR}/WebKitBuild/Release")
 set(WEBKIT_DEBUG_DIR "${WEBKIT_DIR}/WebKitBuild/Debug")
 set(WEBKIT_RELEASE_LTO "${WEBKIT_RELEASE_DIR}/WebKitBuild/ReleaseLTO")
 
-message(STATUS "#### : ${BUN_RELEASE_BIN}")
+find_program(NPM_CLIENT "bun")
+if (NOT NPM_CLIENT)
+    find_program(NPM_CLIENT "npm")
+endif()
+
+find_program(ZIG "zig")
+if (NOT ZIG)
+    message(FATAL_ERROR "error: Missing zig. Please make sure zig is in PATH.")
+endif()
+
+
+# We must use the same compiler version for the JavaScriptCore bindings and JavaScriptCore
+# If we don't do this, strange memory allocation failures occur.
+# This is easier to happen than you'd expect.
+# Using realpath here causes issues because clang uses clang++ as a symlink
+# so if that's resolved, it won't build for C++
+if (NOT WIN32)
+    find_program(REAL_CC "clang-16")
+    if (NOT REAL_CC)
+        find_program(REAL_CC "clang")
+    endif()
+    find_program(REAL_CXX "clang++-16")
+    if (NOT REAL_CXX)
+        find_program(REAL_CXX "clang++")
+    endif()
+
+    set(CMAKE_C_COMPILER "${REAL_CC}")
+    set(CMAKE_CXX_COMPILER "${REAL_CXX}")
+
+    # else let cmake find msvc
+endif()
+
+# use ccache if available
+find_program(CCACHE "ccache")
+if(CCACHE)
+    set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE}")
+    set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE}")
+endif()
+
+
+message(STATUS "#### : ${CCACHE}")
 

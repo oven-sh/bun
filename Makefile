@@ -463,6 +463,7 @@ ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MINIMUM_ARCHIVE_FILES) \
 		-lusockets \
 		-lcares \
 		-lzstd \
+		-lSDL2 \
 		$(BUN_DEPS_OUT_DIR)/libuwsockets.o
 
 ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO)
@@ -1883,6 +1884,11 @@ base64:
 	cd $(BUN_DEPS_DIR)/base64 && make clean && rm -rf CMakeCache.txt CMakeFiles && cmake $(CMAKE_FLAGS) . && make
 	cp $(BUN_DEPS_DIR)/base64/libbase64.a $(BUN_DEPS_OUT_DIR)/libbase64.a
 
+.PHONY: sdl
+sdl:
+	cd $(BUN_DEPS_DIR)/SDL && ./configure && make
+	cp $(BUN_DEPS_DIR)/SDL/build/.libs/libSDL2.a $(BUN_DEPS_OUT_DIR)/libSDL2.a
+
 .PHONY: cold-jsc-start
 cold-jsc-start:
 	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
@@ -1900,7 +1906,7 @@ cold-jsc-start:
 		misctools/cold-jsc-start.cpp -o cold-jsc-start
 
 .PHONY: vendor-without-npm
-vendor-without-npm: node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive lolhtml sqlite usockets uws tinycc c-ares zstd base64
+vendor-without-npm: node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive lolhtml sqlite usockets uws tinycc c-ares zstd base64 sdl
 
 
 .PHONY: vendor-without-check

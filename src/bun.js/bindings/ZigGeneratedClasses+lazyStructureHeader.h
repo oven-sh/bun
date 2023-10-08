@@ -18,6 +18,10 @@ JSC::Structure* JSBuildMessageStructure() { return m_JSBuildMessage.getInitializ
   JSC::JSObject* JSBuildMessageConstructor() { return m_JSBuildMessage.constructorInitializedOnMainThread(this); }
   JSC::JSValue JSBuildMessagePrototype() { return m_JSBuildMessage.prototypeInitializedOnMainThread(this); }
   JSC::LazyClassStructure m_JSBuildMessage;
+JSC::Structure* JSCanvasStructure() { return m_JSCanvas.getInitializedOnMainThread(this); }
+  JSC::JSObject* JSCanvasConstructor() { return m_JSCanvas.constructorInitializedOnMainThread(this); }
+  JSC::JSValue JSCanvasPrototype() { return m_JSCanvas.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSCanvas;
 JSC::Structure* JSCommentStructure() { return m_JSComment.getInitializedOnMainThread(this); }
   JSC::JSObject* JSCommentConstructor() { return m_JSComment.constructorInitializedOnMainThread(this); }
   JSC::JSValue JSCommentPrototype() { return m_JSComment.prototypeInitializedOnMainThread(this); }

@@ -29,6 +29,12 @@ ALWAYS_INLINE void GlobalObject::initGeneratedLazyClasses() {
                  init.setStructure(WebCore::JSBuildMessage::createStructure(init.vm, init.global, init.prototype));
                  init.setConstructor(WebCore::JSBuildMessage::createConstructor(init.vm, init.global, init.prototype));
               });
+    m_JSCanvas.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSCanvas::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSCanvas::createStructure(init.vm, init.global, init.prototype));
+                 init.setConstructor(WebCore::JSCanvas::createConstructor(init.vm, init.global, init.prototype));
+              });
     m_JSComment.initLater(
               [](LazyClassStructure::Initializer& init) {
                  init.setPrototype(WebCore::JSComment::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
@@ -314,6 +320,7 @@ void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& 
       thisObject->m_JSBlob.visit(visitor);
       thisObject->m_JSBuildArtifact.visit(visitor);
       thisObject->m_JSBuildMessage.visit(visitor);
+      thisObject->m_JSCanvas.visit(visitor);
       thisObject->m_JSComment.visit(visitor);
       thisObject->m_JSCrypto.visit(visitor);
       thisObject->m_JSCryptoHasher.visit(visitor);

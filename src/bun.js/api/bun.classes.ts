@@ -2,6 +2,25 @@ import { define } from "../scripts/class-definitions";
 
 export default [
   define({
+    name: "Canvas",
+    construct: true,
+    finalize: true,
+    // hasPendingActivity: true,
+    configurable: false,
+    klass: {},
+    JSType: "0b11101110",
+    proto: {
+      width: {
+        getter: "getWidth",
+        setter: "setWidth",
+      },
+      height: {
+        getter: "getHeight",
+        setter: "setHeight",
+      },
+    },
+  }),
+  define({
     name: "Subprocess",
     construct: true,
     noConstructor: true,

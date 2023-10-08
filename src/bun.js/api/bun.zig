@@ -57,6 +57,7 @@ pub const BunObject = struct {
     pub const SHA512_256 = Crypto.SHA512_256.getter;
     pub const TOML = Bun.getTOMLObject;
     pub const Transpiler = Bun.getTranspilerConstructor;
+    pub const Canvas = Bun.getCanvasConstructor;
     pub const argv = Bun.getArgv;
     pub const assetPrefix = Bun.getAssetPrefix;
     pub const cwd = Bun.getCWD;
@@ -102,6 +103,7 @@ pub const BunObject = struct {
         @export(BunObject.SHA512_256, .{ .name = getterName("SHA512_256") });
         @export(BunObject.TOML, .{ .name = getterName("TOML") });
         @export(BunObject.Transpiler, .{ .name = getterName("Transpiler") });
+        @export(BunObject.Canvas, .{ .name = getterName("Canvas") });
         @export(BunObject.argv, .{ .name = getterName("argv") });
         @export(BunObject.assetPrefix, .{ .name = getterName("assetPrefix") });
         @export(BunObject.cwd, .{ .name = getterName("cwd") });
@@ -2821,6 +2823,13 @@ pub fn getTranspilerConstructor(
     _: *JSC.JSObject,
 ) callconv(.C) JSC.JSValue {
     return JSC.API.JSTranspiler.getConstructor(globalThis);
+}
+
+pub fn getCanvasConstructor(
+    globalThis: *JSC.JSGlobalObject,
+    _: *JSC.JSObject,
+) callconv(.C) JSC.JSValue {
+    return JSC.API.JSCanvas.getConstructor(globalThis);
 }
 
 pub fn getFileSystemRouter(

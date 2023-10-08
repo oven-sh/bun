@@ -15,6 +15,7 @@
     macro(SHA512_256) \
     macro(TOML) \
     macro(Transpiler) \
+    macro(Canvas) \
     macro(argv) \
     macro(assetPrefix) \
     macro(cwd) \

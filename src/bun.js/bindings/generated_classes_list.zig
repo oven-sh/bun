@@ -55,4 +55,6 @@ pub const Classes = struct {
     pub const DebugHTTPSServer = JSC.API.DebugHTTPSServer;
     pub const Crypto = JSC.WebCore.Crypto;
     pub const FFI = JSC.FFI;
+    pub const Canvas = JSC.API.JSCanvas;
+    pub const JSCanvas = Canvas;
 };

@@ -922,6 +922,88 @@ pub const JSBuildMessage = struct {
         }
     }
 };
+pub const JSCanvas = struct {
+    const Canvas = Classes.Canvas;
+    const GetterType = fn (*Canvas, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*Canvas, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*Canvas, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*Canvas, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*Canvas, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*Canvas {
+        JSC.markBinding(@src());
+        return Canvas__fromJS(value);
+    }
+
+    /// Get the Canvas constructor value.
+    /// This loads lazily from the global object.
+    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        return Canvas__getConstructor(globalObject);
+    }
+
+    /// Create a new instance of Canvas
+    pub fn toJS(this: *Canvas, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = Canvas__create(globalObject, this);
+            std.debug.assert(value__.as(Canvas).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return Canvas__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of Canvas.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*Canvas) bool {
+        JSC.markBinding(@src());
+        return Canvas__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *Canvas, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(Canvas__dangerouslySetPtr(value, null));
+    }
+
+    extern fn Canvas__fromJS(JSC.JSValue) ?*Canvas;
+    extern fn Canvas__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn Canvas__create(globalObject: *JSC.JSGlobalObject, ptr: ?*Canvas) JSC.JSValue;
+
+    extern fn Canvas__dangerouslySetPtr(JSC.JSValue, ?*Canvas) bool;
+
+    comptime {
+        if (@TypeOf(Canvas.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*Canvas)) {
+            @compileLog("Canvas.constructor is not a constructor");
+        }
+
+        if (@TypeOf(Canvas.finalize) != (fn (*Canvas) callconv(.C) void)) {
+            @compileLog("Canvas.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(Canvas.getHeight) != GetterType)
+            @compileLog("Expected Canvas.getHeight to be a getter");
+
+        if (@TypeOf(Canvas.setHeight) != SetterType)
+            @compileLog("Expected Canvas.setHeight to be a setter");
+        if (@TypeOf(Canvas.getWidth) != GetterType)
+            @compileLog("Expected Canvas.getWidth to be a getter");
+
+        if (@TypeOf(Canvas.setWidth) != SetterType)
+            @compileLog("Expected Canvas.setWidth to be a setter");
+        if (!JSC.is_bindgen) {
+            @export(Canvas.constructor, .{ .name = "CanvasClass__construct" });
+            @export(Canvas.finalize, .{ .name = "CanvasClass__finalize" });
+            @export(Canvas.getHeight, .{ .name = "CanvasPrototype__getHeight" });
+            @export(Canvas.getWidth, .{ .name = "CanvasPrototype__getWidth" });
+            @export(Canvas.setHeight, .{ .name = "CanvasPrototype__setHeight" });
+            @export(Canvas.setWidth, .{ .name = "CanvasPrototype__setWidth" });
+        }
+    }
+};
 pub const JSComment = struct {
     const Comment = Classes.Comment;
     const GetterType = fn (*Comment, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
@@ -7090,6 +7172,7 @@ comptime {
     _ = JSBlob;
     _ = JSBuildArtifact;
     _ = JSBuildMessage;
+    _ = JSCanvas;
     _ = JSComment;
     _ = JSCrypto;
     _ = JSCryptoHasher;

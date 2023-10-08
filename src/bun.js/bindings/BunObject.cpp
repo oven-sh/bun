@@ -577,6 +577,7 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     SHA512_256                                     BunObject_getter_wrap_SHA512_256                                    DontDelete|PropertyCallback
     TOML                                           BunObject_getter_wrap_TOML                                          DontDelete|PropertyCallback
     Transpiler                                     BunObject_getter_wrap_Transpiler                                    DontDelete|PropertyCallback
+    Canvas                                         BunObject_getter_wrap_Canvas                                        DontDelete|PropertyCallback
     _Os                                            BunObject_callback__Os                                              DontEnum|DontDelete|Function 1
     _Path                                          BunObject_callback__Path                                            DontEnum|DontDelete|Function 1
     allocUnsafe                                    BunObject_callback_allocUnsafe                                      DontDelete|Function 1

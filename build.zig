@@ -1,6 +1,7 @@
 const std = @import("std");
 const pathRel = std.fs.path.relative;
 const Wyhash = @import("./src/wyhash.zig").Wyhash;
+const LazyPath = std.Build.LazyPath;
 var is_debug_build = false;
 fn moduleSource(comptime out: []const u8) FileSource {
     if (comptime std.fs.path.dirname(@src().file)) |base| {
@@ -219,6 +220,8 @@ pub fn build_(b: *Build) !void {
         .optimize = optimize,
         .main_pkg_path = .{ .cwd_relative = b.pathFromRoot(".") },
     });
+
+    obj.addIncludePath(LazyPath.relative("./src/deps/SDL/include"));
 
     b.reference_trace = 16;
 

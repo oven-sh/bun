@@ -32,6 +32,7 @@ pub const API = struct {
     pub const JSBundler = @import("./bun.js/api/JSBundler.zig").JSBundler;
     pub const BuildArtifact = @import("./bun.js/api/JSBundler.zig").BuildArtifact;
     pub const JSTranspiler = @import("./bun.js/api/JSTranspiler.zig");
+    pub const JSCanvas = @import("./bun.js/api/JSCanvas.zig");
     pub const HTTPServer = @import("./bun.js/api/server.zig").HTTPServer;
     pub const ServerConfig = @import("./bun.js/api/server.zig").ServerConfig;
     pub const ServerWebSocket = @import("./bun.js/api/server.zig").ServerWebSocket;

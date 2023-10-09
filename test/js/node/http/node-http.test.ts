@@ -255,6 +255,38 @@ describe("node:http", () => {
       });
     }
 
+    it("should be async readable", async done => {
+      try {
+        const data = "a".repeat(16385);
+        var server = createServer((req, res) => {
+          req.on("data", () => {});
+          req.on("end", () => {
+            res.end(data);
+          });
+        });
+        let sum = data.length;
+        const url = await listen(server);
+        await new Promise((resolve, reject) => {
+          request(url, async res => {
+            try {
+              for await (const c of res) {
+                sum -= c.length;
+              }
+              resolve();
+            } catch (e) {
+              reject(e);
+            }
+          }).end();
+        });
+        expect(sum).toBe(0);
+        done();
+      } catch (e) {
+        done(e);
+      } finally {
+        server.close();
+      }
+    });
+
     // it.only("check for expected fields", done => {
     //   runTest((server, port) => {
     //     const req = request({ host: "localhost", port, method: "GET" }, res => {

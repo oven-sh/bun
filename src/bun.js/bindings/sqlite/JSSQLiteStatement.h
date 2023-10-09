@@ -47,22 +47,22 @@
 
 namespace WebCore {
 
-class JSSQLStatementConstructor final : public JSC::JSFunction {
+class JSSQLiteStatementConstructor final : public JSC::JSFunction {
 public:
     using Base = JSC::JSFunction;
-    static JSSQLStatementConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure);
+    static JSSQLiteStatementConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure);
 
     DECLARE_INFO;
     template<typename, SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<JSSQLStatementConstructor, WebCore::UseCustomHeapCellType::No>(
+        return WebCore::subspaceForImpl<JSSQLiteStatementConstructor, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSSQLStatementConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSQLStatementConstructor = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSSQLStatementConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSQLStatementConstructor = std::forward<decltype(space)>(space); });
+            [](auto& spaces) { return spaces.m_clientSubspaceForJSSQLiteStatementConstructor.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSQLiteStatementConstructor = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForJSSQLiteStatementConstructor.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSQLiteStatementConstructor = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -72,7 +72,7 @@ public:
     }
 
 private:
-    JSSQLStatementConstructor(JSC::VM& vm, NativeExecutable* native, JSGlobalObject* globalObject, JSC::Structure* structure)
+    JSSQLiteStatementConstructor(JSC::VM& vm, NativeExecutable* native, JSGlobalObject* globalObject, JSC::Structure* structure)
         : Base(vm, native, globalObject, structure)
     {
     }

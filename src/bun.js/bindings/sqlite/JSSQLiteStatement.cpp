@@ -1,6 +1,6 @@
 #include "root.h"
 
-#include "JSSQLStatement.h"
+#include "JSSQLiteStatement.h"
 #include "JavaScriptCore/JSObjectInlines.h"
 #include "wtf/text/ExternalStringImpl.h"
 
@@ -159,24 +159,24 @@ extern "C" void Bun__closeAllSQLiteDatabasesForTermination()
 namespace WebCore {
 using namespace JSC;
 
-class JSSQLStatement : public JSC::JSNonFinalObject {
+class JSSQLiteStatement : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
-    static JSSQLStatement* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, sqlite3_stmt* stmt, VersionSqlite3* version_db)
+    static JSSQLiteStatement* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, sqlite3_stmt* stmt, VersionSqlite3* version_db)
     {
-        JSSQLStatement* ptr = new (NotNull, JSC::allocateCell<JSSQLStatement>(globalObject->vm())) JSSQLStatement(structure, *globalObject, stmt, version_db);
+        JSSQLiteStatement* ptr = new (NotNull, JSC::allocateCell<JSSQLiteStatement>(globalObject->vm())) JSSQLiteStatement(structure, *globalObject, stmt, version_db);
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }
     static void destroy(JSC::JSCell*);
     template<typename, SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
-        return WebCore::subspaceForImpl<JSSQLStatement, UseCustomHeapCellType::No>(
+        return WebCore::subspaceForImpl<JSSQLiteStatement, UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSSQLStatement.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSQLStatement = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSSQLStatement.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSQLStatement = std::forward<decltype(space)>(space); });
+            [](auto& spaces) { return spaces.m_clientSubspaceForJSSQLiteStatement.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSQLiteStatement = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForJSSQLiteStatement.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSQLiteStatement = std::forward<decltype(space)>(space); });
     }
     DECLARE_VISIT_CHILDREN;
     DECLARE_EXPORT_INFO;
@@ -194,7 +194,7 @@ public:
     bool need_update() { return version_db->version.load() != version; }
     void update_version() { version = version_db->version.load(); }
 
-    ~JSSQLStatement();
+    ~JSSQLiteStatement();
 
     sqlite3_stmt* stmt;
     VersionSqlite3* version_db;
@@ -205,7 +205,7 @@ public:
     mutable WriteBarrier<JSC::Structure> _structure;
 
 protected:
-    JSSQLStatement(JSC::Structure* structure, JSDOMGlobalObject& globalObject, sqlite3_stmt* stmt, VersionSqlite3* version_db)
+    JSSQLiteStatement(JSC::Structure* structure, JSDOMGlobalObject& globalObject, sqlite3_stmt* stmt, VersionSqlite3* version_db)
         : Base(globalObject.vm(), structure)
         , stmt(stmt)
         , version_db(version_db)
@@ -218,7 +218,7 @@ protected:
     void finishCreation(JSC::VM&);
 };
 
-static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLStatement* castedThis)
+static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLiteStatement* castedThis)
 {
     if (!castedThis->hasExecuted) {
         castedThis->hasExecuted = true;
@@ -334,14 +334,14 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
     castedThis->_prototype.set(vm, castedThis, object);
 }
 
-void JSSQLStatement::destroy(JSC::JSCell* cell)
+void JSSQLiteStatement::destroy(JSC::JSCell* cell)
 {
-    JSSQLStatement* thisObject = static_cast<JSSQLStatement*>(cell);
+    JSSQLiteStatement* thisObject = static_cast<JSSQLiteStatement*>(cell);
     sqlite3_finalize(thisObject->stmt);
     thisObject->stmt = nullptr;
 }
 
-void JSSQLStatementConstructor::destroy(JSC::JSCell* cell)
+void JSSQLiteStatementConstructor::destroy(JSC::JSCell* cell)
 {
 }
 
@@ -499,7 +499,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetCustomSQLite, (JSC::JSGlobalObject * l
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue thisValue = callFrame->thisValue();
-    JSSQLStatementConstructor* thisObject = jsDynamicCast<JSSQLStatementConstructor*>(thisValue.getObject());
+    JSSQLiteStatementConstructor* thisObject = jsDynamicCast<JSSQLiteStatementConstructor*>(thisValue.getObject());
     if (UNLIKELY(!thisObject)) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQL"_s));
         return JSValue::encode(JSC::jsUndefined());
@@ -540,7 +540,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue thisValue = callFrame->thisValue();
-    JSSQLStatementConstructor* thisObject = jsDynamicCast<JSSQLStatementConstructor*>(thisValue.getObject());
+    JSSQLiteStatementConstructor* thisObject = jsDynamicCast<JSSQLiteStatementConstructor*>(thisValue.getObject());
     JSC::JSArrayBufferView* array = jsDynamicCast<JSC::JSArrayBufferView*>(callFrame->argument(0));
     unsigned int flags = SQLITE_DESERIALIZE_FREEONCLOSE | SQLITE_DESERIALIZE_RESIZEABLE;
     JSC::EnsureStillAliveScope ensureAliveArray(array);
@@ -627,7 +627,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSerialize, (JSC::JSGlobalObject * lexical
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue thisValue = callFrame->thisValue();
-    JSSQLStatementConstructor* thisObject = jsDynamicCast<JSSQLStatementConstructor*>(thisValue.getObject());
+    JSSQLiteStatementConstructor* thisObject = jsDynamicCast<JSSQLiteStatementConstructor*>(thisValue.getObject());
     if (UNLIKELY(!thisObject)) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQL"_s));
         return JSValue::encode(JSC::jsUndefined());
@@ -668,7 +668,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction, (JSC::JSGlobalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue thisValue = callFrame->thisValue();
-    JSSQLStatementConstructor* thisObject = jsDynamicCast<JSSQLStatementConstructor*>(thisValue.getObject());
+    JSSQLiteStatementConstructor* thisObject = jsDynamicCast<JSSQLiteStatementConstructor*>(thisValue.getObject());
     if (UNLIKELY(!thisObject)) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQL"_s));
         return JSValue::encode(JSC::jsUndefined());
@@ -695,7 +695,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction, (JSC::JSGlobalObje
         return JSValue::encode(JSC::jsUndefined());
     }
 
-    if(sqlite3_compileoption_used("SQLITE_OMIT_LOAD_EXTENSION")) {
+    if (sqlite3_compileoption_used("SQLITE_OMIT_LOAD_EXTENSION")) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "This build of sqlite3 does not support dynamic extension loading"_s));
         return JSValue::encode(JSC::jsUndefined());
     }
@@ -723,7 +723,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue thisValue = callFrame->thisValue();
-    JSSQLStatementConstructor* thisObject = jsDynamicCast<JSSQLStatementConstructor*>(thisValue.getObject());
+    JSSQLiteStatementConstructor* thisObject = jsDynamicCast<JSSQLiteStatementConstructor*>(thisValue.getObject());
     if (UNLIKELY(!thisObject)) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQL"_s));
         return JSValue::encode(JSC::jsUndefined());
@@ -824,7 +824,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementIsInTransactionFunction, (JSC::JSGlobalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue thisValue = callFrame->thisValue();
-    JSSQLStatementConstructor* thisObject = jsDynamicCast<JSSQLStatementConstructor*>(thisValue.getObject());
+    JSSQLiteStatementConstructor* thisObject = jsDynamicCast<JSSQLiteStatementConstructor*>(thisValue.getObject());
     if (UNLIKELY(!thisObject)) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQLStatement"_s));
         return JSValue::encode(JSC::jsUndefined());
@@ -860,7 +860,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue thisValue = callFrame->thisValue();
-    JSSQLStatementConstructor* thisObject = jsDynamicCast<JSSQLStatementConstructor*>(thisValue.getObject());
+    JSSQLiteStatementConstructor* thisObject = jsDynamicCast<JSSQLiteStatementConstructor*>(thisValue.getObject());
     if (UNLIKELY(!thisObject)) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQLStatement"_s));
         return JSValue::encode(JSC::jsUndefined());
@@ -919,9 +919,9 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
         return JSValue::encode(JSC::jsUndefined());
     }
 
-    auto* structure = JSSQLStatement::createStructure(vm, lexicalGlobalObject, lexicalGlobalObject->objectPrototype());
-    // auto* structure = JSSQLStatement::createStructure(vm, globalObject(), thisObject->getDirect(vm, vm.propertyNames->prototype));
-    JSSQLStatement* sqlStatement = JSSQLStatement::create(
+    auto* structure = JSSQLiteStatement::createStructure(vm, lexicalGlobalObject, lexicalGlobalObject->objectPrototype());
+    // auto* structure = JSSQLiteStatement::createStructure(vm, globalObject(), thisObject->getDirect(vm, vm.propertyNames->prototype));
+    JSSQLiteStatement* sqlStatement = JSSQLiteStatement::create(
         structure, reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject), statement, databases()[handle]);
     if (bindings.isObject()) {
         auto* castedThis = sqlStatement;
@@ -930,10 +930,10 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
     return JSValue::encode(JSValue(sqlStatement));
 }
 
-JSSQLStatementConstructor* JSSQLStatementConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+JSSQLiteStatementConstructor* JSSQLiteStatementConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
 {
     NativeExecutable* executable = vm.getHostFunction(jsSQLStatementPrepareStatementFunction, ImplementationVisibility::Public, callHostFunctionAsConstructor, String("SQLStatement"_s));
-    JSSQLStatementConstructor* ptr = new (NotNull, JSC::allocateCell<JSSQLStatementConstructor>(vm)) JSSQLStatementConstructor(vm, executable, globalObject, structure);
+    JSSQLiteStatementConstructor* ptr = new (NotNull, JSC::allocateCell<JSSQLiteStatementConstructor>(vm)) JSSQLiteStatementConstructor(vm, executable, globalObject, structure);
     ptr->finishCreation(vm);
 
     return ptr;
@@ -945,7 +945,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue thisValue = callFrame->thisValue();
-    JSSQLStatementConstructor* constructor = jsDynamicCast<JSSQLStatementConstructor*>(thisValue.getObject());
+    JSSQLiteStatementConstructor* constructor = jsDynamicCast<JSSQLiteStatementConstructor*>(thisValue.getObject());
     if (!constructor) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQLStatement"_s));
         return JSValue::encode(jsUndefined());
@@ -1010,7 +1010,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue thisValue = callFrame->thisValue();
-    JSSQLStatementConstructor* constructor = jsDynamicCast<JSSQLStatementConstructor*>(thisValue.getObject());
+    JSSQLiteStatementConstructor* constructor = jsDynamicCast<JSSQLiteStatementConstructor*>(thisValue.getObject());
 
     if (!constructor) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQLStatement"_s));
@@ -1052,7 +1052,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObj
 }
 
 /* Hash table for constructor */
-static const HashTableValue JSSQLStatementConstructorTableValues[] = {
+static const HashTableValue JSSQLiteStatementConstructorTableValues[] = {
     { "open"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementOpenStatementFunction, 2 } },
     { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementCloseStatementFunction, 1 } },
     { "prepare"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementPrepareStatementFunction, 2 } },
@@ -1064,21 +1064,21 @@ static const HashTableValue JSSQLStatementConstructorTableValues[] = {
     { "deserialize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementDeserialize, 2 } },
 };
 
-const ClassInfo JSSQLStatementConstructor::s_info = { "SQLStatement"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(JSSQLStatementConstructor) };
+const ClassInfo JSSQLiteStatementConstructor::s_info = { "SQLStatement"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(JSSQLiteStatementConstructor) };
 
-void JSSQLStatementConstructor::finishCreation(VM& vm)
+void JSSQLiteStatementConstructor::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    auto* structure = JSSQLStatement::createStructure(vm, globalObject(), globalObject()->objectPrototype());
-    auto* proto = JSSQLStatement::create(structure, reinterpret_cast<Zig::GlobalObject*>(globalObject()), nullptr, nullptr);
+    auto* structure = JSSQLiteStatement::createStructure(vm, globalObject(), globalObject()->objectPrototype());
+    auto* proto = JSSQLiteStatement::create(structure, reinterpret_cast<Zig::GlobalObject*>(globalObject()), nullptr, nullptr);
     this->putDirect(vm, vm.propertyNames->prototype, proto, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 
-    reifyStaticProperties(vm, JSSQLStatementConstructor::info(), JSSQLStatementConstructorTableValues, *this);
+    reifyStaticProperties(vm, JSSQLiteStatementConstructor::info(), JSSQLiteStatementConstructorTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
-static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLStatement* castedThis);
-static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLStatement* castedThis)
+static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLiteStatement* castedThis);
+static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLiteStatement* castedThis)
 {
     auto& columnNames = castedThis->columnNames->data()->propertyNameVector();
     int count = columnNames.size();
@@ -1201,8 +1201,8 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
     return JSValue(result);
 }
 
-static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLStatement* castedThis, ObjectInitializationScope& scope, JSC::GCDeferralContext* deferralContext);
-static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLStatement* castedThis, ObjectInitializationScope& scope, JSC::GCDeferralContext* deferralContext)
+static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLiteStatement* castedThis, ObjectInitializationScope& scope, JSC::GCDeferralContext* deferralContext);
+static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLiteStatement* castedThis, ObjectInitializationScope& scope, JSC::GCDeferralContext* deferralContext)
 {
     int count = castedThis->columnNames->size();
     auto& vm = lexicalGlobalObject->vm();
@@ -1254,7 +1254,7 @@ static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGloba
     return result;
 }
 
-static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLStatement* castedThis, ObjectInitializationScope& scope)
+static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLiteStatement* castedThis, ObjectInitializationScope& scope)
 {
     return constructResultRow(lexicalGlobalObject, castedThis, scope, nullptr);
 }
@@ -1264,7 +1264,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
 
     JSC::VM& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto castedThis = jsDynamicCast<JSSQLStatement*>(callFrame->thisValue());
+    auto castedThis = jsDynamicCast<JSSQLiteStatement*>(callFrame->thisValue());
 
     CHECK_THIS
 
@@ -1336,7 +1336,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionGet, (JSC::JSGlob
 
     JSC::VM& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto castedThis = jsDynamicCast<JSSQLStatement*>(callFrame->thisValue());
+    auto castedThis = jsDynamicCast<JSSQLiteStatement*>(callFrame->thisValue());
 
     CHECK_THIS
 
@@ -1381,10 +1381,10 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionGet, (JSC::JSGlob
 }
 
 extern "C" {
-static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsSQLStatementExecuteStatementFunctionGetWithoutTypeChecking, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSSQLStatement* castedThis));
+static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsSQLStatementExecuteStatementFunctionGetWithoutTypeChecking, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSSQLiteStatement* castedThis));
 }
 
-JSC_DEFINE_JIT_OPERATION(jsSQLStatementExecuteStatementFunctionGetWithoutTypeChecking, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSSQLStatement* castedThis))
+JSC_DEFINE_JIT_OPERATION(jsSQLStatementExecuteStatementFunctionGetWithoutTypeChecking, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSSQLiteStatement* castedThis))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     IGNORE_WARNINGS_BEGIN("frame-address")
@@ -1433,7 +1433,7 @@ constexpr JSC::DFG::AbstractHeapKind writeKinds[4] = { JSC::DFG::SideState, JSC:
 
 static const JSC::DOMJIT::Signature DOMJITSignatureForjsSQLStatementExecuteStatementFunctionGet(
     jsSQLStatementExecuteStatementFunctionGetWithoutTypeChecking,
-    JSSQLStatement::info(),
+    JSSQLiteStatement::info(),
     JSC::DOMJIT::Effect::forReadWriteKinds(readKinds, writeKinds),
     JSC::SpecOther);
 
@@ -1442,7 +1442,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
 
     JSC::VM& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto castedThis = jsDynamicCast<JSSQLStatement*>(callFrame->thisValue());
+    auto castedThis = jsDynamicCast<JSSQLiteStatement*>(callFrame->thisValue());
 
     CHECK_THIS;
 
@@ -1518,7 +1518,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
 
     JSC::VM& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto castedThis = jsDynamicCast<JSSQLStatement*>(callFrame->thisValue());
+    auto castedThis = jsDynamicCast<JSSQLiteStatement*>(callFrame->thisValue());
 
     CHECK_THIS
 
@@ -1561,7 +1561,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementToStringFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = lexicalGlobalObject->vm();
-    JSSQLStatement* castedThis = jsDynamicCast<JSSQLStatement*>(callFrame->thisValue());
+    JSSQLiteStatement* castedThis = jsDynamicCast<JSSQLiteStatement*>(callFrame->thisValue());
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     CHECK_THIS
@@ -1580,7 +1580,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementToStringFunction, (JSC::JSGlobalObject * 
 JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnNames, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     JSC::VM& vm = lexicalGlobalObject->vm();
-    JSSQLStatement* castedThis = jsDynamicCast<JSSQLStatement*>(JSValue::decode(thisValue));
+    JSSQLiteStatement* castedThis = jsDynamicCast<JSSQLiteStatement*>(JSValue::decode(thisValue));
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_THIS
 
@@ -1608,7 +1608,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnNames, (JSGlobalObject * lexical
 JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnCount, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     JSC::VM& vm = lexicalGlobalObject->vm();
-    JSSQLStatement* castedThis = jsDynamicCast<JSSQLStatement*>(JSValue::decode(thisValue));
+    JSSQLiteStatement* castedThis = jsDynamicCast<JSSQLiteStatement*>(JSValue::decode(thisValue));
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_THIS
     CHECK_PREPARED
@@ -1619,7 +1619,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnCount, (JSGlobalObject * lexical
 JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetParamCount, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     JSC::VM& vm = lexicalGlobalObject->vm();
-    JSSQLStatement* castedThis = jsDynamicCast<JSSQLStatement*>(JSValue::decode(thisValue));
+    JSSQLiteStatement* castedThis = jsDynamicCast<JSSQLiteStatement*>(JSValue::decode(thisValue));
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_THIS
     CHECK_PREPARED
@@ -1630,7 +1630,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetParamCount, (JSGlobalObject * lexicalG
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFunctionFinalize, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = lexicalGlobalObject->vm();
-    JSSQLStatement* castedThis = jsDynamicCast<JSSQLStatement*>(callFrame->thisValue());
+    JSSQLiteStatement* castedThis = jsDynamicCast<JSSQLiteStatement*>(callFrame->thisValue());
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_THIS
 
@@ -1642,10 +1642,10 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFunctionFinalize, (JSC::JSGlobalObject * 
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
 }
 
-const ClassInfo JSSQLStatement::s_info = { "SQLStatement"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(JSSQLStatement) };
+const ClassInfo JSSQLiteStatement::s_info = { "SQLStatement"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(JSSQLiteStatement) };
 
 /* Hash table for prototype */
-static const HashTableValue JSSQLStatementTableValues[] = {
+static const HashTableValue JSSQLiteStatementTableValues[] = {
     { "run"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementExecuteStatementFunctionRun, 1 } },
     { "get"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, jsSQLStatementExecuteStatementFunctionGet, &DOMJITSignatureForjsSQLStatementExecuteStatementFunctionGet } },
     { "all"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementExecuteStatementFunctionAll, 1 } },
@@ -1657,20 +1657,20 @@ static const HashTableValue JSSQLStatementTableValues[] = {
     { "paramsCount"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsSqlStatementGetParamCount, 0 } },
 };
 
-void JSSQLStatement::finishCreation(VM& vm)
+void JSSQLiteStatement::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSSQLStatement::info(), JSSQLStatementTableValues, *this);
+    reifyStaticProperties(vm, JSSQLiteStatement::info(), JSSQLiteStatementTableValues, *this);
 }
 
-JSSQLStatement::~JSSQLStatement()
+JSSQLiteStatement::~JSSQLiteStatement()
 {
     if (this->stmt) {
         sqlite3_finalize(this->stmt);
     }
 }
 
-JSC::JSValue JSSQLStatement::rebind(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue values, bool clone)
+JSC::JSValue JSSQLiteStatement::rebind(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue values, bool clone)
 {
     JSC::VM& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1684,21 +1684,21 @@ JSC::JSValue JSSQLStatement::rebind(JSC::JSGlobalObject* lexicalGlobalObject, JS
 }
 
 template<typename Visitor>
-void JSSQLStatement::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+void JSSQLiteStatement::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    JSSQLStatement* thisObject = jsCast<JSSQLStatement*>(cell);
+    JSSQLiteStatement* thisObject = jsCast<JSSQLiteStatement*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->_structure);
     visitor.append(thisObject->_prototype);
 }
 
-DEFINE_VISIT_CHILDREN(JSSQLStatement);
+DEFINE_VISIT_CHILDREN(JSSQLiteStatement);
 
 template<typename Visitor>
-void JSSQLStatement::visitAdditionalChildren(Visitor& visitor)
+void JSSQLiteStatement::visitAdditionalChildren(Visitor& visitor)
 {
-    JSSQLStatement* thisObject = this;
+    JSSQLiteStatement* thisObject = this;
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
 
     visitor.append(thisObject->_structure);
@@ -1706,14 +1706,14 @@ void JSSQLStatement::visitAdditionalChildren(Visitor& visitor)
 }
 
 template<typename Visitor>
-void JSSQLStatement::visitOutputConstraints(JSCell* cell, Visitor& visitor)
+void JSSQLiteStatement::visitOutputConstraints(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<JSSQLStatement*>(cell);
+    auto* thisObject = jsCast<JSSQLiteStatement*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitOutputConstraints(thisObject, visitor);
     thisObject->visitAdditionalChildren(visitor);
 }
 
-template void JSSQLStatement::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
-template void JSSQLStatement::visitOutputConstraints(JSCell*, SlotVisitor&);
+template void JSSQLiteStatement::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
+template void JSSQLiteStatement::visitOutputConstraints(JSCell*, SlotVisitor&);
 }

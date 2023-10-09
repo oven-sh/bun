@@ -107,7 +107,7 @@
 #include "JavaScriptCore/FunctionPrototype.h"
 #include "JavaScriptCore/GetterSetter.h"
 #include "napi.h"
-#include "JSSQLStatement.h"
+#include "JSSQLiteiteStatement.h"
 #include "ModuleLoader.h"
 #include "NodeVMScript.h"
 #include "ProcessIdentifier.h"
@@ -1688,7 +1688,7 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
         }
 
         if (string == "sqlite"_s) {
-            return JSC::JSValue::encode(JSSQLStatementConstructor::create(vm, globalObject, JSSQLStatementConstructor::createStructure(vm, globalObject, globalObject->m_functionPrototype.get())));
+            return JSC::JSValue::encode(JSSQLiteStatementConstructor::create(vm, globalObject, JSSQLiteStatementConstructor::createStructure(vm, globalObject, globalObject->m_functionPrototype.get())));
         }
 
         if (string == "http"_s) {

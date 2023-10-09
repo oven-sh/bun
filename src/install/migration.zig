@@ -739,12 +739,6 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
 
                                 resolutions[id] = res;
                                 metas[id].origin = switch (res.tag) {
-                                    // TODO: What is origin actually used for, it doesnt seem to be used anywhere
-                                    // .npm => .npm,
-                                    // .root, .folder, .local_tarball, .symlink, .workspace => .local,
-                                    // .remote_tarball, .git, .github, .gitlab, .single_file_module => .tarball,
-                                    // else => if (Environment.allow_assert) unreachable else .local,
-
                                     // This works?
                                     .root => .local,
                                     else => .npm,
@@ -851,7 +845,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
         return error.NotAllPackagesGotResolved;
     }
 
-    // This is definetly a memory leak, but it's fine because there is no install api, so this can only be leaked once per process.
+    // This is definitely a memory leak, but it's fine because there is no install api, so this can only be leaked once per process.
     // This operation is neccecary because callers of `loadFromDisk` assume the data is written into the passed `this`.
     // You'll find that not cleaning the lockfile will cause `bun install` to not actually install anything since it doesnt have any hoisted trees.
     this.* = (try this.cleanWithLogger(&[_]Install.PackageManager.UpdateRequest{}, log, false)).*;

@@ -35,6 +35,12 @@ ALWAYS_INLINE void GlobalObject::initGeneratedLazyClasses() {
                  init.setStructure(WebCore::JSCanvas::createStructure(init.vm, init.global, init.prototype));
                  init.setConstructor(WebCore::JSCanvas::createConstructor(init.vm, init.global, init.prototype));
               });
+    m_JSCanvasRenderingContext2D.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSCanvasRenderingContext2D::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSCanvasRenderingContext2D::createStructure(init.vm, init.global, init.prototype));
+                 init.setConstructor(WebCore::JSCanvasRenderingContext2D::createConstructor(init.vm, init.global, init.prototype));
+              });
     m_JSComment.initLater(
               [](LazyClassStructure::Initializer& init) {
                  init.setPrototype(WebCore::JSComment::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
@@ -321,6 +327,7 @@ void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& 
       thisObject->m_JSBuildArtifact.visit(visitor);
       thisObject->m_JSBuildMessage.visit(visitor);
       thisObject->m_JSCanvas.visit(visitor);
+      thisObject->m_JSCanvasRenderingContext2D.visit(visitor);
       thisObject->m_JSComment.visit(visitor);
       thisObject->m_JSCrypto.visit(visitor);
       thisObject->m_JSCryptoHasher.visit(visitor);

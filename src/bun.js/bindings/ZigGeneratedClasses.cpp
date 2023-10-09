@@ -3008,6 +3008,15 @@ JSC_DECLARE_CUSTOM_GETTER(jsCanvasConstructor);
 
 extern "C" void CanvasClass__finalize(void*);
 
+extern "C" EncodedJSValue CanvasPrototype__animate(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(CanvasPrototype__animateCallback);
+
+extern "C" EncodedJSValue CanvasPrototype__close(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(CanvasPrototype__closeCallback);
+
+extern "C" EncodedJSValue CanvasPrototype__getContext(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(CanvasPrototype__getContextCallback);
+
 extern "C" JSC::EncodedJSValue CanvasPrototype__getHeight(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(CanvasPrototype__heightGetterWrap);
 
@@ -3020,11 +3029,28 @@ JSC_DECLARE_CUSTOM_GETTER(CanvasPrototype__widthGetterWrap);
 extern "C" bool CanvasPrototype__setWidth(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue value);
 JSC_DECLARE_CUSTOM_SETTER(CanvasPrototype__widthSetterWrap);
 
+extern "C" JSC::EncodedJSValue CanvasPrototype__getX(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(CanvasPrototype__xGetterWrap);
+
+extern "C" bool CanvasPrototype__setX(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue value);
+JSC_DECLARE_CUSTOM_SETTER(CanvasPrototype__xSetterWrap);
+
+extern "C" JSC::EncodedJSValue CanvasPrototype__getY(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(CanvasPrototype__yGetterWrap);
+
+extern "C" bool CanvasPrototype__setY(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue value);
+JSC_DECLARE_CUSTOM_SETTER(CanvasPrototype__ySetterWrap);
+
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSCanvasPrototype, JSCanvasPrototype::Base);
 
 static const HashTableValue JSCanvasPrototypeTableValues[] = {
+    { "animate"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, CanvasPrototype__animateCallback, 1 } },
+    { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, CanvasPrototype__closeCallback, 0 } },
+    { "getContext"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, CanvasPrototype__getContextCallback, 1 } },
     { "height"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, CanvasPrototype__heightGetterWrap, CanvasPrototype__heightSetterWrap } },
-    { "width"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, CanvasPrototype__widthGetterWrap, CanvasPrototype__widthSetterWrap } }
+    { "width"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, CanvasPrototype__widthGetterWrap, CanvasPrototype__widthSetterWrap } },
+    { "x"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, CanvasPrototype__xGetterWrap, CanvasPrototype__xSetterWrap } },
+    { "y"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, CanvasPrototype__yGetterWrap, CanvasPrototype__ySetterWrap } }
 };
 
 const ClassInfo JSCanvasPrototype::s_info = { "Canvas"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCanvasPrototype) };
@@ -3039,6 +3065,90 @@ JSC_DEFINE_CUSTOM_GETTER(jsCanvasConstructor, (JSGlobalObject * lexicalGlobalObj
     if (UNLIKELY(!prototype))
         return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for Canvas"_s);
     return JSValue::encode(globalObject->JSCanvasConstructor());
+}
+
+JSC_DEFINE_HOST_FUNCTION(CanvasPrototype__animateCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSCanvas* thisObject = jsDynamicCast<JSCanvas*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Canvas"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return CanvasPrototype__animate(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(CanvasPrototype__closeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSCanvas* thisObject = jsDynamicCast<JSCanvas*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Canvas"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return CanvasPrototype__close(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(CanvasPrototype__getContextCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSCanvas* thisObject = jsDynamicCast<JSCanvas*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Canvas"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return CanvasPrototype__getContext(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(CanvasPrototype__heightGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -3083,6 +3193,52 @@ JSC_DEFINE_CUSTOM_SETTER(CanvasPrototype__widthSetterWrap, (JSGlobalObject * lex
     JSCanvas* thisObject = jsCast<JSCanvas*>(JSValue::decode(thisValue));
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
     auto result = CanvasPrototype__setWidth(thisObject->wrapped(), lexicalGlobalObject, encodedValue);
+
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(CanvasPrototype__xGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSCanvas* thisObject = jsCast<JSCanvas*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = CanvasPrototype__getX(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_SETTER(CanvasPrototype__xSetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSCanvas* thisObject = jsCast<JSCanvas*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    auto result = CanvasPrototype__setX(thisObject->wrapped(), lexicalGlobalObject, encodedValue);
+
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(CanvasPrototype__yGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSCanvas* thisObject = jsCast<JSCanvas*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = CanvasPrototype__getY(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_SETTER(CanvasPrototype__ySetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSCanvas* thisObject = jsCast<JSCanvas*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    auto result = CanvasPrototype__setY(thisObject->wrapped(), lexicalGlobalObject, encodedValue);
 
     RELEASE_AND_RETURN(throwScope, result);
 }
@@ -3154,6 +3310,12 @@ const ClassInfo JSCanvasConstructor::s_info = { "Function"_s, &Base::s_info, nul
 extern "C" EncodedJSValue Canvas__getConstructor(Zig::GlobalObject* globalObject)
 {
     return JSValue::encode(globalObject->JSCanvasConstructor());
+}
+
+extern "C" bool Canvas__hasPendingActivity(void* ptr);
+bool JSCanvas::hasPendingActivity(void* ctx)
+{
+    return Canvas__hasPendingActivity(ctx);
 }
 
 JSCanvas::~JSCanvas()
@@ -3234,6 +3396,434 @@ extern "C" EncodedJSValue Canvas__create(Zig::GlobalObject* globalObject, void* 
     auto& vm = globalObject->vm();
     JSC::Structure* structure = globalObject->JSCanvasStructure();
     JSCanvas* instance = JSCanvas::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+
+template<typename Visitor>
+void JSCanvas::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSCanvas* thisObject = jsCast<JSCanvas*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_CHILDREN(JSCanvas);
+
+template<typename Visitor>
+void JSCanvas::visitAdditionalChildren(Visitor& visitor)
+{
+    JSCanvas* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+
+    visitor.addOpaqueRoot(this->wrapped());
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSCanvas);
+
+template<typename Visitor>
+void JSCanvas::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSCanvas* thisObject = jsCast<JSCanvas*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSCanvas);
+class JSCanvasRenderingContext2DPrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static JSCanvasRenderingContext2DPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSCanvasRenderingContext2DPrototype* ptr = new (NotNull, JSC::allocateCell<JSCanvasRenderingContext2DPrototype>(vm)) JSCanvasRenderingContext2DPrototype(vm, globalObject, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    DECLARE_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSCanvasRenderingContext2DPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+class JSCanvasRenderingContext2DConstructor final : public JSC::InternalFunction {
+public:
+    using Base = JSC::InternalFunction;
+    static JSCanvasRenderingContext2DConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSCanvasRenderingContext2DPrototype* prototype);
+
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+    static constexpr bool needsDestruction = false;
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+    }
+
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return WebCore::subspaceForImpl<JSCanvasRenderingContext2DConstructor, WebCore::UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceForCanvasRenderingContext2DConstructor.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCanvasRenderingContext2DConstructor = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForCanvasRenderingContext2DConstructor.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForCanvasRenderingContext2DConstructor = std::forward<decltype(space)>(space); });
+    }
+
+    void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSCanvasRenderingContext2DPrototype* prototype);
+
+    // Must be defined for each specialization class.
+    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+
+    DECLARE_EXPORT_INFO;
+
+private:
+    JSCanvasRenderingContext2DConstructor(JSC::VM& vm, JSC::Structure* structure);
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSCanvasRenderingContext2DPrototype* prototype);
+};
+
+extern "C" void* CanvasRenderingContext2DClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+JSC_DECLARE_CUSTOM_GETTER(jsCanvasRenderingContext2DConstructor);
+
+extern "C" void CanvasRenderingContext2DClass__finalize(void*);
+
+extern "C" EncodedJSValue CanvasRenderingContext2DPrototype__clearRect(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(CanvasRenderingContext2DPrototype__clearRectCallback);
+
+extern "C" EncodedJSValue CanvasRenderingContext2DPrototype__fillRect(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(CanvasRenderingContext2DPrototype__fillRectCallback);
+
+extern "C" JSC::EncodedJSValue CanvasRenderingContext2DPrototype__getFillStyle(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(CanvasRenderingContext2DPrototype__fillStyleGetterWrap);
+
+extern "C" bool CanvasRenderingContext2DPrototype__setFillStyle(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue value);
+JSC_DECLARE_CUSTOM_SETTER(CanvasRenderingContext2DPrototype__fillStyleSetterWrap);
+
+extern "C" EncodedJSValue CanvasRenderingContext2DPrototype__strokeRect(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(CanvasRenderingContext2DPrototype__strokeRectCallback);
+
+extern "C" JSC::EncodedJSValue CanvasRenderingContext2DPrototype__getStrokeStyle(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(CanvasRenderingContext2DPrototype__strokeStyleGetterWrap);
+
+extern "C" bool CanvasRenderingContext2DPrototype__setStrokeStyle(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue value);
+JSC_DECLARE_CUSTOM_SETTER(CanvasRenderingContext2DPrototype__strokeStyleSetterWrap);
+
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSCanvasRenderingContext2DPrototype, JSCanvasRenderingContext2DPrototype::Base);
+
+static const HashTableValue JSCanvasRenderingContext2DPrototypeTableValues[] = {
+    { "clearRect"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, CanvasRenderingContext2DPrototype__clearRectCallback, 4 } },
+    { "fillRect"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, CanvasRenderingContext2DPrototype__fillRectCallback, 4 } },
+    { "fillStyle"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, CanvasRenderingContext2DPrototype__fillStyleGetterWrap, CanvasRenderingContext2DPrototype__fillStyleSetterWrap } },
+    { "strokeRect"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, CanvasRenderingContext2DPrototype__strokeRectCallback, 4 } },
+    { "strokeStyle"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, CanvasRenderingContext2DPrototype__strokeStyleGetterWrap, CanvasRenderingContext2DPrototype__strokeStyleSetterWrap } }
+};
+
+const ClassInfo JSCanvasRenderingContext2DPrototype::s_info = { "CanvasRenderingContext2D"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCanvasRenderingContext2DPrototype) };
+
+JSC_DEFINE_CUSTOM_GETTER(jsCanvasRenderingContext2DConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* prototype = jsDynamicCast<JSCanvasRenderingContext2DPrototype*>(JSValue::decode(thisValue));
+
+    if (UNLIKELY(!prototype))
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for CanvasRenderingContext2D"_s);
+    return JSValue::encode(globalObject->JSCanvasRenderingContext2DConstructor());
+}
+
+JSC_DEFINE_HOST_FUNCTION(CanvasRenderingContext2DPrototype__clearRectCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSCanvasRenderingContext2D* thisObject = jsDynamicCast<JSCanvasRenderingContext2D*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof CanvasRenderingContext2D"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return CanvasRenderingContext2DPrototype__clearRect(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(CanvasRenderingContext2DPrototype__fillRectCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSCanvasRenderingContext2D* thisObject = jsDynamicCast<JSCanvasRenderingContext2D*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof CanvasRenderingContext2D"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return CanvasRenderingContext2DPrototype__fillRect(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(CanvasRenderingContext2DPrototype__fillStyleGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSCanvasRenderingContext2D* thisObject = jsCast<JSCanvasRenderingContext2D*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = CanvasRenderingContext2DPrototype__getFillStyle(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_SETTER(CanvasRenderingContext2DPrototype__fillStyleSetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSCanvasRenderingContext2D* thisObject = jsCast<JSCanvasRenderingContext2D*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    auto result = CanvasRenderingContext2DPrototype__setFillStyle(thisObject->wrapped(), lexicalGlobalObject, encodedValue);
+
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(CanvasRenderingContext2DPrototype__strokeRectCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSCanvasRenderingContext2D* thisObject = jsDynamicCast<JSCanvasRenderingContext2D*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof CanvasRenderingContext2D"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return CanvasRenderingContext2DPrototype__strokeRect(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(CanvasRenderingContext2DPrototype__strokeStyleGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSCanvasRenderingContext2D* thisObject = jsCast<JSCanvasRenderingContext2D*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = CanvasRenderingContext2DPrototype__getStrokeStyle(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_SETTER(CanvasRenderingContext2DPrototype__strokeStyleSetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSCanvasRenderingContext2D* thisObject = jsCast<JSCanvasRenderingContext2D*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    auto result = CanvasRenderingContext2DPrototype__setStrokeStyle(thisObject->wrapped(), lexicalGlobalObject, encodedValue);
+
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+void JSCanvasRenderingContext2DPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    Base::finishCreation(vm);
+    reifyStaticProperties(vm, JSCanvasRenderingContext2D::info(), JSCanvasRenderingContext2DPrototypeTableValues, *this);
+    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+}
+
+void JSCanvasRenderingContext2DConstructor::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSCanvasRenderingContext2DPrototype* prototype)
+{
+    Base::finishCreation(vm, 0, "CanvasRenderingContext2D"_s, PropertyAdditionMode::WithoutStructureTransition);
+
+    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    ASSERT(inherits(info()));
+}
+
+JSCanvasRenderingContext2DConstructor::JSCanvasRenderingContext2DConstructor(JSC::VM& vm, JSC::Structure* structure)
+    : Base(vm, structure, construct, construct)
+{
+}
+
+JSCanvasRenderingContext2DConstructor* JSCanvasRenderingContext2DConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSCanvasRenderingContext2DPrototype* prototype)
+{
+    JSCanvasRenderingContext2DConstructor* ptr = new (NotNull, JSC::allocateCell<JSCanvasRenderingContext2DConstructor>(vm)) JSCanvasRenderingContext2DConstructor(vm, structure);
+    ptr->finishCreation(vm, globalObject, prototype);
+    return ptr;
+}
+
+JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCanvasRenderingContext2DConstructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+{
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    JSC::VM& vm = globalObject->vm();
+    JSObject* newTarget = asObject(callFrame->newTarget());
+    auto* constructor = globalObject->JSCanvasRenderingContext2DConstructor();
+    Structure* structure = globalObject->JSCanvasRenderingContext2DStructure();
+    if (constructor != newTarget) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(
+            // ShadowRealm functions belong to a different global object.
+            getFunctionRealm(globalObject, newTarget));
+        RETURN_IF_EXCEPTION(scope, {});
+        structure = InternalFunction::createSubclassStructure(
+            globalObject,
+            newTarget,
+            functionGlobalObject->JSCanvasRenderingContext2DStructure());
+    }
+
+    void* ptr = CanvasRenderingContext2DClass__construct(globalObject, callFrame);
+
+    if (UNLIKELY(!ptr)) {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    JSCanvasRenderingContext2D* instance = JSCanvasRenderingContext2D::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+
+void JSCanvasRenderingContext2DConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSCanvasRenderingContext2DPrototype* prototype)
+{
+}
+
+const ClassInfo JSCanvasRenderingContext2DConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCanvasRenderingContext2DConstructor) };
+
+extern "C" EncodedJSValue CanvasRenderingContext2D__getConstructor(Zig::GlobalObject* globalObject)
+{
+    return JSValue::encode(globalObject->JSCanvasRenderingContext2DConstructor());
+}
+
+JSCanvasRenderingContext2D::~JSCanvasRenderingContext2D()
+{
+}
+void JSCanvasRenderingContext2D::destroy(JSCell* cell)
+{
+    static_cast<JSCanvasRenderingContext2D*>(cell)->JSCanvasRenderingContext2D::~JSCanvasRenderingContext2D();
+}
+
+const ClassInfo JSCanvasRenderingContext2D::s_info = { "CanvasRenderingContext2D"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCanvasRenderingContext2D) };
+
+void JSCanvasRenderingContext2D::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+JSCanvasRenderingContext2D* JSCanvasRenderingContext2D::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
+{
+    JSCanvasRenderingContext2D* ptr = new (NotNull, JSC::allocateCell<JSCanvasRenderingContext2D>(vm)) JSCanvasRenderingContext2D(vm, structure, ctx);
+    ptr->finishCreation(vm);
+    return ptr;
+}
+
+extern "C" void* CanvasRenderingContext2D__fromJS(JSC::EncodedJSValue value)
+{
+    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+    if (decodedValue.isEmpty() || !decodedValue.isCell())
+        return nullptr;
+
+    JSC::JSCell* cell = decodedValue.asCell();
+    JSCanvasRenderingContext2D* object = JSC::jsDynamicCast<JSCanvasRenderingContext2D*>(cell);
+
+    if (!object)
+        return nullptr;
+
+    return object->wrapped();
+}
+
+extern "C" bool CanvasRenderingContext2D__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
+{
+    JSCanvasRenderingContext2D* object = JSC::jsDynamicCast<JSCanvasRenderingContext2D*>(JSValue::decode(value));
+    if (!object)
+        return false;
+
+    object->m_ctx = ptr;
+    return true;
+}
+
+extern "C" const size_t CanvasRenderingContext2D__ptrOffset = JSCanvasRenderingContext2D::offsetOfWrapped();
+
+void JSCanvasRenderingContext2D::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = jsCast<JSCanvasRenderingContext2D*>(cell);
+    if (void* wrapped = thisObject->wrapped()) {
+        // if (thisObject->scriptExecutionContext())
+        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+    }
+    Base::analyzeHeap(cell, analyzer);
+}
+
+JSObject* JSCanvasRenderingContext2D::createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+{
+    return WebCore::JSCanvasRenderingContext2DConstructor::create(vm, globalObject, WebCore::JSCanvasRenderingContext2DConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<WebCore::JSCanvasRenderingContext2DPrototype*>(prototype));
+}
+
+JSObject* JSCanvasRenderingContext2D::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
+{
+    return JSCanvasRenderingContext2DPrototype::create(vm, globalObject, JSCanvasRenderingContext2DPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+}
+
+extern "C" EncodedJSValue CanvasRenderingContext2D__create(Zig::GlobalObject* globalObject, void* ptr)
+{
+    auto& vm = globalObject->vm();
+    JSC::Structure* structure = globalObject->JSCanvasRenderingContext2DStructure();
+    JSCanvasRenderingContext2D* instance = JSCanvasRenderingContext2D::create(vm, globalObject, structure, ptr);
 
     return JSValue::encode(instance);
 }

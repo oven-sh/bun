@@ -22,6 +22,10 @@ JSC::Structure* JSCanvasStructure() { return m_JSCanvas.getInitializedOnMainThre
   JSC::JSObject* JSCanvasConstructor() { return m_JSCanvas.constructorInitializedOnMainThread(this); }
   JSC::JSValue JSCanvasPrototype() { return m_JSCanvas.prototypeInitializedOnMainThread(this); }
   JSC::LazyClassStructure m_JSCanvas;
+JSC::Structure* JSCanvasRenderingContext2DStructure() { return m_JSCanvasRenderingContext2D.getInitializedOnMainThread(this); }
+  JSC::JSObject* JSCanvasRenderingContext2DConstructor() { return m_JSCanvasRenderingContext2D.constructorInitializedOnMainThread(this); }
+  JSC::JSValue JSCanvasRenderingContext2DPrototype() { return m_JSCanvasRenderingContext2D.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSCanvasRenderingContext2D;
 JSC::Structure* JSCommentStructure() { return m_JSComment.getInitializedOnMainThread(this); }
   JSC::JSObject* JSCommentConstructor() { return m_JSComment.constructorInitializedOnMainThread(this); }
   JSC::JSValue JSCommentPrototype() { return m_JSComment.prototypeInitializedOnMainThread(this); }

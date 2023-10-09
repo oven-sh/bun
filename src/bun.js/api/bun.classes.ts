@@ -5,7 +5,7 @@ export default [
     name: "Canvas",
     construct: true,
     finalize: true,
-    // hasPendingActivity: true,
+    hasPendingActivity: true,
     configurable: false,
     klass: {},
     JSType: "0b11101110",
@@ -17,6 +17,56 @@ export default [
       height: {
         getter: "getHeight",
         setter: "setHeight",
+      },
+      x: {
+        getter: "getX",
+        setter: "setX",
+      },
+      y: {
+        getter: "getY",
+        setter: "setY",
+      },
+      animate: {
+        fn: "animate",
+        length: 1,
+      },
+      close: {
+        fn: "close",
+        length: 0,
+      },
+      getContext: {
+        fn: "getContext",
+        length: 1,
+      },
+    },
+  }),
+  define({
+    name: "CanvasRenderingContext2D",
+    construct: true,
+    finalize: false,
+    configurable: false,
+    klass: {},
+    JSType: "0b11101110",
+    proto: {
+      strokeStyle: {
+        getter: "getStrokeStyle",
+        setter: "setStrokeStyle",
+      },
+      fillStyle: {
+        getter: "getFillStyle",
+        setter: "setFillStyle",
+      },
+      clearRect: {
+        fn: "clearRect",
+        length: 4,
+      },
+      fillRect: {
+        fn: "fillRect",
+        length: 4,
+      },
+      strokeRect: {
+        fn: "strokeRect",
+        length: 4,
       },
     },
   }),

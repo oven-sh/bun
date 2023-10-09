@@ -786,6 +786,8 @@ pub const String = extern struct {
     }
 
     pub fn indexOfComptimeArrayCaseInsensitiveSameLength(this: String, comptime values: []const []const u8) ?usize {
+        if (values.len == 0) return null;
+
         if (this.is8Bit()) {
             const bytes = this.byteSlice();
 

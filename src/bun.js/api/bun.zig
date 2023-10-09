@@ -2829,7 +2829,7 @@ pub fn getCanvasConstructor(
     globalThis: *JSC.JSGlobalObject,
     _: *JSC.JSObject,
 ) callconv(.C) JSC.JSValue {
-    return JSC.API.JSCanvas.getConstructor(globalThis);
+    return JSC.API.Canvas.getConstructor(globalThis);
 }
 
 pub fn getFileSystemRouter(
@@ -3720,6 +3720,22 @@ pub const Timer = struct {
 
         return TimerObject.init(globalThis, id, .setTimeout, interval, wrappedCallback, arguments);
     }
+
+    pub fn setImmediate(
+        globalThis: *JSGlobalObject,
+        callback: JSValue,
+        arguments: JSValue,
+    ) callconv(.C) JSValue {
+        JSC.markBinding(@src());
+        const id = globalThis.bunVM().timer.last_id;
+        globalThis.bunVM().timer.last_id +%= 1;
+
+        const wrappedCallback = callback.withAsyncContextIfNeeded(globalThis);
+        Timer.set(id, globalThis, wrappedCallback, 0, arguments, false) catch return .undefined;
+
+        return TimerObject.init(globalThis, id, .setImmediate, 0, wrappedCallback, arguments);
+    }
+
     pub fn setInterval(
         globalThis: *JSGlobalObject,
         callback: JSValue,
@@ -3744,10 +3760,9 @@ pub const Timer = struct {
         return TimerObject.init(globalThis, id, .setInterval, interval, wrappedCallback, arguments);
     }
 
-    pub fn clearTimer(timer_id_value: JSValue, globalThis: *JSGlobalObject, repeats: bool) void {
+    pub fn clearTimer(timer_id_value: JSValue, globalThis: *JSGlobalObject, kind: Timeout.Kind) void {
         JSC.markBinding(@src());
 
-        const kind: Timeout.Kind = if (repeats) .setInterval else .setTimeout;
         var vm = globalThis.bunVM();
         var map = vm.timer.maps.get(kind);
 
@@ -3786,16 +3801,26 @@ pub const Timer = struct {
         id: JSValue,
     ) callconv(.C) JSValue {
         JSC.markBinding(@src());
-        Timer.clearTimer(id, globalThis, false);
-        return JSValue.jsUndefined();
+        Timer.clearTimer(id, globalThis, .setTimeout);
+        return .undefined;
     }
+
+    pub fn clearImmediate(
+        globalThis: *JSGlobalObject,
+        id: JSValue,
+    ) callconv(.C) JSValue {
+        JSC.markBinding(@src());
+        Timer.clearTimer(id, globalThis, .setImmediate);
+        return .undefined;
+    }
+
     pub fn clearInterval(
         globalThis: *JSGlobalObject,
         id: JSValue,
     ) callconv(.C) JSValue {
         JSC.markBinding(@src());
-        Timer.clearTimer(id, globalThis, true);
-        return JSValue.jsUndefined();
+        Timer.clearTimer(id, globalThis, .setInterval);
+        return .undefined;
     }
 
     const Shimmer = @import("../bindings/shimmer.zig").Shimmer;

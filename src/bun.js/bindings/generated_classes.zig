@@ -984,6 +984,12 @@ pub const JSCanvas = struct {
             @compileLog("Canvas.finalize is not a finalizer");
         }
 
+        if (@TypeOf(Canvas.animate) != CallbackType)
+            @compileLog("Expected Canvas.animate to be a callback but received " ++ @typeName(@TypeOf(Canvas.animate)));
+        if (@TypeOf(Canvas.close) != CallbackType)
+            @compileLog("Expected Canvas.close to be a callback but received " ++ @typeName(@TypeOf(Canvas.close)));
+        if (@TypeOf(Canvas.getContext) != CallbackType)
+            @compileLog("Expected Canvas.getContext to be a callback but received " ++ @typeName(@TypeOf(Canvas.getContext)));
         if (@TypeOf(Canvas.getHeight) != GetterType)
             @compileLog("Expected Canvas.getHeight to be a getter");
 
@@ -994,13 +1000,117 @@ pub const JSCanvas = struct {
 
         if (@TypeOf(Canvas.setWidth) != SetterType)
             @compileLog("Expected Canvas.setWidth to be a setter");
+        if (@TypeOf(Canvas.getX) != GetterType)
+            @compileLog("Expected Canvas.getX to be a getter");
+
+        if (@TypeOf(Canvas.setX) != SetterType)
+            @compileLog("Expected Canvas.setX to be a setter");
+        if (@TypeOf(Canvas.getY) != GetterType)
+            @compileLog("Expected Canvas.getY to be a getter");
+
+        if (@TypeOf(Canvas.setY) != SetterType)
+            @compileLog("Expected Canvas.setY to be a setter");
         if (!JSC.is_bindgen) {
+            @export(Canvas.animate, .{ .name = "CanvasPrototype__animate" });
+            @export(Canvas.close, .{ .name = "CanvasPrototype__close" });
             @export(Canvas.constructor, .{ .name = "CanvasClass__construct" });
             @export(Canvas.finalize, .{ .name = "CanvasClass__finalize" });
+            @export(Canvas.getContext, .{ .name = "CanvasPrototype__getContext" });
             @export(Canvas.getHeight, .{ .name = "CanvasPrototype__getHeight" });
             @export(Canvas.getWidth, .{ .name = "CanvasPrototype__getWidth" });
+            @export(Canvas.getX, .{ .name = "CanvasPrototype__getX" });
+            @export(Canvas.getY, .{ .name = "CanvasPrototype__getY" });
+            @export(Canvas.hasPendingActivity, .{ .name = "Canvas__hasPendingActivity" });
             @export(Canvas.setHeight, .{ .name = "CanvasPrototype__setHeight" });
             @export(Canvas.setWidth, .{ .name = "CanvasPrototype__setWidth" });
+            @export(Canvas.setX, .{ .name = "CanvasPrototype__setX" });
+            @export(Canvas.setY, .{ .name = "CanvasPrototype__setY" });
+        }
+    }
+};
+pub const JSCanvasRenderingContext2D = struct {
+    const CanvasRenderingContext2D = Classes.CanvasRenderingContext2D;
+    const GetterType = fn (*CanvasRenderingContext2D, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*CanvasRenderingContext2D, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*CanvasRenderingContext2D, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*CanvasRenderingContext2D, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*CanvasRenderingContext2D, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*CanvasRenderingContext2D {
+        JSC.markBinding(@src());
+        return CanvasRenderingContext2D__fromJS(value);
+    }
+
+    /// Get the CanvasRenderingContext2D constructor value.
+    /// This loads lazily from the global object.
+    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        return CanvasRenderingContext2D__getConstructor(globalObject);
+    }
+
+    /// Create a new instance of CanvasRenderingContext2D
+    pub fn toJS(this: *CanvasRenderingContext2D, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = CanvasRenderingContext2D__create(globalObject, this);
+            std.debug.assert(value__.as(CanvasRenderingContext2D).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return CanvasRenderingContext2D__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of CanvasRenderingContext2D.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*CanvasRenderingContext2D) bool {
+        JSC.markBinding(@src());
+        return CanvasRenderingContext2D__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *CanvasRenderingContext2D, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(CanvasRenderingContext2D__dangerouslySetPtr(value, null));
+    }
+
+    extern fn CanvasRenderingContext2D__fromJS(JSC.JSValue) ?*CanvasRenderingContext2D;
+    extern fn CanvasRenderingContext2D__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn CanvasRenderingContext2D__create(globalObject: *JSC.JSGlobalObject, ptr: ?*CanvasRenderingContext2D) JSC.JSValue;
+
+    extern fn CanvasRenderingContext2D__dangerouslySetPtr(JSC.JSValue, ?*CanvasRenderingContext2D) bool;
+
+    comptime {
+        if (@TypeOf(CanvasRenderingContext2D.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*CanvasRenderingContext2D)) {
+            @compileLog("CanvasRenderingContext2D.constructor is not a constructor");
+        }
+
+        if (@TypeOf(CanvasRenderingContext2D.clearRect) != CallbackType)
+            @compileLog("Expected CanvasRenderingContext2D.clearRect to be a callback but received " ++ @typeName(@TypeOf(CanvasRenderingContext2D.clearRect)));
+        if (@TypeOf(CanvasRenderingContext2D.fillRect) != CallbackType)
+            @compileLog("Expected CanvasRenderingContext2D.fillRect to be a callback but received " ++ @typeName(@TypeOf(CanvasRenderingContext2D.fillRect)));
+        if (@TypeOf(CanvasRenderingContext2D.getFillStyle) != GetterType)
+            @compileLog("Expected CanvasRenderingContext2D.getFillStyle to be a getter");
+
+        if (@TypeOf(CanvasRenderingContext2D.setFillStyle) != SetterType)
+            @compileLog("Expected CanvasRenderingContext2D.setFillStyle to be a setter");
+        if (@TypeOf(CanvasRenderingContext2D.strokeRect) != CallbackType)
+            @compileLog("Expected CanvasRenderingContext2D.strokeRect to be a callback but received " ++ @typeName(@TypeOf(CanvasRenderingContext2D.strokeRect)));
+        if (@TypeOf(CanvasRenderingContext2D.getStrokeStyle) != GetterType)
+            @compileLog("Expected CanvasRenderingContext2D.getStrokeStyle to be a getter");
+
+        if (@TypeOf(CanvasRenderingContext2D.setStrokeStyle) != SetterType)
+            @compileLog("Expected CanvasRenderingContext2D.setStrokeStyle to be a setter");
+        if (!JSC.is_bindgen) {
+            @export(CanvasRenderingContext2D.clearRect, .{ .name = "CanvasRenderingContext2DPrototype__clearRect" });
+            @export(CanvasRenderingContext2D.constructor, .{ .name = "CanvasRenderingContext2DClass__construct" });
+            @export(CanvasRenderingContext2D.fillRect, .{ .name = "CanvasRenderingContext2DPrototype__fillRect" });
+            @export(CanvasRenderingContext2D.getFillStyle, .{ .name = "CanvasRenderingContext2DPrototype__getFillStyle" });
+            @export(CanvasRenderingContext2D.getStrokeStyle, .{ .name = "CanvasRenderingContext2DPrototype__getStrokeStyle" });
+            @export(CanvasRenderingContext2D.setFillStyle, .{ .name = "CanvasRenderingContext2DPrototype__setFillStyle" });
+            @export(CanvasRenderingContext2D.setStrokeStyle, .{ .name = "CanvasRenderingContext2DPrototype__setStrokeStyle" });
+            @export(CanvasRenderingContext2D.strokeRect, .{ .name = "CanvasRenderingContext2DPrototype__strokeRect" });
         }
     }
 };
@@ -7173,6 +7283,7 @@ comptime {
     _ = JSBuildArtifact;
     _ = JSBuildMessage;
     _ = JSCanvas;
+    _ = JSCanvasRenderingContext2D;
     _ = JSComment;
     _ = JSCrypto;
     _ = JSCryptoHasher;

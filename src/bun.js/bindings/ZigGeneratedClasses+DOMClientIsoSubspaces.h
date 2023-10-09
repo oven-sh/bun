@@ -4,7 +4,8 @@ std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBigIntStatsConstructor
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBlobConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBuildArtifact;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBuildMessage;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBuildMessageConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCanvas;
-std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCanvasConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForComment;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCanvasConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCanvasRenderingContext2D;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCanvasRenderingContext2DConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForComment;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCrypto;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCryptoConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCryptoHasher;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCryptoHasherConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDebugHTTPSServer;

@@ -4,7 +4,8 @@ std::unique_ptr<IsoSubspace> m_subspaceForBigIntStatsConstructor;std::unique_ptr
 std::unique_ptr<IsoSubspace> m_subspaceForBlobConstructor;std::unique_ptr<IsoSubspace> m_subspaceForBuildArtifact;
 std::unique_ptr<IsoSubspace> m_subspaceForBuildMessage;
 std::unique_ptr<IsoSubspace> m_subspaceForBuildMessageConstructor;std::unique_ptr<IsoSubspace> m_subspaceForCanvas;
-std::unique_ptr<IsoSubspace> m_subspaceForCanvasConstructor;std::unique_ptr<IsoSubspace> m_subspaceForComment;
+std::unique_ptr<IsoSubspace> m_subspaceForCanvasConstructor;std::unique_ptr<IsoSubspace> m_subspaceForCanvasRenderingContext2D;
+std::unique_ptr<IsoSubspace> m_subspaceForCanvasRenderingContext2DConstructor;std::unique_ptr<IsoSubspace> m_subspaceForComment;
 std::unique_ptr<IsoSubspace> m_subspaceForCrypto;
 std::unique_ptr<IsoSubspace> m_subspaceForCryptoConstructor;std::unique_ptr<IsoSubspace> m_subspaceForCryptoHasher;
 std::unique_ptr<IsoSubspace> m_subspaceForCryptoHasherConstructor;std::unique_ptr<IsoSubspace> m_subspaceForDebugHTTPSServer;

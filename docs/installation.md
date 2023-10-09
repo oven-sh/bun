@@ -3,7 +3,8 @@ Bun ships as a single executable that can be installed a few different ways.
 ## macOS and Linux
 
 {% callout %}
-**Linux users** — The `unzip` package is required to install Bun. Kernel version 5.6 or higher is strongly recommended, but the minimum is 5.1.
+**Linux users** — The `unzip` package is required to install Bun. Use `sudo apt install unzip` to install `unzip` package.
+Kernel version 5.6 or higher is strongly recommended, but the minimum is 5.1. Use `uname -r` to check Kernel version.
 {% /callout %}
 
 {% codetabs %}

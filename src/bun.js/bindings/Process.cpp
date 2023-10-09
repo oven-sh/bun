@@ -749,8 +749,8 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessExitCode, (JSC::JSGlobalObject * lexicalGloba
 
     int exitCodeInt = exitCode.toInt32(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, false);
-    if (exitCodeInt < 0 || exitCodeInt > 127) {
-        throwRangeError(lexicalGlobalObject, throwScope, "exitCode must be between 0 and 127"_s);
+    if (exitCodeInt < 0 || exitCodeInt > 255) {
+        throwRangeError(lexicalGlobalObject, throwScope, "exitCode must be between 0 and 255"_s);
         return false;
     }
 

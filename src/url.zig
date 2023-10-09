@@ -1098,8 +1098,10 @@ pub const FormData = struct {
                         }
                         if (filename_str.len > 0) {
                             const extension = std.fs.path.extension(filename_str);
-                            if (bun.HTTP.MimeType.byExtensionNoDefault(extension[1..extension.len])) |mime| {
-                                break :brk mime.value;
+                            if (extension.len > 0) {
+                                if (bun.HTTP.MimeType.byExtensionNoDefault(extension[1..extension.len])) |mime| {
+                                    break :brk mime.value;
+                                }
                             }
                         }
 

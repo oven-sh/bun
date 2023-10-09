@@ -21,195 +21,235 @@ var initializeSDL = std.once(struct {
     }
 }.call);
 
-const Color = struct {
-    r: u8,
-    g: u8,
-    b: u8,
-    a: u8,
+const Color = union(enum) {
+    rgba: u32,
+    argb: u32,
 
-    /// color name -> ARGB value
-    pub const Names = bun.ComptimeStringMap(u32, .{
-        .{ "aliceblue", 0xfff0f8ff },
-        .{ "alpha", 0x00000000 },
-        .{ "antiquewhite", 0xfffaebd7 },
-        .{ "aqua", 0xff00ffff },
-        .{ "aquamarine", 0xff7fffd4 },
-        .{ "azure", 0xfff0ffff },
-        .{ "beige", 0xfff5f5dc },
-        .{ "bisque", 0xffffe4c4 },
-        .{ "black", 0xff000000 },
-        .{ "blanchedalmond", 0xffffebcd },
-        .{ "blue", 0xff0000ff },
-        .{ "blueviolet", 0xff8a2be2 },
-        .{ "brown", 0xffa52a2a },
-        .{ "burlywood", 0xffdeb887 },
-        .{ "cadetblue", 0xff5f9ea0 },
-        .{ "chartreuse", 0xff7fff00 },
-        .{ "chocolate", 0xffd2691e },
-        .{ "coral", 0xffff7f50 },
-        .{ "cornflowerblue", 0xff6495ed },
-        .{ "cornsilk", 0xfffff8dc },
-        .{ "crimson", 0xffdc143c },
-        .{ "cyan", 0xff00ffff },
-        .{ "darkblue", 0xff00008b },
-        .{ "darkcyan", 0xff008b8b },
-        .{ "darkgoldenrod", 0xffb8860b },
-        .{ "darkgray", 0xffa9a9a9 },
-        .{ "darkgrey", 0xffa9a9a9 },
-        .{ "darkgreen", 0xff006400 },
-        .{ "darkkhaki", 0xffbdb76b },
-        .{ "darkmagenta", 0xff8b008b },
-        .{ "darkolivegreen", 0xff556b2f },
-        .{ "darkorange", 0xffff8c00 },
-        .{ "darkorchid", 0xff9932cc },
-        .{ "darkred", 0xff8b0000 },
-        .{ "darksalmon", 0xffe9967a },
-        .{ "darkseagreen", 0xff8fbc8f },
-        .{ "darkslateblue", 0xff483d8b },
-        .{ "darkslategray", 0xff2f4f4f },
-        .{ "darkslategrey", 0xff2f4f4f },
-        .{ "darkturquoise", 0xff00ced1 },
-        .{ "darkviolet", 0xff9400d3 },
-        .{ "deeppink", 0xffff1493 },
-        .{ "deepskyblue", 0xff00bfff },
-        .{ "dimgray", 0xff696969 },
-        .{ "dimgrey", 0xff696969 },
-        .{ "dodgerblue", 0xff1e90ff },
-        .{ "firebrick", 0xffb22222 },
-        .{ "floralwhite", 0xfffffaf0 },
-        .{ "forestgreen", 0xff228b22 },
-        .{ "fuchsia", 0xffff00ff },
-        .{ "gainsboro", 0xffdcdcdc },
-        .{ "ghostwhite", 0xfff8f8ff },
-        .{ "gold", 0xffffd700 },
-        .{ "goldenrod", 0xffdaa520 },
-        .{ "gray", 0xff808080 },
-        .{ "grey", 0xff808080 },
-        .{ "green", 0xff008000 },
-        .{ "greenyellow", 0xffadff2f },
-        .{ "honeydew", 0xfff0fff0 },
-        .{ "hotpink", 0xffff69b4 },
-        .{ "indianred", 0xffcd5c5c },
-        .{ "indigo", 0xff4b0082 },
-        .{ "ivory", 0xfffffff0 },
-        .{ "khaki", 0xfff0e68c },
-        .{ "lavender", 0xffe6e6fa },
-        .{ "lavenderblush", 0xfffff0f5 },
-        .{ "lawngreen", 0xff7cfc00 },
-        .{ "lemonchiffon", 0xfffffacd },
-        .{ "lightblue", 0xffadd8e6 },
-        .{ "lightcoral", 0xfff08080 },
-        .{ "lightcyan", 0xffe0ffff },
-        .{ "lightgoldenrodyellow", 0xfffafad2 },
-        .{ "lightgray", 0xffd3d3d3 },
-        .{ "lightgrey", 0xffd3d3d3 },
-        .{ "lightgreen", 0xff90ee90 },
-        .{ "lightpink", 0xffffb6c1 },
-        .{ "lightsalmon", 0xffffa07a },
-        .{ "lightseagreen", 0xff20b2aa },
-        .{ "lightskyblue", 0xff87cefa },
-        .{ "lightslateblue", 0xff8470ff },
-        .{ "lightslategray", 0xff778899 },
-        .{ "lightslategrey", 0xff778899 },
-        .{ "lightsteelblue", 0xffb0c4de },
-        .{ "lightyellow", 0xffffffe0 },
-        .{ "lime", 0xff00ff00 },
-        .{ "limegreen", 0xff32cd32 },
-        .{ "linen", 0xfffaf0e6 },
-        .{ "magenta", 0xffff00ff },
-        .{ "maroon", 0xff800000 },
-        .{ "mediumaquamarine", 0xff66cdaa },
-        .{ "mediumblue", 0xff0000cd },
-        .{ "mediumorchid", 0xffba55d3 },
-        .{ "mediumpurple", 0xff9370db },
-        .{ "mediumseagreen", 0xff3cb371 },
-        .{ "mediumslateblue", 0xff7b68ee },
-        .{ "mediumspringgreen", 0xff00fa9a },
-        .{ "mediumturquoise", 0xff48d1cc },
-        .{ "mediumvioletred", 0xffc71585 },
-        .{ "midnightblue", 0xff191970 },
-        .{ "mintcream", 0xfff5fffa },
-        .{ "mistyrose", 0xffffe4e1 },
-        .{ "moccasin", 0xffffe4b5 },
-        .{ "navajowhite", 0xffffdead },
-        .{ "navy", 0xff000080 },
-        .{ "oldlace", 0xfffdf5e6 },
-        .{ "olive", 0xff808000 },
-        .{ "olivedrab", 0xff6b8e23 },
-        .{ "orange", 0xffffa500 },
-        .{ "orangered", 0xffff4500 },
-        .{ "orchid", 0xffda70d6 },
-        .{ "palegoldenrod", 0xffeee8aa },
-        .{ "palegreen", 0xff98fb98 },
-        .{ "paleturquoise", 0xffafeeee },
-        .{ "palevioletred", 0xffdb7093 },
-        .{ "papayawhip", 0xffffefd5 },
-        .{ "peachpuff", 0xffffdab9 },
-        .{ "peru", 0xffcd853f },
-        .{ "pink", 0xffffc0cb },
-        .{ "plum", 0xffdda0dd },
-        .{ "powderblue", 0xffb0e0e6 },
-        .{ "purple", 0xff800080 },
-        .{ "rebeccapurple", 0xff663399 },
-        .{ "red", 0xffff0000 },
-        .{ "rosybrown", 0xffbc8f8f },
-        .{ "royalblue", 0xff4169e1 },
-        .{ "saddlebrown", 0xff8b4513 },
-        .{ "salmon", 0xfffa8072 },
-        .{ "sandybrown", 0xfff4a460 },
-        .{ "seagreen", 0xff2e8b57 },
-        .{ "seashell", 0xfffff5ee },
-        .{ "sienna", 0xffa0522d },
-        .{ "silver", 0xffc0c0c0 },
-        .{ "skyblue", 0xff87ceeb },
-        .{ "slateblue", 0xff6a5acd },
-        .{ "slategray", 0xff708090 },
-        .{ "slategrey", 0xff708090 },
-        .{ "snow", 0xfffffafa },
-        .{ "springgreen", 0xff00ff7f },
-        .{ "steelblue", 0xff4682b4 },
-        .{ "tan", 0xffd2b48c },
-        .{ "teal", 0xff008080 },
-        .{ "thistle", 0xffd8bfd8 },
-        .{ "tomato", 0xffff6347 },
-        .{ "transparent", 0x00000000 },
-        .{ "turquoise", 0xff40e0d0 },
-        .{ "violet", 0xffee82ee },
-        .{ "violetred", 0xffd02090 },
-        .{ "wheat", 0xfff5deb3 },
-        .{ "white", 0xffffffff },
-        .{ "whitesmoke", 0xfff5f5f5 },
-        .{ "yellow", 0xffffff00 },
-        .{ "yellowgreen", 0xff9acd32 },
-    });
+    pub fn a(this: Color) u8 {
+        return switch (this) {
+            .rgba => |color| @truncate(color),
+            .argb => |color| @truncate(color >> 24),
+        };
+    }
+
+    pub fn r(this: Color) u8 {
+        return switch (this) {
+            .rgba => |color| @truncate(color >> 24),
+            .argb => |color| @truncate(color >> 16),
+        };
+    }
+
+    pub fn g(this: Color) u8 {
+        return switch (this) {
+            .rgba => |color| @truncate(color >> 16),
+            .argb => |color| @truncate(color >> 8),
+        };
+    }
+
+    fn shift(this: Color, comptime p: @TypeOf(.enum_literal)) u5 {
+        return switch (this) {
+            .rgba => switch (p) {
+                .r => 24,
+                .g => 16,
+                .b => 8,
+                .a => 0,
+                else => @compileError("must be r, g, b, or a"),
+            },
+            .argb => switch (p) {
+                .a => 24,
+                .r => 16,
+                .g => 8,
+                .b => 0,
+                else => @compileError("must be r, g, b, or a"),
+            },
+        };
+    }
+
+    pub fn b(this: Color) u8 {
+        return switch (this) {
+            .rgba => |color| @truncate(color >> 8),
+            .argb => |color| @truncate(color),
+        };
+    }
+
+    pub fn get(this: Color) u32 {
+        return switch (this) {
+            inline else => |color| color,
+        };
+    }
+
+    pub fn rgba(color: u32) Color {
+        return .{ .rgba = color };
+    }
+
+    pub fn argb(color: u32) Color {
+        return .{ .argb = color };
+    }
 
     pub fn fromJS(value: JSValue, global: *JSGlobalObject) ?Color {
         if (bun.String.tryFromJS(value, global)) |str| {
             if (str.inMapCaseInsensitive(Names)) |color| {
-                return fromARGB(color);
+                return color;
             }
         }
 
         return null;
     }
 
-    pub fn fromARGB(value: u32) Color {
-        return .{
-            .r = @truncate(value >> 16),
-            .g = @truncate(value >> 8),
-            .b = @truncate(value),
-            .a = @truncate(value >> 24),
-        };
-    }
-
-    pub fn fromRGBA(value: u32) Color {
-        return .{
-            .r = @truncate(value >> 24),
-            .g = @truncate(value >> 16),
-            .b = @truncate(value >> 8),
-            .a = @truncate(value),
-        };
-    }
+    pub const Names = bun.ComptimeStringMap(Color, .{
+        .{ "aliceblue", argb(0xfff0f8ff) },
+        .{ "alpha", argb(0x00000000) },
+        .{ "antiquewhite", argb(0xfffaebd7) },
+        .{ "aqua", argb(0xff00ffff) },
+        .{ "aquamarine", argb(0xff7fffd4) },
+        .{ "azure", argb(0xfff0ffff) },
+        .{ "beige", argb(0xfff5f5dc) },
+        .{ "bisque", argb(0xffffe4c4) },
+        .{ "black", argb(0xff000000) },
+        .{ "blanchedalmond", argb(0xffffebcd) },
+        .{ "blue", argb(0xff0000ff) },
+        .{ "blueviolet", argb(0xff8a2be2) },
+        .{ "brown", argb(0xffa52a2a) },
+        .{ "burlywood", argb(0xffdeb887) },
+        .{ "cadetblue", argb(0xff5f9ea0) },
+        .{ "chartreuse", argb(0xff7fff00) },
+        .{ "chocolate", argb(0xffd2691e) },
+        .{ "coral", argb(0xffff7f50) },
+        .{ "cornflowerblue", argb(0xff6495ed) },
+        .{ "cornsilk", argb(0xfffff8dc) },
+        .{ "crimson", argb(0xffdc143c) },
+        .{ "cyan", argb(0xff00ffff) },
+        .{ "darkblue", argb(0xff00008b) },
+        .{ "darkcyan", argb(0xff008b8b) },
+        .{ "darkgoldenrod", argb(0xffb8860b) },
+        .{ "darkgray", argb(0xffa9a9a9) },
+        .{ "darkgrey", argb(0xffa9a9a9) },
+        .{ "darkgreen", argb(0xff006400) },
+        .{ "darkkhaki", argb(0xffbdb76b) },
+        .{ "darkmagenta", argb(0xff8b008b) },
+        .{ "darkolivegreen", argb(0xff556b2f) },
+        .{ "darkorange", argb(0xffff8c00) },
+        .{ "darkorchid", argb(0xff9932cc) },
+        .{ "darkred", argb(0xff8b0000) },
+        .{ "darksalmon", argb(0xffe9967a) },
+        .{ "darkseagreen", argb(0xff8fbc8f) },
+        .{ "darkslateblue", argb(0xff483d8b) },
+        .{ "darkslategray", argb(0xff2f4f4f) },
+        .{ "darkslategrey", argb(0xff2f4f4f) },
+        .{ "darkturquoise", argb(0xff00ced1) },
+        .{ "darkviolet", argb(0xff9400d3) },
+        .{ "deeppink", argb(0xffff1493) },
+        .{ "deepskyblue", argb(0xff00bfff) },
+        .{ "dimgray", argb(0xff696969) },
+        .{ "dimgrey", argb(0xff696969) },
+        .{ "dodgerblue", argb(0xff1e90ff) },
+        .{ "firebrick", argb(0xffb22222) },
+        .{ "floralwhite", argb(0xfffffaf0) },
+        .{ "forestgreen", argb(0xff228b22) },
+        .{ "fuchsia", argb(0xffff00ff) },
+        .{ "gainsboro", argb(0xffdcdcdc) },
+        .{ "ghostwhite", argb(0xfff8f8ff) },
+        .{ "gold", argb(0xffffd700) },
+        .{ "goldenrod", argb(0xffdaa520) },
+        .{ "gray", argb(0xff808080) },
+        .{ "grey", argb(0xff808080) },
+        .{ "green", argb(0xff008000) },
+        .{ "greenyellow", argb(0xffadff2f) },
+        .{ "honeydew", argb(0xfff0fff0) },
+        .{ "hotpink", argb(0xffff69b4) },
+        .{ "indianred", argb(0xffcd5c5c) },
+        .{ "indigo", argb(0xff4b0082) },
+        .{ "ivory", argb(0xfffffff0) },
+        .{ "khaki", argb(0xfff0e68c) },
+        .{ "lavender", argb(0xffe6e6fa) },
+        .{ "lavenderblush", argb(0xfffff0f5) },
+        .{ "lawngreen", argb(0xff7cfc00) },
+        .{ "lemonchiffon", argb(0xfffffacd) },
+        .{ "lightblue", argb(0xffadd8e6) },
+        .{ "lightcoral", argb(0xfff08080) },
+        .{ "lightcyan", argb(0xffe0ffff) },
+        .{ "lightgoldenrodyellow", argb(0xfffafad2) },
+        .{ "lightgray", argb(0xffd3d3d3) },
+        .{ "lightgrey", argb(0xffd3d3d3) },
+        .{ "lightgreen", argb(0xff90ee90) },
+        .{ "lightpink", argb(0xffffb6c1) },
+        .{ "lightsalmon", argb(0xffffa07a) },
+        .{ "lightseagreen", argb(0xff20b2aa) },
+        .{ "lightskyblue", argb(0xff87cefa) },
+        .{ "lightslateblue", argb(0xff8470ff) },
+        .{ "lightslategray", argb(0xff778899) },
+        .{ "lightslategrey", argb(0xff778899) },
+        .{ "lightsteelblue", argb(0xffb0c4de) },
+        .{ "lightyellow", argb(0xffffffe0) },
+        .{ "lime", argb(0xff00ff00) },
+        .{ "limegreen", argb(0xff32cd32) },
+        .{ "linen", argb(0xfffaf0e6) },
+        .{ "magenta", argb(0xffff00ff) },
+        .{ "maroon", argb(0xff800000) },
+        .{ "mediumaquamarine", argb(0xff66cdaa) },
+        .{ "mediumblue", argb(0xff0000cd) },
+        .{ "mediumorchid", argb(0xffba55d3) },
+        .{ "mediumpurple", argb(0xff9370db) },
+        .{ "mediumseagreen", argb(0xff3cb371) },
+        .{ "mediumslateblue", argb(0xff7b68ee) },
+        .{ "mediumspringgreen", argb(0xff00fa9a) },
+        .{ "mediumturquoise", argb(0xff48d1cc) },
+        .{ "mediumvioletred", argb(0xffc71585) },
+        .{ "midnightblue", argb(0xff191970) },
+        .{ "mintcream", argb(0xfff5fffa) },
+        .{ "mistyrose", argb(0xffffe4e1) },
+        .{ "moccasin", argb(0xffffe4b5) },
+        .{ "navajowhite", argb(0xffffdead) },
+        .{ "navy", argb(0xff000080) },
+        .{ "oldlace", argb(0xfffdf5e6) },
+        .{ "olive", argb(0xff808000) },
+        .{ "olivedrab", argb(0xff6b8e23) },
+        .{ "orange", argb(0xffffa500) },
+        .{ "orangered", argb(0xffff4500) },
+        .{ "orchid", argb(0xffda70d6) },
+        .{ "palegoldenrod", argb(0xffeee8aa) },
+        .{ "palegreen", argb(0xff98fb98) },
+        .{ "paleturquoise", argb(0xffafeeee) },
+        .{ "palevioletred", argb(0xffdb7093) },
+        .{ "papayawhip", argb(0xffffefd5) },
+        .{ "peachpuff", argb(0xffffdab9) },
+        .{ "peru", argb(0xffcd853f) },
+        .{ "pink", argb(0xffffc0cb) },
+        .{ "plum", argb(0xffdda0dd) },
+        .{ "powderblue", argb(0xffb0e0e6) },
+        .{ "purple", argb(0xff800080) },
+        .{ "rebeccapurple", argb(0xff663399) },
+        .{ "red", argb(0xffff0000) },
+        .{ "rosybrown", argb(0xffbc8f8f) },
+        .{ "royalblue", argb(0xff4169e1) },
+        .{ "saddlebrown", argb(0xff8b4513) },
+        .{ "salmon", argb(0xfffa8072) },
+        .{ "sandybrown", argb(0xfff4a460) },
+        .{ "seagreen", argb(0xff2e8b57) },
+        .{ "seashell", argb(0xfffff5ee) },
+        .{ "sienna", argb(0xffa0522d) },
+        .{ "silver", argb(0xffc0c0c0) },
+        .{ "skyblue", argb(0xff87ceeb) },
+        .{ "slateblue", argb(0xff6a5acd) },
+        .{ "slategray", argb(0xff708090) },
+        .{ "slategrey", argb(0xff708090) },
+        .{ "snow", argb(0xfffffafa) },
+        .{ "springgreen", argb(0xff00ff7f) },
+        .{ "steelblue", argb(0xff4682b4) },
+        .{ "tan", argb(0xffd2b48c) },
+        .{ "teal", argb(0xff008080) },
+        .{ "thistle", argb(0xffd8bfd8) },
+        .{ "tomato", argb(0xffff6347) },
+        .{ "transparent", argb(0x00000000) },
+        .{ "turquoise", argb(0xff40e0d0) },
+        .{ "violet", argb(0xffee82ee) },
+        .{ "violetred", argb(0xffd02090) },
+        .{ "wheat", argb(0xfff5deb3) },
+        .{ "white", argb(0xffffffff) },
+        .{ "whitesmoke", argb(0xfff5f5f5) },
+        .{ "yellow", argb(0xffffff00) },
+        .{ "yellowgreen", argb(0xff9acd32) },
+    });
 };
 
 pub const Canvas = struct {
@@ -227,7 +267,7 @@ pub const Canvas = struct {
     y_value: JSValue = .zero,
 
     timer_id: ?JSValue = null,
-    _animate_callback_value: ?JSValue = null,
+    _animate_callback_wrapper_value: ?JSValue = null,
 
     previous_time: f64 = 0.0,
 
@@ -311,7 +351,7 @@ pub const Canvas = struct {
         return _canvas;
     }
 
-    fn animateCallback(global: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+    fn animateCallbackWrapper(global: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
         const args = callFrame.arguments(2).slice();
         const canvas = Canvas.fromJS(args[0]) orelse {
             global.throw("Failed to get canvas from value", .{});
@@ -348,7 +388,7 @@ pub const Canvas = struct {
         if (canvas.running) {
             canvas.timer_id = Timer.setImmediate(
                 global,
-                canvas.getAnimateCallback(global),
+                canvas.getAnimateCallbackWrapper(global),
                 JSC.JSArray.from(global, &[_]JSValue{ canvas.toJS(global), callback }),
             );
         }
@@ -358,11 +398,11 @@ pub const Canvas = struct {
         return .undefined;
     }
 
-    fn getAnimateCallback(this: *Canvas, global: *JSGlobalObject) callconv(.C) JSValue {
-        return this._animate_callback_value orelse {
-            const cb = JSC.createCallback(global, ZigString.static("animateCallback"), 2, animateCallback);
-            this._animate_callback_value = cb;
-            return this._animate_callback_value.?;
+    fn getAnimateCallbackWrapper(this: *Canvas, global: *JSGlobalObject) callconv(.C) JSValue {
+        return this._animate_callback_wrapper_value orelse {
+            const cb = JSC.createCallback(global, ZigString.static("animateCallbackWrapper"), 2, animateCallbackWrapper);
+            this._animate_callback_wrapper_value = cb;
+            return this._animate_callback_wrapper_value.?;
         };
     }
 
@@ -375,12 +415,14 @@ pub const Canvas = struct {
             return .zero;
         }
 
+        const callback = args[0];
+
         this.previous_time = @floatFromInt(global.bunVM().origin_timer.read());
 
         this.timer_id = Timer.setImmediate(
             global,
-            this.getAnimateCallback(global),
-            JSC.JSArray.from(global, &[_]JSValue{ this.toJS(global), args[0] }),
+            this.getAnimateCallbackWrapper(global),
+            JSC.JSArray.from(global, &[_]JSValue{ this.toJS(global), callback }),
         );
 
         return .undefined;
@@ -532,7 +574,7 @@ pub const CanvasRenderingContext2D = struct {
     fill_style: JSValue = .undefined,
     cached_fill_color: ?Color = null,
 
-    clear_color: Color = Color.fromRGBA(0x00000000),
+    clear_color: Color = Color.rgba(0x00000000),
 
     pub fn create(window: *c.SDL_Window, renderer: *c.SDL_Renderer) ?*CanvasRenderingContext2D {
         log("create", .{});
@@ -549,7 +591,7 @@ pub const CanvasRenderingContext2D = struct {
     pub fn constructor(global: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) ?*CanvasRenderingContext2D {
         _ = callFrame;
         log("constructor", .{});
-        global.throw("CanvasRenderingContext2D cannot be constructed", .{});
+        global.throw("Illegal constructor: CanvasRenderingContext2D cannot be constructed", .{});
         return null;
     }
 
@@ -592,7 +634,7 @@ pub const CanvasRenderingContext2D = struct {
             .h = @floatCast(args[3].asNumber()),
         };
 
-        if (c.SDL_SetRenderDrawColor(this.renderer, this.clear_color.r, this.clear_color.g, this.clear_color.b, this.clear_color.a) < 0) {
+        if (c.SDL_SetRenderDrawColor(this.renderer, this.clear_color.r(), this.clear_color.g(), this.clear_color.b(), this.clear_color.a()) < 0) {
             global.throw("clearRect failed to set draw color", .{});
             return .zero;
         }
@@ -646,7 +688,7 @@ pub const CanvasRenderingContext2D = struct {
         };
 
         if (this.getFillColor(global)) |fill_color| {
-            if (c.SDL_SetRenderDrawColor(this.renderer, fill_color.r, fill_color.g, fill_color.b, fill_color.a) < 0) {
+            if (c.SDL_SetRenderDrawColor(this.renderer, fill_color.r(), fill_color.g(), fill_color.b(), fill_color.a()) < 0) {
                 global.throw("fillRect failed to set fill color", .{});
                 return .zero;
             }
@@ -675,7 +717,7 @@ pub const CanvasRenderingContext2D = struct {
         };
 
         if (this.getStrokeColor(global)) |fill_color| {
-            if (c.SDL_SetRenderDrawColor(this.renderer, fill_color.r, fill_color.g, fill_color.b, fill_color.a) < 0) {
+            if (c.SDL_SetRenderDrawColor(this.renderer, fill_color.r(), fill_color.g(), fill_color.b(), fill_color.a()) < 0) {
                 global.throw("strokeRect failed to set fill color", .{});
                 return .zero;
             }

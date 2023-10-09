@@ -6,6 +6,9 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
     case Field::BunFFI: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "bun:ffi"_s, "bun/ffi.js"_s, InternalModuleRegistryConstants::BunFFICode, "builtin://bun/ffi"_s);
     }
+    case Field::BunSql: {
+      INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "bun:sql"_s, "bun/sql.js"_s, InternalModuleRegistryConstants::BunSqlCode, "builtin://bun/sql"_s);
+    }
     case Field::BunSqlite: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "bun:sqlite"_s, "bun/sqlite.js"_s, InternalModuleRegistryConstants::BunSqliteCode, "builtin://bun/sqlite"_s);
     }

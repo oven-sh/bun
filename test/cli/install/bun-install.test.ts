@@ -1526,7 +1526,7 @@ it("should choose the right version with prereleases", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@0.0.2-alpha.3",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -2685,9 +2685,9 @@ it("should handle bitbucket git dependencies", async () => {
     expect(stdout).toBeDefined();
     const out = await new Response(stdout).text();
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      ` + public-install-test@git+ssh://${dep}#56ee8a7e167c6ab10b672203f2ab6fbcb752788d`,
+      ` + public-install-test@git+ssh://${dep}#79265e2d9754c60b60f97cc8d859fb6da073b5d2`,
       "",
-      " 1 packages installed",
+      " 1 package installed",
     ]);
     expect(await exited).toBe(0);
     await access(join(package_dir, "bun.lockb"));
@@ -2722,10 +2722,10 @@ it("should handle bitbucket git dependencies", async () => {
     const out = await new Response(stdout).text();
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      ` installed publicinstalltest@git+ssh://${dep}#56ee8a7e167c6ab10b672203f2ab6fbcb752788d`,
+      ` installed publicinstalltest@git+ssh://${dep}#79265e2d9754c60b60f97cc8d859fb6da073b5d2`,
       "",
       "",
-      " 1 packages installed",
+      " 1 package installed",
     ]);
     expect(await exited).toBe(0);
     await access(join(package_dir, "bun.lockb"));
@@ -2766,7 +2766,7 @@ it("should handle gitlab git dependencies", async () => {
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       ` + public-install-test@git+ssh://${dep}#93f3aa4ec9ca8a0bacc010776db48bfcd915c44c`,
       "",
-      " 1 packages installed",
+      " 1 package installed",
     ]);
     expect(await exited).toBe(0);
     await access(join(package_dir, "bun.lockb"));
@@ -2804,7 +2804,7 @@ it("should handle gitlab git dependencies", async () => {
       ` installed public-install-test@git+ssh://${dep}#93f3aa4ec9ca8a0bacc010776db48bfcd915c44c`,
       "",
       "",
-      " 1 packages installed",
+      " 1 package installed",
     ]);
     expect(await exited).toBe(0);
     await access(join(package_dir, "bun.lockb"));
@@ -3181,7 +3181,8 @@ it("should treat non-GitHub http(s) URLs as tarballs (https://some.url/path?stuf
       name: "Foo",
       version: "0.0.1",
       dependencies: {
-        "@vercel/turbopack-node": "https://gitpkg-fork.vercel.sh/vercel/turbo/crates/turbopack-node/js?turbopack-230922.2"
+        "@vercel/turbopack-node":
+          "https://gitpkg-fork.vercel.sh/vercel/turbo/crates/turbopack-node/js?turbopack-230922.2",
       },
     }),
   );
@@ -3203,7 +3204,7 @@ it("should treat non-GitHub http(s) URLs as tarballs (https://some.url/path?stuf
   expect(out.split(/\r?\n/)).toEqual([
     " + @vercel/turbopack-node@https://gitpkg-fork.vercel.sh/vercel/turbo/crates/turbopack-node/js?turbopack-230922.2",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();

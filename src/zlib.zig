@@ -575,8 +575,6 @@ pub const ZlibReaderArrayList = struct {
 
             switch (rc) {
                 ReturnCode.StreamEnd => {
-                    this.state = State.End;
-
                     this.end();
                     return;
                 },

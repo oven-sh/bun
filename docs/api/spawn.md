@@ -183,18 +183,14 @@ const proc = Bun.spawn(["echo", "hello"]);
 proc.unref();
 ```
 
-## IPC - Inter-Process Communication
+## Inter-process communication (IPC)
 
-When the ipc is specified, Bun will open an IPC channel to the subprocess. The passed callback is called for incoming messages, and `subprocess.send` can send messages to the subprocess. Messages are serialized using the JSC serialize API, which allows for the same types that `postMessage`/`structuredClone` supports.
+Bun supports direct inter-process communication channel between two `bun` processes. To receive messages from a spawned Bun subprocess, specify an `ipc` handler.
+{%callout%}
+**Note** — This API is only compatible with other `bun` processes. Use `process.execPath` to get a path to the currently running `bun` executable.
+{%/callout%}
 
-
-The subprocess can send and recieve messages by using `process.send` and `process.on("message")`, respectively. This is the same API as what Node.js exposes when `child_process.fork()` is used.
-
-
-Currently, this is only compatible with processes that are other `bun` instances.
-
-```ts
-// parent.ts
+```ts#parent.ts
 const child = Bun.spawn(["bun", "child.ts"], {
   ipc(message) {
     /**
@@ -202,23 +198,43 @@ const child = Bun.spawn(["bun", "child.ts"], {
      **/
   },
 });
-
-child.send("Hello from parent"); // The parent can send messages to the child as well
 ```
 
-The child process and send messages to the parent using the `process.send` method
+The parent process can send messages to the subprocess using the `.send()` method on the returned `Subprocess` instance. A reference to the sending subprocess is also available as the second argument in the `ipc` handler.
 
-```ts
-// child.ts
-// process.send will be undefined if the ipc channel is not open
+```ts#parent.ts
+const childProc = Bun.spawn(["bun", "child.ts"], {
+  ipc(message, childProc) {
+    /**
+     * The message received from the sub process
+     **/
+    childProc.send("Respond to child")
+  },
+});
+
+childProc.send("I am your father"); // The parent can send messages to the child as well
+```
+
+Meanwhile the child process can send messages to its parent using with `process.send()` and receive messages with `process.on("message")`. This is the same API used for `child_process.fork()` in Node.js.
+
+```ts#child.ts
 process.send("Hello from child as string");
 process.send({ message: "Hello from child as object" });
 
 process.on("message", (message) => {
-    /**
-     * The message received from the parent
-     **/
+  // print message from parent
+  console.log(message);
 });
+```
+
+All messages are serialized using the JSC `serialize` API, which allows for the same set of [transferrable types](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Transferable_objects) supported by `postMessage` and `structuredClone`, including strings, typed arrays, streams, and objects.
+
+```ts#child.ts
+// send a string
+process.send("Hello from child as string");
+
+// send an object
+process.send({ message: "Hello from child as object" });
 ```
 
 ## Blocking API (`Bun.spawnSync()`)

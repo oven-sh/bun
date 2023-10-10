@@ -1908,6 +1908,11 @@ pub const Package = extern struct {
     /// When .tag is uninitialized, that means the package is not resolved yet.
     resolution: Resolution = .{},
 
+    /// dependencies & resolutions must be the same length
+    /// resolutions[i] is the resolved package ID for dependencies[i]
+    /// if resolutions[i] is an invalid package ID, then dependencies[i] is not resolved
+    dependencies: DependencySlice = .{},
+
     /// The resolved package IDs for this package's dependencies. Instead of storing this
     /// on the `Dependency` struct within `.dependencies`, it is stored on the package itself
     /// so we can access it faster.
@@ -1920,11 +1925,6 @@ pub const Package = extern struct {
     /// By default, the underlying buffer is filled with "invalid_id" to indicate this package ID
     /// was not resolved
     resolutions: PackageIDSlice = .{},
-
-    /// dependencies & resolutions must be the same length
-    /// resolutions[i] is the resolved package ID for dependencies[i]
-    /// if resolutions[i] is an invalid package ID, then dependencies[i] is not resolved
-    dependencies: DependencySlice = .{},
 
     meta: Meta = .{},
     bin: Bin = .{},

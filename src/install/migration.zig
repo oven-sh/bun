@@ -88,26 +88,6 @@ pub fn detectAndLoadOtherLockfile(this: *Lockfile, allocator: Allocator, log: *l
         return lockfile;
     }
 
-    unsupported: {
-        inline for (.{
-            .{ "yarn.lock", "yarn" },
-            .{ "pnpm-lock.yaml", "pnpm" },
-        }) |check| {
-            const check_file = check[0];
-            const check_name = check[1];
-
-            @memcpy(buf[dirname.len .. dirname.len + check_file.len], check_file);
-            buf[dirname.len + check_file.len] = 0;
-            const lockfile_path = buf[0 .. dirname.len + check_file.len :0];
-            if (cwd.accessZ(lockfile_path, .{}) catch null) |_| {
-                Output.prettyErrorln("<yellow><b>warn<r>: Auto-migrating lockfiles from {s} is not yet supported.", .{check_name});
-                Output.prettyErrorln("      Bun may install slightly newer versions of your dependencies.", .{});
-                Output.flush();
-                break :unsupported;
-            }
-        }
-    }
-
     return LoadFromDiskResult{ .not_found = {} };
 }
 

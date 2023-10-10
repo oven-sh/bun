@@ -1088,8 +1088,8 @@ pub const Behavior = packed struct(u8) {
     }
 
     pub fn format(self: Behavior, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        var num_fields: u8 = 0;
         const fields = std.meta.fields(Behavior);
+        var num_fields: u8 = 0;
         inline for (fields) |f| {
             if (f.type == bool and @field(self, f.name)) {
                 num_fields += 1;

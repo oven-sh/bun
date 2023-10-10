@@ -7660,7 +7660,8 @@ pub const PackageManager = struct {
             .{ .not_found = {} };
 
         var root = Lockfile.Package{};
-        var needs_new_lockfile = load_lockfile_result != .ok or load_lockfile_result.ok.buffers.dependencies.items.len == 0 and manager.package_json_updates.len > 0;
+        var needs_new_lockfile = load_lockfile_result != .ok or
+            (load_lockfile_result.ok.buffers.dependencies.items.len == 0 and manager.package_json_updates.len > 0);
 
         // this defaults to false
         // but we force allowing updates to the lockfile when you do bun add
@@ -7668,7 +7669,6 @@ pub const PackageManager = struct {
         manager.progress = .{};
 
         // Step 2. Parse the package.json file
-        //
         var package_json_source = logger.Source.initPathString(package_json_cwd, package_json_contents);
 
         switch (load_lockfile_result) {

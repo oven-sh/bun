@@ -67,7 +67,7 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
 
     return struct {
         const len_indexes = precomputed.len_indexes;
-        pub const kvs: [kvs_list.len]KV = precomputed.sorted_kvs;
+        pub const kvs = precomputed.sorted_kvs;
 
         const keys_list: []const []const KeyType = blk: {
             var k: [kvs.len][]const KeyType = undefined;

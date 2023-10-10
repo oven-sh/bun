@@ -80,6 +80,7 @@ validate("node_modules/body-parser", "200.0.0");
 validate("packages/second/node_modules/not-body-parser", "200.0.0", "body-parser");
 validate("packages/second/node_modules/connect", "200.0.0", "body-parser");
 validate("packages/second/node_modules/body-parser", "3.21.2", "express");
+// NOTE: bun does not hoist this properly, but it is extremely unlikely to be a real use case
 // validate("packages/second/node_modules/body-parser/node_modules/body-parser", "1.13.3", "body-parser");
 
 // connect

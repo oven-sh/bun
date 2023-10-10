@@ -47,8 +47,8 @@ pub const String = extern struct {
     }
 
     pub inline fn assertDefined(_: *const String) void {
-        if (comptime !Environment.allow_assert)
-            return;
+        // if (comptime !Environment.allow_assert)
+        //     return;
 
         // if (this.isUndefined()) {
         //     @breakpoint();

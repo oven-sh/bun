@@ -142,13 +142,46 @@ This will add the following to your `package.json`:
 }
 ```
 
-To install a package globally, see [`Global Installation of Package`](/docs/install/global-install).
-
-To view a complete list of options for a given command:
+To view a complete list of options for this command:
 
 ```bash
 $ bun add --help
 ```
+
+## `bun add --global`
+
+{% callout %}
+**Note** — This would not modify package.json of your current project folder.
+**Alias** - `bun add --global`, `bun add -g`, `bun install --global` and `bun install -g`
+{% /callout %}
+
+To install a package globally, use the `-g`/`--global` flag. This will not modify the `package.json` of your current project. Typically this is used for installing command-line tools.
+
+```bash
+$ bun add --global cowsay # or `bun add -g cowsay`
+$ cowsay "Bun!"
+ ______
+< Bun! >
+ ------
+        \   ^__^
+         \  (oo)\_______
+            (__)\       )\/\
+                ||----w |
+                ||     ||
+```
+
+{% details summary="Configuring global installation behavior" %}
+
+```toml
+[install]
+# where `bun install --global` installs packages
+globalDir = "~/.bun/install/global"
+
+# where globally-installed package bins are linked
+globalBinDir = "~/.bun/bin"
+```
+
+{% /details %}
 
 ## `bun remove`
 

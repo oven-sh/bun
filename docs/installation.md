@@ -34,33 +34,6 @@ $ proto install bun
 
 {% /codetabs %}
 
-### Global Installation Behavior
-{% callout %}
-**Note** — To ensure Bun can install package globally, you might have to manually add `BUN_INSTALL` and `PATH` to your system environment.
-{% /callout %}
-
-{% codetabs %}
-
-```bash#macOS/Linux_(.bash_profile)
-$ echo -e export BUN_INSTALL="\$HOME/.bun" >> ~/.bash_profile
-$ echo -e export PATH=\$BUN_INSTALL/bin:\$PATH >> ~/.bash_profile
-$ source ~/.bash_profile
-```
-
-```bash#macOS/Linux_(.bashrc)
-$ echo -e export BUN_INSTALL="\$HOME/.bun" >> ~/.bashrc
-$ echo -e export PATH=\$BUN_INSTALL/bin:\$PATH >> ~/.bashrc
-$ source ~/.bashrc
-```
-
-```bash#macOS_(.zshrc)
-$ echo -e export BUN_INSTALL="\$HOME/.bun" >> ~/.zshrc
-$ echo -e export PATH=\$BUN_INSTALL/bin:\$PATH >> ~/.zshrc
-$ source ~/.zshrc
-```
-
-{% /codetabs %}
-
 ## Windows
 
 Bun provides a _limited, experimental_ native build for Windows. At the moment, only the Bun runtime is supported.
@@ -93,37 +66,57 @@ $ docker pull oven/bun:alpine
 $ docker pull oven/bun:distroless
 ```
 
-## Check of Installation
+## Checking installation
 
-### `bun --version`
-
-To check the version installed, use the `--version` flag (or `--v`).
+To check that Bun was installed successfully, run `bun --version`.
 
 ```sh
 $ bun --version
+1.x.y
 ```
 
-```sh
-$ bun --v
-```
-
-{% callout %}
-**Note** — This is equalvent to `npm --version` that gives you the installed version.
-**Example** - `1.0.4`
-{% /callout %}
-
-### `bun --revision`
-
-For Bun, there are minor updates within the same version. To check the version with revision, use the `--revision` flag.
+To see the precise commit of [oven-sh/bun](https://github.com/oven-sh/bun) that you're using, run `bun --revision`.
 
 ```sh
 $ bun --revision
+1.x.y+b7982ac1318937560f38e0f8eb18f45eaa43480f
 ```
 
-{% callout %}
-**Note** — There will show you both version and revision installed.
-**Example** - `1.0.4+ffe6bb0b7fd801ef6a3bb408708fbbf070904dd8`
-{% /callout %}
+{% details summary="Troubleshoot: command not found" %}
+**Note** — If you've installed Bun but are seeing a `command not found` error, you may have to manually add the installation directory to your `PATH`. In order for this change to persist across restarts, you'll need to update the configuration file for your system's shell.
+
+To detect your current shell:
+
+```sh
+$ echo $SHELL
+/bin/zsh # or /bin/bash or /bin/fish
+```
+
+Then add these lines to the appropriate file, save it, and open a new shell.
+
+{% codetabs %}
+
+```bash#bash
+# ~/.bashrc
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
+```
+
+```bash#zsh
+# ~/.zshrc
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
+```
+
+```sh#fish
+# ~/.config/fish/config.fish
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
+```
+
+{% /codetabs %}
+
+{% /details %}
 
 ## Upgrading
 

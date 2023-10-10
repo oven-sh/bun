@@ -1,6 +1,9 @@
+import { endianness } from 'node:os';
 import util from 'node:util';
 import koffi from 'koffi';
-import bunffi from 'bun:ffi';
+import type bunffi from 'bun:ffi';
+
+const LE = endianness() === 'LE';
 
 koffi.alias('f32', 'float');
 koffi.alias('f64', 'double');
@@ -15,7 +18,7 @@ koffi.alias('u64', 'uint64_t');
 koffi.alias('usize', 'uint64_t');
 koffi.alias('callback', 'void*');
 koffi.alias('function', 'void*');
-koffi.alias('cstring', 'void*');
+koffi.alias('cstring', 'uint8_t*');
 koffi.alias('pointer', 'void*');
 koffi.alias('ptr', 'void*');
 
@@ -95,6 +98,11 @@ const ffi = {
                         ptrsToValues.set(ptrAddr, rawret);
                         return ptrAddr;
                     }
+                    if (returnType === 'cstring') {
+                        const ptrAddr = Number(koffi.address(rawret));
+                        ptrsToValues.set(ptrAddr, rawret);
+                        return new ffi.CString(ptrAddr);
+                    }
                     return rawret;
                 }
             );
@@ -104,8 +112,16 @@ const ffi = {
             symbols: outsyms,
         };
     },
-    linkSymbols(lib) {
-        return this.dlopen('', lib); // TODO
+    linkSymbols<Fns extends Record<string, bunffi.Narrow<bunffi.FFIFunction>>>(symbols: Fns) {
+        const linked = {} as bunffi.ConvertFns<typeof symbols>;
+        for (const [sym, def] of Object.entries(symbols) as [string, bunffi.FFIFunction][]) {
+            if (!def.ptr) throw new Error('ffi.linkSymbols requires a non-null pointer');
+            Reflect.set(linked, sym, ffi.CFunction(def as typeof def & { ptr: bunffi.Pointer }));
+        }
+        return {
+            close() {},
+            symbols: linked,
+        };
     },
     viewSource(symsOrCb, isCb) {
         // Impossible to polyfill, but we preserve the important properties of the function:
@@ -114,7 +130,11 @@ const ffi = {
         const stub = '/* [native code] */' as const;
         return isCb ? stub : Object.keys(symsOrCb).map(() => stub) as any; // any cast to suppress type error due to non-overload syntax
     },
-    toBuffer(ptr, bOff, bLen) { return Buffer.alloc(0); }, // TODO
+    toBuffer(ptr, bOff, bLen) {
+        const arraybuffer = this.toArrayBuffer(ptr, bOff, bLen);
+        return Buffer.from(arraybuffer);
+    },
+    //! Problem: these arraybuffer views are not mapped to the native memory, so they can't be used to modify the memory.
     toArrayBuffer(ptr, byteOff?, byteLen?) {
         const view = ptrsToValues.get(ptr);
         if (!view) throw new Error(
@@ -122,13 +142,17 @@ const ffi = {
         );
         if (view instanceof ArrayBuffer || view instanceof SharedArrayBuffer) return view as ArrayBuffer; // ?
         if (util.types.isExternal(view)) {
-            let bytes = [], byte, off = 0;
-            do {
-                byte = koffi.decode(view, off++, 'unsigned char[]', 1);
-                bytes.push(byte[0]);
-            } while (byte[0]);
-            bytes.pop();
-            return new Uint8Array(bytes).buffer as ArrayBuffer; // ?
+            if (byteLen === undefined) {
+                let bytes = [], byte, off = 0;
+                do {
+                    byte = koffi.decode(view, off++, 'unsigned char[]', 1);
+                    bytes.push(byte[0]);
+                } while (byte[0]);
+                bytes.pop();
+                return new Uint8Array(bytes).buffer as ArrayBuffer; // ?
+            } else {
+                return koffi.decode(view, byteOff ?? 0, 'unsigned char[]', byteLen).buffer;
+            }
         }
         if (byteOff === undefined) return (view as DataView).buffer;
         return (view as DataView).buffer.slice(byteOff, byteOff + (byteLen ?? (view as DataView).byteLength));
@@ -150,20 +174,113 @@ const ffi = {
             return ptr + byteOffset;
         }
     },
-    read: 0 as any, // TODO
+    read: {
+        f32(ptr, bOff = 0) {
+            const view = ptrsToValues.get(ptr);
+            if (!view) throw new Error(
+                `Untracked pointer ${ptr} in ffi.read.f32, this polyfill is limited to pointers obtained through the same instance of the ffi module.`
+            );
+            if (view instanceof ArrayBuffer || view instanceof SharedArrayBuffer) return new DataView(view).getFloat32(bOff, LE);
+            return koffi.decode(view, bOff, 'f32');
+        },
+        f64(ptr, bOff = 0) {
+            const view = ptrsToValues.get(ptr);
+            if (!view) throw new Error(
+                `Untracked pointer ${ptr} in ffi.read.f64, this polyfill is limited to pointers obtained through the same instance of the ffi module.`
+            );
+            if (view instanceof ArrayBuffer || view instanceof SharedArrayBuffer) return new DataView(view).getFloat64(bOff, LE);
+            return koffi.decode(view, bOff, 'f64');
+        },
+        i8(ptr, bOff = 0) {
+            const view = ptrsToValues.get(ptr);
+            if (!view) throw new Error(
+                `Untracked pointer ${ptr} in ffi.read.i8, this polyfill is limited to pointers obtained through the same instance of the ffi module.`
+            );
+            if (view instanceof ArrayBuffer || view instanceof SharedArrayBuffer) return new DataView(view).getInt8(bOff);
+            return koffi.decode(view, bOff, 'i8');
+        },
+        i16(ptr, bOff = 0) {
+            const view = ptrsToValues.get(ptr);
+            if (!view) throw new Error(
+                `Untracked pointer ${ptr} in ffi.read.i16, this polyfill is limited to pointers obtained through the same instance of the ffi module.`
+            );
+            if (view instanceof ArrayBuffer || view instanceof SharedArrayBuffer) return new DataView(view).getInt16(bOff, LE);
+            return koffi.decode(view, bOff, 'i16');
+        },
+        i32(ptr, bOff = 0) {
+            const view = ptrsToValues.get(ptr);
+            if (!view) throw new Error(
+                `Untracked pointer ${ptr} in ffi.read.i32, this polyfill is limited to pointers obtained through the same instance of the ffi module.`
+            );
+            if (view instanceof ArrayBuffer || view instanceof SharedArrayBuffer) return new DataView(view).getInt32(bOff, LE);
+            return koffi.decode(view, bOff, 'i32');
+        },
+        i64(ptr, bOff = 0) {
+            const view = ptrsToValues.get(ptr);
+            if (!view) throw new Error(
+                `Untracked pointer ${ptr} in ffi.read.i64, this polyfill is limited to pointers obtained through the same instance of the ffi module.`
+            );
+            if (view instanceof ArrayBuffer || view instanceof SharedArrayBuffer) return new DataView(view).getBigInt64(bOff, LE);
+            return koffi.decode(view, bOff, 'i64');
+        },
+        intptr(ptr, bOff = 0) {
+            return this.i32(ptr, bOff);
+        },
+        ptr(ptr, bOff = 0) {
+            const u64 = this.u64(ptr, bOff);
+            const masked = u64 & 0b11111111_11111111_11111111_11111111_11111111_11111111_00000111_00000000n;
+            return Number(masked);
+        },
+        u8(ptr, bOff = 0) {
+            const view = ptrsToValues.get(ptr);
+            if (!view) throw new Error(
+                `Untracked pointer ${ptr} in ffi.read.u8, this polyfill is limited to pointers obtained through the same instance of the ffi module.`
+            );
+            if (view instanceof ArrayBuffer || view instanceof SharedArrayBuffer) return new DataView(view).getUint8(bOff);
+            return koffi.decode(view, bOff, 'u8');
+        },
+        u16(ptr, bOff = 0) {
+            const view = ptrsToValues.get(ptr);
+            if (!view) throw new Error(
+                `Untracked pointer ${ptr} in ffi.read.u16, this polyfill is limited to pointers obtained through the same instance of the ffi module.`
+            );
+            if (view instanceof ArrayBuffer || view instanceof SharedArrayBuffer) return new DataView(view).getUint16(bOff, LE);
+            return koffi.decode(view, bOff, 'u16');
+        },
+        u32(ptr, bOff = 0) {
+            const view = ptrsToValues.get(ptr);
+            if (!view) throw new Error(
+                `Untracked pointer ${ptr} in ffi.read.u32, this polyfill is limited to pointers obtained through the same instance of the ffi module.`
+            );
+            if (view instanceof ArrayBuffer || view instanceof SharedArrayBuffer) return new DataView(view).getUint32(bOff, LE);
+            return koffi.decode(view, bOff, 'u32');
+        },
+        u64(ptr, bOff = 0) {
+            const view = ptrsToValues.get(ptr);
+            if (!view) throw new Error(
+                `Untracked pointer ${ptr} in ffi.read.u64, this polyfill is limited to pointers obtained through the same instance of the ffi module.`
+            );
+            if (view instanceof ArrayBuffer || view instanceof SharedArrayBuffer) return new DataView(view).getBigUint64(bOff, LE);
+            return koffi.decode(view, bOff, 'u64');
+        },
+    },
     suffix:
         process.platform === 'darwin' ? '.dylib' :
         (process.platform === 'win32' ? '.dll' : '.so'),
-    // TODO
     CString: class CString extends String implements bunffi.CString {
-        constructor(str: bunffi.Pointer, bOff?: number, bLen?: number) {
+        constructor(ptr: bunffi.Pointer, bOff?: number, bLen?: number) {
+            const buf = ffi.toBuffer(ptr, bOff, bLen);
+            const str = buf.toString('ascii');
             super(str);
+            this.ptr = ptr;
+            this.#buffer = buf.buffer as ArrayBuffer; // ?
         }
-        close() { }
-        ptr!: bunffi.Pointer;
+        close() {};
+        ptr: bunffi.Pointer;
         byteOffset?: number;
         byteLength?: number;
-        get arrayBuffer(): ArrayBuffer { return new ArrayBuffer(0); };
+        #buffer: ArrayBuffer;
+        get arrayBuffer(): ArrayBuffer { return this.#buffer; };
     },
     CFunction(sym): CallableFunction & { close(): void; } {
         if (!sym.ptr) throw new Error('ffi.CFunction requires a non-null pointer');
@@ -174,15 +291,15 @@ const ffi = {
             `Untracked pointer ${sym.ptr} in ffi.CFunction, this polyfill is limited to pointers obtained through the same instance of the ffi module.`
         );
         const fn = koffi.decode(fnPtr, fnSig);
-        fn.close = () => koffi.unregister(fn);
+        fn.close = () => {};
         return fn;
     },
     // TODO
     JSCallback: class JSCallback implements bunffi.JSCallback {
-        constructor(cb: (...args: any[]) => any, def: bunffi.FFIFunction) { }
+        constructor(cb: (...args: any[]) => any, def: bunffi.FFIFunction) {}
         readonly ptr!: bunffi.Pointer | null;
         readonly threadsafe!: boolean;
-        close() { };
+        close() {};
     },
     FFIType,
 } satisfies typeof bunffi;

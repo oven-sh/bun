@@ -466,7 +466,10 @@ pub const Body = struct {
             JSC.markBinding(@src());
 
             switch (this.*) {
-                .Used, .Empty => {
+                .Used => {
+                    return JSC.WebCore.ReadableStream.used(globalThis);
+                },
+                .Empty => {
                     return JSC.WebCore.ReadableStream.empty(globalThis);
                 },
                 .Null => {
@@ -492,6 +495,9 @@ pub const Body = struct {
                     var locked = &this.Locked;
                     if (locked.readable) |readable| {
                         return readable.value;
+                    }
+                    if (locked.promise != null) {
+                        return JSC.WebCore.ReadableStream.used(globalThis);
                     }
                     var drain_result: JSC.WebCore.DrainResult = .{
                         .estimated_size = 0,
@@ -1104,8 +1110,7 @@ pub fn BodyMixin(comptime Type: type) type {
             var body: *Body.Value = this.getBodyValue();
 
             if (body.* == .Used) {
-                // TODO: make this closed
-                return JSC.WebCore.ReadableStream.empty(globalThis);
+                return JSC.WebCore.ReadableStream.used(globalThis);
             }
 
             return body.toReadableStream(globalThis);

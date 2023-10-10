@@ -20,7 +20,6 @@ describe("AbortSignal", () => {
   });
 
   test("AbortSignal.timeout(n) should not freeze the process", async () => {
-    
     const fileName = join(import.meta.dir, "abort.signal.ts");
 
     const server = Bun.spawn({
@@ -29,11 +28,14 @@ describe("AbortSignal", () => {
       cwd: tmpdir(),
     });
 
-    const exitCode = await Promise.race([server.exited, (async () => {
-      await Bun.sleep(5000);
-      server.kill();
-      return 2;
-    })()])
+    const exitCode = await Promise.race([
+      server.exited,
+      (async () => {
+        await Bun.sleep(5000);
+        server.kill();
+        return 2;
+      })(),
+    ]);
 
     expect(exitCode).toBe(0);
   });

@@ -786,7 +786,6 @@ pub const Fetch = struct {
                         },
                         bun.default_allocator,
                     );
-                    return;
                 }
                 // if we are buffering resolve the promise
                 if (this.response.get()) |response_js| {
@@ -796,7 +795,7 @@ pub const Fetch = struct {
                             const promise = promise_.asAnyPromise().?;
                             promise.reject(globalThis, err);
                         }
-                        
+
                         response.body.value.toErrorInstance(err, globalThis);
                     }
                 }

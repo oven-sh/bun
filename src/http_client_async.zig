@@ -481,7 +481,6 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(&dead_socket).ptr());
                     socket.close(0, null);
                 }
-                
             }
             pub fn onClose(
                 ptr: *anyopaque,
@@ -2901,7 +2900,6 @@ fn fail(this: *HTTPClient, err: anyerror) void {
         _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
     }
 
-    
     this.state.request_stage = .fail;
     this.state.response_stage = .fail;
     this.state.fail = err;

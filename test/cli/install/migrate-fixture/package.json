@@ -2,12 +2,12 @@
   "name": "root",
   "version": "0.0.0",
   "dependencies": {
-    "bar": "0.0.2",
-    "bun-types": "1.0.0",
-    "hello": "0.3.2",
-    "install-test": ">=0.0.0",
-    "install-test1": "0.x",
-    "public-install-test": "*"
+    "bar": "https://github.com/oven-sh/bun/raw/f7e4eb83694aa007a492ef66c28ffbe6a2dae791/test/cli/install/bar-0.0.2.tgz",
+    "bun-types": "file:bun-types",
+    "hello": "file:hello-0.3.2.tgz",
+    "install-test": "bitbucket:dylan-conway/public-install-test",
+    "install-test1": "github:dylan-conway/install-test",
+    "public-install-test": "gitlab:dylan-conway/public-install-test"
   },
   "workspaces": [
     "packages/*"

@@ -3007,7 +3007,6 @@ pub const PackageManager = struct {
     ) !void {
         const name = dependency.realname();
 
-        // std.debug.print("enqueue \"{s}\" dependency: {s}\n", .{ @tagName(dependency.version.tag), this.lockfile.str(&name) });
 
         const name_hash = switch (dependency.version.tag) {
             .dist_tag, .git, .github, .npm, .tarball, .workspace => String.Builder.stringHash(this.lockfile.str(&name)),
@@ -3154,7 +3153,6 @@ pub const PackageManager = struct {
                                 );
 
                             if (!dependency.behavior.isPeer() or install_peer) {
-                                // std.debug.print("setting up network task for: {s}\n", .{name_str});
                                 var network_entry = try this.network_dedupe_map.getOrPutContext(this.allocator, task_id, .{});
                                 if (!network_entry.found_existing) {
                                     if (this.options.enable.manifest_cache) {
@@ -3217,7 +3215,9 @@ pub const PackageManager = struct {
                                     this.enqueueNetworkTask(network_task);
                                 }
                             } else {
-                                try this.peer_dependencies.append(this.allocator, id);
+                                if (this.options.do.install_peer_dependencies) {
+                                    try this.peer_dependencies.append(this.allocator, id);
+                                }
                             }
 
                             var manifest_entry_parse = try this.task_queue.getOrPutContext(this.allocator, task_id, .{});
@@ -4772,6 +4772,7 @@ pub const PackageManager = struct {
                 }
 
                 if (bun_install.save_peer) |save| {
+                    this.do.install_peer_dependencies = save;
                     this.remote_package_features.peer_dependencies = save;
                 }
 
@@ -5042,6 +5043,7 @@ pub const PackageManager = struct {
             print_meta_hash_string: bool = false,
             verify_integrity: bool = true,
             summary: bool = true,
+            install_peer_dependencies: bool = true,
         };
 
         pub const Enable = struct {
@@ -7507,7 +7509,7 @@ pub const PackageManager = struct {
                                 .onPackageManifestError = {},
                                 .onPackageDownloadError = {},
                             },
-                            false,
+                            true,
                             log_level,
                         );
                         if (!installer.options.do.install_packages) return error.InstallFailed;
@@ -7948,31 +7950,33 @@ pub const PackageManager = struct {
                     manager.sleep();
             }
 
-            try manager.processPeerDependencyList();
+            if (manager.options.do.install_peer_dependencies) {
+                try manager.processPeerDependencyList();
 
-            manager.drainDependencyList();
+                manager.drainDependencyList();
 
-            while (manager.pending_tasks > 0) {
-                try manager.runTasks(
-                    *PackageManager,
-                    manager,
-                    .{
-                        .onExtract = {},
-                        .onResolve = {},
-                        .onPackageManifestError = {},
-                        .onPackageDownloadError = {},
-                        .progress_bar = true,
-                    },
-                    true,
-                    log_level,
-                );
+                while (manager.pending_tasks > 0) {
+                    try manager.runTasks(
+                        *PackageManager,
+                        manager,
+                        .{
+                            .onExtract = {},
+                            .onResolve = {},
+                            .onPackageManifestError = {},
+                            .onPackageDownloadError = {},
+                            .progress_bar = true,
+                        },
+                        true,
+                        log_level,
+                    );
 
-                if (PackageManager.verbose_install and manager.pending_tasks > 0) {
-                    Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{manager.pending_tasks});
+                    if (PackageManager.verbose_install and manager.pending_tasks > 0) {
+                        Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{manager.pending_tasks});
+                    }
+
+                    if (manager.pending_tasks > 0)
+                        manager.sleep();
                 }
-
-                if (manager.pending_tasks > 0)
-                    manager.sleep();
             }
 
             if (comptime log_level.showProgress()) {

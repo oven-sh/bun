@@ -3627,7 +3627,6 @@ pub const PackageManager = struct {
             // through "dependencies" or "optionalDependencies", skip it
             if (dependency.behavior.isPeer()) {
                 if (non_optional_names.contains(dependency.name_hash)) {
-                    std.debug.print("skip {s}\n", .{this.lockfile.str(&dependency.name)});
                     continue;
                 }
 
@@ -3638,9 +3637,8 @@ pub const PackageManager = struct {
                     const other_dep = lockfile.buffers.dependencies.items[j];
                     const not_optional = this.options.local_package_features.optional_dependencies and other_dep.behavior.isOptional();
                     if (other_dep.behavior.isNormal() or not_optional) {
-                        non_optional_names.putAssumeCapacity(other_dep.name_hash);
+                        non_optional_names.putAssumeCapacity(other_dep.name_hash, {});
                         if (other_dep.name_hash == dependency.name_hash) {
-                            std.debug.print("skip2 {s}\n", .{this.lockfile.str(&dependency.name)});
                             skip = true;
                             break;
                         }

@@ -12,6 +12,68 @@ if (NOT CI)
     string(APPEND CMAKE_CXX_FLAGS "-MMD")
 endIf()
 
+execute_process(
+    COMMAND brew --prefix
+    OUTPUT_VARIABLE BREW_PREFIX_PATH
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+# Determine OS name
+execute_process(
+    COMMAND uname -s
+    COMMAND tr '[:upper:]' '[:lower:]'
+    OUTPUT_VARIABLE OS_NAME
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
+# Determine architecture
+execute_process(
+    COMMAND uname -m
+    OUTPUT_VARIABLE ARCH_NAME_RAW
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
+set(BUN_AUTO_UPDATER_REPO "Jarred-Sumner/bun-releases-for-updater")
+set(CMAKE_CXX_COMPILER_LAUNCHER_FLAG "")
+
+# On Linux ARM64, uname -m reports aarch64
+if(ARCH_NAME_RAW STREQUAL "aarch64")
+    set(ARCH_NAME_RAW "arm64")
+endif()
+
+if(NOT DEFINED CPU_TARGET)
+    set(CPU_TARGET "native")
+endif()
+
+set(MARCH_NATIVE "-mtune=${CPU_TARGET}")
+set(NATIVE_OR_OLD_MARCH "")
+set(MMD_IF_LOCAL "")
+set(DEFAULT_MIN_MACOS_VERSION "")
+set(ARCH_NAME "")
+set(DOCKER_BUILDARCH "")
+set(AR "")
+
+if(ARCH_NAME_RAW STREQUAL "arm64")
+    set(ARCH_NAME "aarch64")
+    set(DOCKER_BUILDARCH "arm64")
+    set(BREW_PREFIX_PATH "/opt/homebrew")
+    set(DEFAULT_MIN_MACOS_VERSION "11.0")
+    set(MARCH_NATIVE "-mtune=${CPU_TARGET}")
+else()
+    set(ARCH_NAME "x64")
+    set(DOCKER_BUILDARCH "amd64")
+    set(BREW_PREFIX_PATH "/usr/local")
+    set(DEFAULT_MIN_MACOS_VERSION "10.14")
+    set(MARCH_NATIVE "-march=${CPU_TARGET} -mtune=${CPU_TARGET}")
+    set(NATIVE_OR_OLD_MARCH "-march=nehalem")
+endif()
+
+if(NOT DEFINED MIN_MACOS_VERSION)
+    set(MIN_MACOS_VERSION ${DEFAULT_MIN_MACOS_VERSION})
+endif()
+
+if(NOT DEFINED CI)
+    set(CI "false")
+endif()
 
 # find node or bun
 message(STATUS "Looking for bun or node")
@@ -88,6 +150,8 @@ if (NOT WIN32)
 
     set(CMAKE_C_COMPILER "${REAL_CC}")
     set(CMAKE_CXX_COMPILER "${REAL_CXX}")
+    set(CMAKE_AR "${AR}")
+    find_program(CMAKE_RANLIB NAMES llvm-16-ranlib llvm-ranlib)
 
     # else let cmake find msvc
 endif()
@@ -157,6 +221,49 @@ endif()
 find_program(SED NAMES gsed sed)
 
 
+# Determine directory of current CMakeLists.txt
+get_filename_component(BUN_DIR ${CMAKE_CURRENT_LIST_FILE} DIRECTORY)
+
+# Set the dependencies directories
+if(NOT DEFINED BUN_DEPS_DIR)
+  set(BUN_DEPS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/deps")
+endif()
+
+if(NOT DEFINED BUN_DEPS_OUT_DIR)
+  set(BUN_DEPS_OUT_DIR ${BUN_DEPS_DIR})
+endif()
+
+# Determine CPU count
+if(APPLE)
+  execute_process(COMMAND sysctl -n hw.logicalcpu OUTPUT_VARIABLE CPU_COUNT OUTPUT_STRIP_TRAILING_WHITESPACE)
+elseif(UNIX) # This branch covers Linux, among others
+  execute_process(COMMAND nproc OUTPUT_VARIABLE CPU_COUNT OUTPUT_STRIP_TRAILING_WHITESPACE)
+else()
+  set(CPU_COUNT 2) # Default value
+endif()
+
+# Default CPUS to CPU_COUNT if not set
+if(NOT DEFINED CPUS)
+  set(CPUS ${CPU_COUNT})
+endif()
+
+# Default USER to environment variable USER
+if(NOT DEFINED USER)
+  set(USER $ENV{USER})
+endif()
+
+if(NOT DEFINED BUN_RELEASE_DIR)
+  get_filename_component(BUN_RELEASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../bun-release" ABSOLUTE)
+endif()
+
+set(OPENSSL_VERSION "OpenSSL_1_1_1l")
+
+# TODO: use cmake's find_package
+if (NOT DEFINED LIBICONV_PATH)
+    set(LIBICONV_PATH "${BREW_PREFIX_PATH}/opt/libiconv/lib/libiconv.a")
+endif()
 
 
-message(STATUS "#### : ${CMAKE_PROJECT_VERSION}")
+
+
+message(STATUS "#### : ${BREW_PREFIX_PATH}")

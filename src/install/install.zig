@@ -3007,7 +3007,6 @@ pub const PackageManager = struct {
     ) !void {
         const name = dependency.realname();
 
-
         const name_hash = switch (dependency.version.tag) {
             .dist_tag, .git, .github, .npm, .tarball, .workspace => String.Builder.stringHash(this.lockfile.str(&name)),
             else => dependency.name_hash,
@@ -3612,11 +3611,50 @@ pub const PackageManager = struct {
         const lockfile = this.lockfile;
 
         // Step 1. Go through main dependencies
-        var i = dependencies_list.off;
+        const begin = dependencies_list.off;
+        var i = begin;
         const end = dependencies_list.off +| dependencies_list.len;
+
+        var non_optional_names = std.AutoHashMap(u64, void).init(this.allocator);
+        non_optional_names.ensureUnusedCapacity(end - i) catch unreachable;
+        defer non_optional_names.deinit();
+
         // we have to be very careful with pointers here
         while (i < end) : (i += 1) {
             const dependency = lockfile.buffers.dependencies.items[i];
+
+            // if dependency is peer and is going to be installed
+            // through "dependencies" or "optionalDependencies", skip it
+            if (dependency.behavior.isPeer()) {
+                if (non_optional_names.contains(dependency.name_hash)) {
+                    std.debug.print("skip {s}\n", .{this.lockfile.str(&dependency.name)});
+                    continue;
+                }
+
+                // check the remaining dependencies
+                var j = i + 1;
+                var skip = false;
+                while (j < end) : (j += 1) {
+                    const other_dep = lockfile.buffers.dependencies.items[j];
+                    const not_optional = this.options.local_package_features.optional_dependencies and other_dep.behavior.isOptional();
+                    if (other_dep.behavior.isNormal() or not_optional) {
+                        non_optional_names.putAssumeCapacity(other_dep.name_hash);
+                        if (other_dep.name_hash == dependency.name_hash) {
+                            std.debug.print("skip2 {s}\n", .{this.lockfile.str(&dependency.name)});
+                            skip = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (skip) continue;
+            } else {
+                const not_optional = this.options.local_package_features.optional_dependencies and dependency.behavior.isOptional();
+                if (dependency.behavior.isNormal() or not_optional) {
+                    non_optional_names.putAssumeCapacity(dependency.name_hash, {});
+                }
+            }
+
             const resolution = lockfile.buffers.resolutions.items[i];
             this.enqueueDependencyWithMain(
                 i,
@@ -7529,7 +7567,7 @@ pub const PackageManager = struct {
                         .onPackageManifestError = {},
                         .onPackageDownloadError = {},
                     },
-                    false,
+                    true,
                     log_level,
                 );
                 if (!installer.options.do.install_packages) return error.InstallFailed;
@@ -7545,7 +7583,7 @@ pub const PackageManager = struct {
                         .onPackageManifestError = {},
                         .onPackageDownloadError = {},
                     },
-                    false,
+                    true,
                     log_level,
                 );
 

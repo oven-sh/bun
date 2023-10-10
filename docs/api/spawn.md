@@ -185,7 +185,13 @@ proc.unref();
 
 ## IPC - Inter-Process Communication
 
-`Bun.spawn()` supports IPC between other bun sub processes
+When the ipc is specified, Bun will open an IPC channel to the subprocess. The passed callback is called for incoming messages, and `subprocess.send` can send messages to the subprocess. Messages are serialized using the JSC serialize API, which allows for the same types that `postMessage`/`structuredClone` supports.
+
+
+The subprocess can send and recieve messages by using `process.send` and `process.on("message")`, respectively. This is the same API as what Node.js exposes when `child_process.fork()` is used.
+
+
+Currently, this is only compatible with processes that are other `bun` instances.
 
 ```ts
 // parent.ts
@@ -204,14 +210,9 @@ The child process and send messages to the parent using the `process.send` metho
 
 ```ts
 // child.ts
-interface ChildProcess extends Process {
-  send: (message: any) => void;
-}
-
-const send = (process as ChildProcess).send;
-
-send("Hello from child as string");
-send({ message: "Hello from child as object" });
+// process.send will be undefined if the ipc channel is not open
+process.send("Hello from child as string");
+process.send({ message: "Hello from child as object" });
 
 process.on("message", (message) => {
     /**

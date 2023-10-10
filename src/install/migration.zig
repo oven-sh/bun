@@ -232,6 +232,9 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
             );
             continue;
         };
+        if (pkg.get("extraneous")) |x| if (x.data == .e_boolean and x.data.e_boolean.value) {
+            continue;
+        };
 
         id_map.putAssumeCapacity(
             pkg_path,
@@ -331,7 +334,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
         // the counting pass
         const pkg = entry.value.?.data.e_object;
 
-        if (pkg.get("link") != null or if (pkg.get("inBundle")) |x| x.data == .e_boolean and x.data.e_boolean.value else false) continue;
+        if (pkg.get("link") != null or if (pkg.get("inBundle") orelse pkg.get("extraneous")) |x| x.data == .e_boolean and x.data.e_boolean.value else false) continue;
 
         const pkg_path = entry.key.?.asString(allocator).?;
 
@@ -513,7 +516,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
         // the counting pass
         const pkg = entry.value.?.data.e_object;
 
-        if (pkg.get("link") != null or if (pkg.get("inBundle")) |x| x.data == .e_boolean and x.data.e_boolean.value else false) continue;
+        if (pkg.get("link") != null or if (pkg.get("inBundle") orelse pkg.get("extraneous")) |x| x.data == .e_boolean and x.data.e_boolean.value else false) continue;
 
         const pkg_path = entry.key.?.asString(allocator).?;
 
@@ -576,8 +579,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                 if (deps.data != .e_object) return error.InvalidNPMLockfile;
                 const properties = deps.data.e_object.properties;
 
-                dep_loop: for (properties.slice(), 0..) |prop, i| {
-                    _ = i;
+                dep_loop: for (properties.slice()) |prop| {
                     const name_bytes = prop.key.?.asString(this.allocator).?;
                     if (bundled_dependencies != null and bundled_dependencies.?.getIndex(name_bytes) != null) continue :dep_loop;
 

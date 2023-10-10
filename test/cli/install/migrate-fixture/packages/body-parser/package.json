@@ -1,0 +1,7 @@
+{
+  "name": "body-parser",
+  "version": "1.13.3",
+  "dependencies": {
+    "svelte": "gitlab:dylan-conway/public-install-test"
+  }
+}

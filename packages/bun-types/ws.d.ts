@@ -74,6 +74,8 @@ declare module "ws" {
     WebSocket?: U | undefined;
   }
 
+  interface ServerOption extends WebSocketServerOptions {}
+
   interface AddressInfo {
     address: string;
     family: string;
@@ -219,4 +221,6 @@ declare module "ws" {
       listener: (...args: any[]) => void,
     ): this;
   }
+
+  var Server: typeof WebSocketServer;
 }

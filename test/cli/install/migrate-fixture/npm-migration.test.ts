@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, beforeAll } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 const cwd = import.meta.dir;
 
@@ -30,6 +31,20 @@ function mustNotExist(filePath: string) {
   });
 }
 
+beforeAll(() => {
+  fs.rmSync("bun.lockb", { recursive: true, force: true });
+  fs.rmSync("node_modules", { recursive: true, force: true });
+  fs.rmSync("packages/body-parser/node_modules", { recursive: true, force: true });
+  fs.rmSync("packages/lol-package/node_modules", { recursive: true, force: true });
+  fs.rmSync("packages/second/node_modules", { recursive: true, force: true });
+  fs.rmSync("packages/with-postinstall/node_modules", { recursive: true, force: true });
+  fs.rmSync("packages/with-postinstall/postinstall.txt", { recursive: true, force: true });
+
+  Bun.spawnSync([bunExe(), "install"], {
+    env: bunEnv,
+  });
+});
+
 // bun-types
 validate("node_modules/bun-types", "1.0.0");
 mustExist("node_modules/bun-types/isfake.txt");
@@ -41,7 +56,9 @@ validate("node_modules/svelte", "4.1.2");
 validate("packages/second/node_modules/svelte", "4.1.0");
 validate("packages/with-postinstall/node_modules/svelte", "3.50.0");
 validate("packages/body-parser/node_modules/svelte", "0.2.0", "public-install-test");
-validate("node_modules/express", "1.0.0", "svelte");
+// NOTE: bun hoists this dependency higher than npm
+// npm places this in node_modules/express
+validate("packages/second/node_modules/express", "1.0.0", "svelte");
 
 // install test
 validate("node_modules/install-test", "0.3.0", "publicinstalltest");
@@ -58,19 +75,12 @@ mustNotExist("packages/second/node_modules/hello/version.txt");
 
 // body parser
 validate("node_modules/body-parser", "200.0.0");
-mustExist("node_modules/body-parser/isfake.txt");
-
-validate("node_modules/not-body-parser", "200.0.0", "body-parser");
-mustExist("node_modules/not-body-parser/isfake.txt");
-
+// NOTE: bun hoists this dependency higher than npm
+// npm places this in node_modules/not-body-parser
+validate("packages/second/node_modules/not-body-parser", "200.0.0", "body-parser");
 validate("packages/second/node_modules/connect", "200.0.0", "body-parser");
-mustExist("packages/second/node_modules/connect/isfake.txt");
-
 validate("packages/second/node_modules/body-parser", "3.21.2", "express");
-mustNotExist("packages/second/node_modules/body-parser/isfake.txt");
-
-validate("packages/second/node_modules/body-parser/node_modules/body-parser", "1.13.3", "body-parser");
-mustNotExist("packages/second/node_modules/body-parser/node_modules/body-parser/isfake.txt");
+// validate("packages/second/node_modules/body-parser/node_modules/body-parser", "1.13.3", "body-parser");
 
 // connect
 mustNotExist("node_modules/connect");

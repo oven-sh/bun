@@ -314,7 +314,20 @@
         "BUN_DEBUG_StringBuilder": "1"
       }
     },
-
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun install [migration fixture]",
+      "program": "bun-debug",
+      "args": ["install"],
+      "cwd": "${workspaceFolder}/test/cli/install/migrate-fixture",
+      "console": "internalConsole",
+      "env": {
+        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_DEBUG_migrate": "1",
+        "BUN_DEBUG_Lockfile": "1"
+      }
+    },
     {
       "type": "lldb",
       "request": "launch",

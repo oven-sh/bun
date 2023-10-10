@@ -173,10 +173,9 @@ pub const LoadFromDiskResult = union(enum) {
 
 pub fn loadFromDisk(this: *Lockfile, allocator: Allocator, log: *logger.Log, filename: stringZ) LoadFromDiskResult {
     if (comptime Environment.allow_assert) std.debug.assert(FileSystem.instance_loaded);
-    var file = std.io.getStdIn();
 
-    if (filename.len > 0)
-        file = std.fs.cwd().openFileZ(filename, .{ .mode = .read_only }) catch |err| {
+    var file = if (filename.len > 0)
+        std.fs.cwd().openFileZ(filename, .{ .mode = .read_only }) catch |err| {
             return switch (err) {
                 error.FileNotFound => {
                     // Attempt to load from "package-lock.json", "yarn.lock", etc.
@@ -190,7 +189,9 @@ pub fn loadFromDisk(this: *Lockfile, allocator: Allocator, log: *logger.Log, fil
                 error.AccessDenied, error.BadPathName => LoadFromDiskResult{ .not_found = {} },
                 else => LoadFromDiskResult{ .err = .{ .step = .open_file, .value = err } },
             };
-        };
+        }
+    else
+        std.io.getStdIn();
 
     defer file.close();
     var buf = file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
@@ -4753,6 +4754,9 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
             try w.objectField("name");
             try w.write(pkg.name.slice(sb));
 
+            try w.objectField("name_hash");
+            try w.write(pkg.name_hash);
+
             try w.objectField("resolution");
             if (pkg.resolution.tag == .uninitialized) {
                 try w.write(null);
@@ -4884,6 +4888,27 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
             //     try w.objectField("len");
             //     try w.write(pkg.resolutions.len);
             // }
+        }
+    }
+
+    try w.objectField("workspace_paths");
+    {
+        try w.beginObject();
+        defer w.endObject() catch {};
+
+        for (this.workspace_paths.keys(), this.workspace_paths.values()) |k, v| {
+            try w.objectField(try std.fmt.bufPrint(&buf, "{d}", .{k}));
+            try w.write(v.slice(sb));
+        }
+    }
+    try w.objectField("workspace_versions");
+    {
+        try w.beginObject();
+        defer w.endObject() catch {};
+
+        for (this.workspace_versions.keys(), this.workspace_versions.values()) |k, v| {
+            try w.objectField(try std.fmt.bufPrint(&buf, "{d}", .{k}));
+            try w.write(try std.fmt.bufPrint(&buf, "{}", .{v.fmt(sb)}));
         }
     }
 

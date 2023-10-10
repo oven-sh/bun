@@ -229,7 +229,7 @@ pub inline fn isGitHubRepoPath(dependency: string) bool {
 ///
 /// This also checks for a github url that ends with ".tar.gz"
 pub inline fn isGitHubTarballPath(dependency: string) bool {
-    if (strings.endsWithComptime(dependency, ".tar.gz")) return true;
+    if (isTarball(dependency)) return true;
 
     var parts = strings.split(dependency, "/");
 
@@ -832,6 +832,12 @@ pub fn parseWithTag(
                     .literal = sliced.value(),
                     .value = .{ .tarball = .{ .uri = .{ .local = sliced.sub(dependency[7..]).value() } } },
                 };
+            } else if (strings.hasPrefixComptime(dependency, "file:")) {
+                return .{
+                    .tag = .tarball,
+                    .literal = sliced.value(),
+                    .value = .{ .tarball = .{ .uri = .{ .local = sliced.sub(dependency[5..]).value() } } },
+                };
             } else if (strings.contains(dependency, "://")) {
                 if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "invalid or unsupported dependency \"{s}\"", .{dependency}) catch unreachable;
                 return null;
@@ -1109,7 +1115,6 @@ pub const Behavior = packed struct(u8) {
                 inline for (fields) |f| {
                     if (f.type == bool and @field(self, f.name)) {
                         try writer.writeAll(" " ++ f.name);
-                        break;
                     }
                 }
                 try writer.writeAll(" }");

@@ -3458,11 +3458,6 @@ pub const PackageManager = struct {
                 }
             },
             .tarball => {
-                Output.debug("loser {}\n", .{
-                    dependency.version.value.tarball.uri.remote.fmt(
-                        this.lockfile.buffers.string_bytes.items,
-                    ),
-                });
                 const res: Resolution = switch (dependency.version.value.tarball.uri) {
                     .local => |path| .{
                         .tag = .local_tarball,
@@ -6789,7 +6784,6 @@ pub const PackageManager = struct {
 
         /// Call when you mutate the length of `lockfile.packages`
         pub fn fixCachedLockfilePackageSlices(this: *PackageInstaller) void {
-            Output.debug("LOSER FIXUP TIME", .{});
             this.metas = this.lockfile.packages.items(.meta);
             this.names = this.lockfile.packages.items(.name);
             this.bins = this.lockfile.packages.items(.bin);

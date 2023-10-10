@@ -476,10 +476,10 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     std.debug.assert(context().pending_sockets.put(pooled));
                 }
 
-                socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(&dead_socket).ptr());
-                socket.close(0, null);
-                if (comptime Environment.allow_assert) {
-                    std.debug.assert(false);
+                // we can reach here if we are aborted
+                if (!socket.isClosed()) {
+                    socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(&dead_socket).ptr());
+                    socket.close(0, null);
                 }
             }
             pub fn onClose(
@@ -1104,7 +1104,7 @@ pub fn onClose(
     }
 
     if (in_progress) {
-        client.fail(error.ConnectionClosed);
+        client.closeAndFail(error.ConnectionClosed, is_ssl, socket);
     }
 }
 pub fn onTimeout(
@@ -2900,9 +2900,6 @@ fn fail(this: *HTTPClient, err: anyerror) void {
         _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
     }
 
-    this.state.reset(this.allocator);
-    this.proxy_tunneling = false;
-
     this.state.request_stage = .fail;
     this.state.response_stage = .fail;
     this.state.fail = err;
@@ -2910,6 +2907,9 @@ fn fail(this: *HTTPClient, err: anyerror) void {
 
     const callback = this.result_callback;
     const result = this.toResult();
+    this.state.reset(this.allocator);
+    this.proxy_tunneling = false;
+
     callback.run(result);
 }
 
@@ -2917,9 +2917,6 @@ fn fail(this: *HTTPClient, err: anyerror) void {
 fn cloneMetadata(this: *HTTPClient) void {
     std.debug.assert(this.state.pending_response != null);
     if (this.state.pending_response) |response| {
-        // we should never clone metadata twice
-        std.debug.assert(this.state.cloned_metadata == null);
-        // just in case we check and free
         if (this.state.cloned_metadata != null) {
             this.state.cloned_metadata.?.deinit(this.allocator);
             this.state.cloned_metadata = null;

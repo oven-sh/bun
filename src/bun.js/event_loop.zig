@@ -1148,7 +1148,7 @@ pub const EventLoop = struct {
 
     pub fn callTask(timer: *uws.Timer) callconv(.C) void {
         var task = Task.from(timer.as(*anyopaque));
-        timer.deinit();
+        defer timer.deinit(true);
 
         JSC.VirtualMachine.get().enqueueTask(task);
     }

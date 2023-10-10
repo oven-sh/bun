@@ -93,8 +93,8 @@ bun upgrade --canary
   - [`bun run`](https://bun.sh/docs/cli/run)
   - [`bun install`](https://bun.sh/docs/cli/install)
   - [`bun test`](https://bun.sh/docs/cli/test)
-  - [`bun init`](https://bun.sh/docs/scaffolding/bun-init)
-  - [`bun create`](https://bun.sh/docs/scaffolding/bun-create)
+  - [`bun init`](https://bun.sh/docs/cli/init)
+  - [`bun create`](https://bun.sh/docs/cli/bun-create)
   - [`bunx`](https://bun.sh/docs/cli/bunx)
 - Runtime
   - [Runtime](https://bun.sh/docs/runtime/index)

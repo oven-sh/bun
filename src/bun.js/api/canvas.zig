@@ -86,14 +86,58 @@ const Color = union(enum) {
         return .{ .argb = color };
     }
 
+    pub fn rgb(color: u32) Color {
+        return .{ .argb = 0xff000000 | color };
+    }
+
     pub fn fromJS(value: JSValue, global: *JSGlobalObject) ?Color {
         if (bun.String.tryFromJS(value, global)) |str| {
             if (str.inMapCaseInsensitive(Names)) |color| {
                 return color;
             }
+
+            const length = str.length();
+            if (length >= 4 and str.hasPrefixComptime("#")) brk: {
+                const hex_length = length - 1;
+                if (hex_length != 3 and hex_length != 4 and hex_length != 6 and hex_length != 8) break :brk;
+                if (str.is8Bit()) {
+                    var hex = str.byteSlice()[1..];
+                    var hex_value: u32 = 0;
+                    for (hex) |digit| {
+                        if (!std.ascii.isHex(digit)) break :brk;
+                        hex_value <<= 4;
+                        hex_value |= if (digit < 'A') digit - '0' else (digit - 'A' + 10) & 0xf;
+                    }
+                    switch (hex_length) {
+                        3 => {
+                            std.debug.print("TODO: hex colors with 3 digits\n", .{});
+                            break :brk;
+                        },
+                        4 => {
+                            std.debug.print("TODO: hex colors with 4 digits\n", .{});
+                            break :brk;
+                        },
+                        6 => return rgb(hex_value),
+                        8 => return rgba(hex_value),
+                        else => unreachable,
+                    }
+                }
+            }
+
+            if (str.hasPrefixComptime("rgba(")) {
+                // parse rgba color
+            }
+
+            // assume never in quirks mode
+            // if (str.hasPrefixComptime("rgb(")) {}
+
         }
 
         return null;
+    }
+
+    pub fn maybeRGB(comptime T: type, characters: []T) bool {
+        _ = characters;
     }
 
     pub const Names = bun.ComptimeStringMap(Color, .{
@@ -274,12 +318,33 @@ pub const Canvas = struct {
     window: *c.SDL_Window = undefined,
     renderer: *c.SDL_Renderer = undefined,
 
+    fps: struct {
+        pub const max_ticks = 100;
+        ticks: [max_ticks]f64 = .{0} ** max_ticks,
+        index: usize = 0,
+        sum: f64 = 0,
+
+        pub fn get(this: *@This(), tick: f64) f64 {
+            this.sum -= this.ticks[this.index];
+            this.sum += tick;
+            this.ticks[this.index] = tick;
+            this.index += 1;
+            if (this.index == max_ticks) {
+                this.index = 0;
+            }
+
+            return this.sum / @as(f64, @floatFromInt(max_ticks));
+        }
+    },
+
     pub fn constructor(global: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) ?*Canvas {
         log("Canvas.constructor", .{});
 
         const args = callFrame.arguments(5).slice();
 
-        var canvas = Canvas{};
+        var canvas = Canvas{
+            .fps = .{},
+        };
 
         switch (args.len) {
             0, 1 => {},
@@ -374,8 +439,12 @@ pub const Canvas = struct {
         }
 
         const current_time: f64 = @floatFromInt(global.bunVM().origin_timer.read());
+        const fps = canvas.fps.get(current_time - canvas.previous_time);
         const delta = (current_time - canvas.previous_time) / @as(f64, 1000000000.0);
         canvas.previous_time = current_time;
+
+        var buf: [1000:0]u8 = undefined;
+        c.SDL_SetWindowTitle(canvas.window, std.fmt.bufPrintZ(&buf, "fps: {d}", .{fps}) catch unreachable);
 
         const res = callback.call(global, &[_]JSValue{JSValue.jsNumber(delta)});
         if (res.isException(global.vm())) {
@@ -465,6 +534,11 @@ pub const Canvas = struct {
             this.renderer = renderer;
         } else {
             global.throw("Failed to create renderer", .{});
+            return .zero;
+        }
+
+        if (c.SDL_SetRenderDrawBlendMode(this.renderer, c.SDL_BLENDMODE_BLEND) < 0) {
+            global.throw("Failed to set render blend mode", .{});
             return .zero;
         }
 
@@ -574,7 +648,8 @@ pub const CanvasRenderingContext2D = struct {
     fill_style: JSValue = .undefined,
     cached_fill_color: ?Color = null,
 
-    clear_color: Color = Color.rgba(0x00000000),
+    const clear_color = Color.rgb(0xffffff);
+    const default_color = Color.rgba(0x000000ff);
 
     pub fn create(window: *c.SDL_Window, renderer: *c.SDL_Renderer) ?*CanvasRenderingContext2D {
         log("create", .{});
@@ -634,7 +709,7 @@ pub const CanvasRenderingContext2D = struct {
             .h = @floatCast(args[3].asNumber()),
         };
 
-        if (c.SDL_SetRenderDrawColor(this.renderer, this.clear_color.r(), this.clear_color.g(), this.clear_color.b(), this.clear_color.a()) < 0) {
+        if (c.SDL_SetRenderDrawColor(this.renderer, clear_color.r(), clear_color.g(), clear_color.b(), clear_color.a()) < 0) {
             global.throw("clearRect failed to set draw color", .{});
             return .zero;
         }
@@ -687,11 +762,10 @@ pub const CanvasRenderingContext2D = struct {
             .h = @floatCast(args[3].asNumber()),
         };
 
-        if (this.getFillColor(global)) |fill_color| {
-            if (c.SDL_SetRenderDrawColor(this.renderer, fill_color.r(), fill_color.g(), fill_color.b(), fill_color.a()) < 0) {
-                global.throw("fillRect failed to set fill color", .{});
-                return .zero;
-            }
+        const fill_color = this.getFillColor(global) orelse default_color;
+        if (c.SDL_SetRenderDrawColor(this.renderer, fill_color.r(), fill_color.g(), fill_color.b(), fill_color.a()) < 0) {
+            global.throw("fillRect failed to set fill color", .{});
+            return .zero;
         }
 
         if (c.SDL_RenderFillRectF(this.renderer, &rect) < 0) {
@@ -716,11 +790,10 @@ pub const CanvasRenderingContext2D = struct {
             .h = @floatCast(args[3].asNumber()),
         };
 
-        if (this.getStrokeColor(global)) |fill_color| {
-            if (c.SDL_SetRenderDrawColor(this.renderer, fill_color.r(), fill_color.g(), fill_color.b(), fill_color.a()) < 0) {
-                global.throw("strokeRect failed to set fill color", .{});
-                return .zero;
-            }
+        const stroke_color = this.getStrokeColor(global) orelse default_color;
+        if (c.SDL_SetRenderDrawColor(this.renderer, stroke_color.r(), stroke_color.g(), stroke_color.b(), stroke_color.a()) < 0) {
+            global.throw("strokeRect failed to set fill color", .{});
+            return .zero;
         }
 
         if (c.SDL_RenderDrawRectF(this.renderer, &rect) < 0) {

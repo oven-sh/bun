@@ -210,7 +210,6 @@ pub const Diagnostic = struct {
     /// Default diagnostics reporter when all you want is English with no colors.
     /// Use this as a reference for implementing your own if needed.
     pub fn report(diag: Diagnostic, stream: anytype, err: anyerror) !void {
-        std.debug.print("starting diag report", .{});
         const Arg = struct {
             prefix: []const u8,
             name: []const u8,
@@ -222,7 +221,6 @@ pub const Diagnostic = struct {
         else
             Arg{ .prefix = "", .name = diag.arg };
 
-        std.debug.print("switching in diag.report", .{});
         Output.pretty("Invalid argument '{s}{s}'\n", .{ a.prefix, a.name });
         Output.pretty("{}", .{err});
         Output.flush();
@@ -440,12 +438,7 @@ pub fn helpEx(
     );
 }
 
-pub fn simplePrintParam(
-    param: Param(Help),
-    // comptime Error: type,
-    // context: anytype,
-    // valueText: fn (@TypeOf(context), Param(Id)) Error![]const u8,
-) !void {
+pub fn simplePrintParam(param: Param(Help)) !void {
     Output.pretty("\n", .{});
     if (param.names.short) |s| {
         Output.pretty("<cyan>-{c}<r>", .{s});
@@ -470,53 +463,12 @@ pub fn simplePrintParam(
     // }
 }
 pub fn simpleHelp(
-    // stream: anytype,
     params: []const Param(Help),
-    // helpText: *const fn (Param(Help)) []const u8,
-    // valueText: *const fn (Param(Help)) []const u8,
 ) void {
-    // _ = stream;
-    // const Context = struct {
-    //     helpText: *const fn (Param(Help)) []const u8,
-    //     valueText: *const fn (Param(Help)) []const u8,
-
-    //     pub fn help(c: @This(), p: Param(Id)) error{}![]const u8 {
-    //         return c.helpText(p);
-    //     }
-
-    //     pub fn value(c: @This(), p: Param(Id)) error{}![]const u8 {
-    //         return c.valueText(p);
-    //     }
-    // };
-
-    // return helpFull(
-    //     stream,
-    //     Id,
-    //     params,
-    //     error{},
-    //     Context{
-    //         .helpText = helpText,
-    //         .valueText = valueText,
-    //     },
-    //     Context.help,
-    //     Context.value,
-    // );
-
     const max_spacing = blk: {
         var res: usize = 2;
         for (params) |param| {
-            // param.names.long.?.len orelse 0;
-            // var flags_len = brk: {
-            //     if (param.names.long) |l| {
-            //         break :brk l.len;
-            //     }
-            //     break :brk 0;
-            // };
             var flags_len = if (param.names.long) |l| l.len else 0;
-            // if(param.names.short) flags_len += 4;
-            // var cs = io.countingWriter(io.null_writer);
-            // var flag_text = getValueSimple(param);
-            // try printParam(cs.writer(), Help, param, error{}, context, valueText);
             if (res < flags_len)
                 res = flags_len;
         }
@@ -528,14 +480,11 @@ pub fn simpleHelp(
         if (param.names.short == null and param.names.long == null)
             continue;
 
+        const desc_text = getHelpSimple(param);
+        if (desc_text.len == 0) continue;
+
         // create a string with spaces_len spaces
         const default_allocator = @import("root").bun.default_allocator;
-
-        // var spaces_before = default_allocator.alloc(u8, num_spaces_after) catch unreachable;
-        // defer default_allocator.free(spaces_before);
-        // for (0..spaces_before) |i| {
-        //     spaces_before[i] = ' ';
-        // }
 
         const flags_len = if (param.names.long) |l| l.len else 0;
         const num_spaces_after = max_spacing - flags_len;
@@ -546,18 +495,7 @@ pub fn simpleHelp(
         }
 
         simplePrintParam(param) catch unreachable;
-        Output.pretty("  ", .{});
-        const desc_text = getHelpSimple(param);
-        Output.pretty("{s}  {s}", .{ spaces_after, desc_text });
-        // print space spaces_len times
-
-        // if (help_text.len > 0) {
-        //     var cs = io.countingWriter(stream);
-        //     try stream.print("\t", .{});
-        //     try printParam(cs.writer(), Help, param, error{}, context, valueText);
-        //     try stream.writeByteNTimes(' ', max_spacing - @as(usize, @intCast(cs.bytes_written)));
-        //     try stream.print("\t{s}\n", .{getHelpSimple(param)});
-        // }
+        Output.pretty("  {s}  {s}", .{ spaces_after, desc_text });
     }
 }
 

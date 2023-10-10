@@ -55,46 +55,7 @@ pub const Cli = struct {
         MainPanicHandler.Singleton = &panicker;
         Command.start(allocator, log) catch |err| {
             switch (err) {
-                // error.MissingEntryPoint => {
-                //     Output.prettyErrorln("<r><b>bun build <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
-                //     Output.prettyErrorln(
-                //         \\<r><red>error: Missing entrypoints. What would you like to bundle?<r>
-                //         \\
-                //         \\<b>Usage<r>: <b><green>bun build<r> [flags] [...entrypoints]
-                //         \\
-                //         \\<b>Common Flags:<r>
-                //         \\  <cyan>--outfile<r>            Write the output to a specific file (default: stdout)
-                //         \\  <cyan>--outdir<r>             Write the output to a directory (required for splitting)
-                //         \\  <cyan>--minify<r>             Enable all minification flags
-                //         \\  <cyan>--minify-whitespace<r>  Remove unneeded whitespace
-                //         \\  <cyan>--minify-syntax<r>      Transform code to use less syntax
-                //         \\  <cyan>--minify-identifiers<r> Shorten variable names
-                //         \\  <cyan>--sourcemap<r>          Generate sourcemaps
-                //         \\                          none | inline | external
-                //         \\  <cyan>--target<r>             The intended execution environment for the bundle.
-                //         \\                         browser | bun | node
-                //         \\  <cyan>--splitting<r>          Enable code splitting (requires --outdir)
-                //         \\  <cyan>--watch<r>              Run bundler in watch mode
-                //         \\
-                //         \\<b>Examples:<r>
-                //         \\  <d>Frontend web apps:<r>
-                //         \\  <b><green>bun build<r> <blue>./src/index.ts<r> <cyan>--outfile=bundle.js<r>
-                //         \\  <b><green>bun build<r> <cyan>--minify<r> <cyan>--splitting<r> <cyan>--outdir=out<r> <blue>./index.jsx ./lib/worker.ts<r>
-                //         \\
-                //         \\  <d>Bundle code to be run in Bun (reduces server startup time)<r>
-                //         \\  <b><green>bun build<r> <cyan>--target=bun<r> <blue>./server.ts<r> <cyan>--outfile=server.js<r>
-                //         \\
-                //         \\  <d>Creating a standalone executable (see https://bun.sh/docs/bundler/executables)<r>
-                //         \\  <b><green>bun build<r> <cyan>--compile<r> <blue>./cli.ts<r> <cyan>--outfile=my-app<r>
-                //         \\
-                //         \\A full list of flags is available at <magenta>https://bun.sh/docs/bundler<r>
-                //         \\
-                //     , .{});
-                //     Global.exit(1);
-                // },
                 else => {
-                    // Always dump the logs
-                    // std.debug.print("dump logs", .{});
                     if (Output.enable_ansi_colors_stderr) {
                         log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
                     } else {
@@ -167,16 +128,15 @@ pub const Arguments = struct {
 
     const base_params_ = [_]ParamType{
         clap.parseParam("-h, --help                        Display this menu and exit") catch unreachable,
-        // clap.parseParam("--all") catch unreachable,
         clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
-        clap.parseParam("-c, --config <PATH>?              Config file to load Bun from (e.g. -c bunfig.toml") catch unreachable,
+        clap.parseParam("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml") catch unreachable,
         clap.parseParam("<POS>...") catch unreachable,
     };
 
     const transpiler_params_ = [_]ParamType{
         clap.parseParam("--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --target dependent") catch unreachable,
         clap.parseParam("--extension-order <STR>...        Defaults to: .tsx,.ts,.jsx,.js,.json ") catch unreachable,
-        clap.parseParam("--tsconfig-override <STR>         Load tsconfig from path instead of cwd/tsconfig.json") catch unreachable,
+        clap.parseParam("--tsconfig-override <STR>         Specify custom tsconfig.json. Default <d>$cwd<r>/tsconfig.json") catch unreachable,
         clap.parseParam("-d, --define <STR>...             Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\". Values are parsed as JSON.") catch unreachable,
         clap.parseParam("-e, --external <STR>...           Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
         clap.parseParam("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: js, jsx, ts, tsx, json, toml, text, file, wasm, napi") catch unreachable,
@@ -187,26 +147,13 @@ pub const Arguments = struct {
         clap.parseParam("--jsx-runtime <STR>               \"automatic\" (default) or \"classic\"") catch unreachable,
     };
     const runtime_params_ = [_]ParamType{
-        // clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
-        // clap.parseParam("-c, --config <PATH>?              Config file to load Bun from (e.g. -c bunfig.toml") catch unreachable,
-
         clap.parseParam("-r, --preload <STR>...            Import a module before other modules are loaded") catch unreachable,
         clap.parseParam("--hot                             Enable auto reload in the Bun runtime, test runner, or bundler") catch unreachable,
         clap.parseParam("--watch                           Automatically restart the process on file change") catch unreachable,
-        // clap.parseParam("--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --target dependent") catch unreachable,
-        // clap.parseParam("--no-summary                      Don't print a summary (when generating .bun)") catch unreachable,
-
-        // clap.parseParam("-u, --origin <STR>                Rewrite import URLs to start with --origin. Default: \"\"") catch unreachable,
-        // clap.parseParam("-p, --port <STR>                  Port to serve Bun's dev server on. Default: \"3000\"") catch unreachable,
         clap.parseParam("--smol                            Use less memory, but run garbage collection more often") catch unreachable,
-        // clap.parseParam("--minify                          Minify (experimental)") catch unreachable,
-        // clap.parseParam("--minify-syntax                   Minify syntax and inline data (experimental)") catch unreachable,
-        // clap.parseParam("--minify-whitespace               Minify whitespace (experimental)") catch unreachable,
-        // clap.parseParam("--minify-identifiers              Minify identifiers") catch unreachable,
-
-        clap.parseParam("--inspect <STR>?                  Activate Bun's Debugger") catch unreachable,
-        clap.parseParam("--inspect-wait <STR>?             Activate Bun's Debugger, wait for a connection before executing") catch unreachable,
-        clap.parseParam("--inspect-brk <STR>?              Activate Bun's Debugger, set breakpoint on first line of code and wait") catch unreachable,
+        clap.parseParam("--inspect <STR>?                  Activate Bun's debugger") catch unreachable,
+        clap.parseParam("--inspect-wait <STR>?             Activate Bun's debugger, wait for a connection before executing") catch unreachable,
+        clap.parseParam("--inspect-brk <STR>?              Activate Bun's debugger, set breakpoint on first line of code and wait") catch unreachable,
         clap.parseParam("--if-present                      Exit if the entrypoint does not exist") catch unreachable,
         clap.parseParam("--no-install                      Disable auto install in the Bun runtime") catch unreachable,
         clap.parseParam("-i                                Automatically install dependencies and use global cache in Bun's runtime, equivalent to --install=fallback") catch unreachable,
@@ -215,15 +162,7 @@ pub const Arguments = struct {
         clap.parseParam("--prefer-latest                   Use the latest matching versions of packages in the Bun runtime, always checking npm") catch unreachable,
     };
 
-    // const runtime_params = [_]ParamType{
-    //     clap.parseParam("--silent                          Don't repeat the command for bun run") catch unreachable,
-    // };
-    // const positional_params_ = [_]ParamType{
-    //     clap.parseParam("<POS>...") catch unreachable,
-    // };
-
     const auto_only_params = [_]ParamType{
-        // clap.parseParam("-h, --help                        Display this menu and exit") catch unreachable,
         clap.parseParam("--all") catch unreachable,
         clap.parseParam("-v, --version                     Print version and exit") catch unreachable,
         clap.parseParam("--revision                        Print version with revision and exit") catch unreachable,
@@ -237,6 +176,11 @@ pub const Arguments = struct {
         clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
     };
     const run_params = run_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
+
+    const bunx_commands = [_]ParamType{
+        clap.parseParam("--silent                          Don't repeat the command for bun run") catch unreachable,
+        clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
+    };
 
     // these commands don't use clap
     // Command.Tag.BunxCommand
@@ -419,10 +363,8 @@ pub const Arguments = struct {
     }
 
     pub fn parse(allocator: std.mem.Allocator, ctx: *Command.Context, comptime cmd: Command.Tag) !Api.TransformOptions {
-        std.debug.print("starting parse\n", .{});
         var diag = clap.Diagnostic{};
         const params_to_parse = comptime cmd.params();
-        const params_to_print = comptime cmd.params_to_print();
 
         var args = clap.parse(clap.Help, params_to_parse, .{
             .diagnostic = &diag,
@@ -432,25 +374,17 @@ pub const Arguments = struct {
             else
                 0,
         }) catch |err| {
-            std.debug.print("error caught\n", .{});
             // Report useful error and exit
             clap.help(Output.errorWriter(), params_to_parse) catch {};
             Output.errorWriter().writeAll("\n") catch {};
             diag.report(Output.errorWriter(), err) catch {};
-            std.debug.print("done printing\n", .{});
             Global.exit(1);
         };
 
-        std.debug.print("past parsing\n", .{});
-        // const print_all_help = args.flag("--all");
         const print_help = args.flag("--help");
         if (print_help) {
-            std.debug.print("printing help\n", .{});
-            cmd.print_helptext(params_to_print);
-            // clap.help(Output.writer(), params_to_parse[0..params_to_parse.len]) catch {};
-            // Output.prettyln("\n-------\n\n", .{});
+            cmd.printHelp();
             Output.flush();
-            // HelpCommand.printWithReason(.explicit);
             Global.exit(0);
         }
 
@@ -581,6 +515,7 @@ pub const Arguments = struct {
         // if (args.option("--port")) |port_str| {
         //     opts.port = std.fmt.parseInt(u16, port_str, 10) catch return error.InvalidPort;
         // }
+
         opts.serve = false; // TODO
         opts.main_fields = args.options("--main-fields");
         // we never actually supported inject.
@@ -592,7 +527,6 @@ pub const Arguments = struct {
         // opts.no_summary = args.flag("--no-summary");
 
         if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .TestCommand) {
-            std.debug.print("auto/run/test\n", .{});
             const preloads = args.options("--preload");
 
             if (args.flag("--hot")) {
@@ -858,15 +792,11 @@ pub const Arguments = struct {
         if (cmd == .BuildCommand) {
             if (opts.entry_points.len == 0 and opts.framework == null) {
                 Output.prettyErrorln("<r><b>bun build <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
-                // Output.flush();
-                // cmd.print_helptext();
-                // Output.pretty("\n-------------\n", .{});
                 Output.prettyError("<r><red>error: Missing entrypoints. What would you like to bundle?<r>\n\n", .{});
                 Output.flush();
-                Output.pretty("Usage:\n  <d>$<r> <b><green>bun build<r> \\<entrypoint\\> [...\\<entrypoints\\>] [flags]  \n", .{});
+                Output.pretty("Usage:\n  <d>$<r> <b><green>bun build<r> \\<entrypoint\\> [...\\<entrypoints\\>] <cyan>[flags]<r>  \n", .{});
                 Output.pretty("\nTo see full documentation:\n  <d>$<r> <b><green>bun build<r> --help\n", .{});
                 Output.flush();
-                // return error.MissingEntryPoint;
                 Global.exit(1);
             }
         }
@@ -979,6 +909,7 @@ pub const HelpCommand = struct {
         \\
         \\  <b><yellow>upgrade<r>                        Get the latest version of Bun
         \\  <b>bun --help<r>                     Show all supported flags and commands
+        \\  <b>bun [command] --help<r>                     Print helptext for a specific command
         \\
         \\  Learn more about Bun:          <magenta>https://bun.sh/docs<r>
         \\  Join our Discord community:    <blue>https://bun.sh/discord<r>
@@ -1148,11 +1079,8 @@ pub const Command = struct {
             ctx.allocator = allocator;
 
             if (comptime Command.Tag.uses_global_options.get(command)) {
-                std.debug.print("arguments.parse\n", .{});
                 ctx.args = try Arguments.parse(allocator, &ctx, command);
-            } else {
-                std.debug.print("doesnt use global options\n", .{});
-            }
+            } else {}
             return ctx;
         }
     };
@@ -1358,12 +1286,11 @@ pub const Command = struct {
         switch (tag) {
             .DiscordCommand => return try DiscordCommand.exec(allocator),
             .HelpCommand => return try HelpCommand.exec(allocator),
-            .InitCommand => return try InitCommand.exec(allocator, bun.argv()),
             .ReservedCommand => return try ReservedCommand.exec(allocator),
+            .InitCommand => return try InitCommand.exec(allocator, bun.argv()),
             .BuildCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BuildCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .BuildCommand);
-
                 try BuildCommand.exec(ctx);
             },
             .InstallCompletionsCommand => {
@@ -1547,18 +1474,24 @@ pub const Command = struct {
                 var args = try std.process.argsAlloc(allocator);
 
                 if (args.len <= 2) {
-                    Output.prettyErrorln(
-                        \\<b><cyan>bun create<r>: create a new project from a template
-                        \\
-                        \\<b>Usage<r>: <b><cyan>bun create<r> [template] [...args]
-                        \\       <b><cyan>bun create<r> [username/repo] [name]
-                        \\
-                        \\If given a GitHub repository name, Bun will download it and use it as a template,
-                        \\otherwise it will run <b><magenta>bunx create-[template]<r> with the given arguments.
-                        \\
-                        \\Learn more about creating new projects: <magenta>https://bun.sh/docs/templates<r>
-                        \\
-                    , .{});
+                    Command.Tag.printHelp(.CreateCommand);
+                    Global.exit(1);
+                    return;
+                }
+
+                // iterate over args
+                // if --help, print help and exit
+                const print_help = brk: {
+                    for (bun.argv()) |arg_| {
+                        const arg = bun.span(arg_);
+                        if (strings.eqlComptime(arg, "--help")) {
+                            break :brk true;
+                        }
+                    }
+                    break :brk false;
+                };
+                if (print_help) {
+                    Command.Tag.printHelp(.CreateCommand);
                     Global.exit(1);
                     return;
                 }
@@ -1595,11 +1528,11 @@ pub const Command = struct {
                         \\
                         \\To create a project using Create React App, run
                         \\
-                        \\  bun create react-app
+                        \\  <d>bun create react-app<r>
                         \\
                         \\To create a React project using Vite, run
                         \\
-                        \\  bun create vite
+                        \\  <d>bun create vite<r>
                         \\
                         \\Then select "React" from the list of frameworks.
                         \\
@@ -1644,13 +1577,10 @@ pub const Command = struct {
                 return;
             },
             .AutoCommand => {
-                std.debug.print("running autocommand\n", .{});
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .AutoCommand) unreachable;
                 var ctx = Command.Context.create(allocator, log, .AutoCommand) catch |e| {
-                    std.debug.print("error in context.create()\n", .{});
                     switch (e) {
                         error.MissingEntryPoint => {
-                            std.debug.print("missing entry point\n", .{});
                             HelpCommand.execWithReason(allocator, .explicit);
                             return;
                         },
@@ -1759,7 +1689,7 @@ pub const Command = struct {
                 }
 
                 // Output.prettyWarnln("<r><yellow>warn<r><d>:<r> failed to parse command\n", .{});
-                // std.debug.print("fallback to help\n", .{});
+
                 // Output.flush();
                 try HelpCommand.exec(allocator);
             },
@@ -1864,68 +1794,135 @@ pub const Command = struct {
 
         pub fn params(comptime cmd: Tag) []const Arguments.ParamType {
             return &comptime switch (cmd) {
-                Command.Tag.AutoCommand => Arguments.auto_params,
-                Command.Tag.RunCommand => Arguments.run_params,
-                Command.Tag.BuildCommand => Arguments.build_params,
-                Command.Tag.TestCommand => Arguments.test_params,
-                Command.Tag.BunxCommand => Arguments.run_params,
+                .AutoCommand => Arguments.auto_params,
+                .RunCommand => Arguments.run_params,
+                .BuildCommand => Arguments.build_params,
+                .TestCommand => Arguments.test_params,
+                .BunxCommand => Arguments.run_params,
                 else => Arguments.base_params_ ++ Arguments.runtime_params_ ++ Arguments.transpiler_params_,
             };
         }
 
-        pub fn params_to_print(comptime cmd: Tag) []const Arguments.ParamType {
-            return &comptime switch (cmd) {
-                Command.Tag.BuildCommand => Arguments.build_only_params,
-                Command.Tag.TestCommand => Arguments.test_only_params,
-                Command.Tag.InstallCommand => Install.PackageManager.install_params,
-                Command.Tag.AddCommand => Install.PackageManager.add_params,
-                Command.Tag.UpdateCommand => Install.PackageManager.update_params,
-                Command.Tag.RemoveCommand => Install.PackageManager.remove_params,
-                Command.Tag.LinkCommand => Install.PackageManager.link_params,
-                Command.Tag.UnlinkCommand => Install.PackageManager.unlink_params,
-                Command.Tag.AutoCommand => Arguments.auto_params,
-                Command.Tag.RunCommand => Arguments.run_params,
-                Command.Tag.BunxCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
-                Command.Tag.InitCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
-                Command.Tag.CreateCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
-                Command.Tag.DiscordCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
-                Command.Tag.GetCompletionsCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
-                Command.Tag.HelpCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
-                Command.Tag.InstallCompletionsCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
-                Command.Tag.PackageManagerCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
-                Command.Tag.UpgradeCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
-                Command.Tag.ReplCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
-                Command.Tag.ReservedCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
-            };
-        }
-
-        // fn print_helptext_(intro: []u8, outro: []u8, params_list: []const Arguments.ParamType) void {
-        //     Output.pretty("\n{s}", .{intro});
-        //     Output.flush();
-        //     Output.pretty("\n<b>Flags:<r>", .{});
-        //     Output.flush();
-        //     clap.simpleHelp(params_list);
-        //     Output.pretty("\n\n{s}", .{outro});
-        //     Output.flush();
+        // pub fn params_to_print(comptime cmd: Tag) []const Arguments.ParamType {
+        //     return &comptime switch (cmd) {
+        //         .BuildCommand => Arguments.build_only_params,
+        //         .TestCommand => Arguments.test_only_params,
+        //         .InstallCommand => Install.PackageManager.install_params,
+        //         .AddCommand => Install.PackageManager.add_params,
+        //         .UpdateCommand => Install.PackageManager.update_params,
+        //         .RemoveCommand => Install.PackageManager.remove_params,
+        //         .LinkCommand => Install.PackageManager.link_params,
+        //         .UnlinkCommand => Install.PackageManager.unlink_params,
+        //         .AutoCommand => Arguments.auto_params,
+        //         .RunCommand => Arguments.run_params,
+        //         .BunxCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
+        //         .InitCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
+        //         .CreateCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
+        //         .DiscordCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
+        //         .GetCompletionsCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
+        //         .HelpCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
+        //         .InstallCompletionsCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
+        //         .PackageManagerCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
+        //         .UpgradeCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
+        //         .ReplCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
+        //         .ReservedCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
+        //     };
         // }
 
-        pub fn print_helptext(cmd: Tag, params_list: []const Arguments.ParamType) void {
+        pub fn printHelp(comptime cmd: Tag) void {
+            // const params_list = comptime cmd.params_to_print();
             switch (cmd) {
+
+                // these commands do not use Context
+                // .DiscordCommand => return try DiscordCommand.exec(allocator),
+                // .HelpCommand => return try HelpCommand.exec(allocator),
+                // .ReservedCommand => return try ReservedCommand.exec(allocator),
+
+                // these commands are implemented in install.zig
+                // Command.Tag.InstallCommand => {},
+                // Command.Tag.AddCommand => {},
+                // Command.Tag.RemoveCommand => {},
+                // Command.Tag.UpdateCommand => {},
+                // Command.Tag.PackageManagerCommand => {},
+                // Command.Tag.LinkCommand => {},
+                // Command.Tag.UnlinkCommand => {},
+
+                // fall back to HelpCommand.printWithReason
                 Command.Tag.AutoCommand => {
-                    Output.pretty("asdf", .{});
-                    Output.flush();
+                    HelpCommand.printWithReason(.explicit);
                 },
                 Command.Tag.RunCommand => {
-                    Output.pretty("asdf", .{});
+                    const intro_text =
+                        \\<b>Usage<r>:
+                        \\  Run a file or package.json script.
+                        \\  <b><green>bun run<r> <cyan>[flags]<r> \<file\>
+                        \\  <b><green>bun run<r> <cyan>[flags]<r> \<package.json script\>
+                    ;
+
+                    const outro_text =
+                        \\<b>Examples:<r>
+                        \\  <d>Run a JavaScript or TypeScript file<r>
+                        \\  <b><green>bun run<r> <blue>./index.js<r>
+                        \\  <b><green>bun run<r> <blue>./index.tsx<r>
+                        \\
+                        \\  <d>Run a package.json script<r>
+                        \\  <b><green>bun run dev<r>
+                        \\  <b><green>bun run lint<r>
+                        \\
+                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/run<r>
+                    ;
+
+                    Output.pretty(intro_text ++ "\n\n", .{});
+                    Output.flush();
+                    Output.pretty("<b>Flags:<r>", .{});
+                    Output.flush();
+                    clap.simpleHelp(&Arguments.run_params);
+                    Output.pretty("\n\n" ++ outro_text, .{});
                     Output.flush();
                 },
-                Command.Tag.BunxCommand => {
-                    Output.pretty("asdf", .{});
+
+                .InitCommand => {
+                    const intro_text =
+                        \\<b>Usage<r>: <b><green>bun build<r> <cyan>[flags]<r> [...entrypoints]
+                        \\  Initialize a Bun project in the current directory.
+                        \\  Creates a package.json, tsconfig.json, and bunfig.toml if they don't exist.
+                        \\
+                        \\<b>Flags<r>:
+                        \\  <cyan>-y, --yes<r>             Accept all default options
+                        \\  <cyan>--minify<r>             Enable all minification flags
+                        \\
+                        \\<b>Examples:<r>
+                        \\  <b><green>bun init<r>
+                        \\  <b><green>bun init --yes<r> <blue>./src/index.ts<r> <cyan>--outfile=bundle.js<r>
+                        \\
+                    ;
+
+                    Output.pretty(intro_text, .{});
                     Output.flush();
+                },
+
+                Command.Tag.BunxCommand => {
+                    Output.prettyErrorln(
+                        \\usage<r><d>:<r> <cyan>bunx <r><d>[<r><blue>--bun<r><d>]<r><cyan> package<r><d>[@version] [...flags or arguments to pass through]<r>
+                        \\
+                        \\bunx runs an npm package executable, automatically installing into a global shared cache if not installed in node_modules.
+                        \\
+                        \\example<d>:<r>
+                        \\
+                        \\  <cyan>bunx bun-repl<r>
+                        \\  <cyan>bunx prettier foo.js<r>
+                        \\
+                        \\The <cyan>--bun<r> flag forces the package to run in Bun's JavaScript runtime, even when it tries to use Node.js.
+                        \\
+                        \\  <cyan>bunx <r><blue>--bun<r><cyan> tsc --version<r>
+                        \\
+                    , .{});
                 },
                 Command.Tag.BuildCommand => {
                     const intro_text =
-                        \\<b>Usage<r>: <b><green>bun build<r> [flags] [...entrypoints]
+                        \\<b>Usage<r>:
+                        \\  Transpile and bundle one more more files.
+                        \\  <b><green>bun build<r> <cyan>[flags]<r> [...entrypoints]
                     ;
 
                     const outro_text =
@@ -1944,19 +1941,17 @@ pub const Command = struct {
                         \\
                     ;
 
-                    Output.pretty(intro_text, .{});
-                    Output.pretty("\n\n", .{});
+                    Output.pretty(intro_text ++ "\n\n", .{});
                     Output.flush();
                     Output.pretty("<b>Flags:<r>", .{});
                     Output.flush();
-                    clap.simpleHelp(params_list);
-                    Output.pretty("\n\n", .{});
-                    Output.pretty(outro_text, .{});
+                    clap.simpleHelp(&Arguments.build_only_params);
+                    Output.pretty("\n\n" ++ outro_text, .{});
                     Output.flush();
                 },
                 Command.Tag.TestCommand => {
                     const intro_text =
-                        \\<b>Usage<r>: <b><green>bun test<r> [flags] [patterns...]
+                        \\<b>Usage<r>: <b><green>bun test<r> <cyan>[flags]<r> [patterns...]
                         \\  Run all matching test files and print the results to stdout
                     ;
                     const outro_text =
@@ -1977,118 +1972,69 @@ pub const Command = struct {
                     Output.flush();
                     Output.pretty("\n<b>Flags:<r>", .{});
                     Output.flush();
-                    clap.simpleHelp(params_list);
-                    Output.pretty("\n\n", .{});
-                    Output.pretty(outro_text, .{});
-                    Output.flush();
-                },
-                Command.Tag.InitCommand => {
-                    const intro_text =
-                        \\<b>Usage<r>: <b><green>bun init<r> [flags]
-                        \\  Run all matching test files and print the results to stdout
-                    ;
-                    const outro_text =
-                        \\<b>Examples:<r>
-                        \\  <d>Run all test files <r>
-                        \\  <b><green>bun test<r>
-                        \\
-                        \\  <d>Run all test files with "foo" or "bar" in the file name<r>
-                        \\  <b><green>bun test foo bar<r>
-                        \\
-                        \\  <d>Run all test files, only including tests whose names includes "baz"<r>
-                        \\  <b><green>bun test<r> <cyan>--test-name-pattern<r> baz<r>
-                        \\
-                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/test<r>
-                    ;
-                    Output.pretty("\n", .{});
-                    Output.pretty(intro_text, .{});
-                    Output.flush();
-                    Output.pretty("\n<b>Flags:<r>", .{});
-                    Output.flush();
-                    clap.simpleHelp(params_list);
+                    clap.simpleHelp(&Arguments.test_only_params);
                     Output.pretty("\n\n", .{});
                     Output.pretty(outro_text, .{});
                     Output.flush();
                 },
                 Command.Tag.CreateCommand => {
-                    Output.pretty("asdf", .{});
-                    Output.flush();
+                    Output.prettyErrorln(
+                        \\<b><cyan>bun create<r>: create a new project from a template
+                        \\
+                        \\<b>Usage<r>: <b><cyan>bun create<r> [template] [...args]
+                        \\       <b><cyan>bun create<r> [username/repo] [name]
+                        \\
+                        \\If given a GitHub repository name, Bun will download it and use it as a template,
+                        \\otherwise it will run <b><magenta>bunx create-[template]<r> with the given arguments.
+                        \\
+                        \\Learn more about creating new projects: <magenta>https://bun.sh/docs/templates<r>
+                        \\
+                    , .{});
                 },
                 Command.Tag.HelpCommand => {
-                    Output.pretty("asdf", .{});
-                    Output.flush();
+                    HelpCommand.printWithReason(.explicit);
                 },
                 Command.Tag.UpgradeCommand => {
-                    Output.pretty("asdf", .{});
-                    Output.flush();
-                },
-                Command.Tag.ReplCommand => {
-                    Output.pretty("asdf", .{});
-                    Output.flush();
-                },
-                Command.Tag.InstallCommand => {
-                    Output.pretty("asdf", .{});
-                    Output.flush();
-                },
-                Command.Tag.AddCommand => {
                     const intro_text =
-                        \\<b>Usage<r>: <b><green>bun add<r> [flags] \<pkg\> [...\<pkg\>]
-                        \\  Install a package and add it to your package.json
+                        \\<b>Usage<r>: <b><green>bun upgrade<r> <cyan>[flags]<r>
+                        \\  Upgrade Bun
                     ;
                     const outro_text =
                         \\<b>Examples:<r>
-                        \\  <d>Add a dependency from the npm registry<r>
-                        \\  <b><green>bun add zod<r>
-                        \\  <b><green>bun add zod@next<r>
-                        \\  <b><green>bun add zod@3.0.0<r>
+                        \\  <d>Instal the latest stable version<r>
+                        \\  <b><green>bun upgrade<r>
                         \\
-                        \\  <d>Add a dev, optional, or peer dependency <r>
-                        \\  <b><green>bun add -d typescript<r>
-                        \\  <b><green>bun add -o lodash<r>
-                        \\  <b><green>bun add --peer esbuild<r>
+                        \\  <d>Install the most recent canary version of Bun<r>
+                        \\  <b><green>bun upgrade --canary<r>
                         \\
-                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/install<r>
+                        \\Full documentation is available at <magenta>https://bun.sh/docs/installation#upgrading<r>
                     ;
                     Output.pretty("\n", .{});
                     Output.pretty(intro_text, .{});
                     Output.flush();
                     Output.pretty("\n<b>Flags:<r>", .{});
                     Output.flush();
-                    clap.simpleHelp(params_list);
+                    clap.simpleHelp(&Arguments.test_only_params);
                     Output.pretty("\n\n", .{});
                     Output.pretty(outro_text, .{});
                     Output.flush();
                 },
-                Command.Tag.RemoveCommand => {
-                    Output.pretty("asdf", .{});
+                Command.Tag.ReplCommand => {
+                    const intro_text =
+                        \\<b>Usage<r>: <b><green>bun repl<r> <cyan>[flags]<r>
+                        \\  Open a Bun REPL
+                    ;
+
+                    Output.pretty(intro_text, .{});
                     Output.flush();
                 },
-                Command.Tag.UpdateCommand => {
-                    Output.pretty("asdf", .{});
-                    Output.flush();
-                },
-                Command.Tag.LinkCommand => {
-                    Output.pretty("asdf", .{});
-                    Output.flush();
-                },
-                Command.Tag.UnlinkCommand => {
-                    Output.pretty("asdf", .{});
-                    Output.flush();
-                },
-                Command.Tag.PackageManagerCommand => {
-                    Output.pretty("asdf", .{});
-                    Output.flush();
-                },
-                Command.Tag.DiscordCommand => {
-                    Output.pretty("asdf", .{});
-                    Output.flush();
-                },
+
                 Command.Tag.GetCompletionsCommand => {
-                    Output.pretty("asdf", .{});
+                    Output.pretty("<b>Usage<r>: <b><green>bun getcompletes<r>", .{});
                     Output.flush();
                 },
                 Command.Tag.InstallCompletionsCommand => {
-                    Output.pretty("asdf", .{});
+                    Output.pretty("<b>Usage<r>: <b><green>bun completions<r>", .{});
                     Output.flush();
                 },
                 else => {

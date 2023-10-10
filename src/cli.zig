@@ -182,29 +182,6 @@ pub const Arguments = struct {
         clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
     };
 
-    // these commands don't use clap
-    // Command.Tag.BunxCommand
-    // Command.Tag.InitCommand
-    // Command.Tag.CreateCommand
-    // Command.Tag.DiscordCommand
-    // Command.Tag.GetCompletionsCommand
-    // Command.Tag.HelpCommand
-    // Command.Tag.InstallCompletionsCommand
-    // Command.Tag.PackageManagerCommand
-    // Command.Tag.UpgradeCommand
-    // Command.Tag.ReplCommand
-    // Command.Tag.ReservedCommand
-
-    // const public_params = runtime_params_ ++ auto_install_params;
-
-    // these were only used in bun dev
-    // const debug_params = [_]ParamType{
-    // clap.parseParam("--dump-environment-variables    Dump environment variables from .env and process as JSON and quit. Useful for debugging") catch unreachable,
-    // clap.parseParam("--dump-limits                   Dump system limits. Useful for debugging") catch unreachable,
-    // };
-
-    // pub const params = public_params ++ debug_params;
-
     const build_only_params = [_]ParamType{
         clap.parseParam("--format <STR>                   Specifies the module format to build to. Only esm is supported.") catch unreachable,
         clap.parseParam("--target <STR>                   The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\"") catch unreachable,
@@ -231,14 +208,14 @@ pub const Arguments = struct {
 
     // TODO: update test completions
     const test_only_params = [_]ParamType{
-        clap.parseParam("--timeout <NUMBER>") catch unreachable,
-        clap.parseParam("--update-snapshots") catch unreachable,
-        clap.parseParam("--rerun-each <NUMBER>") catch unreachable,
-        clap.parseParam("--only") catch unreachable,
-        clap.parseParam("--todo") catch unreachable,
-        clap.parseParam("--coverage") catch unreachable,
-        clap.parseParam("--bail <NUMBER>?") catch unreachable,
-        clap.parseParam("-t, --test-name-pattern <STR>") catch unreachable,
+        clap.parseParam("--timeout <NUMBER>               Set the per-test timeout in milliseconds, default is 5000.") catch unreachable,
+        clap.parseParam("--update-snapshots               Update snapshot files") catch unreachable,
+        clap.parseParam("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs") catch unreachable,
+        clap.parseParam("--only                           Only run tests that are marked with \"test.only()\"") catch unreachable,
+        clap.parseParam("--todo                           Include tests that are marked with \"test.todo()\"") catch unreachable,
+        clap.parseParam("--coverage                       Generate a coverage profile") catch unreachable,
+        clap.parseParam("--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.") catch unreachable,
+        clap.parseParam("-t, --test-name-pattern <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
     };
     pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -607,6 +584,7 @@ pub const Arguments = struct {
             opts.origin = try std.fmt.allocPrint(allocator, "http://localhost:{d}/", .{opts.port.?});
         }
 
+        // these we're only used in bun dev
         // ctx.debug.dump_environment_variables = args.flag("--dump-environment-variables");
         // ctx.debug.dump_limits = args.flag("--dump-limits");
 
@@ -1688,9 +1666,8 @@ pub const Command = struct {
                     Global.exit(1);
                 }
 
-                // Output.prettyWarnln("<r><yellow>warn<r><d>:<r> failed to parse command\n", .{});
-
-                // Output.flush();
+                Output.prettyWarnln("<r><yellow>warn<r><d>:<r> failed to parse command\n", .{});
+                Output.flush();
                 try HelpCommand.exec(allocator);
             },
         }
@@ -1803,34 +1780,7 @@ pub const Command = struct {
             };
         }
 
-        // pub fn params_to_print(comptime cmd: Tag) []const Arguments.ParamType {
-        //     return &comptime switch (cmd) {
-        //         .BuildCommand => Arguments.build_only_params,
-        //         .TestCommand => Arguments.test_only_params,
-        //         .InstallCommand => Install.PackageManager.install_params,
-        //         .AddCommand => Install.PackageManager.add_params,
-        //         .UpdateCommand => Install.PackageManager.update_params,
-        //         .RemoveCommand => Install.PackageManager.remove_params,
-        //         .LinkCommand => Install.PackageManager.link_params,
-        //         .UnlinkCommand => Install.PackageManager.unlink_params,
-        //         .AutoCommand => Arguments.auto_params,
-        //         .RunCommand => Arguments.run_params,
-        //         .BunxCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
-        //         .InitCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
-        //         .CreateCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
-        //         .DiscordCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
-        //         .GetCompletionsCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
-        //         .HelpCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
-        //         .InstallCompletionsCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
-        //         .PackageManagerCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
-        //         .UpgradeCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
-        //         .ReplCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
-        //         .ReservedCommand => Arguments.runtime_params_ ++ Arguments.transpiler_params_,
-        //     };
-        // }
-
         pub fn printHelp(comptime cmd: Tag) void {
-            // const params_list = comptime cmd.params_to_print();
             switch (cmd) {
 
                 // these commands do not use Context
@@ -1970,7 +1920,7 @@ pub const Command = struct {
                     Output.pretty("\n", .{});
                     Output.pretty(intro_text, .{});
                     Output.flush();
-                    Output.pretty("\n<b>Flags:<r>", .{});
+                    Output.pretty("\n\n<b>Flags:<r>", .{});
                     Output.flush();
                     clap.simpleHelp(&Arguments.test_only_params);
                     Output.pretty("\n\n", .{});
@@ -2012,7 +1962,7 @@ pub const Command = struct {
                     Output.pretty("\n", .{});
                     Output.pretty(intro_text, .{});
                     Output.flush();
-                    Output.pretty("\n<b>Flags:<r>", .{});
+                    Output.pretty("\n\n<b>Flags:<r>", .{});
                     Output.flush();
                     clap.simpleHelp(&Arguments.test_only_params);
                     Output.pretty("\n\n", .{});

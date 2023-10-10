@@ -59,12 +59,9 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
         }
 
         fn normal(parser: *@This()) ArgError!?Arg(Id) {
-            std.debug.print("normal()\n", .{});
             const ArgType = Arg(Id);
             const arg_info = (try parser.parseNextArg()) orelse return null;
             const arg = arg_info.arg;
-
-            std.debug.print("arg: {s}:{s}\n", .{ arg, @tagName(arg_info.kind) });
 
             switch (arg_info.kind) {
                 .long => {
@@ -121,7 +118,6 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
                     // interpret the rest of the arguments as positional
                     // arguments.
                     if (mem.eql(u8, arg, "--")) {
-                        std.debug.print("rest are positional\n", .{});
                         parser.state = .rest_are_positional;
                         // return null to terminate arg parsing
                         const value = parser.iter.next() orelse return null;

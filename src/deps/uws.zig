@@ -700,9 +700,9 @@ pub const Timer = opaque {
         @as(*@TypeOf(ptr), @ptrCast(@alignCast(value_ptr))).* = ptr;
     }
 
-    pub fn deinit(this: *Timer) void {
+    pub fn deinit(this: *Timer, comptime fallthrough: bool) void {
         debug("Timer.deinit()", .{});
-        us_timer_close(this);
+        us_timer_close(this, @intFromBool(fallthrough));
     }
 
     pub fn ext(this: *Timer, comptime Type: type) ?*Type {
@@ -946,7 +946,7 @@ const uintmax_t = c_ulong;
 
 extern fn us_create_timer(loop: ?*Loop, fallthrough: i32, ext_size: c_uint) *Timer;
 extern fn us_timer_ext(timer: ?*Timer) *?*anyopaque;
-extern fn us_timer_close(timer: ?*Timer) void;
+extern fn us_timer_close(timer: ?*Timer, fallthrough: i32) void;
 extern fn us_timer_set(timer: ?*Timer, cb: ?*const fn (*Timer) callconv(.C) void, ms: i32, repeat_ms: i32) void;
 extern fn us_timer_loop(t: ?*Timer) ?*Loop;
 pub const us_socket_context_options_t = extern struct {

@@ -152,9 +152,6 @@ export default {
       description:
         "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
     }),
-    page("install/global-install", "Global Installation of Package", {
-      description: "Install a package to your global environment using `bun add --global`.",
-    }),
     page("install/cache", "Global cache", {
       description:
         "Bun's package manager installs all packages into a shared global cache to avoid redundant re-downloads.",

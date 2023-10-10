@@ -132,7 +132,7 @@ struct us_timer_t *us_create_timer(struct us_loop_t *loop, int fallthrough, unsi
 void *us_timer_ext(struct us_timer_t *timer);
 
 /* */
-void us_timer_close(struct us_timer_t *timer);
+void us_timer_close(struct us_timer_t *timer, int fallthrough);
 
 /* Arm a timer with a delay from now and eventually a repeat delay.
  * Specify 0 as repeat delay to disable repeating. Specify both 0 to disarm. */

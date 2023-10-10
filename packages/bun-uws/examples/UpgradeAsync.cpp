@@ -90,7 +90,7 @@ int main() {
 
                 delete upgradeData;
 
-                us_timer_close(t);
+                us_timer_close(t, 0);
             }, 5000, 0);
 
         },

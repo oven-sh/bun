@@ -85,7 +85,7 @@ it("should link package", async () => {
     ` installed ${link_name}@link:${link_name}`,
     "",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited2).toBe(0);
 
@@ -186,7 +186,7 @@ it("should link scoped package", async () => {
     ` installed ${link_name}@link:${link_name}`,
     "",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited2).toBe(0);
 
@@ -292,7 +292,7 @@ it("should link dependency without crashing", async () => {
   expect(out2.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
     ` + ${link_name}@link:${link_name}`,
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited2).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", link_name].sort());
@@ -341,6 +341,6 @@ it("should link dependency without crashing", async () => {
   expect(err4).toContain(`error: FileNotFound installing ${link_name}`);
   expect(stdout4).toBeDefined();
   const out4 = await new Response(stdout4).text();
-  expect(out4.replace(/\[[0-9\.]+m?s\]/, "[]").split(/\r?\n/)).toEqual(["Failed to install 1 packages", "[] done", ""]);
+  expect(out4.replace(/\[[0-9\.]+m?s\]/, "[]").split(/\r?\n/)).toEqual(["Failed to install 1 package", "[] done", ""]);
   expect(await exited4).toBe(0);
 });

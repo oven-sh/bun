@@ -1905,7 +1905,12 @@ pub const PackageManager = struct {
         @memset(this.preinstall_state.items[offset..], PreinstallState.unknown);
     }
 
-    pub fn laterVersionInCache(this: *PackageManager, name: []const u8, name_hash: PackageNameHash, resolution: Resolution) ?Semver.Version {
+    pub fn formatLaterVersionInCache(
+        this: *PackageManager,
+        name: []const u8,
+        name_hash: PackageNameHash,
+        resolution: Resolution,
+    ) ?Semver.Version.Formatter {
         switch (resolution.tag) {
             Resolution.Tag.npm => {
                 if (resolution.value.npm.version.tag.hasPre())
@@ -1927,8 +1932,12 @@ pub const PackageManager = struct {
                 };
 
                 if (manifest.findByDistTag("latest")) |latest_version| {
-                    if (latest_version.version.order(resolution.value.npm.version, this.lockfile.buffers.string_bytes.items, this.lockfile.buffers.string_bytes.items) != .gt) return null;
-                    return latest_version.version;
+                    if (latest_version.version.order(
+                        resolution.value.npm.version,
+                        manifest.string_buf,
+                        this.lockfile.buffers.string_bytes.items,
+                    ) != .gt) return null;
+                    return latest_version.version.fmt(manifest.string_buf);
                 }
 
                 return null;
@@ -5985,11 +5994,11 @@ pub const PackageManager = struct {
         clap.parseParam("-D, --development") catch unreachable,
         clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
         clap.parseParam("-E, --exact                  Add the exact version instead of the ^range") catch unreachable,
-        clap.parseParam("<POS> ...                         \"name\" or \"name@version\" of packages to install") catch unreachable,
+        clap.parseParam("<POS> ...                         \"name\" or \"name@version\" of package(s) to install") catch unreachable,
     };
 
     const remove_params = install_params_ ++ [_]ParamType{
-        clap.parseParam("<POS> ...                         \"name\" of packages to remove from package.json") catch unreachable,
+        clap.parseParam("<POS> ...                         \"name\" of package(s) to remove from package.json") catch unreachable,
     };
 
     const link_params = install_params_ ++ [_]ParamType{
@@ -8082,13 +8091,14 @@ pub const PackageManager = struct {
 
                 if (install_summary.success > 0) {
                     // it's confusing when it shows 3 packages and says it installed 1
-                    Output.pretty("\n <green>{d}<r> packages<r> installed ", .{@max(
+                    const pkgs_installed = @max(
                         install_summary.success,
                         @as(
                             u32,
                             @truncate(manager.package_json_updates.len),
                         ),
-                    )});
+                    );
+                    Output.pretty("\n <green>{d}<r> package{s}<r> installed ", .{ pkgs_installed, if (pkgs_installed == 1) "" else "s" });
                     Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
                     printed_timestamp = true;
                     Output.pretty("<r>\n", .{});
@@ -8103,7 +8113,7 @@ pub const PackageManager = struct {
                         }
                     }
 
-                    Output.pretty("\n <r><b>{d}<r> packages removed ", .{manager.summary.remove});
+                    Output.pretty("\n <r><b>{d}<r> package{s} removed ", .{ manager.summary.remove, if (manager.summary.remove == 1) "" else "s" });
                     Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
                     printed_timestamp = true;
                     Output.pretty("<r>\n", .{});
@@ -8112,16 +8122,19 @@ pub const PackageManager = struct {
 
                     const count = @as(PackageID, @truncate(manager.lockfile.packages.len));
                     if (count != install_summary.skipped) {
-                        Output.pretty("Checked <green>{d} installs<r> across {d} packages <d>(no changes)<r> ", .{
+                        Output.pretty("Checked <green>{d} install{s}<r> across {d} package{s} <d>(no changes)<r> ", .{
                             install_summary.skipped,
+                            if (install_summary.skipped == 1) "" else "s",
                             count,
+                            if (count == 1) "" else "s",
                         });
                         Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
                         printed_timestamp = true;
                         Output.pretty("<r>\n", .{});
                     } else {
-                        Output.pretty("<r> <green>Done<r>! Checked {d} packages<r> <d>(no changes)<r> ", .{
+                        Output.pretty("<r> <green>Done<r>! Checked {d} package{s}<r> <d>(no changes)<r> ", .{
                             install_summary.skipped,
+                            if (install_summary.skipped == 1) "" else "s",
                         });
                         Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
                         printed_timestamp = true;
@@ -8130,7 +8143,7 @@ pub const PackageManager = struct {
                 }
 
                 if (install_summary.fail > 0) {
-                    Output.prettyln("<r>Failed to install <red><b>{d}<r> packages\n", .{install_summary.fail});
+                    Output.prettyln("<r>Failed to install <red><b>{d}<r> package{s}\n", .{ install_summary.fail, if (install_summary.fail == 1) "" else "s" });
                     Output.flush();
                 }
             }

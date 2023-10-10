@@ -291,6 +291,15 @@ export function createEmptyReadableStream() {
 }
 
 $linkTimeConstant;
+export function createUsedReadableStream() {
+  var stream = new ReadableStream({
+    pull() {},
+  } as any);
+  stream.getReader();
+  return stream;
+}
+
+$linkTimeConstant;
 export function createNativeReadableStream(nativePtr, nativeType, autoAllocateChunkSize) {
   return new ReadableStream({
     $lazy: true,

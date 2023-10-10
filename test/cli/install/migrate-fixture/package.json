@@ -7,7 +7,8 @@
     "hello": "file:hello-0.3.2.tgz",
     "install-test": "bitbucket:dylan-conway/public-install-test",
     "install-test1": "github:dylan-conway/install-test",
-    "public-install-test": "gitlab:dylan-conway/public-install-test"
+    "public-install-test": "gitlab:dylan-conway/public-install-test",
+    "svelte": "4.2.1"
   },
   "workspaces": [
     "packages/*"

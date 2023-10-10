@@ -19,6 +19,19 @@ function lookup(domain, options, callback) {
     options = { family: options };
   }
 
+  const invalidDomainValues = [
+    undefined,
+    false,
+    null,
+    ""
+  ];
+
+  if(Number.isNaN(domain) || invalidDomainValues.some(value => domain === value)) {
+    console.warn(`DeprecationWarning: The provided hostname "${String(domain)}" is not a valid hostname, and is supported in the dns module solely for compatibility.`);
+    callback(null, null, 4);
+    return;
+  }
+
   dns.lookup(domain, options).then(
     res => {
       res.sort((a, b) => a.family - b.family);

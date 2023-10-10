@@ -2666,19 +2666,45 @@ pub const Expect = struct {
         const expected = arguments[0];
         const value: JSValue = this.getValue(globalThis, thisValue, "toEqualIgnoringWhitespace", "<green>expected<r>") orelse return .zero;
 
+        if (!expected.isString()) {
+            globalThis.throw("toEqualIgnoringWhitespace() requires argument to be a string", .{});
+            return .zero;
+        }
+
         const not = this.flags.not;
         var pass = value.isString() and expected.isString();
 
         if (pass) {
-            var expectedStr = expected.toString(globalThis).toSlice(globalThis, default_allocator).slice();
             var valueStr = value.toString(globalThis).toSlice(globalThis, default_allocator).slice();
+            var expectedStr = expected.toString(globalThis).toSlice(globalThis, default_allocator).slice();
 
-            // Remove all whitespace from both strings
-            expectedStr = strings.removeWhitespace(default_allocator, expectedStr);
-            valueStr = strings.removeWhitespace(default_allocator, valueStr);
+            var left: usize = 0;
+            var right: usize = 0;
 
-            // Compare the strings
-            pass = strings.eql(expectedStr, valueStr);
+            // Skip leading whitespaces
+            while (left < valueStr.len and std.ascii.isWhitespace(valueStr[left])) left += 1;
+            while (right < expectedStr.len and std.ascii.isWhitespace(expectedStr[right])) right += 1;
+
+            while (left < valueStr.len and right < expectedStr.len) {
+                const left_char = valueStr[left];
+                const right_char = expectedStr[right];
+
+                if (left_char != right_char) {
+                    pass = false;
+                    break;
+                }
+
+                left += 1;
+                right += 1;
+
+                // Skip trailing whitespaces
+                while (left < valueStr.len and std.ascii.isWhitespace(valueStr[left])) left += 1;
+                while (right < expectedStr.len and std.ascii.isWhitespace(expectedStr[right])) right += 1;
+            }
+
+            if (left < valueStr.len or right < expectedStr.len) {
+                pass = false;
+            }
         }
 
         if (not) pass = !pass;

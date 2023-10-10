@@ -4847,15 +4847,3 @@ pub fn concatIfNeeded(
     }
     std.debug.assert(remain.len == 0);
 }
-
-pub fn removeWhitespace(allocator: std.mem.Allocator, str: []const u8) []u8 {
-    var result = allocator.alloc(u8, str.len) catch unreachable;
-    var j: usize = 0;
-    for (str) |char| {
-        if (!std.ascii.isWhitespace(char)) {
-            result[j] = char;
-            j += 1;
-        }
-    }
-    return result[0..j];
-}

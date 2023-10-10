@@ -57,13 +57,13 @@ mustExist("node_modules/hello/version.txt");
 mustNotExist("packages/second/node_modules/hello/version.txt");
 
 // body parser
-validate("node_modules/body-parser", "1.13.3");
+validate("node_modules/body-parser", "200.0.0");
 mustExist("node_modules/body-parser/isfake.txt");
 
-validate("node_modules/not-body-parser", "1.13.3", "body-parser");
+validate("node_modules/not-body-parser", "200.0.0", "body-parser");
 mustExist("node_modules/not-body-parser/isfake.txt");
 
-validate("packages/second/node_modules/connect", "1.13.3", "body-parser");
+validate("packages/second/node_modules/connect", "200.0.0", "body-parser");
 mustExist("packages/second/node_modules/connect/isfake.txt");
 
 validate("packages/second/node_modules/body-parser", "3.21.2", "express");

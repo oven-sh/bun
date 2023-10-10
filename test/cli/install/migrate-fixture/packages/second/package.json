@@ -8,6 +8,6 @@
     "lol": "*",
     "not-body-parser": "*",
     "svelte": "*",
-    "connect": "^1.13.3"
+    "connect": "200.0.0"
   }
 }

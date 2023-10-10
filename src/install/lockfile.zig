@@ -4608,6 +4608,9 @@ pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep: Dependenc
     try w.beginObject();
     defer w.endObject() catch {};
 
+    try w.objectField("literal");
+    try w.write(dep.version.literal.slice(sb));
+
     try w.objectField(@tagName(dep.version.tag));
     switch (dep.version.tag) {
         .uninitialized => try w.write(null),
@@ -4864,30 +4867,6 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
                     }
                 }
             }
-
-            // try w.objectField("dependencies_slice");
-            // {
-            //     try w.beginObject();
-            //     defer w.endObject() catch {};
-
-            //     try w.objectField("off");
-            //     try w.write(pkg.dependencies.off);
-
-            //     try w.objectField("len");
-            //     try w.write(pkg.dependencies.len);
-            // }
-
-            // try w.objectField("resolutions_slice");
-            // {
-            //     try w.beginObject();
-            //     defer w.endObject() catch {};
-
-            //     try w.objectField("off");
-            //     try w.write(pkg.resolutions.off);
-
-            //     try w.objectField("len");
-            //     try w.write(pkg.resolutions.len);
-            // }
         }
     }
 
@@ -4911,33 +4890,4 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
             try w.write(try std.fmt.bufPrint(&buf, "{}", .{v.fmt(sb)}));
         }
     }
-
-    // try w.objectField("buffers");
-    // {
-    //     try w.beginObject();
-    //     defer w.endObject() catch {};
-
-    //     try w.objectField("resolutions");
-    //     {
-    //         try w.beginArray();
-    //         defer w.endArray() catch {};
-
-    //         for (this.buffers.resolutions.items) |res| {
-    //             try w.write(res);
-    //         }
-    //     }
-
-    //     try w.objectField("string_bytes");
-    //     try w.write(this.buffers.string_bytes.items);
-
-    //     try w.objectField("dependencies");
-    //     {
-    //         try w.beginArray();
-    //         defer w.endArray() catch {};
-
-    //         for (this.buffers.dependencies.items) |dep| {
-    //             try this.jsonStringifyDependency(w, dep, null);
-    //         }
-    //     }
-    // }
 }

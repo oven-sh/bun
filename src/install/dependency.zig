@@ -252,7 +252,7 @@ pub inline fn isTarball(dependency: string) bool {
 }
 
 pub const Version = struct {
-    tag: Dependency.Version.Tag = .uninitialized,
+    tag: Tag = .uninitialized,
     literal: String = .{},
     value: Value = .{ .uninitialized = {} },
 

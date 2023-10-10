@@ -122,7 +122,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
     Install.initializeStore();
 
     const json_src = logger.Source.initPathString(path, data);
-    const json = bun.JSON.ParseJSON(&json_src, log, allocator) catch return error.InvalidNPMLockfile;
+    const json = bun.JSON.ParseJSONUTF8(&json_src, log, allocator) catch return error.InvalidNPMLockfile;
 
     if (json.data != .e_object) {
         return error.InvalidNPMLockfile;
@@ -673,16 +673,22 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                                 debug("skipping bundled dependency {s}", .{name_bytes});
                                 continue :dep_loop;
                             }
-                            var is_workspace = workspace_map != null and workspace_map.?.map.getIndex(
-                                packages_properties.at(found.old_json_index).key.?.asString(allocator).?,
-                            ) != null;
 
                             const id = found.new_package_id;
+
+                            var is_workspace = resolutions[id].tag == .workspace;
 
                             dependencies_buf[0] = Dependency{
                                 .name = dep_name,
                                 .name_hash = name_hash,
-                                .version = version,
+                                .version = if (is_workspace)
+                                    .{
+                                        .tag = .workspace,
+                                        .literal = resolutions[id].value.workspace,
+                                        .value = .{ .workspace = resolutions[id].value.workspace },
+                                    }
+                                else
+                                    version,
                                 .behavior = .{
                                     .normal = dep_key == .dependencies,
                                     .optional = dep_key == .optionalDependencies,

@@ -54,18 +54,15 @@ find_program(ESBUILD "esbuild")
 if (NOT ESBUILD)
     set(ESBUILD "./node_modules/.bin/esbuild" CACHE STRING "esbuild executable")
 endif()
-find_program(DSYMUTIL "dsymutil")
-if (NOT DSYMUTIL)
-    find_program(DSYMUTIL "dsymutil-15")
-endif()
+find_program(DSYMUTIL NAMES "dsymutil" "dsymutil-15")
 set(WEBKIT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/WebKit")
 set(WEBKIT_RELEASE_DIR "${WEBKIT_DIR}/WebKitBuild/Release")
 set(WEBKIT_DEBUG_DIR "${WEBKIT_DIR}/WebKitBuild/Debug")
 set(WEBKIT_RELEASE_LTO "${WEBKIT_RELEASE_DIR}/WebKitBuild/ReleaseLTO")
 
-find_program(NPM_CLIENT "bun")
-if (NOT NPM_CLIENT)
-    find_program(NPM_CLIENT "npm")
+find_program(NPM_CLIENT NAMES "bun" "npm")
+if(NOT NPM_CLIENT)
+  message(WARNING "Neither 'bun' nor 'npm' was found on the system.")
 endif()
 
 find_program(ZIG "zig")
@@ -101,6 +98,65 @@ if(CCACHE)
     set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE}")
     set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE}")
 endif()
+
+if (APPLE)
+    # Find LLVM
+    # If LLVM_PREFIX is not set or points to a non-existing location
+    if(NOT DEFINED LLVM_PREFIX OR NOT EXISTS ${LLVM_PREFIX})
+        # Try to find llvm@16 using brew
+        execute_process(COMMAND brew --prefix llvm@16
+                        OUTPUT_VARIABLE TEMP_LLVM_PREFIX
+                        OUTPUT_STRIP_TRAILING_WHITESPACE) # Removes newlines from the output
+
+        # If the path exists
+        if(EXISTS ${TEMP_LLVM_PREFIX})
+            set(LLVM_PREFIX ${TEMP_LLVM_PREFIX})
+        endif()
+    endif()
+
+    # If LLVM_PREFIX is still not set or points to a non-existing location
+    if(NOT DEFINED LLVM_PREFIX OR NOT EXISTS ${LLVM_PREFIX})
+
+        # Try to find the default llvm using brew
+        execute_process(COMMAND brew --prefix llvm
+                        OUTPUT_VARIABLE TEMP_LLVM_PREFIX
+                        OUTPUT_STRIP_TRAILING_WHITESPACE)
+
+        # If the path exists
+        if(EXISTS ${TEMP_LLVM_PREFIX})
+            set(LLVM_PREFIX ${TEMP_LLVM_PREFIX})
+        endif()
+    endif()
+
+    # If LLVM_PREFIX is still not set or points to a non-existing location
+    if(NOT DEFINED LLVM_PREFIX OR NOT EXISTS ${LLVM_PREFIX})
+        message(FATAL_ERROR "Unable to find llvm. Please run 'brew install llvm@16' or set LLVM_PREFIX=/path/to/llvm")
+    endif()
+
+
+    # Use LLVM libraries and includes
+    link_directories(${LLVM_PREFIX}/lib)
+    include_directories(${LLVM_PREFIX}/include)
+
+    # Set compilers
+    set(CMAKE_C_COMPILER ${LLVM_PREFIX}/bin/clang)
+    set(CMAKE_CXX_COMPILER ${LLVM_PREFIX}/bin/clang++)
+
+    # Set codesign identity if not already set
+    if(NOT DEFINED CODESIGN_IDENTITY)
+        execute_process(
+            COMMAND security find-identity -v -p codesigning
+            COMMAND awk '/Apple Development/ { print $$2 }'
+            OUTPUT_VARIABLE CODESIGN_IDENTITY
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+    endif()
+endif()
+
+# macOS sed is different
+find_program(SED NAMES gsed sed)
+
+
 
 
 message(STATUS "#### : ${CMAKE_PROJECT_VERSION}")

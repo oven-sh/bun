@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "dependencies": {
     "sharp": "*",
-    "svelte": "3.50.0"
+    "svelte": "3"
   },
   "scripts": {
     "postinstall": "bun postinstall.js"

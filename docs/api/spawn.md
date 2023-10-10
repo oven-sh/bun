@@ -183,6 +183,43 @@ const proc = Bun.spawn(["echo", "hello"]);
 proc.unref();
 ```
 
+## IPC - Inter-Process Communication
+
+`Bun.spawn()` supports IPC between other bun sub processes
+
+```ts
+// parent.ts
+const child = Bun.spawn(["bun", "child.ts"], {
+  ipc(message) {
+    /**
+     * The message received from the sub process
+     **/
+  },
+});
+
+child.send("Hello from parent"); // The parent can send messages to the child as well
+```
+
+The child process and send messages to the parent using the `process.send` method
+
+```ts
+// child.ts
+interface ChildProcess extends Process {
+  send: (message: any) => void;
+}
+
+const send = (process as ChildProcess).send;
+
+send("Hello from child as string");
+send({ message: "Hello from child as object" });
+
+process.on("message", (message) => {
+    /**
+     * The message received from the parent
+     **/
+});
+```
+
 ## Blocking API (`Bun.spawnSync()`)
 
 Bun provides a synchronous equivalent of `Bun.spawn` called `Bun.spawnSync`. This is a blocking API that supports the same inputs and parameters as `Bun.spawn`. It returns a `SyncSubprocess` object, which differs from `Subprocess` in a few ways.

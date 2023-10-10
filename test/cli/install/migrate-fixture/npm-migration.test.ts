@@ -1,43 +1,40 @@
-/// <reference types="../../../../packages/bun-types" />
 import fs from "fs";
 import path from "path";
+import { test, expect, describe } from "bun:test";
 
 const cwd = import.meta.dir;
 
 function validate(packageName: string, version: string, realPackageName?: string) {
-  process.stdout.write(`checking ${packageName} for ${realPackageName ? `${realPackageName}:${version}` : version}`);
-  const pkg = JSON.parse(fs.readFileSync(path.join(cwd, packageName, "package.json"), "utf8"));
-  if (pkg.version !== version) {
-    process.stdout.write("... ❌ got " + pkg.version + "\n");
-  } else {
-    if (realPackageName && realPackageName != pkg.name) {
-      process.stdout.write("... ❌ name was " + pkg.name + "\n");
-    } else {
-      process.stdout.write("... ✅\n");
+  test(`${packageName} is ${realPackageName ? `${realPackageName}@${version}` : version}`, () => {
+    const pkg = JSON.parse(fs.readFileSync(path.join(cwd, packageName, "package.json"), "utf8"));
+    expect(pkg.version).toBe(version);
+    if (realPackageName) {
+      expect(pkg.name).toBe(realPackageName);
     }
-  }
+  });
 }
 
 function mustExist(filePath: string) {
-  if (!fs.existsSync(filePath)) {
-    console.log(`file ${filePath} ❌ should exist`);
-  } else {
-    console.log(`file ${filePath} ✅ exists`);
-  }
+  test(`${filePath} exists`, () => {
+    if (!fs.existsSync(path.join(cwd, filePath))) {
+      throw new Error(`File ${filePath} was not found`);
+    }
+  });
 }
 
 function mustNotExist(filePath: string) {
-  if (!fs.existsSync(filePath)) {
-    console.log(`file ${filePath} ✅ does not exist`);
-  } else {
-    console.log(`file ${filePath} ❌ should not exist`);
-  }
+  test(`${filePath} does not exist`, () => {
+    if (fs.existsSync(path.join(cwd, filePath))) {
+      throw new Error(`File ${filePath} was found`);
+    }
+  });
 }
 
 // bun-types
 validate("node_modules/bun-types", "1.0.0");
 mustExist("node_modules/bun-types/isfake.txt");
-validate("node_modules/bun-types/node_modules/bun-types", "1.0.4");
+validate("node_modules/bun-types/node_modules/bun-types", "1.0.0");
+mustNotExist("node_modules/bun-types/node_modules/bun-types/isfake.txt");
 
 // svelte
 validate("node_modules/svelte", "4.1.2");
@@ -81,3 +78,9 @@ validate("packages/second/node_modules/body-parser/node_modules/connect", "2.30.
 
 // sharp
 validate("node_modules/sharp", "0.32.6");
+
+// iconv-lite
+mustNotExist("packages/second/node_modules/body-parser/node_modules/body-parser/node_modules/iconv-lite");
+mustNotExist("packages/second/node_modules/body-parser/node_modules/iconv-lite");
+mustNotExist("packages/second/node_modules/iconv-lite");
+mustNotExist("node_modules/iconv-lite");

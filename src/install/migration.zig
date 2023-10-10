@@ -661,81 +661,89 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                             if (resolutions[id].tag == .uninitialized) {
                                 debug("resolving '{s}'", .{name_bytes});
 
-                                const dep_pkg = packages_properties.at(found.old_json_index).value.?.data.e_object;
-                                const dep_resolved = (dep_pkg.get("resolved") orelse return error.LockfileWorkspaceMissingResolved).asString(this.allocator) orelse return error.InvalidNPMLockfile;
-
-                                const res = switch (version.tag) {
-                                    .uninitialized => std.debug.panic("Version string {s} resolved to `.uninitialized`", .{version_bytes}),
-                                    .npm, .dist_tag => res: {
-                                        const dep_actual_version = (dep_pkg.get("version") orelse return error.InvalidNPMLockfile)
-                                            .asString(this.allocator) orelse return error.InvalidNPMLockfile;
-
-                                        const dep_actual_version_str = builder.append(String, dep_actual_version);
-                                        const dep_actual_version_sliced = dep_actual_version_str.sliced(this.buffers.string_bytes.items);
-
-                                        break :res Resolution.init(.{
-                                            .npm = .{
-                                                .url = builder.append(String, dep_resolved),
-                                                .version = Semver.Version.parse(dep_actual_version_sliced).version.fill(),
-                                            },
+                                const res = resolved: {
+                                    const dep_pkg = packages_properties.at(found.old_json_index).value.?.data.e_object;
+                                    const npm_resolution = dep_pkg.get("resolved") orelse {
+                                        break :resolved Resolution.init(.{
+                                            .folder = builder.append(String, name_checking_buf[0..buf_len]),
                                         });
-                                    },
-                                    .tarball => if (strings.hasPrefixComptime(dep_resolved, "file:"))
-                                        Resolution.init(.{ .local_tarball = builder.append(String, dep_resolved[5..]) })
-                                    else
-                                        Resolution.init(.{ .remote_tarball = builder.append(String, dep_resolved) }),
-                                    .folder => Resolution.init(.{ .folder = builder.append(String, dep_resolved) }),
-                                    // not sure if this is possible to hit
-                                    .symlink => Resolution.init(.{ .folder = builder.append(String, dep_resolved) }),
-                                    .workspace => workspace: {
-                                        var input = builder.append(String, dep_resolved).sliced(this.buffers.string_bytes.items);
-                                        if (strings.hasPrefixComptime(input.slice, "workspace:")) {
-                                            input = input.sub(input.slice["workspace:".len..]);
-                                        }
-                                        break :workspace Resolution.init(.{
-                                            .workspace = input.value(),
-                                        });
-                                    },
-                                    .git => res: {
-                                        const str = (if (strings.hasPrefixComptime(dep_resolved, "git+"))
-                                            builder.append(String, dep_resolved[4..])
+                                    };
+                                    const dep_resolved = npm_resolution.asString(this.allocator) orelse return error.InvalidNPMLockfile;
+
+                                    // TODO: This logic is incorrect for convoluted tests
+                                    break :resolved switch (version.tag) {
+                                        .uninitialized => std.debug.panic("Version string {s} resolved to `.uninitialized`", .{version_bytes}),
+                                        .npm, .dist_tag => res: {
+                                            const dep_actual_version = (dep_pkg.get("version") orelse return error.InvalidNPMLockfile)
+                                                .asString(this.allocator) orelse return error.InvalidNPMLockfile;
+
+                                            const dep_actual_version_str = builder.append(String, dep_actual_version);
+                                            const dep_actual_version_sliced = dep_actual_version_str.sliced(this.buffers.string_bytes.items);
+
+                                            break :res Resolution.init(.{
+                                                .npm = .{
+                                                    .url = builder.append(String, dep_resolved),
+                                                    .version = Semver.Version.parse(dep_actual_version_sliced).version.fill(),
+                                                },
+                                            });
+                                        },
+                                        .tarball => if (strings.hasPrefixComptime(dep_resolved, "file:"))
+                                            Resolution.init(.{ .local_tarball = builder.append(String, dep_resolved[5..]) })
                                         else
-                                            builder.append(String, dep_resolved))
-                                            .sliced(this.buffers.string_bytes.items);
+                                            Resolution.init(.{ .remote_tarball = builder.append(String, dep_resolved) }),
+                                        .folder => Resolution.init(.{ .folder = builder.append(String, dep_resolved) }),
+                                        // not sure if this is possible to hit
+                                        .symlink => Resolution.init(.{ .folder = builder.append(String, dep_resolved) }),
+                                        .workspace => workspace: {
+                                            var input = builder.append(String, dep_resolved).sliced(this.buffers.string_bytes.items);
+                                            if (strings.hasPrefixComptime(input.slice, "workspace:")) {
+                                                input = input.sub(input.slice["workspace:".len..]);
+                                            }
+                                            break :workspace Resolution.init(.{
+                                                .workspace = input.value(),
+                                            });
+                                        },
+                                        .git => res: {
+                                            const str = (if (strings.hasPrefixComptime(dep_resolved, "git+"))
+                                                builder.append(String, dep_resolved[4..])
+                                            else
+                                                builder.append(String, dep_resolved))
+                                                .sliced(this.buffers.string_bytes.items);
 
-                                        const hash_index = strings.lastIndexOfChar(str.slice, '#') orelse return error.InvalidNPMLockfile;
+                                            const hash_index = strings.lastIndexOfChar(str.slice, '#') orelse return error.InvalidNPMLockfile;
 
-                                        const commit = str.sub(str.slice[hash_index + 1 ..]).value();
-                                        break :res Resolution.init(.{
-                                            .git = .{
-                                                .owner = version.value.git.owner,
-                                                .repo = str.sub(str.slice[0..hash_index]).value(),
-                                                .committish = commit,
-                                                .resolved = commit,
-                                                .package_name = dep_name,
-                                            },
-                                        });
-                                    },
-                                    .github => res: {
-                                        const str = (if (strings.hasPrefixComptime(dep_resolved, "git+"))
-                                            builder.append(String, dep_resolved[4..])
-                                        else
-                                            builder.append(String, dep_resolved))
-                                            .sliced(this.buffers.string_bytes.items);
+                                            const commit = str.sub(str.slice[hash_index + 1 ..]).value();
+                                            break :res Resolution.init(.{
+                                                .git = .{
+                                                    .owner = version.value.git.owner,
+                                                    .repo = str.sub(str.slice[0..hash_index]).value(),
+                                                    .committish = commit,
+                                                    .resolved = commit,
+                                                    .package_name = dep_name,
+                                                },
+                                            });
+                                        },
+                                        .github => res: {
+                                            const str = (if (strings.hasPrefixComptime(dep_resolved, "git+"))
+                                                builder.append(String, dep_resolved[4..])
+                                            else
+                                                builder.append(String, dep_resolved))
+                                                .sliced(this.buffers.string_bytes.items);
 
-                                        const hash_index = strings.lastIndexOfChar(str.slice, '#') orelse return error.InvalidNPMLockfile;
+                                            const hash_index = strings.lastIndexOfChar(str.slice, '#') orelse return error.InvalidNPMLockfile;
 
-                                        const commit = str.sub(str.slice[hash_index + 1 ..]).value();
-                                        break :res Resolution.init(.{
-                                            .git = .{
-                                                .owner = version.value.github.owner,
-                                                .repo = str.sub(str.slice[0..hash_index]).value(),
-                                                .committish = commit,
-                                                .resolved = commit,
-                                                .package_name = dep_name,
-                                            },
-                                        });
-                                    },
+                                            const commit = str.sub(str.slice[hash_index + 1 ..]).value();
+                                            break :res Resolution.init(.{
+                                                .git = .{
+                                                    .owner = version.value.github.owner,
+                                                    .repo = str.sub(str.slice[0..hash_index]).value(),
+                                                    .committish = commit,
+                                                    .resolved = commit,
+                                                    .package_name = dep_name,
+                                                },
+                                            });
+                                        },
+                                    };
                                 };
                                 debug("-> {}", .{res.fmtForDebug(this.buffers.string_bytes.items)});
 
@@ -790,10 +798,12 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                                     }
                                 };
                             }
+
+                            // it is technically possible to get a package-lock.json without a dependency.
+                            // it's very unlikely, but possible. when NPM sees this, it essentially doesnt install the package, and treats it like it doesn't exist.
+                            // in test/cli/install/migrate-fixture, you can observe this for `iconv-lite`
                             debug("could not find package '{s}' in '{s}'", .{ name_bytes, pkg_path });
-                            // the lockfile is supposed contain everything
-                            // despite the name `optionalDependencies`, those also have to be resolved
-                            return error.MissingLockfileDependency;
+                            continue :dep_loop;
                         }
                     }
                 }

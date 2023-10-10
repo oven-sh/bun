@@ -3611,48 +3611,39 @@ pub const PackageManager = struct {
         const lockfile = this.lockfile;
 
         // Step 1. Go through main dependencies
-        const begin = dependencies_list.off;
-        var i = begin;
+        var begin = dependencies_list.off;
         const end = dependencies_list.off +| dependencies_list.len;
 
-        var non_optional_names = std.AutoHashMap(u64, void).init(this.allocator);
-        non_optional_names.ensureUnusedCapacity(end - i) catch unreachable;
-        defer non_optional_names.deinit();
+        // if dependency is peer and is going to be installed
+        // through "dependencies", skip it
+        if (end - begin > 1 and lockfile.buffers.dependencies.items[0].behavior.isPeer()) {
+            var peer_i: usize = 0;
+            var peer = &lockfile.buffers.dependencies.items[peer_i];
+            while (peer.behavior.isPeer()) {
+                var dep_i: usize = end - 1;
+                var dep = lockfile.buffers.dependencies.items[dep_i];
+                while (!dep.behavior.isPeer()) {
+                    if (!dep.behavior.isDev()) {
+                        if (peer.name_hash == dep.name_hash) {
+                            peer.* = lockfile.buffers.dependencies.items[begin];
+                            begin += 1;
+                            break;
+                        }
+                    }
+                    dep_i -= 1;
+                    dep = lockfile.buffers.dependencies.items[dep_i];
+                }
+                peer_i += 1;
+                if (peer_i == end) break;
+                peer = &lockfile.buffers.dependencies.items[peer_i];
+            }
+        }
+
+        var i = begin;
 
         // we have to be very careful with pointers here
         while (i < end) : (i += 1) {
             const dependency = lockfile.buffers.dependencies.items[i];
-
-            // if dependency is peer and is going to be installed
-            // through "dependencies" or "optionalDependencies", skip it
-            if (dependency.behavior.isPeer()) {
-                if (non_optional_names.contains(dependency.name_hash)) {
-                    continue;
-                }
-
-                // check the remaining dependencies
-                var j = i + 1;
-                var skip = false;
-                while (j < end) : (j += 1) {
-                    const other_dep = lockfile.buffers.dependencies.items[j];
-                    const not_optional = this.options.local_package_features.optional_dependencies and other_dep.behavior.isOptional();
-                    if (other_dep.behavior.isNormal() or not_optional) {
-                        non_optional_names.putAssumeCapacity(other_dep.name_hash, {});
-                        if (other_dep.name_hash == dependency.name_hash) {
-                            skip = true;
-                            break;
-                        }
-                    }
-                }
-
-                if (skip) continue;
-            } else {
-                const not_optional = this.options.local_package_features.optional_dependencies and dependency.behavior.isOptional();
-                if (dependency.behavior.isNormal() or not_optional) {
-                    non_optional_names.putAssumeCapacity(dependency.name_hash, {});
-                }
-            }
-
             const resolution = lockfile.buffers.resolutions.items[i];
             this.enqueueDependencyWithMain(
                 i,

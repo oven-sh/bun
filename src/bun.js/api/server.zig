@@ -4834,6 +4834,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         temporary_url_buffer: std.ArrayListUnmanaged(u8) = .{},
 
         cached_hostname: bun.String = bun.String.empty,
+        cached_localAddr: bun.String = bun.String.empty,
         cached_protocol: bun.String = bun.String.empty,
 
         flags: packed struct(u3) {
@@ -5297,14 +5298,43 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             return JSC.JSValue.jsNumber(@as(i32, @intCast(@as(u31, @truncate(this.activeSocketsCount())))));
         }
 
-        pub fn getHostname(this: *ThisServer, globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {
-            if (this.cached_hostname.isEmpty()) {
+        pub fn getUnix(this: *ThisServer, globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {
+            switch (this.config.address) {
+                .unix => |unix| {
+                    var value = bun.String.create(bun.sliceTo(@constCast(unix), 0));
+                    return value.toJS(globalThis);
+                },
+                else => {
+                    return JSValue.jsUndefined();
+                },
+            }
+        }
+
+        pub fn getAddress(this: *ThisServer, globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {
+            if (this.cached_localAddr.isEmpty()) {
                 if (this.listener) |listener| {
-                    var buf: [1024]u8 = [_]u8{0} ** 1024;
-                    var len: i32 = 1024;
+                    var buf: [64]u8 = [_]u8{0} ** 64;
+                    var len: i32 = 64;
                     listener.socket().localAddressText(&buf, &len);
                     if (len > 0) {
-                        this.cached_hostname = bun.String.create(buf[0..@as(usize, @intCast(len))]);
+                        this.cached_localAddr = bun.String.create(buf[0..@as(usize, @intCast(len))]);
+                    }
+                }
+            }
+
+            return this.cached_localAddr.toJS(globalThis);
+        }
+
+        pub fn getHostname(this: *ThisServer, globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {
+            if (this.cached_hostname.isEmpty()) {
+                if (this.cached_hostname.isEmpty()) {
+                    if (this.listener) |listener| {
+                        var buf: [1024]u8 = [_]u8{0} ** 1024;
+                        var len: i32 = 1024;
+                        listener.socket().localHostname(&buf, &len);
+                        if (len > 0) {
+                            this.cached_hostname = bun.String.create(buf[0..@as(usize, @intCast(len))]);
+                        }
                     }
                 }
 
@@ -5420,6 +5450,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub fn deinit(this: *ThisServer) void {
             httplog("deinit", .{});
             this.cached_hostname.deref();
+            this.cached_localAddr.deref();
             this.cached_protocol.deref();
 
             this.config.address.deinit(bun.default_allocator);

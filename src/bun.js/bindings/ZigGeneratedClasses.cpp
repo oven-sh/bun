@@ -4167,6 +4167,9 @@ JSC_DECLARE_CUSTOM_GETTER(jsDebugHTTPSServerConstructor);
 
 extern "C" void DebugHTTPSServerClass__finalize(void*);
 
+extern "C" JSC::EncodedJSValue DebugHTTPSServerPrototype__getAddress(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(DebugHTTPSServerPrototype__addressGetterWrap);
+
 extern "C" JSC::EncodedJSValue DebugHTTPSServerPrototype__getDevelopment(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(DebugHTTPSServerPrototype__developmentGetterWrap);
 
@@ -4203,12 +4206,16 @@ JSC_DECLARE_HOST_FUNCTION(DebugHTTPSServerPrototype__requestIPCallback);
 extern "C" EncodedJSValue DebugHTTPSServerPrototype__doStop(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(DebugHTTPSServerPrototype__stopCallback);
 
+extern "C" JSC::EncodedJSValue DebugHTTPSServerPrototype__getUnix(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(DebugHTTPSServerPrototype__unixGetterWrap);
+
 extern "C" EncodedJSValue DebugHTTPSServerPrototype__doUpgrade(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(DebugHTTPSServerPrototype__upgradeCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDebugHTTPSServerPrototype, JSDebugHTTPSServerPrototype::Base);
 
 static const HashTableValue JSDebugHTTPSServerPrototypeTableValues[] = {
+    { "address"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPSServerPrototype__addressGetterWrap, 0 } },
     { "development"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPSServerPrototype__developmentGetterWrap, 0 } },
     { "fetch"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPSServerPrototype__fetchCallback, 1 } },
     { "hostname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPSServerPrototype__hostnameGetterWrap, 0 } },
@@ -4221,6 +4228,7 @@ static const HashTableValue JSDebugHTTPSServerPrototypeTableValues[] = {
     { "reload"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPSServerPrototype__reloadCallback, 2 } },
     { "requestIP"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPSServerPrototype__requestIPCallback, 1 } },
     { "stop"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPSServerPrototype__stopCallback, 1 } },
+    { "unix"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPSServerPrototype__unixGetterWrap, 0 } },
     { "upgrade"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPSServerPrototype__upgradeCallback, 1 } }
 };
 
@@ -4236,6 +4244,37 @@ JSC_DEFINE_CUSTOM_GETTER(jsDebugHTTPSServerConstructor, (JSGlobalObject * lexica
     if (UNLIKELY(!prototype))
         return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for DebugHTTPSServer"_s);
     return JSValue::encode(globalObject->JSDebugHTTPSServerConstructor());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(DebugHTTPSServerPrototype__addressGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSDebugHTTPSServer* thisObject = jsCast<JSDebugHTTPSServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_address.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        DebugHTTPSServerPrototype__getAddress(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_address.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void DebugHTTPSServerPrototype__addressSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSDebugHTTPSServer*>(JSValue::decode(thisValue));
+    thisObject->m_address.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue DebugHTTPSServerPrototype__addressGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSDebugHTTPSServer*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_address.get());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(DebugHTTPSServerPrototype__developmentGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -4500,6 +4539,37 @@ JSC_DEFINE_HOST_FUNCTION(DebugHTTPSServerPrototype__stopCallback, (JSGlobalObjec
     return DebugHTTPSServerPrototype__doStop(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
+JSC_DEFINE_CUSTOM_GETTER(DebugHTTPSServerPrototype__unixGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSDebugHTTPSServer* thisObject = jsCast<JSDebugHTTPSServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_unix.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        DebugHTTPSServerPrototype__getUnix(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_unix.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void DebugHTTPSServerPrototype__unixSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSDebugHTTPSServer*>(JSValue::decode(thisValue));
+    thisObject->m_unix.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue DebugHTTPSServerPrototype__unixGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSDebugHTTPSServer*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_unix.get());
+}
+
 JSC_DEFINE_HOST_FUNCTION(DebugHTTPSServerPrototype__upgradeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
@@ -4630,8 +4700,10 @@ void JSDebugHTTPSServer::visitAdditionalChildren(Visitor& visitor)
     JSDebugHTTPSServer* thisObject = this;
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
 
+    visitor.append(thisObject->m_address);
     visitor.append(thisObject->m_hostname);
     visitor.append(thisObject->m_id);
+    visitor.append(thisObject->m_unix);
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN(JSDebugHTTPSServer);
@@ -4681,6 +4753,9 @@ JSC_DECLARE_CUSTOM_GETTER(jsDebugHTTPServerConstructor);
 
 extern "C" void DebugHTTPServerClass__finalize(void*);
 
+extern "C" JSC::EncodedJSValue DebugHTTPServerPrototype__getAddress(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(DebugHTTPServerPrototype__addressGetterWrap);
+
 extern "C" JSC::EncodedJSValue DebugHTTPServerPrototype__getDevelopment(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(DebugHTTPServerPrototype__developmentGetterWrap);
 
@@ -4717,12 +4792,16 @@ JSC_DECLARE_HOST_FUNCTION(DebugHTTPServerPrototype__requestIPCallback);
 extern "C" EncodedJSValue DebugHTTPServerPrototype__doStop(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(DebugHTTPServerPrototype__stopCallback);
 
+extern "C" JSC::EncodedJSValue DebugHTTPServerPrototype__getUnix(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(DebugHTTPServerPrototype__unixGetterWrap);
+
 extern "C" EncodedJSValue DebugHTTPServerPrototype__doUpgrade(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(DebugHTTPServerPrototype__upgradeCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDebugHTTPServerPrototype, JSDebugHTTPServerPrototype::Base);
 
 static const HashTableValue JSDebugHTTPServerPrototypeTableValues[] = {
+    { "address"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPServerPrototype__addressGetterWrap, 0 } },
     { "development"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPServerPrototype__developmentGetterWrap, 0 } },
     { "fetch"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPServerPrototype__fetchCallback, 1 } },
     { "hostname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPServerPrototype__hostnameGetterWrap, 0 } },
@@ -4735,6 +4814,7 @@ static const HashTableValue JSDebugHTTPServerPrototypeTableValues[] = {
     { "reload"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPServerPrototype__reloadCallback, 2 } },
     { "requestIP"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPServerPrototype__requestIPCallback, 1 } },
     { "stop"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPServerPrototype__stopCallback, 1 } },
+    { "unix"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPServerPrototype__unixGetterWrap, 0 } },
     { "upgrade"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPServerPrototype__upgradeCallback, 1 } }
 };
 
@@ -4750,6 +4830,37 @@ JSC_DEFINE_CUSTOM_GETTER(jsDebugHTTPServerConstructor, (JSGlobalObject * lexical
     if (UNLIKELY(!prototype))
         return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for DebugHTTPServer"_s);
     return JSValue::encode(globalObject->JSDebugHTTPServerConstructor());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(DebugHTTPServerPrototype__addressGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSDebugHTTPServer* thisObject = jsCast<JSDebugHTTPServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_address.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        DebugHTTPServerPrototype__getAddress(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_address.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void DebugHTTPServerPrototype__addressSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSDebugHTTPServer*>(JSValue::decode(thisValue));
+    thisObject->m_address.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue DebugHTTPServerPrototype__addressGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSDebugHTTPServer*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_address.get());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(DebugHTTPServerPrototype__developmentGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -5014,6 +5125,37 @@ JSC_DEFINE_HOST_FUNCTION(DebugHTTPServerPrototype__stopCallback, (JSGlobalObject
     return DebugHTTPServerPrototype__doStop(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
+JSC_DEFINE_CUSTOM_GETTER(DebugHTTPServerPrototype__unixGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSDebugHTTPServer* thisObject = jsCast<JSDebugHTTPServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_unix.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        DebugHTTPServerPrototype__getUnix(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_unix.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void DebugHTTPServerPrototype__unixSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSDebugHTTPServer*>(JSValue::decode(thisValue));
+    thisObject->m_unix.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue DebugHTTPServerPrototype__unixGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSDebugHTTPServer*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_unix.get());
+}
+
 JSC_DEFINE_HOST_FUNCTION(DebugHTTPServerPrototype__upgradeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
@@ -5144,8 +5286,10 @@ void JSDebugHTTPServer::visitAdditionalChildren(Visitor& visitor)
     JSDebugHTTPServer* thisObject = this;
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
 
+    visitor.append(thisObject->m_address);
     visitor.append(thisObject->m_hostname);
     visitor.append(thisObject->m_id);
+    visitor.append(thisObject->m_unix);
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN(JSDebugHTTPServer);
@@ -11686,6 +11830,9 @@ JSC_DECLARE_CUSTOM_GETTER(jsHTTPSServerConstructor);
 
 extern "C" void HTTPSServerClass__finalize(void*);
 
+extern "C" JSC::EncodedJSValue HTTPSServerPrototype__getAddress(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(HTTPSServerPrototype__addressGetterWrap);
+
 extern "C" JSC::EncodedJSValue HTTPSServerPrototype__getDevelopment(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(HTTPSServerPrototype__developmentGetterWrap);
 
@@ -11722,12 +11869,16 @@ JSC_DECLARE_HOST_FUNCTION(HTTPSServerPrototype__requestIPCallback);
 extern "C" EncodedJSValue HTTPSServerPrototype__doStop(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(HTTPSServerPrototype__stopCallback);
 
+extern "C" JSC::EncodedJSValue HTTPSServerPrototype__getUnix(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(HTTPSServerPrototype__unixGetterWrap);
+
 extern "C" EncodedJSValue HTTPSServerPrototype__doUpgrade(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(HTTPSServerPrototype__upgradeCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSHTTPSServerPrototype, JSHTTPSServerPrototype::Base);
 
 static const HashTableValue JSHTTPSServerPrototypeTableValues[] = {
+    { "address"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPSServerPrototype__addressGetterWrap, 0 } },
     { "development"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPSServerPrototype__developmentGetterWrap, 0 } },
     { "fetch"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSServerPrototype__fetchCallback, 1 } },
     { "hostname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPSServerPrototype__hostnameGetterWrap, 0 } },
@@ -11740,6 +11891,7 @@ static const HashTableValue JSHTTPSServerPrototypeTableValues[] = {
     { "reload"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSServerPrototype__reloadCallback, 2 } },
     { "requestIP"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSServerPrototype__requestIPCallback, 1 } },
     { "stop"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSServerPrototype__stopCallback, 1 } },
+    { "unix"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPSServerPrototype__unixGetterWrap, 0 } },
     { "upgrade"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSServerPrototype__upgradeCallback, 1 } }
 };
 
@@ -11755,6 +11907,37 @@ JSC_DEFINE_CUSTOM_GETTER(jsHTTPSServerConstructor, (JSGlobalObject * lexicalGlob
     if (UNLIKELY(!prototype))
         return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for HTTPSServer"_s);
     return JSValue::encode(globalObject->JSHTTPSServerConstructor());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(HTTPSServerPrototype__addressGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSHTTPSServer* thisObject = jsCast<JSHTTPSServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_address.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        HTTPSServerPrototype__getAddress(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_address.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void HTTPSServerPrototype__addressSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSHTTPSServer*>(JSValue::decode(thisValue));
+    thisObject->m_address.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue HTTPSServerPrototype__addressGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSHTTPSServer*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_address.get());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(HTTPSServerPrototype__developmentGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -12019,6 +12202,37 @@ JSC_DEFINE_HOST_FUNCTION(HTTPSServerPrototype__stopCallback, (JSGlobalObject * l
     return HTTPSServerPrototype__doStop(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
+JSC_DEFINE_CUSTOM_GETTER(HTTPSServerPrototype__unixGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSHTTPSServer* thisObject = jsCast<JSHTTPSServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_unix.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        HTTPSServerPrototype__getUnix(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_unix.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void HTTPSServerPrototype__unixSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSHTTPSServer*>(JSValue::decode(thisValue));
+    thisObject->m_unix.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue HTTPSServerPrototype__unixGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSHTTPSServer*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_unix.get());
+}
+
 JSC_DEFINE_HOST_FUNCTION(HTTPSServerPrototype__upgradeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
@@ -12149,8 +12363,10 @@ void JSHTTPSServer::visitAdditionalChildren(Visitor& visitor)
     JSHTTPSServer* thisObject = this;
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
 
+    visitor.append(thisObject->m_address);
     visitor.append(thisObject->m_hostname);
     visitor.append(thisObject->m_id);
+    visitor.append(thisObject->m_unix);
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN(JSHTTPSServer);
@@ -12200,6 +12416,9 @@ JSC_DECLARE_CUSTOM_GETTER(jsHTTPServerConstructor);
 
 extern "C" void HTTPServerClass__finalize(void*);
 
+extern "C" JSC::EncodedJSValue HTTPServerPrototype__getAddress(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(HTTPServerPrototype__addressGetterWrap);
+
 extern "C" JSC::EncodedJSValue HTTPServerPrototype__getDevelopment(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(HTTPServerPrototype__developmentGetterWrap);
 
@@ -12236,12 +12455,16 @@ JSC_DECLARE_HOST_FUNCTION(HTTPServerPrototype__requestIPCallback);
 extern "C" EncodedJSValue HTTPServerPrototype__doStop(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(HTTPServerPrototype__stopCallback);
 
+extern "C" JSC::EncodedJSValue HTTPServerPrototype__getUnix(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(HTTPServerPrototype__unixGetterWrap);
+
 extern "C" EncodedJSValue HTTPServerPrototype__doUpgrade(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(HTTPServerPrototype__upgradeCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSHTTPServerPrototype, JSHTTPServerPrototype::Base);
 
 static const HashTableValue JSHTTPServerPrototypeTableValues[] = {
+    { "address"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPServerPrototype__addressGetterWrap, 0 } },
     { "development"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPServerPrototype__developmentGetterWrap, 0 } },
     { "fetch"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPServerPrototype__fetchCallback, 1 } },
     { "hostname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPServerPrototype__hostnameGetterWrap, 0 } },
@@ -12254,6 +12477,7 @@ static const HashTableValue JSHTTPServerPrototypeTableValues[] = {
     { "reload"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPServerPrototype__reloadCallback, 2 } },
     { "requestIP"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPServerPrototype__requestIPCallback, 1 } },
     { "stop"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPServerPrototype__stopCallback, 1 } },
+    { "unix"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPServerPrototype__unixGetterWrap, 0 } },
     { "upgrade"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPServerPrototype__upgradeCallback, 1 } }
 };
 
@@ -12269,6 +12493,37 @@ JSC_DEFINE_CUSTOM_GETTER(jsHTTPServerConstructor, (JSGlobalObject * lexicalGloba
     if (UNLIKELY(!prototype))
         return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for HTTPServer"_s);
     return JSValue::encode(globalObject->JSHTTPServerConstructor());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(HTTPServerPrototype__addressGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSHTTPServer* thisObject = jsCast<JSHTTPServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_address.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        HTTPServerPrototype__getAddress(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_address.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void HTTPServerPrototype__addressSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSHTTPServer*>(JSValue::decode(thisValue));
+    thisObject->m_address.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue HTTPServerPrototype__addressGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSHTTPServer*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_address.get());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(HTTPServerPrototype__developmentGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -12533,6 +12788,37 @@ JSC_DEFINE_HOST_FUNCTION(HTTPServerPrototype__stopCallback, (JSGlobalObject * le
     return HTTPServerPrototype__doStop(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
+JSC_DEFINE_CUSTOM_GETTER(HTTPServerPrototype__unixGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSHTTPServer* thisObject = jsCast<JSHTTPServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_unix.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        HTTPServerPrototype__getUnix(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_unix.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void HTTPServerPrototype__unixSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSHTTPServer*>(JSValue::decode(thisValue));
+    thisObject->m_unix.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue HTTPServerPrototype__unixGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSHTTPServer*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_unix.get());
+}
+
 JSC_DEFINE_HOST_FUNCTION(HTTPServerPrototype__upgradeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
@@ -12663,8 +12949,10 @@ void JSHTTPServer::visitAdditionalChildren(Visitor& visitor)
     JSHTTPServer* thisObject = this;
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
 
+    visitor.append(thisObject->m_address);
     visitor.append(thisObject->m_hostname);
     visitor.append(thisObject->m_id);
+    visitor.append(thisObject->m_unix);
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN(JSHTTPServer);

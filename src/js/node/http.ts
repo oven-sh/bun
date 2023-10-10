@@ -448,7 +448,10 @@ class Server extends EventEmitter {
   address() {
     if (!this.#server) return null;
 
-    const address = this.#server.hostname;
+    if (this.#server.unix) {
+      return this.#server.unix;
+    }
+    const address = this.#server.address;
     return {
       address,
       family: isIPv6(address) ? "IPv6" : "IPv4",

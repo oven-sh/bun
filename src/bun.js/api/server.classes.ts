@@ -41,8 +41,16 @@ function generate(name) {
       pendingWebSockets: {
         getter: "getPendingWebSockets",
       },
+      unix: {
+        getter: "getUnix",
+        cache: true,
+      },
       hostname: {
         getter: "getHostname",
+        cache: true,
+      },
+      address: {
+        getter: "getAddress",
         cache: true,
       },
       protocol: {

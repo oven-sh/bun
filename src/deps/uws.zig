@@ -306,6 +306,14 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             );
         }
 
+        /// Get the local address of a socket in binary format.
+        ///
+        /// # Arguments
+        /// - `buf`: A buffer to store the binary address data.
+        /// - `length`: A pointer to an integer representing the length of the buf.
+        ///
+        /// # Returns
+        /// This function returns void, and updated `buf` and `length` inplace.
         pub fn localAddressBinary(this: ThisSocket, buf: [*]u8, length: *i32) void {
             return us_socket_local_address(
                 comptime ssl_int,
@@ -315,7 +323,40 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             );
         }
 
+        /// Get the local address of a socket in text format.
+        ///
+        /// # Arguments
+        /// - `buf`: A buffer to store the text address data.
+        /// - `length`: A pointer to an integer representing the length of the buf.
+        ///
+        /// # Returns
+        /// This function returns void, and updated `buf` and `length` inplace.
         pub fn localAddressText(this: ThisSocket, buf: [*]u8, length: *i32) void {
+            const addr_v4_len = @sizeOf(std.meta.FieldType(std.os.sockaddr.in, .addr));
+            const addr_v6_len = @sizeOf(std.meta.FieldType(std.os.sockaddr.in6, .addr));
+
+            var sa_buf_len: i32 = addr_v6_len + 1;
+            var sa_buf: [addr_v6_len + 1]u8 = undefined;
+
+            this.localAddressBinary(&sa_buf, &sa_buf_len);
+            const addr_len: usize = @intCast(sa_buf_len);
+            sa_buf[addr_len] = 0;
+
+            var ret: ?[*:0]const u8 = null;
+            if (addr_len == addr_v4_len) {
+                ret = bun.c_ares.ares_inet_ntop(std.os.AF.INET, &sa_buf, buf, @as(u32, @intCast(length.*)));
+            } else if (addr_len == addr_v6_len) {
+                ret = bun.c_ares.ares_inet_ntop(std.os.AF.INET6, &sa_buf, buf, @as(u32, @intCast(length.*)));
+            }
+            if (ret) |_| {
+                length.* = @intCast(bun.len(bun.cast([*:0]u8, buf)));
+                return;
+            }
+            // error
+            length.* = 0;
+        }
+
+        pub fn localHostname(this: ThisSocket, buf: [*]u8, length: *i32) void {
             const addr_v4_len = @sizeOf(std.meta.FieldType(std.os.sockaddr.in, .addr));
             const addr_v6_len = @sizeOf(std.meta.FieldType(std.os.sockaddr.in6, .addr));
 
@@ -326,19 +367,42 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             const addr_len = @as(usize, @intCast(sa_buf_len));
             sa_buf[addr_len] = 0;
 
-            var ret: ?[*:0]const u8 = null;
-            if (addr_len == addr_v4_len) {
-                ret = bun.c_ares.ares_inet_ntop(std.os.AF.INET, &sa_buf, buf, @as(u32, @intCast(length.*)));
-            } else if (addr_len == addr_v6_len) {
-                ret = bun.c_ares.ares_inet_ntop(std.os.AF.INET6, &sa_buf, buf, @as(u32, @intCast(length.*)));
-            }
-
-            if (ret != null) {
-                length.* = @intCast(bun.len(bun.cast([*:0]u8, buf)));
+            var service: [0]u8 = [_]u8{};
+            const ret = if (addr_len == addr_v4_len) blk: {
+                var sa: std.os.sockaddr.in = std.mem.zeroes(std.os.sockaddr.in);
+                sa.family = std.os.AF.INET;
+                sa.addr = @as(*align(1) const u32, @ptrCast(sa_buf[0..4])).*;
+                break :blk std.c.getnameinfo(@as(*std.os.sockaddr, @ptrCast(&sa)), @sizeOf(std.os.sockaddr.in), buf, @intCast(length.*), &service, service.len, 0);
+            } else if (addr_len == addr_v6_len) blk: {
+                var sa: std.os.sockaddr.in6 = std.mem.zeroes(std.os.sockaddr.in6);
+                sa.family = std.os.AF.INET6;
+                @memcpy(&sa.addr, sa_buf[0..16]);
+                break :blk std.c.getnameinfo(@as(*std.os.sockaddr, @ptrCast(&sa)), @sizeOf(std.os.sockaddr.in6), buf, @intCast(length.*), &service, service.len, 0);
             } else {
-                // error
                 length.* = 0;
+                return;
+            };
+
+
+            if (@intFromEnum(ret) == 0) {
+                length.* = @intCast(bun.len(bun.cast([*:0]u8, buf)));
+                if (addr_len == addr_v6_len) {
+                    var addr_text: [64]u8 = undefined;
+                    _ = bun.c_ares.ares_inet_ntop(std.os.AF.INET6, &sa_buf, &addr_text, 64);
+                    const len: usize = @intCast(bun.len(bun.cast([*:0]u8, &addr_text)));
+
+                    if (bun.strings.eql(buf[0..@intCast(length.*)], addr_text[0..len])) {
+                        @memcpy(buf[1 .. len + 1], addr_text[0..len]);
+                        buf[0] = '[';
+                        buf[len + 1] = ']';
+                        buf[len + 2] = 0;
+                        length.* += 2;
+                    }
+                }
+                return;
             }
+            // error
+            length.* = 0;
         }
 
         pub fn connect(

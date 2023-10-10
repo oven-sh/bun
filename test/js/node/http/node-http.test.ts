@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import nodefs from "node:fs";
 import { join as joinPath } from "node:path";
+import { unlinkSync } from "node:fs";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll } = createTest(import.meta.path);
 
 function listen(server: Server, protocol: string = "http"): Promise<URL> {
@@ -992,5 +993,74 @@ describe("node https server", async () => {
     } finally {
       done();
     }
+  });
+});
+
+describe("server.address should be valid IP, issue#5850", () => {
+  it("should return null before listening", done => {
+    const server = createServer((req, res) => {
+      res.end();
+    });
+    try {
+      expect(server.address()).toBeNull();
+      done();
+    } catch (err) {
+      done(err);
+    }
+  });
+  it("test default hostname", done => {
+    const server = createServer((req, res) => {
+      res.end();
+    });
+    server.listen(0, async (_err, host, port) => {
+      try {
+        const { address, family } = server.address();
+        expect(["::", "0.0.0.0"]).toContain(address);
+        if (address === "0.0.0.0") {
+          expect(family).toStrictEqual("IPv4");
+        } else {
+          expect(family).toStrictEqual("IPv6");
+        }
+        done();
+      } catch (err) {
+        done(err);
+      } finally {
+        server.close();
+      }
+    });
+  });
+  it.each([["localhost"], ["127.0.0.1"]])("test %s", (hostname, done) => {
+    const server = createServer((req, res) => {
+      res.end();
+    });
+    server.listen(0, hostname, async (_err, host, port) => {
+      try {
+        const { address, family } = server.address();
+        expect(address).toStrictEqual("127.0.0.1");
+        expect(family).toStrictEqual("IPv4");
+        done();
+      } catch (err) {
+        done(err);
+      } finally {
+        server.close();
+      }
+    });
+  });
+  it("test unix socket, issue#6413", done => {
+    const socketPath = `${tmpdir()}/bun-server-${Math.random().toString(32)}.sock`;
+    const server = createServer((req, res) => {
+      res.end();
+    });
+    server.listen(socketPath, async (_err, host, port) => {
+      try {
+        expect(server.address()).toStrictEqual(socketPath);
+        done();
+      } catch (err) {
+        done(err);
+      } finally {
+        server.close();
+        unlinkSync(socketPath);
+      }
+    });
   });
 });

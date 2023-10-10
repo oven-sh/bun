@@ -35,15 +35,15 @@ export default {
     page("quickstart", "Quickstart", {
       description: "Get started with Bun by building and running a simple HTTP server in 6 lines of TypeScript.",
     }),
-    page("scaffolding/typescript", "TypeScript", {
+    page("typescript", "TypeScript", {
       description: "Install and configure type declarations for Bun's APIs",
     }),
 
     divider("Scaffolding"),
-    page("scaffolding/bun-init", "`bun init`", {
+    page("cli/init", "`bun init`", {
       description: "Scaffold an empty Bun project.",
     }),
-    page("scaffolding/bun-create", "`bun create`", {
+    page("cli/bun-create", "`bun create`", {
       description: "Scaffold a new Bun project from an official template or GitHub repo.",
     }),
 

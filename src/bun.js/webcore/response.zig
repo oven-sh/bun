@@ -778,27 +778,28 @@ pub const Fetch = struct {
             if (!success) {
                 const err = this.onReject();
                 err.ensureStillAlive();
+                // if we are streaming update with error
+                if (this.readable_stream_ref.get()) |readable| {
+                    readable.ptr.Bytes.onData(
+                        .{
+                            .err = .{ .JSValue = err },
+                        },
+                        bun.default_allocator,
+                    );
+                    return;
+                }
+                // if we are buffering resolve the promise
                 if (this.response.get()) |response_js| {
                     if (response_js.as(Response)) |response| {
                         const body = response.body;
-                        if (body.value == .Locked) {
-                            if (body.value.Locked.readable) |readable| {
-                                readable.ptr.Bytes.onData(
-                                    .{
-                                        .err = .{ .JSValue = err },
-                                    },
-                                    bun.default_allocator,
-                                );
-                                return;
-                            }
+                        if (body.value.Locked.promise) |promise_| {
+                            const promise = promise_.asAnyPromise().?;
+                            promise.reject(globalThis, err);
                         }
-
+                        
                         response.body.value.toErrorInstance(err, globalThis);
-                        return;
                     }
                 }
-
-                globalThis.throwValue(err);
                 return;
             }
 
@@ -1708,7 +1709,7 @@ pub const Fetch = struct {
                             if (decompress.isBoolean()) {
                                 disable_decompression = !decompress.asBoolean();
                             } else if (decompress.isNumber()) {
-                                disable_keepalive = decompress.to(i32) == 0;
+                                disable_decompression = decompress.to(i32) == 0;
                             }
                         }
 
@@ -1901,7 +1902,7 @@ pub const Fetch = struct {
                             if (decompress.isBoolean()) {
                                 disable_decompression = !decompress.asBoolean();
                             } else if (decompress.isNumber()) {
-                                disable_keepalive = decompress.to(i32) == 0;
+                                disable_decompression = decompress.to(i32) == 0;
                             }
                         }
 

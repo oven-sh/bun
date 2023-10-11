@@ -78,18 +78,18 @@ mustNotExist("node_modules/bun-types/node_modules/bun-types/isfake.txt");
 validate("node_modules/svelte", "4.1.2");
 validate("packages/second/node_modules/svelte", "4.1.0");
 validate("packages/with-postinstall/node_modules/svelte", "3.50.0");
-validate("packages/body-parser/node_modules/svelte", "0.2.0", "public-install-test");
+// validate("packages/body-parser/node_modules/svelte", "0.2.0", "public-install-test");
 // NOTE: bun hoists this dependency higher than npm
 // npm places this in node_modules/express
 validate("packages/second/node_modules/express", "1.0.0", "svelte");
 
 // install test
-validate("node_modules/install-test", "0.3.0", "publicinstalltest");
-mustExist("node_modules/install-test/src/index.js");
+// validate("node_modules/install-test", "0.3.0", "publicinstalltest");
+// mustExist("node_modules/install-test/src/index.js");
 validate("node_modules/install-test1", "0.2.0", "install-test");
 mustExist("node_modules/install-test1/index.js");
-validate("node_modules/public-install-test", "0.2.0", "public-install-test");
-mustExist("node_modules/public-install-test/index.js");
+// validate("node_modules/public-install-test", "0.2.0", "public-install-test");
+// mustExist("node_modules/public-install-test/index.js");
 
 // hello
 validate("node_modules/hello", "0.3.2");

@@ -5327,14 +5327,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
         pub fn getHostname(this: *ThisServer, globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {
             if (this.cached_hostname.isEmpty()) {
-                if (this.cached_hostname.isEmpty()) {
-                    if (this.listener) |listener| {
-                        var buf: [1024]u8 = [_]u8{0} ** 1024;
-                        var len: i32 = 1024;
-                        listener.socket().localHostname(&buf, &len);
-                        if (len > 0) {
-                            this.cached_hostname = bun.String.create(buf[0..@as(usize, @intCast(len))]);
-                        }
+                if (this.listener) |listener| {
+                    var buf: [1024]u8 = [_]u8{0} ** 1024;
+                    var len: i32 = 1024;
+                    listener.socket().remoteAddress(&buf, &len);
+                    if (len > 0) {
+                        this.cached_hostname = bun.String.create(buf[0..@as(usize, @intCast(len))]);
                     }
                 }
 

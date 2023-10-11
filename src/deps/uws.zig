@@ -356,55 +356,6 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             length.* = 0;
         }
 
-        pub fn localHostname(this: ThisSocket, buf: [*]u8, length: *i32) void {
-            const addr_v4_len = @sizeOf(std.meta.FieldType(std.os.sockaddr.in, .addr));
-            const addr_v6_len = @sizeOf(std.meta.FieldType(std.os.sockaddr.in6, .addr));
-
-            var sa_buf_len: i32 = addr_v6_len + 1;
-            var sa_buf: [addr_v6_len + 1]u8 = undefined;
-
-            this.localAddressBinary(&sa_buf, &sa_buf_len);
-            const addr_len = @as(usize, @intCast(sa_buf_len));
-            sa_buf[addr_len] = 0;
-
-            var service: [0]u8 = [_]u8{};
-            const ret = if (addr_len == addr_v4_len) blk: {
-                var sa: std.os.sockaddr.in = std.mem.zeroes(std.os.sockaddr.in);
-                sa.family = std.os.AF.INET;
-                sa.addr = @as(*align(1) const u32, @ptrCast(sa_buf[0..4])).*;
-                break :blk std.c.getnameinfo(@as(*std.os.sockaddr, @ptrCast(&sa)), @sizeOf(std.os.sockaddr.in), buf, @intCast(length.*), &service, service.len, 0);
-            } else if (addr_len == addr_v6_len) blk: {
-                var sa: std.os.sockaddr.in6 = std.mem.zeroes(std.os.sockaddr.in6);
-                sa.family = std.os.AF.INET6;
-                @memcpy(&sa.addr, sa_buf[0..16]);
-                break :blk std.c.getnameinfo(@as(*std.os.sockaddr, @ptrCast(&sa)), @sizeOf(std.os.sockaddr.in6), buf, @intCast(length.*), &service, service.len, 0);
-            } else {
-                length.* = 0;
-                return;
-            };
-
-
-            if (@intFromEnum(ret) == 0) {
-                length.* = @intCast(bun.len(bun.cast([*:0]u8, buf)));
-                if (addr_len == addr_v6_len) {
-                    var addr_text: [64]u8 = undefined;
-                    _ = bun.c_ares.ares_inet_ntop(std.os.AF.INET6, &sa_buf, &addr_text, 64);
-                    const len: usize = @intCast(bun.len(bun.cast([*:0]u8, &addr_text)));
-
-                    if (bun.strings.eql(buf[0..@intCast(length.*)], addr_text[0..len])) {
-                        @memcpy(buf[1 .. len + 1], addr_text[0..len]);
-                        buf[0] = '[';
-                        buf[len + 1] = ']';
-                        buf[len + 2] = 0;
-                        length.* += 2;
-                    }
-                }
-                return;
-            }
-            // error
-            length.* = 0;
-        }
-
         pub fn connect(
             host: []const u8,
             port: i32,

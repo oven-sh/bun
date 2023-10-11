@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test, it } from "bun:test";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
 import * as fs from "node:fs";
@@ -102,6 +102,15 @@ test("dns.resolveSoa (bun.sh)", done => {
   });
 });
 
+test("dns.resolveSoa (empty string)", done => {
+  dns.resolveSoa("", (err, result) => {
+    expect(err).toBeNull();
+    // one of root server
+    expect(result).not.toBeUndefined();
+    done(err);
+  });
+});
+
 test("dns.resolveNaptr (naptr.socketify.dev)", done => {
   dns.resolveNaptr("naptr.socketify.dev", (err, results) => {
     expect(err).toBeNull();
@@ -142,6 +151,32 @@ test("dns.resolveNs (bun.sh) ", done => {
     expect(err).toBeNull();
     expect(results instanceof Array).toBe(true);
     expect(results[0].includes(".ns.cloudflare.com")).toBe(true);
+    done(err);
+  });
+});
+
+test("dns.resolveNs (empty string) ", done => {
+  dns.resolveNs("", (err, results) => {
+    expect(err).toBeNull();
+    expect(results instanceof Array).toBe(true);
+    // root servers
+    expect(results.sort()).toStrictEqual(
+      [
+        "e.root-servers.net",
+        "h.root-servers.net",
+        "l.root-servers.net",
+        "i.root-servers.net",
+        "a.root-servers.net",
+        "d.root-servers.net",
+        "c.root-servers.net",
+        "b.root-servers.net",
+        "j.root-servers.net",
+        "k.root-servers.net",
+        "g.root-servers.net",
+        "m.root-servers.net",
+        "f.root-servers.net",
+      ].sort(),
+    );
     done(err);
   });
 });
@@ -267,4 +302,95 @@ test("dns.promises.reverse", async () => {
     let hostnames = await dns.promises.reverse("2606:4700:4700::1111");
     expect(hostnames).toContain("one.one.one.one");
   }
+});
+
+describe("test invalid arguments", () => {
+  it.each([
+    // TODO: dns.resolveAny is not implemented yet
+    ["dns.resolveCname", dns.resolveCname],
+    ["dns.resolveCaa", dns.resolveCaa],
+    ["dns.resolveMx", dns.resolveMx],
+    ["dns.resolveNaptr", dns.resolveNaptr],
+    ["dns.resolveNs", dns.resolveNs],
+    ["dns.resolvePtr", dns.resolvePtr],
+    ["dns.resolveSoa", dns.resolveSoa],
+    ["dns.resolveSrv", dns.resolveSrv],
+    ["dns.resolveTxt", dns.resolveTxt],
+  ])("%s", (_, fn, done) => {
+    fn("a".repeat(2000), (err, results) => {
+      try {
+        expect(err).not.toBeNull();
+        expect(results).toBeUndefined();
+        done();
+      } catch (e) {
+        done(e);
+      }
+    });
+  });
+
+  it("dns.lookupService", async () => {
+    expect(() => {
+      dns.lookupService("", 443, (err, hostname, service) => {});
+    }).toThrow("Expected address to be a non-empty string for 'lookupService'.");
+    expect(() => {
+      dns.lookupService("google.com", 443, (err, hostname, service) => {});
+    }).toThrow("Expected address to be a invalid address for 'lookupService'.");
+  });
+});
+
+describe("dns.lookupService", () => {
+  it.each([
+    ["1.1.1.1", 53, ["one.one.one.one", "domain"]],
+    ["2606:4700:4700::1111", 53, ["one.one.one.one", "domain"]],
+    ["2606:4700:4700::1001", 53, ["one.one.one.one", "domain"]],
+    ["1.1.1.1", 80, ["one.one.one.one", "http"]],
+    ["1.1.1.1", 443, ["one.one.one.one", "https"]],
+  ])("lookupService(%s, %d)", (address, port, expected, done) => {
+    dns.lookupService(address, port, (err, hostname, service) => {
+      try {
+        expect(err).toBeNull();
+        expect(hostname).toStrictEqual(expected[0]);
+        expect(service).toStrictEqual(expected[1]);
+        done();
+      } catch (err) {
+        done(err);
+      }
+    });
+  });
+
+  it("lookupService(255.255.255.255, 443)", done => {
+    dns.lookupService("255.255.255.255", 443, (err, hostname, service) => {
+      if (process.platform == "darwin") {
+        try {
+          expect(err).toBeNull();
+          expect(hostname).toStrictEqual("broadcasthost");
+          expect(service).toStrictEqual("https");
+          done();
+        } catch (err) {
+          done(err);
+        }
+      } else {
+        try {
+          expect(err).not.toBeNull();
+          expect(hostname).toBeUndefined();
+          expect(service).toBeUndefined();
+          done();
+        } catch (err) {
+          done(err);
+        }
+      }
+    });
+  });
+
+  it.each([
+    ["1.1.1.1", 53, ["one.one.one.one", "domain"]],
+    ["2606:4700:4700::1111", 53, ["one.one.one.one", "domain"]],
+    ["2606:4700:4700::1001", 53, ["one.one.one.one", "domain"]],
+    ["1.1.1.1", 80, ["one.one.one.one", "http"]],
+    ["1.1.1.1", 443, ["one.one.one.one", "https"]],
+  ])("promises.lookupService(%s, %d)", async (address, port, expected) => {
+    const [hostname, service] = await dns.promises.lookupService(address, port);
+    expect(hostname).toStrictEqual(expected[0]);
+    expect(service).toStrictEqual(expected[1]);
+  });
 });

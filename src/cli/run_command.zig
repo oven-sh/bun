@@ -282,7 +282,10 @@ pub const RunCommand = struct {
         child_process.stdout_behavior = .Inherit;
 
         const result = child_process.spawnAndWait() catch |err| {
-            Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
+            if (!silent) {
+                Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
+            }
+
             Output.flush();
             return true;
         };
@@ -290,7 +293,7 @@ pub const RunCommand = struct {
         switch (result) {
             .Exited => |code| {
                 if (code > 0) {
-                    if (code != 2) {
+                    if (code != 2 and !silent) {
                         Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with {any}<r>", .{ name, bun.SignalCode.from(code) });
                         Output.flush();
                     }
@@ -299,14 +302,18 @@ pub const RunCommand = struct {
                 }
             },
             .Signal => |signal| {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with {any}<r>", .{ name, bun.SignalCode.from(signal) });
-                Output.flush();
+                if (!silent) {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with {any}<r>", .{ name, bun.SignalCode.from(signal) });
+                    Output.flush();
+                }
 
                 Global.exit(1);
             },
             .Stopped => |signal| {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was stopped by signal {any}<r>", .{ name, bun.SignalCode.from(signal) });
-                Output.flush();
+                if (!silent) {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was stopped by signal {any}<r>", .{ name, bun.SignalCode.from(signal) });
+                    Output.flush();
+                }
 
                 Global.exit(1);
             },
@@ -341,6 +348,7 @@ pub const RunCommand = struct {
         child_process.stderr_behavior = .Inherit;
         child_process.stdin_behavior = .Inherit;
         child_process.stdout_behavior = .Inherit;
+        const silent = ctx.debug.silent;
 
         const result = child_process.spawnAndWait() catch |err| {
             if (err == error.AccessDenied) {
@@ -349,7 +357,8 @@ pub const RunCommand = struct {
                     const rc = bun.C.stat(executable[0.. :0].ptr, &stat);
                     if (rc == 0) {
                         if (std.os.S.ISDIR(stat.mode)) {
-                            Output.prettyErrorln("<r><red>error<r>: Failed to run directory \"<b>{s}<r>\"\n", .{executable});
+                            if (!silent)
+                                Output.prettyErrorln("<r><red>error<r>: Failed to run directory \"<b>{s}<r>\"\n", .{executable});
                             Global.exit(1);
                         }
                     }
@@ -361,24 +370,25 @@ pub const RunCommand = struct {
         switch (result) {
             .Exited => |sig| {
                 // 2 is SIGINT, which is CTRL + C so that's kind of annoying to show
-                if (sig > 0 and sig != 2)
+                if (sig > 0 and sig != 2 and !silent)
                     Output.prettyErrorln("<r><red>error<r><d>:<r> \"<b>{s}<r>\" exited with <b>{any}<r>", .{ std.fs.path.basename(executable), bun.SignalCode.from(sig) });
                 Global.exit(sig);
             },
             .Signal => |sig| {
                 // 2 is SIGINT, which is CTRL + C so that's kind of annoying to show
-                if (sig > 0 and sig != 2) {
+                if (sig > 0 and sig != 2 and !silent) {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> \"<b>{s}<r>\" exited with <b>{any}<r>", .{ std.fs.path.basename(executable), bun.SignalCode.from(sig) });
                 }
                 Global.exit(std.mem.asBytes(&sig)[0]);
             },
             .Stopped => |sig| {
-                if (sig > 0)
+                if (sig > 0 and !silent)
                     Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" stopped with {any}<r>", .{ std.fs.path.basename(executable), bun.SignalCode.from(sig) });
                 Global.exit(std.mem.asBytes(&sig)[0]);
             },
             .Unknown => |sig| {
-                Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" stopped: {d}<r>", .{ std.fs.path.basename(executable), sig });
+                if (!silent)
+                    Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" stopped: {d}<r>", .{ std.fs.path.basename(executable), sig });
                 Global.exit(1);
             },
         }
@@ -628,7 +638,7 @@ pub const RunCommand = struct {
             // the use of npm/? is copying yarn
             // e.g.
             // > "yarn/1.22.4 npm/? node/v12.16.3 darwin x64",
-            "bun/" ++ Global.package_json_version ++ " npm/? node/v18.15.0 " ++ Global.os_name ++ " " ++ Global.arch_name,
+            "bun/" ++ Global.package_json_version ++ " npm/? node/v20.8.0 " ++ Global.os_name ++ " " ++ Global.arch_name,
         ) catch unreachable;
 
         if (this_bundler.env.get("npm_execpath") == null) {
@@ -955,14 +965,14 @@ pub const RunCommand = struct {
                         // "White space after #! is optional."
                         var shebang_buf: [64]u8 = undefined;
                         const shebang_size = file.pread(&shebang_buf, 0) catch |err| {
-                            Output.prettyErrorln("<r><red>error<r>: Failed to read file <b>{s}<r> due to error <b>{s}<r>", .{ file_path, @errorName(err) });
+                            if (!ctx.debug.silent)
+                                Output.prettyErrorln("<r><red>error<r>: Failed to read file <b>{s}<r> due to error <b>{s}<r>", .{ file_path, @errorName(err) });
                             Global.exit(1);
                         };
 
                         var shebang: string = shebang_buf[0..shebang_size];
 
                         shebang = std.mem.trim(u8, shebang, " \r\n\t");
-                        if (shebang.len == 0) break :possibly_open_with_bun_js;
                         if (strings.hasPrefixComptime(shebang, "#!")) {
                             const first_arg: string = if (bun.argv().len > 0) bun.span(bun.argv()[0]) else "";
                             const filename = std.fs.path.basename(first_arg);
@@ -1148,6 +1158,10 @@ pub const RunCommand = struct {
                     passthrough,
                 );
             }
+        }
+
+        if (ctx.runtime_options.if_present) {
+            return true;
         }
 
         if (comptime log_errors) {

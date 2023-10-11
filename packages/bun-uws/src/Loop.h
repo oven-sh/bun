@@ -58,12 +58,6 @@ private:
         for (auto &p : loopData->postHandlers) {
             p.second((Loop *) loop);
         }
-
-        /* After every event loop iteration, we must not hold the cork buffer */
-        if (loopData->corkedSocket) {
-            std::cerr << "Error: Cork buffer must not be held across event loop iterations!" << std::endl;
-            std::terminate();
-        }
     }
 
     Loop() = delete;
@@ -132,7 +126,7 @@ public:
         LoopData *loopData = (LoopData *) us_loop_ext((us_loop_t *) this);
 
         /* Stop and free dateTimer first */
-        us_timer_close(loopData->dateTimer);
+        us_timer_close(loopData->dateTimer, 1);
 
         loopData->~LoopData();
         /* uSockets will track whether this loop is owned by us or a borrowed alien loop */

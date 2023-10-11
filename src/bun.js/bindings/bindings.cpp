@@ -19,6 +19,7 @@
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/JSArrayBuffer.h"
 #include "JavaScriptCore/JSArrayInlines.h"
+#include "JavaScriptCore/ErrorInstanceInlines.h"
 
 #include "JavaScriptCore/JSCallbackObject.h"
 #include "JavaScriptCore/JSClassRef.h"
@@ -225,6 +226,47 @@ AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSC
                         return AsymmetricMatcherResult::PASS;
                     }
                 }
+            }
+        }
+
+        return AsymmetricMatcherResult::FAIL;
+    } else if (auto* expectArrayContaining = jsDynamicCast<JSExpectArrayContaining*>(matcherPropCell)) {
+        JSValue expectedArrayValue = expectArrayContaining->m_arrayValue.get();
+
+        if (JSC::isArray(globalObject, otherProp)) {
+            if (JSC::isArray(globalObject, expectedArrayValue)) {
+                JSArray* expectedArray = jsDynamicCast<JSArray*>(expectedArrayValue);
+                JSArray* otherArray = jsDynamicCast<JSArray*>(otherProp);
+
+                unsigned expectedLength = expectedArray->length();
+                unsigned otherLength = otherArray->length();
+
+                // A empty array is all array's subset
+                if (expectedLength == 0) {
+                    return AsymmetricMatcherResult::PASS;
+                }
+
+                // O(m*n) but works for now
+                for (unsigned m = 0; m < expectedLength; m++) {
+                    JSValue expectedValue = expectedArray->getIndex(globalObject, m);
+                    bool found = false;
+
+                    for (unsigned n = 0; n < otherLength; n++) {
+                        JSValue otherValue = otherArray->getIndex(globalObject, n);
+                        ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
+                        Vector<std::pair<JSValue, JSValue>, 16> stack;
+                        if (Bun__deepEquals<false, true>(globalObject, expectedValue, otherValue, stack, &scope, true)) {
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if (!found) {
+                        return AsymmetricMatcherResult::FAIL;
+                    }
+                }
+
+                return AsymmetricMatcherResult::PASS;
             }
         }
 
@@ -576,7 +618,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     case Float64ArrayType:
     case BigInt64ArrayType:
     case BigUint64ArrayType: {
-        if (!isTypedArrayType(static_cast<JSC::JSType>(c2Type))) {
+        if (!isTypedArrayType(static_cast<JSC::JSType>(c2Type)) || c1Type != c2Type) {
             return false;
         }
 
@@ -1354,15 +1396,22 @@ BunString WebCore__DOMURL__fileSystemPath(WebCore__DOMURL* arg0)
 extern "C" JSC__JSValue ZigString__toJSONObject(const ZigString* strPtr, JSC::JSGlobalObject* globalObject)
 {
     auto str = Zig::toString(*strPtr);
-    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
-    auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
-    JSValue result = JSONParseWithException(globalObject, str);
-    if (auto* exception = scope.exception()) {
-        scope.clearException();
-        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(exception->value()));
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    // JSONParseWithException does not propagate exceptions as expected. See #5859
+    JSValue result = JSONParse(globalObject, str);
+
+    if (!result && !scope.exception()) {
+        scope.throwException(globalObject, createSyntaxError(globalObject, "Failed to parse JSON"_s));
     }
 
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+    if (scope.exception()) {
+        auto* exception = scope.exception();
+        scope.clearException();
+        return JSC::JSValue::encode(exception);
+    }
+
+    return JSValue::encode(result);
 }
 
 JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
@@ -2063,7 +2112,7 @@ JSC__JSValue JSC__JSModuleLoader__evaluate(JSC__JSGlobalObject* globalObject, co
     JSC::VM& vm = globalObject->vm();
 
     JSC::SourceCode sourceCode = JSC::makeSource(
-        src, JSC::SourceOrigin { origin }, origin.fileSystemPath(),
+        src, JSC::SourceOrigin { origin }, JSC::SourceTaintedOrigin::Untainted, origin.fileSystemPath(),
         WTF::TextPosition(), JSC::SourceProviderSourceType::Module);
     globalObject->moduleLoader()->provideFetch(globalObject, jsString(vm, origin.fileSystemPath()), WTFMove(sourceCode));
     auto* promise = JSC::importModule(globalObject, JSC::Identifier::fromString(vm, origin.fileSystemPath()), JSValue(jsString(vm, referrer.fileSystemPath())), JSValue(), JSValue());
@@ -2113,6 +2162,14 @@ JSC__JSValue ReadableStream__empty(Zig::GlobalObject* globalObject)
     auto& vm = globalObject->vm();
     auto clientData = WebCore::clientData(vm);
     auto* function = globalObject->getDirect(vm, clientData->builtinNames().createEmptyReadableStreamPrivateName()).getObject();
+    return JSValue::encode(JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s));
+}
+
+JSC__JSValue ReadableStream__used(Zig::GlobalObject* globalObject)
+{
+    auto& vm = globalObject->vm();
+    auto clientData = WebCore::clientData(vm);
+    auto* function = globalObject->getDirect(vm, clientData->builtinNames().createUsedReadableStreamPrivateName()).getObject();
     return JSValue::encode(JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s));
 }
 
@@ -4483,6 +4540,14 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0
         globalObject->m_asyncContextData.get()->getInternalField(0),
         JSC::JSValue::decode(JSValue3),
         JSC::JSValue::decode(JSValue4));
+}
+
+extern "C" WebCore::AbortSignal* WebCore__AbortSignal__new(JSC__JSGlobalObject* globalObject)
+{
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(globalObject);
+    auto* context = thisObject->scriptExecutionContext();
+    RefPtr<WebCore::AbortSignal> abortSignal = WebCore::AbortSignal::create(context);
+    return abortSignal.leakRef();
 }
 
 extern "C" JSC__JSValue WebCore__AbortSignal__create(JSC__JSGlobalObject* globalObject)

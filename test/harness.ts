@@ -7,6 +7,7 @@ export const bunEnv: any = {
   NO_COLOR: "1",
   FORCE_COLOR: undefined,
   TZ: "Etc/UTC",
+  CI: "1",
 };
 
 export function bunExe() {
@@ -83,7 +84,7 @@ export function hideFromStackTrace(block: CallableFunction) {
   });
 }
 
-export function tempDirWithFiles(basename: string, files: Record<string, string | Record<string, string>>) {
+export function tempDirWithFiles(basename: string, files: Record<string, string | Record<string, string>>): string {
   var fs = require("fs");
   var path = require("path");
   var { tmpdir } = require("os");

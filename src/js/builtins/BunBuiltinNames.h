@@ -69,8 +69,10 @@ using namespace JSC;
     macro(createCommonJSModule) \
     macro(createEmptyReadableStream) \
     macro(createFIFO) \
+    macro(createInternalModuleById) \
     macro(createNativeReadableStream) \
     macro(createReadableStream) \
+    macro(createUsedReadableStream) \
     macro(createUninitializedArrayBuffer) \
     macro(createWritableStreamFromInternal) \
     macro(cwd) \
@@ -119,6 +121,7 @@ using namespace JSC;
     macro(inFlightCloseRequest) \
     macro(inFlightWriteRequest) \
     macro(initializeWith) \
+    macro(internalModuleRegistry) \
     macro(internalRequire) \
     macro(internalStream) \
     macro(internalWritable) \
@@ -130,7 +133,6 @@ using namespace JSC;
     macro(join) \
     macro(kind) \
     macro(lazy) \
-    macro(lazyLoad) \
     macro(lazyStreamPrototypeMap) \
     macro(loadCJS2ESM) \
     macro(localStreams) \
@@ -146,6 +148,7 @@ using namespace JSC;
     macro(once) \
     macro(options) \
     macro(origin) \
+    macro(overridableRequire) \
     macro(ownerReadableStream) \
     macro(parse) \
     macro(password) \
@@ -186,6 +189,7 @@ using namespace JSC;
     macro(require) \
     macro(requireESM) \
     macro(requireMap) \
+    macro(requireNativeModule) \
     macro(resolve) \
     macro(resolveSync) \
     macro(resume) \
@@ -211,12 +215,6 @@ using namespace JSC;
     macro(strategyHWM) \
     macro(strategySizeAlgorithm) \
     macro(stream) \
-    macro(streamClosed) \
-    macro(streamClosing) \
-    macro(streamErrored) \
-    macro(streamReadable) \
-    macro(streamWaiting) \
-    macro(streamWritable) \
     macro(structuredCloneForStream) \
     macro(syscall) \
     macro(textDecoderStreamDecoder) \
@@ -245,9 +243,6 @@ using namespace JSC;
     macro(writer) \
     macro(writing) \
     macro(written) \
-    macro(createInternalModuleById) \
-    macro(internalModuleRegistry) \
-    macro(requireNativeModule) \
 
 class BunBuiltinNames {
 public:

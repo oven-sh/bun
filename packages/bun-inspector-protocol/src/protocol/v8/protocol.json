@@ -1091,7 +1091,8 @@
             "Canceled",
             "RpPageNotVisible",
             "SilentMediationFailure",
-            "ThirdPartyCookiesBlocked"
+            "ThirdPartyCookiesBlocked",
+            "NotSignedInWithIdp"
           ]
         },
         {
@@ -1164,6 +1165,34 @@
           ]
         },
         {
+          "id": "PropertyRuleIssueReason",
+          "type": "string",
+          "enum": ["InvalidSyntax", "InvalidInitialValue", "InvalidInherits", "InvalidName"]
+        },
+        {
+          "id": "PropertyRuleIssueDetails",
+          "description": "This issue warns about errors in property rules that lead to property\nregistrations being ignored.",
+          "type": "object",
+          "properties": [
+            {
+              "name": "sourceCodeLocation",
+              "description": "Source code position of the property rule.",
+              "$ref": "SourceCodeLocation"
+            },
+            {
+              "name": "propertyRuleIssueReason",
+              "description": "Reason why the property rule was discarded.",
+              "$ref": "PropertyRuleIssueReason"
+            },
+            {
+              "name": "propertyValue",
+              "description": "The value of the property rule property that failed to parse",
+              "optional": true,
+              "type": "string"
+            }
+          ]
+        },
+        {
           "id": "InspectorIssueCode",
           "description": "A unique identifier for the type of issue. Each type may use one of the\noptional fields in InspectorIssueDetails to convey more specific\ninformation about the kind of issue.",
           "type": "string",
@@ -1185,7 +1214,8 @@
             "FederatedAuthRequestIssue",
             "BounceTrackingIssue",
             "StylesheetLoadingIssue",
-            "FederatedAuthUserInfoRequestIssue"
+            "FederatedAuthUserInfoRequestIssue",
+            "PropertyRuleIssue"
           ]
         },
         {
@@ -1227,6 +1257,7 @@
             },
             { "name": "bounceTrackingIssueDetails", "optional": true, "$ref": "BounceTrackingIssueDetails" },
             { "name": "stylesheetLoadingIssueDetails", "optional": true, "$ref": "StylesheetLoadingIssueDetails" },
+            { "name": "propertyRuleIssueDetails", "optional": true, "$ref": "PropertyRuleIssueDetails" },
             {
               "name": "federatedAuthUserInfoRequestIssueDetails",
               "optional": true,
@@ -1344,8 +1375,14 @@
           "type": "object",
           "properties": [
             { "name": "name", "description": "address field name, for example GIVEN_NAME.", "type": "string" },
-            { "name": "value", "description": "address field name, for example Jon Doe.", "type": "string" }
+            { "name": "value", "description": "address field value, for example Jon Doe.", "type": "string" }
           ]
+        },
+        {
+          "id": "AddressFields",
+          "description": "A list of address fields.",
+          "type": "object",
+          "properties": [{ "name": "fields", "type": "array", "items": { "$ref": "AddressField" } }]
         },
         {
           "id": "Address",
@@ -1353,9 +1390,59 @@
           "properties": [
             {
               "name": "fields",
-              "description": "fields and values defining a test address.",
+              "description": "fields and values defining an address.",
               "type": "array",
               "items": { "$ref": "AddressField" }
+            }
+          ]
+        },
+        {
+          "id": "AddressUI",
+          "description": "Defines how an address can be displayed like in chrome://settings/addresses.\nAddress UI is a two dimensional array, each inner array is an \"address information line\", and when rendered in a UI surface should be displayed as such.\nThe following address UI for instance:\n[[{name: \"GIVE_NAME\", value: \"Jon\"}, {name: \"FAMILY_NAME\", value: \"Doe\"}], [{name: \"CITY\", value: \"Munich\"}, {name: \"ZIP\", value: \"81456\"}]]\nshould allow the receiver to render:\nJon Doe\nMunich 81456",
+          "type": "object",
+          "properties": [
+            {
+              "name": "addressFields",
+              "description": "A two dimension array containing the repesentation of values from an address profile.",
+              "type": "array",
+              "items": { "$ref": "AddressFields" }
+            }
+          ]
+        },
+        {
+          "id": "FillingStrategy",
+          "description": "Specified whether a filled field was done so by using the html autocomplete attribute or autofill heuristics.",
+          "type": "string",
+          "enum": ["autocompleteAttribute", "autofillInferred"]
+        },
+        {
+          "id": "FilledField",
+          "type": "object",
+          "properties": [
+            { "name": "htmlType", "description": "The type of the field, e.g text, password etc.", "type": "string" },
+            { "name": "id", "description": "the html id", "type": "string" },
+            { "name": "name", "description": "the html name", "type": "string" },
+            { "name": "value", "description": "the field value", "type": "string" },
+            { "name": "autofillType", "description": "The actual field type, e.g FAMILY_NAME", "type": "string" },
+            { "name": "fillingStrategy", "description": "The filling strategy", "$ref": "FillingStrategy" }
+          ]
+        }
+      ],
+      "events": [
+        {
+          "name": "addressFormFilled",
+          "description": "Emitted when an address form is filled.",
+          "parameters": [
+            {
+              "name": "filledFields",
+              "description": "Information about the fields that were filled",
+              "type": "array",
+              "items": { "$ref": "FilledField" }
+            },
+            {
+              "name": "addressUi",
+              "description": "An UI representation of the address used to fill the form.\nConsists of a 2D array where each child represents an address/profile line.",
+              "$ref": "AddressUI"
             }
           ]
         }
@@ -1387,7 +1474,9 @@
           "name": "setAddresses",
           "description": "Set addresses so that developers can verify their forms implementation.",
           "parameters": [{ "name": "addresses", "type": "array", "items": { "$ref": "Address" } }]
-        }
+        },
+        { "name": "disable", "description": "Disables autofill domain notifications." },
+        { "name": "enable", "description": "Enables autofill domain notifications." }
       ]
     },
     {
@@ -3212,6 +3301,18 @@
           ]
         },
         {
+          "name": "setPropertyRulePropertyName",
+          "description": "Modifies the property rule property name.",
+          "parameters": [
+            { "name": "styleSheetId", "$ref": "StyleSheetId" },
+            { "name": "range", "$ref": "SourceRange" },
+            { "name": "propertyName", "type": "string" }
+          ],
+          "returns": [
+            { "name": "propertyName", "description": "The resulting key text after modification.", "$ref": "Value" }
+          ]
+        },
+        {
           "name": "setKeyframeKey",
           "description": "Modifies the keyframe rule key text.",
           "parameters": [
@@ -4628,7 +4729,7 @@
     {
       "domain": "DOMDebugger",
       "description": "DOM debugging allows setting breakpoints on particular DOM operations and events. JavaScript\nexecution will stop on these operations as if there was a regular breakpoint set.",
-      "dependencies": ["DOM", "Debugger", "Runtime"],
+      "dependencies": ["DOM", "Runtime"],
       "types": [
         {
           "id": "DOMBreakpointType",
@@ -4738,6 +4839,8 @@
           "name": "removeInstrumentationBreakpoint",
           "description": "Removes breakpoint on particular native event.",
           "experimental": true,
+          "deprecated": true,
+          "redirect": "EventBreakpoints",
           "parameters": [{ "name": "eventName", "description": "Instrumentation name to stop on.", "type": "string" }]
         },
         {
@@ -4788,6 +4891,8 @@
           "name": "setInstrumentationBreakpoint",
           "description": "Sets breakpoint on particular native event.",
           "experimental": true,
+          "deprecated": true,
+          "redirect": "EventBreakpoints",
           "parameters": [{ "name": "eventName", "description": "Instrumentation name to stop on.", "type": "string" }]
         },
         {
@@ -6069,7 +6174,7 @@
     },
     {
       "domain": "EventBreakpoints",
-      "description": "EventBreakpoints permits setting breakpoints on particular operations and\nevents in targets that run JavaScript but do not have a DOM.\nJavaScript execution will stop on these operations as if there was a regular\nbreakpoint set.",
+      "description": "EventBreakpoints permits setting JavaScript breakpoints on operations and events\noccurring in native code invoked from JavaScript. Once breakpoint is hit, it is\nreported through Debugger domain, similarly to regular breakpoints being hit.",
       "experimental": true,
       "commands": [
         {
@@ -6081,7 +6186,8 @@
           "name": "removeInstrumentationBreakpoint",
           "description": "Removes breakpoint on particular native event.",
           "parameters": [{ "name": "eventName", "description": "Instrumentation name to stop on.", "type": "string" }]
-        }
+        },
+        { "name": "disable", "description": "Removes all breakpoints" }
       ]
     },
     {
@@ -6099,7 +6205,7 @@
           "id": "DialogType",
           "description": "Whether the dialog shown is an account chooser or an auto re-authentication dialog.",
           "type": "string",
-          "enum": ["AccountChooser", "AutoReauthn", "ConfirmIdpSignin"]
+          "enum": ["AccountChooser", "AutoReauthn", "ConfirmIdpLogin"]
         },
         {
           "id": "Account",
@@ -6112,7 +6218,7 @@
             { "name": "givenName", "type": "string" },
             { "name": "pictureUrl", "type": "string" },
             { "name": "idpConfigUrl", "type": "string" },
-            { "name": "idpSigninUrl", "type": "string" },
+            { "name": "idpLoginUrl", "type": "string" },
             { "name": "loginState", "$ref": "LoginState" },
             {
               "name": "termsOfServiceUrl",
@@ -6159,6 +6265,11 @@
             { "name": "dialogId", "type": "string" },
             { "name": "accountIndex", "type": "integer" }
           ]
+        },
+        {
+          "name": "confirmIdpLogin",
+          "description": "Only valid if the dialog type is ConfirmIdpLogin. Acts as if the user had\nclicked the continue button.",
+          "parameters": [{ "name": "dialogId", "type": "string" }]
         },
         {
           "name": "dismissDialog",
@@ -6987,16 +7098,14 @@
             {
               "name": "tiltX",
               "description": "The plane angle between the Y-Z plane and the plane containing both the stylus axis and the Y axis, in degrees of the range [-90,90], a positive tiltX is to the right (default: 0)",
-              "experimental": true,
               "optional": true,
-              "type": "integer"
+              "type": "number"
             },
             {
               "name": "tiltY",
               "description": "The plane angle between the X-Z plane and the plane containing both the stylus axis and the X axis, in degrees of the range [-90,90], a positive tiltY is towards the user (default: 0).",
-              "experimental": true,
               "optional": true,
-              "type": "integer"
+              "type": "number"
             },
             {
               "name": "twist",
@@ -7280,16 +7389,14 @@
             {
               "name": "tiltX",
               "description": "The plane angle between the Y-Z plane and the plane containing both the stylus axis and the Y axis, in degrees of the range [-90,90], a positive tiltX is to the right (default: 0).",
-              "experimental": true,
               "optional": true,
-              "type": "integer"
+              "type": "number"
             },
             {
               "name": "tiltY",
               "description": "The plane angle between the X-Z plane and the plane containing both the stylus axis and the X axis, in degrees of the range [-90,90], a positive tiltY is towards the user (default: 0).",
-              "experimental": true,
               "optional": true,
-              "type": "integer"
+              "type": "number"
             },
             {
               "name": "twist",
@@ -9158,6 +9265,7 @@
             "ch-ect",
             "ch-prefers-color-scheme",
             "ch-prefers-reduced-motion",
+            "ch-prefers-reduced-transparency",
             "ch-rtt",
             "ch-save-data",
             "ch-ua",
@@ -11403,7 +11511,6 @@
             "LowEndDevice",
             "InvalidSchemeRedirect",
             "InvalidSchemeNavigation",
-            "InProgressNavigation",
             "NavigationRequestBlockedByCsp",
             "MainFrameNavigation",
             "MojoBinderPolicy",
@@ -11415,7 +11522,6 @@
             "NavigationBadHttpStatus",
             "ClientCertRequested",
             "NavigationRequestNetworkError",
-            "MaxNumOfRunningPrerendersExceeded",
             "CancelAllHostsForTesting",
             "DidFailLoad",
             "Stop",
@@ -11427,9 +11533,8 @@
             "MixedContent",
             "TriggerBackgrounded",
             "MemoryLimitExceeded",
-            "FailToGetMemoryUsage",
             "DataSaverEnabled",
-            "HasEffectiveUrl",
+            "TriggerUrlHasEffectiveUrl",
             "ActivatedBeforeStarted",
             "InactivePageRestriction",
             "StartFailed",
@@ -11460,7 +11565,13 @@
             "PrerenderingDisabledByDevTools",
             "ResourceLoadBlockedByClient",
             "SpeculationRuleRemoved",
-            "ActivatedWithAuxiliaryBrowsingContexts"
+            "ActivatedWithAuxiliaryBrowsingContexts",
+            "MaxNumOfRunningEagerPrerendersExceeded",
+            "MaxNumOfRunningNonEagerPrerendersExceeded",
+            "MaxNumOfRunningEmbedderPrerendersExceeded",
+            "PrerenderingUrlHasEffectiveUrl",
+            "RedirectedPrerenderingUrlHasEffectiveUrl",
+            "ActivationUrlHasEffectiveUrl"
           ]
         },
         {
@@ -11515,26 +11626,6 @@
           "parameters": [{ "name": "ruleSet", "$ref": "RuleSet" }]
         },
         { "name": "ruleSetRemoved", "parameters": [{ "name": "id", "$ref": "RuleSetId" }] },
-        {
-          "name": "prerenderAttemptCompleted",
-          "description": "Fired when a prerender attempt is completed.",
-          "parameters": [
-            { "name": "key", "$ref": "PreloadingAttemptKey" },
-            {
-              "name": "initiatingFrameId",
-              "description": "The frame id of the frame initiating prerendering.",
-              "$ref": "Page.FrameId"
-            },
-            { "name": "prerenderingUrl", "type": "string" },
-            { "name": "finalStatus", "$ref": "PrerenderFinalStatus" },
-            {
-              "name": "disallowedApiMethod",
-              "description": "This is used to give users more information about the name of the API call\nthat is incompatible with prerender and has caused the cancellation of the attempt",
-              "optional": true,
-              "type": "string"
-            }
-          ]
-        },
         {
           "name": "preloadEnabledStateUpdated",
           "description": "Fired when a preload enabled state is updated.",
@@ -12077,14 +12168,14 @@
           "id": "InterestGroupAccessType",
           "description": "Enum of interest group access types.",
           "type": "string",
-          "enum": ["join", "leave", "update", "loaded", "bid", "win"]
+          "enum": ["join", "leave", "update", "loaded", "bid", "win", "additionalBid", "additionalBidWin", "clear"]
         },
         {
           "id": "InterestGroupAd",
           "description": "Ad advertising element inside an interest group.",
           "type": "object",
           "properties": [
-            { "name": "renderUrl", "type": "string" },
+            { "name": "renderURL", "type": "string" },
             { "name": "metadata", "optional": true, "type": "string" }
           ]
         },
@@ -12097,10 +12188,10 @@
             { "name": "name", "type": "string" },
             { "name": "expirationTime", "$ref": "Network.TimeSinceEpoch" },
             { "name": "joiningOrigin", "type": "string" },
-            { "name": "biddingUrl", "optional": true, "type": "string" },
-            { "name": "biddingWasmHelperUrl", "optional": true, "type": "string" },
-            { "name": "updateUrl", "optional": true, "type": "string" },
-            { "name": "trustedBiddingSignalsUrl", "optional": true, "type": "string" },
+            { "name": "biddingLogicURL", "optional": true, "type": "string" },
+            { "name": "biddingWasmHelperURL", "optional": true, "type": "string" },
+            { "name": "updateURL", "optional": true, "type": "string" },
+            { "name": "trustedBiddingSignalsURL", "optional": true, "type": "string" },
             { "name": "trustedBiddingSignalsKeys", "type": "array", "items": { "type": "string" } },
             { "name": "userBiddingSignals", "optional": true, "type": "string" },
             { "name": "ads", "type": "array", "items": { "$ref": "InterestGroupAd" } },
@@ -12276,19 +12367,23 @@
           ]
         },
         {
+          "id": "AttributionReportingEventReportWindows",
+          "experimental": true,
+          "type": "object",
+          "properties": [
+            { "name": "start", "description": "duration in seconds", "type": "integer" },
+            { "name": "ends", "description": "duration in seconds", "type": "array", "items": { "type": "integer" } }
+          ]
+        },
+        {
           "id": "AttributionReportingSourceRegistration",
           "experimental": true,
           "type": "object",
           "properties": [
             { "name": "time", "$ref": "Network.TimeSinceEpoch" },
-            { "name": "expiry", "description": "duration in seconds", "optional": true, "type": "integer" },
-            { "name": "eventReportWindow", "description": "duration in seconds", "optional": true, "type": "integer" },
-            {
-              "name": "aggregatableReportWindow",
-              "description": "duration in seconds",
-              "optional": true,
-              "type": "integer"
-            },
+            { "name": "expiry", "description": "duration in seconds", "type": "integer" },
+            { "name": "eventReportWindows", "$ref": "AttributionReportingEventReportWindows" },
+            { "name": "aggregatableReportWindow", "description": "duration in seconds", "type": "integer" },
             { "name": "type", "$ref": "AttributionReportingSourceType" },
             { "name": "sourceOrigin", "type": "string" },
             { "name": "reportingOrigin", "type": "string" },

@@ -2585,3 +2585,14 @@ it("construct buffer from hex, issue #4919", () => {
   expect(buf1).toStrictEqual(Buffer.from([]));
   expect(buf2).toStrictEqual(Buffer.from([0x63, 0xe9, 0xf6, 0xc4, 0xb0, 0x4f, 0xa8, 0xc8, 0x0f, 0x3f, 0xb0, 0xee]));
 });
+
+it("new Buffer.alloc()", () => {
+  const buf = new Buffer.alloc(10);
+  expect(buf.length).toBe(10);
+  expect(buf[0]).toBe(0);
+});
+
+it("new Buffer.from()", () => {
+  const buf = new Buffer.from("🥶");
+  expect(buf.length).toBe(4);
+});

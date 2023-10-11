@@ -1697,7 +1697,7 @@ pub const Expect = struct {
             const result: JSValue = result_.?;
             var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
 
-            if (expected_value.isEmpty()) {
+            if (expected_value.isEmpty() or expected_value.isUndefined()) {
                 const signature_no_args = comptime getSignature("toThrow", "", true);
                 if (result.toError()) |err| {
                     const name = err.get(globalObject, "name") orelse JSValue.undefined;
@@ -1780,7 +1780,7 @@ pub const Expect = struct {
 
         const signature = comptime getSignature("toThrow", "<green>expected<r>", false);
         if (did_throw) {
-            if (expected_value.isEmpty()) return thisValue;
+            if (expected_value.isEmpty() or expected_value.isUndefined()) return thisValue;
 
             const result: JSValue = if (result_.?.toError()) |r|
                 r
@@ -1915,7 +1915,7 @@ pub const Expect = struct {
         var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
         const received_line = "Received function did not throw\n";
 
-        if (expected_value.isEmpty()) {
+        if (expected_value.isEmpty() or expected_value.isUndefined()) {
             const fmt = comptime getSignature("toThrow", "", false) ++ "\n\n" ++ received_line;
             if (Output.enable_ansi_colors) {
                 globalObject.throw(Output.prettyFmt(fmt, true), .{});
@@ -2646,6 +2646,83 @@ pub const Expect = struct {
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toBeWithin", "<green>start<r><d>, <r><green>end<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
         globalThis.throwPretty(fmt, .{ start_fmt, end_fmt, received_fmt });
+        return .zero;
+    }
+
+    pub fn toEqualIgnoringWhitespace(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const _arguments = callFrame.arguments(1);
+        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+
+        if (arguments.len < 1) {
+            globalThis.throwInvalidArguments("toEqualIgnoringWhitespace() requires 1 argument", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const expected = arguments[0];
+        const value: JSValue = this.getValue(globalThis, thisValue, "toEqualIgnoringWhitespace", "<green>expected<r>") orelse return .zero;
+
+        if (!expected.isString()) {
+            globalThis.throw("toEqualIgnoringWhitespace() requires argument to be a string", .{});
+            return .zero;
+        }
+
+        const not = this.flags.not;
+        var pass = value.isString() and expected.isString();
+
+        if (pass) {
+            var valueStr = value.toString(globalThis).toSlice(globalThis, default_allocator).slice();
+            var expectedStr = expected.toString(globalThis).toSlice(globalThis, default_allocator).slice();
+
+            var left: usize = 0;
+            var right: usize = 0;
+
+            // Skip leading whitespaces
+            while (left < valueStr.len and std.ascii.isWhitespace(valueStr[left])) left += 1;
+            while (right < expectedStr.len and std.ascii.isWhitespace(expectedStr[right])) right += 1;
+
+            while (left < valueStr.len and right < expectedStr.len) {
+                const left_char = valueStr[left];
+                const right_char = expectedStr[right];
+
+                if (left_char != right_char) {
+                    pass = false;
+                    break;
+                }
+
+                left += 1;
+                right += 1;
+
+                // Skip trailing whitespaces
+                while (left < valueStr.len and std.ascii.isWhitespace(valueStr[left])) left += 1;
+                while (right < expectedStr.len and std.ascii.isWhitespace(expectedStr[right])) right += 1;
+            }
+
+            if (left < valueStr.len or right < expectedStr.len) {
+                pass = false;
+            }
+        }
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const expected_fmt = expected.toFmt(globalThis, &formatter);
+        const value_fmt = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toEqualIgnoringWhitespace", "<green>expected<r>", true) ++ "\n\n" ++ "Expected: not <green>{any}<r>\n" ++ "Received: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{ expected_fmt, value_fmt });
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toEqualIgnoringWhitespace", "<green>expected<r>", false) ++ "\n\n" ++ "Expected: <green>{any}<r>\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{ expected_fmt, value_fmt });
         return .zero;
     }
 
@@ -3437,8 +3514,11 @@ pub const Expect = struct {
         return ExpectStringMatching.call(globalObject, callFrame);
     }
 
+    pub fn arrayContaining(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        return ExpectArrayContaining.call(globalObject, callFrame);
+    }
+
     pub const extend = notImplementedStaticFn;
-    pub const arrayContaining = notImplementedStaticFn;
     pub const assertions = notImplementedStaticFn;
     pub const hasAssertions = notImplementedStaticFn;
     pub const objectContaining = notImplementedStaticFn;
@@ -3618,6 +3698,43 @@ pub const ExpectAny = struct {
         vm.autoGarbageCollect();
 
         return any_js_value;
+    }
+};
+
+pub const ExpectArrayContaining = struct {
+    pub usingnamespace JSC.Codegen.JSExpectArrayContaining;
+
+    pub fn finalize(
+        this: *ExpectArrayContaining,
+    ) callconv(.C) void {
+        VirtualMachine.get().allocator.destroy(this);
+    }
+
+    pub fn call(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        const args = callFrame.arguments(1).slice();
+
+        if (args.len == 0 or !args[0].jsType().isArray()) {
+            const fmt = "<d>expect.<r>arrayContaining<d>(<r>array<d>)<r>\n\nExpected a array\n";
+            globalObject.throwPretty(fmt, .{});
+            return .zero;
+        }
+
+        const array_value = args[0];
+        const array_containing = globalObject.bunVM().allocator.create(ExpectArrayContaining) catch unreachable;
+
+        if (Jest.runner.?.pending_test == null) {
+            const err = globalObject.createErrorInstance("expect.arrayContaining() must be called in a test", .{});
+            err.put(globalObject, ZigString.static("name"), ZigString.init("TestNotRunningError").toValueGC(globalObject));
+            globalObject.throwValue(err);
+            return .zero;
+        }
+
+        const array_containing_js_value = array_containing.toJS(globalObject);
+        ExpectArrayContaining.arrayValueSetCached(array_containing_js_value, globalObject, array_value);
+
+        var vm = globalObject.bunVM();
+        vm.autoGarbageCollect();
+        return array_containing_js_value;
     }
 };
 

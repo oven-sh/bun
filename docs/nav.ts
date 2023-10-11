@@ -35,12 +35,16 @@ export default {
     page("quickstart", "Quickstart", {
       description: "Get started with Bun by building and running a simple HTTP server in 6 lines of TypeScript.",
     }),
-    page("templates", "Templates", {
-      description: "Hit the ground running with one of Bun's official templates, or download a template from GitHub.",
+    page("typescript", "TypeScript", {
+      description: "Install and configure type declarations for Bun's APIs",
     }),
-    page("guides", "Guides", {
-      description: "A set of walkthrough guides and code snippets for performing common tasks with Bun",
-      href: "/guides",
+
+    divider("Scaffolding"),
+    page("cli/init", "`bun init`", {
+      description: "Scaffold an empty Bun project.",
+    }),
+    page("cli/bun-create", "`bun create`", {
+      description: "Scaffold a new Bun project from an official template or GitHub repo.",
     }),
 
     // page("typescript", "TypeScript"),
@@ -78,7 +82,6 @@ export default {
     // page("bundev", "Dev server"),
     // page("benchmarks", "Benchmarks"),
 
-    // divider("Runtime"),
     divider("Runtime"),
     page("cli/run", "`bun run`", {
       description: "Use `bun run` to execute JavaScript/TypeScript files and package.json scripts.",
@@ -101,6 +104,9 @@ export default {
     // page("runtime/apis", "APIs", {
     //   description: `Bun is a new JavaScript runtime designed to be a faster, leaner, more modern replacement for Node.js.`,
     // }),
+    page("runtime/env", "Environment variables", {
+      description: `How to read and set environment variables, plus how to use them to configure Bun`,
+    }),
     page("runtime/bun-apis", "Bun APIs", {
       description: `Bun provides a set of highly optimized native APIs for performing common tasks.`,
     }),
@@ -129,7 +135,7 @@ export default {
     page("runtime/autoimport", "Auto-install", {
       description: `Never use node_modules again. Bun can optionally auto-install your dependencies on the fly.`,
     }),
-    page("runtime/configuration", "Configuration", {
+    page("runtime/bunfig", "bunfig.toml", {
       description: `Bun's runtime is configurable with environment variables and the bunfig.toml config file.`,
     }),
     page("runtime/debugger", "Debugger", {
@@ -155,7 +161,7 @@ export default {
     }),
     page("install/lockfile", "Lockfile", {
       description:
-        "Bun's binary lockfile `bun.lockb` tracks your resolved dependency ytrr, making future installs fast and repeatable.",
+        "Bun's binary lockfile `bun.lockb` tracks your resolved dependency tree, making future installs fast and repeatable.",
     }),
     page("install/registries", "Scopes and registries", {
       description: "How to configure private scopes and custom package registries.",

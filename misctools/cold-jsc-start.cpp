@@ -132,9 +132,10 @@ int main(int argc, char **argv) {
 
   vm.ref();
   if (argc > 2) {
-    auto source = JSC::makeSource(WTF::String::fromUTF8(argv[argc - 1]),
-                                  SourceOrigin(WTF::URL("file://eval.js"_s)),
-                                  "eval.js"_s);
+    auto source =
+        JSC::makeSource(WTF::String::fromUTF8(argv[argc - 1]),
+                        SourceOrigin(WTF::URL("file://eval.js"_s)),
+                        JSC::SourceTaintedOrigin::Untainted, "eval.js"_s);
 
     NakedPtr<Exception> evaluationException;
     JSValue returnValue =
@@ -163,7 +164,8 @@ int main(int argc, char **argv) {
   if (auto contents = WTF::FileSystemImpl::readEntireFile(fileURLString)) {
     auto source =
         JSC::makeSource(WTF::String::fromUTF8(contents.value()),
-                        SourceOrigin(WTF::URL(fileURLString)), fileURLString);
+                        SourceOrigin(WTF::URL(fileURLString)),
+                        JSC::SourceTaintedOrigin::Untainted, fileURLString);
 
     NakedPtr<Exception> evaluationException;
     JSValue returnValue =

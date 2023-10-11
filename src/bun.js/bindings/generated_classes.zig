@@ -1327,6 +1327,8 @@ pub const JSDebugHTTPSServer = struct {
             @compileLog("Expected DebugHTTPSServer.doPublish to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPSServer.doPublish)));
         if (@TypeOf(DebugHTTPSServer.doReload) != CallbackType)
             @compileLog("Expected DebugHTTPSServer.doReload to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPSServer.doReload)));
+        if (@TypeOf(DebugHTTPSServer.doRequestIP) != CallbackType)
+            @compileLog("Expected DebugHTTPSServer.doRequestIP to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPSServer.doRequestIP)));
         if (@TypeOf(DebugHTTPSServer.doStop) != CallbackType)
             @compileLog("Expected DebugHTTPSServer.doStop to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPSServer.doStop)));
         if (@TypeOf(DebugHTTPSServer.doUpgrade) != CallbackType)
@@ -1335,6 +1337,7 @@ pub const JSDebugHTTPSServer = struct {
             @export(DebugHTTPSServer.doFetch, .{ .name = "DebugHTTPSServerPrototype__doFetch" });
             @export(DebugHTTPSServer.doPublish, .{ .name = "DebugHTTPSServerPrototype__doPublish" });
             @export(DebugHTTPSServer.doReload, .{ .name = "DebugHTTPSServerPrototype__doReload" });
+            @export(DebugHTTPSServer.doRequestIP, .{ .name = "DebugHTTPSServerPrototype__doRequestIP" });
             @export(DebugHTTPSServer.doStop, .{ .name = "DebugHTTPSServerPrototype__doStop" });
             @export(DebugHTTPSServer.doUpgrade, .{ .name = "DebugHTTPSServerPrototype__doUpgrade" });
             @export(DebugHTTPSServer.finalize, .{ .name = "DebugHTTPSServerClass__finalize" });
@@ -1470,6 +1473,8 @@ pub const JSDebugHTTPServer = struct {
             @compileLog("Expected DebugHTTPServer.doPublish to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPServer.doPublish)));
         if (@TypeOf(DebugHTTPServer.doReload) != CallbackType)
             @compileLog("Expected DebugHTTPServer.doReload to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPServer.doReload)));
+        if (@TypeOf(DebugHTTPServer.doRequestIP) != CallbackType)
+            @compileLog("Expected DebugHTTPServer.doRequestIP to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPServer.doRequestIP)));
         if (@TypeOf(DebugHTTPServer.doStop) != CallbackType)
             @compileLog("Expected DebugHTTPServer.doStop to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPServer.doStop)));
         if (@TypeOf(DebugHTTPServer.doUpgrade) != CallbackType)
@@ -1478,6 +1483,7 @@ pub const JSDebugHTTPServer = struct {
             @export(DebugHTTPServer.doFetch, .{ .name = "DebugHTTPServerPrototype__doFetch" });
             @export(DebugHTTPServer.doPublish, .{ .name = "DebugHTTPServerPrototype__doPublish" });
             @export(DebugHTTPServer.doReload, .{ .name = "DebugHTTPServerPrototype__doReload" });
+            @export(DebugHTTPServer.doRequestIP, .{ .name = "DebugHTTPServerPrototype__doRequestIP" });
             @export(DebugHTTPServer.doStop, .{ .name = "DebugHTTPServerPrototype__doStop" });
             @export(DebugHTTPServer.doUpgrade, .{ .name = "DebugHTTPServerPrototype__doUpgrade" });
             @export(DebugHTTPServer.finalize, .{ .name = "DebugHTTPServerClass__finalize" });
@@ -2205,6 +2211,8 @@ pub const JSExpect = struct {
             @compileLog("Expected Expect.toEndWith to be a callback but received " ++ @typeName(@TypeOf(Expect.toEndWith)));
         if (@TypeOf(Expect.toEqual) != CallbackType)
             @compileLog("Expected Expect.toEqual to be a callback but received " ++ @typeName(@TypeOf(Expect.toEqual)));
+        if (@TypeOf(Expect.toEqualIgnoringWhitespace) != CallbackType)
+            @compileLog("Expected Expect.toEqualIgnoringWhitespace to be a callback but received " ++ @typeName(@TypeOf(Expect.toEqualIgnoringWhitespace)));
         if (@TypeOf(Expect.toHaveBeenCalled) != CallbackType)
             @compileLog("Expected Expect.toHaveBeenCalled to be a callback but received " ++ @typeName(@TypeOf(Expect.toHaveBeenCalled)));
         if (@TypeOf(Expect.toHaveBeenCalledTimes) != CallbackType)
@@ -2341,6 +2349,7 @@ pub const JSExpect = struct {
             @export(Expect.toContainEqual, .{ .name = "ExpectPrototype__toContainEqual" });
             @export(Expect.toEndWith, .{ .name = "ExpectPrototype__toEndWith" });
             @export(Expect.toEqual, .{ .name = "ExpectPrototype__toEqual" });
+            @export(Expect.toEqualIgnoringWhitespace, .{ .name = "ExpectPrototype__toEqualIgnoringWhitespace" });
             @export(Expect.toHaveBeenCalled, .{ .name = "ExpectPrototype__toHaveBeenCalled" });
             @export(Expect.toHaveBeenCalledTimes, .{ .name = "ExpectPrototype__toHaveBeenCalledTimes" });
             @export(Expect.toHaveBeenCalledWith, .{ .name = "ExpectPrototype__toHaveBeenCalledWith" });
@@ -2504,6 +2513,87 @@ pub const JSExpectAnything = struct {
         if (!JSC.is_bindgen) {
             @export(ExpectAnything.call, .{ .name = "ExpectAnythingClass__call" });
             @export(ExpectAnything.finalize, .{ .name = "ExpectAnythingClass__finalize" });
+        }
+    }
+};
+pub const JSExpectArrayContaining = struct {
+    const ExpectArrayContaining = Classes.ExpectArrayContaining;
+    const GetterType = fn (*ExpectArrayContaining, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*ExpectArrayContaining, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*ExpectArrayContaining, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*ExpectArrayContaining, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*ExpectArrayContaining, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*ExpectArrayContaining {
+        JSC.markBinding(@src());
+        return ExpectArrayContaining__fromJS(value);
+    }
+
+    extern fn ExpectArrayContainingPrototype__arrayValueSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn ExpectArrayContainingPrototype__arrayValueGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `ExpectArrayContaining.arrayValue` setter
+    /// This value will be visited by the garbage collector.
+    pub fn arrayValueSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        ExpectArrayContainingPrototype__arrayValueSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `ExpectArrayContaining.arrayValue` getter
+    /// This value will be visited by the garbage collector.
+    pub fn arrayValueGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = ExpectArrayContainingPrototype__arrayValueGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Create a new instance of ExpectArrayContaining
+    pub fn toJS(this: *ExpectArrayContaining, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = ExpectArrayContaining__create(globalObject, this);
+            std.debug.assert(value__.as(ExpectArrayContaining).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return ExpectArrayContaining__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of ExpectArrayContaining.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*ExpectArrayContaining) bool {
+        JSC.markBinding(@src());
+        return ExpectArrayContaining__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *ExpectArrayContaining, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(ExpectArrayContaining__dangerouslySetPtr(value, null));
+    }
+
+    extern fn ExpectArrayContaining__fromJS(JSC.JSValue) ?*ExpectArrayContaining;
+    extern fn ExpectArrayContaining__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn ExpectArrayContaining__create(globalObject: *JSC.JSGlobalObject, ptr: ?*ExpectArrayContaining) JSC.JSValue;
+
+    extern fn ExpectArrayContaining__dangerouslySetPtr(JSC.JSValue, ?*ExpectArrayContaining) bool;
+
+    comptime {
+        if (@TypeOf(ExpectArrayContaining.finalize) != (fn (*ExpectArrayContaining) callconv(.C) void)) {
+            @compileLog("ExpectArrayContaining.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(ExpectArrayContaining.call) != StaticCallbackType)
+            @compileLog("Expected ExpectArrayContaining.call to be a static callback");
+        if (!JSC.is_bindgen) {
+            @export(ExpectArrayContaining.call, .{ .name = "ExpectArrayContainingClass__call" });
+            @export(ExpectArrayContaining.finalize, .{ .name = "ExpectArrayContainingClass__finalize" });
         }
     }
 };
@@ -3196,6 +3286,8 @@ pub const JSHTTPSServer = struct {
             @compileLog("Expected HTTPSServer.doPublish to be a callback but received " ++ @typeName(@TypeOf(HTTPSServer.doPublish)));
         if (@TypeOf(HTTPSServer.doReload) != CallbackType)
             @compileLog("Expected HTTPSServer.doReload to be a callback but received " ++ @typeName(@TypeOf(HTTPSServer.doReload)));
+        if (@TypeOf(HTTPSServer.doRequestIP) != CallbackType)
+            @compileLog("Expected HTTPSServer.doRequestIP to be a callback but received " ++ @typeName(@TypeOf(HTTPSServer.doRequestIP)));
         if (@TypeOf(HTTPSServer.doStop) != CallbackType)
             @compileLog("Expected HTTPSServer.doStop to be a callback but received " ++ @typeName(@TypeOf(HTTPSServer.doStop)));
         if (@TypeOf(HTTPSServer.doUpgrade) != CallbackType)
@@ -3204,6 +3296,7 @@ pub const JSHTTPSServer = struct {
             @export(HTTPSServer.doFetch, .{ .name = "HTTPSServerPrototype__doFetch" });
             @export(HTTPSServer.doPublish, .{ .name = "HTTPSServerPrototype__doPublish" });
             @export(HTTPSServer.doReload, .{ .name = "HTTPSServerPrototype__doReload" });
+            @export(HTTPSServer.doRequestIP, .{ .name = "HTTPSServerPrototype__doRequestIP" });
             @export(HTTPSServer.doStop, .{ .name = "HTTPSServerPrototype__doStop" });
             @export(HTTPSServer.doUpgrade, .{ .name = "HTTPSServerPrototype__doUpgrade" });
             @export(HTTPSServer.finalize, .{ .name = "HTTPSServerClass__finalize" });
@@ -3339,6 +3432,8 @@ pub const JSHTTPServer = struct {
             @compileLog("Expected HTTPServer.doPublish to be a callback but received " ++ @typeName(@TypeOf(HTTPServer.doPublish)));
         if (@TypeOf(HTTPServer.doReload) != CallbackType)
             @compileLog("Expected HTTPServer.doReload to be a callback but received " ++ @typeName(@TypeOf(HTTPServer.doReload)));
+        if (@TypeOf(HTTPServer.doRequestIP) != CallbackType)
+            @compileLog("Expected HTTPServer.doRequestIP to be a callback but received " ++ @typeName(@TypeOf(HTTPServer.doRequestIP)));
         if (@TypeOf(HTTPServer.doStop) != CallbackType)
             @compileLog("Expected HTTPServer.doStop to be a callback but received " ++ @typeName(@TypeOf(HTTPServer.doStop)));
         if (@TypeOf(HTTPServer.doUpgrade) != CallbackType)
@@ -3347,6 +3442,7 @@ pub const JSHTTPServer = struct {
             @export(HTTPServer.doFetch, .{ .name = "HTTPServerPrototype__doFetch" });
             @export(HTTPServer.doPublish, .{ .name = "HTTPServerPrototype__doPublish" });
             @export(HTTPServer.doReload, .{ .name = "HTTPServerPrototype__doReload" });
+            @export(HTTPServer.doRequestIP, .{ .name = "HTTPServerPrototype__doRequestIP" });
             @export(HTTPServer.doStop, .{ .name = "HTTPServerPrototype__doStop" });
             @export(HTTPServer.doUpgrade, .{ .name = "HTTPServerPrototype__doUpgrade" });
             @export(HTTPServer.finalize, .{ .name = "HTTPServerClass__finalize" });
@@ -6781,6 +6877,9 @@ pub const JSTextDecoder = struct {
         if (@TypeOf(TextDecoder.getFatal) != GetterType)
             @compileLog("Expected TextDecoder.getFatal to be a getter");
 
+        if (@TypeOf(TextDecoder.getIgnoreBOM) != GetterType)
+            @compileLog("Expected TextDecoder.getIgnoreBOM to be a getter");
+
         if (!JSC.is_bindgen) {
             @export(TextDecoder.constructor, .{ .name = "TextDecoderClass__construct" });
             @export(TextDecoder.decode, .{ .name = "TextDecoderPrototype__decode" });
@@ -6788,6 +6887,7 @@ pub const JSTextDecoder = struct {
             @export(TextDecoder.finalize, .{ .name = "TextDecoderClass__finalize" });
             @export(TextDecoder.getEncoding, .{ .name = "TextDecoderPrototype__getEncoding" });
             @export(TextDecoder.getFatal, .{ .name = "TextDecoderPrototype__getFatal" });
+            @export(TextDecoder.getIgnoreBOM, .{ .name = "TextDecoderPrototype__getIgnoreBOM" });
         }
     }
 };
@@ -7006,6 +7106,7 @@ comptime {
     _ = JSExpect;
     _ = JSExpectAny;
     _ = JSExpectAnything;
+    _ = JSExpectArrayContaining;
     _ = JSExpectStringContaining;
     _ = JSExpectStringMatching;
     _ = JSFFI;

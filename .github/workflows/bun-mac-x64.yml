@@ -115,36 +115,36 @@ jobs:
           #   arch: x86_64
           #   tag: bun-darwin-x64-baseline
           #   obj: bun-obj-darwin-x64-baseline
-          #   runner: macos-11
+          #   runner: macos-12
           #   artifact: bun-obj-darwin-x64-baseline
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-aug3-5/bun-webkit-macos-amd64-lto.tar.gz"
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3/bun-webkit-macos-amd64-lto.tar.gz"
           #   dependencies: true
           #   compile_obj: false
           - cpu: haswell
             arch: x86_64
             tag: bun-darwin-x64
             obj: bun-obj-darwin-x64
-            runner: macos-11
+            runner: macos-12
             artifact: bun-obj-darwin-x64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-aug3-5/bun-webkit-macos-amd64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3/bun-webkit-macos-amd64-lto.tar.gz"
             dependencies: true
             compile_obj: false
           # - cpu: nehalem
           #   arch: x86_64
           #   tag: bun-darwin-x64-baseline
           #   obj: bun-obj-darwin-x64-baseline
-          #   runner: macos-11
+          #   runner: macos-12
           #   artifact: bun-obj-darwin-x64-baseline
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-aug3-5/bun-webkit-macos-amd64-lto.tar.gz"
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3/bun-webkit-macos-amd64-lto.tar.gz"
           #   dependencies: false
           #   compile_obj: true
           - cpu: haswell
             arch: x86_64
             tag: bun-darwin-x64
             obj: bun-obj-darwin-x64
-            runner: macos-11
+            runner: macos-12
             artifact: bun-obj-darwin-x64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-aug3-5/bun-webkit-macos-amd64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3/bun-webkit-macos-amd64-lto.tar.gz"
             dependencies: false
             compile_obj: true
           # - cpu: native
@@ -152,14 +152,14 @@ jobs:
           #   tag: bun-darwin-aarch64
           #   obj: bun-obj-darwin-aarch64
           #   artifact: bun-obj-darwin-aarch64
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-aug3-5/bun-webkit-macos-arm64-lto.tar.gz"
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3/bun-webkit-macos-arm64-lto.tar.gz"
           #   runner: macos-arm64
           #   dependencies: true
           #   compile_obj: true
     steps:
       - uses: actions/checkout@v3
       - name: Checkout submodules
-        run: git submodule update --init --recursive --depth=1 --progress -j $(sysctl -n hw.ncpu)
+        run: git submodule update --init --recursive --depth=1 --progress -j $(sysctl -n hw.ncpu) --force
       - name: Install dependencies
         env:
           CPU_TARGET: ${{ matrix.cpu }}
@@ -172,10 +172,10 @@ jobs:
           OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
         run: |
-          brew install rust ccache llvm@15 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild --force
+          brew install rust ccache llvm@16 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild --force
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
-          echo "$(brew --prefix llvm@15)/bin" >> $GITHUB_PATH
-          brew link --overwrite llvm@15
+          echo "$(brew --prefix llvm@16)/bin" >> $GITHUB_PATH
+          brew link --overwrite llvm@16
       - name: Download WebKit
         if: matrix.compile_obj
         env:
@@ -250,6 +250,7 @@ jobs:
     if: github.repository_owner == 'oven-sh'
     needs: [macOS-cpp, macos-object-files]
     timeout-minutes: 90
+    permissions: write-all
     strategy:
       matrix:
         include:
@@ -258,29 +259,29 @@ jobs:
           #   tag: bun-darwin-x64-baseline
           #   obj: bun-obj-darwin-x64-baseline
           #   package: bun-darwin-x64
-          #   runner: macos-11
+          #   runner: macos-12
           #   artifact: bun-obj-darwin-x64-baseline
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-aug3-5/bun-webkit-macos-amd64-lto.tar.gz"
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3/bun-webkit-macos-amd64-lto.tar.gz"
           - cpu: haswell
             arch: x86_64
             tag: bun-darwin-x64
             obj: bun-obj-darwin-x64
             package: bun-darwin-x64
-            runner: macos-11
+            runner: macos-12
             artifact: bun-obj-darwin-x64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-aug3-5/bun-webkit-macos-amd64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3/bun-webkit-macos-amd64-lto.tar.gz"
           # - cpu: native
           #   arch: aarch64
           #   tag: bun-darwin-aarch64
           #   obj: bun-obj-darwin-aarch64
           #   package: bun-darwin-aarch64
           #   artifact: bun-obj-darwin-aarch64
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-aug3-5/bun-webkit-macos-arm64-lto.tar.gz"
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3/bun-webkit-macos-arm64-lto.tar.gz"
           #   runner: macos-arm64
     steps:
       - uses: actions/checkout@v3
       - name: Checkout submodules
-        run: git submodule update --init --recursive --depth=1 --progress -j $(sysctl -n hw.ncpu)
+        run: git submodule update --init --recursive --depth=1 --progress -j $(sysctl -n hw.ncpu) --force
       - name: Install dependencies
         env:
           CPU_TARGET: ${{ matrix.cpu }}
@@ -293,10 +294,10 @@ jobs:
           OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
         run: |
-          brew install rust ccache llvm@15 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild --force
+          brew install rust ccache llvm@16 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild --force
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
-          echo "$(brew --prefix llvm@15)/bin" >> $GITHUB_PATH
-          brew link --overwrite llvm@15
+          echo "$(brew --prefix llvm@16)/bin" >> $GITHUB_PATH
+          brew link --overwrite llvm@16
       - name: Download WebKit
         env:
           CPU_TARGET: ${{ matrix.cpu }}
@@ -398,11 +399,32 @@ jobs:
           name: "Canary (${{github.sha}})"
           tag: "canary"
           artifacts: "${{runner.temp}}/release/${{matrix.tag}}.zip,${{runner.temp}}/release/${{matrix.tag}}-profile.zip"
+      - uses: sarisia/actions-status-discord@v1
+        if: failure() && github.repository_owner == 'oven-sh' && github.event_name == 'pull_request'
+        with:
+          title: ""
+          webhook: ${{ secrets.DISCORD_WEBHOOK }}
+          status: ${{ job.status }}
+          noprefix: true
+          nocontext: true
+          description: |
+            Pull Request
+            ### [${{github.event.pull_request.title}}](https://github.com/oven-sh/bun/pull/${{github.event.number}})
+
+            @${{ github.actor }}
+
+            Build failed on ${{ matrix.tag }}:
+
+            **[View build output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}})**
+
+            [Commit ${{github.sha}}](https://github.com/oven-sh/bun/commits/${{github.sha}})
   macOS-test:
     name: Tests ${{matrix.tag}}
     runs-on: ${{ matrix.runner }}
     needs: [macOS]
     if: github.event_name == 'pull_request' && github.repository_owner == 'oven-sh'
+    permissions:
+      pull-requests: write
     timeout-minutes: 30
     outputs:
       failing_tests: ${{ steps.test.outputs.failing_tests }}
@@ -412,7 +434,7 @@ jobs:
       matrix:
         include:
           - tag: bun-darwin-x64
-            runner: macos-11
+            runner: macos-12
     steps:
       - id: checkout
         name: Checkout
@@ -425,8 +447,8 @@ jobs:
         with:
           name: ${{matrix.tag}}
           path: ${{runner.temp}}/release
-      - id: install
-        name: Install
+      - id: install-bun
+        name: Install Bun
         run: |
           cd ${{runner.temp}}/release
           unzip ${{matrix.tag}}.zip
@@ -434,6 +456,12 @@ jobs:
           chmod +x bun
           pwd >> $GITHUB_PATH
           ./bun --version
+      - id: install
+        name: Install dependencies
+        run: |
+          bun install --verbose
+          bun install --cwd=test --verbose
+          bun install --cwd=packages/bun-internal-test --verbose
       - id: test
         name: Test (node runner)
         env:
@@ -442,10 +470,24 @@ jobs:
           TLS_POSTGRES_DATABASE_URL: ${{ secrets.TLS_POSTGRES_DATABASE_URL }}
         # if: ${{github.event.inputs.use_bun == 'false'}}
         run: |
-          bun install
-          bun install --cwd test
-          bun install --cwd packages/bun-internal-test
           node packages/bun-internal-test/src/runner.node.mjs || true
+      - uses: sarisia/actions-status-discord@v1
+        if: always() && steps.test.outputs.failing_tests != '' && github.event_name == 'pull_request'
+        with:
+          title: ""
+          webhook: ${{ secrets.DISCORD_WEBHOOK }}
+          status: "failure"
+          noprefix: true
+          nocontext: true
+          description: |
+            Pull Request
+            ### ❌ [${{github.event.pull_request.title}}](https://github.com/oven-sh/bun/pull/${{github.event.number}})
+
+            @${{ github.actor }}, there are ${{ steps.test.outputs.failing_tests_count }} files with test failures on ${{ matrix.tag }}:
+
+            ${{ steps.test.outputs.failing_tests }}
+
+            **[View test output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}})**
       - name: Comment on PR
         if: steps.test.outputs.failing_tests != '' && github.event_name == 'pull_request'
         uses: thollander/actions-comment-pull-request@v2

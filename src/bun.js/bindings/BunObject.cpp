@@ -215,6 +215,7 @@ extern "C" EncodedJSValue Bun__DNSResolver__resolvePtr(JSGlobalObject*, JSC::Cal
 extern "C" EncodedJSValue Bun__DNSResolver__resolveCname(JSGlobalObject*, JSC::CallFrame*);
 extern "C" EncodedJSValue Bun__DNSResolver__getServers(JSGlobalObject*, JSC::CallFrame*);
 extern "C" EncodedJSValue Bun__DNSResolver__reverse(JSGlobalObject*, JSC::CallFrame*);
+extern "C" EncodedJSValue Bun__DNSResolver__lookupService(JSGlobalObject*, JSC::CallFrame*);
 
 static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
 {
@@ -245,6 +246,8 @@ static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getServers"_s), 2, Bun__DNSResolver__getServers, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "reverse"_s), 2, Bun__DNSResolver__reverse, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "lookupService"_s), 2, Bun__DNSResolver__lookupService, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
     return dnsObject;
 }
@@ -602,7 +605,7 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     hash                                           BunObject_getter_wrap_hash                                          DontDelete|PropertyCallback
     indexOfLine                                    BunObject_callback_indexOfLine                                      DontDelete|Function 1
     inflateSync                                    BunObject_callback_inflateSync                                      DontDelete|Function 1
-    inspect                                        BunObject_getter_wrap_inspect                                            DontDelete|PropertyCallback
+    inspect                                        BunObject_getter_wrap_inspect                                       DontDelete|PropertyCallback
     isMainThread                                   constructIsMainThread                                               ReadOnly|DontDelete|PropertyCallback
     jest                                           BunObject_callback_jest                                             DontEnum|DontDelete|Function 1
     listen                                         BunObject_callback_listen                                           DontDelete|Function 1
@@ -701,9 +704,9 @@ public:
 
 const JSC::ClassInfo JSBunObject::s_info = { "Bun"_s, &JSNonFinalObject::s_info, &bunObjectTable, nullptr, CREATE_METHOD_TABLE(JSBunObject) };
 
-JSValue createBunObject(Zig::GlobalObject* globalObject)
+JSC::JSObject* createBunObject(VM& vm, JSObject* globalObject)
 {
-    return JSBunObject::create(globalObject->vm(), globalObject);
+    return JSBunObject::create(vm, static_cast<Zig::GlobalObject*>(globalObject));
 }
 
 }

@@ -559,6 +559,13 @@ pub const TextDecoder = struct {
                     remainder = remainder[1..];
                     continue;
                 },
+                // BOM handling
+                0xFEFF => {
+                    buffer.ensureTotalCapacity(allocator, 1) catch unreachable;
+                    buffer.items.ptr[buffer.items.len] = remainder[0];
+                    buffer.items.len += 1;
+                    remainder = remainder[1..];
+                },
 
                 // Is this an unpaired low surrogate or four-digit hex escape?
                 else => {
@@ -629,8 +636,13 @@ pub const TextDecoder = struct {
             },
             EncodingLabel.@"UTF-8" => {
                 const toUTF16 = if (stream) strings.toUTF16Alloc else strings.toUTF16AllocNoTrim;
+                const moved_buffer_slice_8 = if (!this.ignore_bom and buffer_slice.len > 3 and std.mem.eql(u8, &[_]u8{ '\xEF', '\xBB', '\xBF' }, buffer_slice[0..3]))
+                    buffer_slice[3..]
+                else
+                    buffer_slice;
+
                 if (this.fatal) {
-                    if (toUTF16(default_allocator, buffer_slice, true)) |result_| {
+                    if (toUTF16(default_allocator, moved_buffer_slice_8, true)) |result_| {
                         if (result_) |result| {
                             return ZigString.toExternalU16(result.ptr, result.len, globalThis);
                         }
@@ -649,7 +661,7 @@ pub const TextDecoder = struct {
                         }
                     }
                 } else {
-                    if (toUTF16(default_allocator, buffer_slice, false)) |result_| {
+                    if (toUTF16(default_allocator, moved_buffer_slice_8, false)) |result_| {
                         if (result_) |result| {
                             return ZigString.toExternalU16(result.ptr, result.len, globalThis);
                         }
@@ -664,15 +676,20 @@ pub const TextDecoder = struct {
                 }
 
                 // Experiment: using mimalloc directly is slightly slower
-                return ZigString.init(buffer_slice).toValueGC(globalThis);
+                return ZigString.init(moved_buffer_slice_8).toValueGC(globalThis);
             },
 
             EncodingLabel.@"UTF-16LE" => {
-                if (std.mem.isAligned(@intFromPtr(buffer_slice.ptr), @alignOf([*]const u16))) {
-                    return this.decodeUTF16WithAlignment([]align(2) const u16, @as([]align(2) const u16, @alignCast(std.mem.bytesAsSlice(u16, buffer_slice))), globalThis);
+                const moved_buffer_slice_16 = if (!this.ignore_bom and buffer_slice.len > 2 and std.mem.eql(u8, &[_]u8{ '\xFF', '\xFE' }, buffer_slice[0..2]))
+                    buffer_slice[2..]
+                else
+                    buffer_slice;
+
+                if (std.mem.isAligned(@intFromPtr(moved_buffer_slice_16.ptr), @alignOf([*]const u16))) {
+                    return this.decodeUTF16WithAlignment([]align(2) const u16, @as([]align(2) const u16, @alignCast(std.mem.bytesAsSlice(u16, moved_buffer_slice_16))), globalThis);
                 }
 
-                return this.decodeUTF16WithAlignment([]align(1) const u16, std.mem.bytesAsSlice(u16, buffer_slice), globalThis);
+                return this.decodeUTF16WithAlignment([]align(1) const u16, std.mem.bytesAsSlice(u16, moved_buffer_slice_16), globalThis);
             },
             else => {
                 globalThis.throwInvalidArguments("TextDecoder.decode set to unsupported encoding", .{});
@@ -702,6 +719,9 @@ pub const TextDecoder = struct {
                     globalThis.throwInvalidArguments("Unsupported encoding label \"{s}\"", .{str.slice()});
                     return null;
                 }
+            } else if (arguments[0].isUndefined()) {
+                // default to utf-8
+                decoder.encoding = EncodingLabel.@"UTF-8";
             } else {
                 globalThis.throwInvalidArguments("TextDecoder(encoding) label is invalid", .{});
                 return null;

@@ -27,6 +27,12 @@ pub const Repository = extern struct {
     resolved: GitSHA = .{},
     package_name: String = .{},
 
+    pub const Hosts = bun.ComptimeStringMap(string, .{
+        .{ "bitbucket", ".org" },
+        .{ "github", ".com" },
+        .{ "gitlab", ".com" },
+    });
+
     pub fn verify(this: *const Repository) void {
         this.owner.assertDefined();
         this.repo.assertDefined();
@@ -125,15 +131,31 @@ pub const Repository = extern struct {
         if (strings.hasPrefixComptime(url, "ssh://")) {
             final_path_buf[0.."https".len].* = "https".*;
             bun.copy(u8, final_path_buf["https".len..], url["ssh".len..]);
-            return final_path_buf[0..(url.len - "ssh".len + "https".len)];
+            return final_path_buf[0 .. url.len - "ssh".len + "https".len];
         }
+
         if (Dependency.isSCPLikePath(url)) {
             final_path_buf[0.."https://".len].* = "https://".*;
             var rest = final_path_buf["https://".len..];
+
+            const colon_index = strings.indexOfChar(url, ':');
+
+            if (colon_index) |colon| {
+                // make sure known hosts have `.com` or `.org`
+                if (Hosts.get(url[0..colon])) |tld| {
+                    bun.copy(u8, rest, url[0..colon]);
+                    bun.copy(u8, rest[colon..], tld);
+                    rest[colon + tld.len] = '/';
+                    bun.copy(u8, rest[colon + tld.len + 1 ..], url[colon + 1 ..]);
+                    return final_path_buf[0 .. url.len + "https://".len + tld.len];
+                }
+            }
+
             bun.copy(u8, rest, url);
-            if (strings.indexOfChar(rest, ':')) |colon| rest[colon] = '/';
-            return final_path_buf[0..(url.len + "https://".len)];
+            if (colon_index) |colon| rest[colon] = '/';
+            return final_path_buf[0 .. url.len + "https://".len];
         }
+
         return null;
     }
 

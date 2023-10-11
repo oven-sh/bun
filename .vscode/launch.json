@@ -306,14 +306,14 @@
       "request": "launch",
       "name": "bun install",
       "program": "bun-debug",
-      "args": ["install"],
+      "args": ["install", "--frozen-lockfile"],
       "cwd": "${fileDirname}",
       "console": "internalConsole",
       "env": {
-        "BUN_DEBUG_QUIET_LOGS": "1"
+        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_DEBUG_Lockfile": "1"
       }
     },
-
     {
       "type": "lldb",
       "request": "launch",

@@ -87,7 +87,7 @@ pub const ExternalModules = struct {
     };
 
     pub fn isNodeBuiltin(str: string) bool {
-        return NodeBuiltinsMap.has(str);
+        return bun.JSC.HardcodedModule.Aliases.has(str, .node);
     }
 
     const default_wildcard_patterns = &[_]WildcardPattern{
@@ -1364,6 +1364,7 @@ pub const BundleOptions = struct {
     loaders: Loader.HashTable,
     resolve_dir: string = "/",
     jsx: JSX.Pragma = JSX.Pragma{},
+    emit_decorator_metadata: bool = false,
     auto_import_jsx: bool = true,
     allow_runtime: bool = true,
 
@@ -1442,6 +1443,7 @@ pub const BundleOptions = struct {
     minify_whitespace: bool = false,
     minify_syntax: bool = false,
     minify_identifiers: bool = false,
+    dead_code_elimination: bool = true,
 
     code_coverage: bool = false,
     debugger: bool = false,

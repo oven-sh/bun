@@ -21,6 +21,7 @@ const json_parser = bun.JSON;
 const JSPrinter = bun.js_printer;
 
 const linker = @import("../linker.zig");
+const migration = @import("./migration.zig");
 
 const sync = @import("../sync.zig");
 const Api = @import("../api/schema.zig").Api;
@@ -84,15 +85,15 @@ const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 
 const MetaHash = [std.crypto.hash.sha2.Sha512256.digest_length]u8;
 const zero_hash = std.mem.zeroes(MetaHash);
-const NameHashMap = std.ArrayHashMapUnmanaged(u32, String, ArrayIdentityContext, false);
-const NameHashSet = std.ArrayHashMapUnmanaged(u32, void, ArrayIdentityContext, false);
-const VersionHashMap = std.ArrayHashMapUnmanaged(u32, Semver.Version, ArrayIdentityContext, false);
+pub const NameHashMap = std.ArrayHashMapUnmanaged(PackageNameHash, String, ArrayIdentityContext.U64, false);
+pub const NameHashSet = std.ArrayHashMapUnmanaged(u32, void, ArrayIdentityContext, false);
+pub const VersionHashMap = std.ArrayHashMapUnmanaged(PackageNameHash, Semver.Version, ArrayIdentityContext.U64, false);
 
 const assertNoUninitializedPadding = @import("./padding_checker.zig").assertNoUninitializedPadding;
 
 // Serialized data
 /// The version of the lockfile format, intended to prevent data corruption for format changes.
-format: FormatVersion = .v1,
+format: FormatVersion = FormatVersion.current,
 
 meta_hash: MetaHash = zero_hash,
 
@@ -159,7 +160,7 @@ pub fn isEmpty(this: *const Lockfile) bool {
     return this.packages.len == 0 or this.packages.len == 1 or this.packages.get(0).resolutions.len == 0;
 }
 
-pub const LoadFromDiskResult = union(Tag) {
+pub const LoadFromDiskResult = union(enum) {
     not_found: void,
     err: struct {
         step: Step,
@@ -167,26 +168,30 @@ pub const LoadFromDiskResult = union(Tag) {
     },
     ok: *Lockfile,
 
-    pub const Step = enum { open_file, read_file, parse_file };
-
-    pub const Tag = enum {
-        not_found,
-        err,
-        ok,
-    };
+    pub const Step = enum { open_file, read_file, parse_file, migrating };
 };
 
 pub fn loadFromDisk(this: *Lockfile, allocator: Allocator, log: *logger.Log, filename: stringZ) LoadFromDiskResult {
     if (comptime Environment.allow_assert) std.debug.assert(FileSystem.instance_loaded);
-    var file = std.io.getStdIn();
 
-    if (filename.len > 0)
-        file = std.fs.cwd().openFileZ(filename, .{ .mode = .read_only }) catch |err| {
+    var file = if (filename.len > 0)
+        std.fs.cwd().openFileZ(filename, .{ .mode = .read_only }) catch |err| {
             return switch (err) {
-                error.FileNotFound, error.AccessDenied, error.BadPathName => LoadFromDiskResult{ .not_found = {} },
+                error.FileNotFound => {
+                    // Attempt to load from "package-lock.json", "yarn.lock", etc.
+                    return migration.detectAndLoadOtherLockfile(
+                        this,
+                        allocator,
+                        log,
+                        filename,
+                    );
+                },
+                error.AccessDenied, error.BadPathName => LoadFromDiskResult{ .not_found = {} },
                 else => LoadFromDiskResult{ .err = .{ .step = .open_file, .value = err } },
             };
-        };
+        }
+    else
+        std.io.getStdIn();
 
     defer file.close();
     var buf = file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
@@ -208,6 +213,10 @@ pub fn loadFromBytes(this: *Lockfile, buf: []u8, allocator: Allocator, log: *log
     Lockfile.Serializer.load(this, &stream, allocator, log) catch |err| {
         return LoadFromDiskResult{ .err = .{ .step = .parse_file, .value = err } };
     };
+
+    if (Environment.allow_assert) {
+        this.verifyData() catch @panic("lockfile data is corrupt");
+    }
 
     return LoadFromDiskResult{ .ok = this };
 }
@@ -287,6 +296,14 @@ pub const Tree = struct {
                 .resolutions = lockfile.buffers.resolutions.items,
                 .string_buf = lockfile.buffers.string_bytes.items,
             };
+        }
+
+        pub fn reload(this: *Iterator, lockfile: *const Lockfile) void {
+            this.trees = lockfile.buffers.trees.items;
+            this.dependency_ids = lockfile.buffers.hoisted_dependencies.items;
+            this.dependencies = lockfile.buffers.dependencies.items;
+            this.resolutions = lockfile.buffers.resolutions.items;
+            this.string_buf = lockfile.buffers.string_bytes.items;
         }
 
         pub fn nextNodeModulesFolder(this: *Iterator) ?NodeModulesFolder {
@@ -375,7 +392,7 @@ pub const Tree = struct {
             dependencies: Lockfile.DependencyIDList,
         };
 
-        pub const ArrayList = std.MultiArrayList(Entry);
+        pub const ArrayList = bun.MultiArrayList(Entry);
 
         /// Flatten the multi-dimensional ArrayList of package IDs into a single easily serializable array
         pub fn clean(this: *Builder) !DependencyIDList {
@@ -703,7 +720,7 @@ pub fn cleanWithLogger(
     //     }
     // }
 
-    var new = try old.allocator.create(Lockfile);
+    var new: *Lockfile = try old.allocator.create(Lockfile);
     try new.initEmpty(
         old.allocator,
     );
@@ -730,12 +747,73 @@ pub fn cleanWithLogger(
         .clone_queue = clone_queue_,
         .log = log,
     };
+
     // try clone_queue.ensureUnusedCapacity(root.dependencies.len);
     _ = try root.clone(old, new, package_id_mapping, &cloner);
 
+    // Clone workspace_paths and workspace_versions at the end.
+    if (old.workspace_paths.count() > 0 or old.workspace_versions.count() > 0) {
+        try new.workspace_paths.ensureTotalCapacity(z_allocator, old.workspace_paths.count());
+        try new.workspace_versions.ensureTotalCapacity(z_allocator, old.workspace_versions.count());
+
+        var workspace_paths_builder = new.stringBuilder();
+
+        const WorkspacePathSorter = struct {
+            string_buf: []const u8,
+            entries: NameHashMap.DataList,
+
+            pub fn lessThan(sorter: @This(), a: usize, b: usize) bool {
+                const left = sorter.entries.items(.value)[a];
+                const right = sorter.entries.items(.value)[b];
+                return strings.order(left.slice(sorter.string_buf), right.slice(sorter.string_buf)) == .lt;
+            }
+        };
+
+        // Sort by name for determinism
+        old.workspace_paths.sort(WorkspacePathSorter{
+            .entries = old.workspace_paths.entries,
+            .string_buf = old.buffers.string_bytes.items,
+        });
+
+        for (old.workspace_paths.values()) |*path| {
+            workspace_paths_builder.count(old.str(path));
+        }
+        const versions: []const Semver.Version = old.workspace_versions.values();
+        for (versions) |version| {
+            version.count(old.buffers.string_bytes.items, @TypeOf(&workspace_paths_builder), &workspace_paths_builder);
+        }
+
+        try workspace_paths_builder.allocate();
+
+        new.workspace_paths.entries.len = old.workspace_paths.entries.len;
+
+        for (old.workspace_paths.values(), new.workspace_paths.values()) |*src, *dest| {
+            dest.* = workspace_paths_builder.append(String, old.str(src));
+        }
+        @memcpy(
+            new.workspace_paths.keys(),
+            old.workspace_paths.keys(),
+        );
+
+        try new.workspace_versions.ensureTotalCapacity(z_allocator, old.workspace_versions.count());
+        new.workspace_versions.entries.len = old.workspace_versions.entries.len;
+        for (versions, new.workspace_versions.values()) |src, *dest| {
+            dest.* = src.clone(old.buffers.string_bytes.items, @TypeOf(&workspace_paths_builder), &workspace_paths_builder);
+        }
+
+        @memcpy(
+            new.workspace_versions.keys(),
+            old.workspace_versions.keys(),
+        );
+
+        workspace_paths_builder.clamp();
+
+        try new.workspace_versions.reIndex(z_allocator);
+        try new.workspace_paths.reIndex(z_allocator);
+    }
+
     // When you run `"bun add react"
     // This is where we update it in the lockfile from "latest" to "^17.0.2"
-
     try cloner.flush();
 
     // Don't allow invalid memory to happen
@@ -936,6 +1014,9 @@ pub const Printer = struct {
                     .read_file => Output.prettyErrorln("<r><red>error<r> reading lockfile:<r> {s}", .{
                         @errorName(cause.value),
                     }),
+                    .migrating => Output.prettyErrorln("<r><red>error<r> while migrating lockfile:<r> {s}", .{
+                        @errorName(cause.value),
+                    }),
                 }
                 if (log.errors > 0) {
                     switch (Output.enable_ansi_colors) {
@@ -991,6 +1072,7 @@ pub const Printer = struct {
             env_loader,
             null,
             null,
+            .install,
         );
 
         var printer = Printer{
@@ -1057,21 +1139,39 @@ pub const Printer = struct {
 
                     if (!installed.isSet(package_id)) continue;
 
-                    const fmt = comptime brk: {
-                        if (enable_ansi_colors) {
-                            break :brk Output.prettyFmt("<r> <green>+<r> <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
-                        } else {
-                            break :brk Output.prettyFmt("<r> + {s}<r><d>@{}<r>\n", enable_ansi_colors);
-                        }
-                    };
+                    if (PackageManager.instance.formatLaterVersionInCache(package_name, dependency.name_hash, resolved[package_id])) |later_version_fmt| {
+                        const fmt = comptime brk: {
+                            if (enable_ansi_colors) {
+                                break :brk Output.prettyFmt("<r> <green>+<r> <b>{s}<r><d>@{}<r> <d>(<blue>v{} available<r><d>)<r>\n", enable_ansi_colors);
+                            } else {
+                                break :brk Output.prettyFmt("<r> + {s}<r><d>@{}<r> <d>(v{} available)<r>\n", enable_ansi_colors);
+                            }
+                        };
+                        try writer.print(
+                            fmt,
+                            .{
+                                package_name,
+                                resolved[package_id].fmt(string_buf),
+                                later_version_fmt,
+                            },
+                        );
+                    } else {
+                        const fmt = comptime brk: {
+                            if (enable_ansi_colors) {
+                                break :brk Output.prettyFmt("<r> <green>+<r> <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
+                            } else {
+                                break :brk Output.prettyFmt("<r> + {s}<r><d>@{}<r>\n", enable_ansi_colors);
+                            }
+                        };
 
-                    try writer.print(
-                        fmt,
-                        .{
-                            package_name,
-                            resolved[package_id].fmt(string_buf),
-                        },
-                    );
+                        try writer.print(
+                            fmt,
+                            .{
+                                package_name,
+                                resolved[package_id].fmt(string_buf),
+                            },
+                        );
+                    }
                 }
             } else {
                 outer: for (dependencies_buffer, resolutions_buffer, 0..) |dependency, package_id, dep_id| {
@@ -1180,6 +1280,24 @@ pub const Printer = struct {
             comptime Writer: type,
             writer: Writer,
         ) !void {
+            // internal for debugging, print the lockfile as custom json
+            // limited to debug because we don't want people to rely on this format.
+            if (Environment.isDebug) {
+                if (std.os.getenv("JSON")) |_| {
+                    try std.json.stringify(
+                        this.lockfile,
+                        .{
+                            .whitespace = .indent_2,
+                            .emit_null_optional_fields = true,
+                            .emit_nonportable_numbers_as_strings = true,
+                        },
+                        writer,
+                    );
+                    try writer.writeAll("\n");
+                    return;
+                }
+            }
+
             try writer.writeAll(
                 \\# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.
                 \\# yarn lockfile v1
@@ -1336,7 +1454,7 @@ pub const Printer = struct {
                         var behavior = Behavior.uninitialized;
                         var dependency_behavior_change_count: u8 = 0;
                         for (dependencies) |dep| {
-                            if (dep.behavior != behavior) {
+                            if (!dep.behavior.eq(behavior)) {
                                 if (dep.behavior.isOptional()) {
                                     try writer.writeAll("  optionalDependencies:\n");
                                     if (comptime Environment.allow_assert) dependency_behavior_change_count += 1;
@@ -1378,20 +1496,18 @@ pub const Printer = struct {
 
 pub fn verifyData(this: *Lockfile) !void {
     std.debug.assert(this.format == Lockfile.FormatVersion.current);
-    {
-        var i: usize = 0;
-        while (i < this.packages.len) : (i += 1) {
-            const package: Lockfile.Package = this.packages.get(i);
-            std.debug.assert(this.str(&package.name).len == @as(usize, package.name.len()));
-            std.debug.assert(String.Builder.stringHash(this.str(&package.name)) == @as(usize, package.name_hash));
-            std.debug.assert(package.dependencies.get(this.buffers.dependencies.items).len == @as(usize, package.dependencies.len));
-            std.debug.assert(package.resolutions.get(this.buffers.resolutions.items).len == @as(usize, package.resolutions.len));
-            std.debug.assert(package.resolutions.get(this.buffers.resolutions.items).len == @as(usize, package.dependencies.len));
-            const dependencies = package.dependencies.get(this.buffers.dependencies.items);
-            for (dependencies) |dependency| {
-                std.debug.assert(this.str(&dependency.name).len == @as(usize, dependency.name.len()));
-                std.debug.assert(String.Builder.stringHash(this.str(&dependency.name)) == dependency.name_hash);
-            }
+    var i: usize = 0;
+    while (i < this.packages.len) : (i += 1) {
+        const package: Lockfile.Package = this.packages.get(i);
+        std.debug.assert(this.str(&package.name).len == @as(usize, package.name.len()));
+        std.debug.assert(String.Builder.stringHash(this.str(&package.name)) == @as(usize, package.name_hash));
+        std.debug.assert(package.dependencies.get(this.buffers.dependencies.items).len == @as(usize, package.dependencies.len));
+        std.debug.assert(package.resolutions.get(this.buffers.resolutions.items).len == @as(usize, package.resolutions.len));
+        std.debug.assert(package.resolutions.get(this.buffers.resolutions.items).len == @as(usize, package.dependencies.len));
+        const dependencies = package.dependencies.get(this.buffers.dependencies.items);
+        for (dependencies) |dependency| {
+            std.debug.assert(this.str(&dependency.name).len == @as(usize, dependency.name.len()));
+            std.debug.assert(String.Builder.stringHash(this.str(&dependency.name)) == dependency.name_hash);
         }
     }
 }
@@ -1608,7 +1724,7 @@ pub fn appendPackage(this: *Lockfile, package_: Lockfile.Package) !Lockfile.Pack
 
 fn appendPackageWithID(this: *Lockfile, package_: Lockfile.Package, id: PackageID) !Lockfile.Package {
     defer {
-        if (comptime Environment.isDebug) {
+        if (comptime Environment.allow_assert) {
             std.debug.assert(this.getPackageID(package_.name_hash, null, &package_.resolution) != null);
         }
     }
@@ -1770,12 +1886,13 @@ pub const PackageIndex = struct {
 };
 
 pub const FormatVersion = enum(u32) {
-    v0,
+    v0 = 0,
     // bun v0.0.x - bun v0.1.6
-    v1,
+    v1 = 1,
     // bun v0.1.7+
     // This change added tarball URLs to npm-resolved packages
-    v2,
+    v2 = 2,
+
     _,
     pub const current = FormatVersion.v2;
 };
@@ -1795,7 +1912,7 @@ pub const Package = extern struct {
     name: String = .{},
     name_hash: PackageNameHash = 0,
 
-    /// How a package has been resolved
+    /// How this package has been resolved
     /// When .tag is uninitialized, that means the package is not resolved yet.
     resolution: Resolution = .{},
 
@@ -1804,8 +1921,18 @@ pub const Package = extern struct {
     /// if resolutions[i] is an invalid package ID, then dependencies[i] is not resolved
     dependencies: DependencySlice = .{},
 
-    /// The resolved package IDs for the dependencies
-    resolutions: DependencyIDSlice = .{},
+    /// The resolved package IDs for this package's dependencies. Instead of storing this
+    /// on the `Dependency` struct within `.dependencies`, it is stored on the package itself
+    /// so we can access it faster.
+    ///
+    /// Each index in this array corresponds to the same index in dependencies.
+    /// Each value in this array corresponds to the resolved package ID for that dependency.
+    ///
+    /// So this is how you say "what package ID for lodash does this package actually resolve to?"
+    ///
+    /// By default, the underlying buffer is filled with "invalid_id" to indicate this package ID
+    /// was not resolved
+    resolutions: PackageIDSlice = .{},
 
     meta: Meta = .{},
     bin: Bin = .{},
@@ -1943,11 +2070,11 @@ pub const Package = extern struct {
         field: string,
         behavior: Behavior,
 
-        pub const dependencies = DependencyGroup{ .prop = "dependencies", .field = "dependencies", .behavior = @as(Behavior, @enumFromInt(Behavior.normal)) };
-        pub const dev = DependencyGroup{ .prop = "devDependencies", .field = "dev_dependencies", .behavior = @as(Behavior, @enumFromInt(Behavior.dev)) };
-        pub const optional = DependencyGroup{ .prop = "optionalDependencies", .field = "optional_dependencies", .behavior = @as(Behavior, @enumFromInt(Behavior.optional)) };
-        pub const peer = DependencyGroup{ .prop = "peerDependencies", .field = "peer_dependencies", .behavior = @as(Behavior, @enumFromInt(Behavior.peer)) };
-        pub const workspaces = DependencyGroup{ .prop = "workspaces", .field = "workspaces", .behavior = @as(Behavior, @enumFromInt(Behavior.workspace)) };
+        pub const dependencies = DependencyGroup{ .prop = "dependencies", .field = "dependencies", .behavior = Behavior.normal };
+        pub const dev = DependencyGroup{ .prop = "devDependencies", .field = "dev_dependencies", .behavior = Behavior.dev };
+        pub const optional = DependencyGroup{ .prop = "optionalDependencies", .field = "optional_dependencies", .behavior = Behavior.optional };
+        pub const peer = DependencyGroup{ .prop = "peerDependencies", .field = "peer_dependencies", .behavior = Behavior.peer };
+        pub const workspaces = DependencyGroup{ .prop = "workspaces", .field = "workspaces", .behavior = Behavior.workspace };
     };
 
     pub inline fn isDisabled(this: *const Lockfile.Package) bool {
@@ -2408,6 +2535,7 @@ pub const Package = extern struct {
             const from_deps = from.dependencies.get(from_lockfile.buffers.dependencies.items);
             const from_resolutions = from.resolutions.get(from_lockfile.buffers.resolutions.items);
             var to_i: usize = 0;
+            var skipped_workspaces: usize = 0;
 
             for (from_deps, 0..) |*from_dep, i| {
                 found: {
@@ -2424,6 +2552,11 @@ pub const Package = extern struct {
                     to_i = 0;
                     while (to_i < prev_i) : (to_i += 1) {
                         if (from_dep.name_hash == to_deps[to_i].name_hash) break :found;
+                    }
+
+                    if (PackageManager.instance.workspaces.contains(from_lockfile.str(&from_dep.name))) {
+                        skipped_workspaces += 1;
+                        continue;
                     }
 
                     // We found a removed dependency!
@@ -2451,7 +2584,7 @@ pub const Package = extern struct {
                     if (id_mapping) |mapping| {
                         const version = to_deps[to_i].version;
                         if (switch (version.tag) {
-                            .workspace => if (to_lockfile.workspace_paths.getPtr(@truncate(from_dep.name_hash))) |path_ptr| brk: {
+                            .workspace => if (to_lockfile.workspace_paths.getPtr(from_dep.name_hash)) |path_ptr| brk: {
                                 const path = to_lockfile.str(path_ptr);
                                 var file = std.fs.cwd().openFile(Path.join(
                                     &[_]string{ path, "package.json" },
@@ -2493,7 +2626,7 @@ pub const Package = extern struct {
                 summary.update += 1;
             }
 
-            summary.add = @truncate(to_deps.len - (from_deps.len - summary.remove));
+            summary.add = @truncate((to_deps.len + skipped_workspaces) - (from_deps.len - summary.remove));
 
             inline for (Package.Scripts.Hooks) |hook| {
                 if (!@field(to.scripts, hook).eql(
@@ -2539,7 +2672,6 @@ pub const Package = extern struct {
         comptime features: Features,
     ) !void {
         initializeStore();
-
         const json = json_parser.ParseJSONUTF8(&source, log, allocator) catch |err| {
             switch (Output.enable_ansi_colors) {
                 inline else => |enable_ansi_colors| {
@@ -2609,8 +2741,20 @@ pub const Package = extern struct {
             } else external_alias.hash,
             else => external_alias.hash,
         };
-        const workspace_path = if (comptime tag == null) lockfile.workspace_paths.get(@truncate(name_hash)) else null;
-        const workspace_version = if (comptime tag == null) lockfile.workspace_versions.get(@truncate(name_hash)) else workspace_ver;
+
+        var workspace_path: ?String = null;
+        var workspace_version = workspace_ver;
+        if (comptime tag == null) {
+            workspace_path = lockfile.workspace_paths.get(name_hash);
+            workspace_version = lockfile.workspace_versions.get(name_hash);
+
+            if (workspace_path == null or workspace_version == null) {
+                if (PackageManager.instance.workspaces.get(lockfile.str(&external_alias.value))) |_workspace_version| {
+                    workspace_path = external_alias.value;
+                    workspace_version = _workspace_version;
+                }
+            }
+        }
 
         switch (dependency_version.tag) {
             .folder => {
@@ -2688,7 +2832,7 @@ pub const Package = extern struct {
                 dependency_version.literal = path;
                 dependency_version.value.workspace = path;
 
-                var workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, @truncate(name_hash));
+                var workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, name_hash);
                 if (workspace_entry.found_existing) {
                     if (strings.eqlComptime(workspace, "*")) return null;
 
@@ -2705,7 +2849,7 @@ pub const Package = extern struct {
                 workspace_entry.value_ptr.* = path;
 
                 if (workspace_version) |ver| {
-                    try lockfile.workspace_versions.put(allocator, @truncate(name_hash), ver);
+                    try lockfile.workspace_versions.put(allocator, name_hash, ver);
 
                     for (package_dependencies[0..dependencies_count]) |*package_dep| {
                         if (switch (package_dep.version.tag) {
@@ -3153,7 +3297,7 @@ pub const Package = extern struct {
                 a: usize,
                 b: usize,
             ) bool {
-                return std.mem.order(u8, self.values[a].name, self.values[b].name) == .lt;
+                return strings.order(self.values[a].name, self.values[b].name) == .lt;
             }
         }{
             .values = workspace_names.values(),
@@ -3328,15 +3472,7 @@ pub const Package = extern struct {
                             return error.InvalidPackageJSON;
                         }
                         for (obj.properties.slice()) |item| {
-                            const key = item.key.?.asString(allocator) orelse {
-                                log.addErrorFmt(&source, item.key.?.loc, allocator,
-                                    \\{0s} expects a map of specifiers, e.g.
-                                    \\"{0s}": {{
-                                    \\  "bun": "latest"
-                                    \\}}
-                                , .{group.prop}) catch {};
-                                return error.InvalidPackageJSON;
-                            };
+                            const key = item.key.?.asString(allocator).?;
                             const value = item.value.?.asString(allocator) orelse {
                                 log.addErrorFmt(&source, item.value.?.loc, allocator,
                                     \\{0s} expects a map of specifiers, e.g.
@@ -3568,6 +3704,11 @@ pub const Package = extern struct {
                     )) |dep| {
                         package_dependencies[total_dependencies_count] = dep;
                         total_dependencies_count += 1;
+
+                        try lockfile.workspace_paths.put(allocator, external_name.hash, dep.version.value.workspace);
+                        if (entry.version) |v| {
+                            try lockfile.workspace_versions.put(allocator, external_name.hash, v);
+                        }
                     }
                 }
             } else {
@@ -3630,15 +3771,19 @@ pub const Package = extern struct {
         string_builder.clamp();
     }
 
-    pub const List = std.MultiArrayList(Lockfile.Package);
+    pub const List = bun.MultiArrayList(Lockfile.Package);
 
     pub const Meta = extern struct {
+        // TODO: when we bump the lockfile version, we should reorder this to:
+        // id(32), arch(16), os(16), id(8), man_dir(8), integrity(72 align 8)
+        // should allow us to remove padding bytes
+
+        // TODO: remove origin. it doesnt do anything and can be inferred from the resolution
         origin: Origin = Origin.npm,
         _padding_origin: u8 = 0,
 
         arch: Npm.Architecture = Npm.Architecture.all,
         os: Npm.OperatingSystem = Npm.OperatingSystem.all,
-
         _padding_os: u16 = 0,
 
         id: PackageID = invalid_package_id,
@@ -3657,11 +3802,14 @@ pub const Package = extern struct {
         }
 
         pub fn clone(this: *const Meta, id: PackageID, buf: []const u8, comptime StringBuilderType: type, builder: StringBuilderType) Meta {
-            var new = this.*;
-            new.id = id;
-            new.man_dir = builder.append(String, this.man_dir.slice(buf));
-
-            return new;
+            return Meta{
+                .id = id,
+                .man_dir = builder.append(String, this.man_dir.slice(buf)),
+                .integrity = this.integrity,
+                .arch = this.arch,
+                .os = this.os,
+                .origin = this.origin,
+            };
         }
     };
 
@@ -3738,6 +3886,8 @@ pub const Package = extern struct {
 
             inline for (FieldsEnum.fields) |field| {
                 const value = sliced.items(@field(Lockfile.Package.List.Field, field.name));
+                if (comptime Environment.allow_assert)
+                    debug("save(\"{s}\") = {d} bytes", .{ field.name, std.mem.sliceAsBytes(value).len });
 
                 comptime assertNoUninitializedPadding(@TypeOf(value));
                 try writer.writeAll(std.mem.sliceAsBytes(value));
@@ -3824,11 +3974,14 @@ pub fn deinit(this: *Lockfile) void {
 const Buffers = struct {
     trees: Tree.List = .{},
     hoisted_dependencies: DependencyIDList = .{},
+    /// This is the underlying buffer used for the `resolutions` external slices inside of `Package`
+    /// Should be the same length as `dependencies`
     resolutions: PackageIDList = .{},
+    /// This is the underlying buffer used for the `dependencies` external slices inside of `Package`
     dependencies: DependencyList = .{},
+    /// This is the underlying buffer used for any `Semver.ExternalString` instance in the lockfile
     extern_strings: ExternalStringBuffer = .{},
-    // node_modules_folders: NodeModulesFolderList = NodeModulesFolderList{},
-    // node_modules_package_ids: PackageIDList = PackageIDList{},
+    /// This is where all non-inlinable `Semver.String`s are stored.
     string_bytes: StringBuffer = .{},
 
     pub fn deinit(this: *Buffers, allocator: Allocator) void {
@@ -4118,6 +4271,9 @@ pub const Serializer = struct {
     pub const version = "bun-lockfile-format-v0\n";
     const header_bytes: string = "#!/usr/bin/env bun\n" ++ version;
 
+    const has_workspace_package_ids_tag: u64 = @bitCast([_]u8{ 'w', 'O', 'r', 'K', 's', 'P', 'a', 'C' });
+    const has_trusted_dependencies_tag: u64 = @bitCast([_]u8{ 't', 'R', 'u', 'S', 't', 'E', 'D', 'd' });
+
     pub fn save(this: *Lockfile, comptime StreamType: type, stream: StreamType) !void {
         var old_package_list = this.packages;
         this.packages = try this.packages.clone(z_allocator);
@@ -4135,6 +4291,62 @@ pub const Serializer = struct {
         try Lockfile.Package.Serializer.save(this.packages, StreamType, stream, @TypeOf(&writer), &writer);
         try Lockfile.Buffers.save(this.buffers, z_allocator, StreamType, stream, @TypeOf(&writer), &writer);
         try writer.writeIntLittle(u64, 0);
+
+        // < Bun v1.0.4 stopped right here when reading the lockfile
+        // So we add an extra 8 byte tag to say "hey, there's more data here"
+        if (this.workspace_versions.count() > 0) {
+            try writer.writeAll(std.mem.asBytes(&has_workspace_package_ids_tag));
+
+            // We need to track the "version" field in "package.json" of workspace member packages
+            // We do not necessarily have that in the Resolution struct. So we store it here.
+            try Lockfile.Buffers.writeArray(
+                StreamType,
+                stream,
+                @TypeOf(&writer),
+                &writer,
+                []PackageNameHash,
+                this.workspace_versions.keys(),
+            );
+            try Lockfile.Buffers.writeArray(
+                StreamType,
+                stream,
+                @TypeOf(&writer),
+                &writer,
+                []Semver.Version,
+                this.workspace_versions.values(),
+            );
+
+            try Lockfile.Buffers.writeArray(
+                StreamType,
+                stream,
+                @TypeOf(&writer),
+                &writer,
+                []PackageNameHash,
+                this.workspace_paths.keys(),
+            );
+            try Lockfile.Buffers.writeArray(
+                StreamType,
+                stream,
+                @TypeOf(&writer),
+                &writer,
+                []String,
+                this.workspace_paths.values(),
+            );
+        }
+
+        if (this.trusted_dependencies.count() > 0) {
+            try writer.writeAll(std.mem.asBytes(&has_trusted_dependencies_tag));
+
+            try Lockfile.Buffers.writeArray(
+                StreamType,
+                stream,
+                @TypeOf(&writer),
+                &writer,
+                []u32,
+                this.trusted_dependencies.keys(),
+            );
+        }
+
         const end = try stream.getPos();
 
         try writer.writeAll(&alignment_bytes_to_repeat_buffer);
@@ -4181,28 +4393,124 @@ pub const Serializer = struct {
             return error.@"Lockfile is malformed (expected 0 at the end)";
         }
 
-        if (comptime Environment.allow_assert) std.debug.assert(stream.pos == total_buffer_size);
+        var has_workspace_name_hashes = false;
+        // < Bun v1.0.4 stopped right here when reading the lockfile
+        // So we add an extra 8 byte tag to say "hey, there's more data here"
+        {
+            const remaining_in_buffer = total_buffer_size -| stream.pos;
 
-        lockfile.scratch = Lockfile.Scratch.init(allocator);
+            if (remaining_in_buffer > 8 and total_buffer_size <= stream.buffer.len) {
+                const next_num = try reader.readIntLittle(u64);
+                if (next_num == has_workspace_package_ids_tag) {
+                    {
+                        var workspace_package_name_hashes = try Lockfile.Buffers.readArray(
+                            stream,
+                            allocator,
+                            std.ArrayListUnmanaged(PackageNameHash),
+                        );
+                        defer workspace_package_name_hashes.deinit(allocator);
+
+                        var workspace_versions_list = try Lockfile.Buffers.readArray(
+                            stream,
+                            allocator,
+                            std.ArrayListUnmanaged(Semver.Version),
+                        );
+                        comptime {
+                            if (PackageNameHash != @TypeOf((VersionHashMap.KV{ .key = undefined, .value = undefined }).key)) {
+                                @compileError("VersionHashMap must be in sync with serialization");
+                            }
+                            if (Semver.Version != @TypeOf((VersionHashMap.KV{ .key = undefined, .value = undefined }).value)) {
+                                @compileError("VersionHashMap must be in sync with serialization");
+                            }
+                        }
+                        defer workspace_versions_list.deinit(allocator);
+                        try lockfile.workspace_versions.ensureTotalCapacity(allocator, workspace_versions_list.items.len);
+                        lockfile.workspace_versions.entries.len = workspace_versions_list.items.len;
+                        @memcpy(lockfile.workspace_versions.keys(), workspace_package_name_hashes.items);
+                        @memcpy(lockfile.workspace_versions.values(), workspace_versions_list.items);
+                        try lockfile.workspace_versions.reIndex(allocator);
+                    }
+
+                    {
+                        var workspace_paths_hashes = try Lockfile.Buffers.readArray(
+                            stream,
+                            allocator,
+                            std.ArrayListUnmanaged(PackageNameHash),
+                        );
+                        defer workspace_paths_hashes.deinit(allocator);
+                        var workspace_paths_strings = try Lockfile.Buffers.readArray(
+                            stream,
+                            allocator,
+                            std.ArrayListUnmanaged(String),
+                        );
+                        defer workspace_paths_strings.deinit(allocator);
+
+                        try lockfile.workspace_paths.ensureTotalCapacity(allocator, workspace_paths_strings.items.len);
+
+                        lockfile.workspace_paths.entries.len = workspace_paths_strings.items.len;
+                        @memcpy(lockfile.workspace_paths.keys(), workspace_paths_hashes.items);
+                        @memcpy(lockfile.workspace_paths.values(), workspace_paths_strings.items);
+                        try lockfile.workspace_paths.reIndex(allocator);
+                    }
+                } else {
+                    stream.pos -= 8;
+                }
+            }
+        }
 
         {
-            lockfile.package_index = PackageIndex.Map.initContext(allocator, .{});
-            lockfile.string_pool = StringPool.initContext(allocator, .{});
-            try lockfile.package_index.ensureTotalCapacity(@as(u32, @truncate(lockfile.packages.len)));
+            const remaining_in_buffer = total_buffer_size -| stream.pos;
+
+            if (remaining_in_buffer > 8 and total_buffer_size <= stream.buffer.len) {
+                const next_num = try reader.readIntLittle(u64);
+                if (next_num == has_trusted_dependencies_tag) {
+                    var trusted_dependencies_hashes = try Lockfile.Buffers.readArray(
+                        stream,
+                        allocator,
+                        std.ArrayListUnmanaged(u32),
+                    );
+                    defer trusted_dependencies_hashes.deinit(allocator);
+
+                    try lockfile.trusted_dependencies.ensureTotalCapacity(allocator, trusted_dependencies_hashes.items.len);
+
+                    lockfile.trusted_dependencies.entries.len = trusted_dependencies_hashes.items.len;
+                    @memcpy(lockfile.trusted_dependencies.keys(), trusted_dependencies_hashes.items);
+                    try lockfile.trusted_dependencies.reIndex(allocator);
+                } else {
+                    stream.pos -= 8;
+                }
+            }
+        }
+
+        lockfile.scratch = Lockfile.Scratch.init(allocator);
+        lockfile.package_index = PackageIndex.Map.initContext(allocator, .{});
+        lockfile.string_pool = StringPool.initContext(allocator, .{});
+        try lockfile.package_index.ensureTotalCapacity(@as(u32, @truncate(lockfile.packages.len)));
+
+        if (!has_workspace_name_hashes) {
             const slice = lockfile.packages.slice();
             const name_hashes = slice.items(.name_hash);
             const resolutions = slice.items(.resolution);
             for (name_hashes, resolutions, 0..) |name_hash, resolution, id| {
                 try lockfile.getOrPutID(@as(PackageID, @truncate(id)), name_hash);
 
+                // compatibility with < Bun v1.0.4
                 switch (resolution.tag) {
                     .workspace => {
-                        try lockfile.workspace_paths.put(allocator, @as(u32, @truncate(name_hash)), resolution.value.workspace);
+                        try lockfile.workspace_paths.put(allocator, name_hash, resolution.value.workspace);
                     },
                     else => {},
                 }
             }
+        } else {
+            const slice = lockfile.packages.slice();
+            const name_hashes = slice.items(.name_hash);
+            for (name_hashes, 0..) |name_hash, id| {
+                try lockfile.getOrPutID(@as(PackageID, @truncate(id)), name_hash);
+            }
         }
+
+        if (comptime Environment.allow_assert) std.debug.assert(stream.pos == total_buffer_size);
 
         // const end = try reader.readIntLittle(u64);
     }
@@ -4213,7 +4521,7 @@ pub fn hasMetaHashChanged(this: *Lockfile, print_name_version_string: bool) !boo
     this.meta_hash = try this.generateMetaHash(print_name_version_string);
     return !strings.eqlLong(&previous_meta_hash, &this.meta_hash, false);
 }
-fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaHash {
+pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaHash {
     if (this.packages.len <= 1)
         return zero_hash;
 
@@ -4342,4 +4650,295 @@ pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Ve
     }
 
     return null;
+}
+
+pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep: Dependency, res: ?PackageID) !void {
+    const sb = this.buffers.string_bytes.items;
+    var buf: [2048]u8 = undefined;
+
+    try w.beginObject();
+    defer w.endObject() catch {};
+
+    try w.objectField("literal");
+    try w.write(dep.version.literal.slice(sb));
+
+    try w.objectField(@tagName(dep.version.tag));
+    switch (dep.version.tag) {
+        .uninitialized => try w.write(null),
+        .npm => {
+            try w.beginObject();
+            defer w.endObject() catch {};
+
+            const info: Dependency.Version.NpmInfo = dep.version.value.npm;
+
+            try w.objectField("name");
+            try w.write(info.name.slice(sb));
+
+            try w.objectField("version");
+            try w.write(try std.fmt.bufPrint(&buf, "{}", .{info.version}));
+        },
+        .dist_tag => {
+            try w.beginObject();
+            defer w.endObject() catch {};
+
+            const info: Dependency.Version.TagInfo = dep.version.value.dist_tag;
+
+            try w.objectField("name");
+            try w.write(info.name.slice(sb));
+
+            try w.objectField("tag");
+            try w.write(info.name.slice(sb));
+        },
+        .tarball => {
+            try w.beginObject();
+            defer w.endObject() catch {};
+
+            const info: Dependency.Version.TarballInfo = dep.version.value.tarball;
+            try w.objectField(@tagName(info.uri));
+            try w.write(switch (info.uri) {
+                inline else => |s| s.slice(sb),
+            });
+
+            try w.objectField("package_name");
+            try w.write(info.package_name.slice(sb));
+        },
+        .folder => {
+            try w.write(dep.version.value.folder.slice(sb));
+        },
+        .symlink => {
+            try w.write(dep.version.value.symlink.slice(sb));
+        },
+        .workspace => {
+            try w.write(dep.version.value.workspace.slice(sb));
+        },
+        .git => {
+            try w.beginObject();
+            defer w.endObject() catch {};
+
+            const info: Repository = dep.version.value.git;
+
+            try w.objectField("owner");
+            try w.write(info.owner.slice(sb));
+            try w.objectField("repo");
+            try w.write(info.repo.slice(sb));
+            try w.objectField("committish");
+            try w.write(info.committish.slice(sb));
+            try w.objectField("resolved");
+            try w.write(info.resolved.slice(sb));
+            try w.objectField("package_name");
+            try w.write(info.package_name.slice(sb));
+        },
+        .github => {
+            try w.beginObject();
+            defer w.endObject() catch {};
+
+            const info: Repository = dep.version.value.github;
+
+            try w.objectField("owner");
+            try w.write(info.owner.slice(sb));
+            try w.objectField("repo");
+            try w.write(info.repo.slice(sb));
+            try w.objectField("committish");
+            try w.write(info.committish.slice(sb));
+            try w.objectField("resolved");
+            try w.write(info.resolved.slice(sb));
+            try w.objectField("package_name");
+            try w.write(info.package_name.slice(sb));
+        },
+    }
+
+    try w.objectField("resolved_id");
+    try w.write(if (res) |r| if (r == invalid_package_id) null else r else null);
+
+    const behavior = try std.fmt.bufPrint(&buf, "{}", .{dep.behavior});
+    try w.objectField("behavior");
+    try w.write(behavior);
+}
+
+pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
+    var buf: [2048]u8 = undefined;
+    const sb = this.buffers.string_bytes.items;
+    try w.beginObject();
+    defer w.endObject() catch {};
+
+    try w.objectField("format");
+    try w.write(@tagName(this.format));
+    try w.objectField("meta_hash");
+    try w.write(std.fmt.bytesToHex(this.meta_hash, .lower));
+
+    {
+        try w.objectField("package_index");
+        try w.beginObject();
+        defer w.endObject() catch {};
+
+        var iter = this.package_index.iterator();
+        while (iter.next()) |it| {
+            const entry: PackageIndex.Entry = it.value_ptr.*;
+            const first_id = switch (entry) {
+                .PackageID => |id| id,
+                .PackageIDMultiple => |ids| ids.items[0],
+            };
+            const name = this.packages.items(.name)[first_id].slice(sb);
+            try w.objectField(name);
+            switch (entry) {
+                .PackageID => |id| try w.write(id),
+                .PackageIDMultiple => |ids| {
+                    try w.beginArray();
+                    for (ids.items) |id| {
+                        try w.write(id);
+                    }
+                    try w.endArray();
+                },
+            }
+        }
+    }
+    {
+        try w.objectField("packages");
+        try w.beginArray();
+        defer w.endArray() catch {};
+
+        for (0..this.packages.len) |i| {
+            const pkg: Package = this.packages.get(i);
+            try w.beginObject();
+            defer w.endObject() catch {};
+
+            try w.objectField("id");
+            try w.write(i);
+
+            try w.objectField("name");
+            try w.write(pkg.name.slice(sb));
+
+            try w.objectField("name_hash");
+            try w.write(pkg.name_hash);
+
+            try w.objectField("resolution");
+            if (pkg.resolution.tag == .uninitialized) {
+                try w.write(null);
+            } else {
+                const b = try std.fmt.bufPrint(&buf, "{s} {s}", .{ @tagName(pkg.resolution.tag), pkg.resolution.fmt(sb) });
+                try w.write(b);
+            }
+
+            try w.objectField("dependencies");
+            {
+                try w.beginObject();
+                defer w.endObject() catch {};
+
+                for (pkg.dependencies.get(this.buffers.dependencies.items), pkg.resolutions.get(this.buffers.resolutions.items)) |dep_, res| {
+                    const dep: Dependency = dep_;
+                    try w.objectField(dep.name.slice(sb));
+                    try this.jsonStringifyDependency(w, dep, res);
+                }
+            }
+
+            if (@as(u16, @intFromEnum(pkg.meta.arch)) != Npm.Architecture.all_value) {
+                try w.objectField("arch");
+                try w.beginArray();
+                defer w.endArray() catch {};
+
+                for (Npm.Architecture.NameMap.kvs) |kv| {
+                    if (pkg.meta.arch.has(kv.value)) {
+                        try w.write(kv.key);
+                    }
+                }
+            }
+
+            if (@as(u16, @intFromEnum(pkg.meta.os)) != Npm.OperatingSystem.all_value) {
+                try w.objectField("os");
+                try w.beginArray();
+                defer w.endArray() catch {};
+
+                for (Npm.OperatingSystem.NameMap.kvs) |kv| {
+                    if (pkg.meta.os.has(kv.value)) {
+                        try w.write(kv.key);
+                    }
+                }
+            }
+
+            try w.objectField("integrity");
+            if (pkg.meta.integrity.tag != .unknown) {
+                try w.write(try std.fmt.bufPrint(&buf, "{}", .{pkg.meta.integrity}));
+            } else {
+                try w.write(null);
+            }
+
+            try w.objectField("man_dir");
+            try w.write(pkg.meta.man_dir.slice(sb));
+
+            try w.objectField("origin");
+            try w.write(@tagName(pkg.meta.origin));
+
+            try w.objectField("bin");
+            switch (pkg.bin.tag) {
+                .none => try w.write(null),
+                .file => {
+                    try w.beginObject();
+                    defer w.endObject() catch {};
+
+                    try w.objectField("file");
+                    try w.write(pkg.bin.value.file.slice(sb));
+                },
+                .named_file => {
+                    try w.beginObject();
+                    defer w.endObject() catch {};
+
+                    try w.objectField("name");
+                    try w.write(pkg.bin.value.named_file[0].slice(sb));
+
+                    try w.objectField("file");
+                    try w.write(pkg.bin.value.named_file[1].slice(sb));
+                },
+                .dir => {
+                    try w.objectField("dir");
+                    try w.write(pkg.bin.value.dir.slice(sb));
+                },
+                .map => {
+                    try w.beginObject();
+                    defer w.endObject() catch {};
+
+                    const data: []const ExternalString = pkg.bin.value.map.get(this.buffers.extern_strings.items);
+                    var bin_i: usize = 0;
+                    while (bin_i < data.len) : (bin_i += 2) {
+                        try w.objectField(data[bin_i].slice(sb));
+                        try w.write(data[bin_i + 1].slice(sb));
+                    }
+                },
+            }
+
+            {
+                try w.objectField("scripts");
+                try w.beginObject();
+                defer w.endObject() catch {};
+
+                inline for (comptime std.meta.fieldNames(Lockfile.Scripts)) |field_name| {
+                    var script = @field(pkg.scripts, field_name).slice(sb);
+                    if (script.len > 0) {
+                        try w.objectField(field_name);
+                        try w.write(script);
+                    }
+                }
+            }
+        }
+    }
+
+    try w.objectField("workspace_paths");
+    {
+        try w.beginObject();
+        defer w.endObject() catch {};
+
+        for (this.workspace_paths.keys(), this.workspace_paths.values()) |k, v| {
+            try w.objectField(try std.fmt.bufPrint(&buf, "{d}", .{k}));
+            try w.write(v.slice(sb));
+        }
+    }
+    try w.objectField("workspace_versions");
+    {
+        try w.beginObject();
+        defer w.endObject() catch {};
+
+        for (this.workspace_versions.keys(), this.workspace_versions.values()) |k, v| {
+            try w.objectField(try std.fmt.bufPrint(&buf, "{d}", .{k}));
+            try w.write(try std.fmt.bufPrint(&buf, "{}", .{v.fmt(sb)}));
+        }
+    }
 }

@@ -1338,8 +1338,10 @@ pub const PathName = struct {
     base: string,
     dir: string,
     /// includes the leading .
+    /// extensionless files report ""
     ext: string,
     filename: string,
+
     pub fn nonUniqueNameStringBase(self: *const PathName) string {
         // /bar/foo/index.js -> foo
         if (self.dir.len > 0 and strings.eqlComptime(self.base, "index")) {
@@ -1398,7 +1400,7 @@ pub const PathName = struct {
     pub fn init(_path: string) PathName {
         var path = _path;
         var base = path;
-        var ext = path;
+        var ext: []const u8 = undefined;
         var dir = path;
         var is_absolute = true;
 
@@ -1419,10 +1421,11 @@ pub const PathName = struct {
         }
 
         // Strip off the extension
-        var _dot = strings.lastIndexOfChar(base, '.');
-        if (_dot) |dot| {
+        if (strings.lastIndexOfChar(base, '.')) |dot| {
             ext = base[dot..];
             base = base[0..dot];
+        } else {
+            ext = "";
         }
 
         if (is_absolute) {

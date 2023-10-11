@@ -54,13 +54,7 @@
     "../bun-inspector-protocol"
   ],
   "activationEvents": [
-    "onLanguage:javascript",
-    "onLanguage:javascriptreact",
-    "onLanguage:typescript",
-    "onLanguage:typescriptreact",
-    "workspaceContains:**/.lockb",
-    "onDebugResolve:bun",
-    "onDebugDynamicConfigurations:bun"
+    "onStartupFinished"
   ],
   "browser": "dist/web-extension.js",
   "bugs": {
@@ -95,7 +89,7 @@
         },
         "bun.debugTerminal.stopOnEntry": {
           "type": "boolean",
-          "description": "If Bun should stop on entry when used in the JavaScript Debug Terminal.",
+          "description": "If the debugger should stop on the first line when used in the JavaScript Debug Terminal.",
           "scope": "window",
           "default": false
         }
@@ -177,12 +171,12 @@
             "properties": {
               "runtime": {
                 "type": "string",
-                "description": "The path to Bun.",
+                "description": "The path to the `bun` executable. Defaults to `PATH` environment variable.",
                 "default": "bun"
               },
               "runtimeArgs": {
                 "type": "array",
-                "description": "The command-line arguments passed to Bun.",
+                "description": "The command-line arguments passed to the `bun` executable. Unlike `args`, these arguments are not passed to the program, but to the `bun` executable itself.",
                 "items": {
                   "type": "string"
                 },
@@ -208,7 +202,7 @@
               },
               "env": {
                 "type": "object",
-                "description": "The environment variables passed to Bun.",
+                "description": "The environment variables to pass to Bun.",
                 "default": {}
               },
               "strictEnv": {
@@ -218,7 +212,7 @@
               },
               "stopOnEntry": {
                 "type": "boolean",
-                "description": "If a breakpoint should be set at the first line.",
+                "description": "If the debugger should stop on the first line of the program.",
                 "default": false
               },
               "noDebug": {
@@ -231,7 +225,7 @@
                   "boolean",
                   "string"
                 ],
-                "description": "If the process should be restarted when files change.",
+                "description": "If the process should be restarted when files change. Equivalent to passing `--watch` or `--hot` to the `bun` executable.",
                 "enum": [
                   true,
                   false,
@@ -245,7 +239,7 @@
             "properties": {
               "url": {
                 "type": "string",
-                "description": "The URL of the Bun process to attach to."
+                "description": "The URL of the WebSocket inspector to attach to."
               },
               "noDebug": {
                 "type": "boolean",
@@ -254,7 +248,7 @@
               },
               "stopOnEntry": {
                 "type": "boolean",
-                "description": "If a breakpoint should when the program is attached.",
+                "description": "If the debugger should stop on the first line of the program.",
                 "default": false
               }
             }
@@ -293,6 +287,20 @@
           }
         ],
         "priority": "default"
+      }
+    ],
+    "taskDefinitions": [
+      {
+        "type": "bun",
+        "required": [
+          "script"
+        ],
+        "properties": {
+          "script": {
+            "type": "string",
+            "description": "The script to execute"
+          }
+        }
       }
     ]
   }

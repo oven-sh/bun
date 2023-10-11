@@ -225,6 +225,7 @@ pub const ReadableStream = struct {
     extern fn ReadableStream__isDisturbed(possibleReadableStream: JSValue, globalObject: *JSGlobalObject) bool;
     extern fn ReadableStream__isLocked(possibleReadableStream: JSValue, globalObject: *JSGlobalObject) bool;
     extern fn ReadableStream__empty(*JSGlobalObject) JSC.JSValue;
+    extern fn ReadableStream__used(*JSGlobalObject) JSC.JSValue;
     extern fn ReadableStream__cancel(stream: JSValue, *JSGlobalObject) void;
     extern fn ReadableStream__abort(stream: JSValue, *JSGlobalObject) void;
     extern fn ReadableStream__detach(stream: JSValue, *JSGlobalObject) void;
@@ -365,6 +366,12 @@ pub const ReadableStream = struct {
         JSC.markBinding(@src());
 
         return ReadableStream__empty(globalThis);
+    }
+
+    pub fn used(globalThis: *JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+
+        return ReadableStream__used(globalThis);
     }
 
     const Base = @import("../../ast/base.zig");
@@ -2634,6 +2641,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         }
 
         fn flushFromJSNoWait(this: *@This()) JSC.Node.Maybe(JSValue) {
+            log("flushFromJSNoWait", .{});
             if (this.hasBackpressure() or this.done) {
                 return .{ .result = JSValue.jsNumberFromInt32(0) };
             }
@@ -3595,6 +3603,9 @@ pub const ByteStream = struct {
                     this.buffer = try std.ArrayList(u8).initCapacity(bun.default_allocator, chunk.len);
                     this.buffer.appendSliceAssumeCapacity(chunk);
                 },
+                .err => {
+                    this.pending.result = .{ .err = stream.err };
+                },
                 else => unreachable,
             }
             return;
@@ -3603,6 +3614,9 @@ pub const ByteStream = struct {
         switch (stream) {
             .temporary_and_done, .temporary => {
                 try this.buffer.appendSlice(chunk);
+            },
+            .err => {
+                this.pending.result = .{ .err = stream.err };
             },
             // We don't support the rest of these yet
             else => unreachable,
@@ -3788,7 +3802,6 @@ pub const FIFO = struct {
     },
     signal: JSC.WebCore.Signal = .{},
     is_first_read: bool = true,
-    auto_close: bool = true,
     has_adjusted_pipe_size_on_linux: bool = false,
     drained: bool = true,
 
@@ -3807,7 +3820,12 @@ pub const FIFO = struct {
     pub fn close(this: *FIFO) void {
         if (this.poll_ref) |poll| {
             this.poll_ref = null;
-            poll.deinit();
+            if (comptime Environment.isLinux) {
+                // force target fd to be removed from epoll
+                poll.deinitForceUnregister();
+            } else {
+                poll.deinit();
+            }
         }
 
         const fd = this.fd;
@@ -3815,8 +3833,7 @@ pub const FIFO = struct {
         defer if (signal_close) this.signal.close(null);
         if (signal_close) {
             this.fd = bun.invalid_fd;
-            if (this.auto_close)
-                _ = bun.sys.close(fd);
+            _ = bun.sys.close(fd);
         }
 
         this.to_read = null;
@@ -4198,10 +4215,15 @@ pub const File = struct {
         file: *Blob.FileStore,
     ) StreamStart {
         var file_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-        var auto_close = file.pathlike == .path;
 
-        var fd = if (!auto_close)
-            file.pathlike.fd
+        var fd = if (file.pathlike != .path)
+            // We will always need to close the file descriptor.
+            switch (Syscall.dup(@intCast(file.pathlike.fd))) {
+                .result => |_fd| _fd,
+                .err => |err| {
+                    return .{ .err = err.withPath(file.pathlike.path.slice()) };
+                },
+            }
         else switch (Syscall.open(file.pathlike.path.sliceZ(&file_buf), std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC, 0)) {
             .result => |_fd| _fd,
             .err => |err| {
@@ -4218,7 +4240,7 @@ pub const File = struct {
             }
         }
 
-        if (!auto_close and !(file.is_atty orelse false)) {
+        if (file.pathlike != .path and !(file.is_atty orelse false)) {
             if (comptime Environment.isWindows) {
                 bun.todo(@src(), {});
             } else {
@@ -4229,7 +4251,6 @@ pub const File = struct {
                         // if we do not, clone the descriptor and set non-blocking
                         // it is important for us to clone it so we don't cause Weird Things to happen
                         if ((flags & std.os.O.NONBLOCK) == 0) {
-                            auto_close = true;
                             fd = switch (Syscall.fcntl(fd, std.os.F.DUPFD, 0)) {
                                 .result => |_fd| @as(@TypeOf(fd), @intCast(_fd)),
                                 .err => |err| return .{ .err = err },
@@ -4249,24 +4270,18 @@ pub const File = struct {
             const stat: bun.Stat = switch (Syscall.fstat(fd)) {
                 .result => |result| result,
                 .err => |err| {
-                    if (auto_close) {
-                        _ = Syscall.close(fd);
-                    }
+                    _ = Syscall.close(fd);
                     return .{ .err = err };
                 },
             };
 
             if (std.os.S.ISDIR(stat.mode)) {
-                if (auto_close) {
-                    _ = Syscall.close(fd);
-                }
+                _ = Syscall.close(fd);
                 return .{ .err = Syscall.Error.fromCode(.ISDIR, .fstat) };
             }
 
             if (std.os.S.ISSOCK(stat.mode)) {
-                if (auto_close) {
-                    _ = Syscall.close(fd);
-                }
+                _ = Syscall.close(fd);
                 return .{ .err = Syscall.Error.fromCode(.INVAL, .fstat) };
             }
 
@@ -4292,9 +4307,7 @@ pub const File = struct {
             file.max_size = this.remaining_bytes;
 
             if (this.remaining_bytes == 0) {
-                if (auto_close) {
-                    _ = Syscall.close(fd);
-                }
+                _ = Syscall.close(fd);
 
                 return .{ .empty = {} };
             }
@@ -4303,7 +4316,6 @@ pub const File = struct {
         }
 
         this.fd = fd;
-        this.auto_close = auto_close;
 
         return StreamStart{ .ready = {} };
     }
@@ -4725,7 +4737,6 @@ pub const FileReader = struct {
                             .readable = .{
                                 .FIFO = .{
                                     .fd = readable_file.fd,
-                                    .auto_close = readable_file.auto_close,
                                     .drained = this.buffered_data.len == 0,
                                 },
                             },
@@ -4885,7 +4896,7 @@ pub fn NewReadyWatcher(
             const fd = @as(c_int, @intCast(fd_));
             std.debug.assert(@as(c_int, @intCast(this.poll_ref.?.fd)) == fd);
             std.debug.assert(
-                this.poll_ref.?.unregister(JSC.VirtualMachine.get().event_loop_handle.?) == .result,
+                this.poll_ref.?.unregister(JSC.VirtualMachine.get().event_loop_handle.?, false) == .result,
             );
         }
 

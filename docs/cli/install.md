@@ -23,9 +23,7 @@ sudo apt install --install-recommends linux-generic-hwe-20.04
 
 {% /details %}
 
-## Manage dependencies
-
-### `bun install`
+## `bun install`
 
 To install all dependencies of a project:
 
@@ -43,7 +41,7 @@ Running `bun install` will:
 - **Run** your project's `{pre|post}install` and `{pre|post}prepare` scripts at the appropriate time. For security reasons Bun _does not execute_ lifecycle scripts of installed dependencies.
 - **Write** a `bun.lockb` lockfile to the project root.
 
-To install in production mode (i.e. without `devDependencies`):
+To install in production mode (i.e. without `devDependencies` or `optionalDependencies`):
 
 ```bash
 $ bun install --production
@@ -95,7 +93,7 @@ dryRun = false
 
 {% /details %}
 
-### `bun add`
+## `bun add`
 
 To add a particular package:
 
@@ -144,7 +142,20 @@ This will add the following to your `package.json`:
 }
 ```
 
-To install a package globally:
+To view a complete list of options for this command:
+
+```bash
+$ bun add --help
+```
+
+## `bun add --global`
+
+{% callout %}
+**Note** — This would not modify package.json of your current project folder.
+**Alias** - `bun add --global`, `bun add -g`, `bun install --global` and `bun install -g`
+{% /callout %}
+
+To install a package globally, use the `-g`/`--global` flag. This will not modify the `package.json` of your current project. Typically this is used for installing command-line tools.
 
 ```bash
 $ bun add --global cowsay # or `bun add -g cowsay`
@@ -171,13 +182,8 @@ globalBinDir = "~/.bun/bin"
 ```
 
 {% /details %}
-To view a complete list of options for a given command:
 
-```bash
-$ bun add --help
-```
-
-### `bun remove`
+## `bun remove`
 
 To remove a dependency:
 
@@ -185,7 +191,17 @@ To remove a dependency:
 $ bun remove preact
 ```
 
-## Local packages (`bun link`)
+## `bun update`
+
+To update all dependencies to the latest version _that's compatible with the version range specified in your `package.json`_:
+
+```sh
+$ bun update
+```
+
+This will not edit your `package.json`. There's currently no command to force-update all dependencies to the latest version regardless version ranges.
+
+## `bun link`
 
 Use `bun link` in a local directory to register the current package as a "linkable" package.
 

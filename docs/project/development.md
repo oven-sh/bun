@@ -32,32 +32,37 @@ $ proto install bun
 
 ## Install LLVM
 
-Bun requires LLVM 15 and Clang 15 (`clang` is part of LLVM). This version requirement is to match WebKit (precompiled), as mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
+Bun requires LLVM 16 and Clang 16 (`clang` is part of LLVM). This version requirement is to match WebKit (precompiled), as mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
 
 {% codetabs %}
 
 ```bash#macOS (Homebrew)
-$ brew install llvm@15
+$ brew install llvm@16
 ```
 
 ```bash#Ubuntu/Debian
 $ # LLVM has an automatic installation script that is compatible with all versions of Ubuntu
-$ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 15 all
+$ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 16 all
 ```
 
 ```bash#Arch
-$ sudo pacman -S llvm15 clang15 lld
+$ sudo pacman -S llvm clang lld
+```
 
+```bash#Fedora
+$ sudo dnf install 'dnf-command(copr)'
+$ sudo dnf copr enable -y @fedora-llvm-team/llvm-snapshots
+$ sudo dnf install llvm clang lld
 ```
 
 {% /codetabs %}
 
-If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-15.0.7).
+If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-16.0.6).
 
-Make sure LLVM 15 is in your path:
+Make sure LLVM 16 is in your path:
 
 ```bash
-$ which clang-15
+$ which clang-16
 ```
 
 If not, run this to manually link it:
@@ -66,16 +71,16 @@ If not, run this to manually link it:
 
 ```bash#macOS (Homebrew)
 # use fish_add_path if you're using fish
-$ export PATH="$PATH:$(brew --prefix llvm@15)/bin"
-$ export LDFLAGS="$LDFLAGS -L$(brew --prefix llvm@15)/lib"
-$ export CPPFLAGS="$CPPFLAGS -I$(brew --prefix llvm@15)/include"
+$ export PATH="$PATH:$(brew --prefix llvm@16)/bin"
+$ export LDFLAGS="$LDFLAGS -L$(brew --prefix llvm@16)/lib"
+$ export CPPFLAGS="$CPPFLAGS -I$(brew --prefix llvm@16)/include"
 ```
 
 ```bash#Arch
 
-$ export PATH="$PATH:/usr/lib/llvm15/bin"
-$ export LDFLAGS="$LDFLAGS -L/usr/lib/llvm15/lib"
-$ export CPPFLAGS="$CPPFLAGS -I/usr/lib/llvm15/include"
+$ export PATH="$PATH:/usr/lib/llvm16/bin"
+$ export LDFLAGS="$LDFLAGS -L/usr/lib/llvm16/lib"
+$ export CPPFLAGS="$CPPFLAGS -I/usr/lib/llvm16/include"
 
 ```
 
@@ -96,7 +101,11 @@ $ sudo apt install cargo ccache cmake git golang libtool ninja-build pkg-config 
 ```
 
 ```bash#Arch
-$ pacman -S base-devel ccache cmake esbuild git go libiconv libtool make ninja pkg-config python rust sed unzip
+$ sudo pacman -S base-devel ccache cmake esbuild git go libiconv libtool make ninja pkg-config python rust sed unzip
+```
+
+```bash#Fedora
+$ sudo dnf install cargo ccache cmake git golang libtool ninja-build pkg-config rustc golang-github-evanw-esbuild libatomic-static libstdc++-static sed unzip
 ```
 
 {% /codetabs %}
@@ -285,26 +294,6 @@ The above will probably also need Zig and/or C++ code rebuilt.
 
 VSCode is the recommended IDE for working on Bun, as it has been configured. Once opening, you can run `Extensions: Show Recommended Extensions` to install the recommended extensions for Zig and C++. ZLS is automatically configured.
 
-### ZLS
-
-ZLS is the language server for Zig. The latest binary that the extension auto-updates may not function with the version of Zig that Bun uses. It may be more reliable to build ZLS from source:
-
-```bash
-$ git clone https://github.com/zigtools/zls
-$ cd zls
-$ git checkout f91ff831f4959efcb7e648dba4f0132c296d26c0
-$ zig build
-```
-
-Then add absolute paths to Zig and ZLS in your vscode config:
-
-```json
-{
-  "zig.zigPath": "/path/to/zig/install/zig",
-  "zig.zls.path": "/path/to/zls/zig-out/bin/zls"
-}
-```
-
 ## JavaScript builtins
 
 When you change anything in `src/js/builtins/*` or switch branches, run this:
@@ -396,34 +385,12 @@ $ valgrind --fair-sched=try --track-origins=yes bun-debug <args>
 
 ## Updating `WebKit`
 
-The Bun team will occasionally bump the version of WebKit used in Bun. When this happens, you may see something like this with you run `git status`.
-
-```bash
-$ git status
-On branch my-branch
-Changes not staged for commit:
-  (use "git add <file>..." to update what will be committed)
-  (use "git restore <file>..." to discard changes in working directory)
-	modified:   src/bun.js/WebKit (new commits)
-```
-
-For performance reasons, `make submodule` does not automatically update the WebKit submodule. To update, run the following commands from the root of the Bun repo:
+The Bun team will occasionally bump the version of WebKit used in Bun. When this happens, you may see errors in `src/bun.js/bindings` during builds. When you see this, install the latest version of `bun-webkit` and re-compile.
 
 ```bash
 $ bun install
 $ make cpp
 ```
-
-<!-- Check the [Bun repo](https://github.com/oven-sh/bun/tree/main/src/bun.js) to get the hash of the commit of WebKit is currently being used.
-
-{% image width="270" src="https://github.com/oven-sh/bun/assets/3084745/51730b73-89ef-4358-9a41-9563a60a54be" /%} -->
-
-<!--
-```bash
-$ cd src/bun.js/WebKit
-$ git fetch
-$ git checkout <hash>
-``` -->
 
 ## Troubleshooting
 
@@ -484,7 +451,7 @@ If you see an error about `cmakeconfig.h` not being found, this is because the p
 $ bun install
 ```
 
-Check to see the command installed webkit, and you can manully look for `node_modules/bun-webkit-{platform}-{arch}`:
+Check to see the command installed webkit, and you can manually look for `node_modules/bun-webkit-{platform}-{arch}`:
 
 ```bash
 # this should reveal two directories. if not, something went wrong

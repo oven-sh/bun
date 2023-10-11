@@ -1,6 +1,15 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
+test("non-ascii regexp literals", () => {
+  var str = "🔴11 54 / 10,000";
+  expect(str.replace(/[🔵🔴,]+/g, "")).toBe("11 54 / 10000");
+});
+
+test("ascii regex with escapes", () => {
+  expect(/^[-#!$@£%^&*()_+|~=`{}\[\]:";'<>?,.\/ ]$/).toBeInstanceOf(RegExp);
+});
+
 describe("// @bun", () => {
   beforeEach(() => {
     delete require.cache[require.resolve("./async-transpiler-entry")];

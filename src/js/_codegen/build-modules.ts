@@ -5,6 +5,7 @@ import { cap, fmtCPPString, readdirRecursive, resolveSyncOrNull } from "./helper
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { builtinModules } from "node:module";
 import { BuildConfig } from "bun";
+import { define } from "./replacements";
 
 const t = new Bun.Transpiler({ loader: "tsx" });
 
@@ -28,7 +29,13 @@ const internalRegistry = new Map();
 
 // Build Registry
 for (let i = 0; i < moduleList.length; i++) {
-  const prefix = moduleList[i].startsWith("node/") ? "node:" : moduleList[i].startsWith("bun:") ? "bun/" : undefined;
+  const prefix = moduleList[i].startsWith("node/")
+    ? "node:"
+    : moduleList[i].startsWith("bun:")
+    ? "bun/"
+    : moduleList[i].startsWith("internal/")
+    ? "internal/"
+    : undefined;
   if (prefix) {
     const id = prefix + moduleList[i].slice(prefix.length).replaceAll(".", "/").slice(0, -3);
     internalRegistry.set(id, i);
@@ -90,7 +97,7 @@ globalThis.requireTransformer = (specifier: string, from: string) => {
     return codegenRequireId(`${found}/*${path.relative(BASE, relativeMatch)}*/`);
   }
 
-  throw new Error(`Builtin Bundler: Could not resolve "${specifier}" in ${from}. These cannot be relative.`);
+  throw new Error(`Builtin Bundler: Could not resolve "${specifier}" in ${from}.`);
 };
 
 // Preprocess builtins
@@ -173,6 +180,7 @@ const config = ({ platform, debug }: { platform: string; debug?: boolean }) =>
     target: "bun",
     external: builtinModules,
     define: {
+      ...define,
       IS_BUN_DEVELOPMENT: String(!!debug),
       __intrinsic__debug: debug ? "$debug_log_enabled" : "false",
       "process.platform": JSON.stringify(platform),
@@ -222,7 +230,7 @@ for (const [name, bundle, outputs] of [
         .replace(/\$\$EXPORT\$\$\((.*)\).\$\$EXPORT_END\$\$;/, "return $1")
         .replace(/]\s*,\s*__(debug|assert)_end__\)/g, ")")
         .replace(/]\s*,\s*__debug_end__\)/g, ")")
-        .replace(/__intrinsic__lazy\(/g, "globalThis[globalThis.Symbol.for('Bun.lazy')](")
+        // .replace(/__intrinsic__lazy\(/g, "globalThis[globalThis.Symbol.for('Bun.lazy')](")
         .replace(/import.meta.require\((.*?)\)/g, (expr, specifier) => {
           try {
             const str = JSON.parse(specifier);

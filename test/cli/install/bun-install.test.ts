@@ -659,6 +659,13 @@ it("should ignore peerDependencies within workspaces", async () => {
       },
     }),
   );
+  await writeFile(
+    join(package_dir, "bunfig.toml"),
+    `
+    [install]
+    peer = false
+    `,
+  );
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
@@ -679,9 +686,85 @@ it("should ignore peerDependencies within workspaces", async () => {
   ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
-  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "Baz"]);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual(["Baz"]);
   expect(await readlink(join(package_dir, "node_modules", "Baz"))).toBe(join("..", "packages", "baz"));
   await access(join(package_dir, "bun.lockb"));
+});
+
+it("should handle installing the same peerDependency with different versions", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      peerDependencies: {
+        peer: "0.0.2",
+      },
+      dependencies: {
+        boba: "0.0.2",
+      },
+    }),
+  );
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(requested).toBe(0);
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + boba@0.0.2",
+    "",
+    " 2 packages installed",
+  ]);
+});
+
+it("should handle installing the same peerDependency with the same version", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      peerDependencies: {
+        peer: "0.0.1",
+      },
+      dependencies: {
+        boba: "0.0.2",
+      },
+    }),
+  );
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(requested).toBe(0);
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + boba@0.0.2",
+    "",
+    " 1 package installed",
+  ]);
 });
 
 it("should handle life-cycle scripts within workspaces", async () => {
@@ -3396,7 +3479,7 @@ it("should consider peerDependencies during hoisting", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--peer"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -3444,6 +3527,105 @@ it("should consider peerDependencies during hoisting", async () => {
   });
   expect(await readlink(join(package_dir, "node_modules", "moo"))).toBe(join("..", "moo"));
   expect(await readdirSorted(join(package_dir, "moo"))).toEqual(["package.json"]);
+  await access(join(package_dir, "bun.lockb"));
+});
+
+it("should install peerDependencies when needed", async () => {
+  const urls: string[] = [];
+  setHandler(
+    dummyRegistry(urls, {
+      "0.0.3": {
+        bin: {
+          "baz-run": "index.js",
+        },
+      },
+      "0.0.5": {
+        bin: {
+          "baz-exec": "index.js",
+        },
+      },
+    }),
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      peerDependencies: {
+        baz: ">=0.0.3",
+      },
+      workspaces: ["bar", "moo"],
+    }),
+  );
+  await mkdir(join(package_dir, "bar"));
+  await writeFile(
+    join(package_dir, "bar", "package.json"),
+    JSON.stringify({
+      name: "bar",
+      version: "0.0.2",
+      dependencies: {
+        baz: "0.0.3",
+      },
+    }),
+  );
+  await mkdir(join(package_dir, "moo"));
+  await writeFile(
+    join(package_dir, "moo", "package.json"),
+    JSON.stringify({
+      name: "moo",
+      version: "0.0.4",
+      dependencies: {
+        baz: "0.0.5",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + bar@workspace:bar",
+    " + moo@workspace:moo",
+    "",
+    " 4 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`, `${root_url}/baz-0.0.5.tgz`]);
+  expect(requested).toBe(3);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "bar", "baz", "moo"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual(["baz-exec", "baz-run"]);
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "baz-exec"))).toBe(
+    join("..", "..", "moo", "node_modules", "baz", "index.js"),
+  );
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "baz-run"))).toBe(join("..", "baz", "index.js"));
+  expect(await readlink(join(package_dir, "node_modules", "bar"))).toBe(join("..", "bar"));
+  expect(await readdirSorted(join(package_dir, "bar"))).toEqual(["package.json"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
+  expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
+    name: "baz",
+    version: "0.0.3",
+    bin: {
+      "baz-run": "index.js",
+    },
+  });
+  expect(await readlink(join(package_dir, "node_modules", "moo"))).toBe(join("..", "moo"));
+  expect(await readdirSorted(join(package_dir, "moo"))).toEqual(["node_modules", "package.json"]);
+  expect(await file(join(package_dir, "moo", "node_modules", "baz", "package.json")).json()).toEqual({
+    name: "baz",
+    version: "0.0.5",
+    bin: {
+      "baz-exec": "index.js",
+    },
+  });
   await access(join(package_dir, "bun.lockb"));
 });
 
@@ -6925,6 +7107,39 @@ it("should handle `workspace:*` on both root & child", async () => {
   expect(await readlink(join(package_dir, "node_modules", "baz"))).toBe(join("..", "packages", "baz"));
   expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["package.json"]);
   expect(await file(join(package_dir, "node_modules", "baz", "package.json")).text()).toEqual(baz_package);
+  await access(join(package_dir, "bun.lockb"));
+});
+
+it("should install peer dependencies from root package", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      peerDependencies: {
+        bar: "0.0.2",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    env,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", " 1 package installed"]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
+  expect(requested).toBe(2);
+
   await access(join(package_dir, "bun.lockb"));
 });
 

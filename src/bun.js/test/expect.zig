@@ -2649,6 +2649,83 @@ pub const Expect = struct {
         return .zero;
     }
 
+    pub fn toEqualIgnoringWhitespace(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const _arguments = callFrame.arguments(1);
+        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+
+        if (arguments.len < 1) {
+            globalThis.throwInvalidArguments("toEqualIgnoringWhitespace() requires 1 argument", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const expected = arguments[0];
+        const value: JSValue = this.getValue(globalThis, thisValue, "toEqualIgnoringWhitespace", "<green>expected<r>") orelse return .zero;
+
+        if (!expected.isString()) {
+            globalThis.throw("toEqualIgnoringWhitespace() requires argument to be a string", .{});
+            return .zero;
+        }
+
+        const not = this.flags.not;
+        var pass = value.isString() and expected.isString();
+
+        if (pass) {
+            var valueStr = value.toString(globalThis).toSlice(globalThis, default_allocator).slice();
+            var expectedStr = expected.toString(globalThis).toSlice(globalThis, default_allocator).slice();
+
+            var left: usize = 0;
+            var right: usize = 0;
+
+            // Skip leading whitespaces
+            while (left < valueStr.len and std.ascii.isWhitespace(valueStr[left])) left += 1;
+            while (right < expectedStr.len and std.ascii.isWhitespace(expectedStr[right])) right += 1;
+
+            while (left < valueStr.len and right < expectedStr.len) {
+                const left_char = valueStr[left];
+                const right_char = expectedStr[right];
+
+                if (left_char != right_char) {
+                    pass = false;
+                    break;
+                }
+
+                left += 1;
+                right += 1;
+
+                // Skip trailing whitespaces
+                while (left < valueStr.len and std.ascii.isWhitespace(valueStr[left])) left += 1;
+                while (right < expectedStr.len and std.ascii.isWhitespace(expectedStr[right])) right += 1;
+            }
+
+            if (left < valueStr.len or right < expectedStr.len) {
+                pass = false;
+            }
+        }
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const expected_fmt = expected.toFmt(globalThis, &formatter);
+        const value_fmt = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toEqualIgnoringWhitespace", "<green>expected<r>", true) ++ "\n\n" ++ "Expected: not <green>{any}<r>\n" ++ "Received: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{ expected_fmt, value_fmt });
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toEqualIgnoringWhitespace", "<green>expected<r>", false) ++ "\n\n" ++ "Expected: <green>{any}<r>\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{ expected_fmt, value_fmt });
+        return .zero;
+    }
+
     pub fn toBeSymbol(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
         defer this.postMatch(globalThis);
 

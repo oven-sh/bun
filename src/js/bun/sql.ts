@@ -145,15 +145,28 @@ function loadOptions(o) {
   var hostname, port, username, password, database, tls, url, query, adapter;
   const env = Bun.env;
 
-  if (typeof o === "undefined" || (typeof o === "string" && o?.length === 0)) {
+  if (typeof o === "undefined" || (typeof o === "string" && o.length === 0)) {
     const urlString = env.POSTGRES_URL || env.DATABASE_URL || env.PGURL || env.PG_URL;
     if (urlString) {
-      o = urlString;
+      url = new URL(urlString);
+      o = {};
     }
+  } else if (o && typeof o === "object") {
+    if (o instanceof URL) {
+      url = o;
+    } else if (o?.url) {
+      const _url = o.url;
+      if (typeof _url === "string") {
+        url = new URL(_url);
+      } else if (_url && typeof _url === "object" && _url instanceof URL) {
+        url = _url;
+      }
+    }
+  } else if (typeof o === "string") {
+    url = new URL(o);
   }
 
-  if (typeof o === "string") {
-    url = new URL(o);
+  if (url) {
     ({ hostname, port, username, password, protocol: adapter } = o = url);
     if (adapter[adapter.length - 1] === ":") {
       adapter = adapter.slice(0, -1);

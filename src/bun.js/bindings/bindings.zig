@@ -3557,6 +3557,16 @@ pub const JSValue = enum(JSValueReprInt) {
         cppFn("push", .{ value, globalObject, out });
     }
 
+    extern fn JSC__JSValue__toISOString(*JSC.JSGlobalObject, JSC.JSValue, *[28]u8) c_int;
+    pub fn toISOString(this: JSValue, globalObject: *JSC.JSGlobalObject, buf: *[28]u8) []const u8 {
+        const count = JSC__JSValue__toISOString(globalObject, this, buf);
+        if (count < 0) {
+            return "";
+        }
+
+        return buf[0..@as(usize, @intCast(count))];
+    }
+
     pub fn as(value: JSValue, comptime ZigType: type) ?*ZigType {
         if (value.isEmptyOrUndefinedOrNull())
             return null;

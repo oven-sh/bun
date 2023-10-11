@@ -473,7 +473,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                         .map = view,
                     }),
                 };
-            } else Bin{},
+            } else Bin.init(),
 
             .scripts = .{},
         });

@@ -1083,7 +1083,9 @@ pub const Blob = struct {
                             needs_async.* = true;
                             return .zero;
                         }
-
+                        if (comptime !needs_open) {
+                            return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                        }
                         return JSC.JSPromise.rejectedPromiseValue(
                             globalThis,
                             err.withPath(pathlike.path.slice()).toJSC(globalThis),
@@ -1153,6 +1155,9 @@ pub const Blob = struct {
                     if (err.getErrno() == .AGAIN) {
                         needs_async.* = true;
                         return .zero;
+                    }
+                    if (comptime !needs_open) {
+                        return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
                     }
                     return JSC.JSPromise.rejectedPromiseValue(
                         globalThis,

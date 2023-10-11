@@ -209,7 +209,7 @@ dev = true
 
 ### `install.peer`
 
-Whether to install peer dependencies. Default `false`.
+Whether to install peer dependencies. Default `true`.
 
 ```toml
 [install]

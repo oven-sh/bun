@@ -983,6 +983,16 @@ declare module "bun:test" {
      */
     toBeWithin(start: number, end: number): void;
     /**
+     * Asserts that a value is equal to the expected string, ignoring any whitespace.
+     *
+     * @example
+     * expect(" foo ").toEqualIgnoringWhitespace("foo");
+     * expect("bar").toEqualIgnoringWhitespace(" bar ");
+     *
+     * @param expected the expected string
+     */
+    toEqualIgnoringWhitespace(expected: string): void;
+    /**
      * Asserts that a value is a `symbol`.
      *
      * @example

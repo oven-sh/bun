@@ -733,6 +733,8 @@ interface Process {
    * On other operating systems, this returns `undefined`.
    */
   constrainedMemory(): number | undefined;
+
+  send(data: any): void;
 }
 
 interface MemoryUsageObject {

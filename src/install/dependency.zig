@@ -52,7 +52,7 @@ version: Dependency.Version = .{},
 behavior: Behavior = .uninitialized,
 
 /// Sorting order for dependencies is:
-/// 1. [`dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies`]
+/// 1. [ `peerDependencies`, `optionalDependencies`, `devDependencies`, `dependencies` ]
 /// 2. name ASC
 /// "name" must be ASC so that later, when we rebuild the lockfile
 /// we insert it back in reverse order without an extra sorting pass

@@ -38,12 +38,13 @@ export default {
     page("typescript", "TypeScript", {
       description: "Install and configure type declarations for Bun's APIs",
     }),
-    page("templates", "Templates", {
-      description: "Hit the ground running with one of Bun's official templates, or download a template from GitHub.",
+
+    divider("Scaffolding"),
+    page("cli/init", "`bun init`", {
+      description: "Scaffold an empty Bun project.",
     }),
-    page("guides", "Guides", {
-      description: "A set of walkthrough guides and code snippets for performing common tasks with Bun",
-      href: "/guides",
+    page("cli/bun-create", "`bun create`", {
+      description: "Scaffold a new Bun project from an official template or GitHub repo.",
     }),
 
     // page("typescript", "TypeScript"),
@@ -81,7 +82,6 @@ export default {
     // page("bundev", "Dev server"),
     // page("benchmarks", "Benchmarks"),
 
-    // divider("Runtime"),
     divider("Runtime"),
     page("cli/run", "`bun run`", {
       description: "Use `bun run` to execute JavaScript/TypeScript files and package.json scripts.",

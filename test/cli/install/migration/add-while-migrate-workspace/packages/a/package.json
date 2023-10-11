@@ -1,5 +1,6 @@
 {
   "name": "a",
+  "version": "1.0.0",
   "dependencies": {
     "b": "1.0.0"
   }

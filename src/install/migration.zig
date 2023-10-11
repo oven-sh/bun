@@ -386,7 +386,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
             .meta = .{
                 .id = package_id,
 
-                .origin = if (is_workspace) .local else .npm,
+                .origin = if (package_id == 0) .local else .npm,
 
                 .arch = if (pkg.get("cpu")) |cpu_array| arch: {
                     if (cpu_array.data != .e_array) return error.InvalidNPMLockfile;
@@ -582,14 +582,16 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                 for (wksp.keys(), wksp.values()) |key, value| {
                     const entry1 = id_map.get(key) orelse return error.InvalidNPMLockfile;
                     const name_hash = stringHash(value.name);
+                    const wksp_name = builder.append(String, value.name);
+                    const wksp_path = builder.append(String, key);
                     dependencies_buf[0] = Dependency{
-                        .name = builder.append(String, value.name),
+                        .name = wksp_name,
                         .name_hash = name_hash,
                         .version = .{
                             .tag = .workspace,
-                            .literal = builder.append(String, key),
+                            .literal = wksp_path,
                             .value = .{
-                                .workspace = builder.append(String, key),
+                                .workspace = wksp_path,
                             },
                         },
                         .behavior = .{
@@ -681,14 +683,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                             dependencies_buf[0] = Dependency{
                                 .name = dep_name,
                                 .name_hash = name_hash,
-                                .version = if (is_workspace)
-                                    .{
-                                        .tag = .workspace,
-                                        .literal = resolutions[id].value.workspace,
-                                        .value = .{ .workspace = resolutions[id].value.workspace },
-                                    }
-                                else
-                                    version,
+                                .version = version,
                                 .behavior = .{
                                     .normal = dep_key == .dependencies,
                                     .optional = dep_key == .optionalDependencies,
@@ -932,6 +927,8 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
     if (Environment.allow_assert) {
         try this.verifyData();
     }
+
+    this.meta_hash = try this.generateMetaHash(false);
 
     return LoadFromDiskResult{ .ok = this };
 }

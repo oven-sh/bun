@@ -964,13 +964,17 @@ pub fn parseWithTag(
 pub const Behavior = packed struct(u8) {
     pub const uninitialized: Behavior = .{};
 
+    // these padding fields are to have compatibility
+    // with older versions of lockfile v2
+    _unused_1: u1 = 0,
+
     normal: bool = false,
     optional: bool = false,
     dev: bool = false,
     peer: bool = false,
     workspace: bool = false,
 
-    _padding: u3 = 0, //padding
+    _unused_2: u2 = 0,
 
     pub const normal = Behavior{ .normal = true };
     pub const optional = Behavior{ .optional = true };
@@ -1115,5 +1119,13 @@ pub const Behavior = packed struct(u8) {
                 try writer.writeAll(" }");
             },
         }
+    }
+
+    comptime {
+        std.debug.assert(@as(u8, @bitCast(Behavior.normal)) == (1 << 1));
+        std.debug.assert(@as(u8, @bitCast(Behavior.optional)) == (1 << 2));
+        std.debug.assert(@as(u8, @bitCast(Behavior.dev)) == (1 << 3));
+        std.debug.assert(@as(u8, @bitCast(Behavior.peer)) == (1 << 4));
+        std.debug.assert(@as(u8, @bitCast(Behavior.workspace)) == (1 << 5));
     }
 };

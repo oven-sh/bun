@@ -335,7 +335,7 @@ it("should remove all cache", async () => {
 });
 
 it("bun pm migrate", async () => {
-  const test_dir = join(import.meta.dir, "migrate-2");
+  const test_dir = join(import.meta.dir, "migration/contoso-test");
   rmSync(join(test_dir, "bun.lockb"), { recursive: true, force: true });
 
   const { stdout, stderr, exitCode } = Bun.spawnSync({

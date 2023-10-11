@@ -2559,6 +2559,14 @@ pub const Package = extern struct {
                 }
                 defer to_i += 1;
 
+                debug("compare {s} and {s}", .{
+                    from_dep.name.slice(from_lockfile.buffers.string_bytes.items),
+                    to_deps[to_i].name.slice(to_lockfile.buffers.string_bytes.items),
+                });
+                debug("-> {} and {}", .{
+                    from_dep.*,
+                    to_deps[to_i],
+                });
                 if (to_deps[to_i].eql(from_dep, to_lockfile.buffers.string_bytes.items, from_lockfile.buffers.string_bytes.items)) {
                     if (update_requests) |updates| {
                         if (updates.len == 0 or brk: {
@@ -4470,7 +4478,7 @@ pub fn hasMetaHashChanged(this: *Lockfile, print_name_version_string: bool) !boo
     this.meta_hash = try this.generateMetaHash(print_name_version_string);
     return !strings.eqlLong(&previous_meta_hash, &this.meta_hash, false);
 }
-fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaHash {
+pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaHash {
     if (this.packages.len <= 1)
         return zero_hash;
 

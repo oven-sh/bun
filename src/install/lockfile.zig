@@ -4221,6 +4221,7 @@ pub const Serializer = struct {
     const header_bytes: string = "#!/usr/bin/env bun\n" ++ version;
 
     const has_workspace_package_ids_tag: u64 = @bitCast([_]u8{ 'w', 'O', 'r', 'K', 's', 'P', 'a', 'C' });
+    const has_trusted_dependencies_tag: u64 = @bitCast([_]u8{ 't', 'R', 'u', 'S', 't', 'E', 'D', 'd' });
 
     pub fn save(this: *Lockfile, comptime StreamType: type, stream: StreamType) !void {
         var old_package_list = this.packages;
@@ -4279,6 +4280,19 @@ pub const Serializer = struct {
                 &writer,
                 []String,
                 this.workspace_paths.values(),
+            );
+        }
+
+        if (this.trusted_dependencies.count() > 0) {
+            try writer.writeAll(std.mem.asBytes(&has_trusted_dependencies_tag));
+
+            try Lockfile.Buffers.writeArray(
+                StreamType,
+                stream,
+                @TypeOf(&writer),
+                &writer,
+                []u32,
+                this.trusted_dependencies.keys(),
             );
         }
 
@@ -4387,6 +4401,30 @@ pub const Serializer = struct {
                         @memcpy(lockfile.workspace_paths.values(), workspace_paths_strings.items);
                         try lockfile.workspace_paths.reIndex(allocator);
                     }
+                } else {
+                    stream.pos -= 8;
+                }
+            }
+        }
+
+        {
+            const remaining_in_buffer = total_buffer_size -| stream.pos;
+
+            if (remaining_in_buffer > 8 and total_buffer_size <= stream.buffer.len) {
+                const next_num = try reader.readIntLittle(u64);
+                if (next_num == has_trusted_dependencies_tag) {
+                    var trusted_dependencies_hashes = try Lockfile.Buffers.readArray(
+                        stream,
+                        allocator,
+                        std.ArrayListUnmanaged(u32),
+                    );
+                    defer trusted_dependencies_hashes.deinit(allocator);
+
+                    try lockfile.trusted_dependencies.ensureTotalCapacity(allocator, trusted_dependencies_hashes.items.len);
+
+                    lockfile.trusted_dependencies.entries.len = trusted_dependencies_hashes.items.len;
+                    @memcpy(lockfile.trusted_dependencies.keys(), trusted_dependencies_hashes.items);
+                    try lockfile.trusted_dependencies.reIndex(allocator);
                 } else {
                     stream.pos -= 8;
                 }

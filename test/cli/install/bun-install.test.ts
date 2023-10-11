@@ -820,6 +820,8 @@ it("should handle life-cycle scripts within workspaces", async () => {
 });
 
 it("should handle life-cycle scripts during re-installation", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -828,6 +830,10 @@ it("should handle life-cycle scripts during re-installation", async () => {
       scripts: {
         install: [bunExe(), "index.js"].join(" "),
       },
+      dependencies: {
+        qux: "^0.0",
+      },
+      trustedDependencies: ["qux"],
       workspaces: ["bar"],
     }),
   );
@@ -865,13 +871,15 @@ it("should handle life-cycle scripts during re-installation", async () => {
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "[scripts:run] Bar",
     " + Bar@workspace:bar",
+    " + qux@0.0.2",
     "[scripts:run] Foo",
+    "[scripts:run] Qux",
     "",
-    " 1 package installed",
+    " 2 packages installed",
   ]);
   expect(await exited1).toBe(0);
-  expect(requested).toBe(0);
-  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "Bar"]);
+  expect(requested).toBe(2);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "Bar", "qux"]);
   expect(await readlink(join(package_dir, "node_modules", "Bar"))).toBe(join("..", "bar"));
   await access(join(package_dir, "bun.lockb"));
   // Perform `bun install` again but with lockfile from before
@@ -897,13 +905,15 @@ it("should handle life-cycle scripts during re-installation", async () => {
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "[scripts:run] Bar",
     " + Bar@workspace:bar",
+    " + qux@0.0.2",
     "[scripts:run] Foo",
+    "[scripts:run] Qux",
     "",
-    " 1 package installed",
+    " 2 packages installed",
   ]);
   expect(await exited2).toBe(0);
-  expect(requested).toBe(0);
-  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual(["Bar"]);
+  expect(requested).toBe(3);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "Bar", "qux"]);
   expect(await readlink(join(package_dir, "node_modules", "Bar"))).toBe(join("..", "bar"));
   await access(join(package_dir, "bun.lockb"));
   // Perform `bun install --production` with lockfile from before
@@ -929,13 +939,15 @@ it("should handle life-cycle scripts during re-installation", async () => {
   expect(out3.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "[scripts:run] Bar",
     " + Bar@workspace:bar",
+    " + qux@0.0.2",
     "[scripts:run] Foo",
+    "[scripts:run] Qux",
     "",
-    " 1 package installed",
+    " 2 packages installed",
   ]);
   expect(await exited3).toBe(0);
-  expect(requested).toBe(0);
-  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual(["Bar"]);
+  expect(requested).toBe(4);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "Bar", "qux"]);
   expect(await readlink(join(package_dir, "node_modules", "Bar"))).toBe(join("..", "bar"));
   await access(join(package_dir, "bun.lockb"));
 });

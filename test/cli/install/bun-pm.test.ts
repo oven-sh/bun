@@ -339,7 +339,7 @@ it("bun pm migrate", async () => {
   rmSync(join(test_dir, "bun.lockb"), { recursive: true, force: true });
 
   const { stdout, stderr, exitCode } = Bun.spawnSync({
-    cmd: [bunExe(), "pm", "migrate"],
+    cmd: [bunExe(), "pm", "migrate", "--force"],
     cwd: test_dir,
     stdout: "pipe",
     stdin: "pipe",

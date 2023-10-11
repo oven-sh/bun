@@ -39,11 +39,13 @@ test('the install succeeds', () => {
   Bun.spawnSync([bunExe(), "reset.ts"], {
     env: bunEnv,
     cwd,
+    stdio: ["inherit", "inherit", "inherit"],
   });
 
   Bun.spawnSync([bunExe(), "install"], {
     env: bunEnv,
     cwd,
+    stdio: ["inherit", "inherit", "inherit"],
   });
 
   console.log(cwd);

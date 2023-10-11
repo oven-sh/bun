@@ -15,7 +15,7 @@ import {
   root_url,
   setHandler,
 } from "./dummy.registry";
-import { rmSync } from "js/node/fs/export-star-from";
+import { cpSync, rmSync } from "js/node/fs/export-star-from";
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
@@ -334,9 +334,11 @@ it("should remove all cache", async () => {
   expect(await exists(cache_dir)).toBeFalse();
 });
 
+import { tmpdir } from "os";
 it("bun pm migrate", async () => {
-  const test_dir = join(import.meta.dir, "migration/contoso-test");
-  rmSync(join(test_dir, "bun.lockb"), { recursive: true, force: true });
+  const test_dir = join(tmpdir(), "contoso-test" + Math.random().toString(36).slice(2));
+
+  cpSync(join(import.meta.dir, "migration/contoso-test"), test_dir, { recursive: true });
 
   const { stdout, stderr, exitCode } = Bun.spawnSync({
     cmd: [bunExe(), "pm", "migrate", "--force"],
@@ -354,10 +356,16 @@ it("bun pm migrate", async () => {
   expect(stdout.toString("utf-8")).toBe("");
   expect(stderr.toString("utf-8")).toEndWith("migrated lockfile from package-lock.json\n");
 
-  const hasher = new Bun.CryptoHasher("sha256");
+  const hashExec = Bun.spawnSync({
+    cmd: [bunExe(), "pm", "hash"],
+    cwd: test_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  expect(hashExec.exitCode).toBe(0);
+  const hash = hashExec.stdout.toString("utf-8").trim();
 
-  const expected = hasher.update(await Bun.file(join(test_dir, "expected_bun.lockb")).arrayBuffer()).digest("hex");
-  const actual = hasher.update(await Bun.file(join(test_dir, "bun.lockb")).arrayBuffer()).digest("hex");
-
-  expect(actual).toBe(expected);
+  expect(hash).toMatchSnapshot();
 });

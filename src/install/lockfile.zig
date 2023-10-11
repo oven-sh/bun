@@ -2559,14 +2559,6 @@ pub const Package = extern struct {
                 }
                 defer to_i += 1;
 
-                debug("compare {s} and {s}", .{
-                    from_dep.name.slice(from_lockfile.buffers.string_bytes.items),
-                    to_deps[to_i].name.slice(to_lockfile.buffers.string_bytes.items),
-                });
-                debug("-> {} and {}", .{
-                    from_dep.*,
-                    to_deps[to_i],
-                });
                 if (to_deps[to_i].eql(from_dep, to_lockfile.buffers.string_bytes.items, from_lockfile.buffers.string_bytes.items)) {
                     if (update_requests) |updates| {
                         if (updates.len == 0 or brk: {

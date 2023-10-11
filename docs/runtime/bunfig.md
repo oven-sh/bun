@@ -216,6 +216,17 @@ Whether to install peer dependencies. Default `false`.
 peer = false
 ```
 
+### `install.github.api`
+
+Enable using the github REST API to install github dependencies. Default `true`.
+
+Private github repositories will fail to install if this option is true because the REST API is unauthenticated.
+
+```toml
+[install]
+github.api = true
+```
+
 ### `install.production`
 
 Whether `bun install` will run in "production mode". Default `false`.

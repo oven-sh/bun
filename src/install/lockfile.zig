@@ -1507,10 +1507,11 @@ pub fn verifyResolutions(this: *Lockfile, local_features: Features, remote_featu
                 } else {
                     if (failed_dep.version.tag == .github) {
                         Output.prettyErrorln(
-                            "<r><red>error<r><d>:<r> <b>{s}<r><d>@<b>{}<r><d> failed to resolve<r>\nIf this is a private repository set install.github.api to false in bunfig.toml\n\n",
+                            "<r><red>error<r><d>:<r> <b>{s}<r><d>@<b>{}<r><d> failed to resolve<r>\nIf \"{s}\" is a private repository, set install.github.api to false in bunfig.toml\n\n",
                             .{
                                 failed_dep.name.slice(string_buf),
                                 failed_dep.version.literal.fmt(string_buf),
+                                failed_dep.name.slice(string_buf),
                             },
                         );
                     } else {

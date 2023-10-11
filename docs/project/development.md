@@ -133,6 +133,12 @@ $ bun install -g @oven/zig
 $ zigup 0.12.0-dev.163+6780a6bbf
 ```
 
+If you are utilizing ZSH, it may be necessary to add the Bun binary directory to your PATH environment variable. To achieve this, append the following line to your .zshrc file:
+
+```bash
+$ echo "export PATH=$PATH:~/.bun/bin" >> ~/.zshrc
+```
+
 {% callout %}
 We last updated Zig on **July 18th, 2023**
 {% /callout %}

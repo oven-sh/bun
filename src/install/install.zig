@@ -6847,6 +6847,7 @@ pub const PackageManager = struct {
         folder_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
         install_count: usize = 0,
         successfully_installed: Bitset,
+        tree_iterator: *Lockfile.Tree.Iterator,
 
         // For linking native binaries, we only want to link after we've installed the companion dependencies
         // We don't want to introduce dependent callbacks like that for every single package
@@ -6860,10 +6861,12 @@ pub const PackageManager = struct {
 
         /// Call when you mutate the length of `lockfile.packages`
         pub fn fixCachedLockfilePackageSlices(this: *PackageInstaller) void {
-            this.metas = this.lockfile.packages.items(.meta);
-            this.names = this.lockfile.packages.items(.name);
-            this.bins = this.lockfile.packages.items(.bin);
-            this.resolutions = this.lockfile.packages.items(.resolution);
+            var packages = this.lockfile.packages.slice();
+            this.metas = packages.items(.meta);
+            this.names = packages.items(.name);
+            this.bins = packages.items(.bin);
+            this.resolutions = packages.items(.resolution);
+            this.tree_iterator.reload(this.lockfile);
         }
 
         /// Install versions of a package which are waiting on a network request
@@ -7474,38 +7477,38 @@ pub const PackageManager = struct {
         var summary = PackageInstall.Summary{};
 
         {
-            var parts = lockfile.packages.slice();
-            var metas = parts.items(.meta);
-            var names = parts.items(.name);
-            var dependencies = lockfile.buffers.dependencies.items;
-            const resolutions_buffer: []const PackageID = lockfile.buffers.resolutions.items;
-            const resolution_lists: []const Lockfile.PackageIDSlice = parts.items(.resolutions);
-            var resolutions = parts.items(.resolution);
-
             var iterator = Lockfile.Tree.Iterator.init(lockfile);
 
-            var installer = PackageInstaller{
-                .manager = this,
-                .options = &this.options,
-                .metas = metas,
-                .bins = parts.items(.bin),
-                .root_node_modules_folder = node_modules_folder,
-                .names = names,
-                .resolutions = resolutions,
-                .lockfile = lockfile,
-                .node = &install_node,
-                .node_modules_folder = node_modules_folder,
-                .progress = progress,
-                .skip_verify_installed_version_number = skip_verify_installed_version_number,
-                .skip_delete = skip_delete,
-                .summary = &summary,
-                .global_bin_dir = this.options.global_bin_dir,
-                .force_install = force_install,
-                .install_count = lockfile.buffers.hoisted_dependencies.items.len,
-                .successfully_installed = try Bitset.initEmpty(
-                    this.allocator,
-                    lockfile.packages.len,
-                ),
+            var installer: PackageInstaller = brk: {
+                // These slices potentially get resized during iteration
+                // so we want to make sure they're not accessible to the rest of this function
+                // to make mistakes harder
+                var parts = lockfile.packages.slice();
+
+                break :brk PackageInstaller{
+                    .manager = this,
+                    .options = &this.options,
+                    .metas = parts.items(.meta),
+                    .bins = parts.items(.bin),
+                    .root_node_modules_folder = node_modules_folder,
+                    .names = parts.items(.name),
+                    .resolutions = parts.items(.resolution),
+                    .lockfile = lockfile,
+                    .node = &install_node,
+                    .node_modules_folder = node_modules_folder,
+                    .progress = progress,
+                    .skip_verify_installed_version_number = skip_verify_installed_version_number,
+                    .skip_delete = skip_delete,
+                    .summary = &summary,
+                    .global_bin_dir = this.options.global_bin_dir,
+                    .force_install = force_install,
+                    .install_count = lockfile.buffers.hoisted_dependencies.items.len,
+                    .successfully_installed = try Bitset.initEmpty(
+                        this.allocator,
+                        lockfile.packages.len,
+                    ),
+                    .tree_iterator = &iterator,
+                };
             };
 
             while (iterator.nextNodeModulesFolder()) |node_modules| {
@@ -7598,87 +7601,95 @@ pub const PackageManager = struct {
             if (!installer.options.do.install_packages) return error.InstallFailed;
 
             summary.successfully_installed = installer.successfully_installed;
-            outer: for (installer.platform_binlinks.items) |deferred| {
-                const dependency_id = deferred.dependency_id;
-                const package_id = resolutions_buffer[dependency_id];
-                const folder = deferred.node_modules_folder;
+            {
+                var parts = lockfile.packages.slice();
+                var metas = parts.items(.meta);
+                var names = parts.items(.name);
+                var dependencies = lockfile.buffers.dependencies.items;
+                const resolutions_buffer: []const PackageID = lockfile.buffers.resolutions.items;
+                const resolution_lists: []const Lockfile.PackageIDSlice = parts.items(.resolutions);
+                outer: for (installer.platform_binlinks.items) |deferred| {
+                    const dependency_id = deferred.dependency_id;
+                    const package_id = resolutions_buffer[dependency_id];
+                    const folder = deferred.node_modules_folder;
 
-                const package_resolutions: []const PackageID = resolution_lists[package_id].get(resolutions_buffer);
-                const original_bin: Bin = installer.bins[package_id];
+                    const package_resolutions: []const PackageID = resolution_lists[package_id].get(resolutions_buffer);
+                    const original_bin: Bin = installer.bins[package_id];
 
-                for (package_resolutions) |resolved_id| {
-                    if (resolved_id >= names.len) continue;
-                    const meta: Lockfile.Package.Meta = metas[resolved_id];
+                    for (package_resolutions) |resolved_id| {
+                        if (resolved_id >= names.len) continue;
+                        const meta: Lockfile.Package.Meta = metas[resolved_id];
 
-                    // This is specifically for platform-specific binaries
-                    if (meta.os == .all and meta.arch == .all) continue;
+                        // This is specifically for platform-specific binaries
+                        if (meta.os == .all and meta.arch == .all) continue;
 
-                    // Don't attempt to link incompatible binaries
-                    if (meta.isDisabled()) continue;
+                        // Don't attempt to link incompatible binaries
+                        if (meta.isDisabled()) continue;
 
-                    const name = lockfile.str(&dependencies[dependency_id].name);
+                        const name = lockfile.str(&dependencies[dependency_id].name);
 
-                    if (!installer.has_created_bin) {
-                        if (!this.options.global) {
-                            if (comptime Environment.isWindows) {
-                                std.os.mkdiratW(node_modules_folder.dir.fd, bun.strings.w(".bin"), 0) catch {};
-                            } else {
-                                node_modules_folder.dir.makeDirZ(".bin") catch {};
-                            }
-                        }
-                        if (comptime Environment.isPosix)
-                            Bin.Linker.umask = C.umask(0);
-                        installer.has_created_bin = true;
-                    }
-
-                    var bin_linker = Bin.Linker{
-                        .bin = original_bin,
-                        .package_installed_node_modules = bun.toFD(folder.dir.fd),
-                        .root_node_modules_folder = bun.toFD(node_modules_folder.dir.fd),
-                        .global_bin_path = this.options.bin_path,
-                        .global_bin_dir = this.options.global_bin_dir.dir,
-
-                        .package_name = strings.StringOrTinyString.init(name),
-                        .string_buf = lockfile.buffers.string_bytes.items,
-                        .extern_string_buf = lockfile.buffers.extern_strings.items,
-                    };
-
-                    bin_linker.link(this.options.global);
-
-                    if (bin_linker.err) |err| {
-                        if (comptime log_level != .silent) {
-                            const fmt = "\n<r><red>error:<r> linking <b>{s}<r>: {s}\n";
-                            const args = .{ name, @errorName(err) };
-
-                            if (comptime log_level.showProgress()) {
-                                switch (Output.enable_ansi_colors) {
-                                    inline else => |enable_ansi_colors| {
-                                        this.progress.log(comptime Output.prettyFmt(fmt, enable_ansi_colors), args);
-                                    },
+                        if (!installer.has_created_bin) {
+                            if (!this.options.global) {
+                                if (comptime Environment.isWindows) {
+                                    std.os.mkdiratW(node_modules_folder.dir.fd, bun.strings.w(".bin"), 0) catch {};
+                                } else {
+                                    node_modules_folder.dir.makeDirZ(".bin") catch {};
                                 }
-                            } else {
-                                Output.prettyErrorln(fmt, args);
                             }
+                            if (comptime Environment.isPosix)
+                                Bin.Linker.umask = C.umask(0);
+                            installer.has_created_bin = true;
                         }
 
-                        if (this.options.enable.fail_early) Global.crash();
+                        var bin_linker = Bin.Linker{
+                            .bin = original_bin,
+                            .package_installed_node_modules = bun.toFD(folder.dir.fd),
+                            .root_node_modules_folder = bun.toFD(node_modules_folder.dir.fd),
+                            .global_bin_path = this.options.bin_path,
+                            .global_bin_dir = this.options.global_bin_dir.dir,
+
+                            .package_name = strings.StringOrTinyString.init(name),
+                            .string_buf = lockfile.buffers.string_bytes.items,
+                            .extern_string_buf = lockfile.buffers.extern_strings.items,
+                        };
+
+                        bin_linker.link(this.options.global);
+
+                        if (bin_linker.err) |err| {
+                            if (comptime log_level != .silent) {
+                                const fmt = "\n<r><red>error:<r> linking <b>{s}<r>: {s}\n";
+                                const args = .{ name, @errorName(err) };
+
+                                if (comptime log_level.showProgress()) {
+                                    switch (Output.enable_ansi_colors) {
+                                        inline else => |enable_ansi_colors| {
+                                            this.progress.log(comptime Output.prettyFmt(fmt, enable_ansi_colors), args);
+                                        },
+                                    }
+                                } else {
+                                    Output.prettyErrorln(fmt, args);
+                                }
+                            }
+
+                            if (this.options.enable.fail_early) Global.crash();
+                        }
+
+                        continue :outer;
                     }
 
-                    continue :outer;
-                }
+                    if (comptime log_level != .silent) {
+                        const fmt = "\n<r><yellow>warn:<r> no compatible binaries found for <b>{s}<r>\n";
+                        const args = .{lockfile.str(&names[package_id])};
 
-                if (comptime log_level != .silent) {
-                    const fmt = "\n<r><yellow>warn:<r> no compatible binaries found for <b>{s}<r>\n";
-                    const args = .{lockfile.str(&names[package_id])};
-
-                    if (comptime log_level.showProgress()) {
-                        switch (Output.enable_ansi_colors) {
-                            inline else => |enable_ansi_colors| {
-                                this.progress.log(comptime Output.prettyFmt(fmt, enable_ansi_colors), args);
-                            },
+                        if (comptime log_level.showProgress()) {
+                            switch (Output.enable_ansi_colors) {
+                                inline else => |enable_ansi_colors| {
+                                    this.progress.log(comptime Output.prettyFmt(fmt, enable_ansi_colors), args);
+                                },
+                            }
+                        } else {
+                            Output.prettyErrorln(fmt, args);
                         }
-                    } else {
-                        Output.prettyErrorln(fmt, args);
                     }
                 }
             }

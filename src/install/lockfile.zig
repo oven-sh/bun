@@ -298,6 +298,14 @@ pub const Tree = struct {
             };
         }
 
+        pub fn reload(this: *Iterator, lockfile: *const Lockfile) void {
+            this.trees = lockfile.buffers.trees.items;
+            this.dependency_ids = lockfile.buffers.hoisted_dependencies.items;
+            this.dependencies = lockfile.buffers.dependencies.items;
+            this.resolutions = lockfile.buffers.resolutions.items;
+            this.string_buf = lockfile.buffers.string_bytes.items;
+        }
+
         pub fn nextNodeModulesFolder(this: *Iterator) ?NodeModulesFolder {
             if (this.tree_id >= this.trees.len) return null;
 
@@ -3763,7 +3771,7 @@ pub const Package = extern struct {
         string_builder.clamp();
     }
 
-    pub const List = std.MultiArrayList(Lockfile.Package);
+    pub const List = bun.MultiArrayList(Lockfile.Package);
 
     pub const Meta = extern struct {
         // TODO: when we bump the lockfile version, we should reorder this to:
@@ -3794,11 +3802,14 @@ pub const Package = extern struct {
         }
 
         pub fn clone(this: *const Meta, id: PackageID, buf: []const u8, comptime StringBuilderType: type, builder: StringBuilderType) Meta {
-            var new = this.*;
-            new.id = id;
-            new.man_dir = builder.append(String, this.man_dir.slice(buf));
-
-            return new;
+            return Meta{
+                .id = id,
+                .man_dir = builder.append(String, this.man_dir.slice(buf)),
+                .integrity = this.integrity,
+                .arch = this.arch,
+                .os = this.os,
+                .origin = this.origin,
+            };
         }
     };
 
@@ -3875,6 +3886,8 @@ pub const Package = extern struct {
 
             inline for (FieldsEnum.fields) |field| {
                 const value = sliced.items(@field(Lockfile.Package.List.Field, field.name));
+                if (comptime Environment.allow_assert)
+                    debug("save(\"{s}\") = {d} bytes", .{ field.name, std.mem.sliceAsBytes(value).len });
 
                 comptime assertNoUninitializedPadding(@TypeOf(value));
                 try writer.writeAll(std.mem.sliceAsBytes(value));

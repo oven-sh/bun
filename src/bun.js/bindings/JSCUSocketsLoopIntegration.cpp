@@ -19,12 +19,12 @@
 extern "C" void bun_on_tick_before(JSC::VM* vm)
 {
 #if ACQUIRE_RELEASE_HEAP_ACCESS
-    vm->heap.releaseAccess();
+    // vm->heap.releaseAccess();
 #endif
 }
 extern "C" void bun_on_tick_after(JSC::VM* vm)
 {
 #if ACQUIRE_RELEASE_HEAP_ACCESS
-    vm->heap.acquireAccess();
+    // vm->heap.acquireAccess();
 #endif
 }

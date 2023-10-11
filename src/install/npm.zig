@@ -808,12 +808,6 @@ pub const PackageManifest = struct {
             return this.findByVersion(left.version);
         }
 
-        if (this.findByDistTag("latest")) |result| {
-            if (group.satisfies(result.version)) {
-                return result;
-            }
-        }
-
         {
             const releases = this.pkg.releases.keys.get(this.versions);
             var i = releases.len;
@@ -838,6 +832,10 @@ pub const PackageManifest = struct {
                 if (group.satisfies(version)) {
                     return .{ .version = version, .package = &packages[i - 1] };
                 }
+            }
+        } else if (this.findByDistTag("latest")) |result| {
+            if (group.satisfies(result.version)) {
+                return result;
             }
         }
 

@@ -9,6 +9,7 @@ let cwd = join(tmpdir(), "complex-workspace-test" + Math.random().toString(36).s
 
 function validate(packageName: string, version: string, realPackageName?: string) {
   test(`${packageName} is ${realPackageName ? `${realPackageName}@${version}` : version}`, () => {
+    if (!cwd) throw new Error("install failed");
     const pkg = JSON.parse(fs.readFileSync(path.join(cwd, packageName, "package.json"), "utf8"));
     expect(pkg.version).toBe(version);
     if (realPackageName) {
@@ -19,6 +20,7 @@ function validate(packageName: string, version: string, realPackageName?: string
 
 function mustExist(filePath: string) {
   test(`${filePath} exists`, () => {
+    if (!cwd) throw new Error("install failed");
     if (!fs.existsSync(path.join(cwd, filePath))) {
       throw new Error(`File ${filePath} was not found`);
     }
@@ -27,26 +29,40 @@ function mustExist(filePath: string) {
 
 function mustNotExist(filePath: string) {
   test(`${filePath} does not exist`, () => {
+    if (!cwd) throw new Error("install failed");
     if (fs.existsSync(path.join(cwd, filePath))) {
       throw new Error(`File ${filePath} was found`);
     }
   });
 }
 
-test("the install succeeds", () => {
+beforeAll(() => {
   fs.cpSync(path.join(import.meta.dir, "complex-workspace"), cwd, { recursive: true });
+});
 
-  Bun.spawnSync([bunExe(), "reset.ts"], {
+test("the install succeeds", async () => {
+  var subprocess = Bun.spawn([bunExe(), "reset.ts"], {
+    env: bunEnv,
+    cwd,
+    stdio: ["inherit", "inherit", "inherit"],
+  });
+  await subprocess.exited;
+  if (subprocess.exitCode != 0) {
+    cwd = false as any;
+    throw new Error("Failed to install");
+  }
+
+  subprocess = Bun.spawn([bunExe(), "install"], {
     env: bunEnv,
     cwd,
     stdio: ["inherit", "inherit", "inherit"],
   });
 
-  Bun.spawnSync([bunExe(), "install"], {
-    env: bunEnv,
-    cwd,
-    stdio: ["inherit", "inherit", "inherit"],
-  });
+  await subprocess.exited;
+  if (subprocess.exitCode != 0) {
+    cwd = false as any;
+    throw new Error("Failed to install");
+  }
 
   console.log(cwd);
 });

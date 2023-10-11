@@ -41,11 +41,11 @@ test.todo("migrate workspace from npm during `bun add`", async () => {
 
   Bun.spawnSync([bunExe(), "add", "lodash@4.17.21"], {
     env: bunEnv,
-    cwd: join(testDir, "packages", "a")
+    cwd: join(testDir, "packages", "a"),
   });
 
   expect(fs.existsSync(join(testDir, "node_modules/lodash"))).toBeTrue();
-  
+
   const lodash_version = JSON.parse(fs.readFileSync(join(testDir, "node_modules/lodash/package.json"), "utf8")).version;
   expect(lodash_version).toBe("4.17.21");
 

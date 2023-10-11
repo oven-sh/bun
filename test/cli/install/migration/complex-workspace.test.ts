@@ -33,7 +33,7 @@ function mustNotExist(filePath: string) {
   });
 }
 
-test('the install succeeds', () => {
+test("the install succeeds", () => {
   fs.cpSync(path.join(import.meta.dir, "complex-workspace"), cwd, { recursive: true });
 
   Bun.spawnSync([bunExe(), "reset.ts"], {

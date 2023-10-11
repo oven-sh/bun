@@ -1,6 +1,8 @@
 Bun ships as a single executable that can be installed a few different ways.
 
-## macOS and Linux
+## Installing
+
+### macOS and Linux
 
 {% callout %}
 **Linux users** — The `unzip` package is required to install Bun. Use `sudo apt install unzip` to install `unzip` package.
@@ -35,7 +37,7 @@ $ proto install bun
 
 {% /codetabs %}
 
-## Windows
+### Windows
 
 Bun provides a _limited, experimental_ native build for Windows. At the moment, only the Bun runtime is supported.
 
@@ -69,7 +71,7 @@ $ docker pull oven/bun:distroless
 
 ## Checking installation
 
-To check that Bun was installed successfully, run `bun --version`.
+To check that Bun was installed successfully, open a new terminal window and run `bun --version`.
 
 ```sh
 $ bun --version
@@ -83,10 +85,7 @@ $ bun --revision
 1.x.y+b7982ac1318937560f38e0f8eb18f45eaa43480f
 ```
 
-{% details summary="Troubleshoot: command not found" %}
-**Note** — If you've installed Bun but are seeing a `command not found` error, you may have to manually add the installation directory to your `PATH`. In order for this change to persist across restarts, you'll need to update the configuration file for your system's shell.
-
-To detect your current shell:
+f you've installed Bun but are seeing a `command not found` error, you may have to manually add the installation directory to your `PATH`. First, determine what shell you're using:
 
 ```sh
 $ echo $SHELL
@@ -104,7 +103,7 @@ export PATH="$BUN_INSTALL/bin:$PATH"
 ```
 
 ```bash#zsh
-# ~/.zshrc
+# ~/.bashrc
 export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
 ```
@@ -116,8 +115,6 @@ export PATH="$BUN_INSTALL/bin:$PATH"
 ```
 
 {% /codetabs %}
-
-{% /details %}
 
 ## Upgrading
 

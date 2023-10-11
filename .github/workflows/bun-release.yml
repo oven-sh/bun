@@ -2,7 +2,7 @@ name: bun-release
 concurrency: release
 env:
   BUN_VERSION: ${{ github.event.inputs.tag || github.event.release.tag_name || 'canary' }}
-  BUN_LATEST: ${{ github.event.inputs.is-latest || github.event.release.prerelease == 'false' }}
+  BUN_LATEST: ${{ (github.event.inputs.is-latest || github.event.release.tag_name) && 'true' || 'false' }}
 on:
   release:
     types:

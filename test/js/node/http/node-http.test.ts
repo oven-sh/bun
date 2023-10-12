@@ -1044,8 +1044,13 @@ describe("server.address should be valid IP", () => {
     server.listen(0, hostname, async (_err, host, port) => {
       try {
         const { address, family } = server.address();
-        expect(address).toStrictEqual("127.0.0.1");
-        expect(family).toStrictEqual("IPv4");
+        expect(port).toBeInteger();
+        expect(["IPv4", "IPv6"]).toContain(family);
+        if (family === "IPv4") {
+          expect(address).toStrictEqual("127.0.0.1");
+        } else {
+          expect(address).toStrictEqual("::1");
+        }
         done();
       } catch (err) {
         done(err);

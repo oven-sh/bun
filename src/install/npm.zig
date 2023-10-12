@@ -810,7 +810,14 @@ pub const PackageManifest = struct {
 
         if (this.findByDistTag("latest")) |result| {
             if (group.satisfies(result.version)) {
-                return result;
+                if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
+                    if (left.version.order(result.version, this.string_buf, this.string_buf) == .eq) {
+                        // if prerelease, use latest if semver+tag match range exactly
+                        return result;
+                    }
+                } else {
+                    return result;
+                }
             }
         }
 

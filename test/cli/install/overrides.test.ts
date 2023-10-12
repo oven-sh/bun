@@ -162,4 +162,28 @@ test("changing overrides makes the lockfile changed, prevent frozen install", as
   installExpectFail(tmp, ["install", "--frozen-lockfile"]);
 });
 
-// frozen lockfile
+test("overrides reset when removed", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "bun-pm-test"));
+  writeFileSync(
+    join(tmp, "package.json"),
+    JSON.stringify({
+      overrides: {
+        bytes: "1.0.0",
+      },
+    }),
+  );
+  install(tmp, ["install", "express@4.18.2"]);
+  expect(versionOf(tmp, "node_modules/bytes/package.json")).toBe("1.0.0");
+
+  writeFileSync(
+    join(tmp, "package.json"),
+    JSON.stringify({
+      ...JSON.parse(readFileSync(join(tmp, "package.json")).toString()),
+      overrides: undefined,
+    }),
+  );
+  install(tmp, ["install"]);
+  expect(versionOf(tmp, "node_modules/bytes/package.json")).not.toBe("1.0.0");
+
+  ensureLockfileDoesntChangeOnBunI(tmp);
+});

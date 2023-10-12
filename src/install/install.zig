@@ -7885,6 +7885,25 @@ pub const PackageManager = struct {
                         manager.root_dependency_list = dep_lists[0];
                         try builder.allocate();
 
+                        var all_name_hashes = brk: {
+                            if (!manager.summary.overrides_changed) break :brk &.{};
+                            const hashes_len = manager.lockfile.overrides.map.entries.len + lockfile.overrides.map.entries.len;
+                            if (hashes_len == 0) break :brk &.{};
+                            var all_name_hashes = try bun.default_allocator.alloc(PackageNameHash, hashes_len);
+                            @memcpy(all_name_hashes[0..manager.lockfile.overrides.map.entries.len], manager.lockfile.overrides.map.keys());
+                            @memcpy(all_name_hashes[manager.lockfile.overrides.map.entries.len..], lockfile.overrides.map.keys());
+                            var i = manager.lockfile.overrides.map.entries.len;
+                            while (i < all_name_hashes.len) {
+                                if (std.mem.indexOfScalar(PackageNameHash, all_name_hashes[0..i], all_name_hashes[i]) != null) {
+                                    all_name_hashes[i] = all_name_hashes[all_name_hashes.len - 1];
+                                    all_name_hashes.len -= 1;
+                                } else {
+                                    i += 1;
+                                }
+                            }
+                            break :brk all_name_hashes;
+                        };
+
                         manager.lockfile.overrides = try lockfile.overrides.clone(&lockfile, manager.lockfile, builder);
 
                         try manager.lockfile.buffers.dependencies.ensureUnusedCapacity(manager.lockfile.allocator, len);
@@ -7910,9 +7929,8 @@ pub const PackageManager = struct {
                         }
 
                         if (manager.summary.overrides_changed) {
-                            const dependency_name_hashes_to_check = manager.lockfile.overrides.map.keys();
                             for (manager.lockfile.buffers.dependencies.items, 0..) |*dependency, dependency_i| {
-                                if (std.mem.indexOfScalar(PackageNameHash, dependency_name_hashes_to_check, dependency.name_hash)) |_| {
+                                if (std.mem.indexOfScalar(PackageNameHash, all_name_hashes, dependency.name_hash)) |_| {
                                     manager.lockfile.buffers.resolutions.items[dependency_i] = invalid_package_id;
                                     try manager.enqueueDependencyWithMain(
                                         @truncate(dependency_i),

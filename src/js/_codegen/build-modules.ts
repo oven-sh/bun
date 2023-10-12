@@ -381,7 +381,8 @@ static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(bundledOu
 // This is a generated enum for zig code (exports.zig)
 fs.writeFileSync(
   path.join(BASE, "out/ResolvedSourceTag.zig"),
-  `pub const ResolvedSourceTag = enum(u32) {
+  `// zig fmt: off
+pub const ResolvedSourceTag = enum(u32) {
     // Predefined
     javascript = 0,
     package_json_type_module = 1,

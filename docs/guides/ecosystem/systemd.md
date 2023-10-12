@@ -19,7 +19,7 @@ $ touch my-app.service
 
 ---
 
-Here is a typical service file that runs an application on system start. You can use this as a template for your own service.
+Here is a typical service file that runs an application on system start. You can use this as a template for your own service. Refer to the [systemd documentation](https://www.freedesktop.org/software/systemd/man/systemd.service.html) for more information on each setting.
 
 ```ini
 [Unit]
@@ -83,7 +83,7 @@ $ sudo systemctl status my-app
 
 ---
 
-To update the service, edit the contents of the service file then reload the daemon.
+To update the service, edit the contents of the service file, then reload the daemon.
 
 ```bash
 sudo systemctl daemon-reload
@@ -91,13 +91,13 @@ sudo systemctl daemon-reload
 
 ---
 
-Fore a complete guide on the service unit configuration, you can check [this page](https://www.freedesktop.org/software/systemd/man/systemd.service.html). Or refer to this cheatsheet of common commands:
+For a complete guide on the service unit configuration, you can check [this page](https://www.freedesktop.org/software/systemd/man/systemd.service.html). Or refer to this cheatsheet of common commands:
 
 ```bash
-sudo systemctl daemon-reload # Tells the systemd that some files got changed
-sudo systemctl enable my-app # Enables the app to auto start
-sudo systemctl disable my-app # Disable the app from auto starting
-sudo systemctl start my-app # It starts the app if is stopped (This doesn't affect enable/disable)
-sudo systemctl stop my-app # It stops the app (This doesn't affect enable/disable)
-sudo systemctl restart my-app # It restarts the app
+sudo systemctl daemon-reload # tell systemd that some files got changed
+sudo systemctl enable my-app # enable the app (to allow auto-start)
+sudo systemctl disable my-app # disable the app (turns off auto-start)
+sudo systemctl start my-app # start the app if is stopped
+sudo systemctl stop my-app # stop the app
+sudo systemctl restart my-app # restart the app
 ```

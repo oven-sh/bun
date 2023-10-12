@@ -55,7 +55,7 @@ WantedBy=multi-user.target
 If your application starts a webserver, note that non-`root` users are not able to listen on ports 80 or 443 by default. To permanently allow Bun to listen on these ports when executed by a non-`root` user, use the following command. This step isn't necessary when running as `root`.
 
 ```bash
-sudo setcap CAP_NET_BIND_SERVICE=+eip ~/.bun/bin/bun
+$ sudo setcap CAP_NET_BIND_SERVICE=+eip ~/.bun/bin/bun
 ```
 
 ---
@@ -63,7 +63,7 @@ sudo setcap CAP_NET_BIND_SERVICE=+eip ~/.bun/bin/bun
 With the service file configured, you can now _enable_ the service. Once enabled, it will start automatically on reboot. This requires `sudo` permissions.
 
 ```bash
-sudo systemctl enable my-app
+$ sudo systemctl enable my-app
 ```
 
 ---
@@ -96,7 +96,7 @@ $ sudo systemctl status my-app
 To update the service, edit the contents of the service file, then reload the daemon.
 
 ```bash
-sudo systemctl daemon-reload
+$ sudo systemctl daemon-reload
 ```
 
 ---
@@ -104,10 +104,10 @@ sudo systemctl daemon-reload
 For a complete guide on the service unit configuration, you can check [this page](https://www.freedesktop.org/software/systemd/man/systemd.service.html). Or refer to this cheatsheet of common commands:
 
 ```bash
-sudo systemctl daemon-reload # tell systemd that some files got changed
-sudo systemctl enable my-app # enable the app (to allow auto-start)
-sudo systemctl disable my-app # disable the app (turns off auto-start)
-sudo systemctl start my-app # start the app if is stopped
-sudo systemctl stop my-app # stop the app
-sudo systemctl restart my-app # restart the app
+$ sudo systemctl daemon-reload # tell systemd that some files got changed
+$ sudo systemctl enable my-app # enable the app (to allow auto-start)
+$ sudo systemctl disable my-app # disable the app (turns off auto-start)
+$ sudo systemctl start my-app # start the app if is stopped
+$ sudo systemctl stop my-app # stop the app
+$ sudo systemctl restart my-app # restart the app
 ```

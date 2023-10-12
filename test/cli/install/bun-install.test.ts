@@ -3484,7 +3484,11 @@ it("should handle GitHub tarball URL in dependencies (https://github.com/user/re
 
 it("should treat non-GitHub http(s) URLs as tarballs (https://some.url/path?stuff)", async () => {
   const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  setHandler(
+    dummyRegistry(urls, {
+      "4.3.0": { as: "4.3.0" },
+    }),
+  );
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -3514,11 +3518,11 @@ it("should treat non-GitHub http(s) URLs as tarballs (https://some.url/path?stuf
   expect(out.split(/\r?\n/)).toEqual([
     " + @vercel/turbopack-node@https://gitpkg-fork.vercel.sh/vercel/turbo/crates/turbopack-node/js?turbopack-230922.2",
     "",
-    " 1 package installed",
+    " 2 packages installed",
   ]);
   expect(await exited).toBe(0);
-  expect(urls.sort()).toBeEmpty();
-  expect(requested).toBe(0);
+  expect(urls.sort()).toHaveLength(2);
+  expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "@vercel", "loader-runner"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "@vercel"))).toEqual(["turbopack-node"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "@vercel", "turbopack-node"))).toEqual([
@@ -3526,8 +3530,6 @@ it("should treat non-GitHub http(s) URLs as tarballs (https://some.url/path?stuf
     "src",
     "tsconfig.json",
   ]);
-  const package_json = await file(join(package_dir, "node_modules", "when", "package.json")).json();
-  expect(package_json.name).toBe("when");
   await access(join(package_dir, "bun.lockb"));
 });
 

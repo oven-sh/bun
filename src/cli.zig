@@ -156,7 +156,7 @@ pub const Arguments = struct {
         clap.parseParam("--inspect-brk <STR>?              Activate Bun's debugger, set breakpoint on first line of code and wait") catch unreachable,
         clap.parseParam("--if-present                      Exit if the entrypoint does not exist") catch unreachable,
         clap.parseParam("--no-install                      Disable auto install in the Bun runtime") catch unreachable,
-        clap.parseParam("-i                                Automatically install dependencies and use global cache in Bun's runtime, equivalent to --install=fallback") catch unreachable,
+        clap.parseParam("-i                                    Automatically install dependencies and use global cache in Bun's runtime, equivalent to --install=fallback") catch unreachable,
         clap.parseParam("--install <STR>                   Install dependencies automatically when no node_modules are present, default: \"auto\". \"force\" to ignore node_modules, fallback to install any missing") catch unreachable,
         clap.parseParam("--prefer-offline                  Skip staleness checks for packages in the Bun runtime and resolve from disk") catch unreachable,
         clap.parseParam("--prefer-latest                   Use the latest matching versions of packages in the Bun runtime, always checking npm") catch unreachable,
@@ -887,7 +887,7 @@ pub const HelpCommand = struct {
         \\
         \\  <b><yellow>upgrade<r>                        Get the latest version of Bun
         \\  <b>bun --help<r>                     Show all supported flags and commands
-        \\  <b>bun [command] --help<r>                     Print helptext for a specific command
+        \\  <b>bun [command] --help<r>            Print helptext for a specific command
         \\
         \\  Learn more about Bun:          <magenta>https://bun.sh/docs<r>
         \\  Join our Discord community:    <blue>https://bun.sh/discord<r>
@@ -1091,6 +1091,10 @@ pub const Command = struct {
         // symlink is argv[0]
         if (strings.endsWithComptime(argv0, "bunx"))
             return .BunxCommand;
+
+        if (strings.endsWithComptime(std.mem.span(bun.argv()[0]), "node")) {
+            @import("./deps/zig-clap/clap/streaming.zig").warn_on_unrecognized_flag = false;
+        }
 
         if (comptime Environment.isDebug) {
             if (strings.endsWithComptime(argv0, "bunx-debug"))
@@ -1803,10 +1807,7 @@ pub const Command = struct {
                 },
                 Command.Tag.RunCommand => {
                     const intro_text =
-                        \\<b>Usage<r>:
-                        \\  Run a file or package.json script.
-                        \\  <b><green>bun run<r> <cyan>[flags]<r> \<file\>
-                        \\  <b><green>bun run<r> <cyan>[flags]<r> \<package.json script\>
+                        \\<b>Usage<r>: <b><green>bun run<r> <cyan>[flags]<r> \<file or script\>
                     ;
 
                     const outro_text =
@@ -1820,6 +1821,7 @@ pub const Command = struct {
                         \\  <b><green>bun run lint<r>
                         \\
                         \\Full documentation is available at <magenta>https://bun.sh/docs/cli/run<r>
+                        \\
                     ;
 
                     Output.pretty(intro_text ++ "\n\n", .{});
@@ -1853,18 +1855,18 @@ pub const Command = struct {
 
                 Command.Tag.BunxCommand => {
                     Output.prettyErrorln(
-                        \\usage<r><d>:<r> <cyan>bunx <r><d>[<r><blue>--bun<r><d>]<r><cyan> package<r><d>[@version] [...flags or arguments to pass through]<r>
-                        \\
+                        \\<b>Usage: bunx <r><cyan>[flags]<r> \<package\><d>[@version] [...flags and arguments]<r>
                         \\bunx runs an npm package executable, automatically installing into a global shared cache if not installed in node_modules.
                         \\
-                        \\example<d>:<r>
+                        \\Flags:
                         \\
-                        \\  <cyan>bunx bun-repl<r>
-                        \\  <cyan>bunx prettier foo.js<r>
+                        \\  <cyan>--bun<r> Force the command to run with Bun instead of Node.js
                         \\
-                        \\The <cyan>--bun<r> flag forces the package to run in Bun's JavaScript runtime, even when it tries to use Node.js.
+                        \\Examples<d>:<r>
                         \\
-                        \\  <cyan>bunx <r><blue>--bun<r><cyan> tsc --version<r>
+                        \\  <b>bunx prisma migrate<r>
+                        \\  <b>bunx prettier foo.js<r>
+                        \\  <b>bunx<r> <cyan>--bun<r> <b>vite dev foo.js<r>
                         \\
                     , .{});
                 },
@@ -1916,6 +1918,7 @@ pub const Command = struct {
                         \\  <b><green>bun test<r> <cyan>--test-name-pattern<r> baz<r>
                         \\
                         \\Full documentation is available at <magenta>https://bun.sh/docs/cli/test<r>
+                        \\
                     ;
                     Output.pretty("\n", .{});
                     Output.pretty(intro_text, .{});
@@ -1951,7 +1954,7 @@ pub const Command = struct {
                     ;
                     const outro_text =
                         \\<b>Examples:<r>
-                        \\  <d>Instal the latest stable version<r>
+                        \\  <d>Install the latest stable version<r>
                         \\  <b><green>bun upgrade<r>
                         \\
                         \\  <d>Install the most recent canary version of Bun<r>
@@ -1961,11 +1964,12 @@ pub const Command = struct {
                     ;
                     Output.pretty("\n", .{});
                     Output.pretty(intro_text, .{});
+                    Output.pretty("\n\n", {});
                     Output.flush();
-                    Output.pretty("\n\n<b>Flags:<r>", .{});
-                    Output.flush();
-                    clap.simpleHelp(&Arguments.test_only_params);
-                    Output.pretty("\n\n", .{});
+                    // Output.pretty("\n\n<b>Flags:<r>", .{});
+                    // Output.flush();
+                    // clap.simpleHelp(&Arguments.test_only_params);
+                    // Output.pretty("\n\n", .{});
                     Output.pretty(outro_text, .{});
                     Output.flush();
                 },
@@ -1973,6 +1977,7 @@ pub const Command = struct {
                     const intro_text =
                         \\<b>Usage<r>: <b><green>bun repl<r> <cyan>[flags]<r>
                         \\  Open a Bun REPL
+                        \\
                     ;
 
                     Output.pretty(intro_text, .{});

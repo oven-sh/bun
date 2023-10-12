@@ -441,9 +441,9 @@ pub fn helpEx(
 pub fn simplePrintParam(param: Param(Help)) !void {
     Output.pretty("\n", .{});
     if (param.names.short) |s| {
-        Output.pretty("<cyan>-{c}<r>", .{s});
+        Output.pretty("  <cyan>-{c}<r>", .{s});
     } else {
-        Output.pretty("  ", .{});
+        Output.pretty("    ", .{});
     }
     if (param.names.long) |l| {
         if (param.names.short) |_| {

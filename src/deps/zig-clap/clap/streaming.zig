@@ -11,6 +11,7 @@ const mem = std.mem;
 const os = std.os;
 const testing = std.testing;
 
+pub var warn_on_unrecognized_flag = true;
 /// The result returned from StreamingClap.next
 pub fn Arg(comptime Id: type) type {
     return struct {
@@ -99,14 +100,19 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
                     // unrecognized command
                     // if flag else arg
                     if (arg_info.kind == .long or arg_info.kind == .short) {
-                        Output.prettyWarnln("<r><yellow>warn<r><d>:<r> unrecognized flag: {s}{s}\n", .{ if (arg_info.kind == .long) "--" else "-", name });
-                        Output.flush();
+                        if (warn_on_unrecognized_flag) {
+                            Output.prettyWarnln("<r><yellow>warn<r><d>:<r> unrecognized flag: {s}{s}\n", .{ if (arg_info.kind == .long) "--" else "-", name });
+                            Output.flush();
+                        }
+
                         // continue parsing after unrecognized flag
                         return parser.next();
                     }
 
-                    Output.prettyWarnln("<r><yellow>warn<r><d>:<r> unrecognized argument: {s}\n", .{name});
-                    Output.flush();
+                    if (warn_on_unrecognized_flag) {
+                        Output.prettyWarnln("<r><yellow>warn<r><d>:<r> unrecognized argument: {s}\n", .{name});
+                        Output.flush();
+                    }
                     return null;
                 },
                 .short => return try parser.chainging(.{

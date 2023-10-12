@@ -1891,7 +1891,7 @@ pub const PackageIndex = struct {
 pub const OverrideMap = struct {
     const debug = Output.scoped(.OverrideMap, false);
 
-    map: std.ArrayHashMapUnmanaged(PackageNameHash, Dependency.Version, ArrayIdentityContext.U64, false) = .{},
+    map: std.ArrayHashMapUnmanaged(PackageNameHash, Dependency, ArrayIdentityContext.U64, false) = .{},
 
     /// In the future, this `get` function should handle multi-level resolutions. This is difficult right
     /// now because given a Dependency ID, there is no fast way to trace it to it's package.
@@ -1901,16 +1901,39 @@ pub const OverrideMap = struct {
     /// and "here is a list of overrides depending on the package that imported" similar to PackageIndex above.
     pub fn get(this: *const OverrideMap, name_hash: PackageNameHash) ?Dependency.Version {
         debug("looking up override for {x}", .{name_hash});
-        return this.map.get(name_hash);
+        return if (this.map.get(name_hash)) |dep|
+            dep.version
+        else
+            null;
     }
 
     pub fn deinit(this: *OverrideMap, allocator: Allocator) void {
         this.map.deinit(allocator);
     }
 
+    pub fn count(this: *OverrideMap, lockfile: *Lockfile, builder: *Lockfile.StringBuilder) void {
+        for (this.map.values()) |dep| {
+            dep.count(lockfile.buffers.string_bytes.items, @TypeOf(builder), builder);
+        }
+    }
+
+    pub fn clone(this: *OverrideMap, old_lockfile: *Lockfile, new_lockfile: *Lockfile, new_builder: *Lockfile.StringBuilder) !OverrideMap {
+        var new = OverrideMap{};
+        try new.map.ensureTotalCapacity(new_lockfile.allocator, this.map.entries.len);
+
+        for (this.map.keys(), this.map.values()) |k, v| {
+            new.map.putAssumeCapacity(
+                k,
+                try v.clone(old_lockfile.buffers.string_bytes.items, @TypeOf(new_builder), new_builder),
+            );
+        }
+
+        return new;
+    }
+
     // the rest of this struct is expression parsing code:
 
-    pub fn maybeCount(
+    pub fn parseCount(
         _: *OverrideMap,
         lockfile: *Lockfile,
         expr: Expr,
@@ -1949,7 +1972,7 @@ pub const OverrideMap = struct {
 
     /// Given a package json expression, detect and parse override configuration into the given override map.
     /// It is assumed the input map is uninitialized (zero entries)
-    pub fn maybeParse(
+    pub fn parseAppend(
         this: *OverrideMap,
         lockfile: *Lockfile,
         root_package: *Lockfile.Package,
@@ -2052,7 +2075,7 @@ pub const OverrideMap = struct {
             std.debug.print("resolutions {d}\n", .{this.map.entries.len});
             var iter = this.map.iterator();
             while (iter.next()) |entry| {
-                std.debug.print("  {d} -> {s}\n", .{ entry.key_ptr.*, entry.value_ptr.literal.fmt(builder.lockfile.buffers.string_bytes.items) });
+                std.debug.print("  {d} -> {s}\n", .{ entry.key_ptr.*, entry.value_ptr.version.literal.fmt(builder.lockfile.buffers.string_bytes.items) });
             }
         }
 
@@ -2119,7 +2142,7 @@ pub const OverrideMap = struct {
         key: []const u8,
         value: []const u8,
         builder: *Lockfile.StringBuilder,
-    ) !?Dependency.Version {
+    ) !?Dependency {
         if (value.len == 0) {
             try log.addWarningFmt(&source, loc, lockfile.allocator, "Missing " ++ field ++ " value", .{});
             return null;
@@ -2136,7 +2159,7 @@ pub const OverrideMap = struct {
             const pkg_deps: []const Dependency = root_package.dependencies.get(lockfile.buffers.dependencies.items);
             for (pkg_deps) |dep| {
                 if (dep.name.eql(ref_name_str, lockfile.buffers.string_bytes.items, ref_name)) {
-                    return dep.version;
+                    return dep;
                 }
             }
             try log.addWarningFmt(&source, loc, lockfile.allocator, "Could not resolve " ++ field ++ " \"{s}\" (you need \"{s}\" in your dependencies)", .{ value, ref_name });
@@ -2146,13 +2169,23 @@ pub const OverrideMap = struct {
         const literalString = builder.append(String, value);
         const literalSliced = literalString.sliced(lockfile.buffers.string_bytes.items);
 
-        return Dependency.parse(
-            lockfile.allocator,
-            builder.append(String, key),
-            literalSliced.slice,
-            &literalSliced,
-            log,
-        );
+        const name_hash = String.Builder.stringHash(key);
+        const name = builder.appendWithHash(String, key, name_hash);
+
+        return Dependency{
+            .name = name,
+            .name_hash = name_hash,
+            .version = Dependency.parse(
+                lockfile.allocator,
+                name,
+                literalSliced.slice,
+                &literalSliced,
+                log,
+            ) orelse {
+                try log.addWarningFmt(&source, loc, lockfile.allocator, "Invalid " ++ field ++ " value \"{s}\"", .{value});
+                return null;
+            },
+        };
     }
 };
 
@@ -2779,6 +2812,7 @@ pub const Package = extern struct {
             add: u32 = 0,
             remove: u32 = 0,
             update: u32 = 0,
+            overrides_changed: bool = false,
 
             pub inline fn sum(this: *Summary, that: Summary) void {
                 this.add += that.add;
@@ -2787,7 +2821,7 @@ pub const Package = extern struct {
             }
 
             pub inline fn hasDiffs(this: Summary) bool {
-                return this.add > 0 or this.remove > 0 or this.update > 0;
+                return this.add > 0 or this.remove > 0 or this.update > 0 or this.overrides_changed;
             }
         };
 
@@ -2808,22 +2842,21 @@ pub const Package = extern struct {
             var to_i: usize = 0;
             var skipped_workspaces: usize = 0;
 
-            // if (from_lockfile.overrides.map.count() != to_lockfile.overrides.map.count()) {
-            //     checker: {
-            //         to_lockfile.overrides.map.sort(sorter);
-            //         from_lockfile.overrides.map.sort(sorter);
-
-            //         if (bun.C.memcmp(std.mem.asBytes(from_lockfile.overrides.map.keys()).ptr, std.mem.asBytes(from_lockfile.overrides.map.keys()).ptr, std.mem.asBytes(from_lockfile.overrides.map.keys()).len) != 0) {
-            //             summary.update += 1;
-            //             break :checker;
-            //         }
-
-            //         for (from_lockfile.overrides.map.values(), to_lockfile.overrides.map.values()) |*from, *to| {
-            //             summary.update += @as(u32, @intFromBool(from.eql(to, from_lockfile.buffers.string_bytes.items, to_lockfile.buffers.string_bytes.items)));
-            //         }
-            //     }
-            // }
-            summary.update += 1;
+            if (from_lockfile.overrides.map.count() != to_lockfile.overrides.map.count()) {
+                summary.overrides_changed = true;
+            } else {
+                for (
+                    from_lockfile.overrides.map.keys(),
+                    from_lockfile.overrides.map.values(),
+                    to_lockfile.overrides.map.keys(),
+                    to_lockfile.overrides.map.values(),
+                ) |from_k, *from_override, to_k, *to_override| {
+                    if ((from_k != to_k) or (!from_override.eql(to_override, from_lockfile.buffers.string_bytes.items, to_lockfile.buffers.string_bytes.items))) {
+                        summary.overrides_changed = true;
+                        break;
+                    }
+                }
+            }
 
             for (from_deps, 0..) |*from_dep, i| {
                 found: {
@@ -3836,7 +3869,7 @@ pub const Package = extern struct {
         }
 
         if (comptime features.is_main) {
-            lockfile.overrides.maybeCount(lockfile, json, &string_builder);
+            lockfile.overrides.parseCount(lockfile, json, &string_builder);
         }
 
         try string_builder.allocate();
@@ -4062,7 +4095,7 @@ pub const Package = extern struct {
 
         // This function depends on package.dependencies being set, so it is done at the very end.
         if (comptime features.is_main) {
-            try lockfile.overrides.maybeParse(lockfile, package, log, source, json, &string_builder);
+            try lockfile.overrides.parseAppend(lockfile, package, log, source, json, &string_builder);
         }
 
         string_builder.clamp();
@@ -4571,6 +4604,7 @@ pub const Serializer = struct {
 
     const has_workspace_package_ids_tag: u64 = @bitCast([_]u8{ 'w', 'O', 'r', 'K', 's', 'P', 'a', 'C' });
     const has_trusted_dependencies_tag: u64 = @bitCast([_]u8{ 't', 'R', 'u', 'S', 't', 'E', 'D', 'd' });
+    const has_overrides_tag: u64 = @bitCast([_]u8{ 'o', 'V', 'e', 'R', 'r', 'i', 'D', 's' });
 
     pub fn save(this: *Lockfile, comptime StreamType: type, stream: StreamType) !void {
         var old_package_list = this.packages;
@@ -4642,6 +4676,34 @@ pub const Serializer = struct {
                 &writer,
                 []u32,
                 this.trusted_dependencies.keys(),
+            );
+        }
+
+        if (this.overrides.map.count() > 0) {
+            try writer.writeAll(std.mem.asBytes(&has_overrides_tag));
+
+            try Lockfile.Buffers.writeArray(
+                StreamType,
+                stream,
+                @TypeOf(&writer),
+                &writer,
+                []PackageNameHash,
+                this.overrides.map.keys(),
+            );
+            var external_overrides = try std.ArrayListUnmanaged(Dependency.External).initCapacity(z_allocator, this.overrides.map.count());
+            defer external_overrides.deinit(z_allocator);
+            external_overrides.items.len = this.overrides.map.count();
+            for (external_overrides.items, this.overrides.map.values()) |*dest, src| {
+                dest.* = src.toExternal();
+            }
+
+            try Lockfile.Buffers.writeArray(
+                StreamType,
+                stream,
+                @TypeOf(&writer),
+                &writer,
+                []Dependency.External,
+                external_overrides.items,
             );
         }
 
@@ -4774,6 +4836,42 @@ pub const Serializer = struct {
                     lockfile.trusted_dependencies.entries.len = trusted_dependencies_hashes.items.len;
                     @memcpy(lockfile.trusted_dependencies.keys(), trusted_dependencies_hashes.items);
                     try lockfile.trusted_dependencies.reIndex(allocator);
+                } else {
+                    stream.pos -= 8;
+                }
+            }
+        }
+
+        {
+            const remaining_in_buffer = total_buffer_size -| stream.pos;
+
+            if (remaining_in_buffer > 8 and total_buffer_size <= stream.buffer.len) {
+                const next_num = try reader.readIntLittle(u64);
+                if (next_num == has_overrides_tag) {
+                    var overrides_name_hashes = try Lockfile.Buffers.readArray(
+                        stream,
+                        allocator,
+                        std.ArrayListUnmanaged(PackageNameHash),
+                    );
+                    defer overrides_name_hashes.deinit(allocator);
+
+                    var map = lockfile.overrides.map;
+                    defer lockfile.overrides.map = map;
+
+                    try map.ensureTotalCapacity(allocator, overrides_name_hashes.items.len);
+                    var override_versions_external = try Lockfile.Buffers.readArray(
+                        stream,
+                        allocator,
+                        std.ArrayListUnmanaged(Dependency.External),
+                    );
+                    const context: Dependency.Context = .{
+                        .allocator = allocator,
+                        .log = log,
+                        .buffer = lockfile.buffers.string_bytes.items,
+                    };
+                    for (overrides_name_hashes.items, override_versions_external.items) |name, value| {
+                        map.putAssumeCapacity(name, Dependency.toDependency(value, context));
+                    }
                 } else {
                     stream.pos -= 8;
                 }

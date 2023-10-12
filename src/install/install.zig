@@ -7870,6 +7870,8 @@ pub const PackageManager = struct {
                             new_dep.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
                         }
 
+                        lockfile.overrides.count(&lockfile, builder);
+
                         maybe_root.scripts.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
 
                         const off = @as(u32, @truncate(manager.lockfile.buffers.dependencies.items.len));
@@ -7882,6 +7884,8 @@ pub const PackageManager = struct {
                         resolution_lists[0] = .{ .off = off, .len = len };
                         manager.root_dependency_list = dep_lists[0];
                         try builder.allocate();
+
+                        manager.lockfile.overrides = try lockfile.overrides.clone(&lockfile, manager.lockfile, builder);
 
                         try manager.lockfile.buffers.dependencies.ensureUnusedCapacity(manager.lockfile.allocator, len);
                         try manager.lockfile.buffers.resolutions.ensureUnusedCapacity(manager.lockfile.allocator, len);
@@ -7902,6 +7906,21 @@ pub const PackageManager = struct {
                             dependencies[i] = try new_dep.clone(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
                             if (mapping[i] != invalid_package_id) {
                                 resolutions[i] = old_resolutions[mapping[i]];
+                            }
+                        }
+
+                        if (manager.summary.overrides_changed) {
+                            const dependency_name_hashes_to_check = manager.lockfile.overrides.map.keys();
+                            for (manager.lockfile.buffers.dependencies.items, 0..) |*dependency, dependency_i| {
+                                if (std.mem.indexOfScalar(PackageNameHash, dependency_name_hashes_to_check, dependency.name_hash)) |_| {
+                                    manager.lockfile.buffers.resolutions.items[dependency_i] = invalid_package_id;
+                                    try manager.enqueueDependencyWithMain(
+                                        @truncate(dependency_i),
+                                        dependency,
+                                        manager.lockfile.buffers.resolutions.items[dependency_i],
+                                        false,
+                                    );
+                                }
                             }
                         }
 

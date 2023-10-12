@@ -506,7 +506,13 @@ JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGl
     auto& globalObject = *reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto& vm = globalObject.vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto path = JSC::JSValue::encode(callFrame->argument(0));
+    auto path = JSC::JSValue::encode(callFrame->uncheckedArgument(0));
+    // i dont know a runtime way to check this, help
+    #ifdef _WIN32
+    path = Bun__Path__resolve(lexicalGlobalObject, true, reinterpret_cast<JSC__JSValue*>(&path), 1);
+    #else
+    path = Bun__Path__resolve(lexicalGlobalObject, false, reinterpret_cast<JSC__JSValue*>(&path), 1);
+    #endif
 
     JSC::JSString* pathString = JSC::JSValue::decode(path).toString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));

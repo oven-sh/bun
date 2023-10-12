@@ -89,7 +89,7 @@ f you've installed Bun but are seeing a `command not found` error, you may have 
 
 ```sh
 $ echo $SHELL
-/bin/zsh # or /bin/bash or /bin/fish
+/bin/bash # or /bin/zsh or /bin/fish
 ```
 
 Then add these lines to the appropriate file, save it, and open a new shell.
@@ -103,7 +103,7 @@ export PATH="$BUN_INSTALL/bin:$PATH"
 ```
 
 ```bash#zsh
-# ~/.bashrc
+# ~/.zshrc
 export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
 ```

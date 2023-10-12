@@ -228,6 +228,14 @@ pub const Body = struct {
             return this.size_hint;
         }
 
+        pub fn clone(this: *PendingValue) PendingValue {
+            return PendingValue{
+                .global = this.global,
+                .task = this.task,
+                .size_hint = this.size_hint,
+            };
+        }
+
         pub fn toAnyBlob(this: *PendingValue) ?AnyBlob {
             if (this.promise != null)
                 return null;
@@ -986,6 +994,10 @@ pub const Body = struct {
             // if (this.* == .InlineBlob) {
             //     return this.*;
             // }
+
+            if (this.* == .Locked) {
+                return Value{ .Locked = this.Locked.clone() };
+            }
 
             if (this.* == .Blob) {
                 return Value{ .Blob = this.Blob.dupe() };

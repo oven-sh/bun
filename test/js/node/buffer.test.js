@@ -2596,3 +2596,9 @@ it("new Buffer.from()", () => {
   const buf = new Buffer.from("🥶");
   expect(buf.length).toBe(4);
 });
+
+it("value >= 0x80", () => {
+  const buf = Buffer.alloc(1);
+  buf.write("\x80", 0, "binary");
+  expect(buf[0]).toBe(0x80);
+});

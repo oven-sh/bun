@@ -67,6 +67,7 @@ pub const Subprocess = struct {
     ipc_socket: IPC.Socket = undefined,
     ipc_callback: JSC.Strong = .{},
     ipc_buffer: bun.ByteList,
+    ipc_outgoing_buffer: bun.ByteList,
 
     has_pending_unref: bool = false,
     pub const SignalCode = bun.SignalCode;

@@ -2806,6 +2806,7 @@ pub const VirtualMachine = struct {
         socket: IPC.Socket,
         uws_context: *uws.SocketContext,
         ipc_buffer: bun.ByteList,
+        ipc_outgoing_buffer: bun.ByteList,
 
         pub fn handleIPCMessage(
             this: *IPCInstance,

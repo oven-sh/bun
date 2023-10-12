@@ -35,6 +35,24 @@ pub const IPCMessageType = enum(u8) {
     _,
 };
 
+/// This is used for Bun.spawn() IPC because otherwise we would have to copy the data once to get it to zig, then write it.
+/// Returns `true` on success, `false` on failure + throws a JS error.
+extern fn Bun__serializeJSValueForSubprocess(global: *JSC.JSGlobalObject, value: JSValue) SerializedValueSlice;
+
+const SerializedValueSlice = extern struct {
+    bytes: *u8,
+    size: isize,
+    handle: *anyopaque,
+};
+
+pub fn serializeJSValueForSubprocess(globalThis: *JSGlobalObject, ipc_outgoing_buffer: *bun.ByteList, value: JSValue) void {
+    comptime std.debug.assert(@TypeOf(context) == .Pointer);
+
+    const serialized = Bun__serializeJSValueForSubprocess(global, value);
+
+    _ = serialized;
+}
+
 /// Given potentially unfinished buffer `data`, attempt to decode and process a message from it.
 /// Returns `NotEnoughBytes` if there werent enough bytes
 /// Returns `InvalidFormat` if the message was invalid, probably close the socket in this case
@@ -95,6 +113,7 @@ pub const Socket = uws.NewSocketHandler(false);
 /// struct {
 ///     globalThis: ?*JSGlobalObject,
 ///     ipc_buffer: bun.ByteList,
+///     ipc_outgoing_buffer: bun.ByteList,
 ///
 ///     fn handleIPCMessage(*Context, DecodedIPCMessage) void
 ///     fn handleIPCClose(*Context, Socket) void
@@ -114,6 +133,7 @@ pub fn NewIPCHandler(comptime Context: type) type {
             _ = socket.write(data, false);
             socket.flush();
         }
+
         pub fn onClose(
             this: *Context,
             socket: Socket,
@@ -124,7 +144,7 @@ pub fn NewIPCHandler(comptime Context: type) type {
             log("onClose\n", .{});
             this.handleIPCClose(socket);
         }
-        // extern fn getpid() i32;
+
         pub fn onData(
             this: *Context,
             socket: Socket,
@@ -216,24 +236,21 @@ pub fn NewIPCHandler(comptime Context: type) type {
             _: *Context,
             _: Socket,
         ) void {}
+
         pub fn onTimeout(
             _: *Context,
             _: Socket,
         ) void {}
+
         pub fn onConnectError(
             _: *Context,
             _: Socket,
             _: c_int,
         ) void {}
+
         pub fn onEnd(
             _: *Context,
             _: Socket,
         ) void {}
     };
 }
-
-/// This is used for Bun.spawn() IPC because otherwise we would have to copy the data once to get it to zig, then write it.
-/// Returns `true` on success, `false` on failure + throws a JS error.
-extern fn Bun__serializeJSValueForSubprocess(global: *JSC.JSGlobalObject, value: JSValue, fd: bun.FileDescriptor) bool;
-
-pub const serializeJSValueForSubprocess = Bun__serializeJSValueForSubprocess;

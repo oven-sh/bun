@@ -236,6 +236,8 @@ pub const BunxCommand = struct {
 
         const initial_bin_name = if (strings.eqlComptime(update_request.name, "typescript"))
             "tsc"
+        else if (update_request.version.tag == .github)
+            update_request.version.value.github.repo.slice(update_request.version_buf)
         else if (strings.lastIndexOfChar(update_request.name, '/')) |index|
             update_request.name[index + 1 ..]
         else
@@ -262,19 +264,19 @@ pub const BunxCommand = struct {
         else
             update_request.version.literal.slice(update_request.version_buf);
 
-        const package_fmt: []const u8 = brk: {
-            if (!strings.eql(update_request.version_buf, update_request.name)) {
-                break :brk try std.fmt.allocPrint(
-                    ctx.allocator,
-                    "{s}@{s}",
-                    .{
-                        update_request.name,
-                        display_version,
-                    },
-                );
+        const package_fmt = brk: {
+            if (update_request.version.tag == .github) {
+                break :brk try ctx.allocator.dupe(u8, update_request.version.literal.slice(update_request.version_buf));
             }
 
-            break :brk update_request.name;
+            break :brk try std.fmt.allocPrint(
+                ctx.allocator,
+                "{s}@{s}",
+                .{
+                    update_request.name,
+                    display_version,
+                },
+            );
         };
 
         const PATH_FOR_BIN_DIRS = PATH;

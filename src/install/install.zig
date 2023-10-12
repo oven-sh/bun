@@ -5161,8 +5161,6 @@ pub const PackageManager = struct {
                                 if (query.expr.asProperty(
                                     if (request.is_aliased)
                                         request.name
-                                    else if (request.version.tag == .github)
-                                        request.version.value.github.repo.slice(request.version_buf)
                                     else
                                         request.version.literal.slice(request.version_buf),
                                 )) |value| {
@@ -5246,8 +5244,6 @@ pub const PackageManager = struct {
                                 JSAst.E.String{
                                     .data = try allocator.dupe(u8, if (request.is_aliased)
                                         request.name
-                                    else if (request.resolved_name.isEmpty() and request.version.tag == .github)
-                                        request.version.value.github.repo.slice(request.version_buf)
                                     else if (request.resolved_name.isEmpty())
                                         request.version.literal.slice(request.version_buf)
                                     else
@@ -6359,7 +6355,6 @@ pub const PackageManager = struct {
                     request.name = allocator.dupe(u8, name) catch unreachable;
                     request.name_hash = String.Builder.stringHash(name);
                 } else if (version.tag == .github and version.value.github.committish.isEmpty()) {
-                    request.name = allocator.dupe(u8, version.value.github.repo.slice(input)) catch unreachable;
                     request.name_hash = String.Builder.stringHash(version.literal.slice(input));
                 } else {
                     request.name_hash = String.Builder.stringHash(version.literal.slice(input));

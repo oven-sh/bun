@@ -64,8 +64,8 @@ pub const Response = struct {
 
     allocator: std.mem.Allocator,
     body: Body,
-    original_request: ?*Response = null,
-    body_clones: ?ArrayList(*Body) = null,
+    original_response: ?*Response = null,
+    response_clones: ?ArrayList(*Response) = null,
     url: bun.String = bun.String.empty,
     status_text: bun.String = bun.String.empty,
     redirected: bool = false,
@@ -268,18 +268,19 @@ pub const Response = struct {
             .url = this.url.clone(),
             .status_text = this.status_text.clone(),
             .redirected = this.redirected,
-            .original_request = this.original_request orelse this,
+            .original_response = this.original_response orelse this,
         };
         if (this.body.value == .Locked) {
-            if (this.original_request == null and this.body_clones == null)
-                this.body_clones = ArrayList(*Body).init(default_allocator);
+            if (this.original_response == null and this.response_clones == null)
+                this.response_clones = ArrayList(*Response).init(default_allocator);
 
-            var clones = if (this.original_request) |req|
-                &req.body_clones
+            var clones = if (this.original_response) |req|
+                &req.response_clones
             else
-                &this.body_clones;
-            if (clones.* != null)
-                clones.*.?.append(&new_response.body) catch unreachable;
+                &this.response_clones;
+            if (clones.* != null) {
+                clones.*.?.append(new_response) catch unreachable;
+            }
         }
     }
 
@@ -300,13 +301,29 @@ pub const Response = struct {
     pub fn finalize(
         this: *Response,
     ) callconv(.C) void {
+        if (this.original_response) |req| {
+            var clones = &req.response_clones;
+            if (clones.* != null) {
+                for (clones.*.?.items, 0..) |other, i| {
+                    if (other == this) {
+                        _ = clones.*.?.orderedRemove(i);
+                        break;
+                    }
+                }
+            }
+        }
+
         this.body.deinit(this.allocator);
 
         var allocator = this.allocator;
 
         this.status_text.deref();
         this.url.deref();
-        if (this.body_clones) |clones| {
+        if (this.response_clones) |clones| {
+            for (clones.items) |other| {
+                if (other.original_response == this)
+                    other.original_response = null;
+            }
             clones.deinit();
         }
 
@@ -880,7 +897,8 @@ pub const Fetch = struct {
                                         bun.default_allocator,
                                     );
                                 }
-                                for (response.body_clones.?.items) |other_body| {
+                                for (response.response_clones.?.items) |other_request| {
+                                    var other_body = &other_request.body;
                                     if (other_body.value == .Locked) {
                                         if (other_body.value.Locked.readable) |other_readable| {
                                             other_readable.ptr.Bytes.size_hint = this.getSizeHint();
@@ -911,7 +929,8 @@ pub const Fetch = struct {
                         } else {
                             const size_hint = this.getSizeHint();
                             response.body.value.Locked.size_hint = size_hint;
-                            for (response.body_clones.?.items) |other_body| {
+                            for (response.response_clones.?.items) |other_request| {
+                                var other_body = &other_request.body;
                                 if (other_body.value == .Locked)
                                     other_body.value.Locked.size_hint = size_hint;
                             }
@@ -921,7 +940,7 @@ pub const Fetch = struct {
                             var scheduled_response_buffer = this.scheduled_response_buffer.list;
                             this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
                             var list = scheduled_response_buffer.toManaged(bun.default_allocator);
-                            const has_copies = response.body_clones.?.items.len > 0;
+                            const has_copies = response.response_clones.?.items.len > 0;
                             if (has_copies) {
                                 defer list.deinit();
                             }
@@ -936,7 +955,8 @@ pub const Fetch = struct {
                             if (old == .Locked) {
                                 old.resolve(&response.body.value, this.global_this);
                             }
-                            for (response.body_clones.?.items) |other_body| {
+                            for (response.response_clones.?.items) |other_response| {
+                                var other_body = &other_response.body;
                                 var other_old = other_body.value;
                                 if (other_old == .Locked) {
                                     var new_body_value = Body.Value{

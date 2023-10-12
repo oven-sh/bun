@@ -909,10 +909,11 @@ pub const Fetch = struct {
                                 return;
                             }
                         } else {
-                            response.body.value.Locked.size_hint = this.getSizeHint();
+                            const size_hint = this.getSizeHint();
+                            response.body.value.Locked.size_hint = size_hint;
                             for (response.body_clones.?.items) |other_body| {
                                 if (other_body.value == .Locked)
-                                    other_body.value.Locked.size_hint = this.getSizeHint();
+                                    other_body.value.Locked.size_hint = size_hint;
                             }
                         }
                         // we will reach here when not streaming
@@ -920,29 +921,31 @@ pub const Fetch = struct {
                             var scheduled_response_buffer = this.scheduled_response_buffer.list;
                             this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
                             var list = scheduled_response_buffer.toManaged(bun.default_allocator);
-                            defer list.deinit();
+                            const has_copies = response.body_clones.?.items.len > 0;
+                            if (has_copies) {
+                                defer list.deinit();
+                            }
                             // done resolve body
                             var old = body.value;
                             var body_value = Body.Value{
                                 .InternalBlob = .{
-                                    .bytes = list.clone() catch unreachable,
+                                    .bytes = if (has_copies) (list.clone() catch unreachable) else list,
                                 },
                             };
                             response.body.value = body_value;
                             if (old == .Locked) {
-                                log("resolving locked old", .{});
                                 old.resolve(&response.body.value, this.global_this);
-                                for (response.body_clones.?.items) |other_body| {
-                                    var other_old = other_body.value;
+                            }
+                            for (response.body_clones.?.items) |other_body| {
+                                var other_old = other_body.value;
+                                if (other_old == .Locked) {
                                     var new_body_value = Body.Value{
                                         .InternalBlob = .{
                                             .bytes = list.clone() catch unreachable,
                                         },
                                     };
                                     other_body.value = new_body_value;
-                                    if (other_old == .Locked) {
-                                        other_old.resolve(&other_body.value, this.global_this);
-                                    }
+                                    other_old.resolve(&other_body.value, this.global_this);
                                 }
                             }
                             this.scheduled_response_buffer = .{

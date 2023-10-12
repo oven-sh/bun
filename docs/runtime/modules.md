@@ -33,15 +33,20 @@ Hello world!
 
 In this case, we are importing from `./hello`, a relative path with no extension. **Extensioned imports are optional but supported.** To resolve this import, Bun will check for the following files in order:
 
-- `./hello.ts`
 - `./hello.tsx`
-- `./hello.js`
+- `./hello.jsx`
+- `./hello.ts`
 - `./hello.mjs`
+- `./hello.js`
 - `./hello.cjs`
+- `./hello.json`
+- `./hello/index.tsx`
+- `./hello/index.jsx`
 - `./hello/index.ts`
-- `./hello/index.js`
-- `./hello/index.json`
 - `./hello/index.mjs`
+- `./hello/index.js`
+- `./hello/index.cjs`
+- `./hello/index.json`
 
 Import paths are case-insensitive, meaning these are all valid imports:
 

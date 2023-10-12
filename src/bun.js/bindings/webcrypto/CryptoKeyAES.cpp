@@ -25,7 +25,7 @@
 
 #include "config.h"
 #include "CryptoKeyAES.h"
-
+#include "../wtf-bindings.h"
 #if ENABLE(WEB_CRYPTO)
 
 #include "CryptoAesKeyAlgorithm.h"
@@ -107,7 +107,7 @@ JsonWebKey CryptoKeyAES::exportJwk() const
 {
     JsonWebKey result;
     result.kty = "oct"_s;
-    result.k = base64URLEncodeToString(m_key);
+    result.k = Bun::base64URLEncodeToString(m_key);
     result.key_ops = usages();
     result.ext = extractable();
     return result;

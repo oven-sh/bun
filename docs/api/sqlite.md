@@ -99,6 +99,20 @@ const query = db.prepare("SELECT * FROM foo WHERE bar = ?");
 
 {% /callout %}
 
+## WAL mode
+
+SQLite supports [write-ahead log mode](https://www.sqlite.org/wal.html) (WAL) which dramatically improves performance, especially in situations with many concurrent writes. It's broadly recommended to enable WAL mode for most typical applications.
+
+To enable WAL mode, run this pragma query at the beginning of your application:
+
+```ts
+db.exec("PRAGMA journal_mode = WAL;");
+```
+
+{% details summary="What is WAL mode" %}
+In WAL mode, writes to the database are written directly to a separate file called the "WAL file" (write-ahead log). This file will be later integrated into the main database file. Think of it as a buffer for pending writes. Refer to the [SQLite docs](https://www.sqlite.org/wal.html) for a more detailed overview.
+{% /details %}
+
 ## Statements
 
 A `Statement` is a _prepared query_, which means it's been parsed and compiled into an efficient binary form. It can be executed multiple times in a performant way.

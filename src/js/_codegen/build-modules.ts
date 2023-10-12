@@ -29,7 +29,13 @@ const internalRegistry = new Map();
 
 // Build Registry
 for (let i = 0; i < moduleList.length; i++) {
-  const prefix = moduleList[i].startsWith("node/") ? "node:" : moduleList[i].startsWith("bun:") ? "bun/" : undefined;
+  const prefix = moduleList[i].startsWith("node/")
+    ? "node:"
+    : moduleList[i].startsWith("bun:")
+    ? "bun/"
+    : moduleList[i].startsWith("internal/")
+    ? "internal/"
+    : undefined;
   if (prefix) {
     const id = prefix + moduleList[i].slice(prefix.length).replaceAll(".", "/").slice(0, -3);
     internalRegistry.set(id, i);
@@ -91,7 +97,7 @@ globalThis.requireTransformer = (specifier: string, from: string) => {
     return codegenRequireId(`${found}/*${path.relative(BASE, relativeMatch)}*/`);
   }
 
-  throw new Error(`Builtin Bundler: Could not resolve "${specifier}" in ${from}. These cannot be relative.`);
+  throw new Error(`Builtin Bundler: Could not resolve "${specifier}" in ${from}.`);
 };
 
 // Preprocess builtins
@@ -375,7 +381,8 @@ static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(bundledOu
 // This is a generated enum for zig code (exports.zig)
 fs.writeFileSync(
   path.join(BASE, "out/ResolvedSourceTag.zig"),
-  `pub const ResolvedSourceTag = enum(u32) {
+  `// zig fmt: off
+pub const ResolvedSourceTag = enum(u32) {
     // Predefined
     javascript = 0,
     package_json_type_module = 1,

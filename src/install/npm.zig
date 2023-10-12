@@ -327,12 +327,18 @@ pub const OperatingSystem = enum(u16) {
             return (@intFromEnum(this) & linux) != 0;
         } else if (comptime Environment.isMac) {
             return (@intFromEnum(this) & darwin) != 0;
+        } else if (comptime Environment.isWindows) {
+            return (@intFromEnum(this) & win32) != 0;
         } else {
             return false;
         }
     }
 
-    const NameMap = ComptimeStringMap(u16, .{
+    pub inline fn has(this: OperatingSystem, other: u16) bool {
+        return (@intFromEnum(this) & other) != 0;
+    }
+
+    pub const NameMap = ComptimeStringMap(u16, .{
         .{ "aix", aix },
         .{ "darwin", darwin },
         .{ "freebsd", freebsd },
@@ -383,7 +389,7 @@ pub const Architecture = enum(u16) {
 
     pub const all_value: u16 = arm | arm64 | ia32 | mips | mipsel | ppc | ppc64 | s390 | s390x | x32 | x64;
 
-    const NameMap = ComptimeStringMap(u16, .{
+    pub const NameMap = ComptimeStringMap(u16, .{
         .{ "arm", arm },
         .{ "arm64", arm64 },
         .{ "ia32", ia32 },
@@ -396,6 +402,10 @@ pub const Architecture = enum(u16) {
         .{ "x32", x32 },
         .{ "x64", x64 },
     });
+
+    pub inline fn has(this: Architecture, other: u16) bool {
+        return (@intFromEnum(this) & other) != 0;
+    }
 
     pub fn isMatch(this: Architecture) bool {
         if (comptime Environment.isAarch64) {
@@ -798,7 +808,32 @@ pub const PackageManifest = struct {
             return this.findByVersion(left.version);
         }
 
-        const releases = this.pkg.releases.keys.get(this.versions);
+        if (this.findByDistTag("latest")) |result| {
+            if (group.satisfies(result.version)) {
+                if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
+                    if (left.version.order(result.version, this.string_buf, this.string_buf) == .eq) {
+                        // if prerelease, use latest if semver+tag match range exactly
+                        return result;
+                    }
+                } else {
+                    return result;
+                }
+            }
+        }
+
+        {
+            const releases = this.pkg.releases.keys.get(this.versions);
+            var i = releases.len;
+            // For now, this is the dumb way
+            while (i > 0) : (i -= 1) {
+                const version = releases[i - 1];
+                const packages = this.pkg.releases.values.get(this.package_versions);
+
+                if (group.satisfies(version)) {
+                    return .{ .version = version, .package = &packages[i - 1] };
+                }
+            }
+        }
 
         if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
             const prereleases = this.pkg.prereleases.keys.get(this.versions);
@@ -806,21 +841,6 @@ pub const PackageManifest = struct {
             while (i > 0) : (i -= 1) {
                 const version = prereleases[i - 1];
                 const packages = this.pkg.prereleases.values.get(this.package_versions);
-
-                if (group.satisfies(version)) {
-                    return .{ .version = version, .package = &packages[i - 1] };
-                }
-            }
-        } else if (this.findByDistTag("latest")) |result| {
-            if (group.satisfies(result.version)) return result;
-        }
-
-        {
-            var i = releases.len;
-            // // For now, this is the dumb way
-            while (i > 0) : (i -= 1) {
-                const version = releases[i - 1];
-                const packages = this.pkg.releases.values.get(this.package_versions);
 
                 if (group.satisfies(version)) {
                     return .{ .version = version, .package = &packages[i - 1] };
@@ -861,7 +881,7 @@ pub const PackageManifest = struct {
             }
         }
 
-        var result = PackageManifest{};
+        var result: PackageManifest = bun.serializable(PackageManifest{});
 
         var string_pool = String.Builder.StringPool.init(default_allocator);
         defer string_pool.deinit();
@@ -1094,6 +1114,9 @@ pub const PackageManifest = struct {
                 var dependency_values = version_extern_strings;
                 var dependency_names = all_dependency_names_and_values;
                 var prev_extern_bin_group = extern_strings_bin_entries;
+                const empty_version = bun.serializable(PackageVersion{
+                    .bin = Bin.init(),
+                });
 
                 for (versions) |prop| {
                     const version_name = prop.key.?.asString(allocator) orelse continue;
@@ -1113,7 +1136,7 @@ pub const PackageManifest = struct {
                     }
                     if (!parsed_version.valid) continue;
 
-                    var package_version = PackageVersion{};
+                    var package_version: PackageVersion = empty_version;
 
                     if (prop.value.?.asProperty("cpu")) |cpu| {
                         package_version.cpu = Architecture.all;

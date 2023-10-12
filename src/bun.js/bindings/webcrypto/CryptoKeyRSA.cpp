@@ -28,6 +28,7 @@
 
 #include "CryptoKeyRSAComponents.h"
 #include "JsonWebKey.h"
+#include "../wtf-bindings.h"
 #include <wtf/text/Base64.h>
 
 #if ENABLE(WEB_CRYPTO)
@@ -143,30 +144,30 @@ JsonWebKey CryptoKeyRSA::exportJwk() const
         return result;
 
     // public key
-    result.n = base64URLEncodeToString(rsaComponents->modulus());
-    result.e = base64URLEncodeToString(rsaComponents->exponent());
+    result.n = Bun::base64URLEncodeToString(rsaComponents->modulus());
+    result.e = Bun::base64URLEncodeToString(rsaComponents->exponent());
     if (rsaComponents->type() == CryptoKeyRSAComponents::Type::Public)
         return result;
 
     // private key
-    result.d = base64URLEncodeToString(rsaComponents->privateExponent());
+    result.d = Bun::base64URLEncodeToString(rsaComponents->privateExponent());
     if (!rsaComponents->hasAdditionalPrivateKeyParameters())
         return result;
 
-    result.p = base64URLEncodeToString(rsaComponents->firstPrimeInfo().primeFactor);
-    result.q = base64URLEncodeToString(rsaComponents->secondPrimeInfo().primeFactor);
-    result.dp = base64URLEncodeToString(rsaComponents->firstPrimeInfo().factorCRTExponent);
-    result.dq = base64URLEncodeToString(rsaComponents->secondPrimeInfo().factorCRTExponent);
-    result.qi = base64URLEncodeToString(rsaComponents->secondPrimeInfo().factorCRTCoefficient);
+    result.p = Bun::base64URLEncodeToString(rsaComponents->firstPrimeInfo().primeFactor);
+    result.q = Bun::base64URLEncodeToString(rsaComponents->secondPrimeInfo().primeFactor);
+    result.dp = Bun::base64URLEncodeToString(rsaComponents->firstPrimeInfo().factorCRTExponent);
+    result.dq = Bun::base64URLEncodeToString(rsaComponents->secondPrimeInfo().factorCRTExponent);
+    result.qi = Bun::base64URLEncodeToString(rsaComponents->secondPrimeInfo().factorCRTCoefficient);
     if (rsaComponents->otherPrimeInfos().isEmpty())
         return result;
 
     Vector<RsaOtherPrimesInfo> oth;
     for (const auto& info : rsaComponents->otherPrimeInfos()) {
         RsaOtherPrimesInfo otherInfo;
-        otherInfo.r = base64URLEncodeToString(info.primeFactor);
-        otherInfo.d = base64URLEncodeToString(info.factorCRTExponent);
-        otherInfo.t = base64URLEncodeToString(info.factorCRTCoefficient);
+        otherInfo.r = Bun::base64URLEncodeToString(info.primeFactor);
+        otherInfo.d = Bun::base64URLEncodeToString(info.factorCRTExponent);
+        otherInfo.t = Bun::base64URLEncodeToString(info.factorCRTCoefficient);
         oth.append(WTFMove(otherInfo));
     }
     result.oth = WTFMove(oth);

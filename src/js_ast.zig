@@ -5994,6 +5994,7 @@ pub const Ast = struct {
     /// This is a list of named exports that may exist in a CommonJS module
     /// We use this with `commonjs_at_runtime` to re-export CommonJS
     commonjs_export_names: []string = &([_]string{}),
+    import_meta_ref: Ref = Ref.None,
 
     pub const CommonJSNamedExport = struct {
         loc_ref: LocRef,

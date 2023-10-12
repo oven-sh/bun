@@ -535,7 +535,7 @@ pub const GarbageCollectionController = struct {
 
     pub fn processGCTimer(this: *GarbageCollectionController) void {
         if (this.disabled) return;
-        var vm = this.bunVM().global.vm();
+        var vm = this.bunVM().jsc;
         this.processGCTimerWithHeapSize(vm, vm.blockBytesAllocated());
     }
 
@@ -576,7 +576,7 @@ pub const GarbageCollectionController = struct {
 
     pub fn performGC(this: *GarbageCollectionController) void {
         if (this.disabled) return;
-        var vm = this.bunVM().global.vm();
+        var vm = this.bunVM().jsc;
         vm.collectAsync();
         this.gc_last_heap_size = vm.blockBytesAllocated();
     }
@@ -616,7 +616,7 @@ pub const EventLoop = struct {
 
     pub fn tickWhilePaused(this: *EventLoop, done: *bool) void {
         while (!done.*) {
-            this.virtual_machine.event_loop_handle.?.tick();
+            this.virtual_machine.event_loop_handle.?.tick(this.virtual_machine.jsc);
         }
     }
     extern fn JSC__JSGlobalObject__drainMicrotasks(*JSC.JSGlobalObject) void;
@@ -982,8 +982,9 @@ pub const EventLoop = struct {
         }
 
         if (loop.num_polls > 0 or loop.active > 0) {
-            loop.tick();
             this.processGCTimer();
+            loop.tick(ctx.jsc);
+
             ctx.onAfterEventLoop();
             // this.afterUSocketsTick();
         }
@@ -1006,8 +1007,8 @@ pub const EventLoop = struct {
         }
 
         if (loop.num_polls > 0 or loop.active > 0) {
-            loop.tickWithTimeout(timeoutMs);
             this.processGCTimer();
+            loop.tickWithTimeout(timeoutMs, ctx.jsc);
             ctx.onAfterEventLoop();
             // this.afterUSocketsTick();
         }
@@ -1031,8 +1032,8 @@ pub const EventLoop = struct {
             }
         }
 
-        loop.tick();
         this.processGCTimer();
+        loop.tick(ctx.jsc);
         ctx.onAfterEventLoop();
         this.tickConcurrent();
         this.tick();
@@ -1054,8 +1055,8 @@ pub const EventLoop = struct {
         }
 
         if (loop.active > 0) {
-            loop.tick();
             this.processGCTimer();
+            loop.tick(ctx.jsc);
             ctx.onAfterEventLoop();
             // this.afterUSocketsTick();
         }
@@ -1072,7 +1073,7 @@ pub const EventLoop = struct {
         this.processGCTimer();
 
         var global = ctx.global;
-        var global_vm = global.vm();
+        var global_vm = ctx.jsc;
         while (true) {
             while (this.tickWithCount() > 0) : (this.global.handleRejectedPromises()) {
                 this.tickConcurrent();
@@ -1093,12 +1094,12 @@ pub const EventLoop = struct {
     }
 
     pub fn waitForPromise(this: *EventLoop, promise: JSC.AnyPromise) void {
-        switch (promise.status(this.global.vm())) {
+        switch (promise.status(this.virtual_machine.jsc)) {
             JSC.JSPromise.Status.Pending => {
-                while (promise.status(this.global.vm()) == .Pending) {
+                while (promise.status(this.virtual_machine.jsc) == .Pending) {
                     this.tick();
 
-                    if (promise.status(this.global.vm()) == .Pending) {
+                    if (promise.status(this.virtual_machine.jsc) == .Pending) {
                         this.autoTick();
                     }
                 }
@@ -1110,16 +1111,16 @@ pub const EventLoop = struct {
     // TODO: this implementation is terrible
     // we should not be checking the millitimestamp every time
     pub fn waitForPromiseWithTimeout(this: *EventLoop, promise: JSC.AnyPromise, timeout: u32) bool {
-        return switch (promise.status(this.global.vm())) {
+        return switch (promise.status(this.virtual_machine.jsc)) {
             JSC.JSPromise.Status.Pending => {
                 if (timeout == 0) {
                     return false;
                 }
                 var start_time = std.time.milliTimestamp();
-                while (promise.status(this.global.vm()) == .Pending) {
+                while (promise.status(this.virtual_machine.jsc) == .Pending) {
                     this.tick();
 
-                    if (promise.status(this.global.vm()) == .Pending) {
+                    if (promise.status(this.virtual_machine.jsc) == .Pending) {
                         const remaining = std.time.milliTimestamp() - start_time;
                         if (remaining >= timeout) {
                             return false;
@@ -1147,7 +1148,7 @@ pub const EventLoop = struct {
 
     pub fn callTask(timer: *uws.Timer) callconv(.C) void {
         var task = Task.from(timer.as(*anyopaque));
-        timer.deinit();
+        defer timer.deinit(true);
 
         JSC.VirtualMachine.get().enqueueTask(task);
     }
@@ -1159,7 +1160,7 @@ pub const EventLoop = struct {
             this.virtual_machine.event_loop_handle = actual;
             this.virtual_machine.gc_controller.init(this.virtual_machine);
             // _ = actual.addPostHandler(*JSC.EventLoop, this, JSC.EventLoop.afterUSocketsTick);
-            // _ = actual.addPreHandler(*JSC.VM, this.virtual_machine.global.vm(), JSC.VM.drainMicrotasks);
+            // _ = actual.addPreHandler(*JSC.VM, this.virtual_machine.jsc, JSC.VM.drainMicrotasks);
         }
     }
 
@@ -1238,7 +1239,7 @@ pub const MiniEventLoop = struct {
         while (!isDone(context)) {
             if (this.tickConcurrentWithCount() == 0 and this.tasks.count == 0) {
                 this.loop.num_polls += 1;
-                this.loop.tick();
+                this.loop.tick(null);
                 this.loop.num_polls -= 1;
             }
 
@@ -1329,7 +1330,7 @@ pub const AnyEventLoop = union(enum) {
                 // var concurrent = bun.default_allocator.create(ConcurrentTask) catch unreachable;
                 // _ = concurrent.from(JSC.Task.init(&@field(ctx, field)));
                 // concurrent.auto_delete = true;
-                // this.jsc.enqueueTaskConcurrent(concurrent);
+                // this.virtual_machine.jsc.enqueueTaskConcurrent(concurrent);
             },
             .mini => {
                 this.mini.enqueueTaskConcurrent(Context, ParentContext, ctx, Callback, field);

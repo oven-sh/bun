@@ -141,14 +141,27 @@ export function applyReplacements(src: string, length: number) {
       ];
     } else if (name === "assert") {
       const checkSlice = sliceSourceCode(rest, true, undefined, true);
+      let rest2 = checkSlice.rest;
+      let extraArgs = "";
+      if (checkSlice.result.at(-1) === ",") {
+        const sliced = sliceSourceCode("(" + rest2.slice(1), true, undefined, false);
+        extraArgs = ", " + sliced.result.slice(1, -1);
+        rest2 = sliced.rest;
+      }
       return [
         slice.slice(0, match.index) +
           "(IS_BUN_DEVELOPMENT?$assert(" +
           checkSlice.result.slice(1, -1) +
           "," +
-          JSON.stringify(checkSlice.result.slice(1, -1).replace(/__intrinsic__/g, "$")) +
+          JSON.stringify(
+            checkSlice.result
+              .slice(1, -1)
+              .replace(/__intrinsic__/g, "$")
+              .trim(),
+          ) +
+          extraArgs +
           "):void 0)",
-        checkSlice.rest,
+        rest2,
         true,
       ];
     }

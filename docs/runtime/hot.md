@@ -67,7 +67,7 @@ $ bun --watch test
 
 Use `bun --hot` to enable hot reloading when executing code with Bun. This is distinct from `--watch` mode in that Bun does not hard-restart the entire process. Instead, it detects code changes and updates its internal module cache with the new code.
 
-**Note** — This is not the same as hot reloading in the browser! Many frameworks provide a "hot reloading" experience, where you can edit & save your frontend code (say, a React component) and see the changes reflected in the browser without refreshing the page. Bun's `--hot` is the server-side equivalent of this experience. To get hot reloading in the browser, use a framework like [Vite](https://vite.dev).
+**Note** — This is not the same as hot reloading in the browser! Many frameworks provide a "hot reloading" experience, where you can edit & save your frontend code (say, a React component) and see the changes reflected in the browser without refreshing the page. Bun's `--hot` is the server-side equivalent of this experience. To get hot reloading in the browser, use a framework like [Vite](https://vitejs.dev).
 
 ```bash
 $ bun --hot server.ts

@@ -183,6 +183,60 @@ const proc = Bun.spawn(["echo", "hello"]);
 proc.unref();
 ```
 
+## Inter-process communication (IPC)
+
+Bun supports direct inter-process communication channel between two `bun` processes. To receive messages from a spawned Bun subprocess, specify an `ipc` handler.
+{%callout%}
+**Note** — This API is only compatible with other `bun` processes. Use `process.execPath` to get a path to the currently running `bun` executable.
+{%/callout%}
+
+```ts#parent.ts
+const child = Bun.spawn(["bun", "child.ts"], {
+  ipc(message) {
+    /**
+     * The message received from the sub process
+     **/
+  },
+});
+```
+
+The parent process can send messages to the subprocess using the `.send()` method on the returned `Subprocess` instance. A reference to the sending subprocess is also available as the second argument in the `ipc` handler.
+
+```ts#parent.ts
+const childProc = Bun.spawn(["bun", "child.ts"], {
+  ipc(message, childProc) {
+    /**
+     * The message received from the sub process
+     **/
+    childProc.send("Respond to child")
+  },
+});
+
+childProc.send("I am your father"); // The parent can send messages to the child as well
+```
+
+Meanwhile the child process can send messages to its parent using with `process.send()` and receive messages with `process.on("message")`. This is the same API used for `child_process.fork()` in Node.js.
+
+```ts#child.ts
+process.send("Hello from child as string");
+process.send({ message: "Hello from child as object" });
+
+process.on("message", (message) => {
+  // print message from parent
+  console.log(message);
+});
+```
+
+All messages are serialized using the JSC `serialize` API, which allows for the same set of [transferrable types](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Transferable_objects) supported by `postMessage` and `structuredClone`, including strings, typed arrays, streams, and objects.
+
+```ts#child.ts
+// send a string
+process.send("Hello from child as string");
+
+// send an object
+process.send({ message: "Hello from child as object" });
+```
+
 ## Blocking API (`Bun.spawnSync()`)
 
 Bun provides a synchronous equivalent of `Bun.spawn` called `Bun.spawnSync`. This is a blocking API that supports the same inputs and parameters as `Bun.spawn`. It returns a `SyncSubprocess` object, which differs from `Subprocess` in a few ways.

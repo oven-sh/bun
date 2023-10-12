@@ -1,6 +1,7 @@
 {
   "name": "bun-types",
   "repository": "https://github.com/oven-sh/bun",
+  "license": "MIT",
   "devDependencies": {
     "conditional-type-checks": "^1.0.6",
     "prettier": "^2.4.1",

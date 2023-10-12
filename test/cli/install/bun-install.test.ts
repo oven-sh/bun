@@ -1503,6 +1503,97 @@ it("should handle ^0.0.2 in dependencies", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
+it("should edit package json correctly with git dependencies", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  const package_json = JSON.stringify({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: {},
+  });
+  await writeFile(join(package_dir, "package.json"), package_json);
+  var { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "i", "dylan-conway/install-test"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  var err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  expect(await exited).toBe(0);
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: {
+      "install-test": "dylan-conway/install-test",
+    },
+  });
+  await writeFile(join(package_dir, "package.json"), package_json);
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "i", "dylan-conway/install-test#HEAD"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  }));
+  err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  expect(await exited).toBe(0);
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: {
+      "install-test": "dylan-conway/install-test#HEAD",
+    },
+  });
+  await writeFile(join(package_dir, "package.json"), package_json);
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "i", "github:dylan-conway/install-test"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  }));
+  err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  expect(await exited).toBe(0);
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: {
+      "install-test": "github:dylan-conway/install-test",
+    },
+  });
+  await writeFile(join(package_dir, "package.json"), package_json);
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "i", "github:dylan-conway/install-test#HEAD"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  }));
+  err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  expect(await exited).toBe(0);
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: {
+      "install-test": "github:dylan-conway/install-test#HEAD",
+    },
+  });
+  await access(join(package_dir, "bun.lockb"));
+});
+
 it("should handle ^0.0.2-rc in dependencies", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls, { "0.0.2-rc": { as: "0.0.2" } }));

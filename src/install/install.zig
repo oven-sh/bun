@@ -6370,7 +6370,6 @@ pub const PackageManager = struct {
                     request.name = allocator.dupe(u8, name) catch unreachable;
                     request.name_hash = String.Builder.stringHash(name);
                 } else if (version.tag == .github and version.value.github.committish.isEmpty()) {
-                    request.name = input;
                     request.name_hash = String.Builder.stringHash(version.literal.slice(input));
                 } else {
                     request.name_hash = String.Builder.stringHash(version.literal.slice(input));

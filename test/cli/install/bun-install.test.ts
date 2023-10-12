@@ -1966,6 +1966,34 @@ it("should install latest with prereleases", async () => {
   out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\n/)).toEqual([" + baz@1.0.0-8", "", " 1 package installed"]);
   expect(await exited).toBe(0);
+
+  await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+  await rm(join(package_dir, "bun.lockb"), { recursive: true, force: true });
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        baz: "^1.0.0-0",
+      },
+    }),
+  );
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  }));
+  expect(stderr).toBeDefined();
+  err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\n/)).toEqual([" + baz@1.0.0-0", "", " 1 package installed"]);
+  expect(await exited).toBe(0);
   await access(join(package_dir, "bun.lockb"));
 });
 

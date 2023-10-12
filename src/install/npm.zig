@@ -808,10 +808,15 @@ pub const PackageManifest = struct {
             return this.findByVersion(left.version);
         }
 
-        if (!group.flags.isSet(Semver.Query.Group.Flags.pre)) {
-            if (this.findByDistTag("latest")) |latest| {
-                if (group.satisfies(latest.version)) {
-                    return latest;
+        if (this.findByDistTag("latest")) |result| {
+            if (group.satisfies(result.version)) {
+                if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
+                    if (left.version.order(result.version, this.string_buf, this.string_buf) == .eq) {
+                        // if prerelease, use latest if semver+tag match range exactly
+                        return result;
+                    }
+                } else {
+                    return result;
                 }
             }
         }

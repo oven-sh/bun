@@ -734,6 +734,13 @@ pub fn cleanWithLogger(
 
     old.scratch.dependency_list_queue.head = 0;
 
+    {
+        var builder = new.stringBuilder();
+        old.overrides.count(old, &builder);
+        try builder.allocate();
+        new.overrides = try old.overrides.clone(old, new, &builder);
+    }
+
     // Step 1. Recreate the lockfile with only the packages that are still alive
     const root = old.rootPackage() orelse return error.NoPackage;
 
@@ -846,6 +853,7 @@ pub fn cleanWithLogger(
     }
     new.trusted_dependencies = old_trusted_dependencies;
     new.scripts = old_scripts;
+
     return new;
 }
 

@@ -2079,14 +2079,6 @@ pub const OverrideMap = struct {
         expr: Expr,
         builder: *Lockfile.StringBuilder,
     ) !void {
-        defer {
-            std.debug.print("resolutions {d}\n", .{this.map.entries.len});
-            var iter = this.map.iterator();
-            while (iter.next()) |entry| {
-                std.debug.print("  {d} -> {s}\n", .{ entry.key_ptr.*, entry.value_ptr.version.literal.fmt(builder.lockfile.buffers.string_bytes.items) });
-            }
-        }
-
         if (expr.data != .e_object) {
             try log.addWarningFmt(&source, expr.loc, lockfile.allocator, "\"resolutions\" must be an object with string values", .{});
             return;
@@ -2110,15 +2102,15 @@ pub const OverrideMap = struct {
             // - "foo/bar":
             // - "@namespace/hello/world"
             if (k[0] == '@') {
-                const first_slash = std.mem.indexOfScalar(u8, k, '/') orelse {
+                const first_slash = strings.indexOfChar(k, '/') orelse {
                     try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Invalid package name \"{s}\"", .{k});
                     continue;
                 };
-                if (std.mem.indexOfScalar(u8, k[first_slash + 1 ..], '/') != null) {
+                if (strings.indexOfChar(k[first_slash + 1 ..], '/') != null) {
                     try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Bun currently does not support nested \"resolutions\"", .{});
                     continue;
                 }
-            } else if (std.mem.indexOfScalar(u8, k, '/') != null) {
+            } else if (strings.indexOfChar(k, '/') != null) {
                 try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Bun currently does not support nested \"resolutions\"", .{});
                 continue;
             }

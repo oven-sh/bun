@@ -187,3 +187,5 @@ test("overrides reset when removed", async () => {
 
   ensureLockfileDoesntChangeOnBunI(tmp);
 });
+
+// hi

@@ -1873,6 +1873,102 @@ it("should prefer latest-tagged dependency", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
+it("should install latest with prereleases", async () => {
+  const urls: string[] = [];
+  setHandler(
+    dummyRegistry(urls, {
+      "1.0.0-0": { as: "0.0.3" },
+      "1.0.0-8": { as: "0.0.5" },
+      latest: "1.0.0-0",
+    }),
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+
+  var { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "baz"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  var err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  var out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\n/)).toEqual([
+    "",
+    " installed baz@1.0.0-0",
+    "",
+    "",
+    " 1 package installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(requested).toBe(2);
+  await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+  await rm(join(package_dir, "bun.lockb"), { recursive: true, force: true });
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        baz: "latest",
+      },
+    }),
+  );
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  }));
+  expect(stderr).toBeDefined();
+  err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\n/)).toEqual([" + baz@1.0.0-0", "", " 1 package installed"]);
+  expect(await exited).toBe(0);
+  await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+  await rm(join(package_dir, "bun.lockb"), { recursive: true, force: true });
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        baz: "^1.0.0-5",
+      },
+    }),
+  );
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  }));
+  expect(stderr).toBeDefined();
+  err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\n/)).toEqual([" + baz@1.0.0-8", "", " 1 package installed"]);
+  expect(await exited).toBe(0);
+  await access(join(package_dir, "bun.lockb"));
+});
+
 it("should handle dependency aliasing", async () => {
   const urls: string[] = [];
   setHandler(

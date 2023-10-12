@@ -996,11 +996,9 @@ describe("node https server", async () => {
   });
 });
 
-describe("server.address should be valid IP, issue#5850", () => {
+describe("server.address should be valid IP", () => {
   it("should return null before listening", done => {
-    const server = createServer((req, res) => {
-      res.end();
-    });
+    const server = createServer((req, res) => {});
     try {
       expect(server.address()).toBeNull();
       done();
@@ -1008,13 +1006,25 @@ describe("server.address should be valid IP, issue#5850", () => {
       done(err);
     }
   });
-  it("test default hostname", done => {
-    const server = createServer((req, res) => {
-      res.end();
-    });
+  it("should return null after close", done => {
+    const server = createServer((req, res) => {});
     server.listen(0, async (_err, host, port) => {
       try {
-        const { address, family } = server.address();
+        expect(server.address()).not.toBeNull();
+        server.close();
+        expect(server.address()).toBeNull();
+        done();
+      } catch (err) {
+        done(err);
+      }
+    });
+  });
+  it("test default hostname, issue#5850", done => {
+    const server = createServer((req, res) => {});
+    server.listen(0, async (_err, host, port) => {
+      try {
+        const { address, family, port } = server.address();
+        expect(port).toBeInteger();
         expect(["::", "0.0.0.0"]).toContain(address);
         if (address === "0.0.0.0") {
           expect(family).toStrictEqual("IPv4");
@@ -1030,9 +1040,7 @@ describe("server.address should be valid IP, issue#5850", () => {
     });
   });
   it.each([["localhost"], ["127.0.0.1"]])("test %s", (hostname, done) => {
-    const server = createServer((req, res) => {
-      res.end();
-    });
+    const server = createServer((req, res) => {});
     server.listen(0, hostname, async (_err, host, port) => {
       try {
         const { address, family } = server.address();
@@ -1048,9 +1056,7 @@ describe("server.address should be valid IP, issue#5850", () => {
   });
   it("test unix socket, issue#6413", done => {
     const socketPath = `${tmpdir()}/bun-server-${Math.random().toString(32)}.sock`;
-    const server = createServer((req, res) => {
-      res.end();
-    });
+    const server = createServer((req, res) => {});
     server.listen(socketPath, async (_err, host, port) => {
       try {
         expect(server.address()).toStrictEqual(socketPath);

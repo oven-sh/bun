@@ -510,10 +510,8 @@ public:
     template<typename Visitor> void visitAdditionalChildren(Visitor&);
     DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
-    mutable JSC::WriteBarrier<JSC::Unknown> m_address;
     mutable JSC::WriteBarrier<JSC::Unknown> m_hostname;
     mutable JSC::WriteBarrier<JSC::Unknown> m_id;
-    mutable JSC::WriteBarrier<JSC::Unknown> m_unix;
 };
 
 class JSDebugHTTPServer final : public JSC::JSDestructibleObject {
@@ -569,10 +567,8 @@ public:
     template<typename Visitor> void visitAdditionalChildren(Visitor&);
     DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
-    mutable JSC::WriteBarrier<JSC::Unknown> m_address;
     mutable JSC::WriteBarrier<JSC::Unknown> m_hostname;
     mutable JSC::WriteBarrier<JSC::Unknown> m_id;
-    mutable JSC::WriteBarrier<JSC::Unknown> m_unix;
 };
 
 class JSDirent final : public JSC::JSDestructibleObject {
@@ -1476,10 +1472,8 @@ public:
     template<typename Visitor> void visitAdditionalChildren(Visitor&);
     DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
-    mutable JSC::WriteBarrier<JSC::Unknown> m_address;
     mutable JSC::WriteBarrier<JSC::Unknown> m_hostname;
     mutable JSC::WriteBarrier<JSC::Unknown> m_id;
-    mutable JSC::WriteBarrier<JSC::Unknown> m_unix;
 };
 
 class JSHTTPServer final : public JSC::JSDestructibleObject {
@@ -1535,10 +1529,8 @@ public:
     template<typename Visitor> void visitAdditionalChildren(Visitor&);
     DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
-    mutable JSC::WriteBarrier<JSC::Unknown> m_address;
     mutable JSC::WriteBarrier<JSC::Unknown> m_hostname;
     mutable JSC::WriteBarrier<JSC::Unknown> m_id;
-    mutable JSC::WriteBarrier<JSC::Unknown> m_unix;
 };
 
 class JSListener final : public JSC::JSDestructibleObject {

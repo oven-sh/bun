@@ -1,0 +1,21 @@
+tasks:
+  - name: bun gitpod env
+    init:  chmod +x ./tools/update-tools.sh && ./tools/update-tools.sh
+    command:
+      export PATH=./tools/zig:$PATH
+      && echo "{\"zig_exe_path\":\"$(pwd)/tools/zig/zig\"}" > ~/.config/zls.json
+      && echo
+      && echo workspace start - zig build run
+      && wget https://apt.llvm.org/llvm.sh
+      && chmod +x llvm.sh
+      && sudo ./llvm.sh 16
+      &&  sudo ln -sf $(which clang-16) /usr/bin/clang
+      &&  clang --version
+      &&  npm install -g bun 
+      &&  sudo ln -sf $(which llvm-config-16) /usr/bin/llvm-config
+      &&  llvm-config --version
+      &&  sudo apt install cargo ccache cmake git golang libtool ninja-build pkg-config rustc esbuild
+      &&  bun -version
+      &&  zig version
+      &&  sudo apt-get update && sudo apt-get upgrade
+      &&  make setup

@@ -19,9 +19,11 @@ $ touch my-app.service
 
 ---
 
-Here is a typical service file that runs an application on system start. You can use this as a template for your own service. Refer to the [systemd documentation](https://www.freedesktop.org/software/systemd/man/systemd.service.html) for more information on each setting.
+Here is a typical service file that runs an application on system start. You can use this as a template for your own service. Replace `YOUR_USER` with the name of the user you want to run the application as. To run as `root`, replace `YOUR_USER` with `root`, though this is generally not recommended for security reasons.
 
-```ini
+Refer to the [systemd documentation](https://www.freedesktop.org/software/systemd/man/systemd.service.html) for more information on each setting.
+
+```ini#my-app.service
 [Unit]
 # describe the app
 Description=My App
@@ -46,6 +48,14 @@ Restart=always
 [Install]
 # start the app automatically
 WantedBy=multi-user.target
+```
+
+---
+
+If your application starts a webserver, note that non-`root` users are not able to listen on ports 80 or 443 by default. To permanently allow Bun to listen on these ports when executed by a non-`root` user, use the following command. This step isn't necessary when running as `root`.
+
+```bash
+sudo setcap CAP_NET_BIND_SERVICE=+eip ~/.bun/bin/bun
 ```
 
 ---
@@ -78,7 +88,7 @@ $ sudo systemctl status my-app
      Memory: 40.9M
         CPU: 1.093s
      CGroup: /system.slice/my-app.service
-             └─309641 /home/YOUR_USER/.bun/bin/bun run /home/YOUR_USER/application/dist/index.js
+             └─309641 /home/YOUR_USER/.bun/bin/bun run /home/YOUR_USER/application/index.ts
 ```
 
 ---

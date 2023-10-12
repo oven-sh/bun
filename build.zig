@@ -1,3 +1,5 @@
+const required_zig_version = "0.12.0-dev.888+130227491";
+
 const std = @import("std");
 const pathRel = std.fs.path.relative;
 const Wyhash = @import("./src/wyhash.zig").Wyhash;
@@ -145,7 +147,6 @@ pub fn build(b: *Build) !void {
     };
 }
 
-const required_zig_version = "0.12.0-dev.881+42998e637";
 pub fn build_(b: *Build) !void {
     if (!std.mem.eql(u8, @import("builtin").zig_version_string, required_zig_version)) {
         const colors = std.io.getStdErr().supportsAnsiEscapeCodes();

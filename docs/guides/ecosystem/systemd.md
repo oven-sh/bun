@@ -10,7 +10,7 @@ Other parts include a logging daemon, utilities to control basic system configur
 
 ---
 
-### The service file
+### The service unit configuration
 
 ---
 
@@ -26,7 +26,7 @@ The service file contains:
   - **Type** -> In most cases you will use the `simple` type, but if you need a special case, you can find the rest of the types [here](https://www.freedesktop.org/software/systemd/man/systemd.service.html#Type=)
   - **User** ->
 
-    - Which user to use when starting the application, if you are using the ports 80 or 443, a normal user might not have permission to use those ports
+    - Which user to use when starting the application, if you are using the ports **80** or **443**, a normal user might not have permission to use those ports
     - Use the `root` user at your own risk, as it might expose a security risk
     - In order to use those ports with your non-root user, you need to run this as sudo, With this you can grant permanent access to a specific binary to bind to low-numbered ports
 
@@ -113,5 +113,7 @@ sudo systemctl restart my-app # It restarts the app
 ```
 
 ---
+
+Fore a complete guide on the service unit configuration, you can check [this page](https://www.freedesktop.org/software/systemd/man/systemd.service.html)
 
 #### Now your application is now running as a daemon with systemd using Bun as the interpreter 🥳

@@ -96,13 +96,13 @@ Then add these lines to the appropriate file, save it, and open a new shell.
 
 {% codetabs %}
 
-```bash#bash
-# ~/.bashrc
+```bash#zsh
+# ~/.zshrc
 export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
 ```
 
-```bash#zsh
+```bash#bash
 # ~/.bashrc
 export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"

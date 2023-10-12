@@ -116,6 +116,23 @@ export PATH="$BUN_INSTALL/bin:$PATH"
 
 {% /codetabs %}
 
+You can also execute the following commands to add the installation directory to your `PATH` with automatic detection of the shell you're using:
+
+```sh
+$ SHELL_NAME=$(basename "$SHELL")
+$ CONFIG_FILE=""
+$ 
+$ case "$SHELL_NAME" in
+$     bash) CONFIG_FILE=~/.bashrc ;;
+$     zsh) CONFIG_FILE=~/.zshrc ;;
+$     fish) CONFIG_FILE=~/.config/fish/config.fish ;;
+$ esac
+$ 
+$ echo 'export BUN_INSTALL="$HOME/.bun"' >> "$CONFIG_FILE"
+$ echo 'export PATH="$BUN_INSTALL/bin:$PATH"' >> "$CONFIG_FILE"
+$ source "$CONFIG_FILE"
+```
+
 ## Upgrading
 
 Once installed, the binary can upgrade itself.

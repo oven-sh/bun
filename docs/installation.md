@@ -85,36 +85,42 @@ $ bun --revision
 1.x.y+b7982ac1318937560f38e0f8eb18f45eaa43480f
 ```
 
-f you've installed Bun but are seeing a `command not found` error, you may have to manually add the installation directory to your `PATH`. First, determine what shell you're using:
+If you've installed Bun but are seeing a `command not found` error, you may have to manually add the installation directory (`~/.bun/bin`) to your `PATH`.
+
+{% details summary="How to add to your `PATH`" %}
+First, determine what shell you're using:
 
 ```sh
 $ echo $SHELL
 /bin/zsh # or /bin/bash or /bin/fish
 ```
 
-Then add these lines to the appropriate file, save it, and open a new shell.
+Then add these lines below to bottom of your shell's configuration file.
 
 {% codetabs %}
 
-```bash#zsh
-# ~/.zshrc
+```bash#~/.zshrc
+# add to ~/.zshrc
 export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
 ```
 
-```bash#bash
-# ~/.bashrc
+```bash#~/.bashrc
+# add to ~/.bashrc
 export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
 ```
 
-```sh#fish
-# ~/.config/fish/config.fish
+```sh#~/.config/fish/config.fish
+# add to ~/.config/fish/config.fish
 export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
 ```
 
 {% /codetabs %}
+Save the file. You'll need to open a new shell/terminal window for the changes to take effect.
+
+{% /details %}
 
 ## Upgrading
 

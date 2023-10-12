@@ -2,6 +2,7 @@ import { ArrayBufferSink, readableStreamToText, spawn, spawnSync, write } from "
 import { describe, expect, it } from "bun:test";
 import { gcTick as _gcTick, bunExe } from "harness";
 import { rmSync, writeFileSync } from "node:fs";
+import path from "path";
 
 for (let [gcTick, label] of [
   [_gcTick, "gcTick"],
@@ -442,36 +443,36 @@ for (let [gcTick, label] of [
       });
 
       describe("ipc", () => {
-        it("the subprocess should be defined and the child should send", (done) => {
+        it("the subprocess should be defined and the child should send", done => {
           gcTick();
-          spawn([bunExe(), "bun-ipc-child.js"], {
+          spawn([bunExe(), path.join(__dirname, "bun-ipc-child.js")], {
             ipc: (message, subProcess) => {
               expect(subProcess).not.toBe(undefined);
               expect(message).toBe("hello");
               subProcess.kill();
               done();
               gcTick();
-            }
+            },
           });
         });
 
-        it("the subprocess should receive the parent message and respond back", (done) => {
+        it("the subprocess should receive the parent message and respond back", done => {
           gcTick();
 
           const parentMessage = "I am your father";
-          const childProc = spawn([bunExe(), "bun-ipc-child-respond.js"], {
+          const childProc = spawn([bunExe(), path.join(__dirname, "bun-ipc-child-respond.js")], {
             ipc: (message, subProcess) => {
               expect(message).toBe(`pong:${parentMessage}`);
               subProcess.kill();
               done();
               gcTick();
-            }
+            },
           });
 
           childProc.send(parentMessage);
           gcTick();
         });
-      })
+      });
     });
   });
 }

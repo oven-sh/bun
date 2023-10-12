@@ -18,7 +18,7 @@ describe("fileURLToPath", () => {
     expect(() => fileURLToPath(new URL("http:///path/to/file.js"))).toThrow();
   });
 
-  it("should add absolute part to relative file", () => {
+  it("should add absolute part to relative file (#6456)", () => {
     const url = pathToFileURL("foo.txt");
     expect(url.href).toBe(`file://${process.cwd()}/foo.txt`);
   })

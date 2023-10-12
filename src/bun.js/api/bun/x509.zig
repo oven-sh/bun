@@ -273,7 +273,10 @@ fn x509PrintGeneralName(out: *BoringSSL.BIO, name: *BoringSSL.GENERAL_NAME) bool
         // instead always print its numeric representation.
         var oline: [256]u8 = undefined;
         _ = BoringSSL.OBJ_obj2txt(&oline, @sizeOf(@TypeOf(oline)), name.d.rid, 1);
-        _ = BoringSSL.BIO_printf(out, "Registered ID:%s", &oline);
+        // TODO: https://github.com/ziglang/zig/issues/17494
+        //       https://github.com/ziglang/zig/issues/16197
+        var WORKAROUND: []u8 = &oline;
+        _ = BoringSSL.BIO_printf(out, "Registered ID:%s", WORKAROUND.ptr);
     } else if (name.name_type == .GEN_X400) {
         _ = BoringSSL.BIO_printf(out, "X400Name:<unsupported>");
     } else if (name.name_type == .GEN_EDIPARTY) {
@@ -301,7 +304,10 @@ fn x509InfoAccessPrint(out: *BoringSSL.BIO, ext: *BoringSSL.X509_EXTENSION) bool
                 }
                 var tmp: [80]u8 = undefined;
                 _ = BoringSSL.i2t_ASN1_OBJECT(&tmp, @sizeOf(@TypeOf(tmp)), desc.method);
-                _ = BoringSSL.BIO_printf(out, "%s - ", &tmp);
+                // TODO: https://github.com/ziglang/zig/issues/17494
+                //       https://github.com/ziglang/zig/issues/16197
+                var WORKAROUND: []u8 = &tmp;
+                _ = BoringSSL.BIO_printf(out, "%s - ", WORKAROUND.ptr);
 
                 if (!x509PrintGeneralName(out, desc.location)) {
                     return false;

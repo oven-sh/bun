@@ -22,11 +22,22 @@ The service file contains:
   - **Description** -> A description about your application
   - **After** -> by setting the value `network.target` the system will know to start your application after the network is available
 - [Service]
+
   - **Type** -> In most cases you will use the `simple` type, but if you need a special case, you can find the rest of the types [here](https://www.freedesktop.org/software/systemd/man/systemd.service.html#Type=)
-  - **User** -> Which user to use when starting the application, if you are using the ports 80 or 443, a normal user might not have permission to use those ports
+  - **User** ->
+
+    - Which user to use when starting the application, if you are using the ports 80 or 443, a normal user might not have permission to use those ports
+    - Use the `root` user at your own risk, as it might expose a security risk
+    - In order to use those ports with your non-root user, you need to run this as sudo, With this you can grant permanent access to a specific binary to bind to low-numbered ports
+
+      ```bash
+      sudo setcap CAP_NET_BIND_SERVICE=+eip ~/.bun/bin/bun
+      ```
+
   - **WorkingDirectory** -> This needs to be set to the root directory of your application
   - **ExecStart** -> Here you need to specify the executable and the file to start, in the case of bun, you need to point to the path `/home/YOUR_USER/.bun/bin/bun` because systemd will not know about bun.
   - **Restart** -> If set to **always** than the service will restart every time when the process is closed even on a clean exit, available options for this are: `no, on-success, on-failure, on-abnormal, on-watchdog, on-abort, always`
+
 - [Install]
   - **WantedBy** -> multi-user.target normally defines a system state where all network services are started up and the system will accept logins. If you omit this part, the service will not start automatically unless another service has `Requires` or `Wants` that points to your service
 
@@ -37,7 +48,7 @@ After=network.target
 
 [Service]
 Type=simple
-User=root
+User=YOUR_USER
 WorkingDirectory=/home/YOUR_USER/application
 ExecStart=/home/YOUR_USER/.bun/bin/bun run /home/YOUR_USER/application/dist/index.js
 Restart=always

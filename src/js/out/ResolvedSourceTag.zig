@@ -1,3 +1,4 @@
+// zig fmt: off
 pub const ResolvedSourceTag = enum(u32) {
     // Predefined
     javascript = 0,
@@ -64,16 +65,16 @@ pub const ResolvedSourceTag = enum(u32) {
     @"node:wasi" = 563,
     @"node:worker_threads" = 564,
     @"node:zlib" = 565,
-    depd = 566,
+    @"depd" = 566,
     @"detect-libc" = 567,
     @"detect-libc/linux" = 568,
     @"isomorphic-fetch" = 569,
     @"node-fetch" = 570,
-    undici = 571,
-    vercel_fetch = 572,
-    ws = 573,
+    @"undici" = 571,
+    @"vercel_fetch" = 572,
+    @"ws" = 573,
     // Native modules run through a different system using ESM registry.
-    bun = 1024,
+    @"bun" = 1024,
     @"bun:jsc" = 1025,
     @"node:buffer" = 1026,
     @"node:constants" = 1027,

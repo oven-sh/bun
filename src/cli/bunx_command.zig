@@ -266,7 +266,7 @@ pub const BunxCommand = struct {
 
         const package_fmt = brk: {
             if (update_request.version.tag == .github) {
-                break :brk try ctx.allocator.dupe(u8, update_request.version.literal.slice(update_request.version_buf));
+                break :brk update_request.version.literal.slice(update_request.version_buf);
             }
 
             break :brk try std.fmt.allocPrint(

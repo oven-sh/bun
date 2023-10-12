@@ -3005,16 +3005,31 @@ pub const PackageManager = struct {
         comptime successFn: SuccessFn,
         comptime failFn: ?FailFn,
     ) !void {
-        const name = dependency.realname();
+        var name = dependency.realname();
 
-        const name_hash = switch (dependency.version.tag) {
+        var name_hash = switch (dependency.version.tag) {
             .dist_tag, .git, .github, .npm, .tarball, .workspace => String.Builder.stringHash(this.lockfile.str(&name)),
             else => dependency.name_hash,
         };
-        const version = dependency.version;
+        const version = version: {
+            if (this.lockfile.overrides.get(name_hash)) |new| {
+                debug("override: {s} -> {s}", .{ this.lockfile.str(&dependency.version.literal), this.lockfile.str(&new.literal) });
+                name = switch (new.tag) {
+                    .dist_tag => new.value.dist_tag.name,
+                    .git => new.value.git.package_name,
+                    .github => new.value.github.package_name,
+                    .npm => new.value.npm.name,
+                    .tarball => new.value.tarball.package_name,
+                    else => name,
+                };
+                name_hash = String.Builder.stringHash(this.lockfile.str(&name));
+                break :version new;
+            }
+            break :version dependency.version;
+        };
         var loaded_manifest: ?Npm.PackageManifest = null;
 
-        switch (dependency.version.tag) {
+        switch (version.tag) {
             .dist_tag, .folder, .npm => {
                 retry_from_manifests_ptr: while (true) {
                     var resolve_result_ = this.getOrPutResolvedPackage(
@@ -3127,13 +3142,13 @@ pub const PackageManager = struct {
                                     "enqueueDependency({d}, {s}, {s}, {s}) = {d}",
                                     .{
                                         id,
-                                        @tagName(dependency.version.tag),
+                                        @tagName(version.tag),
                                         this.lockfile.str(&name),
                                         this.lockfile.str(&version.literal),
                                         result.package.meta.id,
                                     },
                                 );
-                        } else if (dependency.version.tag.isNPM()) {
+                        } else if (version.tag.isNPM()) {
                             const name_str = this.lockfile.str(&name);
                             const task_id = Task.Id.forManifest(name_str);
 
@@ -3144,7 +3159,7 @@ pub const PackageManager = struct {
                                     "enqueueDependency({d}, {s}, {s}, {s}) = task {d}",
                                     .{
                                         id,
-                                        @tagName(dependency.version.tag),
+                                        @tagName(version.tag),
                                         this.lockfile.str(&name),
                                         this.lockfile.str(&version.literal),
                                         task_id,
@@ -3165,8 +3180,8 @@ pub const PackageManager = struct {
 
                                             // If it's an exact package version already living in the cache
                                             // We can skip the network request, even if it's beyond the caching period
-                                            if (dependency.version.tag == .npm and dependency.version.value.npm.version.isExact()) {
-                                                if (loaded_manifest.?.findByVersion(dependency.version.value.npm.version.head.head.range.left.version)) |find_result| {
+                                            if (version.tag == .npm and version.value.npm.version.isExact()) {
+                                                if (loaded_manifest.?.findByVersion(version.value.npm.version.head.head.range.left.version)) |find_result| {
                                                     if (this.getOrPutResolvedPackageWithFindResult(
                                                         name_hash,
                                                         name,
@@ -3233,7 +3248,7 @@ pub const PackageManager = struct {
                 return;
             },
             .git => {
-                const dep = &dependency.version.value.git;
+                const dep = &version.value.git;
                 const res = Resolution{
                     .tag = .git,
                     .value = .{
@@ -3261,7 +3276,7 @@ pub const PackageManager = struct {
                         "enqueueDependency({d}, {s}, {s}, {s}) = {s}",
                         .{
                             id,
-                            @tagName(dependency.version.tag),
+                            @tagName(version.tag),
                             this.lockfile.str(&name),
                             this.lockfile.str(&version.literal),
                             url,
@@ -3312,7 +3327,7 @@ pub const PackageManager = struct {
                 }
             },
             .github => {
-                const dep = &dependency.version.value.github;
+                const dep = &version.value.github;
                 const res = Resolution{
                     .tag = .github,
                     .value = .{
@@ -3339,7 +3354,7 @@ pub const PackageManager = struct {
                         "enqueueDependency({d}, {s}, {s}, {s}) = {s}",
                         .{
                             id,
-                            @tagName(dependency.version.tag),
+                            @tagName(version.tag),
                             this.lockfile.str(&name),
                             this.lockfile.str(&version.literal),
                             url,
@@ -3420,7 +3435,7 @@ pub const PackageManager = struct {
                             "enqueueDependency({d}, {s}, {s}, {s}) = {d}",
                             .{
                                 id,
-                                @tagName(dependency.version.tag),
+                                @tagName(version.tag),
                                 this.lockfile.str(&name),
                                 this.lockfile.str(&version.literal),
                                 result.package.meta.id,
@@ -3475,7 +3490,7 @@ pub const PackageManager = struct {
                 }
             },
             .tarball => {
-                const res: Resolution = switch (dependency.version.value.tarball.uri) {
+                const res: Resolution = switch (version.value.tarball.uri) {
                     .local => |path| .{
                         .tag = .local_tarball,
                         .value = .{
@@ -3496,7 +3511,7 @@ pub const PackageManager = struct {
                     return;
                 }
 
-                const url = switch (dependency.version.value.tarball.uri) {
+                const url = switch (version.value.tarball.uri) {
                     .local => |path| this.lockfile.str(&path),
                     .remote => |url| this.lockfile.str(&url),
                 };
@@ -3511,7 +3526,7 @@ pub const PackageManager = struct {
                         "enqueueDependency({d}, {s}, {s}, {s}) = {s}",
                         .{
                             id,
-                            @tagName(dependency.version.tag),
+                            @tagName(version.tag),
                             this.lockfile.str(&name),
                             this.lockfile.str(&version.literal),
                             url,
@@ -3522,7 +3537,7 @@ pub const PackageManager = struct {
                 try entry.value_ptr.append(this.allocator, @unionInit(TaskCallbackContext, callback_tag, id));
 
                 if (dependency.behavior.isPeer()) return;
-                switch (dependency.version.value.tarball.uri) {
+                switch (version.value.tarball.uri) {
                     .local => {
                         const network_entry = try this.network_dedupe_map.getOrPutContext(this.allocator, task_id, .{});
                         if (network_entry.found_existing) return;

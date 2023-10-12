@@ -112,6 +112,8 @@ trusted_dependencies: NameHashSet = .{},
 workspace_paths: NameHashMap = .{},
 workspace_versions: VersionHashMap = .{},
 
+overrides: OverrideMap = .{},
+
 const Stream = std.io.FixedBufferStream([]u8);
 pub const default_filename = "bun.lockb";
 
@@ -209,6 +211,7 @@ pub fn loadFromBytes(this: *Lockfile, buf: []u8, allocator: Allocator, log: *log
     this.trusted_dependencies = .{};
     this.workspace_paths = .{};
     this.workspace_versions = .{};
+    this.overrides = .{};
 
     Lockfile.Serializer.load(this, &stream, allocator, log) catch |err| {
         return LoadFromDiskResult{ .err = .{ .step = .parse_file, .value = err } };
@@ -1885,6 +1888,274 @@ pub const PackageIndex = struct {
     };
 };
 
+pub const OverrideMap = struct {
+    const debug = Output.scoped(.OverrideMap, false);
+
+    map: std.ArrayHashMapUnmanaged(PackageNameHash, Dependency.Version, ArrayIdentityContext.U64, false) = .{},
+
+    /// In the future, this `get` function should handle multi-level resolutions. This is difficult right
+    /// now because given a Dependency ID, there is no fast way to trace it to it's package.
+    ///
+    /// A potential approach is to add another buffer to the lockfile that maps Dependency ID to Package ID,
+    /// and from there `OverrideMap.map` can have a union as the value, where the union is between "override all"
+    /// and "here is a list of overrides depending on the package that imported" similar to PackageIndex above.
+    pub fn get(this: *const OverrideMap, name_hash: PackageNameHash) ?Dependency.Version {
+        debug("looking up override for {x}", .{name_hash});
+        return this.map.get(name_hash);
+    }
+
+    pub fn deinit(this: *OverrideMap, allocator: Allocator) void {
+        this.map.deinit(allocator);
+    }
+
+    // the rest of this struct is expression parsing code:
+
+    pub fn maybeCount(
+        _: *OverrideMap,
+        lockfile: *Lockfile,
+        expr: Expr,
+        builder: *Lockfile.StringBuilder,
+    ) void {
+        if (expr.asProperty("overrides")) |overrides| {
+            if (overrides.expr.data != .e_object)
+                return;
+
+            for (overrides.expr.data.e_object.properties.slice()) |entry| {
+                builder.count(entry.key.?.asString(lockfile.allocator).?);
+                switch (entry.value.?.data) {
+                    .e_string => |s| {
+                        builder.count(s.slice(lockfile.allocator));
+                    },
+                    .e_object => {
+                        if (entry.value.?.asProperty(".")) |dot| {
+                            if (dot.expr.asString(lockfile.allocator)) |s| {
+                                builder.count(s);
+                            }
+                        }
+                    },
+                    else => {},
+                }
+            }
+        } else if (expr.asProperty("resolutions")) |resolutions| {
+            if (resolutions.expr.data != .e_object)
+                return;
+
+            for (resolutions.expr.data.e_object.properties.slice()) |entry| {
+                builder.count(entry.key.?.asString(lockfile.allocator).?);
+                builder.count(entry.value.?.asString(lockfile.allocator) orelse continue);
+            }
+        }
+    }
+
+    /// Given a package json expression, detect and parse override configuration into the given override map.
+    /// It is assumed the input map is uninitialized (zero entries)
+    pub fn maybeParse(
+        this: *OverrideMap,
+        lockfile: *Lockfile,
+        root_package: *Lockfile.Package,
+        log: *logger.Log,
+        json_source: logger.Source,
+        expr: Expr,
+        builder: *Lockfile.StringBuilder,
+    ) !void {
+        if (Environment.allow_assert) {
+            std.debug.assert(this.map.entries.len == 0); // only call parse once
+        }
+        if (expr.asProperty("overrides")) |overrides| {
+            try this.parseFromOverrides(lockfile, root_package, json_source, log, overrides.expr, builder);
+        } else if (expr.asProperty("resolutions")) |resolutions| {
+            try this.parseFromResolutions(lockfile, root_package, json_source, log, resolutions.expr, builder);
+        }
+        debug("parsed {d} overrides", .{this.map.entries.len});
+    }
+
+    /// https://docs.npmjs.com/cli/v9/configuring-npm/package-json#overrides
+    pub fn parseFromOverrides(
+        this: *OverrideMap,
+        lockfile: *Lockfile,
+        root_package: *Lockfile.Package,
+        source: logger.Source,
+        log: *logger.Log,
+        expr: Expr,
+        builder: *Lockfile.StringBuilder,
+    ) !void {
+        if (expr.data != .e_object) {
+            try log.addWarningFmt(&source, expr.loc, lockfile.allocator, "\"overrides\" must be an object", .{});
+            return error.Invalid;
+        }
+
+        try this.map.ensureUnusedCapacity(lockfile.allocator, expr.data.e_object.properties.len);
+
+        for (expr.data.e_object.properties.slice()) |prop| {
+            const key = prop.key.?;
+            var k = key.asString(lockfile.allocator).?;
+            if (k.len == 0) {
+                try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Missing overridden package name", .{});
+                continue;
+            }
+
+            const name_hash = String.Builder.stringHash(k);
+
+            const value = value: {
+                // for one level deep, we will only support a string and  { ".": value }
+                const value_expr = prop.value.?;
+                if (value_expr.data == .e_string) {
+                    break :value value_expr;
+                } else if (value_expr.data == .e_object) {
+                    if (value_expr.asProperty(".")) |dot| {
+                        if (dot.expr.data == .e_string) {
+                            if (value_expr.data.e_object.properties.len > 1) {
+                                try log.addWarningFmt(&source, value_expr.loc, lockfile.allocator, "Bun currently does not support nested \"overrides\"", .{});
+                            }
+                            break :value dot.expr;
+                        } else {
+                            try log.addWarningFmt(&source, value_expr.loc, lockfile.allocator, "Invalid override value for \"{s}\"", .{k});
+                            continue;
+                        }
+                    } else {
+                        try log.addWarningFmt(&source, value_expr.loc, lockfile.allocator, "Bun currently does not support nested \"overrides\"", .{});
+                        continue;
+                    }
+                }
+                try log.addWarningFmt(&source, value_expr.loc, lockfile.allocator, "Invalid override value for \"{s}\"", .{k});
+                continue;
+            };
+
+            if (try parseOverrideValue(
+                "override",
+                lockfile,
+                root_package,
+                source,
+                value.loc,
+                log,
+                k,
+                value.data.e_string.slice(lockfile.allocator),
+                builder,
+            )) |version| {
+                this.map.putAssumeCapacity(name_hash, version);
+            }
+        }
+    }
+
+    /// yarn classic: https://classic.yarnpkg.com/lang/en/docs/selective-version-resolutions/
+    /// yarn berry: https://yarnpkg.com/configuration/manifest#resolutions
+    pub fn parseFromResolutions(
+        this: *OverrideMap,
+        lockfile: *Lockfile,
+        root_package: *Lockfile.Package,
+        source: logger.Source,
+        log: *logger.Log,
+        expr: Expr,
+        builder: *Lockfile.StringBuilder,
+    ) !void {
+        defer {
+            std.debug.print("resolutions {d}\n", .{this.map.entries.len});
+            var iter = this.map.iterator();
+            while (iter.next()) |entry| {
+                std.debug.print("  {d} -> {s}\n", .{ entry.key_ptr.*, entry.value_ptr.literal.fmt(builder.lockfile.buffers.string_bytes.items) });
+            }
+        }
+
+        if (expr.data != .e_object) {
+            try log.addWarningFmt(&source, expr.loc, lockfile.allocator, "\"resolutions\" must be an object with string values", .{});
+            return;
+        }
+        try this.map.ensureUnusedCapacity(lockfile.allocator, expr.data.e_object.properties.len);
+        for (expr.data.e_object.properties.slice()) |prop| {
+            const key = prop.key.?;
+            var k = key.asString(lockfile.allocator).?;
+            if (strings.hasPrefixComptime(k, "**/"))
+                k = k[3..];
+            if (k.len == 0) {
+                try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Missing resolution package name", .{});
+                continue;
+            }
+            const value = prop.value.?;
+            if (value.data != .e_string) {
+                try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Expected string value for resolution \"{s}\"", .{k});
+                continue;
+            }
+            // currently we only support one level deep, so we should error if there are more than one
+            // - "foo/bar":
+            // - "@namespace/hello/world"
+            if (k[0] == '@') {
+                const first_slash = std.mem.indexOfScalar(u8, k, '/') orelse {
+                    try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Invalid package name \"{s}\"", .{k});
+                    continue;
+                };
+                if (std.mem.indexOfScalar(u8, k[first_slash + 1 ..], '/') != null) {
+                    try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Bun currently does not support nested \"resolutions\"", .{});
+                    continue;
+                }
+            } else if (std.mem.indexOfScalar(u8, k, '/') != null) {
+                try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Bun currently does not support nested \"resolutions\"", .{});
+                continue;
+            }
+
+            if (try parseOverrideValue(
+                "resolution",
+                lockfile,
+                root_package,
+                source,
+                value.loc,
+                log,
+                k,
+                value.data.e_string.data,
+                builder,
+            )) |version| {
+                const name_hash = String.Builder.stringHash(k);
+                this.map.putAssumeCapacity(name_hash, version);
+            }
+        }
+    }
+
+    pub fn parseOverrideValue(
+        comptime field: []const u8,
+        lockfile: *Lockfile,
+        root_package: *Lockfile.Package,
+        source: logger.Source,
+        loc: logger.Loc,
+        log: *logger.Log,
+        key: []const u8,
+        value: []const u8,
+        builder: *Lockfile.StringBuilder,
+    ) !?Dependency.Version {
+        if (value.len == 0) {
+            try log.addWarningFmt(&source, loc, lockfile.allocator, "Missing " ++ field ++ " value", .{});
+            return null;
+        }
+
+        // "Overrides may also be defined as a reference to a spec for a direct dependency
+        // by prefixing the name of the package you wish the version to match with a `$`"
+        // https://docs.npmjs.com/cli/v9/configuring-npm/package-json#overrides
+        // This is why a `*Lockfile.Package` is needed here.
+        if (value[0] == '$') {
+            const ref_name = value[1..];
+            // This is fine for this string to not share the string pool, because it's only used for .eql()
+            const ref_name_str = String.init(ref_name, ref_name);
+            const pkg_deps: []const Dependency = root_package.dependencies.get(lockfile.buffers.dependencies.items);
+            for (pkg_deps) |dep| {
+                if (dep.name.eql(ref_name_str, lockfile.buffers.string_bytes.items, ref_name)) {
+                    return dep.version;
+                }
+            }
+            try log.addWarningFmt(&source, loc, lockfile.allocator, "Could not resolve " ++ field ++ " \"{s}\" (you need \"{s}\" in your dependencies)", .{ value, ref_name });
+            return null;
+        }
+
+        const literalString = builder.append(String, value);
+        const literalSliced = literalString.sliced(lockfile.buffers.string_bytes.items);
+
+        return Dependency.parse(
+            lockfile.allocator,
+            builder.append(String, key),
+            literalSliced.slice,
+            &literalSliced,
+            log,
+        );
+    }
+};
+
 pub const FormatVersion = enum(u32) {
     v0 = 0,
     // bun v0.0.x - bun v0.1.6
@@ -2536,6 +2807,23 @@ pub const Package = extern struct {
             const from_resolutions = from.resolutions.get(from_lockfile.buffers.resolutions.items);
             var to_i: usize = 0;
             var skipped_workspaces: usize = 0;
+
+            // if (from_lockfile.overrides.map.count() != to_lockfile.overrides.map.count()) {
+            //     checker: {
+            //         to_lockfile.overrides.map.sort(sorter);
+            //         from_lockfile.overrides.map.sort(sorter);
+
+            //         if (bun.C.memcmp(std.mem.asBytes(from_lockfile.overrides.map.keys()).ptr, std.mem.asBytes(from_lockfile.overrides.map.keys()).ptr, std.mem.asBytes(from_lockfile.overrides.map.keys()).len) != 0) {
+            //             summary.update += 1;
+            //             break :checker;
+            //         }
+
+            //         for (from_lockfile.overrides.map.values(), to_lockfile.overrides.map.values()) |*from, *to| {
+            //             summary.update += @as(u32, @intFromBool(from.eql(to, from_lockfile.buffers.string_bytes.items, to_lockfile.buffers.string_bytes.items)));
+            //         }
+            //     }
+            // }
+            summary.update += 1;
 
             for (from_deps, 0..) |*from_dep, i| {
                 found: {
@@ -3547,6 +3835,10 @@ pub const Package = extern struct {
             }
         }
 
+        if (comptime features.is_main) {
+            lockfile.overrides.maybeCount(lockfile, json, &string_builder);
+        }
+
         try string_builder.allocate();
         try lockfile.buffers.dependencies.ensureUnusedCapacity(lockfile.allocator, total_dependencies_count);
         try lockfile.buffers.resolutions.ensureUnusedCapacity(lockfile.allocator, total_dependencies_count);
@@ -3768,6 +4060,11 @@ pub const Package = extern struct {
         lockfile.buffers.dependencies.items = lockfile.buffers.dependencies.items.ptr[0..new_len];
         lockfile.buffers.resolutions.items = lockfile.buffers.resolutions.items.ptr[0..new_len];
 
+        // This function depends on package.dependencies being set, so it is done at the very end.
+        if (comptime features.is_main) {
+            try lockfile.overrides.maybeParse(lockfile, package, log, source, json, &string_builder);
+        }
+
         string_builder.clamp();
     }
 
@@ -3969,6 +4266,7 @@ pub fn deinit(this: *Lockfile) void {
     this.trusted_dependencies.deinit(this.allocator);
     this.workspace_paths.deinit(this.allocator);
     this.workspace_versions.deinit(this.allocator);
+    this.overrides.deinit(this.allocator);
 }
 
 const Buffers = struct {

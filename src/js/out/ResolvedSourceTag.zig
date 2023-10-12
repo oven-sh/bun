@@ -1,3 +1,4 @@
+// zig fmt: off
 pub const ResolvedSourceTag = enum(u32) {
     // Predefined
     javascript = 0,

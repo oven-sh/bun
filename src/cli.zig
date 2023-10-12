@@ -1964,7 +1964,7 @@ pub const Command = struct {
                     ;
                     Output.pretty("\n", .{});
                     Output.pretty(intro_text, .{});
-                    Output.pretty("\n\n", {});
+                    Output.pretty("\n\n", .{});
                     Output.flush();
                     // Output.pretty("\n\n<b>Flags:<r>", .{});
                     // Output.flush();

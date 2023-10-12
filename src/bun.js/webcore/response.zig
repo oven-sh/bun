@@ -271,18 +271,15 @@ pub const Response = struct {
             .original_request = this.original_request orelse this,
         };
         if (this.body.value == .Locked) {
-            if (this.original_request == null and this.body_clones == null){
-                Output.print("creating list\n", .{});
-                Output.flush();
+            if (this.original_request == null and this.body_clones == null)
                 this.body_clones = ArrayList(*Body).init(default_allocator);
-            }
 
             var clones = if (this.original_request) |req|
                 &req.body_clones
             else
                 &this.body_clones;
-            if(clones.* != null)
-            clones.*.?.append(&new_response.body) catch unreachable;
+            if (clones.* != null)
+                clones.*.?.append(&new_response.body) catch unreachable;
         }
     }
 
@@ -309,9 +306,9 @@ pub const Response = struct {
 
         this.status_text.deref();
         this.url.deref();
-        if(this.body_clones) |clones|{
-        clones.deinit();
-    }
+        if (this.body_clones) |clones| {
+            clones.deinit();
+        }
 
         allocator.destroy(this);
     }

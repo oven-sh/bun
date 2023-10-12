@@ -2,82 +2,74 @@
 name: Run Bun as a daemon with systemd
 ---
 
-[systemd](https://systemd.io) is a suite of basic building blocks for a Linux system. It provides a system and service manager that runs as PID 1 and starts the rest of the system.
+[systemd](https://systemd.io) is an init system and service manager for Linux operating systems that manages the startup and control of system processes and services.
 
-systemd provides aggressive parallelization capabilities, uses socket and D-Bus activation for starting services, offers on-demand starting of daemons, keeps track of processes using Linux control groups, maintains mount and auto mount points, and implements an elaborate transactional dependency-based service control logic. systemd supports SysV and LSB init scripts and works as a replacement for sysvinit.
+<!-- systemd provides aggressive parallelization capabilities, uses socket and D-Bus activation for starting services, offers on-demand starting of daemons, keeps track of processes using Linux control groups, maintains mount and auto mount points, and implements an elaborate transactional dependency-based service control logic. systemd supports SysV and LSB init scripts and works as a replacement for sysvinit. -->
 
-Other parts include a logging daemon, utilities to control basic system configuration like the hostname, date, locale, maintain a list of logged-in users and running containers and virtual machines, system accounts, runtime directories and settings, and daemons to manage simple network configuration, network time synchronization, log forwarding, and name resolution.
-
----
-
-### The service unit configuration
+<!-- Other parts include a logging daemon, utilities to control basic system configuration like the hostname, date, locale, maintain a list of logged-in users and running containers and virtual machines, system accounts, runtime directories and settings, and daemons to manage simple network configuration, network time synchronization, log forwarding, and name resolution. -->
 
 ---
 
-To run the **bun** application using **systemd** you need to create the following file in `/lib/systemd/system/` and the file name must end in `.service`, e.g. `my-app.service` and the full path for this file will be `/lib/systemd/system/my-app.service`.
+To run a Bun application as a daemon using **systemd** you'll need to create a _service file_ in `/lib/systemd/system/`.
 
-The service file contains:
+```sh
+$ cd /lib/systemd/system
+$ touch my-app.service
+```
 
-- [Unit]
-  - **Description** -> A description about your application
-  - **After** -> by setting the value `network.target` the system will know to start your application after the network is available
-- [Service]
+---
 
-  - **Type** -> In most cases you will use the `simple` type, but if you need a special case, you can find the rest of the types [here](https://www.freedesktop.org/software/systemd/man/systemd.service.html#Type=)
-  - **User** ->
-
-    - Which user to use when starting the application, if you are using the ports **80** or **443**, a normal user might not have permission to use those ports
-    - Use the `root` user at your own risk, as it might expose a security risk
-    - In order to use those ports with your non-root user, you need to run this as sudo, With this you can grant permanent access to a specific binary to bind to low-numbered ports
-
-      ```bash
-      sudo setcap CAP_NET_BIND_SERVICE=+eip ~/.bun/bin/bun
-      ```
-
-  - **WorkingDirectory** -> This needs to be set to the root directory of your application
-  - **ExecStart** -> Here you need to specify the executable and the file to start, in the case of bun, you need to point to the path `/home/YOUR_USER/.bun/bin/bun` because systemd will not know about bun.
-  - **Restart** -> If set to **always** than the service will restart every time when the process is closed even on a clean exit, available options for this are: `no, on-success, on-failure, on-abnormal, on-watchdog, on-abort, always`
-
-- [Install]
-  - **WantedBy** -> multi-user.target normally defines a system state where all network services are started up and the system will accept logins. If you omit this part, the service will not start automatically unless another service has `Requires` or `Wants` that points to your service
+Here is a typical service file that runs an application on system start. You can use this as a template for your own service.
 
 ```ini
 [Unit]
+# describe the app
 Description=My App
+# start the app after the network is available
 After=network.target
 
 [Service]
+# usually you'll use 'simple'
+# one of https://www.freedesktop.org/software/systemd/man/systemd.service.html#Type=
 Type=simple
+# which user to use when starting the app
 User=YOUR_USER
-WorkingDirectory=/home/YOUR_USER/application
-ExecStart=/home/YOUR_USER/.bun/bin/bun run /home/YOUR_USER/application/dist/index.js
+# path to your application's root directory
+WorkingDirectory=/home/YOUR_USER/path/to/my-app
+# the command to start the app
+# requires absolute paths
+ExecStart=/home/YOUR_USER/.bun/bin/bun run index.ts
+# restart policy
+# one of {no|on-success|on-failure|on-abnormal|on-watchdog|on-abort|always}
 Restart=always
 
 [Install]
+# start the app automatically
 WantedBy=multi-user.target
 ```
 
 ---
 
-### Commands to start/stop/enable/restart your service
+With the service file configured, you can now _enable_ the service. Once enabled, it will start automatically on reboot. This requires `sudo` permissions.
+
+```bash
+sudo systemctl enable my-app
+```
 
 ---
 
-Now that you have your service file, you can start the file using the following command, **note** that this command requires **sudo** permissions. The name of the service is the name of the file
+To start the service without rebooting, you can manually _start_ it.
 
 ```bash
-sudo systemctl start my-app
+$ sudo systemctl start my-app
 ```
 
-To check the status of your application use `status` instead of `start`
+---
+
+Check the status of your application with `systemctl status`. If you've started your app successfully, you should see something like this:
 
 ```bash
-sudo systemctl status my-app
-```
-
-If the application started successfully you should see something like this:
-
-```bash
+$ sudo systemctl status my-app
 ● my-app.service - My App
      Loaded: loaded (/lib/systemd/system/my-app.service; enabled; preset: enabled)
      Active: active (running) since Thu 2023-10-12 11:34:08 UTC; 1h 8min ago
@@ -89,19 +81,17 @@ If the application started successfully you should see something like this:
              └─309641 /home/YOUR_USER/.bun/bin/bun run /home/YOUR_USER/application/dist/index.js
 ```
 
-Now you only started the app, but is not enough to automatically start the app on boot, you need to enable the service using this command:
+---
 
-```bash
-sudo systemctl enable my-app
-```
-
-Once enabled, the app will start on boot, but if you want to change the contents of the service file, you need to run the following command after the edit in order to tell the system that the file changed:
+To update the service, edit the contents of the service file then reload the daemon.
 
 ```bash
 sudo systemctl daemon-reload
 ```
 
-And that is it!! Now you might want to know the following commands and recap the used ones:
+---
+
+Fore a complete guide on the service unit configuration, you can check [this page](https://www.freedesktop.org/software/systemd/man/systemd.service.html). Or refer to this cheatsheet of common commands:
 
 ```bash
 sudo systemctl daemon-reload # Tells the systemd that some files got changed
@@ -111,9 +101,3 @@ sudo systemctl start my-app # It starts the app if is stopped (This doesn't affe
 sudo systemctl stop my-app # It stops the app (This doesn't affect enable/disable)
 sudo systemctl restart my-app # It restarts the app
 ```
-
----
-
-Fore a complete guide on the service unit configuration, you can check [this page](https://www.freedesktop.org/software/systemd/man/systemd.service.html)
-
-#### Now your application is now running as a daemon with systemd using Bun as the interpreter 🥳

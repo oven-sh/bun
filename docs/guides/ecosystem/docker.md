@@ -14,10 +14,10 @@ Now that you have docker, we can start writing the `Dockerfile`, this file shoul
 
 ```dockerfile#Dockerfile
 # * Here we use the official image of bun which already has bun installed, you can specify the exact version
-# * Like 1.0.6-alpine or always get the latest version with alpine e.g. FROM oven/bun:alpine as base
+# * Like 1.0.6-debian or always get the latest version with debian e.g. FROM oven/bun:debian as base
 # * Getting always the latest is not such a great idea as it might introduce breaking changes
-# * You have 2 more options which are 1-alpine and 1.0-aline, which will use the version 1.x.x (Latest minor version) or 1.0.x (Latest revision version)
-FROM oven/bun:1.0.6-alpine as base
+# * You have 2 more options which are 1-debian and 1.0-aline, which will use the version 1.x.x (Latest minor version) or 1.0.x (Latest revision version)
+FROM oven/bun:1.0.6-debian as base
 WORKDIR /usr/src/app
 
 # * Install the deps in temp to cache them and speed up the build

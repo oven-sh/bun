@@ -26,4 +26,4 @@ globalThis.Bun = bun as typeof bun & {
 };
 
 Reflect.set(globalThis, 'jsc', jsc);
-Reflect.set(globalThis, 'ffi', ffi.default);
+Reflect.set(globalThis, 'ffi', ffi);

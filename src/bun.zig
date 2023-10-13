@@ -1841,3 +1841,100 @@ pub fn fdi32(fd_: anytype) i32 {
 }
 
 pub const OSPathSlice = if (Environment.isWindows) [:0]const u16 else [:0]const u8;
+pub const LazyBoolValue = enum {
+    unknown,
+    no,
+    yes,
+};
+/// Create a lazily computed boolean value.
+/// Getter must be a function that takes a pointer to the parent struct and returns a boolean.
+/// Parent must be a type which contains the field we are getting.
+pub fn LazyBool(comptime Getter: anytype, comptime Parent: type, comptime field: string) type {
+    return struct {
+        value: LazyBoolValue = .unknown,
+        pub fn get(self: *@This()) bool {
+            if (self.value == .unknown) {
+                self.value = switch (Getter(@fieldParentPtr(Parent, field, self))) {
+                    true => .yes,
+                    false => .no,
+                };
+            }
+
+            return self.value == .yes;
+        }
+    };
+}
+
+pub fn serializable(input: anytype) @TypeOf(input) {
+    const T = @TypeOf(input);
+    comptime {
+        if (std.meta.trait.isExtern(T)) {
+            if (@typeInfo(T) == .Union) {
+                @compileError("Extern unions must be serialized with serializableInto");
+            }
+        }
+    }
+    var zeroed: [@sizeOf(T)]u8 align(@alignOf(T)) = comptime brk: {
+        var buf: [@sizeOf(T)]u8 align(@alignOf(T)) = undefined;
+        for (&buf) |*ptr| {
+            ptr.* = 0;
+        }
+        break :brk buf;
+    };
+    const result: *T = @ptrCast(&zeroed);
+
+    inline for (comptime std.meta.fieldNames(T)) |field_name| {
+        @field(result, field_name) = @field(input, field_name);
+    }
+
+    return result.*;
+}
+
+pub inline fn serializableInto(comptime T: type, init: anytype) T {
+    var zeroed: [@sizeOf(T)]u8 align(@alignOf(T)) = comptime brk: {
+        var buf: [@sizeOf(T)]u8 align(@alignOf(T)) = undefined;
+        for (&buf) |*ptr| {
+            ptr.* = 0;
+        }
+        break :brk buf;
+    };
+    const result: *T = @ptrCast(&zeroed);
+
+    inline for (comptime std.meta.fieldNames(@TypeOf(init))) |field_name| {
+        @field(result, field_name) = @field(init, field_name);
+    }
+
+    return result.*;
+}
+
+/// Like std.fs.Dir.makePath except instead of infinite looping on dangling
+/// symlink, it deletes the symlink and tries again.
+pub fn makePath(dir: std.fs.Dir, sub_path: []const u8) !void {
+    var it = try std.fs.path.componentIterator(sub_path);
+    var component = it.last() orelse return;
+    while (true) {
+        dir.makeDir(component.path) catch |err| switch (err) {
+            error.PathAlreadyExists => {
+                var path_buf2: [MAX_PATH_BYTES * 2]u8 = undefined;
+                copy(u8, &path_buf2, component.path);
+
+                path_buf2[component.path.len] = 0;
+                var path_to_use = path_buf2[0..component.path.len :0];
+                const result = sys.lstat(path_to_use);
+                try result.throw();
+                const is_dir = std.os.S.ISDIR(result.result.mode);
+                // dangling symlink
+                if (!is_dir) {
+                    dir.deleteTree(component.path) catch {};
+                    continue;
+                }
+            },
+            error.FileNotFound => |e| {
+                component = it.previous() orelse return e;
+                continue;
+            },
+            else => |e| return e,
+        };
+        component = it.next() orelse return;
+    }
+}

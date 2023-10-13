@@ -268,6 +268,9 @@ it("supports serialize/deserialize", () => {
   } catch (e) {
     expect(e.message).toBe("attempt to write a readonly database");
   }
+
+  // https://github.com/oven-sh/bun/issues/3712#issuecomment-1725259824
+  expect(Database.deserialize(input)).toBeInstanceOf(Database);
 });
 
 it("db.query()", () => {

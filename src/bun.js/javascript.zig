@@ -308,6 +308,10 @@ pub export fn Bun__Process__send(
     }
 }
 
+pub export fn Bun__isBunMain(globalObject: *JSGlobalObject, input_ptr: [*]const u8, input_len: usize) bool {
+    return strings.eql(globalObject.bunVM().main, input_ptr[0..input_len]);
+}
+
 pub export fn Bun__Process__disconnect(
     globalObject: *JSGlobalObject,
     callFrame: *JSC.CallFrame,
@@ -1519,7 +1523,6 @@ pub const VirtualMachine = struct {
 
     fn normalizeSpecifierForResolution(specifier_: []const u8, query_string: *[]const u8) []const u8 {
         var specifier = specifier_;
-        if (strings.hasPrefixComptime(specifier, "file://")) specifier = specifier["file://".len..];
 
         if (strings.indexOfChar(specifier, '?')) |i| {
             query_string.* = specifier[i..];

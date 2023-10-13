@@ -19,11 +19,11 @@ Bun's runtime behavior is configured using top-level fields in the `bunfig.toml`
 
 ### `preload`
 
-An array of scripts to execute before running a file or script. This is useful for registering plugins.
+An array of scripts/plugins to execute before running a file or script.
 
 ```toml
-# scripts to run before `bun run`ning a file or script
-# useful for registering plugins
+# scripts to run before `bun run`-ing a file or script
+# register plugins by adding them to this list
 preload = ["./preload.ts"]
 ```
 
@@ -99,6 +99,14 @@ Bun supports the following loaders:
 - `base64`
 - `dataurl`
 - `text`
+
+### `telemetry`
+
+The `telemetry` field permit to enable/disable the analytics records. Bun records bundle timings (so we can answer with data, "is Bun getting faster?") and feature usage (e.g., "are people actually using macros?"). The request body size is about 60 bytes, so it's not a lot of data. By default the telemetry is enabled. Equivalent of `DO_NOT_TRACK` env variable.
+
+```toml
+telemetry = false
+```
 
 ## Test runner
 
@@ -201,7 +209,7 @@ dev = true
 
 ### `install.peer`
 
-Whether to install peer dependencies. Default `false`.
+Whether to install peer dependencies. Default `true`.
 
 ```toml
 [install]

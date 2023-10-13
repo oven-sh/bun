@@ -35,8 +35,6 @@ pub const Loader = struct {
 
     did_load_process: bool = false,
 
-    const empty_string_value: string = "\"\"";
-
     pub fn has(this: *const Loader, input: []const u8) bool {
         const value = this.map.get(input) orelse return false;
         if (value.len == 0) return false;
@@ -174,7 +172,12 @@ pub const Loader = struct {
     }
 
     pub fn getAuto(this: *const Loader, key: string) string {
-        return this.get(key) orelse key;
+        // If it's "" or "$", it's not a variable
+        if (key.len < 2 or key[0] != '$') {
+            return key;
+        }
+
+        return this.get(key[1..]) orelse key;
     }
 
     /// Load values from the environment into Define.
@@ -304,7 +307,7 @@ pub const Loader = struct {
                     }
                 } else {
                     while (iter.next()) |entry| {
-                        const value: string = if (entry.value_ptr.value.len == 0) empty_string_value else entry.value_ptr.value;
+                        const value: string = entry.value_ptr.value;
                         const key = std.fmt.allocPrint(key_allocator, "process.env.{s}", .{entry.key_ptr.*}) catch unreachable;
 
                         e_strings[0] = js_ast.E.String{
@@ -358,15 +361,11 @@ pub const Loader = struct {
                 var key = env[0..i];
                 var value = env[i + 1 ..];
                 if (key.len > 0) {
-                    if (value.len > 0) {
-                        this.map.put(key, value) catch unreachable;
-                    } else {
-                        this.map.put(key, empty_string_value) catch unreachable;
-                    }
+                    this.map.put(key, value) catch unreachable;
                 }
             } else {
                 if (env.len > 0) {
-                    this.map.put(env, empty_string_value) catch unreachable;
+                    this.map.put(env, "") catch unreachable;
                 }
             }
         }
@@ -903,8 +902,8 @@ pub const Map = struct {
 
         var iter_ = this.map.iterator();
         while (iter_.next()) |entry| {
-            // Allow var from .env.development or .env.production to be loaded again. Also don't clone empty vars.
-            if (!entry.value_ptr.conditional and entry.value_ptr.value.len > 0) {
+            // Allow var from .env.development or .env.production to be loaded again
+            if (!entry.value_ptr.conditional) {
                 try env_map.putMove(bun.constStrToU8(entry.key_ptr.*), bun.constStrToU8(entry.value_ptr.value));
             }
         }

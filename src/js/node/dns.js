@@ -1,5 +1,5 @@
 // Hardcoded module "node:dns"
-// only resolve4, resolve, lookup, resolve6 and resolveSrv are implemented.
+// only resolve4, resolve, lookup, resolve6, resolveSrv, and reverse are implemented.
 const dns = Bun.dns;
 
 function getServers() {
@@ -176,7 +176,14 @@ function lookupService(address, port, callback) {
     throw new TypeError("callback must be a function");
   }
 
-  callback(null, address, port);
+  dns.lookupService(address, port, callback).then(
+    results => {
+      callback(null, ...results);
+    },
+    error => {
+      callback(error);
+    },
+  );
 }
 
 function reverse(ip, callback) {
@@ -517,7 +524,7 @@ const promises = {
   },
 
   lookupService(address, port) {
-    return Promise.resolve([]);
+    return dns.lookupService(address, port);
   },
 
   resolve(hostname, rrtype) {

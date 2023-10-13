@@ -618,7 +618,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     case Float64ArrayType:
     case BigInt64ArrayType:
     case BigUint64ArrayType: {
-        if (!isTypedArrayType(static_cast<JSC::JSType>(c2Type))) {
+        if (!isTypedArrayType(static_cast<JSC::JSType>(c2Type)) || c1Type != c2Type) {
             return false;
         }
 
@@ -1396,15 +1396,22 @@ BunString WebCore__DOMURL__fileSystemPath(WebCore__DOMURL* arg0)
 extern "C" JSC__JSValue ZigString__toJSONObject(const ZigString* strPtr, JSC::JSGlobalObject* globalObject)
 {
     auto str = Zig::toString(*strPtr);
-    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
-    auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
-    JSValue result = JSONParseWithException(globalObject, str);
-    if (auto* exception = scope.exception()) {
-        scope.clearException();
-        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(exception->value()));
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    // JSONParseWithException does not propagate exceptions as expected. See #5859
+    JSValue result = JSONParse(globalObject, str);
+
+    if (!result && !scope.exception()) {
+        scope.throwException(globalObject, createSyntaxError(globalObject, "Failed to parse JSON"_s));
     }
 
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+    if (scope.exception()) {
+        auto* exception = scope.exception();
+        scope.clearException();
+        return JSC::JSValue::encode(exception);
+    }
+
+    return JSValue::encode(result);
 }
 
 JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
@@ -2155,6 +2162,14 @@ JSC__JSValue ReadableStream__empty(Zig::GlobalObject* globalObject)
     auto& vm = globalObject->vm();
     auto clientData = WebCore::clientData(vm);
     auto* function = globalObject->getDirect(vm, clientData->builtinNames().createEmptyReadableStreamPrivateName()).getObject();
+    return JSValue::encode(JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s));
+}
+
+JSC__JSValue ReadableStream__used(Zig::GlobalObject* globalObject)
+{
+    auto& vm = globalObject->vm();
+    auto clientData = WebCore::clientData(vm);
+    auto* function = globalObject->getDirect(vm, clientData->builtinNames().createUsedReadableStreamPrivateName()).getObject();
     return JSValue::encode(JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s));
 }
 
@@ -4525,6 +4540,14 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0
         globalObject->m_asyncContextData.get()->getInternalField(0),
         JSC::JSValue::decode(JSValue3),
         JSC::JSValue::decode(JSValue4));
+}
+
+extern "C" WebCore::AbortSignal* WebCore__AbortSignal__new(JSC__JSGlobalObject* globalObject)
+{
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(globalObject);
+    auto* context = thisObject->scriptExecutionContext();
+    RefPtr<WebCore::AbortSignal> abortSignal = WebCore::AbortSignal::create(context);
+    return abortSignal.leakRef();
 }
 
 extern "C" JSC__JSValue WebCore__AbortSignal__create(JSC__JSGlobalObject* globalObject)

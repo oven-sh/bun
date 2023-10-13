@@ -3,34 +3,27 @@ const strings = @import("../string_immutable.zig");
 const Crypto = @import("../sha.zig").Hashers;
 
 pub const Integrity = extern struct {
+    // this is zeroed like this to work around a comptime issue.
+    const empty_digest_buf: [Integrity.digest_buf_len]u8 = [_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+
     tag: Tag = Tag.unknown,
     /// Possibly a [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) value initially
     /// We transform it though.
-    value: [digest_buf_len]u8 = undefined,
+    value: [digest_buf_len]u8 = empty_digest_buf,
 
     const Base64 = std.base64.standard_no_pad;
 
-    pub const digest_buf_len: usize = brk: {
-        const values = [_]usize{
-            std.crypto.hash.Sha1.digest_length,
-            std.crypto.hash.sha2.Sha512.digest_length,
-            std.crypto.hash.sha2.Sha256.digest_length,
-            std.crypto.hash.sha2.Sha384.digest_length,
-        };
-
-        var value: usize = 0;
-        for (values) |val| {
-            value = @max(val, value);
-        }
-
-        break :brk value;
-    };
+    pub const digest_buf_len: usize = @max(
+        std.crypto.hash.Sha1.digest_length,
+        std.crypto.hash.sha2.Sha512.digest_length,
+        std.crypto.hash.sha2.Sha256.digest_length,
+        std.crypto.hash.sha2.Sha384.digest_length,
+    );
 
     pub fn parseSHASum(buf: []const u8) !Integrity {
         if (buf.len == 0) {
             return Integrity{
                 .tag = Tag.unknown,
-                .value = undefined,
             };
         }
 
@@ -40,8 +33,11 @@ pub const Integrity = extern struct {
         var out_i: usize = 0;
         var i: usize = 0;
 
-        {
-            @memset(&integrity.value, 0);
+        // initializer should zero it out
+        if (comptime @import("root").bun.Environment.allow_assert) {
+            for (integrity.value) |c| {
+                std.debug.assert(c == 0);
+            }
         }
 
         while (i < end) {
@@ -74,23 +70,20 @@ pub const Integrity = extern struct {
         if (buf.len < "sha256-".len) {
             return Integrity{
                 .tag = Tag.unknown,
-                .value = undefined,
             };
         }
 
-        var out: [digest_buf_len]u8 = undefined;
+        var out: [digest_buf_len]u8 = empty_digest_buf;
         const tag = Tag.parse(buf);
         if (tag == Tag.unknown) {
             return Integrity{
                 .tag = Tag.unknown,
-                .value = undefined,
             };
         }
 
         Base64.Decoder.decode(&out, std.mem.trimRight(u8, buf["sha256-".len..], "=")) catch {
             return Integrity{
                 .tag = Tag.unknown,
-                .value = undefined,
             };
         };
 
@@ -202,5 +195,14 @@ pub const Integrity = extern struct {
         }
 
         unreachable;
+    }
+
+    comptime {
+        var integrity = Integrity{ .tag = Tag.sha1 };
+        for (integrity.value) |c| {
+            if (c != 0) {
+                @compileError("Integrity buffer is not zeroed");
+            }
+        }
     }
 };

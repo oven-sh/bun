@@ -1,9 +1,12 @@
 Bun ships as a single executable that can be installed a few different ways.
 
-## macOS and Linux
+## Installing
+
+### macOS and Linux
 
 {% callout %}
-**Linux users** — The `unzip` package is required to install Bun. Kernel version 5.6 or higher is strongly recommended, but the minimum is 5.1.
+**Linux users** — The `unzip` package is required to install Bun. Use `sudo apt install unzip` to install `unzip` package.
+Kernel version 5.6 or higher is strongly recommended, but the minimum is 5.1. Use `uname -r` to check Kernel version.
 {% /callout %}
 
 {% codetabs %}
@@ -34,7 +37,7 @@ $ proto install bun
 
 {% /codetabs %}
 
-## Windows
+### Windows
 
 Bun binaries for windows are not yet available, but coming soon. Join the [#windows](https://discord.com/channels/876711213126520882/1149339379446325248) discord channel in discord to stay up to date.
 
@@ -47,6 +50,77 @@ The test runner, package manager, and bundler are still under development. The f
 - `bun install/add/remove`
 - `bun link/unlink`
 - `bun build`
+
+## Docker
+
+Bun provides a [Docker image](https://hub.docker.com/r/oven/bun/tags) that supports both Linux x64 and arm64.
+
+```bash
+$ docker pull oven/bun
+$ docker run --rm --init --ulimit memlock=-1:-1 oven/bun
+```
+
+There are also image variants for different operating systems.
+
+```bash
+$ docker pull oven/bun:debian
+$ docker pull oven/bun:slim
+$ docker pull oven/bun:alpine
+$ docker pull oven/bun:distroless
+```
+
+## Checking installation
+
+To check that Bun was installed successfully, open a new terminal window and run `bun --version`.
+
+```sh
+$ bun --version
+1.x.y
+```
+
+To see the precise commit of [oven-sh/bun](https://github.com/oven-sh/bun) that you're using, run `bun --revision`.
+
+```sh
+$ bun --revision
+1.x.y+b7982ac1318937560f38e0f8eb18f45eaa43480f
+```
+
+If you've installed Bun but are seeing a `command not found` error, you may have to manually add the installation directory (`~/.bun/bin`) to your `PATH`.
+
+{% details summary="How to add to your `PATH`" %}
+First, determine what shell you're using:
+
+```sh
+$ echo $SHELL
+/bin/zsh # or /bin/bash or /bin/fish
+```
+
+Then add these lines below to bottom of your shell's configuration file.
+
+{% codetabs %}
+
+```bash#~/.zshrc
+# add to ~/.zshrc
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
+```
+
+```bash#~/.bashrc
+# add to ~/.bashrc
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
+```
+
+```sh#~/.config/fish/config.fish
+# add to ~/.config/fish/config.fish
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
+```
+
+{% /codetabs %}
+Save the file. You'll need to open a new shell/terminal window for the changes to take effect.
+
+{% /details %}
 
 ## Upgrading
 
@@ -69,6 +143,10 @@ $ bun upgrade --canary
 ```
 
 [View canary build](https://github.com/oven-sh/bun/releases/tag/canary)
+
+{% callout %}
+**Note** — To switch back to a stable release from canary, run `bun upgrade` again with no flags.
+{% /callout %}
 
 <!--
 ## Native

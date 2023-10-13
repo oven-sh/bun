@@ -398,7 +398,8 @@ pub const Bundler = struct {
             DotEnv.instance = env_loader;
         }
 
-        env_loader.quiet = !log.level.atLeast(.warn);
+        // hide elapsed time when loglevel is warn or error
+        env_loader.quiet = !log.level.atLeast(.info);
 
         // var pool = try allocator.create(ThreadPool);
         // try pool.init(ThreadPool.InitConfig{
@@ -435,13 +436,14 @@ pub const Bundler = struct {
         );
 
         if (auto_jsx) {
-            // If we don't explicitly pass JSX, try to get it from the root tsconfig
-            if (bundler.options.transform_options.jsx == null) {
-                // Most of the time, this will already be cached
-                if (bundler.resolver.readDirInfo(bundler.fs.top_level_dir) catch null) |root_dir| {
-                    if (root_dir.tsconfig_json) |tsconfig| {
+            // Most of the time, this will already be cached
+            if (bundler.resolver.readDirInfo(bundler.fs.top_level_dir) catch null) |root_dir| {
+                if (root_dir.tsconfig_json) |tsconfig| {
+                    // If we don't explicitly pass JSX, try to get it from the root tsconfig
+                    if (bundler.options.transform_options.jsx == null) {
                         bundler.options.jsx = tsconfig.jsx;
                     }
+                    bundler.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
                 }
             }
         }
@@ -780,6 +782,7 @@ pub const Bundler = struct {
                         .file_descriptor = file_descriptor,
                         .file_hash = filepath_hash,
                         .macro_remappings = bundler.options.macro_remap,
+                        .emit_decorator_metadata = resolve_result.emit_decorator_metadata,
                         .jsx = resolve_result.jsx,
                     },
                     client_entry_point,
@@ -899,6 +902,7 @@ pub const Bundler = struct {
                         .file_hash = null,
                         .macro_remappings = bundler.options.macro_remap,
                         .jsx = resolve_result.jsx,
+                        .emit_decorator_metadata = resolve_result.emit_decorator_metadata,
                     },
                     client_entry_point_,
                 ) orelse {
@@ -1102,6 +1106,7 @@ pub const Bundler = struct {
                     .minify_syntax = bundler.options.minify_syntax,
                     .minify_identifiers = bundler.options.minify_identifiers,
                     .transform_only = bundler.options.transform_only,
+                    .import_meta_ref = ast.import_meta_ref,
                 },
                 enable_source_map,
             ),
@@ -1125,6 +1130,7 @@ pub const Bundler = struct {
                         .transform_only = bundler.options.transform_only,
                         .module_type = if (ast.exports_kind == .cjs) .cjs else .esm,
                         .inline_require_and_import_errors = false,
+                        .import_meta_ref = ast.import_meta_ref,
                     },
                     enable_source_map,
                 ),
@@ -1188,6 +1194,7 @@ pub const Bundler = struct {
         replace_exports: runtime.Runtime.Features.ReplaceableExport.Map = .{},
         inject_jest_globals: bool = false,
         set_breakpoint_on_first_line: bool = false,
+        emit_decorator_metadata: bool = false,
 
         dont_bundle_twice: bool = false,
         allow_commonjs: bool = false,
@@ -1300,7 +1307,9 @@ pub const Bundler = struct {
                 jsx.parse = loader.isJSX();
 
                 var opts = js_parser.Parser.Options.init(jsx, loader);
+
                 opts.legacy_transform_require_to_import = bundler.options.allow_runtime and !bundler.options.target.isBun();
+                opts.features.emit_decorator_metadata = this_parse.emit_decorator_metadata;
                 opts.features.allow_runtime = bundler.options.allow_runtime;
                 opts.features.set_breakpoint_on_first_line = this_parse.set_breakpoint_on_first_line;
                 opts.features.trim_unused_imports = bundler.options.trim_unused_imports orelse loader.isTypeScript();
@@ -1333,6 +1342,7 @@ pub const Bundler = struct {
                 opts.features.inject_jest_globals = this_parse.inject_jest_globals;
                 opts.features.minify_syntax = bundler.options.minify_syntax;
                 opts.features.minify_identifiers = bundler.options.minify_identifiers;
+                opts.features.dead_code_elimination = bundler.options.dead_code_elimination;
 
                 if (bundler.macro_context == null) {
                     bundler.macro_context = js_ast.Macro.MacroContext.init(bundler);

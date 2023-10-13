@@ -191,9 +191,6 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 #include "DOMJITHelpers.h"
 #include <JavaScriptCore/DFGAbstractHeap.h>
 
-#include "webcrypto/JSCryptoKey.h"
-#include "webcrypto/JSSubtleCrypto.h"
-
 #include "JSDOMFormData.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructor.h"
@@ -206,6 +203,7 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 #include "JSDOMConvertStrings.h"
 #include "JSDOMConvertUnion.h"
 #include "AddEventListenerOptions.h"
+#include "JSSocketAddress.h"
 
 #include "ErrorStackTrace.h"
 #include "CallSite.h"
@@ -216,6 +214,9 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 #include <wtf/text/Base64.h>
 #include "simdutf.h"
 #include "libusockets.h"
+#include "KeyObject.h"
+#include "webcrypto/JSCryptoKey.h"
+#include "webcrypto/JSSubtleCrypto.h"
 
 constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 
@@ -315,29 +316,16 @@ static bool skipNextComputeErrorInfo = false;
 // error.stack calls this function
 static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned& line, unsigned& column, String& sourceURL, JSObject* errorInstance)
 {
-    if (!errorInstance) {
-        return String();
-    }
-
-    if (skipNextComputeErrorInfo) {
-        return String();
-    }
-
-    Zig::GlobalObject* globalObject = jsDynamicCast<Zig::GlobalObject*>(errorInstance->globalObject());
-    if (!globalObject) {
-        // Happens in node:vm
-        globalObject = jsDynamicCast<Zig::GlobalObject*>(Bun__getDefaultGlobal());
-    }
+    auto* lexicalGlobalObject = errorInstance->globalObject();
+    Zig::GlobalObject* globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
     WTF::String name = "Error"_s;
     WTF::String message;
 
-    if (errorInstance) {
-        // Note that we are not allowed to allocate memory in here. It's called inside a finalizer.
-        if (auto* instance = jsDynamicCast<ErrorInstance*>(errorInstance)) {
-            name = instance->sanitizedNameString(globalObject);
-            message = instance->sanitizedMessageString(globalObject);
-        }
+    // Note that we are not allowed to allocate memory in here. It's called inside a finalizer.
+    if (auto* instance = jsDynamicCast<ErrorInstance*>(errorInstance)) {
+        name = instance->sanitizedNameString(lexicalGlobalObject);
+        message = instance->sanitizedMessageString(lexicalGlobalObject);
     }
 
     WTF::StringBuilder sb;
@@ -391,20 +379,23 @@ static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<Stack
             unsigned int thisColumn = 0;
             frame.computeLineAndColumn(thisLine, thisColumn);
             memset(remappedFrames + i, 0, sizeof(ZigStackFrame));
-
             remappedFrames[i].position.line = thisLine;
             remappedFrames[i].position.column_start = thisColumn;
+
             String sourceURLForFrame = frame.sourceURL(vm);
 
-            if (!sourceURLForFrame.isEmpty()) {
-                remappedFrames[i].source_url = Bun::toString(sourceURLForFrame);
-            } else {
-                // https://github.com/oven-sh/bun/issues/3595
-                remappedFrames[i].source_url = BunStringEmpty;
-            }
+            // If it's not a Zig::GlobalObject, don't bother source-mapping it.
+            if (globalObject) {
+                if (!sourceURLForFrame.isEmpty()) {
+                    remappedFrames[i].source_url = Bun::toString(sourceURLForFrame);
+                } else {
+                    // https://github.com/oven-sh/bun/issues/3595
+                    remappedFrames[i].source_url = BunStringEmpty;
+                }
 
-            // This ensures the lifetime of the sourceURL is accounted for correctly
-            Bun__remapStackFramePositions(globalObject, remappedFrames + i, 1);
+                // This ensures the lifetime of the sourceURL is accounted for correctly
+                Bun__remapStackFramePositions(globalObject, remappedFrames + i, 1);
+            }
 
             if (!hasSet) {
                 hasSet = true;
@@ -412,11 +403,9 @@ static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<Stack
                 column = thisColumn;
                 sourceURL = frame.sourceURL(vm);
 
-                if (errorInstance) {
-                    if (remappedFrames[i].remapped) {
-                        errorInstance->putDirect(vm, Identifier::fromString(vm, "originalLine"_s), jsNumber(thisLine), 0);
-                        errorInstance->putDirect(vm, Identifier::fromString(vm, "originalColumn"_s), jsNumber(thisColumn), 0);
-                    }
+                if (remappedFrames[i].remapped) {
+                    errorInstance->putDirect(vm, Identifier::fromString(vm, "originalLine"_s), jsNumber(thisLine), 0);
+                    errorInstance->putDirect(vm, Identifier::fromString(vm, "originalColumn"_s), jsNumber(thisColumn), 0);
                 }
             }
 
@@ -438,8 +427,95 @@ static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<Stack
     return sb.toString();
 }
 
+static String computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, Vector<StackFrame>& stackFrames, unsigned& line, unsigned& column, String& sourceURL, JSObject* errorObject, JSObject* prepareStackTrace)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    size_t stackTraceLimit = globalObject->stackTraceLimit().value();
+    if (stackTraceLimit == 0) {
+        stackTraceLimit = DEFAULT_ERROR_STACK_TRACE_LIMIT;
+    }
+
+    JSCStackTrace stackTrace = JSCStackTrace::fromExisting(vm, stackFrames);
+
+    // Note: we cannot use tryCreateUninitializedRestricted here because we cannot allocate memory inside initializeIndex()
+    JSC::JSArray* callSites = JSC::JSArray::create(vm,
+        globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
+        stackTrace.size());
+
+    // Create the call sites (one per frame)
+    GlobalObject::createCallSitesFromFrames(globalObject, lexicalGlobalObject, stackTrace, callSites);
+
+    // We need to sourcemap it if it's a GlobalObject.
+    if (globalObject == lexicalGlobalObject) {
+        size_t framesCount = stackTrace.size();
+        ZigStackFrame remappedFrames[framesCount];
+        for (int i = 0; i < framesCount; i++) {
+            memset(remappedFrames + i, 0, sizeof(ZigStackFrame));
+            remappedFrames[i].source_url = Bun::toString(lexicalGlobalObject, stackTrace.at(i).sourceURL());
+            if (JSCStackFrame::SourcePositions* sourcePositions = stackTrace.at(i).getSourcePositions()) {
+                remappedFrames[i].position.line = sourcePositions->line.zeroBasedInt();
+                remappedFrames[i].position.column_start = sourcePositions->startColumn.zeroBasedInt() + 1;
+            } else {
+                remappedFrames[i].position.line = -1;
+                remappedFrames[i].position.column_start = -1;
+            }
+        }
+
+        Bun__remapStackFramePositions(globalObject, remappedFrames, framesCount);
+
+        for (size_t i = 0; i < framesCount; i++) {
+            JSC::JSValue callSiteValue = callSites->getIndex(lexicalGlobalObject, i);
+            CallSite* callSite = JSC::jsDynamicCast<CallSite*>(callSiteValue);
+            if (remappedFrames[i].remapped) {
+                int32_t remappedColumnStart = remappedFrames[i].position.column_start;
+                JSC::JSValue columnNumber = JSC::jsNumber(remappedColumnStart);
+                callSite->setColumnNumber(columnNumber);
+
+                int32_t remappedLine = remappedFrames[i].position.line;
+                JSC::JSValue lineNumber = JSC::jsNumber(remappedLine);
+                callSite->setLineNumber(lineNumber);
+            }
+        }
+    }
+
+    globalObject->formatStackTrace(vm, lexicalGlobalObject, errorObject, callSites, prepareStackTrace);
+
+    RETURN_IF_EXCEPTION(scope, String());
+    return String();
+}
+
 static String computeErrorInfo(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned& line, unsigned& column, String& sourceURL, JSObject* errorInstance)
 {
+    if (skipNextComputeErrorInfo) {
+        return String();
+    }
+
+    if (!errorInstance) {
+        return String();
+    }
+
+    auto* lexicalGlobalObject = errorInstance->globalObject();
+    Zig::GlobalObject* globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
+
+    // Error.prepareStackTrace - https://v8.dev/docs/stack-trace-api#customizing-stack-traces
+    if (!globalObject) {
+        // node:vm will use a different JSGlobalObject
+        globalObject = Bun__getDefaultGlobal();
+
+        auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(lexicalGlobalObject);
+        if (JSValue prepareStackTrace = errorConstructor->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "prepareStackTrace"_s))) {
+            if (prepareStackTrace.isCell() && prepareStackTrace.isObject() && prepareStackTrace.isCallable()) {
+                return computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
+            }
+        }
+    } else {
+        if (JSValue prepareStackTrace = globalObject->m_errorConstructorPrepareStackTraceValue.get()) {
+            if (prepareStackTrace.isCell() && prepareStackTrace.isObject() && prepareStackTrace.isCallable()) {
+                return computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
+            }
+        }
+    }
+
     return computeErrorInfoWithoutPrepareStackTrace(vm, stackTrace, line, column, sourceURL, errorInstance);
 }
 
@@ -804,6 +880,28 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
 void GlobalObject::setConsole(void* console)
 {
     this->setConsoleClient(new Zig::ConsoleClient(console));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(errorConstructorPrepareStackTraceGetter,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName))
+{
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    JSValue value = jsUndefined();
+    if (thisObject->m_errorConstructorPrepareStackTraceValue) {
+        value = thisObject->m_errorConstructorPrepareStackTraceValue.get();
+    }
+    return JSValue::encode(value);
+}
+
+JSC_DEFINE_CUSTOM_SETTER(errorConstructorPrepareStackTraceSetter,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::EncodedJSValue encodedValue, JSC::PropertyName property))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    thisObject->m_errorConstructorPrepareStackTraceValue.set(vm, thisObject, JSValue::decode(encodedValue));
+    return true;
 }
 
 #pragma mark - Globals
@@ -1234,7 +1332,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
             static_cast<uint8_t>(WebCore::BufferEncodingType::base64)));
 }
 
-static JSC_DEFINE_HOST_FUNCTION(functionATOB,
+JSC_DEFINE_HOST_FUNCTION(functionATOB,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
@@ -1257,7 +1355,7 @@ static JSC_DEFINE_HOST_FUNCTION(functionATOB,
     RELEASE_AND_RETURN(throwScope, JSValue::encode(jsString(vm, result.releaseReturnValue())));
 }
 
-static JSC_DEFINE_HOST_FUNCTION(functionReportError,
+JSC_DEFINE_HOST_FUNCTION(functionReportError,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     switch (callFrame->argumentCount()) {
@@ -1539,7 +1637,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
 
 // we're trying out a new way to do this lazy loading
 // this is $lazy() in js code
-static JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
+JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
 
@@ -1661,6 +1759,41 @@ static JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
         if (string == "events"_s) {
             return JSValue::encode(WebCore::JSEventEmitter::getConstructor(vm, globalObject));
         }
+
+        if (string == "internal/crypto"_s) {
+            // auto sourceOrigin = callFrame->callerSourceOrigin(vm).url();
+            // bool isBuiltin = sourceOrigin.protocolIs("builtin"_s);
+            // if (!isBuiltin) {
+            //     return JSC::JSValue::encode(JSC::jsUndefined());
+            // }
+            auto* obj = constructEmptyObject(globalObject);
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "symmetricKeySize"_s)), JSC::JSFunction::create(vm, globalObject, 1, "symmetricKeySize"_s, KeyObject__SymmetricKeySize, ImplementationVisibility::Public, NoIntrinsic), 0);
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "asymmetricKeyType"_s)), JSC::JSFunction::create(vm, globalObject, 1, "asymmetricKeyType"_s, KeyObject__AsymmetricKeyType, ImplementationVisibility::Public, NoIntrinsic), 0);
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "asymmetricKeyDetails"_s)), JSC::JSFunction::create(vm, globalObject, 1, "asymmetricKeyDetails"_s, KeyObject_AsymmetricKeyDetails, ImplementationVisibility::Public, NoIntrinsic), 0);
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "equals"_s)), JSC::JSFunction::create(vm, globalObject, 2, "equals"_s, KeyObject__Equals, ImplementationVisibility::Public, NoIntrinsic), 0);
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "exports"_s)), JSC::JSFunction::create(vm, globalObject, 2, "exports"_s, KeyObject__Exports, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createSecretKey"_s)), JSC::JSFunction::create(vm, globalObject, 1, "createSecretKey"_s, KeyObject__createSecretKey, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createPublicKey"_s)), JSC::JSFunction::create(vm, globalObject, 1, "createPublicKey"_s, KeyObject__createPublicKey, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createPrivateKey"_s)), JSC::JSFunction::create(vm, globalObject, 1, "createPrivateKey"_s, KeyObject__createPrivateKey, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+            obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "generateKeySync"_s)), JSC::JSFunction::create(vm, globalObject, 2, "generateKeySync"_s, KeyObject__generateKeySync, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+            obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "generateKeyPairSync"_s)), JSC::JSFunction::create(vm, globalObject, 2, "generateKeyPairSync"_s, KeyObject__generateKeyPairSync, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+            return JSValue::encode(obj);
+        }
+
         if (string == "internal/tls"_s) {
             auto* obj = constructEmptyObject(globalObject);
 
@@ -1850,6 +1983,11 @@ JSC_DECLARE_HOST_FUNCTION(createWritableStreamFromInternal);
 JSC_DECLARE_HOST_FUNCTION(getInternalWritableStream);
 JSC_DECLARE_HOST_FUNCTION(whenSignalAborted);
 JSC_DECLARE_HOST_FUNCTION(isAbortSignal);
+
+JSC_DEFINE_HOST_FUNCTION(jsCreateCJSImportMeta, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return JSValue::encode(Zig::ImportMetaObject::create(globalObject, callFrame->argument(0).toString(globalObject)));
+}
 
 JSC_DEFINE_HOST_FUNCTION(makeThisTypeErrorForBuiltins, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
@@ -2441,7 +2579,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotaskVariadic, (JSGlobalObject * g
     return JSValue::encode(jsUndefined());
 }
 
-void GlobalObject::createCallSitesFromFrames(JSC::JSGlobalObject* lexicalGlobalObject, JSCStackTrace& stackTrace, JSC::JSArray* callSites)
+void GlobalObject::createCallSitesFromFrames(Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSCStackTrace& stackTrace, JSC::JSArray* callSites)
 {
     /* From v8's "Stack Trace API" (https://github.com/v8/v8/wiki/Stack-Trace-API):
      * "To maintain restrictions imposed on strict mode functions, frames that have a
@@ -2449,10 +2587,11 @@ void GlobalObject::createCallSitesFromFrames(JSC::JSGlobalObject* lexicalGlobalO
      * their receiver and function objects. For those frames, getFunction() and getThis()
      * will return undefined."." */
     bool encounteredStrictFrame = false;
-    GlobalObject* globalObject = reinterpret_cast<GlobalObject*>(lexicalGlobalObject);
 
+    // TODO: is it safe to use CallSite structure from a different JSGlobalObject? This case would happen within a node:vm
     JSC::Structure* callSiteStructure = globalObject->callSiteStructure();
     size_t framesCount = stackTrace.size();
+
     for (size_t i = 0; i < framesCount; i++) {
         CallSite* callSite = CallSite::create(lexicalGlobalObject, callSiteStructure, stackTrace.at(i), encounteredStrictFrame);
         callSites->putDirectIndex(lexicalGlobalObject, i, callSite);
@@ -2463,40 +2602,19 @@ void GlobalObject::createCallSitesFromFrames(JSC::JSGlobalObject* lexicalGlobalO
     }
 }
 
-JSC::JSValue GlobalObject::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites)
+void GlobalObject::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites, JSValue prepareStackTrace)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue errorValue = this->get(this, JSC::Identifier::fromString(vm, "Error"_s));
-    if (UNLIKELY(scope.exception())) {
-        return JSValue();
-    }
 
-    if (!errorValue || errorValue.isUndefined() || !errorValue.isObject()) {
-        return JSValue(jsEmptyString(vm));
-    }
+    auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(this);
 
-    auto* errorConstructor = jsDynamicCast<JSC::JSObject*>(errorValue);
-
-    /* If the user has set a callable Error.prepareStackTrace - use it to format the stack trace. */
-    JSC::JSValue prepareStackTrace = errorConstructor->getIfPropertyExists(lexicalGlobalObject, JSC::Identifier::fromString(vm, "prepareStackTrace"_s));
-    if (prepareStackTrace && prepareStackTrace.isCallable()) {
-        JSC::CallData prepareStackTraceCallData = JSC::getCallData(prepareStackTrace);
-
-        if (prepareStackTraceCallData.type != JSC::CallData::Type::None) {
-            JSC::MarkedArgumentBuffer arguments;
-            arguments.append(errorObject);
-            arguments.append(callSites);
-            ASSERT(!arguments.hasOverflowed());
-
-            JSC::JSValue result = profiledCall(
-                lexicalGlobalObject,
-                JSC::ProfilingReason::Other,
-                prepareStackTrace,
-                prepareStackTraceCallData,
-                errorConstructor,
-                arguments);
-            RETURN_IF_EXCEPTION(scope, JSC::jsUndefined());
-            return result;
+    if (!prepareStackTrace) {
+        if (lexicalGlobalObject->inherits<Zig::GlobalObject>()) {
+            if (auto prepare = this->m_errorConstructorPrepareStackTraceValue.get()) {
+                prepareStackTrace = prepare;
+            }
+        } else {
+            prepareStackTrace = errorConstructor->getIfPropertyExists(lexicalGlobalObject, JSC::Identifier::fromString(vm, "prepareStackTrace"_s));
         }
     }
 
@@ -2525,7 +2643,43 @@ JSC::JSValue GlobalObject::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* le
         }
     }
 
-    return JSC::JSValue(jsString(vm, sb.toString()));
+    bool orignialSkipNextComputeErrorInfo = skipNextComputeErrorInfo;
+    skipNextComputeErrorInfo = true;
+    if (errorObject->hasProperty(lexicalGlobalObject, vm.propertyNames->stack)) {
+        skipNextComputeErrorInfo = true;
+        errorObject->deleteProperty(lexicalGlobalObject, vm.propertyNames->stack);
+    }
+    skipNextComputeErrorInfo = orignialSkipNextComputeErrorInfo;
+
+    // In Node, if you console.log(error.stack) inside Error.prepareStackTrace
+    // it will display the stack as a formatted string, so we have to do the same.
+    errorObject->putDirect(vm, vm.propertyNames->stack, JSC::JSValue(jsString(vm, sb.toString())), 0);
+
+    if (prepareStackTrace && prepareStackTrace.isCallable()) {
+        JSC::CallData prepareStackTraceCallData = JSC::getCallData(prepareStackTrace);
+
+        if (prepareStackTraceCallData.type != JSC::CallData::Type::None) {
+            JSC::MarkedArgumentBuffer arguments;
+            arguments.append(errorObject);
+            arguments.append(callSites);
+
+            JSC::JSValue result = profiledCall(
+                lexicalGlobalObject,
+                JSC::ProfilingReason::Other,
+                prepareStackTrace,
+                prepareStackTraceCallData,
+                errorConstructor,
+                arguments);
+
+            RETURN_IF_EXCEPTION(scope, void());
+
+            if (result.isUndefinedOrNull()) {
+                result = jsUndefined();
+            }
+
+            errorObject->putDirect(vm, vm.propertyNames->stack, result, 0);
+        }
+    }
 }
 
 JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -2581,7 +2735,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
         stackTrace.size());
 
     // Create the call sites (one per frame)
-    GlobalObject::createCallSitesFromFrames(lexicalGlobalObject, stackTrace, callSites);
+    GlobalObject::createCallSitesFromFrames(globalObject, lexicalGlobalObject, stackTrace, callSites);
 
     /* Format the stack trace.
      * Note that v8 won't actually format the stack trace here, but will create a "stack" accessor
@@ -2623,22 +2777,8 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
         }
     }
 
-    JSC::JSValue formattedStackTrace = globalObject->formatStackTrace(vm, lexicalGlobalObject, errorObject, callSites);
+    globalObject->formatStackTrace(vm, lexicalGlobalObject, errorObject, callSites, JSC::JSValue());
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode({}));
-
-    bool orignialSkipNextComputeErrorInfo = skipNextComputeErrorInfo;
-    skipNextComputeErrorInfo = true;
-    if (errorObject->hasProperty(lexicalGlobalObject, vm.propertyNames->stack)) {
-        skipNextComputeErrorInfo = true;
-        errorObject->deleteProperty(lexicalGlobalObject, vm.propertyNames->stack);
-    }
-    skipNextComputeErrorInfo = orignialSkipNextComputeErrorInfo;
-
-    if (formattedStackTrace.isUndefinedOrNull()) {
-        formattedStackTrace = JSC::jsUndefined();
-    }
-
-    errorObject->putDirect(vm, vm.propertyNames->stack, formattedStackTrace, 0);
 
     if (auto* instance = jsDynamicCast<JSC::ErrorInstance*>(errorObject)) {
         // we make a separate copy of the StackTrace unfortunately so that we
@@ -2726,17 +2866,40 @@ void GlobalObject::finishCreation(VM& vm)
     m_commonJSFunctionArgumentsStructure.initLater(
         [](const Initializer<Structure>& init) {
             auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(init.owner);
+
+            auto prototype = JSC::constructEmptyObject(init.owner, globalObject->objectPrototype(), 1);
+            prototype->putDirect(
+                init.vm,
+                Identifier::fromString(init.vm, "createImportMeta"_s),
+                JSFunction::create(init.vm, init.owner, 2, ""_s, jsCreateCJSImportMeta, ImplementationVisibility::Public),
+                PropertyAttribute::DontDelete | PropertyAttribute::DontEnum | 0);
+
             JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(
                 globalObject,
-                globalObject->objectPrototype(),
-                3);
+                prototype,
+                5);
             JSC::PropertyOffset offset;
+
             auto& vm = globalObject->vm();
 
             structure = structure->addPropertyTransition(
                 vm,
                 structure,
                 JSC::Identifier::fromString(vm, "module"_s),
+                0,
+                offset);
+
+            structure = structure->addPropertyTransition(
+                vm,
+                structure,
+                JSC::Identifier::fromString(vm, "require"_s),
+                0,
+                offset);
+
+            structure = structure->addPropertyTransition(
+                vm,
+                structure,
+                JSC::Identifier::fromString(vm, "resolve"_s),
                 0,
                 offset);
 
@@ -2755,6 +2918,11 @@ void GlobalObject::finishCreation(VM& vm)
                 offset);
 
             init.set(structure);
+        });
+
+    m_JSSocketAddressStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(JSSocketAddress::createStructure(init.vm, init.owner));
         });
 
     // Change prototype from null to object for synthetic modules.
@@ -3071,6 +3239,14 @@ void GlobalObject::finishCreation(VM& vm)
             init.setConstructor(constructor);
         });
 
+    m_JSCryptoKey.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
+            Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(init.owner);
+            auto* prototype = JSCryptoKey::createPrototype(init.vm, *globalObject);
+            auto* structure = JSCryptoKey::createStructure(init.vm, init.owner, JSValue(prototype));
+            init.set(structure);
+        });
+
     m_JSHTTPSResponseSinkClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::HTTPSResponseSink);
@@ -3254,7 +3430,7 @@ JSC_DEFINE_CUSTOM_GETTER(BunCommonJSModule_getter, (JSGlobalObject * globalObjec
 // This implementation works the same as setTimeout(myFunction, 0)
 // TODO: make it more efficient
 // https://developer.mozilla.org/en-US/docs/Web/API/Window/setImmediate
-static JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
+JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
@@ -3315,9 +3491,74 @@ JSValue getEventSourceConstructor(VM& vm, JSObject* thisObject)
 
     if (returnedException) {
         throwException(globalObject, scope, returnedException.get());
+        return jsUndefined();
     }
 
     RELEASE_AND_RETURN(scope, result);
+}
+
+// `console.Console` or `import { Console } from 'console';`
+JSC_DEFINE_CUSTOM_GETTER(getConsoleConstructor, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
+{
+    auto& vm = globalObject->vm();
+    auto console = JSValue::decode(thisValue).getObject();
+    JSC::JSFunction* createConsoleConstructor = JSC::JSFunction::create(vm, consoleObjectCreateConsoleConstructorCodeGenerator(vm), globalObject);
+    JSC::MarkedArgumentBuffer args;
+    args.append(console);
+    JSC::CallData callData = JSC::getCallData(createConsoleConstructor);
+    NakedPtr<JSC::Exception> returnedException = nullptr;
+    auto result = JSC::call(globalObject, createConsoleConstructor, callData, console, args, returnedException);
+    if (returnedException) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        throwException(globalObject, scope, returnedException.get());
+    }
+    console->putDirect(vm, property, result, 0);
+    return JSValue::encode(result);
+}
+
+// `console._stdout` is equal to `process.stdout`
+JSC_DEFINE_CUSTOM_GETTER(getConsoleStdout, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
+{
+    auto& vm = globalObject->vm();
+    auto console = JSValue::decode(thisValue).getObject();
+    auto global = static_cast<Zig::GlobalObject*>(globalObject);
+
+    // instead of calling the constructor builtin, go through the process.stdout getter to ensure it's only created once.
+    auto stdout = global->processObject()->get(globalObject, Identifier::fromString(vm, "stdout"_s));
+    if (!stdout)
+        return JSValue::encode({});
+
+    console->putDirect(vm, property, stdout, PropertyAttribute::DontEnum | 0);
+    return JSValue::encode(stdout);
+}
+
+// `console._stderr` is equal to `process.stderr`
+JSC_DEFINE_CUSTOM_GETTER(getConsoleStderr, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
+{
+    auto& vm = globalObject->vm();
+    auto console = JSValue::decode(thisValue).getObject();
+    auto global = static_cast<Zig::GlobalObject*>(globalObject);
+
+    // instead of calling the constructor builtin, go through the process.stdout getter to ensure it's only created once.
+    auto stdout = global->processObject()->get(globalObject, Identifier::fromString(vm, "stderr"_s));
+    if (!stdout)
+        return JSValue::encode({});
+
+    console->putDirect(vm, property, stdout, PropertyAttribute::DontEnum | 0);
+    return JSValue::encode(stdout);
+}
+
+JSC_DEFINE_CUSTOM_SETTER(EventSource_setter,
+    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
+        JSC::EncodedJSValue value, JSC::PropertyName property))
+{
+    if (JSValue::decode(thisValue) != globalObject) {
+        return false;
+    }
+
+    auto& vm = globalObject->vm();
+    globalObject->putDirect(vm, property, JSValue::decode(value), 0);
+    return true;
 }
 
 EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
@@ -3476,12 +3717,15 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 
     putDirectBuiltinFunction(vm, this, builtinNames.createFIFOPrivateName(), streamInternalsCreateFIFOCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.createEmptyReadableStreamPrivateName(), readableStreamCreateEmptyReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    putDirectBuiltinFunction(vm, this, builtinNames.createUsedReadableStreamPrivateName(), readableStreamCreateUsedReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.consumeReadableStreamPrivateName(), readableStreamConsumeReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.createNativeReadableStreamPrivateName(), readableStreamCreateNativeReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.requireESMPrivateName(), importMetaObjectRequireESMCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.loadCJS2ESMPrivateName(), importMetaObjectLoadCJS2ESMCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.internalRequirePrivateName(), importMetaObjectInternalRequireCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.requireNativeModulePrivateName(), moduleRequireNativeModuleCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+
+    putDirectBuiltinFunction(vm, this, builtinNames.overridableRequirePrivateName(), moduleOverridableRequireCodeGenerator(vm), 0);
 
     putDirectNativeFunction(vm, this, builtinNames.createUninitializedArrayBufferPrivateName(), 1, functionCreateUninitializedArrayBuffer, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::Function);
     putDirectNativeFunction(vm, this, builtinNames.resolveSyncPrivateName(), 1, functionImportMeta__resolveSyncPrivate, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::Function);
@@ -3539,10 +3783,14 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     JSC::JSObject* errorConstructor = this->errorConstructor();
     errorConstructor->putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "captureStackTrace"_s), 2, errorConstructorFuncCaptureStackTrace, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
     errorConstructor->putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "appendStackTrace"_s), 2, errorConstructorFuncAppendStackTrace, ImplementationVisibility::Private, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
+    errorConstructor->putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "prepareStackTrace"_s), JSC::CustomGetterSetter::create(vm, errorConstructorPrepareStackTraceGetter, errorConstructorPrepareStackTraceSetter), PropertyAttribute::DontEnum | 0);
 
     JSC::JSObject* consoleObject = this->get(this, JSC::Identifier::fromString(vm, "console"_s)).getObject();
     consoleObject->putDirectBuiltinFunction(vm, this, vm.propertyNames->asyncIteratorSymbol, consoleObjectAsyncIteratorCodeGenerator(vm), PropertyAttribute::Builtin | 0);
-    consoleObject->putDirectBuiltinFunction(vm, this, clientData->builtinNames().writePublicName(), consoleObjectWriteCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::ReadOnly | 0);
+    consoleObject->putDirectBuiltinFunction(vm, this, clientData->builtinNames().writePublicName(), consoleObjectWriteCodeGenerator(vm), PropertyAttribute::Builtin | 0);
+    consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "Console"_s), CustomGetterSetter::create(vm, getConsoleConstructor, nullptr), 0);
+    consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stdout"_s), CustomGetterSetter::create(vm, getConsoleStdout, nullptr), PropertyAttribute::DontEnum | 0);
+    consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stderr"_s), CustomGetterSetter::create(vm, getConsoleStderr, nullptr), PropertyAttribute::DontEnum | 0);
 }
 
 extern "C" bool JSC__JSGlobalObject__startRemoteInspector(JSC__JSGlobalObject* globalObject, unsigned char* host, uint16_t arg1)
@@ -3606,6 +3854,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_nodeModuleOverriddenResolveFilename);
 
     visitor.append(thisObject->m_nextTickQueue);
+    visitor.append(thisObject->m_errorConstructorPrepareStackTraceValue);
 
     thisObject->m_JSArrayBufferSinkClassStructure.visit(visitor);
     thisObject->m_JSBufferListClassStructure.visit(visitor);
@@ -3642,6 +3891,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_callSiteStructure.visit(visitor);
     thisObject->m_emitReadableNextTickFunction.visit(visitor);
     thisObject->m_JSBufferSubclassStructure.visit(visitor);
+    thisObject->m_JSCryptoKey.visit(visitor);
+
     thisObject->m_cryptoObject.visit(visitor);
     thisObject->m_JSDOMFileConstructor.visit(visitor);
 
@@ -3659,6 +3910,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_commonJSModuleObjectStructure.visit(visitor);
     thisObject->m_memoryFootprintStructure.visit(visitor);
     thisObject->m_commonJSFunctionArgumentsStructure.visit(visitor);
+    thisObject->m_JSSocketAddressStructure.visit(visitor);
     thisObject->m_cachedGlobalObjectStructure.visit(visitor);
     thisObject->m_cachedGlobalProxyStructure.visit(visitor);
 
@@ -3830,16 +4082,45 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* g
     globalObject->queueMicrotask(function, JSValue(bitwise_cast<double>(reinterpret_cast<uintptr_t>(ptr))), JSValue(bitwise_cast<double>(reinterpret_cast<uintptr_t>(callback))), jsUndefined(), jsUndefined());
 }
 
-JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject,
+JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,
     JSModuleLoader* loader, JSValue key,
     JSValue referrer, JSValue origin)
 {
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(jsGlobalObject);
+
     ErrorableString res;
     res.success = false;
-    BunString keyZ = Bun::toString(globalObject, key);
-    BunString referrerZ = referrer && !referrer.isUndefinedOrNull() && referrer.isString() ? Bun::toString(globalObject, referrer) : BunStringEmpty;
+
+    if (key.isString()) {
+        if (auto* virtualModules = globalObject->onLoadPlugins.virtualModules) {
+            auto keyString = key.toWTFString(globalObject);
+            if (virtualModules->contains(keyString)) {
+                return JSC::Identifier::fromString(globalObject->vm(), keyString);
+            }
+        }
+    }
+
+    BunString keyZ;
+    if (key.isString()) {
+        auto moduleName = jsCast<JSString*>(key)->value(globalObject);
+        if (moduleName.startsWith("file://"_s)) {
+            auto url = WTF::URL(moduleName);
+            if (url.isValid() && !url.isEmpty()) {
+                keyZ = Bun::toStringRef(url.fileSystemPath());
+            } else {
+                keyZ = Bun::toStringRef(moduleName);
+            }
+        } else {
+            keyZ = Bun::toStringRef(moduleName);
+        }
+    } else {
+        keyZ = Bun::toStringRef(globalObject, key);
+    }
+    BunString referrerZ = referrer && !referrer.isUndefinedOrNull() && referrer.isString() ? Bun::toStringRef(globalObject, referrer) : BunStringEmpty;
     ZigString queryString = { 0, 0 };
     Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ, &queryString);
+    keyZ.deref();
+    referrerZ.deref();
 
     if (res.success) {
         if (queryString.len > 0) {
@@ -3854,25 +4135,60 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject,
     }
 }
 
-JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* globalObject,
+JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,
     JSModuleLoader*,
     JSString* moduleNameValue,
     JSValue parameters,
     const SourceOrigin& sourceOrigin)
 {
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(jsGlobalObject);
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* promise = JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
     RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
 
+    if (auto* virtualModules = globalObject->onLoadPlugins.virtualModules) {
+        auto keyString = moduleNameValue->value(globalObject);
+        if (virtualModules->contains(keyString)) {
+            auto resolvedIdentifier = JSC::Identifier::fromString(vm, keyString);
+
+            auto result = JSC::importModule(globalObject, resolvedIdentifier,
+                JSC::jsUndefined(), parameters, JSC::jsUndefined());
+
+            RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
+            return result;
+        }
+    }
+
     auto sourceURL = sourceOrigin.url();
     ErrorableString resolved;
-    auto moduleNameZ = Bun::toString(globalObject, moduleNameValue);
-    auto sourceOriginZ = sourceURL.isEmpty() ? BunStringCwd : Bun::toString(sourceURL.fileSystemPath());
+    BunString moduleNameZ;
+
+    auto moduleName = moduleNameValue->value(globalObject);
+#if BUN_DEBUG
+    auto startRefCount = moduleName.impl()->refCount();
+#endif
+    if (moduleName.startsWith("file://"_s)) {
+        auto url = WTF::URL(moduleName);
+        if (url.isValid() && !url.isEmpty()) {
+            moduleNameZ = Bun::toStringRef(url.fileSystemPath());
+        } else {
+            moduleNameZ = Bun::toStringRef(moduleName);
+        }
+    } else {
+        moduleNameZ = Bun::toStringRef(moduleName);
+    }
+    auto sourceOriginZ = sourceURL.isEmpty() ? BunStringCwd : Bun::toStringRef(sourceURL.fileSystemPath());
     ZigString queryString = { 0, 0 };
     resolved.success = false;
     Zig__GlobalObject__resolve(&resolved, globalObject, &moduleNameZ, &sourceOriginZ, &queryString);
+    moduleNameZ.deref();
+    sourceOriginZ.deref();
+#if BUN_DEBUG
+    // TODO: ASSERT doesnt work right now
+    RELEASE_ASSERT(startRefCount == moduleName.impl()->refCount());
+#endif
     if (!resolved.success) {
         throwException(scope, resolved.result.err, globalObject);
         return promise->rejectWithCaughtException(globalObject, scope);

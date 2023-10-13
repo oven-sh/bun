@@ -20,13 +20,14 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionLoadModule);
 class JSCommonJSModule final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
-    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesPut;
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-    mutable JSC::WriteBarrier<JSC::JSString> m_id;
-    mutable JSC::WriteBarrier<JSC::Unknown> m_filename;
-    mutable JSC::WriteBarrier<JSC::JSString> m_dirname;
+    mutable JSC::WriteBarrier<JSString> m_id;
+    mutable JSC::WriteBarrier<Unknown> m_filename;
+    mutable JSC::WriteBarrier<JSString> m_dirname;
     mutable JSC::WriteBarrier<Unknown> m_paths;
-    mutable JSC::WriteBarrier<JSC::JSSourceCode> sourceCode;
+    mutable JSC::WriteBarrier<Unknown> m_parent;
+    mutable JSC::WriteBarrier<JSSourceCode> sourceCode;
     bool ignoreESModuleAnnotation { false };
 
     static void destroy(JSC::JSCell*);
@@ -54,8 +55,7 @@ public:
     static JSCommonJSModule* create(
         Zig::GlobalObject* globalObject,
         const WTF::String& key,
-        JSValue exportsObject,
-        bool hasEvaluated = false);
+        JSValue exportsObject, bool hasEvaluated, JSValue parent);
 
     static JSCommonJSModule* create(
         Zig::GlobalObject* globalObject,
@@ -73,10 +73,6 @@ public:
     JSValue id();
 
     DECLARE_VISIT_CHILDREN;
-
-    static bool put(JSC::JSCell* cell, JSC::JSGlobalObject* globalObject,
-        JSC::PropertyName propertyName, JSC::JSValue value,
-        JSC::PutPropertySlot& slot);
 
     DECLARE_INFO;
     template<typename, SubspaceAccess mode>

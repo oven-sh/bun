@@ -196,6 +196,7 @@ pub const Arguments = struct {
         clap.parseParam("--inspect <STR>?                  Activate Bun's Debugger") catch unreachable,
         clap.parseParam("--inspect-wait <STR>?             Activate Bun's Debugger, wait for a connection before executing") catch unreachable,
         clap.parseParam("--inspect-brk <STR>?              Activate Bun's Debugger, set breakpoint on first line of code and wait") catch unreachable,
+        clap.parseParam("--if-present                      Exit if the entrypoint does not exist") catch unreachable,
         clap.parseParam("<POS>...                          ") catch unreachable,
     };
 
@@ -538,6 +539,7 @@ pub const Arguments = struct {
                 ctx.preloads = preloads;
             }
 
+            ctx.runtime_options.if_present = args.flag("--if-present");
             ctx.runtime_options.smol = args.flag("--smol");
             if (args.option("--inspect")) |inspect_flag| {
                 ctx.runtime_options.debugger = if (inspect_flag.len == 0)
@@ -1022,6 +1024,7 @@ pub const Command = struct {
     pub const RuntimeOptions = struct {
         smol: bool = false,
         debugger: Debugger = .{ .unspecified = {} },
+        if_present: bool = false,
     };
 
     pub const Context = struct {
@@ -1192,6 +1195,7 @@ pub const Command = struct {
         "install",
         "add",
         "run",
+        "update",
         "link",
         "unlink",
         "remove",
@@ -1199,6 +1203,7 @@ pub const Command = struct {
         "bun",
         "upgrade",
         "discord",
+        "test",
         "pm",
         "x",
         "repl",
@@ -1662,6 +1667,10 @@ pub const Command = struct {
                     });
 
                     Global.exit(1);
+                }
+
+                if (ctx.runtime_options.if_present) {
+                    return;
                 }
 
                 if (was_js_like) {

@@ -64,6 +64,17 @@ To run a file in watch mode, use the `--watch` flag.
 $ bun --watch run index.tsx
 ```
 
+{% callout %}
+**Note** — When using `bun run`, put Bun flags like `--watch` immediately after `bun`.
+
+```bash
+$ bun --watch run dev # ✔️ do this
+$ bun run dev --watch # ❌ don't do this
+```
+
+Flags that occur at the end of the command will be ignored and passed through to the `"dev"` script itself.
+{% /callout %}
+
 ### `--smol`
 
 In memory-constrained environments, use the `--smol` flag to reduce memory usage at a cost to performance.
@@ -78,6 +89,10 @@ $ bun --smol run index.tsx
 Compare to `npm run <script>` or `yarn <script>`
 {% /note %}
 
+```sh
+$ bun [bun flags] run <script> [script flags]
+```
+
 Your `package.json` can define a number of named `"scripts"` that correspond to shell commands.
 
 ```jsonc
@@ -90,10 +105,10 @@ Your `package.json` can define a number of named `"scripts"` that correspond to 
 }
 ```
 
-Use `bun <script>` or `bun run <script>` to execute these scripts.
+Use `bun run <script>` to execute these scripts.
 
 ```bash
-$ bun clean
+$ bun run clean
  $ rm -rf dist && echo 'Done.'
  Cleaning...
  Done.

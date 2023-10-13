@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 
-test("Blob.slice", () => {
+test("Blob.slice", async () => {
   const blob = new Blob(["Bun", "Foo"]);
   const b1 = blob.slice(0, 3, "Text/HTML");
   expect(b1 instanceof Blob).toBeTruthy();
@@ -26,6 +26,33 @@ test("Blob.slice", () => {
   expect(blob.slice(null, "-123").size).toBe(6);
   expect(blob.slice(0, 10).size).toBe(blob.size);
   expect(blob.slice("text/plain;charset=utf-8").type).toBe("text/plain;charset=utf-8");
+
+  // test Blob.slice().slice(), issue#6252
+  expect(await blob.slice(0, 4).slice(0, 3).text()).toBe("Bun");
+  expect(await blob.slice(0, 4).slice(1, 3).text()).toBe("un");
+  expect(await blob.slice(1, 4).slice(0, 3).text()).toBe("unF");
+  expect(await blob.slice(1, 4).slice(1, 3).text()).toBe("nF");
+  expect(await blob.slice(1, 4).slice(2, 3).text()).toBe("F");
+  expect(await blob.slice(1, 4).slice(3, 3).text()).toBe("");
+  expect(await blob.slice(1, 4).slice(4, 3).text()).toBe("");
+  // test negative start
+  expect(await blob.slice(1, 4).slice(-1, 3).text()).toBe("F");
+  expect(await blob.slice(1, 4).slice(-2, 3).text()).toBe("nF");
+  expect(await blob.slice(1, 4).slice(-3, 3).text()).toBe("unF");
+  expect(await blob.slice(1, 4).slice(-4, 3).text()).toBe("unF");
+  expect(await blob.slice(1, 4).slice(-5, 3).text()).toBe("unF");
+  expect(await blob.slice(-1, 4).slice(-1, 3).text()).toBe("");
+  expect(await blob.slice(-2, 4).slice(-1, 3).text()).toBe("");
+  expect(await blob.slice(-3, 4).slice(-1, 3).text()).toBe("F");
+  expect(await blob.slice(-4, 4).slice(-1, 3).text()).toBe("F");
+  expect(await blob.slice(-5, 4).slice(-1, 3).text()).toBe("F");
+  expect(await blob.slice(-5, 4).slice(-2, 3).text()).toBe("nF");
+  expect(await blob.slice(-5, 4).slice(-3, 3).text()).toBe("unF");
+  expect(await blob.slice(-5, 4).slice(-4, 3).text()).toBe("unF");
+  expect(await blob.slice(-4, 4).slice(-3, 3).text()).toBe("nF");
+  expect(await blob.slice(-5, 4).slice(-4, 3).text()).toBe("unF");
+  expect(await blob.slice(-3, 4).slice(-2, 3).text()).toBe("F");
+  expect(await blob.slice(-blob.size, 4).slice(-blob.size, 3).text()).toBe("Bun");
 });
 
 test("new Blob", () => {

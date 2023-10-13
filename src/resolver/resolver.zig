@@ -187,6 +187,8 @@ pub const Result = struct {
     // This is the "type" field from "package.json"
     module_type: options.ModuleType = options.ModuleType.unknown,
 
+    emit_decorator_metadata: bool = false,
+
     debug_meta: ?DebugMeta = null,
 
     dirname_fd: StoredFileDescriptorType = 0,
@@ -965,6 +967,7 @@ pub const Resolver = struct {
 
             if (dir.enclosing_tsconfig_json) |tsconfig| {
                 result.jsx = tsconfig.mergeJSX(result.jsx);
+                result.emit_decorator_metadata = result.emit_decorator_metadata or tsconfig.emit_decorator_metadata;
             }
 
             // If you use mjs or mts, then you're using esm
@@ -1128,41 +1131,6 @@ pub const Resolver = struct {
                         .diff_case = entry.diff_case,
                         .package_json = entry.package_json,
                         .file_fd = entry.file_fd,
-                        .jsx = r.opts.jsx,
-                    },
-                };
-            }
-
-            return .{ .not_found = {} };
-        }
-
-        if (strings.hasPrefixComptime(import_path, "file:///")) {
-            const path = import_path[7..];
-
-            if (r.opts.external.abs_paths.count() > 0 and r.opts.external.abs_paths.contains(path)) {
-                // If the string literal in the source text is an absolute path and has
-                // been marked as an external module, mark it as *not* an absolute path.
-                // That way we preserve the literal text in the output and don't generate
-                // a relative path from the output directory to that path.
-                if (r.debug_logs) |*debug| {
-                    debug.addNoteFmt("The path \"{s}\" is marked as external by the user", .{path});
-                }
-
-                return .{
-                    .success = Result{
-                        .path_pair = .{ .primary = Path.init(import_path) },
-                        .is_external = true,
-                    },
-                };
-            }
-
-            if (r.loadAsFile(path, r.extension_order)) |file| {
-                return .{
-                    .success = Result{
-                        .dirname_fd = file.dirname_fd,
-                        .path_pair = .{ .primary = Path.init(file.path) },
-                        .diff_case = file.diff_case,
-                        .file_fd = file.file_fd,
                         .jsx = r.opts.jsx,
                     },
                 };
@@ -1711,7 +1679,7 @@ pub const Resolver = struct {
                 // check the global cache directory for a package.json file.
                 var manager = r.getPackageManager();
                 var dependency_version = Dependency.Version{};
-                var dependency_behavior = @as(Dependency.Behavior, @enumFromInt(Dependency.Behavior.normal));
+                var dependency_behavior = Dependency.Behavior.normal;
                 var string_buf = esm.version;
 
                 // const initial_pending_tasks = manager.pending_tasks;
@@ -3904,6 +3872,7 @@ pub const Resolver = struct {
                     // starting from the base config (end of the list)
                     // successively apply the inheritable attributes to the next config
                     while (parent_configs.popOrNull()) |parent_config| {
+                        merged_config.emit_decorator_metadata = merged_config.emit_decorator_metadata or parent_config.emit_decorator_metadata;
                         if (parent_config.base_url.len > 0) {
                             merged_config.base_url = parent_config.base_url;
                             merged_config.base_url_for_paths = parent_config.base_url_for_paths;

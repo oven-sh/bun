@@ -638,7 +638,7 @@ pub const RunCommand = struct {
             // the use of npm/? is copying yarn
             // e.g.
             // > "yarn/1.22.4 npm/? node/v12.16.3 darwin x64",
-            "bun/" ++ Global.package_json_version ++ " npm/? node/v18.15.0 " ++ Global.os_name ++ " " ++ Global.arch_name,
+            "bun/" ++ Global.package_json_version ++ " npm/? node/v20.8.0 " ++ Global.os_name ++ " " ++ Global.arch_name,
         ) catch unreachable;
 
         if (this_bundler.env.get("npm_execpath") == null) {
@@ -973,7 +973,6 @@ pub const RunCommand = struct {
                         var shebang: string = shebang_buf[0..shebang_size];
 
                         shebang = std.mem.trim(u8, shebang, " \r\n\t");
-                        if (shebang.len == 0) break :possibly_open_with_bun_js;
                         if (strings.hasPrefixComptime(shebang, "#!")) {
                             const first_arg: string = if (bun.argv().len > 0) bun.span(bun.argv()[0]) else "";
                             const filename = std.fs.path.basename(first_arg);
@@ -1159,6 +1158,10 @@ pub const RunCommand = struct {
                     passthrough,
                 );
             }
+        }
+
+        if (ctx.runtime_options.if_present) {
+            return true;
         }
 
         if (comptime log_errors) {

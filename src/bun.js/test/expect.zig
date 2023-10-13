@@ -1518,7 +1518,7 @@ pub const Expect = struct {
         }
 
         const expected_diff = std.math.pow(f64, 10, -precision) / 2;
-        const actual_diff = std.math.fabs(received - expected);
+        const actual_diff = @abs(received - expected);
         var pass = actual_diff < expected_diff;
 
         const not = this.flags.not;

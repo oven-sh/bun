@@ -10,7 +10,7 @@ Today (February 2023), Bun's codebase has five distinct parts:
 
 - JavaScript, JSX, & TypeScript transpiler, module resolver, and related code
 - JavaScript runtime ([`src/bun.js/`](src/bun.js/))
-- JavaScript runtime bindings ([`src/bun.zig/bindings/**/*.cpp`](src/bun.zig/bindings/))
+- JavaScript runtime bindings ([`src/bun.js/bindings/**/*.cpp`](src/bun.js/bindings/))
 - Package manager ([`src/install/`](src/install/))
 - Shared utilities ([`src/string_immutable.zig`](src/string_immutable.zig))
 

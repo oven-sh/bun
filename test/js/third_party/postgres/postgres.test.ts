@@ -28,20 +28,20 @@ describe("pg", () => {
 
     async function execute() {
       await client.connect();
-      const res = await client.query(`SELECT * FROM users LIMIT 1000`); // <--- bun stuck here
+      const res = await client.query(`SELECT * FROM users LIMIT 1000`);
       expect(res.rows.length).toBeGreaterThanOrEqual(300);
       await client.end();
       return "success";
     }
 
     async function timeout() {
-      client.end();
       await Bun.sleep(5000);
+      client.end();
       return "timeout";
     }
 
     expect(await Promise.race([execute(), timeout()])).toBe("success");
-  });
+  }, 5000);
 });
 
 describe("postgres", () => {

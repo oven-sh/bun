@@ -1,5 +1,3 @@
-## `bun update`
-
 To update all dependencies to the latest version _that's compatible with the version range specified in your `package.json`_:
 
 ```sh

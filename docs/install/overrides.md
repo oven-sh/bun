@@ -34,7 +34,7 @@ node_modules
 
 But what if a security vulnerability was introduced in `bar@4.5.6`? We may want a way to pin `bar` to an older version that doesn't have the vulerability. This is where `"overrides"`/`"resolutions"` come in.
 
-### `"overrides"`
+## `"overrides"`
 
 Add `bar` to the `"overrides"` field in `package.json`. Bun will defer to the specified version range when determining which version of `bar` to install, whether it's a dependency or a metadependency.
 
@@ -54,7 +54,7 @@ Add `bar` to the `"overrides"` field in `package.json`. Bun will defer to the sp
   }
 ```
 
-### `"resolutions"`
+## `"resolutions"`
 
 The syntax is similar for `"resolutions"`, which is Yarn's alternative to `"overrides"`. Bun supports this feature to make migration from Yarn easier.
 

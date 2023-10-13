@@ -2672,7 +2672,7 @@ fn NewPrinter(
                 .e_number => |e| {
                     const value = e.value;
 
-                    const absValue = @fabs(value);
+                    const absValue = @abs(value);
 
                     if (std.math.isNan(value)) {
                         p.printSpaceBeforeIdentifier();

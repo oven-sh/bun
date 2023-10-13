@@ -1136,7 +1136,8 @@ export namespace V8 {
       | "Canceled"
       | "RpPageNotVisible"
       | "SilentMediationFailure"
-      | "ThirdPartyCookiesBlocked";
+      | "ThirdPartyCookiesBlocked"
+      | "NotSignedInWithIdp";
     export type FederatedAuthUserInfoRequestIssueDetails = {
       federatedAuthUserInfoRequestIssueReason: FederatedAuthUserInfoRequestIssueReason;
     };
@@ -1192,6 +1193,25 @@ export namespace V8 {
        */
       failedRequestInfo?: FailedRequestInfo | undefined;
     };
+    export type PropertyRuleIssueReason = "InvalidSyntax" | "InvalidInitialValue" | "InvalidInherits" | "InvalidName";
+    /**
+     * This issue warns about errors in property rules that lead to property
+     * registrations being ignored.
+     */
+    export type PropertyRuleIssueDetails = {
+      /**
+       * Source code position of the property rule.
+       */
+      sourceCodeLocation: SourceCodeLocation;
+      /**
+       * Reason why the property rule was discarded.
+       */
+      propertyRuleIssueReason: PropertyRuleIssueReason;
+      /**
+       * The value of the property rule property that failed to parse
+       */
+      propertyValue?: string | undefined;
+    };
     /**
      * A unique identifier for the type of issue. Each type may use one of the
      * optional fields in InspectorIssueDetails to convey more specific
@@ -1215,7 +1235,8 @@ export namespace V8 {
       | "FederatedAuthRequestIssue"
       | "BounceTrackingIssue"
       | "StylesheetLoadingIssue"
-      | "FederatedAuthUserInfoRequestIssue";
+      | "FederatedAuthUserInfoRequestIssue"
+      | "PropertyRuleIssue";
     /**
      * This struct holds a list of optional fields with additional information
      * specific to the kind of issue. When adding a new issue code, please also
@@ -1239,6 +1260,7 @@ export namespace V8 {
       federatedAuthRequestIssueDetails?: FederatedAuthRequestIssueDetails | undefined;
       bounceTrackingIssueDetails?: BounceTrackingIssueDetails | undefined;
       stylesheetLoadingIssueDetails?: StylesheetLoadingIssueDetails | undefined;
+      propertyRuleIssueDetails?: PropertyRuleIssueDetails | undefined;
       federatedAuthUserInfoRequestIssueDetails?: FederatedAuthUserInfoRequestIssueDetails | undefined;
     };
     /**
@@ -1390,15 +1412,81 @@ export namespace V8 {
        */
       name: string;
       /**
-       * address field name, for example Jon Doe.
+       * address field value, for example Jon Doe.
        */
       value: string;
     };
+    /**
+     * A list of address fields.
+     */
+    export type AddressFields = {
+      fields: AddressField[];
+    };
     export type Address = {
       /**
-       * fields and values defining a test address.
+       * fields and values defining an address.
        */
       fields: AddressField[];
+    };
+    /**
+     * Defines how an address can be displayed like in chrome://settings/addresses.
+     * Address UI is a two dimensional array, each inner array is an "address information line", and when rendered in a UI surface should be displayed as such.
+     * The following address UI for instance:
+     * [[{name: "GIVE_NAME", value: "Jon"}, {name: "FAMILY_NAME", value: "Doe"}], [{name: "CITY", value: "Munich"}, {name: "ZIP", value: "81456"}]]
+     * should allow the receiver to render:
+     * Jon Doe
+     * Munich 81456
+     */
+    export type AddressUI = {
+      /**
+       * A two dimension array containing the repesentation of values from an address profile.
+       */
+      addressFields: AddressFields[];
+    };
+    /**
+     * Specified whether a filled field was done so by using the html autocomplete attribute or autofill heuristics.
+     */
+    export type FillingStrategy = "autocompleteAttribute" | "autofillInferred";
+    export type FilledField = {
+      /**
+       * The type of the field, e.g text, password etc.
+       */
+      htmlType: string;
+      /**
+       * the html id
+       */
+      id: string;
+      /**
+       * the html name
+       */
+      name: string;
+      /**
+       * the field value
+       */
+      value: string;
+      /**
+       * The actual field type, e.g FAMILY_NAME
+       */
+      autofillType: string;
+      /**
+       * The filling strategy
+       */
+      fillingStrategy: FillingStrategy;
+    };
+    /**
+     * Emitted when an address form is filled.
+     * @event `Autofill.addressFormFilled`
+     */
+    export type AddressFormFilledEvent = {
+      /**
+       * Information about the fields that were filled
+       */
+      filledFields: FilledField[];
+      /**
+       * An UI representation of the address used to fill the form.
+       * Consists of a 2D array where each child represents an address/profile line.
+       */
+      addressUi: AddressUI;
     };
     /**
      * Trigger autofill on a form identified by the fieldId.
@@ -1437,6 +1525,26 @@ export namespace V8 {
      * @response `Autofill.setAddresses`
      */
     export type SetAddressesResponse = {};
+    /**
+     * Disables autofill domain notifications.
+     * @request `Autofill.disable`
+     */
+    export type DisableRequest = {};
+    /**
+     * Disables autofill domain notifications.
+     * @response `Autofill.disable`
+     */
+    export type DisableResponse = {};
+    /**
+     * Enables autofill domain notifications.
+     * @request `Autofill.enable`
+     */
+    export type EnableRequest = {};
+    /**
+     * Enables autofill domain notifications.
+     * @response `Autofill.enable`
+     */
+    export type EnableResponse = {};
   }
   export namespace BackgroundService {
     /**
@@ -3573,6 +3681,25 @@ export namespace V8 {
      * @response `CSS.setEffectivePropertyValueForNode`
      */
     export type SetEffectivePropertyValueForNodeResponse = {};
+    /**
+     * Modifies the property rule property name.
+     * @request `CSS.setPropertyRulePropertyName`
+     */
+    export type SetPropertyRulePropertyNameRequest = {
+      styleSheetId: StyleSheetId;
+      range: SourceRange;
+      propertyName: string;
+    };
+    /**
+     * Modifies the property rule property name.
+     * @response `CSS.setPropertyRulePropertyName`
+     */
+    export type SetPropertyRulePropertyNameResponse = {
+      /**
+       * The resulting key text after modification.
+       */
+      propertyName: Value;
+    };
     /**
      * Modifies the keyframe rule key text.
      * @request `CSS.setKeyframeKey`
@@ -7168,6 +7295,16 @@ export namespace V8 {
      * @response `EventBreakpoints.removeInstrumentationBreakpoint`
      */
     export type RemoveInstrumentationBreakpointResponse = {};
+    /**
+     * Removes all breakpoints
+     * @request `EventBreakpoints.disable`
+     */
+    export type DisableRequest = {};
+    /**
+     * Removes all breakpoints
+     * @response `EventBreakpoints.disable`
+     */
+    export type DisableResponse = {};
   }
   export namespace FedCm {
     /**
@@ -7178,7 +7315,7 @@ export namespace V8 {
     /**
      * Whether the dialog shown is an account chooser or an auto re-authentication dialog.
      */
-    export type DialogType = "AccountChooser" | "AutoReauthn" | "ConfirmIdpSignin";
+    export type DialogType = "AccountChooser" | "AutoReauthn" | "ConfirmIdpLogin";
     /**
      * Corresponds to IdentityRequestAccount
      */
@@ -7189,7 +7326,7 @@ export namespace V8 {
       givenName: string;
       pictureUrl: string;
       idpConfigUrl: string;
-      idpSigninUrl: string;
+      idpLoginUrl: string;
       loginState: LoginState;
       /**
        * These two are only set if the loginState is signUp
@@ -7252,6 +7389,20 @@ export namespace V8 {
      * @response `FedCm.selectAccount`
      */
     export type SelectAccountResponse = {};
+    /**
+     * Only valid if the dialog type is ConfirmIdpLogin. Acts as if the user had
+     * clicked the continue button.
+     * @request `FedCm.confirmIdpLogin`
+     */
+    export type ConfirmIdpLoginRequest = {
+      dialogId: string;
+    };
+    /**
+     * Only valid if the dialog type is ConfirmIdpLogin. Acts as if the user had
+     * clicked the continue button.
+     * @response `FedCm.confirmIdpLogin`
+     */
+    export type ConfirmIdpLoginResponse = {};
     /**
      * undefined
      * @request `FedCm.dismissDialog`
@@ -10477,6 +10628,7 @@ export namespace V8 {
       | "ch-ect"
       | "ch-prefers-color-scheme"
       | "ch-prefers-reduced-motion"
+      | "ch-prefers-reduced-transparency"
       | "ch-rtt"
       | "ch-save-data"
       | "ch-ua"
@@ -13109,7 +13261,6 @@ export namespace V8 {
       | "LowEndDevice"
       | "InvalidSchemeRedirect"
       | "InvalidSchemeNavigation"
-      | "InProgressNavigation"
       | "NavigationRequestBlockedByCsp"
       | "MainFrameNavigation"
       | "MojoBinderPolicy"
@@ -13121,7 +13272,6 @@ export namespace V8 {
       | "NavigationBadHttpStatus"
       | "ClientCertRequested"
       | "NavigationRequestNetworkError"
-      | "MaxNumOfRunningPrerendersExceeded"
       | "CancelAllHostsForTesting"
       | "DidFailLoad"
       | "Stop"
@@ -13133,9 +13283,8 @@ export namespace V8 {
       | "MixedContent"
       | "TriggerBackgrounded"
       | "MemoryLimitExceeded"
-      | "FailToGetMemoryUsage"
       | "DataSaverEnabled"
-      | "HasEffectiveUrl"
+      | "TriggerUrlHasEffectiveUrl"
       | "ActivatedBeforeStarted"
       | "InactivePageRestriction"
       | "StartFailed"
@@ -13166,7 +13315,13 @@ export namespace V8 {
       | "PrerenderingDisabledByDevTools"
       | "ResourceLoadBlockedByClient"
       | "SpeculationRuleRemoved"
-      | "ActivatedWithAuxiliaryBrowsingContexts";
+      | "ActivatedWithAuxiliaryBrowsingContexts"
+      | "MaxNumOfRunningEagerPrerendersExceeded"
+      | "MaxNumOfRunningNonEagerPrerendersExceeded"
+      | "MaxNumOfRunningEmbedderPrerendersExceeded"
+      | "PrerenderingUrlHasEffectiveUrl"
+      | "RedirectedPrerenderingUrlHasEffectiveUrl"
+      | "ActivationUrlHasEffectiveUrl";
     /**
      * Preloading status values, see also PreloadingTriggeringOutcome. This
      * status is shared by prefetchStatusUpdated and prerenderStatusUpdated.
@@ -13220,24 +13375,6 @@ export namespace V8 {
      */
     export type RuleSetRemovedEvent = {
       id: RuleSetId;
-    };
-    /**
-     * Fired when a prerender attempt is completed.
-     * @event `Preload.prerenderAttemptCompleted`
-     */
-    export type PrerenderAttemptCompletedEvent = {
-      key: PreloadingAttemptKey;
-      /**
-       * The frame id of the frame initiating prerendering.
-       */
-      initiatingFrameId: Page.FrameId;
-      prerenderingUrl: string;
-      finalStatus: PrerenderFinalStatus;
-      /**
-       * This is used to give users more information about the name of the API call
-       * that is incompatible with prerender and has caused the cancellation of the attempt
-       */
-      disallowedApiMethod?: string | undefined;
     };
     /**
      * Fired when a preload enabled state is updated.
@@ -13935,12 +14072,21 @@ export namespace V8 {
     /**
      * Enum of interest group access types.
      */
-    export type InterestGroupAccessType = "join" | "leave" | "update" | "loaded" | "bid" | "win";
+    export type InterestGroupAccessType =
+      | "join"
+      | "leave"
+      | "update"
+      | "loaded"
+      | "bid"
+      | "win"
+      | "additionalBid"
+      | "additionalBidWin"
+      | "clear";
     /**
      * Ad advertising element inside an interest group.
      */
     export type InterestGroupAd = {
-      renderUrl: string;
+      renderURL: string;
       metadata?: string | undefined;
     };
     /**
@@ -13951,10 +14097,10 @@ export namespace V8 {
       name: string;
       expirationTime: Network.TimeSinceEpoch;
       joiningOrigin: string;
-      biddingUrl?: string | undefined;
-      biddingWasmHelperUrl?: string | undefined;
-      updateUrl?: string | undefined;
-      trustedBiddingSignalsUrl?: string | undefined;
+      biddingLogicURL?: string | undefined;
+      biddingWasmHelperURL?: string | undefined;
+      updateURL?: string | undefined;
+      trustedBiddingSignalsURL?: string | undefined;
       trustedBiddingSignalsKeys: string[];
       userBiddingSignals?: string | undefined;
       ads: InterestGroupAd[];
@@ -14099,20 +14245,27 @@ export namespace V8 {
       key: string;
       value: UnsignedInt128AsBase16;
     };
+    export type AttributionReportingEventReportWindows = {
+      /**
+       * duration in seconds
+       */
+      start: number;
+      /**
+       * duration in seconds
+       */
+      ends: number[];
+    };
     export type AttributionReportingSourceRegistration = {
       time: Network.TimeSinceEpoch;
       /**
        * duration in seconds
        */
-      expiry?: number | undefined;
+      expiry: number;
+      eventReportWindows: AttributionReportingEventReportWindows;
       /**
        * duration in seconds
        */
-      eventReportWindow?: number | undefined;
-      /**
-       * duration in seconds
-       */
-      aggregatableReportWindow?: number | undefined;
+      aggregatableReportWindow: number;
       type: AttributionReportingSourceType;
       sourceOrigin: string;
       reportingOrigin: string;
@@ -16381,6 +16534,7 @@ export namespace V8 {
     "Animation.animationCreated": Animation.AnimationCreatedEvent;
     "Animation.animationStarted": Animation.AnimationStartedEvent;
     "Audits.issueAdded": Audits.IssueAddedEvent;
+    "Autofill.addressFormFilled": Autofill.AddressFormFilledEvent;
     "BackgroundService.recordingStateChanged": BackgroundService.RecordingStateChangedEvent;
     "BackgroundService.backgroundServiceEventReceived": BackgroundService.BackgroundServiceEventReceivedEvent;
     "Browser.downloadWillBegin": Browser.DownloadWillBeginEvent;
@@ -16460,7 +16614,6 @@ export namespace V8 {
     "PerformanceTimeline.timelineEventAdded": PerformanceTimeline.TimelineEventAddedEvent;
     "Preload.ruleSetUpdated": Preload.RuleSetUpdatedEvent;
     "Preload.ruleSetRemoved": Preload.RuleSetRemovedEvent;
-    "Preload.prerenderAttemptCompleted": Preload.PrerenderAttemptCompletedEvent;
     "Preload.preloadEnabledStateUpdated": Preload.PreloadEnabledStateUpdatedEvent;
     "Preload.prefetchStatusUpdated": Preload.PrefetchStatusUpdatedEvent;
     "Preload.prerenderStatusUpdated": Preload.PrerenderStatusUpdatedEvent;
@@ -16533,6 +16686,8 @@ export namespace V8 {
     "Audits.checkFormsIssues": Audits.CheckFormsIssuesRequest;
     "Autofill.trigger": Autofill.TriggerRequest;
     "Autofill.setAddresses": Autofill.SetAddressesRequest;
+    "Autofill.disable": Autofill.DisableRequest;
+    "Autofill.enable": Autofill.EnableRequest;
     "BackgroundService.startObserving": BackgroundService.StartObservingRequest;
     "BackgroundService.stopObserving": BackgroundService.StopObservingRequest;
     "BackgroundService.setRecording": BackgroundService.SetRecordingRequest;
@@ -16583,6 +16738,7 @@ export namespace V8 {
     "CSS.trackComputedStyleUpdates": CSS.TrackComputedStyleUpdatesRequest;
     "CSS.takeComputedStyleUpdates": CSS.TakeComputedStyleUpdatesRequest;
     "CSS.setEffectivePropertyValueForNode": CSS.SetEffectivePropertyValueForNodeRequest;
+    "CSS.setPropertyRulePropertyName": CSS.SetPropertyRulePropertyNameRequest;
     "CSS.setKeyframeKey": CSS.SetKeyframeKeyRequest;
     "CSS.setMediaText": CSS.SetMediaTextRequest;
     "CSS.setContainerQueryText": CSS.SetContainerQueryTextRequest;
@@ -16705,9 +16861,11 @@ export namespace V8 {
     "Emulation.setAutomationOverride": Emulation.SetAutomationOverrideRequest;
     "EventBreakpoints.setInstrumentationBreakpoint": EventBreakpoints.SetInstrumentationBreakpointRequest;
     "EventBreakpoints.removeInstrumentationBreakpoint": EventBreakpoints.RemoveInstrumentationBreakpointRequest;
+    "EventBreakpoints.disable": EventBreakpoints.DisableRequest;
     "FedCm.enable": FedCm.EnableRequest;
     "FedCm.disable": FedCm.DisableRequest;
     "FedCm.selectAccount": FedCm.SelectAccountRequest;
+    "FedCm.confirmIdpLogin": FedCm.ConfirmIdpLoginRequest;
     "FedCm.dismissDialog": FedCm.DismissDialogRequest;
     "FedCm.resetCooldown": FedCm.ResetCooldownRequest;
     "Fetch.disable": Fetch.DisableRequest;
@@ -16979,6 +17137,8 @@ export namespace V8 {
     "Audits.checkFormsIssues": Audits.CheckFormsIssuesResponse;
     "Autofill.trigger": Autofill.TriggerResponse;
     "Autofill.setAddresses": Autofill.SetAddressesResponse;
+    "Autofill.disable": Autofill.DisableResponse;
+    "Autofill.enable": Autofill.EnableResponse;
     "BackgroundService.startObserving": BackgroundService.StartObservingResponse;
     "BackgroundService.stopObserving": BackgroundService.StopObservingResponse;
     "BackgroundService.setRecording": BackgroundService.SetRecordingResponse;
@@ -17029,6 +17189,7 @@ export namespace V8 {
     "CSS.trackComputedStyleUpdates": CSS.TrackComputedStyleUpdatesResponse;
     "CSS.takeComputedStyleUpdates": CSS.TakeComputedStyleUpdatesResponse;
     "CSS.setEffectivePropertyValueForNode": CSS.SetEffectivePropertyValueForNodeResponse;
+    "CSS.setPropertyRulePropertyName": CSS.SetPropertyRulePropertyNameResponse;
     "CSS.setKeyframeKey": CSS.SetKeyframeKeyResponse;
     "CSS.setMediaText": CSS.SetMediaTextResponse;
     "CSS.setContainerQueryText": CSS.SetContainerQueryTextResponse;
@@ -17151,9 +17312,11 @@ export namespace V8 {
     "Emulation.setAutomationOverride": Emulation.SetAutomationOverrideResponse;
     "EventBreakpoints.setInstrumentationBreakpoint": EventBreakpoints.SetInstrumentationBreakpointResponse;
     "EventBreakpoints.removeInstrumentationBreakpoint": EventBreakpoints.RemoveInstrumentationBreakpointResponse;
+    "EventBreakpoints.disable": EventBreakpoints.DisableResponse;
     "FedCm.enable": FedCm.EnableResponse;
     "FedCm.disable": FedCm.DisableResponse;
     "FedCm.selectAccount": FedCm.SelectAccountResponse;
+    "FedCm.confirmIdpLogin": FedCm.ConfirmIdpLoginResponse;
     "FedCm.dismissDialog": FedCm.DismissDialogResponse;
     "FedCm.resetCooldown": FedCm.ResetCooldownResponse;
     "Fetch.disable": Fetch.DisableResponse;

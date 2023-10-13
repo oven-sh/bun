@@ -1,7 +1,7 @@
 name: zig-fmt
 
 env:
-  ZIG_VERSION: 0.12.0-dev.163+6780a6bbf
+  ZIG_VERSION: 0.12.0-dev.888+130227491
 
 on:
   pull_request:
@@ -18,6 +18,8 @@ jobs:
   zig-fmt:
     name: zig fmt
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
     outputs:
       zig_fmt_errs: ${{ steps.fmt.outputs.zig_fmt_errs }}
     steps:

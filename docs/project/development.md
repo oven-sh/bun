@@ -49,6 +49,12 @@ $ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 16 all
 $ sudo pacman -S llvm clang lld
 ```
 
+```bash#Fedora
+$ sudo dnf install 'dnf-command(copr)'
+$ sudo dnf copr enable -y @fedora-llvm-team/llvm-snapshots
+$ sudo dnf install llvm clang lld
+```
+
 {% /codetabs %}
 
 If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-16.0.6).
@@ -98,6 +104,10 @@ $ sudo apt install cargo ccache cmake git golang libtool ninja-build pkg-config 
 $ sudo pacman -S base-devel ccache cmake esbuild git go libiconv libtool make ninja pkg-config python rust sed unzip
 ```
 
+```bash#Fedora
+$ sudo dnf install cargo ccache cmake git golang libtool ninja-build pkg-config rustc golang-github-evanw-esbuild libatomic-static libstdc++-static sed unzip
+```
+
 {% /codetabs %}
 
 {% details summary="Ubuntu — Unable to locate package esbuild" %}
@@ -120,11 +130,11 @@ Zig can be installed either with our npm package [`@oven/zig`](https://www.npmjs
 
 ```bash
 $ bun install -g @oven/zig
-$ zigup 0.12.0-dev.163+6780a6bbf
+$ zigup 0.12.0-dev.888+130227491
 ```
 
 {% callout %}
-We last updated Zig on **July 18th, 2023**
+We last updated Zig on **October 12th, 2023**
 {% /callout %}
 
 ## First Build

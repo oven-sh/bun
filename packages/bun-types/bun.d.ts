@@ -3214,7 +3214,7 @@ declare module "bun" {
     loader: Loader;
   }
 
-  type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject;
+  type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject | undefined;
   type OnLoadCallback = (
     args: OnLoadArgs,
   ) => OnLoadResult | Promise<OnLoadResult>;

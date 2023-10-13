@@ -310,10 +310,9 @@
       "cwd": "${fileDirname}",
       "console": "internalConsole",
       "env": {
-        "BUN_DEBUG_QUIET_LOGS": "1"
+        "BUN_DEBUG_ALL": "1"
       }
     },
-
     {
       "type": "lldb",
       "request": "launch",

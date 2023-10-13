@@ -1777,7 +1777,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSBlobConstructor::construct(JSC::J
     }
 
     JSBlob* instance = JSBlob::create(vm, globalObject, structure, ptr);
-    vm.heap.reportExtraMemoryAllocated(Blob__estimatedSize(instance->wrapped()));
+    vm.heap.reportExtraMemoryAllocated(instance, Blob__estimatedSize(instance->wrapped()));
 
     return JSValue::encode(instance);
 }
@@ -1871,7 +1871,7 @@ extern "C" EncodedJSValue Blob__create(Zig::GlobalObject* globalObject, void* pt
     auto& vm = globalObject->vm();
     JSC::Structure* structure = globalObject->JSBlobStructure();
     JSBlob* instance = JSBlob::create(vm, globalObject, structure, ptr);
-    vm.heap.reportExtraMemoryAllocated(Blob__estimatedSize(ptr));
+    vm.heap.reportExtraMemoryAllocated(instance, Blob__estimatedSize(ptr));
     return JSValue::encode(instance);
 }
 
@@ -7321,6 +7321,9 @@ JSC_DECLARE_HOST_FUNCTION(ExpectPrototype__toEndWithCallback);
 extern "C" EncodedJSValue ExpectPrototype__toEqual(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(ExpectPrototype__toEqualCallback);
 
+extern "C" EncodedJSValue ExpectPrototype__toEqualIgnoringWhitespace(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(ExpectPrototype__toEqualIgnoringWhitespaceCallback);
+
 extern "C" EncodedJSValue ExpectPrototype__toHaveBeenCalled(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(ExpectPrototype__toHaveBeenCalledCallback);
 
@@ -7435,6 +7438,7 @@ static const HashTableValue JSExpectPrototypeTableValues[] = {
     { "toContainEqual"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toContainEqualCallback, 1 } },
     { "toEndWith"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toEndWithCallback, 1 } },
     { "toEqual"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toEqualCallback, 1 } },
+    { "toEqualIgnoringWhitespace"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toEqualIgnoringWhitespaceCallback, 1 } },
     { "toHaveBeenCalled"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toHaveBeenCalledCallback, 0 } },
     { "toHaveBeenCalledTimes"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toHaveBeenCalledTimesCallback, 1 } },
     { "toHaveBeenCalledWith"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toHaveBeenCalledWithCallback, 1 } },
@@ -8600,6 +8604,34 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toEqualCallback, (JSGlobalObject * lex
 #endif
 
     return ExpectPrototype__toEqual(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toEqualIgnoringWhitespaceCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSExpect* thisObject = jsDynamicCast<JSExpect*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return ExpectPrototype__toEqualIgnoringWhitespace(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toHaveBeenCalledCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -17810,7 +17842,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSRequestConstructor::construct(JSC
     }
 
     JSRequest* instance = JSRequest::create(vm, globalObject, structure, ptr);
-    vm.heap.reportExtraMemoryAllocated(Request__estimatedSize(instance->wrapped()));
+    vm.heap.reportExtraMemoryAllocated(instance, Request__estimatedSize(instance->wrapped()));
 
     return JSValue::encode(instance);
 }
@@ -17904,7 +17936,7 @@ extern "C" EncodedJSValue Request__create(Zig::GlobalObject* globalObject, void*
     auto& vm = globalObject->vm();
     JSC::Structure* structure = globalObject->JSRequestStructure();
     JSRequest* instance = JSRequest::create(vm, globalObject, structure, ptr);
-    vm.heap.reportExtraMemoryAllocated(Request__estimatedSize(ptr));
+    vm.heap.reportExtraMemoryAllocated(instance, Request__estimatedSize(ptr));
     return JSValue::encode(instance);
 }
 
@@ -19137,7 +19169,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSResponseConstructor::construct(JS
     }
 
     JSResponse* instance = JSResponse::create(vm, globalObject, structure, ptr);
-    vm.heap.reportExtraMemoryAllocated(Response__estimatedSize(instance->wrapped()));
+    vm.heap.reportExtraMemoryAllocated(instance, Response__estimatedSize(instance->wrapped()));
 
     return JSValue::encode(instance);
 }
@@ -19231,7 +19263,7 @@ extern "C" EncodedJSValue Response__create(Zig::GlobalObject* globalObject, void
     auto& vm = globalObject->vm();
     JSC::Structure* structure = globalObject->JSResponseStructure();
     JSResponse* instance = JSResponse::create(vm, globalObject, structure, ptr);
-    vm.heap.reportExtraMemoryAllocated(Response__estimatedSize(ptr));
+    vm.heap.reportExtraMemoryAllocated(instance, Response__estimatedSize(ptr));
     return JSValue::encode(instance);
 }
 
@@ -26705,12 +26737,16 @@ JSC_DECLARE_CUSTOM_GETTER(TextDecoderPrototype__encodingGetterWrap);
 extern "C" JSC::EncodedJSValue TextDecoderPrototype__getFatal(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(TextDecoderPrototype__fatalGetterWrap);
 
+extern "C" JSC::EncodedJSValue TextDecoderPrototype__getIgnoreBOM(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(TextDecoderPrototype__ignoreBOMGetterWrap);
+
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSTextDecoderPrototype, JSTextDecoderPrototype::Base);
 
 static const HashTableValue JSTextDecoderPrototypeTableValues[] = {
     { "decode"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, TextDecoderPrototype__decodeCallback, &DOMJITSignatureForTextDecoderPrototype__decode } },
     { "encoding"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TextDecoderPrototype__encodingGetterWrap, 0 } },
-    { "fatal"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TextDecoderPrototype__fatalGetterWrap, 0 } }
+    { "fatal"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TextDecoderPrototype__fatalGetterWrap, 0 } },
+    { "ignoreBOM"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TextDecoderPrototype__ignoreBOMGetterWrap, 0 } }
 };
 
 const ClassInfo JSTextDecoderPrototype::s_info = { "TextDecoder"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTextDecoderPrototype) };
@@ -26794,6 +26830,18 @@ JSC_DEFINE_CUSTOM_GETTER(TextDecoderPrototype__fatalGetterWrap, (JSGlobalObject 
     JSTextDecoder* thisObject = jsCast<JSTextDecoder*>(JSValue::decode(thisValue));
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
     JSC::EncodedJSValue result = TextDecoderPrototype__getFatal(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(TextDecoderPrototype__ignoreBOMGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSTextDecoder* thisObject = jsCast<JSTextDecoder*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = TextDecoderPrototype__getIgnoreBOM(thisObject->wrapped(), globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, result);
 }

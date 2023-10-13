@@ -4,25 +4,13 @@ import { withoutAggressiveGC } from "harness";
 import { isIP, isIPv4, isIPv6 } from "node:net";
 
 const backends = ["system", "libc", "c-ares"];
-const validHostnames = [
-  "localhost",
-  "example.com",
-];
-const invalidHostnames = [
-  `this-should-not-exist-${Math.floor(Math.random() * 99999)}.com`,
-];
-const malformedHostnames = [
-  "",
-  " ",
-  ".",
-  " .",
-  "localhost:80",
-  "this is not a hostname",
-];
+const validHostnames = ["localhost", "example.com"];
+const invalidHostnames = [`this-should-not-exist-${Math.floor(Math.random() * 99999)}.com`];
+const malformedHostnames = ["", " ", ".", " .", "localhost:80", "this is not a hostname"];
 
 describe("dns", () => {
-  describe.each(backends)("lookup() [backend: %s]", (backend) => {
-    describe.each(validHostnames)("%s", (hostname) => {
+  describe.each(backends)("lookup() [backend: %s]", backend => {
+    describe.each(validHostnames)("%s", hostname => {
       test.each([
         {
           options: { backend },
@@ -55,7 +43,7 @@ describe("dns", () => {
         {
           options: { backend, family: "any" },
           address: isIP,
-        }
+        },
       ])("%j", async ({ options, address: expectedAddress, family: expectedFamily }) => {
         // @ts-expect-error
         const result = await dns.lookup(hostname, options);
@@ -74,11 +62,11 @@ describe("dns", () => {
         });
       });
     });
-    test.each(validHostnames)("%s [parallel x 10]", async (hostname) => {
+    test.each(validHostnames)("%s [parallel x 10]", async hostname => {
       const results = await Promise.all(
         // @ts-expect-error
-        Array.from({ length: 10 }, () => dns.lookup(hostname, { backend }))
-      )
+        Array.from({ length: 10 }, () => dns.lookup(hostname, { backend })),
+      );
       const answers = results.flat();
       expect(answers).toBeArray();
       expect(answers.length).toBeGreaterThan(10);
@@ -91,7 +79,7 @@ describe("dns", () => {
         }
       });
     });
-    test.each(invalidHostnames)("%s", (hostname) => {
+    test.each(invalidHostnames)("%s", hostname => {
       // @ts-expect-error
       expect(dns.lookup(hostname, { backend })).rejects.toMatchObject({
         code: "DNS_ENOTFOUND",

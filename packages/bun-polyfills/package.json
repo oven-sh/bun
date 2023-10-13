@@ -8,7 +8,8 @@
     "@types/which": "^3.0.0",
     "bun-types": "^1.0.3",
     "copyfiles": "^2.4.1",
-    "tsx": "^3.13.0"
+    "tsx": "^3.13.0",
+    "typings-esm-loader": "^2.0.1"
   },
   "peerDependencies": {
     "typescript": "^5.2.2"

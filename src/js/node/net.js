@@ -66,8 +66,6 @@ const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const bunSocketInternal = Symbol.for("::bunnetsocketinternal::");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 
-function dummy() {}
-
 function closeNT(self) {
   self.emit("close");
 }

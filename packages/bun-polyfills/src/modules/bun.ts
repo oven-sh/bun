@@ -40,7 +40,7 @@ export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satis
 
 //? These are automatically updated on build by tools/updateversions.ts, do not edit manually.
 export const version = '1.0.4' satisfies typeof Bun.version;
-export const revision = '91f4ba534be9e23e6d4543738301af393848e954' satisfies typeof Bun.revision;
+export const revision = '8fcd645baee24344eaa4169b16ca42b1f0af830c' satisfies typeof Bun.revision;
 
 export const gc = (globalThis.gc ? (() => (globalThis.gc!(), process.memoryUsage().heapUsed)) : (() => {
     const err = new Error('[bun-polyfills] Garbage collection polyfills are only available when Node.js is ran with the --expose-gc flag.');
@@ -593,3 +593,5 @@ export const plugin = bunPlugin satisfies typeof Bun.plugin;
         });
     }
 });*/
+
+export * as default from './bun.js';

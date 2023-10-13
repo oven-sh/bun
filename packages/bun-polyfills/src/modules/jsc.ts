@@ -107,3 +107,5 @@ export const optimizeNextInvocation = (() => {
 }) satisfies typeof jsc.optimizeNextInvocation;
 
 export { setRandomSeed, getRandomSeed } from '../global/mathrandom.js';
+
+export * as default from './jsc.js';

@@ -312,3 +312,5 @@ export const read = {
         return koffi.decode(view, bOff, 'u64');
     },
 } satisfies typeof bunffi.read;
+
+export * as default from './ffi.js';

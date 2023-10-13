@@ -1,0 +1,11 @@
+{
+  "name": "with-postinstall",
+  "version": "1.0.0",
+  "dependencies": {
+    "sharp": "*",
+    "svelte": "3.50.0"
+  },
+  "scripts": {
+    "postinstall": "bun postinstall.js"
+  }
+}

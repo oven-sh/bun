@@ -21,6 +21,7 @@ const json_parser = bun.JSON;
 const JSPrinter = bun.js_printer;
 
 const linker = @import("../linker.zig");
+const migration = @import("./migration.zig");
 
 const sync = @import("../sync.zig");
 const Api = @import("../api/schema.zig").Api;
@@ -92,7 +93,7 @@ const assertNoUninitializedPadding = @import("./padding_checker.zig").assertNoUn
 
 // Serialized data
 /// The version of the lockfile format, intended to prevent data corruption for format changes.
-format: FormatVersion = .v1,
+format: FormatVersion = FormatVersion.current,
 
 meta_hash: MetaHash = zero_hash,
 
@@ -110,6 +111,8 @@ scripts: Scripts = .{},
 trusted_dependencies: NameHashSet = .{},
 workspace_paths: NameHashMap = .{},
 workspace_versions: VersionHashMap = .{},
+
+overrides: OverrideMap = .{},
 
 const Stream = std.io.FixedBufferStream([]u8);
 pub const default_filename = "bun.lockb";
@@ -159,7 +162,7 @@ pub fn isEmpty(this: *const Lockfile) bool {
     return this.packages.len == 0 or this.packages.len == 1 or this.packages.get(0).resolutions.len == 0;
 }
 
-pub const LoadFromDiskResult = union(Tag) {
+pub const LoadFromDiskResult = union(enum) {
     not_found: void,
     err: struct {
         step: Step,
@@ -167,26 +170,30 @@ pub const LoadFromDiskResult = union(Tag) {
     },
     ok: *Lockfile,
 
-    pub const Step = enum { open_file, read_file, parse_file };
-
-    pub const Tag = enum {
-        not_found,
-        err,
-        ok,
-    };
+    pub const Step = enum { open_file, read_file, parse_file, migrating };
 };
 
 pub fn loadFromDisk(this: *Lockfile, allocator: Allocator, log: *logger.Log, filename: stringZ) LoadFromDiskResult {
     if (comptime Environment.allow_assert) std.debug.assert(FileSystem.instance_loaded);
-    var file = std.io.getStdIn();
 
-    if (filename.len > 0)
-        file = std.fs.cwd().openFileZ(filename, .{ .mode = .read_only }) catch |err| {
+    var file = if (filename.len > 0)
+        std.fs.cwd().openFileZ(filename, .{ .mode = .read_only }) catch |err| {
             return switch (err) {
-                error.FileNotFound, error.AccessDenied, error.BadPathName => LoadFromDiskResult{ .not_found = {} },
+                error.FileNotFound => {
+                    // Attempt to load from "package-lock.json", "yarn.lock", etc.
+                    return migration.detectAndLoadOtherLockfile(
+                        this,
+                        allocator,
+                        log,
+                        filename,
+                    );
+                },
+                error.AccessDenied, error.BadPathName => LoadFromDiskResult{ .not_found = {} },
                 else => LoadFromDiskResult{ .err = .{ .step = .open_file, .value = err } },
             };
-        };
+        }
+    else
+        std.io.getStdIn();
 
     defer file.close();
     var buf = file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
@@ -204,10 +211,15 @@ pub fn loadFromBytes(this: *Lockfile, buf: []u8, allocator: Allocator, log: *log
     this.trusted_dependencies = .{};
     this.workspace_paths = .{};
     this.workspace_versions = .{};
+    this.overrides = .{};
 
     Lockfile.Serializer.load(this, &stream, allocator, log) catch |err| {
         return LoadFromDiskResult{ .err = .{ .step = .parse_file, .value = err } };
     };
+
+    if (Environment.allow_assert) {
+        this.verifyData() catch @panic("lockfile data is corrupt");
+    }
 
     return LoadFromDiskResult{ .ok = this };
 }
@@ -287,6 +299,14 @@ pub const Tree = struct {
                 .resolutions = lockfile.buffers.resolutions.items,
                 .string_buf = lockfile.buffers.string_bytes.items,
             };
+        }
+
+        pub fn reload(this: *Iterator, lockfile: *const Lockfile) void {
+            this.trees = lockfile.buffers.trees.items;
+            this.dependency_ids = lockfile.buffers.hoisted_dependencies.items;
+            this.dependencies = lockfile.buffers.dependencies.items;
+            this.resolutions = lockfile.buffers.resolutions.items;
+            this.string_buf = lockfile.buffers.string_bytes.items;
         }
 
         pub fn nextNodeModulesFolder(this: *Iterator) ?NodeModulesFolder {
@@ -714,6 +734,13 @@ pub fn cleanWithLogger(
 
     old.scratch.dependency_list_queue.head = 0;
 
+    {
+        var builder = new.stringBuilder();
+        old.overrides.count(old, &builder);
+        try builder.allocate();
+        new.overrides = try old.overrides.clone(old, new, &builder);
+    }
+
     // Step 1. Recreate the lockfile with only the packages that are still alive
     const root = old.rootPackage() orelse return error.NoPackage;
 
@@ -826,6 +853,7 @@ pub fn cleanWithLogger(
     }
     new.trusted_dependencies = old_trusted_dependencies;
     new.scripts = old_scripts;
+
     return new;
 }
 
@@ -995,6 +1023,9 @@ pub const Printer = struct {
                         @errorName(cause.value),
                     }),
                     .read_file => Output.prettyErrorln("<r><red>error<r> reading lockfile:<r> {s}", .{
+                        @errorName(cause.value),
+                    }),
+                    .migrating => Output.prettyErrorln("<r><red>error<r> while migrating lockfile:<r> {s}", .{
                         @errorName(cause.value),
                     }),
                 }
@@ -1260,6 +1291,24 @@ pub const Printer = struct {
             comptime Writer: type,
             writer: Writer,
         ) !void {
+            // internal for debugging, print the lockfile as custom json
+            // limited to debug because we don't want people to rely on this format.
+            if (Environment.isDebug) {
+                if (std.os.getenv("JSON")) |_| {
+                    try std.json.stringify(
+                        this.lockfile,
+                        .{
+                            .whitespace = .indent_2,
+                            .emit_null_optional_fields = true,
+                            .emit_nonportable_numbers_as_strings = true,
+                        },
+                        writer,
+                    );
+                    try writer.writeAll("\n");
+                    return;
+                }
+            }
+
             try writer.writeAll(
                 \\# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.
                 \\# yarn lockfile v1
@@ -1416,7 +1465,7 @@ pub const Printer = struct {
                         var behavior = Behavior.uninitialized;
                         var dependency_behavior_change_count: u8 = 0;
                         for (dependencies) |dep| {
-                            if (dep.behavior != behavior) {
+                            if (!dep.behavior.eq(behavior)) {
                                 if (dep.behavior.isOptional()) {
                                     try writer.writeAll("  optionalDependencies:\n");
                                     if (comptime Environment.allow_assert) dependency_behavior_change_count += 1;
@@ -1458,20 +1507,18 @@ pub const Printer = struct {
 
 pub fn verifyData(this: *Lockfile) !void {
     std.debug.assert(this.format == Lockfile.FormatVersion.current);
-    {
-        var i: usize = 0;
-        while (i < this.packages.len) : (i += 1) {
-            const package: Lockfile.Package = this.packages.get(i);
-            std.debug.assert(this.str(&package.name).len == @as(usize, package.name.len()));
-            std.debug.assert(String.Builder.stringHash(this.str(&package.name)) == @as(usize, package.name_hash));
-            std.debug.assert(package.dependencies.get(this.buffers.dependencies.items).len == @as(usize, package.dependencies.len));
-            std.debug.assert(package.resolutions.get(this.buffers.resolutions.items).len == @as(usize, package.resolutions.len));
-            std.debug.assert(package.resolutions.get(this.buffers.resolutions.items).len == @as(usize, package.dependencies.len));
-            const dependencies = package.dependencies.get(this.buffers.dependencies.items);
-            for (dependencies) |dependency| {
-                std.debug.assert(this.str(&dependency.name).len == @as(usize, dependency.name.len()));
-                std.debug.assert(String.Builder.stringHash(this.str(&dependency.name)) == dependency.name_hash);
-            }
+    var i: usize = 0;
+    while (i < this.packages.len) : (i += 1) {
+        const package: Lockfile.Package = this.packages.get(i);
+        std.debug.assert(this.str(&package.name).len == @as(usize, package.name.len()));
+        std.debug.assert(String.Builder.stringHash(this.str(&package.name)) == @as(usize, package.name_hash));
+        std.debug.assert(package.dependencies.get(this.buffers.dependencies.items).len == @as(usize, package.dependencies.len));
+        std.debug.assert(package.resolutions.get(this.buffers.resolutions.items).len == @as(usize, package.resolutions.len));
+        std.debug.assert(package.resolutions.get(this.buffers.resolutions.items).len == @as(usize, package.dependencies.len));
+        const dependencies = package.dependencies.get(this.buffers.dependencies.items);
+        for (dependencies) |dependency| {
+            std.debug.assert(this.str(&dependency.name).len == @as(usize, dependency.name.len()));
+            std.debug.assert(String.Builder.stringHash(this.str(&dependency.name)) == dependency.name_hash);
         }
     }
 }
@@ -1688,7 +1735,7 @@ pub fn appendPackage(this: *Lockfile, package_: Lockfile.Package) !Lockfile.Pack
 
 fn appendPackageWithID(this: *Lockfile, package_: Lockfile.Package, id: PackageID) !Lockfile.Package {
     defer {
-        if (comptime Environment.isDebug) {
+        if (comptime Environment.allow_assert) {
             std.debug.assert(this.getPackageID(package_.name_hash, null, &package_.resolution) != null);
         }
     }
@@ -1849,13 +1896,307 @@ pub const PackageIndex = struct {
     };
 };
 
+pub const OverrideMap = struct {
+    const debug = Output.scoped(.OverrideMap, false);
+
+    map: std.ArrayHashMapUnmanaged(PackageNameHash, Dependency, ArrayIdentityContext.U64, false) = .{},
+
+    /// In the future, this `get` function should handle multi-level resolutions. This is difficult right
+    /// now because given a Dependency ID, there is no fast way to trace it to it's package.
+    ///
+    /// A potential approach is to add another buffer to the lockfile that maps Dependency ID to Package ID,
+    /// and from there `OverrideMap.map` can have a union as the value, where the union is between "override all"
+    /// and "here is a list of overrides depending on the package that imported" similar to PackageIndex above.
+    pub fn get(this: *const OverrideMap, name_hash: PackageNameHash) ?Dependency.Version {
+        debug("looking up override for {x}", .{name_hash});
+        return if (this.map.get(name_hash)) |dep|
+            dep.version
+        else
+            null;
+    }
+
+    pub fn deinit(this: *OverrideMap, allocator: Allocator) void {
+        this.map.deinit(allocator);
+    }
+
+    pub fn count(this: *OverrideMap, lockfile: *Lockfile, builder: *Lockfile.StringBuilder) void {
+        for (this.map.values()) |dep| {
+            dep.count(lockfile.buffers.string_bytes.items, @TypeOf(builder), builder);
+        }
+    }
+
+    pub fn clone(this: *OverrideMap, old_lockfile: *Lockfile, new_lockfile: *Lockfile, new_builder: *Lockfile.StringBuilder) !OverrideMap {
+        var new = OverrideMap{};
+        try new.map.ensureTotalCapacity(new_lockfile.allocator, this.map.entries.len);
+
+        for (this.map.keys(), this.map.values()) |k, v| {
+            new.map.putAssumeCapacity(
+                k,
+                try v.clone(old_lockfile.buffers.string_bytes.items, @TypeOf(new_builder), new_builder),
+            );
+        }
+
+        return new;
+    }
+
+    // the rest of this struct is expression parsing code:
+
+    pub fn parseCount(
+        _: *OverrideMap,
+        lockfile: *Lockfile,
+        expr: Expr,
+        builder: *Lockfile.StringBuilder,
+    ) void {
+        if (expr.asProperty("overrides")) |overrides| {
+            if (overrides.expr.data != .e_object)
+                return;
+
+            for (overrides.expr.data.e_object.properties.slice()) |entry| {
+                builder.count(entry.key.?.asString(lockfile.allocator).?);
+                switch (entry.value.?.data) {
+                    .e_string => |s| {
+                        builder.count(s.slice(lockfile.allocator));
+                    },
+                    .e_object => {
+                        if (entry.value.?.asProperty(".")) |dot| {
+                            if (dot.expr.asString(lockfile.allocator)) |s| {
+                                builder.count(s);
+                            }
+                        }
+                    },
+                    else => {},
+                }
+            }
+        } else if (expr.asProperty("resolutions")) |resolutions| {
+            if (resolutions.expr.data != .e_object)
+                return;
+
+            for (resolutions.expr.data.e_object.properties.slice()) |entry| {
+                builder.count(entry.key.?.asString(lockfile.allocator).?);
+                builder.count(entry.value.?.asString(lockfile.allocator) orelse continue);
+            }
+        }
+    }
+
+    /// Given a package json expression, detect and parse override configuration into the given override map.
+    /// It is assumed the input map is uninitialized (zero entries)
+    pub fn parseAppend(
+        this: *OverrideMap,
+        lockfile: *Lockfile,
+        root_package: *Lockfile.Package,
+        log: *logger.Log,
+        json_source: logger.Source,
+        expr: Expr,
+        builder: *Lockfile.StringBuilder,
+    ) !void {
+        if (Environment.allow_assert) {
+            std.debug.assert(this.map.entries.len == 0); // only call parse once
+        }
+        if (expr.asProperty("overrides")) |overrides| {
+            try this.parseFromOverrides(lockfile, root_package, json_source, log, overrides.expr, builder);
+        } else if (expr.asProperty("resolutions")) |resolutions| {
+            try this.parseFromResolutions(lockfile, root_package, json_source, log, resolutions.expr, builder);
+        }
+        debug("parsed {d} overrides", .{this.map.entries.len});
+    }
+
+    /// https://docs.npmjs.com/cli/v9/configuring-npm/package-json#overrides
+    pub fn parseFromOverrides(
+        this: *OverrideMap,
+        lockfile: *Lockfile,
+        root_package: *Lockfile.Package,
+        source: logger.Source,
+        log: *logger.Log,
+        expr: Expr,
+        builder: *Lockfile.StringBuilder,
+    ) !void {
+        if (expr.data != .e_object) {
+            try log.addWarningFmt(&source, expr.loc, lockfile.allocator, "\"overrides\" must be an object", .{});
+            return error.Invalid;
+        }
+
+        try this.map.ensureUnusedCapacity(lockfile.allocator, expr.data.e_object.properties.len);
+
+        for (expr.data.e_object.properties.slice()) |prop| {
+            const key = prop.key.?;
+            var k = key.asString(lockfile.allocator).?;
+            if (k.len == 0) {
+                try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Missing overridden package name", .{});
+                continue;
+            }
+
+            const name_hash = String.Builder.stringHash(k);
+
+            const value = value: {
+                // for one level deep, we will only support a string and  { ".": value }
+                const value_expr = prop.value.?;
+                if (value_expr.data == .e_string) {
+                    break :value value_expr;
+                } else if (value_expr.data == .e_object) {
+                    if (value_expr.asProperty(".")) |dot| {
+                        if (dot.expr.data == .e_string) {
+                            if (value_expr.data.e_object.properties.len > 1) {
+                                try log.addWarningFmt(&source, value_expr.loc, lockfile.allocator, "Bun currently does not support nested \"overrides\"", .{});
+                            }
+                            break :value dot.expr;
+                        } else {
+                            try log.addWarningFmt(&source, value_expr.loc, lockfile.allocator, "Invalid override value for \"{s}\"", .{k});
+                            continue;
+                        }
+                    } else {
+                        try log.addWarningFmt(&source, value_expr.loc, lockfile.allocator, "Bun currently does not support nested \"overrides\"", .{});
+                        continue;
+                    }
+                }
+                try log.addWarningFmt(&source, value_expr.loc, lockfile.allocator, "Invalid override value for \"{s}\"", .{k});
+                continue;
+            };
+
+            if (try parseOverrideValue(
+                "override",
+                lockfile,
+                root_package,
+                source,
+                value.loc,
+                log,
+                k,
+                value.data.e_string.slice(lockfile.allocator),
+                builder,
+            )) |version| {
+                this.map.putAssumeCapacity(name_hash, version);
+            }
+        }
+    }
+
+    /// yarn classic: https://classic.yarnpkg.com/lang/en/docs/selective-version-resolutions/
+    /// yarn berry: https://yarnpkg.com/configuration/manifest#resolutions
+    pub fn parseFromResolutions(
+        this: *OverrideMap,
+        lockfile: *Lockfile,
+        root_package: *Lockfile.Package,
+        source: logger.Source,
+        log: *logger.Log,
+        expr: Expr,
+        builder: *Lockfile.StringBuilder,
+    ) !void {
+        if (expr.data != .e_object) {
+            try log.addWarningFmt(&source, expr.loc, lockfile.allocator, "\"resolutions\" must be an object with string values", .{});
+            return;
+        }
+        try this.map.ensureUnusedCapacity(lockfile.allocator, expr.data.e_object.properties.len);
+        for (expr.data.e_object.properties.slice()) |prop| {
+            const key = prop.key.?;
+            var k = key.asString(lockfile.allocator).?;
+            if (strings.hasPrefixComptime(k, "**/"))
+                k = k[3..];
+            if (k.len == 0) {
+                try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Missing resolution package name", .{});
+                continue;
+            }
+            const value = prop.value.?;
+            if (value.data != .e_string) {
+                try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Expected string value for resolution \"{s}\"", .{k});
+                continue;
+            }
+            // currently we only support one level deep, so we should error if there are more than one
+            // - "foo/bar":
+            // - "@namespace/hello/world"
+            if (k[0] == '@') {
+                const first_slash = strings.indexOfChar(k, '/') orelse {
+                    try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Invalid package name \"{s}\"", .{k});
+                    continue;
+                };
+                if (strings.indexOfChar(k[first_slash + 1 ..], '/') != null) {
+                    try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Bun currently does not support nested \"resolutions\"", .{});
+                    continue;
+                }
+            } else if (strings.indexOfChar(k, '/') != null) {
+                try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Bun currently does not support nested \"resolutions\"", .{});
+                continue;
+            }
+
+            if (try parseOverrideValue(
+                "resolution",
+                lockfile,
+                root_package,
+                source,
+                value.loc,
+                log,
+                k,
+                value.data.e_string.data,
+                builder,
+            )) |version| {
+                const name_hash = String.Builder.stringHash(k);
+                this.map.putAssumeCapacity(name_hash, version);
+            }
+        }
+    }
+
+    pub fn parseOverrideValue(
+        comptime field: []const u8,
+        lockfile: *Lockfile,
+        root_package: *Lockfile.Package,
+        source: logger.Source,
+        loc: logger.Loc,
+        log: *logger.Log,
+        key: []const u8,
+        value: []const u8,
+        builder: *Lockfile.StringBuilder,
+    ) !?Dependency {
+        if (value.len == 0) {
+            try log.addWarningFmt(&source, loc, lockfile.allocator, "Missing " ++ field ++ " value", .{});
+            return null;
+        }
+
+        // "Overrides may also be defined as a reference to a spec for a direct dependency
+        // by prefixing the name of the package you wish the version to match with a `$`"
+        // https://docs.npmjs.com/cli/v9/configuring-npm/package-json#overrides
+        // This is why a `*Lockfile.Package` is needed here.
+        if (value[0] == '$') {
+            const ref_name = value[1..];
+            // This is fine for this string to not share the string pool, because it's only used for .eql()
+            const ref_name_str = String.init(ref_name, ref_name);
+            const pkg_deps: []const Dependency = root_package.dependencies.get(lockfile.buffers.dependencies.items);
+            for (pkg_deps) |dep| {
+                if (dep.name.eql(ref_name_str, lockfile.buffers.string_bytes.items, ref_name)) {
+                    return dep;
+                }
+            }
+            try log.addWarningFmt(&source, loc, lockfile.allocator, "Could not resolve " ++ field ++ " \"{s}\" (you need \"{s}\" in your dependencies)", .{ value, ref_name });
+            return null;
+        }
+
+        const literalString = builder.append(String, value);
+        const literalSliced = literalString.sliced(lockfile.buffers.string_bytes.items);
+
+        const name_hash = String.Builder.stringHash(key);
+        const name = builder.appendWithHash(String, key, name_hash);
+
+        return Dependency{
+            .name = name,
+            .name_hash = name_hash,
+            .version = Dependency.parse(
+                lockfile.allocator,
+                name,
+                literalSliced.slice,
+                &literalSliced,
+                log,
+            ) orelse {
+                try log.addWarningFmt(&source, loc, lockfile.allocator, "Invalid " ++ field ++ " value \"{s}\"", .{value});
+                return null;
+            },
+        };
+    }
+};
+
 pub const FormatVersion = enum(u32) {
-    v0,
+    v0 = 0,
     // bun v0.0.x - bun v0.1.6
-    v1,
+    v1 = 1,
     // bun v0.1.7+
     // This change added tarball URLs to npm-resolved packages
-    v2,
+    v2 = 2,
+
     _,
     pub const current = FormatVersion.v2;
 };
@@ -1875,7 +2216,7 @@ pub const Package = extern struct {
     name: String = .{},
     name_hash: PackageNameHash = 0,
 
-    /// How a package has been resolved
+    /// How this package has been resolved
     /// When .tag is uninitialized, that means the package is not resolved yet.
     resolution: Resolution = .{},
 
@@ -1884,8 +2225,18 @@ pub const Package = extern struct {
     /// if resolutions[i] is an invalid package ID, then dependencies[i] is not resolved
     dependencies: DependencySlice = .{},
 
-    /// The resolved package IDs for the dependencies
-    resolutions: DependencyIDSlice = .{},
+    /// The resolved package IDs for this package's dependencies. Instead of storing this
+    /// on the `Dependency` struct within `.dependencies`, it is stored on the package itself
+    /// so we can access it faster.
+    ///
+    /// Each index in this array corresponds to the same index in dependencies.
+    /// Each value in this array corresponds to the resolved package ID for that dependency.
+    ///
+    /// So this is how you say "what package ID for lodash does this package actually resolve to?"
+    ///
+    /// By default, the underlying buffer is filled with "invalid_id" to indicate this package ID
+    /// was not resolved
+    resolutions: PackageIDSlice = .{},
 
     meta: Meta = .{},
     bin: Bin = .{},
@@ -2023,11 +2374,11 @@ pub const Package = extern struct {
         field: string,
         behavior: Behavior,
 
-        pub const dependencies = DependencyGroup{ .prop = "dependencies", .field = "dependencies", .behavior = @as(Behavior, @enumFromInt(Behavior.normal)) };
-        pub const dev = DependencyGroup{ .prop = "devDependencies", .field = "dev_dependencies", .behavior = @as(Behavior, @enumFromInt(Behavior.dev)) };
-        pub const optional = DependencyGroup{ .prop = "optionalDependencies", .field = "optional_dependencies", .behavior = @as(Behavior, @enumFromInt(Behavior.optional)) };
-        pub const peer = DependencyGroup{ .prop = "peerDependencies", .field = "peer_dependencies", .behavior = @as(Behavior, @enumFromInt(Behavior.peer)) };
-        pub const workspaces = DependencyGroup{ .prop = "workspaces", .field = "workspaces", .behavior = @as(Behavior, @enumFromInt(Behavior.workspace)) };
+        pub const dependencies = DependencyGroup{ .prop = "dependencies", .field = "dependencies", .behavior = Behavior.normal };
+        pub const dev = DependencyGroup{ .prop = "devDependencies", .field = "dev_dependencies", .behavior = Behavior.dev };
+        pub const optional = DependencyGroup{ .prop = "optionalDependencies", .field = "optional_dependencies", .behavior = Behavior.optional };
+        pub const peer = DependencyGroup{ .prop = "peerDependencies", .field = "peer_dependencies", .behavior = Behavior.peer };
+        pub const workspaces = DependencyGroup{ .prop = "workspaces", .field = "workspaces", .behavior = Behavior.workspace };
     };
 
     pub inline fn isDisabled(this: *const Lockfile.Package) bool {
@@ -2461,6 +2812,7 @@ pub const Package = extern struct {
             add: u32 = 0,
             remove: u32 = 0,
             update: u32 = 0,
+            overrides_changed: bool = false,
 
             pub inline fn sum(this: *Summary, that: Summary) void {
                 this.add += that.add;
@@ -2469,7 +2821,7 @@ pub const Package = extern struct {
             }
 
             pub inline fn hasDiffs(this: Summary) bool {
-                return this.add > 0 or this.remove > 0 or this.update > 0;
+                return this.add > 0 or this.remove > 0 or this.update > 0 or this.overrides_changed;
             }
         };
 
@@ -2489,6 +2841,22 @@ pub const Package = extern struct {
             const from_resolutions = from.resolutions.get(from_lockfile.buffers.resolutions.items);
             var to_i: usize = 0;
             var skipped_workspaces: usize = 0;
+
+            if (from_lockfile.overrides.map.count() != to_lockfile.overrides.map.count()) {
+                summary.overrides_changed = true;
+            } else {
+                for (
+                    from_lockfile.overrides.map.keys(),
+                    from_lockfile.overrides.map.values(),
+                    to_lockfile.overrides.map.keys(),
+                    to_lockfile.overrides.map.values(),
+                ) |from_k, *from_override, to_k, *to_override| {
+                    if ((from_k != to_k) or (!from_override.eql(to_override, from_lockfile.buffers.string_bytes.items, to_lockfile.buffers.string_bytes.items))) {
+                        summary.overrides_changed = true;
+                        break;
+                    }
+                }
+            }
 
             for (from_deps, 0..) |*from_dep, i| {
                 found: {
@@ -3425,15 +3793,7 @@ pub const Package = extern struct {
                             return error.InvalidPackageJSON;
                         }
                         for (obj.properties.slice()) |item| {
-                            const key = item.key.?.asString(allocator) orelse {
-                                log.addErrorFmt(&source, item.key.?.loc, allocator,
-                                    \\{0s} expects a map of specifiers, e.g.
-                                    \\"{0s}": {{
-                                    \\  "bun": "latest"
-                                    \\}}
-                                , .{group.prop}) catch {};
-                                return error.InvalidPackageJSON;
-                            };
+                            const key = item.key.?.asString(allocator).?;
                             const value = item.value.?.asString(allocator) orelse {
                                 log.addErrorFmt(&source, item.value.?.loc, allocator,
                                     \\{0s} expects a map of specifiers, e.g.
@@ -3506,6 +3866,10 @@ pub const Package = extern struct {
                     },
                 }
             }
+        }
+
+        if (comptime features.is_main) {
+            lockfile.overrides.parseCount(lockfile, json, &string_builder);
         }
 
         try string_builder.allocate();
@@ -3729,18 +4093,27 @@ pub const Package = extern struct {
         lockfile.buffers.dependencies.items = lockfile.buffers.dependencies.items.ptr[0..new_len];
         lockfile.buffers.resolutions.items = lockfile.buffers.resolutions.items.ptr[0..new_len];
 
+        // This function depends on package.dependencies being set, so it is done at the very end.
+        if (comptime features.is_main) {
+            try lockfile.overrides.parseAppend(lockfile, package, log, source, json, &string_builder);
+        }
+
         string_builder.clamp();
     }
 
-    pub const List = std.MultiArrayList(Lockfile.Package);
+    pub const List = bun.MultiArrayList(Lockfile.Package);
 
     pub const Meta = extern struct {
+        // TODO: when we bump the lockfile version, we should reorder this to:
+        // id(32), arch(16), os(16), id(8), man_dir(8), integrity(72 align 8)
+        // should allow us to remove padding bytes
+
+        // TODO: remove origin. it doesnt do anything and can be inferred from the resolution
         origin: Origin = Origin.npm,
         _padding_origin: u8 = 0,
 
         arch: Npm.Architecture = Npm.Architecture.all,
         os: Npm.OperatingSystem = Npm.OperatingSystem.all,
-
         _padding_os: u16 = 0,
 
         id: PackageID = invalid_package_id,
@@ -3759,11 +4132,14 @@ pub const Package = extern struct {
         }
 
         pub fn clone(this: *const Meta, id: PackageID, buf: []const u8, comptime StringBuilderType: type, builder: StringBuilderType) Meta {
-            var new = this.*;
-            new.id = id;
-            new.man_dir = builder.append(String, this.man_dir.slice(buf));
-
-            return new;
+            return Meta{
+                .id = id,
+                .man_dir = builder.append(String, this.man_dir.slice(buf)),
+                .integrity = this.integrity,
+                .arch = this.arch,
+                .os = this.os,
+                .origin = this.origin,
+            };
         }
     };
 
@@ -3840,6 +4216,8 @@ pub const Package = extern struct {
 
             inline for (FieldsEnum.fields) |field| {
                 const value = sliced.items(@field(Lockfile.Package.List.Field, field.name));
+                if (comptime Environment.allow_assert)
+                    debug("save(\"{s}\") = {d} bytes", .{ field.name, std.mem.sliceAsBytes(value).len });
 
                 comptime assertNoUninitializedPadding(@TypeOf(value));
                 try writer.writeAll(std.mem.sliceAsBytes(value));
@@ -3921,16 +4299,20 @@ pub fn deinit(this: *Lockfile) void {
     this.trusted_dependencies.deinit(this.allocator);
     this.workspace_paths.deinit(this.allocator);
     this.workspace_versions.deinit(this.allocator);
+    this.overrides.deinit(this.allocator);
 }
 
 const Buffers = struct {
     trees: Tree.List = .{},
     hoisted_dependencies: DependencyIDList = .{},
+    /// This is the underlying buffer used for the `resolutions` external slices inside of `Package`
+    /// Should be the same length as `dependencies`
     resolutions: PackageIDList = .{},
+    /// This is the underlying buffer used for the `dependencies` external slices inside of `Package`
     dependencies: DependencyList = .{},
+    /// This is the underlying buffer used for any `Semver.ExternalString` instance in the lockfile
     extern_strings: ExternalStringBuffer = .{},
-    // node_modules_folders: NodeModulesFolderList = NodeModulesFolderList{},
-    // node_modules_package_ids: PackageIDList = PackageIDList{},
+    /// This is where all non-inlinable `Semver.String`s are stored.
     string_bytes: StringBuffer = .{},
 
     pub fn deinit(this: *Buffers, allocator: Allocator) void {
@@ -4222,6 +4604,7 @@ pub const Serializer = struct {
 
     const has_workspace_package_ids_tag: u64 = @bitCast([_]u8{ 'w', 'O', 'r', 'K', 's', 'P', 'a', 'C' });
     const has_trusted_dependencies_tag: u64 = @bitCast([_]u8{ 't', 'R', 'u', 'S', 't', 'E', 'D', 'd' });
+    const has_overrides_tag: u64 = @bitCast([_]u8{ 'o', 'V', 'e', 'R', 'r', 'i', 'D', 's' });
 
     pub fn save(this: *Lockfile, comptime StreamType: type, stream: StreamType) !void {
         var old_package_list = this.packages;
@@ -4293,6 +4676,34 @@ pub const Serializer = struct {
                 &writer,
                 []u32,
                 this.trusted_dependencies.keys(),
+            );
+        }
+
+        if (this.overrides.map.count() > 0) {
+            try writer.writeAll(std.mem.asBytes(&has_overrides_tag));
+
+            try Lockfile.Buffers.writeArray(
+                StreamType,
+                stream,
+                @TypeOf(&writer),
+                &writer,
+                []PackageNameHash,
+                this.overrides.map.keys(),
+            );
+            var external_overrides = try std.ArrayListUnmanaged(Dependency.External).initCapacity(z_allocator, this.overrides.map.count());
+            defer external_overrides.deinit(z_allocator);
+            external_overrides.items.len = this.overrides.map.count();
+            for (external_overrides.items, this.overrides.map.values()) |*dest, src| {
+                dest.* = src.toExternal();
+            }
+
+            try Lockfile.Buffers.writeArray(
+                StreamType,
+                stream,
+                @TypeOf(&writer),
+                &writer,
+                []Dependency.External,
+                external_overrides.items,
             );
         }
 
@@ -4431,6 +4842,42 @@ pub const Serializer = struct {
             }
         }
 
+        {
+            const remaining_in_buffer = total_buffer_size -| stream.pos;
+
+            if (remaining_in_buffer > 8 and total_buffer_size <= stream.buffer.len) {
+                const next_num = try reader.readIntLittle(u64);
+                if (next_num == has_overrides_tag) {
+                    var overrides_name_hashes = try Lockfile.Buffers.readArray(
+                        stream,
+                        allocator,
+                        std.ArrayListUnmanaged(PackageNameHash),
+                    );
+                    defer overrides_name_hashes.deinit(allocator);
+
+                    var map = lockfile.overrides.map;
+                    defer lockfile.overrides.map = map;
+
+                    try map.ensureTotalCapacity(allocator, overrides_name_hashes.items.len);
+                    var override_versions_external = try Lockfile.Buffers.readArray(
+                        stream,
+                        allocator,
+                        std.ArrayListUnmanaged(Dependency.External),
+                    );
+                    const context: Dependency.Context = .{
+                        .allocator = allocator,
+                        .log = log,
+                        .buffer = lockfile.buffers.string_bytes.items,
+                    };
+                    for (overrides_name_hashes.items, override_versions_external.items) |name, value| {
+                        map.putAssumeCapacity(name, Dependency.toDependency(value, context));
+                    }
+                } else {
+                    stream.pos -= 8;
+                }
+            }
+        }
+
         lockfile.scratch = Lockfile.Scratch.init(allocator);
         lockfile.package_index = PackageIndex.Map.initContext(allocator, .{});
         lockfile.string_pool = StringPool.initContext(allocator, .{});
@@ -4470,7 +4917,7 @@ pub fn hasMetaHashChanged(this: *Lockfile, print_name_version_string: bool) !boo
     this.meta_hash = try this.generateMetaHash(print_name_version_string);
     return !strings.eqlLong(&previous_meta_hash, &this.meta_hash, false);
 }
-fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaHash {
+pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaHash {
     if (this.packages.len <= 1)
         return zero_hash;
 
@@ -4599,4 +5046,295 @@ pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Ve
     }
 
     return null;
+}
+
+pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep: Dependency, res: ?PackageID) !void {
+    const sb = this.buffers.string_bytes.items;
+    var buf: [2048]u8 = undefined;
+
+    try w.beginObject();
+    defer w.endObject() catch {};
+
+    try w.objectField("literal");
+    try w.write(dep.version.literal.slice(sb));
+
+    try w.objectField(@tagName(dep.version.tag));
+    switch (dep.version.tag) {
+        .uninitialized => try w.write(null),
+        .npm => {
+            try w.beginObject();
+            defer w.endObject() catch {};
+
+            const info: Dependency.Version.NpmInfo = dep.version.value.npm;
+
+            try w.objectField("name");
+            try w.write(info.name.slice(sb));
+
+            try w.objectField("version");
+            try w.write(try std.fmt.bufPrint(&buf, "{}", .{info.version}));
+        },
+        .dist_tag => {
+            try w.beginObject();
+            defer w.endObject() catch {};
+
+            const info: Dependency.Version.TagInfo = dep.version.value.dist_tag;
+
+            try w.objectField("name");
+            try w.write(info.name.slice(sb));
+
+            try w.objectField("tag");
+            try w.write(info.name.slice(sb));
+        },
+        .tarball => {
+            try w.beginObject();
+            defer w.endObject() catch {};
+
+            const info: Dependency.Version.TarballInfo = dep.version.value.tarball;
+            try w.objectField(@tagName(info.uri));
+            try w.write(switch (info.uri) {
+                inline else => |s| s.slice(sb),
+            });
+
+            try w.objectField("package_name");
+            try w.write(info.package_name.slice(sb));
+        },
+        .folder => {
+            try w.write(dep.version.value.folder.slice(sb));
+        },
+        .symlink => {
+            try w.write(dep.version.value.symlink.slice(sb));
+        },
+        .workspace => {
+            try w.write(dep.version.value.workspace.slice(sb));
+        },
+        .git => {
+            try w.beginObject();
+            defer w.endObject() catch {};
+
+            const info: Repository = dep.version.value.git;
+
+            try w.objectField("owner");
+            try w.write(info.owner.slice(sb));
+            try w.objectField("repo");
+            try w.write(info.repo.slice(sb));
+            try w.objectField("committish");
+            try w.write(info.committish.slice(sb));
+            try w.objectField("resolved");
+            try w.write(info.resolved.slice(sb));
+            try w.objectField("package_name");
+            try w.write(info.package_name.slice(sb));
+        },
+        .github => {
+            try w.beginObject();
+            defer w.endObject() catch {};
+
+            const info: Repository = dep.version.value.github;
+
+            try w.objectField("owner");
+            try w.write(info.owner.slice(sb));
+            try w.objectField("repo");
+            try w.write(info.repo.slice(sb));
+            try w.objectField("committish");
+            try w.write(info.committish.slice(sb));
+            try w.objectField("resolved");
+            try w.write(info.resolved.slice(sb));
+            try w.objectField("package_name");
+            try w.write(info.package_name.slice(sb));
+        },
+    }
+
+    try w.objectField("resolved_id");
+    try w.write(if (res) |r| if (r == invalid_package_id) null else r else null);
+
+    const behavior = try std.fmt.bufPrint(&buf, "{}", .{dep.behavior});
+    try w.objectField("behavior");
+    try w.write(behavior);
+}
+
+pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
+    var buf: [2048]u8 = undefined;
+    const sb = this.buffers.string_bytes.items;
+    try w.beginObject();
+    defer w.endObject() catch {};
+
+    try w.objectField("format");
+    try w.write(@tagName(this.format));
+    try w.objectField("meta_hash");
+    try w.write(std.fmt.bytesToHex(this.meta_hash, .lower));
+
+    {
+        try w.objectField("package_index");
+        try w.beginObject();
+        defer w.endObject() catch {};
+
+        var iter = this.package_index.iterator();
+        while (iter.next()) |it| {
+            const entry: PackageIndex.Entry = it.value_ptr.*;
+            const first_id = switch (entry) {
+                .PackageID => |id| id,
+                .PackageIDMultiple => |ids| ids.items[0],
+            };
+            const name = this.packages.items(.name)[first_id].slice(sb);
+            try w.objectField(name);
+            switch (entry) {
+                .PackageID => |id| try w.write(id),
+                .PackageIDMultiple => |ids| {
+                    try w.beginArray();
+                    for (ids.items) |id| {
+                        try w.write(id);
+                    }
+                    try w.endArray();
+                },
+            }
+        }
+    }
+    {
+        try w.objectField("packages");
+        try w.beginArray();
+        defer w.endArray() catch {};
+
+        for (0..this.packages.len) |i| {
+            const pkg: Package = this.packages.get(i);
+            try w.beginObject();
+            defer w.endObject() catch {};
+
+            try w.objectField("id");
+            try w.write(i);
+
+            try w.objectField("name");
+            try w.write(pkg.name.slice(sb));
+
+            try w.objectField("name_hash");
+            try w.write(pkg.name_hash);
+
+            try w.objectField("resolution");
+            if (pkg.resolution.tag == .uninitialized) {
+                try w.write(null);
+            } else {
+                const b = try std.fmt.bufPrint(&buf, "{s} {s}", .{ @tagName(pkg.resolution.tag), pkg.resolution.fmt(sb) });
+                try w.write(b);
+            }
+
+            try w.objectField("dependencies");
+            {
+                try w.beginObject();
+                defer w.endObject() catch {};
+
+                for (pkg.dependencies.get(this.buffers.dependencies.items), pkg.resolutions.get(this.buffers.resolutions.items)) |dep_, res| {
+                    const dep: Dependency = dep_;
+                    try w.objectField(dep.name.slice(sb));
+                    try this.jsonStringifyDependency(w, dep, res);
+                }
+            }
+
+            if (@as(u16, @intFromEnum(pkg.meta.arch)) != Npm.Architecture.all_value) {
+                try w.objectField("arch");
+                try w.beginArray();
+                defer w.endArray() catch {};
+
+                for (Npm.Architecture.NameMap.kvs) |kv| {
+                    if (pkg.meta.arch.has(kv.value)) {
+                        try w.write(kv.key);
+                    }
+                }
+            }
+
+            if (@as(u16, @intFromEnum(pkg.meta.os)) != Npm.OperatingSystem.all_value) {
+                try w.objectField("os");
+                try w.beginArray();
+                defer w.endArray() catch {};
+
+                for (Npm.OperatingSystem.NameMap.kvs) |kv| {
+                    if (pkg.meta.os.has(kv.value)) {
+                        try w.write(kv.key);
+                    }
+                }
+            }
+
+            try w.objectField("integrity");
+            if (pkg.meta.integrity.tag != .unknown) {
+                try w.write(try std.fmt.bufPrint(&buf, "{}", .{pkg.meta.integrity}));
+            } else {
+                try w.write(null);
+            }
+
+            try w.objectField("man_dir");
+            try w.write(pkg.meta.man_dir.slice(sb));
+
+            try w.objectField("origin");
+            try w.write(@tagName(pkg.meta.origin));
+
+            try w.objectField("bin");
+            switch (pkg.bin.tag) {
+                .none => try w.write(null),
+                .file => {
+                    try w.beginObject();
+                    defer w.endObject() catch {};
+
+                    try w.objectField("file");
+                    try w.write(pkg.bin.value.file.slice(sb));
+                },
+                .named_file => {
+                    try w.beginObject();
+                    defer w.endObject() catch {};
+
+                    try w.objectField("name");
+                    try w.write(pkg.bin.value.named_file[0].slice(sb));
+
+                    try w.objectField("file");
+                    try w.write(pkg.bin.value.named_file[1].slice(sb));
+                },
+                .dir => {
+                    try w.objectField("dir");
+                    try w.write(pkg.bin.value.dir.slice(sb));
+                },
+                .map => {
+                    try w.beginObject();
+                    defer w.endObject() catch {};
+
+                    const data: []const ExternalString = pkg.bin.value.map.get(this.buffers.extern_strings.items);
+                    var bin_i: usize = 0;
+                    while (bin_i < data.len) : (bin_i += 2) {
+                        try w.objectField(data[bin_i].slice(sb));
+                        try w.write(data[bin_i + 1].slice(sb));
+                    }
+                },
+            }
+
+            {
+                try w.objectField("scripts");
+                try w.beginObject();
+                defer w.endObject() catch {};
+
+                inline for (comptime std.meta.fieldNames(Lockfile.Scripts)) |field_name| {
+                    var script = @field(pkg.scripts, field_name).slice(sb);
+                    if (script.len > 0) {
+                        try w.objectField(field_name);
+                        try w.write(script);
+                    }
+                }
+            }
+        }
+    }
+
+    try w.objectField("workspace_paths");
+    {
+        try w.beginObject();
+        defer w.endObject() catch {};
+
+        for (this.workspace_paths.keys(), this.workspace_paths.values()) |k, v| {
+            try w.objectField(try std.fmt.bufPrint(&buf, "{d}", .{k}));
+            try w.write(v.slice(sb));
+        }
+    }
+    try w.objectField("workspace_versions");
+    {
+        try w.beginObject();
+        defer w.endObject() catch {};
+
+        for (this.workspace_versions.keys(), this.workspace_versions.values()) |k, v| {
+            try w.objectField(try std.fmt.bufPrint(&buf, "{d}", .{k}));
+            try w.write(try std.fmt.bufPrint(&buf, "{}", .{v.fmt(sb)}));
+        }
+    }
 }

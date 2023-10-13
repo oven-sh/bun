@@ -603,7 +603,9 @@ describe("jest-extended", () => {
     );
 
     expect("hello world").not.toEqualIgnoringWhitespace("hello world!");
-    expect({}).not.toEqualIgnoringWhitespace({});
+    expect(() => {
+      expect({}).not.toEqualIgnoringWhitespace({});
+    }).toThrow("requires argument to be a string");
   });
 
   // Symbol

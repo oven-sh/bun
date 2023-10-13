@@ -1503,6 +1503,97 @@ it("should handle ^0.0.2 in dependencies", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
+it("should edit package json correctly with git dependencies", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  const package_json = JSON.stringify({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: {},
+  });
+  await writeFile(join(package_dir, "package.json"), package_json);
+  var { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "i", "dylan-conway/install-test2"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  var err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  expect(await exited).toBe(0);
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: {
+      "install-test2": "dylan-conway/install-test2",
+    },
+  });
+  await writeFile(join(package_dir, "package.json"), package_json);
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "i", "dylan-conway/install-test2#HEAD"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  }));
+  err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  expect(await exited).toBe(0);
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: {
+      "install-test2": "dylan-conway/install-test2#HEAD",
+    },
+  });
+  await writeFile(join(package_dir, "package.json"), package_json);
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "i", "github:dylan-conway/install-test2"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  }));
+  err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  expect(await exited).toBe(0);
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: {
+      "install-test2": "github:dylan-conway/install-test2",
+    },
+  });
+  await writeFile(join(package_dir, "package.json"), package_json);
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "i", "github:dylan-conway/install-test2#HEAD"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  }));
+  err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  expect(await exited).toBe(0);
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: {
+      "install-test2": "github:dylan-conway/install-test2#HEAD",
+    },
+  });
+  await access(join(package_dir, "bun.lockb"));
+});
+
 it("should handle ^0.0.2-rc in dependencies", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls, { "0.0.2-rc": { as: "0.0.2" } }));
@@ -3393,7 +3484,11 @@ it("should handle GitHub tarball URL in dependencies (https://github.com/user/re
 
 it("should treat non-GitHub http(s) URLs as tarballs (https://some.url/path?stuff)", async () => {
   const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  setHandler(
+    dummyRegistry(urls, {
+      "4.3.0": { as: "4.3.0" },
+    }),
+  );
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -3423,11 +3518,11 @@ it("should treat non-GitHub http(s) URLs as tarballs (https://some.url/path?stuf
   expect(out.split(/\r?\n/)).toEqual([
     " + @vercel/turbopack-node@https://gitpkg-fork.vercel.sh/vercel/turbo/crates/turbopack-node/js?turbopack-230922.2",
     "",
-    " 1 package installed",
+    " 2 packages installed",
   ]);
   expect(await exited).toBe(0);
-  expect(urls.sort()).toBeEmpty();
-  expect(requested).toBe(0);
+  expect(urls.sort()).toHaveLength(2);
+  expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "@vercel", "loader-runner"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "@vercel"))).toEqual(["turbopack-node"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "@vercel", "turbopack-node"))).toEqual([
@@ -3435,8 +3530,6 @@ it("should treat non-GitHub http(s) URLs as tarballs (https://some.url/path?stuf
     "src",
     "tsconfig.json",
   ]);
-  const package_json = await file(join(package_dir, "node_modules", "when", "package.json")).json();
-  expect(package_json.name).toBe("when");
   await access(join(package_dir, "bun.lockb"));
 });
 

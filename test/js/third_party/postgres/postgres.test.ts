@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { Pool } from "pg";
+import { Pool, Client } from "pg";
 import { parse } from "pg-connection-string";
 import postgres from "postgres";
 
@@ -18,6 +18,29 @@ describe("pg", () => {
     } finally {
       pool.end();
     }
+  });
+
+  it("should execute big query and end connection", async () => {
+    const client = new Client({
+      connectionString: CONNECTION_STRING,
+      ssl: { rejectUnauthorized: false },
+    });
+
+    async function execute() {
+      await client.connect();
+      const res = await client.query(`SELECT * FROM users LIMIT 1000`); // <--- bun stuck here
+      expect(res.rows.length).toBeGreaterThanOrEqual(300);
+      await client.end();
+      return "success";
+    }
+
+    async function timeout() {
+      client.end();
+      await Bun.sleep(5000);
+      return "timeout";
+    }
+
+    expect(await Promise.race([execute(), timeout()])).toBe("success");
   });
 });
 

@@ -368,6 +368,14 @@ pub export fn Bun__onDidAppendPlugin(jsc_vm: *VirtualMachine, globalObject: *JSG
     jsc_vm.bundler.linker.plugin_runner = &jsc_vm.plugin_runner.?;
 }
 
+// pub fn getGlobalExitCodeForPipeFailure() u8 {
+//     if (VirtualMachine.is_main_thread_vm) {
+//         return VirtualMachine.get().exit_handler.exit_code;
+//     }
+
+//     return 0;
+// }
+
 pub const ExitHandler = struct {
     exit_code: u8 = 0,
 

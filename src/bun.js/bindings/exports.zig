@@ -969,7 +969,7 @@ pub const ZigConsoleClient = struct {
                 Output.prettyFmt("<r><red>Assertion failed<r>\n", true)
             else
                 "Assertion failed\n";
-            console.error_writer.unbuffered_writer.writeAll(text) catch unreachable;
+            console.error_writer.unbuffered_writer.writeAll(text) catch {};
             return;
         }
 
@@ -1024,7 +1024,7 @@ pub const ZigConsoleClient = struct {
             _ = console.writer.write("\n") catch 0;
             console.writer.flush() catch {};
         } else if (message_type != .Trace)
-            writer.writeAll("undefined\n") catch unreachable;
+            writer.writeAll("undefined\n") catch {};
 
         if (message_type == .Trace) {
             writeTrace(Writer, writer, global);
@@ -1046,14 +1046,14 @@ pub const ZigConsoleClient = struct {
                 writer,
                 exception.stack,
                 true,
-            ) catch unreachable
+            ) catch {}
         else
             JS.VirtualMachine.printStackTrace(
                 Writer,
                 writer,
                 exception.stack,
                 false,
-            ) catch unreachable;
+            ) catch {};
     }
 
     pub const FormatOptions = struct {
@@ -1102,7 +1102,7 @@ pub const ZigConsoleClient = struct {
             if (tag.tag == .String) {
                 if (options.enable_colors) {
                     if (level == .Error) {
-                        unbuffered_writer.writeAll(comptime Output.prettyFmt("<r><red>", true)) catch unreachable;
+                        unbuffered_writer.writeAll(comptime Output.prettyFmt("<r><red>", true)) catch {};
                     }
                     fmt.format(
                         tag,
@@ -1113,7 +1113,7 @@ pub const ZigConsoleClient = struct {
                         true,
                     );
                     if (level == .Error) {
-                        unbuffered_writer.writeAll(comptime Output.prettyFmt("<r>", true)) catch unreachable;
+                        unbuffered_writer.writeAll(comptime Output.prettyFmt("<r>", true)) catch {};
                     }
                 } else {
                     fmt.format(
@@ -1175,7 +1175,7 @@ pub const ZigConsoleClient = struct {
         var any = false;
         if (options.enable_colors) {
             if (level == .Error) {
-                writer.writeAll(comptime Output.prettyFmt("<r><red>", true)) catch unreachable;
+                writer.writeAll(comptime Output.prettyFmt("<r><red>", true)) catch {};
             }
             while (true) {
                 if (any) {
@@ -1197,7 +1197,7 @@ pub const ZigConsoleClient = struct {
                 fmt.remaining_values = fmt.remaining_values[1..];
             }
             if (level == .Error) {
-                writer.writeAll(comptime Output.prettyFmt("<r>", true)) catch unreachable;
+                writer.writeAll(comptime Output.prettyFmt("<r>", true)) catch {};
             }
         } else {
             while (true) {

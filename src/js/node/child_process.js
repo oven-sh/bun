@@ -1174,6 +1174,7 @@ class ChildProcess extends EventEmitter {
       env: env || process.env,
       detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,
       onExit: (handle, exitCode, signalCode, err) => {
+        $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
         this.#handle = handle;
         this.pid = this.#handle.pid;
 
@@ -1189,12 +1190,21 @@ class ChildProcess extends EventEmitter {
     });
     this.pid = this.#handle.pid;
 
+    $debug("ChildProcess: spawn", this.pid, spawnargs);
+
     onSpawnNT(this);
 
     if (ipc) {
       this.send = this.#send;
       this.disconnect = this.#disconnect;
     }
+
+    // this.stdout?.on("data", data => {
+    //   process.stderr.write(data);
+    // });
+    // this.stderr?.on("data", data => {
+    //   process.stderr.write(data);
+    // });
   }
 
   #emitIpcMessage(message) {

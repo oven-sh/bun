@@ -1,9 +1,10 @@
 // @ts-check
 /// <reference types="typings-esm-loader" />
 /// <reference types="bun-types" />
-import { fileURLToPath, pathToFileURL } from 'url';
-import path from 'path';
-import fs from 'fs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import path from 'node:path';
+import util from 'node:util';
+import fs from 'node:fs';
 import $ from 'chalk';
 import bunwasm from 'bun-wasm';
 import { TransformResponseStatus } from 'bun-wasm/schema';
@@ -104,16 +105,19 @@ function formatBuildErrors(buildErrors) {
         const loc = err.data.location;
         const str = `${$.redBright('error')}${$.gray(':')} ${$.bold(err.data.text)}\n` +
         (loc
-            ? `${highlightErrorChar(loc.line_text, loc.offset)}\n` +
+            ? `${highlightErrorChar(loc.line_text, loc.column)}\n` +
                 $.redBright.bold('^'.padStart(loc.column)) + '\n' +
                 `${$.bold(loc.file)}${$.gray(':')}${$.yellowBright(loc.line)}${$.gray(':')}${$.yellowBright(loc.column)} ${$.gray(loc.offset)}`
             : ''
         );
-        return { __proto__: Error.prototype, stack: str };
+        const newerr = new Error(str);
+        newerr.name = 'BuildError';
+        newerr.stack = str;
+        return newerr;
     });
     const aggregate = new AggregateError(formatted, `Input code has ${formatted.length} error${formatted.length === 1 ? '' : 's'}`);
     Error.captureStackTrace(aggregate, NO_STACK);
-    aggregate.name = 'BuildError';
+    aggregate.name = 'BuildFailed';
     return aggregate;
 }
 

@@ -15,7 +15,8 @@
     "typescript": "^5.2.2"
   },
   "scripts": {
-    "node": "tsx --enable-source-maps --import ./dist/src/repl.js",
+    "node": "tsx --no-warnings --enable-source-maps --import ./dist/src/repl.js",
+    "test": "node --no-warnings --loader ./tools/bun_test_loader.mjs",
     "clean": "rm -rf dist",
     "preprocess": "bun tools/updateversions.ts",
     "build": "bun run clean && bun run preprocess && bunx tsc && bunx copyfiles \"./lib/**/*.wasm\" dist",

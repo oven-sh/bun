@@ -1,10 +1,10 @@
 import type {
-    BunPlugin, PluginConstraints, PluginBuilder, OnLoadCallback, OnResolveCallback, HeapSnapshot,
+    BunPlugin, PluginConstraints, PluginBuilder, OnLoadCallback, OnResolveCallback, HeapSnapshot, Password,
     EditorOptions, SpawnOptions, Subprocess, SyncSubprocess, FileBlob as BunFileBlob, ArrayBufferView, Hash
 } from 'bun';
 import { TextDecoderStream } from 'node:stream/web';
 import { NotImplementedError, type SystemError } from '../utils/errors.js';
-import { streamToBuffer, isArrayBufferView, isFileBlob, isOptions } from '../utils/misc.js';
+import { isArrayBufferView, isFileBlob, isOptions } from '../utils/misc.js';
 import dnsPolyfill from './bun/dns.js';
 import { FileSink } from './bun/filesink.js';
 import {
@@ -18,6 +18,7 @@ import { ArrayBufferSink as ArrayBufferSinkPolyfill } from './bun/arraybuffersin
 import { FileBlob, NodeJSStreamFileBlob } from './bun/fileblob.js';
 import TranspilerImpl from './bun/transpiler.js';
 import { mmap as mmapper } from './bun/mmap.js';
+import { SyncWorker } from '../utils/sync.mjs';
 import fs from 'node:fs';
 import v8 from 'node:v8';
 import path from 'node:path';
@@ -29,12 +30,17 @@ import chp, { type ChildProcess, type StdioOptions, type SpawnSyncReturns } from
 import { fileURLToPath as fileURLToPathNode, pathToFileURL as pathToFileURLNode } from 'node:url';
 import npm_which from 'which';
 import openEditor from 'open-editor';
+import bcrypt from 'bcryptjs';
+import argon2 from 'argon2';
+
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satisfies typeof Bun.main;
 
 //? These are automatically updated on build by tools/updateversions.ts, do not edit manually.
 export const version = '1.0.4' satisfies typeof Bun.version;
-export const revision = '3ee6aa803b12d393996b72b5f30c023bf6e1759d' satisfies typeof Bun.revision;
+export const revision = 'a25bb42416fffaeef837b592bf81cad8b257aa48' satisfies typeof Bun.revision;
 
 export const gc = (globalThis.gc ? (() => (globalThis.gc!(), process.memoryUsage().heapUsed)) : (() => {
     const err = new Error('[bun-polyfills] Garbage collection polyfills are only available when Node.js is ran with the --expose-gc flag.');
@@ -120,13 +126,15 @@ export const allocUnsafe = ((size: number) => new Uint8Array(size)) satisfies ty
 
 export const mmap = mmapper satisfies typeof Bun.mmap;
 
-export const generateHeapSnapshot = (async (): Promise<HeapSnapshot> => {
-    process.emitWarning('The polyfill for Bun.generateHeapShot is asynchronous, unlike the original which is synchronous.', {
-        type: 'BunPolyfillWarning',
-        code: 'BUN_POLYFILLS_ASYNC_GENERATE_HEAP_SNAPSHOT',
-        detail: 'This is due to v8.getHeapSnapshot() returning a stream in Node.js. This is not a bug, but a limitation of the polyfill.'
-    });
-    const raw = (await streamToBuffer(v8.getHeapSnapshot())).toString('utf8');
+export const generateHeapSnapshot = ((): HeapSnapshot => {
+    const stream = v8.getHeapSnapshot();
+    const chunks = [];
+    while (true) {
+        const chunk = stream.read();
+        if (chunk === null) break;
+        chunks.push(chunk);
+    }
+    const raw = Buffer.concat(chunks).toString('utf8');
     const json = JSON.parse(raw) as V8HeapSnapshot;
     return {
         version: 2,
@@ -136,8 +144,7 @@ export const generateHeapSnapshot = (async (): Promise<HeapSnapshot> => {
         edgeTypes: json.snapshot.meta.edge_types.flat(),
         edgeNames: json.snapshot.meta.edge_fields.flat(),
         nodeClassNames: json.snapshot.meta.node_types.flat(),
-    };
-    // @ts-expect-error Refer to the above emitWarning call
+    } satisfies HeapSnapshot;
 }) satisfies typeof Bun.generateHeapSnapshot;
 
 //! This is a no-op in Node.js, as there is no way to shrink the V8 heap from JS as far as I know.
@@ -464,6 +471,94 @@ export const pathToFileURL = pathToFileURLNode satisfies typeof Bun.pathToFileUR
 export const fileURLToPath = fileURLToPathNode satisfies typeof Bun.fileURLToPath;
 
 export const dns = dnsPolyfill satisfies typeof Bun.dns;
+
+const Argon2Types = {
+    __proto__: null,
+    argon2d: argon2.argon2d,
+    argon2i: argon2.argon2i,
+    argon2id: argon2.argon2id,
+} as const;
+const syncAwareArgonHash = (async (password: string, algo: Password.Argon2Algorithm): Promise<Uint8Array> => {
+    const { workerData } = await import('node:worker_threads');
+    const argon2 = (await import(workerData.resolve.argon2)).default as typeof import('argon2');
+    return new TextEncoder().encode(await argon2.hash(password, {
+        type: workerData.Argon2Types[algo.algorithm] ?? (() => { throw new TypeError(`Invalid algorithm "${algo.algorithm}"`); })(),
+        memoryCost: algo.memoryCost ?? 65536,
+        timeCost: algo.timeCost ?? 2,
+        parallelism: 1,
+        version: 19,
+    }));
+});
+const syncAwareArgonVerify = (async (hash: string, password: string, algorithm: Password.AlgorithmLabel): Promise<Uint8Array> => {
+    const { workerData } = await import('node:worker_threads');
+    const argon2 = (await import(workerData.resolve.argon2)).default as typeof import('argon2');
+    return new Uint8Array([+await argon2.verify(hash, password, {
+        type: workerData.Argon2Types[algorithm] ?? (() => { throw new TypeError(`Invalid algorithm "${algorithm}"`); })(),
+        parallelism: 1,
+        version: 19,
+    })]);
+});
+
+export const password = {
+    async hash(password, algorithm = 'argon2id') {
+        if (typeof password !== 'string') password = new TextDecoder().decode(password);
+        const algo: Password.Argon2Algorithm | Password.BCryptAlgorithm = typeof algorithm === 'string' ? { algorithm } : algorithm;
+        if (algo.algorithm === 'bcrypt') {
+            return bcrypt.hash(password, algo.cost ?? 10);
+        } else {
+            return argon2.hash(password, {
+                type: Argon2Types[algo.algorithm] ?? (() => { throw new TypeError(`Invalid algorithm "${algo.algorithm}"`); })(),
+                memoryCost: algo.memoryCost ?? 65536,
+                timeCost: algo.timeCost ?? 2,
+                parallelism: 1,
+                version: 19,
+            });
+        }
+    },
+    hashSync(password, algorithm = 'argon2id') {
+        if (typeof password !== 'string') password = new TextDecoder().decode(password);
+        const algo: Password.Argon2Algorithm | Password.BCryptAlgorithm = typeof algorithm === 'string' ? { algorithm } : algorithm;
+        if (algo.algorithm === 'bcrypt') {
+            return bcrypt.hashSync(password, algo.cost ?? 10);
+        } else {
+            const requireModules = { argon2: pathToFileURL(require.resolve('argon2')).href };
+            // TODO: use import.meta.resolve once its unflagged and stable
+            //const modules = { argon2: import.meta.resolve?.('argon2') ?? '' };
+            const worker = new SyncWorker(requireModules, { Argon2Types });
+            const out = worker.sync(syncAwareArgonHash, (data) => new TextDecoder().decode(data))(password, algo);
+            worker.terminate();
+            return out;
+        }
+    },
+    async verify(password, hash, algorithm = 'argon2id') {
+        if (typeof password !== 'string') password = new TextDecoder().decode(password);
+        if (typeof hash !== 'string') hash = new TextDecoder().decode(hash);
+        if (algorithm === 'bcrypt') {
+            return bcrypt.compare(password, hash);
+        } else {
+            return argon2.verify(hash, password, {
+                type: Argon2Types[algorithm] ?? (() => { throw new TypeError(`Invalid algorithm "${algorithm}"`); })(),
+                parallelism: 1,
+                version: 19,
+            });
+        }
+    },
+    verifySync(password, hash, algorithm = 'argon2id') {
+        if (typeof password !== 'string') password = new TextDecoder().decode(password);
+        if (typeof hash !== 'string') hash = new TextDecoder().decode(hash);
+        if (algorithm === 'bcrypt') {
+            return bcrypt.compareSync(password, hash);
+        } else {
+            const requireModules = { argon2: pathToFileURL(require.resolve('argon2')).href };
+            // TODO: use import.meta.resolve once its unflagged and stable
+            //const modules = { argon2: import.meta.resolve?.('argon2') ?? '' };
+            const worker = new SyncWorker(requireModules, { Argon2Types });
+            const out = worker.sync(syncAwareArgonVerify, (data) => !!data[0])(hash, password, algorithm);
+            worker.terminate();
+            return out;
+        }
+    },
+} satisfies typeof Bun.password;
 
 export const isMainThread = workers.isMainThread satisfies typeof Bun.isMainThread;
 

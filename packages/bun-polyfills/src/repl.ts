@@ -13,16 +13,13 @@ globalThis.Bun = bun as typeof bun & {
     deepEquals: typeof import('bun').deepEquals;
     deepMatch: typeof import('bun').deepMatch;
     build: typeof import('bun').build;
-    mmap: typeof import('bun').mmap;
     connect: typeof import('bun').connect;
     listen: typeof import('bun').listen;
-    password: typeof import('bun').password;
     CryptoHashInterface: typeof import('bun').CryptoHashInterface;
     CryptoHasher: typeof import('bun').CryptoHasher;
     FileSystemRouter: typeof import('bun').FileSystemRouter;
 
     //? Polyfilled but with broken types (See each one in ./src/modules/bun.ts for details)
-    generateHeapSnapshot: typeof import('bun').generateHeapSnapshot;
     stdout: typeof import('bun').stdout;
     stderr: typeof import('bun').stderr;
     stdin: typeof import('bun').stdin;

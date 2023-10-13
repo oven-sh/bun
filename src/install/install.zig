@@ -7884,7 +7884,7 @@ pub const PackageManager = struct {
                         manager.root_dependency_list = dep_lists[0];
                         try builder.allocate();
 
-                        var all_name_hashes = brk: {
+                        const all_name_hashes: []PackageNameHash = brk: {
                             if (!manager.summary.overrides_changed) break :brk &.{};
                             const hashes_len = manager.lockfile.overrides.map.entries.len + lockfile.overrides.map.entries.len;
                             if (hashes_len == 0) break :brk &.{};
@@ -7927,7 +7927,7 @@ pub const PackageManager = struct {
                             }
                         }
 
-                        if (manager.summary.overrides_changed) {
+                        if (manager.summary.overrides_changed and all_name_hashes.len > 0) {
                             for (manager.lockfile.buffers.dependencies.items, 0..) |*dependency, dependency_i| {
                                 if (std.mem.indexOfScalar(PackageNameHash, all_name_hashes, dependency.name_hash)) |_| {
                                     manager.lockfile.buffers.resolutions.items[dependency_i] = invalid_package_id;

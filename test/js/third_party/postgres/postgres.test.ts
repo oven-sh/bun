@@ -27,11 +27,15 @@ describe("pg", () => {
     });
 
     async function execute() {
-      await client.connect();
-      const res = await client.query(`SELECT * FROM users LIMIT 1000`);
-      expect(res.rows.length).toBeGreaterThanOrEqual(300);
-      await client.end();
-      return "success";
+      try {
+        await client.connect();
+        const res = await client.query(`SELECT * FROM users LIMIT 1000`);
+        expect(res.rows.length).toBeGreaterThanOrEqual(300);
+        await client.end();
+        return "success";
+      } catch (e) {
+        return e;
+      }
     }
 
     async function timeout() {

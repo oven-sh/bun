@@ -119,3 +119,6 @@ mustNotExist("packages/second/node_modules/body-parser/node_modules/body-parser/
 mustNotExist("packages/second/node_modules/body-parser/node_modules/iconv-lite");
 mustNotExist("packages/second/node_modules/iconv-lite");
 mustNotExist("node_modules/iconv-lite");
+
+// lines-and-columns@^^1.1.6 gets the latest semver-matching version - not 1.2.0 which is outdated and deprecated
+validate("node_modules/lines-and-columns", "1.2.4");

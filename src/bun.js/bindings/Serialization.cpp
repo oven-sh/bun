@@ -12,12 +12,11 @@ using namespace WebCore;
 struct SerializedValueSlice {
     uint8_t* bytes;
     size_t size;
-    Ref<WebCore::SerializedScriptValue>* value;
+    WebCore::SerializedScriptValue* value;
 };
 
-/// This is used for Bun.spawn() IPC because otherwise we would have to copy the data once to get it to zig, then write it.
-/// Returns `true` on success, `false` on failure + throws a JS error.
-extern "C" SerializedValueSlice Bun__serializeJSValueForSubprocess(JSGlobalObject* globalObject, EncodedJSValue encodedValue)
+/// Returns a "slice" that also contains a pointer to the SerializedScriptValue. Must be freed by the caller
+extern "C" SerializedValueSlice Bun__serializeJSValue(JSGlobalObject* globalObject, EncodedJSValue encodedValue)
 {
     JSValue value = JSValue::decode(encodedValue);
 
@@ -37,12 +36,12 @@ extern "C" SerializedValueSlice Bun__serializeJSValueForSubprocess(JSGlobalObjec
 
     auto serializedValue = serialized.releaseReturnValue();
 
-    auto bytes = serializedValue.leakRef().wireBytes();
+    auto bytes = serializedValue->wireBytes();
 
     return {
         bytes.data(),
         bytes.size(),
-        &serializedValue
+        &serializedValue.leakRef(),
     };
 
     // uint8_t id = 2; // IPCMessageType.SerializedMessage
@@ -54,7 +53,7 @@ extern "C" SerializedValueSlice Bun__serializeJSValueForSubprocess(JSGlobalObjec
     // RELEASE_AND_RETURN(scope, true);
 }
 
-extern "C" void Bun__serializedScriptValue__free(Ref<SerializedScriptValue>* value)
+extern "C" void Bun__SerializedScriptSlice__free(SerializedScriptValue* value)
 {
     delete value;
 }

@@ -294,13 +294,8 @@ pub export fn Bun__Process__send(
         return .zero;
     }
     var vm = globalObject.bunVM();
-    if (vm.ipc) |ipc| {
-        const fd = ipc.socket.fd();
-        const success = IPC.serializeJSValueForSubprocess(
-            globalObject,
-            callFrame.argument(0),
-            fd,
-        );
+    if (vm.ipc) |ipc_instance| {
+        const success = ipc_instance.ipc.serializeAndSend(globalObject, callFrame.argument(0));
         return if (success) .undefined else .zero;
     } else {
         globalObject.throw("IPC Socket is no longer open.", .{});
@@ -2803,10 +2798,8 @@ pub const VirtualMachine = struct {
 
     pub const IPCInstance = struct {
         globalThis: ?*JSGlobalObject,
-        socket: IPC.Socket,
         uws_context: *uws.SocketContext,
-        ipc_buffer: bun.ByteList,
-        ipc_outgoing_buffer: bun.ByteList,
+        ipc: IPC.IPCData,
 
         pub fn handleIPCMessage(
             this: *IPCInstance,
@@ -2856,13 +2849,13 @@ pub const VirtualMachine = struct {
         var instance = bun.default_allocator.create(IPCInstance) catch @panic("OOM");
         instance.* = .{
             .globalThis = this.global,
-            .socket = socket,
             .uws_context = context,
-            .ipc_buffer = bun.ByteList{},
+            .ipc = .{ .socket = socket },
         };
         var ptr = socket.ext(*IPCInstance);
         ptr.?.* = instance;
         this.ipc = instance;
+        instance.ipc.writeVersionPacket();
     }
     comptime {
         if (!JSC.is_bindgen)

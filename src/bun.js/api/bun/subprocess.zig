@@ -62,12 +62,9 @@ pub const Subprocess = struct {
     is_sync: bool = false,
     this_jsvalue: JSC.JSValue = .zero,
 
-    ipc: IPCMode,
-    // this is only ever accessed when `ipc` is not `none`
-    ipc_socket: IPC.Socket = undefined,
+    ipc_mode: IPCMode,
     ipc_callback: JSC.Strong = .{},
-    ipc_buffer: bun.ByteList,
-    ipc_outgoing_buffer: bun.ByteList,
+    ipc: IPC.IPCData,
 
     has_pending_unref: bool = false,
     pub const SignalCode = bun.SignalCode;
@@ -84,7 +81,7 @@ pub const Subprocess = struct {
 
     pub fn updateHasPendingActivityFlag(this: *Subprocess) void {
         @fence(.SeqCst);
-        this.has_pending_activity.store(this.waitpid_err == null and this.exit_code == null and this.ipc == .none and this.has_pending_unref, .SeqCst);
+        this.has_pending_activity.store(this.waitpid_err == null and this.exit_code == null and this.ipc_mode == .none and this.has_pending_unref, .SeqCst);
     }
 
     pub fn hasPendingActivity(this: *Subprocess) callconv(.C) bool {
@@ -94,7 +91,7 @@ pub const Subprocess = struct {
 
     pub fn updateHasPendingActivity(this: *Subprocess) void {
         @fence(.Release);
-        this.has_pending_activity.store(this.waitpid_err == null and this.exit_code == null and this.ipc == .none and this.has_pending_unref, .Release);
+        this.has_pending_activity.store(this.waitpid_err == null and this.exit_code == null and this.ipc_mode == .none and this.has_pending_unref, .Release);
     }
 
     pub fn ref(this: *Subprocess) void {
@@ -429,7 +426,7 @@ pub const Subprocess = struct {
     }
 
     pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
-        if (this.ipc == .none) {
+        if (this.ipc_mode == .none) {
             global.throw("Subprocess.send() can only be used if an IPC channel is open.", .{});
             return .zero;
         }
@@ -441,20 +438,16 @@ pub const Subprocess = struct {
 
         const value = callFrame.argument(0);
 
-        const success = IPC.serializeJSValueForSubprocess(
-            global,
-            value,
-            this.ipc_socket.fd(),
-        );
+        const success = this.ipc.serializeAndSend(global, value);
         if (!success) return .zero;
 
         return JSC.JSValue.jsUndefined();
     }
 
     pub fn disconnect(this: *Subprocess) void {
-        if (this.ipc == .none) return;
-        this.ipc_socket.close(0, null);
-        this.ipc = .none;
+        if (this.ipc_mode == .none) return;
+        this.ipc.socket.close(0, null);
+        this.ipc_mode = .none;
     }
 
     pub fn getPid(
@@ -1542,15 +1535,15 @@ pub const Subprocess = struct {
             .stderr = Readable.init(stdio[bun.STDERR_FD], stderr_pipe[0], jsc_vm.allocator, default_max_buffer_size),
             .on_exit_callback = if (on_exit_callback != .zero) JSC.Strong.create(on_exit_callback, globalThis) else .{},
             .is_sync = is_sync,
-            .ipc = ipc_mode,
+            .ipc_mode = ipc_mode,
             // will be assigned in the block below
-            .ipc_socket = socket,
-            .ipc_buffer = bun.ByteList{},
+            .ipc = .{ .socket = socket },
             .ipc_callback = if (ipc_callback != .zero) JSC.Strong.create(ipc_callback, globalThis) else undefined,
         };
         if (ipc_mode != .none) {
             var ptr = socket.ext(*Subprocess);
             ptr.?.* = subprocess;
+            subprocess.ipc.writeVersionPacket();
         }
 
         if (subprocess.stdin == .pipe) {
@@ -2074,7 +2067,7 @@ pub const Subprocess = struct {
 
     pub fn handleIPCClose(this: *Subprocess, _: IPC.Socket) void {
         // uSocket is already freed so calling .close() on the socket can segfault
-        this.ipc = .none;
+        this.ipc_mode = .none;
         this.updateHasPendingActivity();
     }
 

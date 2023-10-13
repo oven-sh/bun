@@ -165,7 +165,7 @@ export default {
       description: "Install local packages as dependencies in your project.",
     }),
     page("cli/pm", "`bun pm`", {
-      description: "Install local packages as dependencies in your project.",
+      description: "Utilities relating to package management with Bun.",
     }),
     page("install/cache", "Global cache", {
       description:
@@ -175,8 +175,7 @@ export default {
       description: "Bun's package manager supports workspaces and mono-repo development workflows.",
     }),
     page("install/lifecycle", "Lifecycle scripts", {
-      description:
-        "Bun's package manager installs all packages into a shared global cache to avoid redundant re-downloads.",
+      description: "How Bun handles package lifecycle scripts with trustedDependencies",
     }),
     page("install/lockfile", "Lockfile", {
       description:

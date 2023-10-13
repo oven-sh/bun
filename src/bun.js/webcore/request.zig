@@ -268,7 +268,7 @@ pub const Request = struct {
             headers.deref();
             this.headers = null;
         }
-
+        this.request_context.deleteRequestClone(this);
         this.url.deref();
         this.url = bun.String.empty;
 
@@ -780,10 +780,14 @@ pub const Request = struct {
             .url = if (preserve_url) original_url else this.url.dupeRef(),
             .method = this.method,
             .headers = this.cloneHeaders(globalThis),
+            .request_context = this.request_context,
         };
 
         if (this.signal) |signal| {
             req.signal = signal.ref();
+        }
+        if (body.value == .Locked) {
+            this.request_context.pushRequestClone(req);
         }
     }
 

@@ -9,6 +9,7 @@ const string = bun.string;
 const Output = @import("root").bun.Output;
 const MutableString = @import("root").bun.MutableString;
 const std = @import("std");
+const ArrayList = std.ArrayList;
 const Allocator = std.mem.Allocator;
 const IdentityContext = @import("../../identity_context.zig").IdentityContext;
 const Fs = @import("../../fs.zig");
@@ -1143,6 +1144,49 @@ pub const AnyRequestContext = struct {
         return .{ .tagged_pointer = Pointer.init(request_ctx) };
     }
 
+    pub fn pushRequestClone(self: AnyRequestContext, request: *Request) void {
+        if (self.tagged_pointer.isNull()) {
+            return;
+        }
+
+        switch (self.tagged_pointer.tag()) {
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
+                return self.tagged_pointer.as(HTTPServer.RequestContext).pushRequestClone(request);
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
+                return self.tagged_pointer.as(HTTPSServer.RequestContext).pushRequestClone(request);
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
+                return self.tagged_pointer.as(DebugHTTPServer.RequestContext).pushRequestClone(request);
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
+                return self.tagged_pointer.as(DebugHTTPSServer.RequestContext).pushRequestClone(request);
+            },
+            else => @panic("Unexpected AnyRequestContext tag"),
+        }
+    }
+
+    pub fn deleteRequestClone(self: AnyRequestContext, request: *Request) void {
+        if (self.tagged_pointer.isNull()) {
+            return;
+        }
+
+        switch (self.tagged_pointer.tag()) {
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
+                return self.tagged_pointer.as(HTTPServer.RequestContext).deleteRequestClone(request);
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
+                return self.tagged_pointer.as(HTTPSServer.RequestContext).deleteRequestClone(request);
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
+                return self.tagged_pointer.as(DebugHTTPServer.RequestContext).deleteRequestClone(request);
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
+                return self.tagged_pointer.as(DebugHTTPSServer.RequestContext).deleteRequestClone(request);
+            },
+            else => @panic("Unexpected AnyRequestContext tag"),
+        }
+    }
     pub fn getRemoteSocketInfo(self: AnyRequestContext) ?uws.SocketAddress {
         if (self.tagged_pointer.isNull()) {
             return null;
@@ -1235,6 +1279,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         req: *uws.Request,
         signal: ?*JSC.WebCore.AbortSignal = null,
         method: HTTP.Method,
+        request_clones: ?ArrayList(*Request) = null,
 
         flags: NewFlags(debug_mode) = .{},
 
@@ -1275,6 +1320,28 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub inline fn isAsync(this: *const RequestContext) bool {
             return this.defer_deinit_until_callback_completes == null;
+        }
+
+        pub fn pushRequestClone(this: *RequestContext, request: *Request) void {
+            if (this.request_body != null) {
+                var body = this.request_body.?;
+                if (body.value == .Locked) {
+                    if (this.request_clones == null)
+                        this.request_clones = ArrayList(*Request).init(default_allocator);
+                    this.request_clones.?.append(request) catch unreachable;
+                }
+            }
+        }
+
+        pub fn deleteRequestClone(this: *RequestContext, request: *Request) void {
+            if (this.request_clones != null) {
+                for (this.request_clones.?.items, 0..) |other, i| {
+                    if (other == request) {
+                        _ = this.request_clones.?.orderedRemove(i);
+                        break;
+                    }
+                }
+            }
         }
 
         fn drainMicrotasks(this: *const RequestContext) void {
@@ -1715,6 +1782,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (comptime Environment.isDebug) {
                 ctxLog("finalizeWithoutDeinit: has_finalized {any}", .{this.flags.has_finalized});
                 this.flags.has_finalized = true;
+            }
+
+            if (this.request_clones) |clones| {
+                clones.deinit();
+                this.request_clones = null;
             }
 
             if (!this.response_jsvalue.isEmpty()) {
@@ -3120,6 +3192,29 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (this.request_body != null) {
                 var body = this.request_body.?;
 
+                for (this.request_clones.?.items) |other_request| {
+                    var other_body = other_request.body;
+                    if (other_body.value != .Locked) continue;
+                    if (other_body.value.Locked.readable) |other_readable| {
+                        if (other_readable.ptr == .Bytes) {
+                            if (!last) {
+                                other_readable.ptr.Bytes.onData(
+                                    .{
+                                        .temporary = bun.ByteList.initConst(chunk),
+                                    },
+                                    bun.default_allocator,
+                                );
+                            } else {
+                                other_readable.ptr.Bytes.onData(
+                                    .{
+                                        .temporary_and_done = bun.ByteList.initConst(chunk),
+                                    },
+                                    bun.default_allocator,
+                                );
+                            }
+                        }
+                    }
+                }
                 if (body.value == .Locked) {
                     if (body.value.Locked.readable) |readable| {
                         if (readable.ptr == .Bytes) {
@@ -3187,6 +3282,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         var vm = this.server.vm;
                         defer vm.drainMicrotasks();
                         old.resolve(&body.value, this.server.globalThis);
+                        for (this.request_clones.?.items) |other_request| {
+                            var other_body = other_request.body;
+                            var other_old = other_body.value;
+                            if (other_old == .Locked) {
+                                other_body.value = .{ .InternalBlob = .{ .bytes = body.value.InternalBlob.bytes.clone() catch unreachable } };
+                                other_old.resolve(&other_body.value, this.server.globalThis);
+                            }
+                        }
                     }
                     return;
                 }

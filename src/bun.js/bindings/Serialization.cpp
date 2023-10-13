@@ -8,7 +8,7 @@
 using namespace JSC;
 using namespace WebCore;
 
-// Must be synced with ipc.zig
+// Must be synced with bindings.zig's JSValue.SerializedScriptValue.External
 struct SerializedValueSlice {
     uint8_t* bytes;
     size_t size;
@@ -43,14 +43,6 @@ extern "C" SerializedValueSlice Bun__serializeJSValue(JSGlobalObject* globalObje
         bytes.size(),
         &serializedValue.leakRef(),
     };
-
-    // uint8_t id = 2; // IPCMessageType.SerializedMessage
-    // write(fd, &id, sizeof(uint8_t));
-    // uint32_t size = bytes.size();
-    // write(fd, &size, sizeof(uint32_t));
-    // write(fd, bytes.data(), size);
-
-    // RELEASE_AND_RETURN(scope, true);
 }
 
 extern "C" void Bun__SerializedScriptSlice__free(SerializedScriptValue* value)

@@ -123,8 +123,8 @@ pub const IPCData = struct {
         ipc_data.outgoing.list.ensureUnusedCapacity(bun.default_allocator, payload_length) catch @panic("OOM");
         const start_offset = ipc_data.outgoing.list.len;
 
-        ipc_data.outgoing.list.writeIntNativeAssumeCapacity(u8, @intFromEnum(IPCMessageType.SerializedMessage));
-        ipc_data.outgoing.list.writeIntNativeAssumeCapacity(u32, size);
+        ipc_data.outgoing.list.writeTypeAsBytesAssumeCapacity(u8, @intFromEnum(IPCMessageType.SerializedMessage));
+        ipc_data.outgoing.list.writeTypeAsBytesAssumeCapacity(u32, size);
         ipc_data.outgoing.list.appendSliceAssumeCapacity(serialized.data);
 
         std.debug.assert(ipc_data.outgoing.list.len == start_offset + payload_length);

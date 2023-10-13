@@ -102,11 +102,12 @@ const LibInfo = struct {
         ) catch unreachable;
         const promise_value = request.head.promise.value();
 
+        const hints = query.options.toLibC();
         const errno = getaddrinfo_async_start_(
             &request.backend.libinfo.machport,
             name_z.ptr,
             null,
-            null,
+            if (hints != null) &hints.? else null,
             GetAddrInfoRequest.getAddrInfoAsyncCallback,
             request,
         );
@@ -2475,7 +2476,7 @@ pub const DNSResolver = struct {
             return dns_lookup.promise.value();
         }
 
-        // var hints_buf = &[_]c_ares.AddrInfo_hints{query.toCAres()};
+        var hints_buf = &[_]c_ares.AddrInfo_hints{query.toCAres()};
         var request = GetAddrInfoRequest.init(
             cache,
             .{
@@ -2491,7 +2492,7 @@ pub const DNSResolver = struct {
         channel.getAddrInfo(
             query.name,
             query.port,
-            &.{},
+            hints_buf,
             GetAddrInfoRequest,
             request,
             GetAddrInfoRequest.onCaresComplete,

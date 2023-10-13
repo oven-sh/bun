@@ -66,6 +66,11 @@ const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const bunSocketInternal = Symbol.for("::bunnetsocketinternal::");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 
+function dummy() {}
+
+function closeNT(self) {
+  self.emit("close");
+}
 function endNT(socket, callback, err) {
   socket.end();
   callback(err);
@@ -320,7 +325,7 @@ const Socket = (function (InternalSocket) {
       this._parent = this;
       this._parentWrap = this;
       this.#pendingRead = undefined;
-      this.#upgraded = false;
+      this.#upgraded = null;
       if (socket instanceof Socket) {
         this.#socket = socket;
       }
@@ -353,6 +358,14 @@ const Socket = (function (InternalSocket) {
         this.emit("connect", this);
       }
       Socket.#Drain(socket);
+    }
+
+    #closeRawConnection() {
+      const connection = this.#upgraded;
+      connection[bunSocketInternal] = null;
+      connection.unref();
+      connection.destroy();
+      process.nextTick(closeNT, connection);
     }
 
     connect(port, host, connectListener) {
@@ -455,7 +468,7 @@ const Socket = (function (InternalSocket) {
 
           if (socket) {
             this.connecting = true;
-            this.#upgraded = true;
+            this.#upgraded = connection;
             const result = socket.upgradeTLS({
               data: this,
               tls,
@@ -466,6 +479,7 @@ const Socket = (function (InternalSocket) {
               // replace socket
               connection[bunSocketInternal] = raw;
               raw.timeout(raw.timeout);
+              this.on("end", this.#closeRawConnection);
               raw.connecting = false;
               this[bunSocketInternal] = tls;
             } else {
@@ -479,7 +493,7 @@ const Socket = (function (InternalSocket) {
               if (!socket) return;
 
               this.connecting = true;
-              this.#upgraded = true;
+              this.#upgraded = connection;
               const result = socket.upgradeTLS({
                 data: this,
                 tls,
@@ -491,6 +505,7 @@ const Socket = (function (InternalSocket) {
                 // replace socket
                 connection[bunSocketInternal] = raw;
                 raw.timeout(raw.timeout);
+                this.on("end", this.#closeRawConnection);
                 raw.connecting = false;
                 this[bunSocketInternal] = tls;
               } else {
@@ -537,6 +552,7 @@ const Socket = (function (InternalSocket) {
     _final(callback) {
       this[bunSocketInternal]?.end();
       callback();
+      process.nextTick(closeNT, this);
     }
 
     get localAddress() {

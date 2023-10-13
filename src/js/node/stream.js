@@ -2620,8 +2620,6 @@ var require_readable = __commonJS({
         state.length += state.objectMode ? 1 : chunk.length;
         if (addToFront) state.buffer.unshift(chunk);
         else state.buffer.push(chunk);
-        $debug("needReadable @ addChunk", state.needReadable, stream.__id);
-        if (state.needReadable) emitReadable(stream, state);
       }
       $debug("about to maybereadmore");
       maybeReadMore(stream, state);

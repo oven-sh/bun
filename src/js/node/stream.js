@@ -2608,8 +2608,7 @@ var require_readable = __commonJS({
     function addChunk(stream, state, chunk, addToFront) {
       $debug("adding chunk", stream.__id);
       $debug("chunk", chunk.toString(), stream.__id);
-      const has_listenners = stream.listenerCount("data") > 0;
-      if (state.flowing && state.length === 0 && !state.sync && has_listenners) {
+      if (state.flowing && state.length === 0 && !state.sync && stream.listenerCount("data") > 0) {
         if (state.multiAwaitDrain) {
           state.awaitDrainWriters.clear();
         } else {
@@ -2622,7 +2621,7 @@ var require_readable = __commonJS({
         if (addToFront) state.buffer.unshift(chunk);
         else state.buffer.push(chunk);
         $debug("needReadable @ addChunk", state.needReadable, stream.__id);
-        if (state.needReadable && has_listenners) emitReadable(stream, state);
+        if (state.needReadable) emitReadable(stream, state);
       }
       $debug("about to maybereadmore");
       maybeReadMore(stream, state);

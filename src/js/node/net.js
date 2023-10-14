@@ -573,8 +573,10 @@ const Socket = (function (InternalSocket) {
       const queue = this.#readQueue;
       let chunk;
       while ((chunk = queue.peek())) {
-        if (!this.push(chunk)) return;
+        const success = !this.push(chunk);
+        // alwasy remove from queue push will queue it internally if needed
         queue.shift();
+        if (!success) break;
       }
     }
 

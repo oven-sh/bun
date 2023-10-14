@@ -39,7 +39,7 @@ export default {
       description: "Install and configure type declarations for Bun's APIs",
     }),
 
-    divider("Scaffolding"),
+    divider("Templating"),
     page("cli/init", "`bun init`", {
       description: "Scaffold an empty Bun project.",
     }),
@@ -152,12 +152,30 @@ export default {
       description:
         "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
     }),
+    page("cli/add", "`bun add`", {
+      description: "Add dependencies to your project.",
+    }),
+    page("cli/remove", "`bun remove`", {
+      description: "Remove dependencies from your project.",
+    }),
+    page("cli/update", "`bun update`", {
+      description: "Update your project's dependencies.",
+    }),
+    page("cli/link", "`bun link`", {
+      description: "Install local packages as dependencies in your project.",
+    }),
+    page("cli/pm", "`bun pm`", {
+      description: "Utilities relating to package management with Bun.",
+    }),
     page("install/cache", "Global cache", {
       description:
         "Bun's package manager installs all packages into a shared global cache to avoid redundant re-downloads.",
     }),
     page("install/workspaces", "Workspaces", {
       description: "Bun's package manager supports workspaces and mono-repo development workflows.",
+    }),
+    page("install/lifecycle", "Lifecycle scripts", {
+      description: "How Bun handles package lifecycle scripts with trustedDependencies",
     }),
     page("install/lockfile", "Lockfile", {
       description:
@@ -166,9 +184,12 @@ export default {
     page("install/registries", "Scopes and registries", {
       description: "How to configure private scopes and custom package registries.",
     }),
-    page("install/utilities", "Utilities", {
-      description: "Use `bun pm` to introspect your global module cache or project dependency tree.",
+    page("install/overrides", "Overrides and resolutions", {
+      description: "Specify version ranges for nested dependencies",
     }),
+    // page("install/utilities", "Utilities", {
+    //   description: "Use `bun pm` to introspect your global module cache or project dependency tree.",
+    // }),
 
     divider("Bundler"),
     page("bundler", "`Bun.build`", {

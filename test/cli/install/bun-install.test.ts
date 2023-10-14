@@ -1513,7 +1513,7 @@ it("should edit package json correctly with git dependencies", async () => {
   });
   await writeFile(join(package_dir, "package.json"), package_json);
   var { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "i", "dylan-conway/install-test"],
+    cmd: [bunExe(), "i", "dylan-conway/install-test2"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -1528,12 +1528,12 @@ it("should edit package json correctly with git dependencies", async () => {
     name: "foo",
     version: "0.0.1",
     dependencies: {
-      "install-test": "dylan-conway/install-test",
+      "install-test2": "dylan-conway/install-test2",
     },
   });
   await writeFile(join(package_dir, "package.json"), package_json);
   ({ stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "i", "dylan-conway/install-test#HEAD"],
+    cmd: [bunExe(), "i", "dylan-conway/install-test2#HEAD"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -1548,12 +1548,12 @@ it("should edit package json correctly with git dependencies", async () => {
     name: "foo",
     version: "0.0.1",
     dependencies: {
-      "install-test": "dylan-conway/install-test#HEAD",
+      "install-test2": "dylan-conway/install-test2#HEAD",
     },
   });
   await writeFile(join(package_dir, "package.json"), package_json);
   ({ stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "i", "github:dylan-conway/install-test"],
+    cmd: [bunExe(), "i", "github:dylan-conway/install-test2"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -1568,12 +1568,12 @@ it("should edit package json correctly with git dependencies", async () => {
     name: "foo",
     version: "0.0.1",
     dependencies: {
-      "install-test": "github:dylan-conway/install-test",
+      "install-test2": "github:dylan-conway/install-test2",
     },
   });
   await writeFile(join(package_dir, "package.json"), package_json);
   ({ stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "i", "github:dylan-conway/install-test#HEAD"],
+    cmd: [bunExe(), "i", "github:dylan-conway/install-test2#HEAD"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -1588,7 +1588,7 @@ it("should edit package json correctly with git dependencies", async () => {
     name: "foo",
     version: "0.0.1",
     dependencies: {
-      "install-test": "github:dylan-conway/install-test#HEAD",
+      "install-test2": "github:dylan-conway/install-test2#HEAD",
     },
   });
   await access(join(package_dir, "bun.lockb"));

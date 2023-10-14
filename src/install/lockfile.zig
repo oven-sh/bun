@@ -1538,7 +1538,7 @@ pub fn verifyResolutions(this: *Lockfile, local_features: Features, remote_featu
         for (resolution_list.get(resolutions_buffer), dependency_list.get(dependencies_buffer)) |package_id, failed_dep| {
             if (package_id < end) continue;
             if (failed_dep.behavior.isPeer() or !failed_dep.behavior.isEnabled(
-                if (root_list.contains(@as(PackageID, @truncate(parent_id))))
+                if (root_list.contains(@truncate(parent_id)))
                     local_features
                 else
                     remote_features,
@@ -2743,6 +2743,18 @@ pub const Package = extern struct {
                     const dep_version = string_builder.appendWithHash(String, version_string_.slice(string_buf), version_string_.hash);
                     const sliced = dep_version.sliced(lockfile.buffers.string_bytes.items);
 
+                    const tag: ?Dependency.Version.Tag = brk: {
+                        if (lockfile.workspace_versions.get(key.hash)) |workspace_version| {
+                            var query_group = try Semver.Query.parse(allocator, version_string_.slice(string_buf), sliced);
+                            defer query_group.deinit();
+                            if (query_group.satisfies(workspace_version)) {
+                                break :brk .workspace;
+                            }
+                        }
+
+                        break :brk null;
+                    };
+
                     const dependency = Dependency{
                         .name = name.value,
                         .name_hash = name.hash,
@@ -2750,10 +2762,11 @@ pub const Package = extern struct {
                             group.behavior.setOptional(package_version.optional_peer_dependencies_len > i)
                         else
                             group.behavior,
-                        .version = Dependency.parse(
+                        .version = Dependency.parseWithOptionalTag(
                             allocator,
                             name.value,
                             sliced.slice,
+                            tag,
                             &sliced,
                             log,
                         ) orelse Dependency.Version{},

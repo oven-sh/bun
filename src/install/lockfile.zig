@@ -1538,7 +1538,7 @@ pub fn verifyResolutions(this: *Lockfile, local_features: Features, remote_featu
         for (resolution_list.get(resolutions_buffer), dependency_list.get(dependencies_buffer)) |package_id, failed_dep| {
             if (package_id < end) continue;
             if (failed_dep.behavior.isPeer() or !failed_dep.behavior.isEnabled(
-                if (root_list.contains(@as(PackageID, @truncate(parent_id))))
+                if (root_list.contains(@truncate(parent_id)))
                     local_features
                 else
                     remote_features,

@@ -248,6 +248,11 @@ pub const Response = struct {
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) callconv(.C) JSValue {
+        if (this.body.value == .Used or (this.body.value == .Locked and this.body.value.Locked.promise != null)) {
+            const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "Response.clone: body already used", .{}, globalThis);
+            globalThis.throwValue(err);
+            return .zero;
+        }
         var cloned = this.clone(getAllocator(globalThis), globalThis);
         return Response.makeMaybePooled(globalThis, cloned);
     }
@@ -926,10 +931,12 @@ pub const Fetch = struct {
                         } else {
                             const size_hint = this.getSizeHint();
                             response.body.value.Locked.size_hint = size_hint;
-                            for (response.response_clones.?.items) |other_request| {
-                                var other_body = &other_request.body;
-                                if (other_body.value == .Locked)
-                                    other_body.value.Locked.size_hint = size_hint;
+                            if (response.response_clones) |response_clones| {
+                                for (response_clones.items) |other_request| {
+                                    var other_body = &other_request.body;
+                                    if (other_body.value == .Locked)
+                                        other_body.value.Locked.size_hint = size_hint;
+                                }
                             }
                         }
                         // we will reach here when not streaming
@@ -937,7 +944,7 @@ pub const Fetch = struct {
                             var scheduled_response_buffer = this.scheduled_response_buffer.list;
                             this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
                             var list = scheduled_response_buffer.toManaged(bun.default_allocator);
-                            const has_copies = response.response_clones.?.items.len > 0;
+                            const has_copies = response.response_clones != null and response.response_clones.?.items.len > 0;
                             if (has_copies) {
                                 defer list.deinit();
                             }
@@ -952,19 +959,22 @@ pub const Fetch = struct {
                             if (old == .Locked) {
                                 old.resolve(&response.body.value, this.global_this);
                             }
-                            for (response.response_clones.?.items) |other_response| {
-                                var other_body = &other_response.body;
-                                var other_old = other_body.value;
-                                if (other_old == .Locked) {
-                                    var new_body_value = Body.Value{
-                                        .InternalBlob = .{
-                                            .bytes = list.clone() catch unreachable,
-                                        },
-                                    };
-                                    other_body.value = new_body_value;
-                                    other_old.resolve(&other_body.value, this.global_this);
+                            if (response.response_clones) |response_clones| {
+                                for (response_clones.items) |other_response| {
+                                    var other_body = &other_response.body;
+                                    var other_old = other_body.value;
+                                    if (other_old == .Locked) {
+                                        var new_body_value = Body.Value{
+                                            .InternalBlob = .{
+                                                .bytes = list.clone() catch unreachable,
+                                            },
+                                        };
+                                        other_body.value = new_body_value;
+                                        other_old.resolve(&other_body.value, this.global_this);
+                                    }
                                 }
                             }
+
                             this.scheduled_response_buffer = .{
                                 .allocator = this.memory_reporter.allocator(),
                                 .list = .{

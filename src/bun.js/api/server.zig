@@ -3283,14 +3283,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     if (old == .Locked) {
                         var vm = this.server.vm;
                         defer vm.drainMicrotasks();
-                        old.resolve(&body.value, this.server.globalThis);
+                        defer old.resolve(&body.value, this.server.globalThis);
                         if (this.request_clones) |request_clones| {
                             for (request_clones.items) |other_request| {
                                 var other_body = other_request.body;
                                 var other_old = other_body.value;
                                 if (other_old == .Locked) {
                                     other_body.value = .{ .InternalBlob = .{ .bytes = body.value.InternalBlob.bytes.clone() catch unreachable } };
-                                    other_old.resolve(&other_body.value, this.server.globalThis);
+                                    defer other_old.resolve(&other_body.value, this.server.globalThis);
                                 }
                             }
                         }

@@ -4324,6 +4324,195 @@ pub const JSNodeJSFS = struct {
         }
     }
 };
+pub const JSPostgresSQLConnection = struct {
+    const PostgresSQLConnection = Classes.PostgresSQLConnection;
+    const GetterType = fn (*PostgresSQLConnection, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*PostgresSQLConnection, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*PostgresSQLConnection, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*PostgresSQLConnection, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*PostgresSQLConnection, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*PostgresSQLConnection {
+        JSC.markBinding(@src());
+        return PostgresSQLConnection__fromJS(value);
+    }
+
+    /// Get the PostgresSQLConnection constructor value.
+    /// This loads lazily from the global object.
+    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        return PostgresSQLConnection__getConstructor(globalObject);
+    }
+
+    /// Create a new instance of PostgresSQLConnection
+    pub fn toJS(this: *PostgresSQLConnection, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = PostgresSQLConnection__create(globalObject, this);
+            std.debug.assert(value__.as(PostgresSQLConnection).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return PostgresSQLConnection__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of PostgresSQLConnection.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*PostgresSQLConnection) bool {
+        JSC.markBinding(@src());
+        return PostgresSQLConnection__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *PostgresSQLConnection, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(PostgresSQLConnection__dangerouslySetPtr(value, null));
+    }
+
+    extern fn PostgresSQLConnection__fromJS(JSC.JSValue) ?*PostgresSQLConnection;
+    extern fn PostgresSQLConnection__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn PostgresSQLConnection__create(globalObject: *JSC.JSGlobalObject, ptr: ?*PostgresSQLConnection) JSC.JSValue;
+
+    extern fn PostgresSQLConnection__dangerouslySetPtr(JSC.JSValue, ?*PostgresSQLConnection) bool;
+
+    comptime {
+        if (@TypeOf(PostgresSQLConnection.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*PostgresSQLConnection)) {
+            @compileLog("PostgresSQLConnection.constructor is not a constructor");
+        }
+
+        if (@TypeOf(PostgresSQLConnection.finalize) != (fn (*PostgresSQLConnection) callconv(.C) void)) {
+            @compileLog("PostgresSQLConnection.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(PostgresSQLConnection.doClose) != CallbackType)
+            @compileLog("Expected PostgresSQLConnection.doClose to be a callback but received " ++ @typeName(@TypeOf(PostgresSQLConnection.doClose)));
+        if (@TypeOf(PostgresSQLConnection.getConnected) != GetterType)
+            @compileLog("Expected PostgresSQLConnection.getConnected to be a getter");
+
+        if (@TypeOf(PostgresSQLConnection.doFlush) != CallbackType)
+            @compileLog("Expected PostgresSQLConnection.doFlush to be a callback but received " ++ @typeName(@TypeOf(PostgresSQLConnection.doFlush)));
+        if (@TypeOf(PostgresSQLConnection.createQuery) != CallbackType)
+            @compileLog("Expected PostgresSQLConnection.createQuery to be a callback but received " ++ @typeName(@TypeOf(PostgresSQLConnection.createQuery)));
+        if (@TypeOf(PostgresSQLConnection.doRef) != CallbackType)
+            @compileLog("Expected PostgresSQLConnection.doRef to be a callback but received " ++ @typeName(@TypeOf(PostgresSQLConnection.doRef)));
+        if (@TypeOf(PostgresSQLConnection.doUnref) != CallbackType)
+            @compileLog("Expected PostgresSQLConnection.doUnref to be a callback but received " ++ @typeName(@TypeOf(PostgresSQLConnection.doUnref)));
+        if (!JSC.is_bindgen) {
+            @export(PostgresSQLConnection.constructor, .{ .name = "PostgresSQLConnectionClass__construct" });
+            @export(PostgresSQLConnection.createQuery, .{ .name = "PostgresSQLConnectionPrototype__createQuery" });
+            @export(PostgresSQLConnection.doClose, .{ .name = "PostgresSQLConnectionPrototype__doClose" });
+            @export(PostgresSQLConnection.doFlush, .{ .name = "PostgresSQLConnectionPrototype__doFlush" });
+            @export(PostgresSQLConnection.doRef, .{ .name = "PostgresSQLConnectionPrototype__doRef" });
+            @export(PostgresSQLConnection.doUnref, .{ .name = "PostgresSQLConnectionPrototype__doUnref" });
+            @export(PostgresSQLConnection.finalize, .{ .name = "PostgresSQLConnectionClass__finalize" });
+            @export(PostgresSQLConnection.getConnected, .{ .name = "PostgresSQLConnectionPrototype__getConnected" });
+            @export(PostgresSQLConnection.hasPendingActivity, .{ .name = "PostgresSQLConnection__hasPendingActivity" });
+        }
+    }
+};
+pub const JSPostgresSQLQuery = struct {
+    const PostgresSQLQuery = Classes.PostgresSQLQuery;
+    const GetterType = fn (*PostgresSQLQuery, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*PostgresSQLQuery, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*PostgresSQLQuery, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*PostgresSQLQuery, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*PostgresSQLQuery, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*PostgresSQLQuery {
+        JSC.markBinding(@src());
+        return PostgresSQLQuery__fromJS(value);
+    }
+
+    extern fn PostgresSQLQueryPrototype__pendingValueSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn PostgresSQLQueryPrototype__pendingValueGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `PostgresSQLQuery.pendingValue` setter
+    /// This value will be visited by the garbage collector.
+    pub fn pendingValueSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        PostgresSQLQueryPrototype__pendingValueSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `PostgresSQLQuery.pendingValue` getter
+    /// This value will be visited by the garbage collector.
+    pub fn pendingValueGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = PostgresSQLQueryPrototype__pendingValueGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Get the PostgresSQLQuery constructor value.
+    /// This loads lazily from the global object.
+    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        return PostgresSQLQuery__getConstructor(globalObject);
+    }
+
+    /// Create a new instance of PostgresSQLQuery
+    pub fn toJS(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = PostgresSQLQuery__create(globalObject, this);
+            std.debug.assert(value__.as(PostgresSQLQuery).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return PostgresSQLQuery__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of PostgresSQLQuery.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*PostgresSQLQuery) bool {
+        JSC.markBinding(@src());
+        return PostgresSQLQuery__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *PostgresSQLQuery, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(PostgresSQLQuery__dangerouslySetPtr(value, null));
+    }
+
+    extern fn PostgresSQLQuery__fromJS(JSC.JSValue) ?*PostgresSQLQuery;
+    extern fn PostgresSQLQuery__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn PostgresSQLQuery__create(globalObject: *JSC.JSGlobalObject, ptr: ?*PostgresSQLQuery) JSC.JSValue;
+
+    extern fn PostgresSQLQuery__dangerouslySetPtr(JSC.JSValue, ?*PostgresSQLQuery) bool;
+
+    comptime {
+        if (@TypeOf(PostgresSQLQuery.estimatedSize) != (fn (*PostgresSQLQuery) callconv(.C) usize)) {
+            @compileLog("PostgresSQLQuery.estimatedSize is not a size function");
+        }
+
+        if (@TypeOf(PostgresSQLQuery.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*PostgresSQLQuery)) {
+            @compileLog("PostgresSQLQuery.constructor is not a constructor");
+        }
+
+        if (@TypeOf(PostgresSQLQuery.finalize) != (fn (*PostgresSQLQuery) callconv(.C) void)) {
+            @compileLog("PostgresSQLQuery.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(PostgresSQLQuery.doCancel) != CallbackType)
+            @compileLog("Expected PostgresSQLQuery.doCancel to be a callback but received " ++ @typeName(@TypeOf(PostgresSQLQuery.doCancel)));
+        if (@TypeOf(PostgresSQLQuery.doRun) != CallbackType)
+            @compileLog("Expected PostgresSQLQuery.doRun to be a callback but received " ++ @typeName(@TypeOf(PostgresSQLQuery.doRun)));
+        if (!JSC.is_bindgen) {
+            @export(PostgresSQLQuery.constructor, .{ .name = "PostgresSQLQueryClass__construct" });
+            @export(PostgresSQLQuery.doCancel, .{ .name = "PostgresSQLQueryPrototype__doCancel" });
+            @export(PostgresSQLQuery.doRun, .{ .name = "PostgresSQLQueryPrototype__doRun" });
+            @export(PostgresSQLQuery.estimatedSize, .{ .name = "PostgresSQLQuery__estimatedSize" });
+            @export(PostgresSQLQuery.finalize, .{ .name = "PostgresSQLQueryClass__finalize" });
+        }
+    }
+};
 pub const JSRequest = struct {
     const Request = Classes.Request;
     const GetterType = fn (*Request, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
@@ -7120,6 +7309,8 @@ comptime {
     _ = JSMD5;
     _ = JSMatchedRoute;
     _ = JSNodeJSFS;
+    _ = JSPostgresSQLConnection;
+    _ = JSPostgresSQLQuery;
     _ = JSRequest;
     _ = JSResolveMessage;
     _ = JSResponse;

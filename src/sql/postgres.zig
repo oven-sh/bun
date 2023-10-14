@@ -1367,11 +1367,23 @@ pub const PostgresSQLQuery = struct {
     cursor_name: bun.String = bun.String.empty,
     thisValue: JSC.JSValue = .undefined,
 
+    pub usingnamespace JSC.Codegen.JSPostgresSQLQuery;
+
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) ?*PostgresSQLQuery {
         _ = globalThis;
         const args_ = callframe.arguments(3);
         const args = args_.slice();
         _ = args;
+    }
+
+    pub fn push(this: *PostgresSQLQuery, globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        var pending_value = PostgresSQLQuery.pendingValueGetCached(this.thisValue);
+        if (pending_value.isEmptyOrUndefinedOrNull()) {
+            pending_value = JSC.JSValue.createEmptyArray(globalThis, 0);
+            PostgresSQLQuery.pendingValueSetCached(this.thisValue, globalThis, pending_value);
+        }
+
+        pending_value.push(globalThis, value);
     }
 
     pub fn doRun(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -1734,9 +1746,9 @@ pub const PostgresSQLConnection = struct {
         pub fn put(this: *const CellPutter, index_: i16, optional_bytes: ?*Data) anyerror!bool {
             const index: u32 = @intCast(index_);
 
-            const putDirectIndex = JSC.JSObject.putDirectIndex;
+            const putDirectOffset = JSC.JSObject.putDirectOffset;
             var bytes_ = optional_bytes orelse {
-                putDirectIndex(this.vm, this.object, index, JSC.JSValue.jsNull());
+                putDirectOffset(this.vm, this.object, index, JSC.JSValue.jsNull());
                 return true;
             };
             defer bytes_.deinit();
@@ -1746,40 +1758,40 @@ pub const PostgresSQLConnection = struct {
                 .number => {
                     switch (bytes.len) {
                         0 => {
-                            putDirectIndex(this.vm, index, JSC.JSValue.jsNull());
+                            putDirectOffset(this.vm, index, JSC.JSValue.jsNull());
                         },
                         2 => {
-                            putDirectIndex(this.vm, index, JSC.JSValue.jsNumber(@bitCast(@as(i16, @bitCast(bytes[0..2])))));
+                            putDirectOffset(this.vm, index, JSC.JSValue.jsNumber(@bitCast(@as(i16, @bitCast(bytes[0..2])))));
                         },
                         4 => {
-                            putDirectIndex(this.vm, index, JSC.JSValue.jsNumber(@bitCast(@as(i32, @bitCast(bytes[0..4])))));
+                            putDirectOffset(this.vm, index, JSC.JSValue.jsNumber(@bitCast(@as(i32, @bitCast(bytes[0..4])))));
                         },
                         else => {
                             var eight: usize = 0;
                             @memcpy(@as(*[8]u8, @ptrCast(&eight))[0..bytes.len], bytes[0..@min(8, bytes.len)]);
                             eight = @byteSwap(eight);
-                            putDirectIndex(this.vm, index, JSC.JSValue.jsNumber(@bitCast(@as(f64, eight))));
+                            putDirectOffset(this.vm, index, JSC.JSValue.jsNumber(@bitCast(@as(f64, eight))));
                         },
                     }
                 },
                 .json => {
                     var str = bun.String.fromUTF8(bytes.slice());
                     defer str.deref();
-                    putDirectIndex(this.vm, index, str.toJSForParseJSON(this.globalObject));
+                    putDirectOffset(this.vm, index, str.toJSForParseJSON(this.globalObject));
                 },
                 .boolean => {
-                    putDirectIndex(this.vm, index, JSC.JSValue.jsBoolean(bytes.len > 0 and bytes[0] == 't'));
+                    putDirectOffset(this.vm, index, JSC.JSValue.jsBoolean(bytes.len > 0 and bytes[0] == 't'));
                 },
                 .time, .datetime, .date => {
-                    putDirectIndex(this.vm, index, JSC.JSValue.fromDateString(bytes_.sliceZ()));
+                    putDirectOffset(this.vm, index, JSC.JSValue.fromDateString(bytes_.sliceZ()));
                 },
                 .bytea => {
-                    putDirectIndex(this.vm, index, JSC.JSValue.createBuffer(this.globalObject, bytes, null));
+                    putDirectOffset(this.vm, index, JSC.JSValue.createBuffer(this.globalObject, bytes, null));
                 },
                 else => {
                     var str = bun.String.fromUTF8(bytes.slice());
                     defer str.deref();
-                    putDirectIndex(this.vm, index, str.toJS(this.globalObject));
+                    putDirectOffset(this.vm, index, str.toJS(this.globalObject));
                 },
             }
             return true;
@@ -1797,6 +1809,7 @@ pub const PostgresSQLConnection = struct {
                 std.debug.assert(!structure.isEmptyOrUndefinedOrNull());
 
                 var row = JSC.JSObject.uninitialized(structure.asCell(), this.globalObject);
+                row.ensureStillAlive();
                 var putter = CellPutter{
                     .object = row,
                     .vm = this.globalObject.vm(),
@@ -1811,9 +1824,7 @@ pub const PostgresSQLConnection = struct {
                 );
                 request.push(row);
             },
-            .CopyData => {
-                
-            },
+            .CopyData => {},
             .ParameterStatus => {},
             .ReadyForQuery => {},
             .CommandComplete => {},

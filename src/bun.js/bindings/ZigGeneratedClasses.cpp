@@ -17202,6 +17202,819 @@ extern "C" EncodedJSValue NodeJSFS__create(Zig::GlobalObject* globalObject, void
 
     return JSValue::encode(instance);
 }
+class JSPostgresSQLConnectionPrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static JSPostgresSQLConnectionPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSPostgresSQLConnectionPrototype* ptr = new (NotNull, JSC::allocateCell<JSPostgresSQLConnectionPrototype>(vm)) JSPostgresSQLConnectionPrototype(vm, globalObject, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    DECLARE_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSPostgresSQLConnectionPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+class JSPostgresSQLConnectionConstructor final : public JSC::InternalFunction {
+public:
+    using Base = JSC::InternalFunction;
+    static JSPostgresSQLConnectionConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSPostgresSQLConnectionPrototype* prototype);
+
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+    static constexpr bool needsDestruction = false;
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+    }
+
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return WebCore::subspaceForImpl<JSPostgresSQLConnectionConstructor, WebCore::UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceForPostgresSQLConnectionConstructor.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForPostgresSQLConnectionConstructor = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForPostgresSQLConnectionConstructor.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForPostgresSQLConnectionConstructor = std::forward<decltype(space)>(space); });
+    }
+
+    void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSPostgresSQLConnectionPrototype* prototype);
+
+    // Must be defined for each specialization class.
+    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+
+    DECLARE_EXPORT_INFO;
+
+private:
+    JSPostgresSQLConnectionConstructor(JSC::VM& vm, JSC::Structure* structure);
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSPostgresSQLConnectionPrototype* prototype);
+};
+
+extern "C" void* PostgresSQLConnectionClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+JSC_DECLARE_CUSTOM_GETTER(jsPostgresSQLConnectionConstructor);
+
+extern "C" void PostgresSQLConnectionClass__finalize(void*);
+
+extern "C" EncodedJSValue PostgresSQLConnectionPrototype__doClose(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(PostgresSQLConnectionPrototype__closeCallback);
+
+extern "C" JSC::EncodedJSValue PostgresSQLConnectionPrototype__getConnected(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(PostgresSQLConnectionPrototype__connectedGetterWrap);
+
+extern "C" EncodedJSValue PostgresSQLConnectionPrototype__doFlush(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(PostgresSQLConnectionPrototype__flushCallback);
+
+extern "C" EncodedJSValue PostgresSQLConnectionPrototype__createQuery(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(PostgresSQLConnectionPrototype__queryCallback);
+
+extern "C" EncodedJSValue PostgresSQLConnectionPrototype__doRef(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(PostgresSQLConnectionPrototype__refCallback);
+
+extern "C" EncodedJSValue PostgresSQLConnectionPrototype__doUnref(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(PostgresSQLConnectionPrototype__unrefCallback);
+
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSPostgresSQLConnectionPrototype, JSPostgresSQLConnectionPrototype::Base);
+
+static const HashTableValue JSPostgresSQLConnectionPrototypeTableValues[] = {
+    { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, PostgresSQLConnectionPrototype__closeCallback, 0 } },
+    { "connected"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, PostgresSQLConnectionPrototype__connectedGetterWrap, 0 } },
+    { "flush"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, PostgresSQLConnectionPrototype__flushCallback, 0 } },
+    { "query"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, PostgresSQLConnectionPrototype__queryCallback, 0 } },
+    { "ref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, PostgresSQLConnectionPrototype__refCallback, 0 } },
+    { "unref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, PostgresSQLConnectionPrototype__unrefCallback, 0 } }
+};
+
+const ClassInfo JSPostgresSQLConnectionPrototype::s_info = { "PostgresSQLConnection"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPostgresSQLConnectionPrototype) };
+
+JSC_DEFINE_CUSTOM_GETTER(jsPostgresSQLConnectionConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* prototype = jsDynamicCast<JSPostgresSQLConnectionPrototype*>(JSValue::decode(thisValue));
+
+    if (UNLIKELY(!prototype))
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for PostgresSQLConnection"_s);
+    return JSValue::encode(globalObject->JSPostgresSQLConnectionConstructor());
+}
+
+JSC_DEFINE_HOST_FUNCTION(PostgresSQLConnectionPrototype__closeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSPostgresSQLConnection* thisObject = jsDynamicCast<JSPostgresSQLConnection*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof PostgresSQLConnection"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return PostgresSQLConnectionPrototype__doClose(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(PostgresSQLConnectionPrototype__connectedGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSPostgresSQLConnection* thisObject = jsCast<JSPostgresSQLConnection*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = PostgresSQLConnectionPrototype__getConnected(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(PostgresSQLConnectionPrototype__flushCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSPostgresSQLConnection* thisObject = jsDynamicCast<JSPostgresSQLConnection*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof PostgresSQLConnection"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return PostgresSQLConnectionPrototype__doFlush(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(PostgresSQLConnectionPrototype__queryCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSPostgresSQLConnection* thisObject = jsDynamicCast<JSPostgresSQLConnection*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof PostgresSQLConnection"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return PostgresSQLConnectionPrototype__createQuery(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(PostgresSQLConnectionPrototype__refCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSPostgresSQLConnection* thisObject = jsDynamicCast<JSPostgresSQLConnection*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof PostgresSQLConnection"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return PostgresSQLConnectionPrototype__doRef(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(PostgresSQLConnectionPrototype__unrefCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSPostgresSQLConnection* thisObject = jsDynamicCast<JSPostgresSQLConnection*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof PostgresSQLConnection"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return PostgresSQLConnectionPrototype__doUnref(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+void JSPostgresSQLConnectionPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    Base::finishCreation(vm);
+    reifyStaticProperties(vm, JSPostgresSQLConnection::info(), JSPostgresSQLConnectionPrototypeTableValues, *this);
+    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+}
+
+void JSPostgresSQLConnectionConstructor::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSPostgresSQLConnectionPrototype* prototype)
+{
+    Base::finishCreation(vm, 0, "PostgresSQLConnection"_s, PropertyAdditionMode::WithoutStructureTransition);
+
+    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    ASSERT(inherits(info()));
+}
+
+JSPostgresSQLConnectionConstructor::JSPostgresSQLConnectionConstructor(JSC::VM& vm, JSC::Structure* structure)
+    : Base(vm, structure, construct, construct)
+{
+}
+
+JSPostgresSQLConnectionConstructor* JSPostgresSQLConnectionConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSPostgresSQLConnectionPrototype* prototype)
+{
+    JSPostgresSQLConnectionConstructor* ptr = new (NotNull, JSC::allocateCell<JSPostgresSQLConnectionConstructor>(vm)) JSPostgresSQLConnectionConstructor(vm, structure);
+    ptr->finishCreation(vm, globalObject, prototype);
+    return ptr;
+}
+
+JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSPostgresSQLConnectionConstructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+{
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    JSC::VM& vm = globalObject->vm();
+    JSObject* newTarget = asObject(callFrame->newTarget());
+    auto* constructor = globalObject->JSPostgresSQLConnectionConstructor();
+    Structure* structure = globalObject->JSPostgresSQLConnectionStructure();
+    if (constructor != newTarget) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(
+            // ShadowRealm functions belong to a different global object.
+            getFunctionRealm(globalObject, newTarget));
+        RETURN_IF_EXCEPTION(scope, {});
+        structure = InternalFunction::createSubclassStructure(
+            globalObject,
+            newTarget,
+            functionGlobalObject->JSPostgresSQLConnectionStructure());
+    }
+
+    void* ptr = PostgresSQLConnectionClass__construct(globalObject, callFrame);
+
+    if (UNLIKELY(!ptr)) {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    JSPostgresSQLConnection* instance = JSPostgresSQLConnection::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+
+void JSPostgresSQLConnectionConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSPostgresSQLConnectionPrototype* prototype)
+{
+}
+
+const ClassInfo JSPostgresSQLConnectionConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPostgresSQLConnectionConstructor) };
+
+extern "C" EncodedJSValue PostgresSQLConnection__getConstructor(Zig::GlobalObject* globalObject)
+{
+    return JSValue::encode(globalObject->JSPostgresSQLConnectionConstructor());
+}
+
+extern "C" bool PostgresSQLConnection__hasPendingActivity(void* ptr);
+bool JSPostgresSQLConnection::hasPendingActivity(void* ctx)
+{
+    return PostgresSQLConnection__hasPendingActivity(ctx);
+}
+
+JSPostgresSQLConnection::~JSPostgresSQLConnection()
+{
+    if (m_ctx) {
+        PostgresSQLConnectionClass__finalize(m_ctx);
+    }
+}
+void JSPostgresSQLConnection::destroy(JSCell* cell)
+{
+    static_cast<JSPostgresSQLConnection*>(cell)->JSPostgresSQLConnection::~JSPostgresSQLConnection();
+}
+
+const ClassInfo JSPostgresSQLConnection::s_info = { "PostgresSQLConnection"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPostgresSQLConnection) };
+
+void JSPostgresSQLConnection::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+JSPostgresSQLConnection* JSPostgresSQLConnection::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
+{
+    JSPostgresSQLConnection* ptr = new (NotNull, JSC::allocateCell<JSPostgresSQLConnection>(vm)) JSPostgresSQLConnection(vm, structure, ctx);
+    ptr->finishCreation(vm);
+    return ptr;
+}
+
+extern "C" void* PostgresSQLConnection__fromJS(JSC::EncodedJSValue value)
+{
+    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+    if (decodedValue.isEmpty() || !decodedValue.isCell())
+        return nullptr;
+
+    JSC::JSCell* cell = decodedValue.asCell();
+    JSPostgresSQLConnection* object = JSC::jsDynamicCast<JSPostgresSQLConnection*>(cell);
+
+    if (!object)
+        return nullptr;
+
+    return object->wrapped();
+}
+
+extern "C" bool PostgresSQLConnection__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
+{
+    JSPostgresSQLConnection* object = JSC::jsDynamicCast<JSPostgresSQLConnection*>(JSValue::decode(value));
+    if (!object)
+        return false;
+
+    object->m_ctx = ptr;
+    return true;
+}
+
+extern "C" const size_t PostgresSQLConnection__ptrOffset = JSPostgresSQLConnection::offsetOfWrapped();
+
+void JSPostgresSQLConnection::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = jsCast<JSPostgresSQLConnection*>(cell);
+    if (void* wrapped = thisObject->wrapped()) {
+        // if (thisObject->scriptExecutionContext())
+        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+    }
+    Base::analyzeHeap(cell, analyzer);
+}
+
+JSObject* JSPostgresSQLConnection::createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+{
+    return WebCore::JSPostgresSQLConnectionConstructor::create(vm, globalObject, WebCore::JSPostgresSQLConnectionConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<WebCore::JSPostgresSQLConnectionPrototype*>(prototype));
+}
+
+JSObject* JSPostgresSQLConnection::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
+{
+    return JSPostgresSQLConnectionPrototype::create(vm, globalObject, JSPostgresSQLConnectionPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+}
+
+extern "C" EncodedJSValue PostgresSQLConnection__create(Zig::GlobalObject* globalObject, void* ptr)
+{
+    auto& vm = globalObject->vm();
+    JSC::Structure* structure = globalObject->JSPostgresSQLConnectionStructure();
+    JSPostgresSQLConnection* instance = JSPostgresSQLConnection::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+
+template<typename Visitor>
+void JSPostgresSQLConnection::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSPostgresSQLConnection* thisObject = jsCast<JSPostgresSQLConnection*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_CHILDREN(JSPostgresSQLConnection);
+
+template<typename Visitor>
+void JSPostgresSQLConnection::visitAdditionalChildren(Visitor& visitor)
+{
+    JSPostgresSQLConnection* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+
+    visitor.addOpaqueRoot(this->wrapped());
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSPostgresSQLConnection);
+
+template<typename Visitor>
+void JSPostgresSQLConnection::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSPostgresSQLConnection* thisObject = jsCast<JSPostgresSQLConnection*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSPostgresSQLConnection);
+class JSPostgresSQLQueryPrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static JSPostgresSQLQueryPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSPostgresSQLQueryPrototype* ptr = new (NotNull, JSC::allocateCell<JSPostgresSQLQueryPrototype>(vm)) JSPostgresSQLQueryPrototype(vm, globalObject, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    DECLARE_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSPostgresSQLQueryPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+class JSPostgresSQLQueryConstructor final : public JSC::InternalFunction {
+public:
+    using Base = JSC::InternalFunction;
+    static JSPostgresSQLQueryConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSPostgresSQLQueryPrototype* prototype);
+
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+    static constexpr bool needsDestruction = false;
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+    }
+
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return WebCore::subspaceForImpl<JSPostgresSQLQueryConstructor, WebCore::UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceForPostgresSQLQueryConstructor.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForPostgresSQLQueryConstructor = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForPostgresSQLQueryConstructor.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForPostgresSQLQueryConstructor = std::forward<decltype(space)>(space); });
+    }
+
+    void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSPostgresSQLQueryPrototype* prototype);
+
+    // Must be defined for each specialization class.
+    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+
+    DECLARE_EXPORT_INFO;
+
+private:
+    JSPostgresSQLQueryConstructor(JSC::VM& vm, JSC::Structure* structure);
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSPostgresSQLQueryPrototype* prototype);
+};
+
+extern "C" void* PostgresSQLQueryClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+JSC_DECLARE_CUSTOM_GETTER(jsPostgresSQLQueryConstructor);
+
+extern "C" void PostgresSQLQueryClass__finalize(void*);
+
+extern "C" EncodedJSValue PostgresSQLQueryPrototype__doCancel(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(PostgresSQLQueryPrototype__cancelCallback);
+
+extern "C" EncodedJSValue PostgresSQLQueryPrototype__doRun(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(PostgresSQLQueryPrototype__runCallback);
+
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSPostgresSQLQueryPrototype, JSPostgresSQLQueryPrototype::Base);
+
+static const HashTableValue JSPostgresSQLQueryPrototypeTableValues[] = {
+    { "cancel"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, PostgresSQLQueryPrototype__cancelCallback, 0 } },
+    { "run"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, PostgresSQLQueryPrototype__runCallback, 2 } }
+};
+
+const ClassInfo JSPostgresSQLQueryPrototype::s_info = { "PostgresSQLQuery"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPostgresSQLQueryPrototype) };
+
+JSC_DEFINE_CUSTOM_GETTER(jsPostgresSQLQueryConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* prototype = jsDynamicCast<JSPostgresSQLQueryPrototype*>(JSValue::decode(thisValue));
+
+    if (UNLIKELY(!prototype))
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for PostgresSQLQuery"_s);
+    return JSValue::encode(globalObject->JSPostgresSQLQueryConstructor());
+}
+
+JSC_DEFINE_HOST_FUNCTION(PostgresSQLQueryPrototype__cancelCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSPostgresSQLQuery* thisObject = jsDynamicCast<JSPostgresSQLQuery*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof PostgresSQLQuery"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return PostgresSQLQueryPrototype__doCancel(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(PostgresSQLQueryPrototype__runCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSPostgresSQLQuery* thisObject = jsDynamicCast<JSPostgresSQLQuery*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof PostgresSQLQuery"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return PostgresSQLQueryPrototype__doRun(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+extern "C" void PostgresSQLQueryPrototype__pendingValueSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSPostgresSQLQuery*>(JSValue::decode(thisValue));
+    thisObject->m_pendingValue.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue PostgresSQLQueryPrototype__pendingValueGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSPostgresSQLQuery*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_pendingValue.get());
+}
+
+void JSPostgresSQLQueryPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    Base::finishCreation(vm);
+    reifyStaticProperties(vm, JSPostgresSQLQuery::info(), JSPostgresSQLQueryPrototypeTableValues, *this);
+    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+}
+
+extern "C" size_t PostgresSQLQuery__estimatedSize(void* ptr);
+
+void JSPostgresSQLQueryConstructor::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSPostgresSQLQueryPrototype* prototype)
+{
+    Base::finishCreation(vm, 0, "PostgresSQLQuery"_s, PropertyAdditionMode::WithoutStructureTransition);
+
+    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    ASSERT(inherits(info()));
+}
+
+JSPostgresSQLQueryConstructor::JSPostgresSQLQueryConstructor(JSC::VM& vm, JSC::Structure* structure)
+    : Base(vm, structure, construct, construct)
+{
+}
+
+JSPostgresSQLQueryConstructor* JSPostgresSQLQueryConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSPostgresSQLQueryPrototype* prototype)
+{
+    JSPostgresSQLQueryConstructor* ptr = new (NotNull, JSC::allocateCell<JSPostgresSQLQueryConstructor>(vm)) JSPostgresSQLQueryConstructor(vm, structure);
+    ptr->finishCreation(vm, globalObject, prototype);
+    return ptr;
+}
+
+JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSPostgresSQLQueryConstructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+{
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    JSC::VM& vm = globalObject->vm();
+    JSObject* newTarget = asObject(callFrame->newTarget());
+    auto* constructor = globalObject->JSPostgresSQLQueryConstructor();
+    Structure* structure = globalObject->JSPostgresSQLQueryStructure();
+    if (constructor != newTarget) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(
+            // ShadowRealm functions belong to a different global object.
+            getFunctionRealm(globalObject, newTarget));
+        RETURN_IF_EXCEPTION(scope, {});
+        structure = InternalFunction::createSubclassStructure(
+            globalObject,
+            newTarget,
+            functionGlobalObject->JSPostgresSQLQueryStructure());
+    }
+
+    void* ptr = PostgresSQLQueryClass__construct(globalObject, callFrame);
+
+    if (UNLIKELY(!ptr)) {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    JSPostgresSQLQuery* instance = JSPostgresSQLQuery::create(vm, globalObject, structure, ptr);
+    vm.heap.reportExtraMemoryAllocated(instance, PostgresSQLQuery__estimatedSize(instance->wrapped()));
+
+    return JSValue::encode(instance);
+}
+
+void JSPostgresSQLQueryConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSPostgresSQLQueryPrototype* prototype)
+{
+}
+
+const ClassInfo JSPostgresSQLQueryConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPostgresSQLQueryConstructor) };
+
+extern "C" EncodedJSValue PostgresSQLQuery__getConstructor(Zig::GlobalObject* globalObject)
+{
+    return JSValue::encode(globalObject->JSPostgresSQLQueryConstructor());
+}
+
+JSPostgresSQLQuery::~JSPostgresSQLQuery()
+{
+    if (m_ctx) {
+        PostgresSQLQueryClass__finalize(m_ctx);
+    }
+}
+void JSPostgresSQLQuery::destroy(JSCell* cell)
+{
+    static_cast<JSPostgresSQLQuery*>(cell)->JSPostgresSQLQuery::~JSPostgresSQLQuery();
+}
+
+const ClassInfo JSPostgresSQLQuery::s_info = { "PostgresSQLQuery"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPostgresSQLQuery) };
+
+void JSPostgresSQLQuery::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+JSPostgresSQLQuery* JSPostgresSQLQuery::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
+{
+    JSPostgresSQLQuery* ptr = new (NotNull, JSC::allocateCell<JSPostgresSQLQuery>(vm)) JSPostgresSQLQuery(vm, structure, ctx);
+    ptr->finishCreation(vm);
+    return ptr;
+}
+
+extern "C" void* PostgresSQLQuery__fromJS(JSC::EncodedJSValue value)
+{
+    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+    if (decodedValue.isEmpty() || !decodedValue.isCell())
+        return nullptr;
+
+    JSC::JSCell* cell = decodedValue.asCell();
+    JSPostgresSQLQuery* object = JSC::jsDynamicCast<JSPostgresSQLQuery*>(cell);
+
+    if (!object)
+        return nullptr;
+
+    return object->wrapped();
+}
+
+extern "C" bool PostgresSQLQuery__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
+{
+    JSPostgresSQLQuery* object = JSC::jsDynamicCast<JSPostgresSQLQuery*>(JSValue::decode(value));
+    if (!object)
+        return false;
+
+    object->m_ctx = ptr;
+    return true;
+}
+
+extern "C" const size_t PostgresSQLQuery__ptrOffset = JSPostgresSQLQuery::offsetOfWrapped();
+
+void JSPostgresSQLQuery::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = jsCast<JSPostgresSQLQuery*>(cell);
+    if (void* wrapped = thisObject->wrapped()) {
+        // if (thisObject->scriptExecutionContext())
+        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+    }
+    Base::analyzeHeap(cell, analyzer);
+}
+
+JSObject* JSPostgresSQLQuery::createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+{
+    return WebCore::JSPostgresSQLQueryConstructor::create(vm, globalObject, WebCore::JSPostgresSQLQueryConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<WebCore::JSPostgresSQLQueryPrototype*>(prototype));
+}
+
+JSObject* JSPostgresSQLQuery::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
+{
+    return JSPostgresSQLQueryPrototype::create(vm, globalObject, JSPostgresSQLQueryPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+}
+
+extern "C" EncodedJSValue PostgresSQLQuery__create(Zig::GlobalObject* globalObject, void* ptr)
+{
+    auto& vm = globalObject->vm();
+    JSC::Structure* structure = globalObject->JSPostgresSQLQueryStructure();
+    JSPostgresSQLQuery* instance = JSPostgresSQLQuery::create(vm, globalObject, structure, ptr);
+    vm.heap.reportExtraMemoryAllocated(instance, PostgresSQLQuery__estimatedSize(ptr));
+    return JSValue::encode(instance);
+}
+
+template<typename Visitor>
+void JSPostgresSQLQuery::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSPostgresSQLQuery* thisObject = jsCast<JSPostgresSQLQuery*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    if (auto* ptr = thisObject->wrapped()) {
+        visitor.reportExtraMemoryVisited(PostgresSQLQuery__estimatedSize(ptr));
+    }
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_CHILDREN(JSPostgresSQLQuery);
+
+template<typename Visitor>
+void JSPostgresSQLQuery::visitAdditionalChildren(Visitor& visitor)
+{
+    JSPostgresSQLQuery* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    visitor.append(thisObject->m_pendingValue);
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSPostgresSQLQuery);
+
+template<typename Visitor>
+void JSPostgresSQLQuery::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSPostgresSQLQuery* thisObject = jsCast<JSPostgresSQLQuery*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSPostgresSQLQuery);
 class JSRequestPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;

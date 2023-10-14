@@ -51,11 +51,13 @@ function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<an
 
 // Only run during debug
 function debugFormatContextValue(value: ReadonlyArray<any> | undefined) {
-  if (value === undefined) return "{}";
+  if (value === undefined) return "undefined";
   let str = "{\n";
   for (var i = 0; i < value.length; i += 2) {
-    str += `  ${value[i].__id__}: ${Bun.inspect(value[i + 1], { depth: 1, colors: Bun.enableANSIColors })}\n`;
+    str += `  ${value[i].__id__}: typeof = ${typeof value[i + 1]}\n`;
   }
+  str += "}";
+  return str;
 }
 
 function get(): ReadonlyArray<any> | undefined {
@@ -77,10 +79,12 @@ class AsyncLocalStorage {
 
     // In debug mode assign every AsyncLocalStorage a unique ID
     if (IS_BUN_DEVELOPMENT) {
-      (this as any).__id__ =
-        Math.random().toString(36).slice(2, 8) +
-        "@" +
-        require("node:path").basename(require("bun:jsc").callerSourceOrigin());
+      const uid = Math.random().toString(36).slice(2, 8);
+      const source = require("bun:jsc").callerSourceOrigin();
+
+      (this as any).__id__ = uid + "@" + require("node:path").basename(source);
+
+      $debug("new AsyncLocalStorage uid=", (this as any).__id__, source);
     }
   }
 
@@ -133,6 +137,7 @@ class AsyncLocalStorage {
   // This function is literred with $asserts to ensure that everything that
   // is assumed to be true is *actually* true.
   run(store_value, callback, ...args) {
+    $debug("run " + (this as any).__id__);
     var context = get() as any[]; // we make sure to .slice() before mutating
     var hasPrevious = false;
     var previous_value;
@@ -215,6 +220,7 @@ class AsyncLocalStorage {
   }
 
   getStore() {
+    $debug("getStore " + (this as any).__id__);
     var context = get();
     if (!context) return;
     var { length } = context;

@@ -96,10 +96,15 @@ pub const Socket = uws.NewSocketHandler(false);
 
 pub const IPCData = struct {
     socket: Socket,
-    incoming: bun.ByteList = .{}, // TODO: use IPCBuffer approach instead of copy fifo
+    incoming: bun.ByteList = .{}, // Maybe we should use IPCBuffer here as well
     outgoing: IPCBuffer = .{},
 
+    has_written_version: if (Environment.allow_assert) u1 else u0 = 0,
+
     pub fn writeVersionPacket(this: *IPCData) void {
+        if (Environment.allow_assert) {
+            std.debug.assert(this.has_written_version == 0);
+        }
         const VersionPacket = extern struct {
             type: IPCMessageType align(1) = .Version,
             version: u32 align(1) = ipcVersion,
@@ -110,9 +115,16 @@ pub const IPCData = struct {
             var list = this.outgoing.list.listManaged(bun.default_allocator);
             list.appendSlice(bytes) catch @panic("OOM");
         }
+        if (Environment.allow_assert) {
+            this.has_written_version = 1;
+        }
     }
 
     pub fn serializeAndSend(ipc_data: *IPCData, globalThis: *JSGlobalObject, value: JSValue) bool {
+        if (Environment.allow_assert) {
+            std.debug.assert(ipc_data.has_written_version == 1);
+        }
+
         const serialized = value.serialize(globalThis) orelse return false;
         defer serialized.deinit();
 
@@ -157,9 +169,17 @@ pub const IPCData = struct {
 pub fn NewIPCHandler(comptime Context: type) type {
     return struct {
         pub fn onOpen(
-            _: *Context,
+            _: *anyopaque,
             _: Socket,
-        ) void {}
+        ) void {
+            // it is NOT safe to use the first argument here because it has not been initialized yet.
+            // ideally we would call .ipc.writeVersionPacket() here, and we need that to handle the
+            // theoretical write failure, but since the .ipc.outgoing buffer isn't available, that
+            // data has nowhere to go.
+            //
+            // therefore, initializers of IPC handlers need to call .ipc.writeVersionPacket() themselves
+            // this is covered by an assertion.
+        }
 
         pub fn onClose(
             this: *Context,
@@ -280,10 +300,12 @@ pub fn NewIPCHandler(comptime Context: type) type {
         ) void {}
 
         pub fn onConnectError(
-            _: *Context,
+            _: *anyopaque,
             _: Socket,
             _: c_int,
-        ) void {}
+        ) void {
+            // context has not been initialized
+        }
 
         pub fn onEnd(
             _: *Context,

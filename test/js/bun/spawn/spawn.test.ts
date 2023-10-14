@@ -445,9 +445,9 @@ for (let [gcTick, label] of [
       describe("ipc", () => {
         it("the subprocess should be defined and the child should send", done => {
           gcTick();
-          spawn([bunExe(), path.join(__dirname, "bun-ipc-child.js")], {
+          const returned_subprocess = spawn([bunExe(), path.join(__dirname, "bun-ipc-child.js")], {
             ipc: (message, subProcess) => {
-              expect(subProcess).not.toBe(undefined);
+              expect(subProcess).toBe(returned_subprocess);
               expect(message).toBe("hello");
               subProcess.kill();
               done();

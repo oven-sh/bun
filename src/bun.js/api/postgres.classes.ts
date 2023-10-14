@@ -54,7 +54,7 @@ export default [
         length: 0,
       },
     },
-    values: ["instance"],
+    values: ["pendingValue"],
     estimatedSize: true,
   }),
 ];

@@ -45,6 +45,25 @@ pub const JSObject = extern struct {
         });
     }
 
+    extern fn JSC__createStructure(*JSC.JSGlobalObject, u32, names: [*]bun.String) JSC.JSValue;
+    extern fn JSC__createEmptyObjectWithStructure(*JSC.JSGlobalObject, *anyopaque) JSC.JSValue;
+    extern fn JSC__putDirectOffset(*JSC.VM, JSC.JSValue, offset: u32, JSC.JSValue) void;
+
+    pub fn createStructure(global: *JSGlobalObject, length: u32, names: [*]bun.String) JSValue {
+        JSC.markBinding(@src());
+        return JSC__createStructure(global, length, names);
+    }
+
+    pub fn uninitialized(global: *JSGlobalObject, structure: JSC.JSValue) JSValue {
+        JSC.markBinding(@src());
+        return JSC__createEmptyObjectWithStructure(global, structure.asCell());
+    }
+
+    pub fn putDirectOffset(this: JSValue, vm: *VM, offset: u32, value: JSValue) void {
+        JSC.markBinding(@src());
+        return JSC__putDirectOffset(vm, this, offset, value);
+    }
+
     pub fn Initializer(comptime Ctx: type, comptime func: fn (*Ctx, obj: *JSObject, global: *JSGlobalObject) void) type {
         return struct {
             pub fn call(this: ?*anyopaque, obj: [*c]JSObject, global: [*c]JSGlobalObject) callconv(.C) void {

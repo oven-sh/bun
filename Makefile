@@ -928,7 +928,7 @@ jsc: jsc-build jsc-copy-headers jsc-bindings
 .PHONY: jsc-build
 jsc-build: $(JSC_BUILD_STEPS)
 .PHONY: jsc-bindings
-jsc-bindings: headers bindings
+jsc-bindings: bindings
 
 .PHONY: clone-submodules
 clone-submodules:

@@ -392,6 +392,26 @@ $ bun install
 $ make cpp
 ```
 
+## Building WebKit locally + Debug mode of JSC
+
+WebKit is not cloned by default (to save time and disk space). To clone and build WebKit locally, run:
+
+```bash
+# once you run this, `make submodule` can be used to automatically
+# update WebKit and the other submodules
+$ git submodule update --init --depth 1 --checkout src/bun.js/WebKit
+# to make a jsc release build
+$ make jsc
+# JSC debug build does not work perfectly with Bun yet, this is actively being
+# worked on and will eventually become the default.
+$ make jsc-build-linux-compile-debug cpp
+$ make jsc-build-mac-compile-debug cpp
+```
+
+Note that the WebKit folder, including build artifacts, is 8GB+ in size.
+
+If you are using a JSC debug build and using vscode, make sure to run the `C/C++: Select a Configuration` command to configure intellisense to find the debug headers.
+
 ## Troubleshooting
 
 ### 'span' file not found on Ubuntu

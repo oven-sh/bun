@@ -2745,7 +2745,7 @@ pub const Package = extern struct {
 
                     const tag: ?Dependency.Version.Tag = brk: {
                         if (lockfile.workspace_versions.get(key.hash)) |workspace_version| {
-                            var query_group = try Semver.Query.parse(allocator, version_string_.slice(string_buf), sliced);
+                            var query_group = try Semver.Query.parse(allocator, dep_version.slice(string_buf), sliced);
                             defer query_group.deinit();
                             if (query_group.satisfies(workspace_version)) {
                                 break :brk .workspace;

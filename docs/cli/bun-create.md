@@ -1,36 +1,12 @@
-## `bun init`
-
-Scaffold an empty project with the interactive `bun init` command.
-
-```bash
-$ bun init
-bun init helps you get started with a minimal project and tries to
-guess sensible defaults. Press ^C anytime to quit.
-
-package name (quickstart):
-entry point (index.ts):
-
-Done! A package.json file was saved in the current directory.
- + index.ts
- + .gitignore
- + tsconfig.json (for editor auto-complete)
- + README.md
-
-To get started, run:
-  bun run index.ts
-```
-
-Press `enter` to accept the default answer for each prompt, or pass the `-y` flag to auto-accept the defaults.
-
-## `bun create`
-
 {% callout %}
 **Note** — You don’t need `bun create` to use Bun. You don’t need any configuration at all. This command exists to make getting started a bit quicker and easier.
 {% /callout %}
 
 Template a new Bun project with `bun create`. This is a flexible command that can be used to create a new project with a `create-<template>` npm package, a GitHub repo, or a local template.
 
-### From `npm`
+If you're looking to create a brand new empty project, use [`bun init`](/docs/cli/init).
+
+## From `npm`
 
 ```sh
 $ bun create <template> [<destination>]
@@ -45,7 +21,7 @@ $ bunx create-remix
 
 Refer to the documentation of the associated `create-<template>` package for complete documentation and usage instructions.
 
-### From GitHub
+## From GitHub
 
 This will download the contents of the GitHub repo to disk.
 
@@ -115,7 +91,7 @@ $ bun create https://github.com/ahfarmer/calculator ./myapp
 
 Bun installs the files as they currently exist current default branch (usually `main` or `master`). Unlike `git clone` it doesn't download the commit history or configure a remote. -->
 
-### From a local template
+## From a local template
 
 {% callout %}
 **⚠️ Warning** — Unlike remote templates, running `bun create` with a local template will delete the entire destination folder if it already exists! Be careful.

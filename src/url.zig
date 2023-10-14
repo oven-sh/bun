@@ -1097,8 +1097,11 @@ pub const FormData = struct {
                             break :brk field.content_type.slice(buf);
                         }
                         if (filename_str.len > 0) {
-                            if (bun.HTTP.MimeType.byExtensionNoDefault(std.fs.path.extension(filename_str))) |mime| {
-                                break :brk mime.value;
+                            const extension = std.fs.path.extension(filename_str);
+                            if (extension.len > 0) {
+                                if (bun.HTTP.MimeType.byExtensionNoDefault(extension[1..extension.len])) |mime| {
+                                    break :brk mime.value;
+                                }
                             }
                         }
 

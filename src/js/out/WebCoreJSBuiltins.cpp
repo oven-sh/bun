@@ -1250,6 +1250,14 @@ const int s_readableStreamCreateNativeReadableStreamCodeLength = 215;
 static const JSC::Intrinsic s_readableStreamCreateNativeReadableStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamCreateNativeReadableStreamCode = "(function (nativePtr, nativeType, autoAllocateChunkSize) {\"use strict\";\n  return new @ReadableStream({\n    @lazy: !0,\n    @bunNativeType: nativeType,\n    @bunNativePtr: nativePtr,\n    autoAllocateChunkSize\n  });\n})\n";
 
+// createUsedReadableStream
+const JSC::ConstructAbility s_readableStreamCreateUsedReadableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_readableStreamCreateUsedReadableStreamCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamCreateUsedReadableStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Private;
+const int s_readableStreamCreateUsedReadableStreamCodeLength = 130;
+static const JSC::Intrinsic s_readableStreamCreateUsedReadableStreamCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_readableStreamCreateUsedReadableStreamCode = "(function () {\"use strict\";\n  var stream = new @ReadableStream({\n    pull() {\n    }\n  });\n  return stream.getReader(), stream;\n})\n";
+
 // getReader
 const JSC::ConstructAbility s_readableStreamGetReaderCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamGetReaderCodeConstructorKind = JSC::ConstructorKind::None;

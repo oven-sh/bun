@@ -30,7 +30,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:crypto`](https://nodejs.org/api/crypto.html)
 
-🟡 Missing `Certificate` `ECDH` `KeyObject` `X509Certificate` `checkPrime` `checkPrimeSync` `createPrivateKey` `createPublicKey` `createSecretKey` `diffieHellman` `generateKey` `generateKeyPair` `generateKeyPairSync` `generateKeySync` `generatePrime` `generatePrimeSync` `getCipherInfo` `getFips` `hkdf` `hkdfSync` `secureHeapUsed` `setEngine` `setFips` `sign` `verify`
+🟡 Missing `Certificate` `ECDH` `X509Certificate` `checkPrime` `checkPrimeSync` `diffieHellman` `generatePrime` `generatePrimeSync` `getCipherInfo` `getFips` `hkdf` `hkdfSync` `secureHeapUsed` `setEngine` `setFips`
 
 Some methods are not optimized yet.
 

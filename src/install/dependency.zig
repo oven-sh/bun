@@ -1,7 +1,9 @@
 const bun = @import("root").bun;
+const Output = bun.Output;
 const logger = bun.logger;
 const Environment = @import("../env.zig");
 const Install = @import("./install.zig");
+const PackageManager = Install.PackageManager;
 const ExternalStringList = Install.ExternalStringList;
 const Features = Install.Features;
 const PackageNameHash = Install.PackageNameHash;
@@ -36,6 +38,8 @@ const URI = union(Tag) {
         remote,
     };
 };
+
+const debug = Output.scoped(.Dependency, true);
 
 name_hash: PackageNameHash = 0,
 name: String = .{},
@@ -92,6 +96,7 @@ pub fn cloneWithDifferentBuffers(this: *const Dependency, name_buf: []const u8, 
         .version = Dependency.parseWithTag(
             builder.lockfile.allocator,
             new_name,
+            String.Builder.stringHash(new_name.slice(name_buf)),
             new_literal.slice(out_slice),
             this.version.tag,
             &sliced,
@@ -144,11 +149,12 @@ pub fn toDependency(
     const name = String{
         .bytes = this[0..8].*,
     };
+    const name_hash: u64 = @bitCast(this[8..16].*);
     return Dependency{
         .name = name,
-        .name_hash = @as(u64, @bitCast(this[8..16].*)),
+        .name_hash = name_hash,
         .behavior = @bitCast(this[16]),
-        .version = Dependency.Version.toVersion(name, this[17..this.len].*, ctx),
+        .version = Dependency.Version.toVersion(name, name_hash, this[17..this.len].*, ctx),
     };
 }
 
@@ -297,6 +303,7 @@ pub const Version = struct {
 
     pub fn toVersion(
         alias: String,
+        alias_hash: PackageNameHash,
         bytes: Version.External,
         ctx: Dependency.Context,
     ) Dependency.Version {
@@ -306,6 +313,7 @@ pub const Version = struct {
         return Dependency.parseWithTag(
             ctx.allocator,
             alias,
+            alias_hash,
             sliced.slice,
             tag,
             sliced,
@@ -670,17 +678,19 @@ pub fn eql(
 pub inline fn parse(
     allocator: std.mem.Allocator,
     alias: String,
+    alias_hash: ?PackageNameHash,
     dependency: string,
     sliced: *const SlicedString,
     log: ?*logger.Log,
 ) ?Version {
     const dep = std.mem.trimLeft(u8, dependency, " \t\n\r");
-    return parseWithTag(allocator, alias, dep, Version.Tag.infer(dep), sliced, log);
+    return parseWithTag(allocator, alias, alias_hash, dep, Version.Tag.infer(dep), sliced, log);
 }
 
 pub fn parseWithOptionalTag(
     allocator: std.mem.Allocator,
     alias: String,
+    alias_hash: ?PackageNameHash,
     dependency: string,
     tag: ?Dependency.Version.Tag,
     sliced: *const SlicedString,
@@ -690,6 +700,7 @@ pub fn parseWithOptionalTag(
     return parseWithTag(
         allocator,
         alias,
+        alias_hash,
         dep,
         tag orelse Version.Tag.infer(dep),
         sliced,
@@ -700,6 +711,7 @@ pub fn parseWithOptionalTag(
 pub fn parseWithTag(
     allocator: std.mem.Allocator,
     alias: String,
+    _alias_hash: ?PackageNameHash,
     dependency: string,
     tag: Dependency.Version.Tag,
     sliced: *const SlicedString,
@@ -710,19 +722,45 @@ pub fn parseWithTag(
     switch (tag) {
         .npm => {
             var input = dependency;
-            const name = if (strings.hasPrefixComptime(input, "npm:")) sliced.sub(brk: {
-                var str = input["npm:".len..];
-                var i: usize = @intFromBool(str.len > 0 and str[0] == '@');
 
-                while (i < str.len) : (i += 1) {
-                    if (str[i] == '@') {
-                        input = str[i + 1 ..];
-                        break :brk str[0..i];
+            const name = brk: {
+                if (strings.hasPrefixComptime(input, "npm:")) {
+                    var str = input["npm:".len..];
+                    var i: usize = @intFromBool(str.len > 0 and str[0] == '@');
+
+                    while (i < str.len) : (i += 1) {
+                        if (str[i] == '@') {
+                            input = str[i + 1 ..];
+                            const name_str = sliced.sub(str[0..i]).value();
+                            if (_alias_hash) |alias_hash| {
+                                debug("Adding npm alias for: {s}", .{str[0..i]});
+                                PackageManager.instance.known_npm_aliases.put(
+                                    allocator,
+                                    alias_hash,
+                                    name_str,
+                                ) catch unreachable;
+                            }
+                            break :brk name_str;
+                        }
                     }
+
+                    input = str[i..];
+
+                    const name_str = sliced.sub(str[0..i]).value();
+                    if (_alias_hash) |alias_hash| {
+                        debug("Adding npm alias for: {s}", .{str[0..i]});
+                        PackageManager.instance.known_npm_aliases.put(
+                            allocator,
+                            alias_hash,
+                            name_str,
+                        ) catch unreachable;
+                    }
+
+                    break :brk name_str;
                 }
-                input = str[i..];
-                break :brk str[0..i];
-            }).value() else alias;
+
+                break :brk alias;
+            };
 
             // Strip single leading v
             // v1.0.0 -> 1.0.0

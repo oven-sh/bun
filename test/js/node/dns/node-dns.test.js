@@ -394,3 +394,20 @@ describe("dns.lookupService", () => {
     expect(service).toStrictEqual(expected[1]);
   });
 });
+
+// Deprecated reference: https://nodejs.org/api/deprecations.html#DEP0118
+describe("lookup deprecated behavior", () => {
+  it.each([
+    undefined,
+    false,
+    null,
+    NaN,
+    ""
+  ])("dns.lookup", domain => {
+    dns.lookup(domain, (error, address, family) => {
+      expect(error).toBeNull();
+      expect(address).toBeNull();
+      expect(family).toBe(4);
+    });
+  });
+});

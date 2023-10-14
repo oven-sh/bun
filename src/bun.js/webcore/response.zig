@@ -945,7 +945,7 @@ pub const Fetch = struct {
                             this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
                             var list = scheduled_response_buffer.toManaged(bun.default_allocator);
                             const has_copies = response.response_clones != null and response.response_clones.?.items.len > 0;
-                            if (has_copies) {
+                            if (!has_copies) {
                                 defer list.deinit();
                             }
                             // done resolve body

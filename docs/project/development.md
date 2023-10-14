@@ -410,7 +410,7 @@ $ make jsc-build-mac-compile-debug cpp
 
 Note that the WebKit folder, including build artifacts, is 8GB+ in size.
 
-If you are using a JSC debug build and using vscode, make sure to run the `C/C++: Select a Configuration` command to configure intellisense to find the debug headers.
+If you are using a JSC debug build and using VScode, make sure to run the `C/C++: Select a Configuration` command to configure intellisense to find the debug headers.
 
 ## Troubleshooting
 

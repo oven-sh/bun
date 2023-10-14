@@ -69,7 +69,7 @@ PRETTIER ?= $(shell which prettier 2>/dev/null || echo "./node_modules/.bin/pret
 ESBUILD = $(shell which esbuild 2>/dev/null || echo "./node_modules/.bin/esbuild")
 DSYMUTIL ?= $(shell which dsymutil 2>/dev/null || which dsymutil-15 2>/dev/null)
 WEBKIT_DIR ?= $(realpath src/bun.js/WebKit)
-WEBKIT_RELEASE_DIR ?= $(WEBKIT_DIR)/WebKitBuild/Debug
+WEBKIT_RELEASE_DIR ?= $(WEBKIT_DIR)/WebKitBuild/Release
 WEBKIT_DEBUG_DIR ?= $(WEBKIT_DIR)/WebKitBuild/Debug
 WEBKIT_RELEASE_DIR_LTO ?= $(WEBKIT_DIR)/WebKitBuild/ReleaseLTO
 
@@ -405,7 +405,7 @@ CLANG_FLAGS = $(INCLUDE_DIRS) \
 		-DNOMINMAX \
 		-DIS_BUILD \
 		-DBUILDING_JSCONLY__ \
-		-DASSERT_ENABLED=1 \
+		-DASSERT_ENABLED=0 \
 		-DENABLE_BUN_SKIP_FAILING_ASSERTIONS=1 \
 		-fvisibility=hidden \
 		-fvisibility-inlines-hidden
@@ -1519,7 +1519,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM) \
 		-c -o $@ $<
 
@@ -1530,7 +1530,7 @@ $(OBJ_DIR)/%.o: src/bun.js/modules/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM) \
 		-c -o $@ $<
 
@@ -1541,7 +1541,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM) \
 		-c -o $@ $<
 
@@ -1552,7 +1552,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM) \
 		-c -o $@ $<
 
@@ -1563,7 +1563,7 @@ $(OBJ_DIR)/%.o: src/io/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM) \
 		-c -o $@ $<
 
@@ -1574,7 +1574,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/node_os/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM) \
 		-c -o $@ $<
 
@@ -1585,7 +1585,7 @@ $(OBJ_DIR)/%.o: src/js/out/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM) \
 		-c -o $@ $<
 
@@ -1597,7 +1597,7 @@ $(OBJ_DIR)/%.o: src/bun.js/bindings/webcrypto/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM) \
 		-c -o $@ $<
 
@@ -1611,7 +1611,7 @@ $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1 \
+		-ferror-limit=10 \
 		-DBUN_DEBUG \
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-g3 -c -o $@ $<
@@ -1626,7 +1626,7 @@ $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
@@ -1639,7 +1639,7 @@ $(DEBUG_OBJ_DIR)/%.o: src/io/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1 \
+		-ferror-limit=10 \
 		-DBUN_DEBUG \
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-g3 -c -o $@ $<
@@ -1655,7 +1655,7 @@ $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
@@ -1670,7 +1670,7 @@ $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/node_os/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
@@ -1685,7 +1685,7 @@ $(DEBUG_OBJ_DIR)/%.o: src/js/out/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
@@ -1698,7 +1698,7 @@ $(DEBUG_OBJ_DIR)/%.o: src/bun.js/modules/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
@@ -1713,7 +1713,7 @@ $(DEBUG_OBJ_DIR)/%.o: src/bun.js/bindings/webcrypto/%.cpp
 		-fno-exceptions \
 		-I$(SRC_DIR) \
 		-fno-rtti \
-		-ferror-limit=1 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
@@ -1892,7 +1892,7 @@ cold-jsc-start:
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1 \
+		-ferror-limit=10 \
 		$(LIBICONV_PATH) \
 		$(DEFAULT_LINKER_FLAGS) \
 		$(PLATFORM_LINKER_FLAGS) \

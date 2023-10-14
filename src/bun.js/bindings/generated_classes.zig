@@ -1220,6 +1220,28 @@ pub const JSDebugHTTPSServer = struct {
         return DebugHTTPSServer__fromJS(value);
     }
 
+    extern fn DebugHTTPSServerPrototype__addressSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn DebugHTTPSServerPrototype__addressGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `DebugHTTPSServer.address` setter
+    /// This value will be visited by the garbage collector.
+    pub fn addressSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        DebugHTTPSServerPrototype__addressSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `DebugHTTPSServer.address` getter
+    /// This value will be visited by the garbage collector.
+    pub fn addressGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = DebugHTTPSServerPrototype__addressGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
     extern fn DebugHTTPSServerPrototype__hostnameSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
 
     extern fn DebugHTTPSServerPrototype__hostnameGetCachedValue(JSC.JSValue) JSC.JSValue;
@@ -1300,8 +1322,9 @@ pub const JSDebugHTTPSServer = struct {
             @compileLog("DebugHTTPSServer.finalize is not a finalizer");
         }
 
-        if (@TypeOf(DebugHTTPSServer.getAddress) != CallbackType)
-            @compileLog("Expected DebugHTTPSServer.getAddress to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPSServer.getAddress)));
+        if (@TypeOf(DebugHTTPSServer.getAddress) != GetterType)
+            @compileLog("Expected DebugHTTPSServer.getAddress to be a getter");
+
         if (@TypeOf(DebugHTTPSServer.getDevelopment) != GetterType)
             @compileLog("Expected DebugHTTPSServer.getDevelopment to be a getter");
 
@@ -1367,6 +1390,28 @@ pub const JSDebugHTTPServer = struct {
     pub fn fromJS(value: JSC.JSValue) ?*DebugHTTPServer {
         JSC.markBinding(@src());
         return DebugHTTPServer__fromJS(value);
+    }
+
+    extern fn DebugHTTPServerPrototype__addressSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn DebugHTTPServerPrototype__addressGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `DebugHTTPServer.address` setter
+    /// This value will be visited by the garbage collector.
+    pub fn addressSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        DebugHTTPServerPrototype__addressSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `DebugHTTPServer.address` getter
+    /// This value will be visited by the garbage collector.
+    pub fn addressGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = DebugHTTPServerPrototype__addressGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
     }
 
     extern fn DebugHTTPServerPrototype__hostnameSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
@@ -1449,8 +1494,9 @@ pub const JSDebugHTTPServer = struct {
             @compileLog("DebugHTTPServer.finalize is not a finalizer");
         }
 
-        if (@TypeOf(DebugHTTPServer.getAddress) != CallbackType)
-            @compileLog("Expected DebugHTTPServer.getAddress to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPServer.getAddress)));
+        if (@TypeOf(DebugHTTPServer.getAddress) != GetterType)
+            @compileLog("Expected DebugHTTPServer.getAddress to be a getter");
+
         if (@TypeOf(DebugHTTPServer.getDevelopment) != GetterType)
             @compileLog("Expected DebugHTTPServer.getDevelopment to be a getter");
 
@@ -3185,6 +3231,28 @@ pub const JSHTTPSServer = struct {
         return HTTPSServer__fromJS(value);
     }
 
+    extern fn HTTPSServerPrototype__addressSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn HTTPSServerPrototype__addressGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `HTTPSServer.address` setter
+    /// This value will be visited by the garbage collector.
+    pub fn addressSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        HTTPSServerPrototype__addressSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `HTTPSServer.address` getter
+    /// This value will be visited by the garbage collector.
+    pub fn addressGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = HTTPSServerPrototype__addressGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
     extern fn HTTPSServerPrototype__hostnameSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
 
     extern fn HTTPSServerPrototype__hostnameGetCachedValue(JSC.JSValue) JSC.JSValue;
@@ -3265,8 +3333,9 @@ pub const JSHTTPSServer = struct {
             @compileLog("HTTPSServer.finalize is not a finalizer");
         }
 
-        if (@TypeOf(HTTPSServer.getAddress) != CallbackType)
-            @compileLog("Expected HTTPSServer.getAddress to be a callback but received " ++ @typeName(@TypeOf(HTTPSServer.getAddress)));
+        if (@TypeOf(HTTPSServer.getAddress) != GetterType)
+            @compileLog("Expected HTTPSServer.getAddress to be a getter");
+
         if (@TypeOf(HTTPSServer.getDevelopment) != GetterType)
             @compileLog("Expected HTTPSServer.getDevelopment to be a getter");
 
@@ -3332,6 +3401,28 @@ pub const JSHTTPServer = struct {
     pub fn fromJS(value: JSC.JSValue) ?*HTTPServer {
         JSC.markBinding(@src());
         return HTTPServer__fromJS(value);
+    }
+
+    extern fn HTTPServerPrototype__addressSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn HTTPServerPrototype__addressGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `HTTPServer.address` setter
+    /// This value will be visited by the garbage collector.
+    pub fn addressSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        HTTPServerPrototype__addressSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `HTTPServer.address` getter
+    /// This value will be visited by the garbage collector.
+    pub fn addressGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = HTTPServerPrototype__addressGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
     }
 
     extern fn HTTPServerPrototype__hostnameSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
@@ -3414,8 +3505,9 @@ pub const JSHTTPServer = struct {
             @compileLog("HTTPServer.finalize is not a finalizer");
         }
 
-        if (@TypeOf(HTTPServer.getAddress) != CallbackType)
-            @compileLog("Expected HTTPServer.getAddress to be a callback but received " ++ @typeName(@TypeOf(HTTPServer.getAddress)));
+        if (@TypeOf(HTTPServer.getAddress) != GetterType)
+            @compileLog("Expected HTTPServer.getAddress to be a getter");
+
         if (@TypeOf(HTTPServer.getDevelopment) != GetterType)
             @compileLog("Expected HTTPServer.getDevelopment to be a getter");
 

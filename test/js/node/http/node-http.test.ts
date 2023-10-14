@@ -1025,6 +1025,8 @@ describe("server.address should be valid IP", () => {
       try {
         const { address, family, port } = server.address();
         expect(port).toBeInteger();
+        expect(port).toBeGreaterThan(0);
+        expect(port).toBeLessThan(65536);
         expect(["::", "0.0.0.0"]).toContain(address);
         if (address === "0.0.0.0") {
           expect(family).toStrictEqual("IPv4");
@@ -1045,6 +1047,8 @@ describe("server.address should be valid IP", () => {
       try {
         const { address, family } = server.address();
         expect(port).toBeInteger();
+        expect(port).toBeGreaterThan(0);
+        expect(port).toBeLessThan(65536);
         expect(["IPv4", "IPv6"]).toContain(family);
         if (family === "IPv4") {
           expect(address).toStrictEqual("127.0.0.1");

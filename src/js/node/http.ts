@@ -447,7 +447,7 @@ class Server extends EventEmitter {
 
   address() {
     if (!this.#server) return null;
-    return this.#server.address();
+    return this.#server.address;
   }
 
   listen(port, host, backlog, onListen) {

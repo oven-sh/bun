@@ -4834,13 +4834,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         temporary_url_buffer: std.ArrayListUnmanaged(u8) = .{},
 
         cached_hostname: bun.String = bun.String.empty,
-        cached_localAddr: struct {
-            address: bun.String,
-            is_v4: bool,
-        } = .{
-            .address = bun.String.empty,
-            .is_v4 = false,
-        },
         cached_protocol: bun.String = bun.String.empty,
 
         flags: packed struct(u3) {
@@ -5304,7 +5297,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             return JSC.JSValue.jsNumber(@as(i32, @intCast(@as(u31, @truncate(this.activeSocketsCount())))));
         }
 
-        pub fn getAddress(this: *ThisServer, globalThis: *JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        pub fn getAddress(this: *ThisServer, globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {
             switch (this.config.address) {
                 .unix => |unix| {
                     var value = bun.String.create(bun.sliceTo(@constCast(unix), 0));
@@ -5312,32 +5305,26 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     return value.toJS(globalThis);
                 },
                 .tcp => {
-                    if (this.cached_localAddr.address.isEmpty()) {
-                        if (this.listener) |listener| {
-                            var buf: [64]u8 = [_]u8{0} ** 64;
-                            var len: i32 = 64;
-                            var is_v4: bool = false;
-                            listener.socket().localAddressText(&buf, &len, &is_v4);
-                            if (len > 0) {
-                                this.cached_localAddr = .{
-                                    .address = bun.String.create(buf[0..@as(usize, @intCast(len))]),
-                                    .is_v4 = is_v4,
-                                };
-                            }
+                    var port: u16 = this.config.address.tcp.port;
+
+                    if (this.listener) |listener| {
+                        port = @intCast(listener.getLocalPort());
+
+                        var buf: [64]u8 = [_]u8{0} ** 64;
+                        var len: i32 = 64;
+                        var is_ipv6: bool = false;
+                        listener.socket().localAddressText(&buf, &len, &is_ipv6);
+                        if (len > 0) {
+                            var ip = bun.String.create(buf[0..@as(usize, @intCast(len))]);
+                            return JSSocketAddress__create(
+                                this.globalThis,
+                                ip.toJS(this.globalThis),
+                                port,
+                                is_ipv6,
+                            );
                         }
                     }
-                    if (this.cached_localAddr.address.isEmpty()) {
-                        return JSValue.jsNull();
-                    }
-                    var result = JSC.JSValue.createEmptyObject(globalThis, 3);
-                    result.put(globalThis, JSC.ZigString.static("address"), this.cached_localAddr.address.toJS(globalThis));
-                    result.put(globalThis, JSC.ZigString.static("port"), this.getPort(globalThis));
-                    if (this.cached_localAddr.is_v4) {
-                        result.put(globalThis, JSC.ZigString.static("family"), JSC.ZigString.static("IPv4").toValueGC(globalThis));
-                    } else {
-                        result.put(globalThis, JSC.ZigString.static("family"), JSC.ZigString.static("IPv6").toValueGC(globalThis));
-                    }
-                    return result;
+                    return JSValue.jsNull();
                 },
             }
         }
@@ -5465,7 +5452,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub fn deinit(this: *ThisServer) void {
             httplog("deinit", .{});
             this.cached_hostname.deref();
-            this.cached_localAddr.address.deref();
             this.cached_protocol.deref();
 
             this.config.address.deinit(bun.default_allocator);

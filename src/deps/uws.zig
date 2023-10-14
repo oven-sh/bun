@@ -328,11 +328,11 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         /// # Arguments
         /// - `buf`: A buffer to store the text address data.
         /// - `length`: A pointer to an integer representing the length of the buf.
-        /// - `is_v4`: A pointer to an boolean representing whether address is IPv4.
+        /// - `is_ipv6: A pointer to an boolean representing whether address is IPv6.
         ///
         /// # Returns
         /// This function returns void, and updated `buf` and `length` inplace.
-        pub fn localAddressText(this: ThisSocket, buf: [*]u8, length: *i32, is_v4: *bool) void {
+        pub fn localAddressText(this: ThisSocket, buf: [*]u8, length: *i32, is_ipv6: *bool) void {
             const addr_v4_len = @sizeOf(std.meta.FieldType(std.os.sockaddr.in, .addr));
             const addr_v6_len = @sizeOf(std.meta.FieldType(std.os.sockaddr.in6, .addr));
 
@@ -346,10 +346,10 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             var ret: ?[*:0]const u8 = null;
             if (addr_len == addr_v4_len) {
                 ret = bun.c_ares.ares_inet_ntop(std.os.AF.INET, &sa_buf, buf, @as(u32, @intCast(length.*)));
-                is_v4.* = true;
+                is_ipv6.* = false;
             } else if (addr_len == addr_v6_len) {
                 ret = bun.c_ares.ares_inet_ntop(std.os.AF.INET6, &sa_buf, buf, @as(u32, @intCast(length.*)));
-                is_v4.* = false;
+                is_ipv6.* = true;
             }
             if (ret) |_| {
                 length.* = @intCast(bun.len(bun.cast([*:0]u8, buf)));

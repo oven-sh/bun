@@ -46,8 +46,8 @@ function generate(name) {
         cache: true,
       },
       address: {
-        fn: "getAddress",
-        length: 0,
+        getter: "getAddress",
+        cache: true,
       },
       protocol: {
         getter: "getProtocol",

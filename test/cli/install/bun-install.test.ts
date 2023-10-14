@@ -1503,6 +1503,66 @@ it("should handle ^0.0.2 in dependencies", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
+it("should handle matching workspaces from dependencies", async () => {
+  const urls: string[] = [];
+  setHandler(
+    dummyRegistry(urls, {
+      "0.2.0": { as: "0.2.0" },
+    }),
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      workspaces: ["packages/*"],
+    }),
+  );
+  await mkdir(join(package_dir, "packages", "pkg1"), { recursive: true });
+  await mkdir(join(package_dir, "packages", "pkg2"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "pkg1", "package.json"),
+    JSON.stringify({
+      name: "pkg1",
+      version: "0.2.0",
+    }),
+  );
+
+  await writeFile(
+    join(package_dir, "packages", "pkg2", "package.json"),
+    JSON.stringify({
+      name: "pkg2",
+      version: "0.2.0",
+      dependencies: {
+        // moo has a dependency on pkg1 that matches 0.2.0
+        moo: "0.2.0",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).not.toContain("error:");
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + pkg1@workspace:packages/pkg1",
+    " + pkg2@workspace:packages/pkg2",
+    "",
+    " 3 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  await access(join(package_dir, "bun.lockb"));
+});
+
 it("should edit package json correctly with git dependencies", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));

@@ -477,7 +477,7 @@ const Socket = (function (InternalSocket) {
               // replace socket
               connection[bunSocketInternal] = raw;
               raw.timeout(raw.timeout);
-              this.on("end", this.#closeRawConnection);
+              this.once("end", this.#closeRawConnection);
               raw.connecting = false;
               this[bunSocketInternal] = tls;
             } else {
@@ -503,7 +503,7 @@ const Socket = (function (InternalSocket) {
                 // replace socket
                 connection[bunSocketInternal] = raw;
                 raw.timeout(raw.timeout);
-                this.on("end", this.#closeRawConnection);
+                this.once("end", this.#closeRawConnection);
                 raw.connecting = false;
                 this[bunSocketInternal] = tls;
               } else {

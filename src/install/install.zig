@@ -2666,7 +2666,7 @@ pub const PackageManager = struct {
             .npm, .dist_tag => {
                 if (version.tag == .npm) {
                     if (this.lockfile.workspace_versions.count() > 0) resolve_from_workspace: {
-                        if (this.lockfile.workspace_versions.get(@truncate(name_hash))) |workspace_version| {
+                        if (this.lockfile.workspace_versions.get(name_hash)) |workspace_version| {
                             if (version.value.npm.version.satisfies(workspace_version)) {
                                 const root_package = this.lockfile.rootPackage() orelse break :resolve_from_workspace;
                                 const root_dependencies = root_package.dependencies.get(this.lockfile.buffers.dependencies.items);
@@ -2674,6 +2674,8 @@ pub const PackageManager = struct {
 
                                 for (root_dependencies, root_resolutions) |root_dep, workspace_package_id| {
                                     if (workspace_package_id != invalid_package_id and root_dep.version.tag == .workspace and root_dep.name_hash == name_hash) {
+                                        // make sure verifyResolutions sees this resolution as a valid package id
+                                        this.lockfile.buffers.resolutions.items[dependency_id] = workspace_package_id;
                                         return .{
                                             .package = this.lockfile.packages.get(workspace_package_id),
                                             .is_first_time = false,

@@ -1,71 +1,55 @@
 ---
-name: Containerize a bun application using Docker
+name: Containerize a Bun application with Docker
 ---
 
-[Docker](https://www.docker.com) is a set of platform as a service products that use OS-level virtualization to deliver software in packages called containers. The service has both free and premium tiers.
+{% callout %}
+This guide assumes you already have [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed.
+{% /callout %}
+
+[Docker](https://www.docker.com) is a platform for packaging and running an application as a lightweight, portable _container_ that encapsulates all the necessary dependencies.
 
 ---
 
-For this first you need to install Docker Desktop to can build docker images, this can be downloaded from their [official web application](https://www.docker.com/products/docker-desktop/)
+To _containerize_ our application, we define a `Dockerfile`. This file contains a list of instructions to initialize the container, copy our local project files into it, install dependencies, and starts the application.
 
----
-
-Now that you have docker, we can start writing the `Dockerfile`, this file should be in the root of your application, a basic `Dockerfile` that uses a build stage can be this, if you don't need a build stage you can remove it from the file.
-
-```dockerfile#Dockerfile
-# * Here we use the official image of bun which already has bun installed, you can specify the exact version
-# * Like 1.0.6-debian or always get the latest version with debian e.g. FROM oven/bun:debian as base
-# * Getting always the latest is not such a great idea as it might introduce breaking changes
-# * You have 2 more options which are 1-debian and 1.0-aline, which will use the version 1.x.x (Latest minor version) or 1.0.x (Latest revision version)
-FROM oven/bun:1.0.6-debian as base
+```docker#Dockerfile
+# use the official Bun image
+# see all versions at https://hub.docker.com/r/oven/bun/tags
+FROM oven/bun:1 as base
 WORKDIR /usr/src/app
 
-# * Install the deps in temp to cache them and speed up the build
+# install dependencies into temp directory
+# this will cache them and speed up future builds
 FROM base AS install
-# * Install both devDependencies and dependencies
 RUN mkdir -p /temp/dev
 COPY package.json bun.lockb /temp/dev/
 RUN cd /temp/dev && bun install --frozen-lockfile
 
-# * Install for production use only dependencies
+# install with --production (exclude devDependencies)
 RUN mkdir -p /temp/prod
 COPY package.json bun.lockb /temp/prod/
 RUN cd /temp/prod && bun install --frozen-lockfile --production
 
-# * In this stage you can test/build your application
-# * This step is optional if you don't test your application or build it
+# copy node_modules from temp directory
+# then copy all (non-ignored) project files into the image
 FROM install AS prerelease
-# * Copy all the deps from temp
 COPY --from=install /temp/dev/node_modules node_modules
-# * This command copies all the files in the current directory to the image except the ones in .dockerignore
 COPY . .
 
-# * Optional steps to test your app before building
-RUN bun test
+# [optional] tests & build
 ENV NODE_ENV=production
-# * You can call the build command here if you want to build your app
+RUN bun test
+RUN bun run build
 
-# Release
+# copy production dependencies and source code into final image
 FROM base AS release
-# * Copy only the packages requried for running the application, such as
-# * node_modules without dev dependencies to keep the image size minimal
 COPY --from=install /temp/prod/node_modules node_modules
-
-# * This will copy all the ts files to the root of the image, if you have a directory with your ts/js files
-# * You can copy the whole directory instead of each file
-# * COPY --from=prerelease /usr/src/app/DIR_NAME DIR_NAME
-# * If you do bot use the prerelease stage, remove the `--from=prerelease /usr/src/app/` as you can only copy them from the project files e.g. `COPY *.ts .`
-COPY --from=prerelease /usr/src/app/*.ts .
+COPY --from=prerelease /usr/src/app/index.ts .
 COPY --from=prerelease /usr/src/app/package.json .
 
-# * Is better to define a different user than root to run your app
+# run the app
 USER bun
-ENV NODE_ENV=production
-
-# * Expose the port your app is running on
 EXPOSE 3000/tcp
-
-# * Point to the file you want to run
 ENTRYPOINT [ "bun", "run", "index.ts" ]
 ```
 
@@ -73,7 +57,7 @@ ENTRYPOINT [ "bun", "run", "index.ts" ]
 
 Now that you have your docker image, let's look at `.dockerignore` which has the same syntax as `.gitignore`, here you need to specify the files/directories that must not go in any stage of the docker build. An example for a ignore file is
 
-```ignore#.dockerignore
+```txt#.dockerignore
 node_modules
 Dockerfile*
 docker-compose*
@@ -93,17 +77,64 @@ coverage*
 
 ---
 
-Now let's build the image, the first build will always take longer as Docker will have to download all the deps and bun image, the second build if there is no build or dependency changes, can take few seconds.
+We'll now use `docker build` to convert this `Dockerfile` into a _Docker image_, is a self-contained template containing all the dependencies and configuration required to run the application.
 
-The `latest` tag is where you put your version of the image, you can stay with latest or specify an exact version as `1.0.0`, Note that if you have 2 images with the same name and tag, the older one will have the name removed but still use space on your system
+The `-t` flag lets us specify a name for the image, and `--pull` tells Docker to automatically download the latest version of the base image (`oven/bun`). The initial build will take longer, as Docker will download all the base images and dependencies.
 
 ```bash
-$ docker build --pull --rm -f "Dockerfile" -t your-image-name:latest "."
-[+] Building 1.4s (19/19) FINISHED
+$ docker build --pull -t bun-hello-world .
+[+] Building 0.9s (21/21) FINISHED
+ => [internal] load build definition from Dockerfile                                                                                     0.0s
+ => => transferring dockerfile: 37B                                                                                                      0.0s
+ => [internal] load .dockerignore                                                                                                        0.0s
+ => => transferring context: 35B                                                                                                         0.0s
+ => [internal] load metadata for docker.io/oven/bun:1                                                                                    0.8s
+ => [auth] oven/bun:pull token for registry-1.docker.io                                                                                  0.0s
+ => [base 1/2] FROM docker.io/oven/bun:1@sha256:373265748d3cd3624cb3f3ee6004f45b1fc3edbd07a622aeeec17566d2756997                         0.0s
+ => [internal] load build context                                                                                                        0.0s
+ => => transferring context: 155B                                                                                                        0.0s
+ # ...lots of commands...
+ => exporting to image                                                                                                                   0.0s
+ => => exporting layers                                                                                                                  0.0s
+ => => writing image sha256:360663f7fdcd6f11e8e94761d5592e2e4dfc8d167f034f15cd5a863d5dc093c4                                             0.0s
+ => => naming to docker.io/library/bun-hello-world                                                                                       0.0s
 ```
 
 ---
 
-Now that you have builded your image, you can use docker desktop to create a container for the image and run the application, Note that in order to access the http/ws port, you need to specify the container port to point to the app port
+We've built a new _Docker image_. Now let's use that image to spin up an actual, running _container_.
 
-And that is it! Now with your docker image is not mandatory to create a docker container, you can also use Kubernetes, also known as K8s, which is an open-source system for automating deployment, scaling, and management of containerized applications.
+We'll use `docker run` to start a new container using the `bun-hello-world` image. It will be run in _detached_ mode (`-d`) and we'll map the container's port 3000 to our local machine's port 3000 (`-p 3000:3000`).
+
+The `run` command prints a string representing the _container ID_.
+
+```sh
+$ docker run -d -p 3000:3000 bun-hello-world
+7f03e212a15ede8644379bce11a13589f563d3909a9640446c5bbefce993678d
+```
+
+---
+
+The container is now running in the background. Visit [localhost:3000](http://localhost:3000). You should see a `Hello, World!` message.
+
+---
+
+To stop the container, we'll use `docker stop <container-id>`.
+
+```sh
+$ docker stop 7f03e212a15ede8644379bce11a13589f563d3909a9640446c5bbefce993678d
+```
+
+---
+
+If you can't find the container ID, you can use `docker ps` to list all running containers.
+
+```sh
+$ docker ps
+CONTAINER ID        IMAGE               COMMAND                  CREATED             STATUS              PORTS                    NAMES
+7f03e212a15e        bun-hello-world     "bun run index.ts"       2 minutes ago       Up 2 minutes        0.0.0.0:3000->3000/tcp   flamboyant_cerf
+```
+
+---
+
+That's it! Refer to the [Docker documentation](https://docs.docker.com/) for more advanced usage.

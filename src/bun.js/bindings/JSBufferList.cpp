@@ -118,8 +118,7 @@ JSC::JSValue JSBufferList::_getString(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
         RELEASE_AND_RETURN(throwScope, JSC::jsEmptyString(vm));
     }
 
-    auto iter = m_deque.begin();
-    JSC::JSString* str = JSC::jsDynamicCast<JSC::JSString*>(iter->get());
+    JSC::JSString* str = JSC::jsDynamicCast<JSC::JSString*>(m_deque.first().get());
     if (UNLIKELY(!str)) {
         return throwTypeError(lexicalGlobalObject, throwScope, "_getString can only be called when all buffers are string"_s);
     }
@@ -132,13 +131,14 @@ JSC::JSValue JSBufferList::_getString(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
     }
     if (n < len) {
         JSString* firstHalf = JSC::jsSubstring(lexicalGlobalObject, str, 0, n);
-        iter->set(vm, this, JSC::jsSubstring(lexicalGlobalObject, str, n, len - n));
+        m_deque.first().set(vm, this, JSC::jsSubstring(lexicalGlobalObject, str, n, len - n));
         RELEASE_AND_RETURN(throwScope, firstHalf);
     }
 
     JSRopeString::RopeBuilder<RecordOverflow> ropeBuilder(vm);
-    for (const auto end = m_deque.end(); iter != end; ++iter) {
-        JSC::JSString* str = JSC::jsDynamicCast<JSC::JSString*>(iter->get());
+    while (m_deque.size() > 0) {
+        auto& element = m_deque.first();
+        JSC::JSString* str = JSC::jsDynamicCast<JSC::JSString*>(element.get());
         if (UNLIKELY(!str)) {
             return throwTypeError(lexicalGlobalObject, throwScope, "_getString can only be called when all buffers are string"_s);
         }
@@ -147,7 +147,7 @@ JSC::JSValue JSBufferList::_getString(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
             JSString* firstHalf = JSC::jsSubstring(lexicalGlobalObject, str, 0, n);
             if (!ropeBuilder.append(firstHalf))
                 return throwOutOfMemoryError(lexicalGlobalObject, throwScope);
-            iter->set(vm, this, JSC::jsSubstring(lexicalGlobalObject, str, n, len - n));
+            element.set(vm, this, JSC::jsSubstring(lexicalGlobalObject, str, n, len - n));
             break;
         }
         if (!ropeBuilder.append(str))
@@ -169,8 +169,7 @@ JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
         RELEASE_AND_RETURN(throwScope, JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, 0));
     }
 
-    auto iter = m_deque.begin();
-    JSC::JSUint8Array* array = JSC::jsDynamicCast<JSC::JSUint8Array*>(iter->get());
+    JSC::JSUint8Array* array = JSC::jsDynamicCast<JSC::JSUint8Array*>(m_deque.first().get());
     if (UNLIKELY(!array)) {
         return throwTypeError(lexicalGlobalObject, throwScope, "_getBuffer can only be called when all buffers are Uint8Array"_s);
     }
@@ -185,7 +184,7 @@ JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
         auto buffer = array->possiblySharedBuffer();
         JSC::JSUint8Array* retArray = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, buffer, 0, n);
         JSC::JSUint8Array* newArray = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, buffer, n, len - n);
-        iter->set(vm, this, newArray);
+        m_deque.first().set(vm, this, newArray);
         RELEASE_AND_RETURN(throwScope, retArray);
     }
 
@@ -196,8 +195,9 @@ JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
     }
     JSC::JSUint8Array* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(arrayBuffer), 0, n);
     size_t offset = 0;
-    for (const auto end = m_deque.end(); iter != end; ++iter) {
-        JSC::JSUint8Array* array = JSC::jsDynamicCast<JSC::JSUint8Array*>(iter->get());
+    while (m_deque.size() > 0) {
+        auto& element = m_deque.first();
+        JSC::JSUint8Array* array = JSC::jsDynamicCast<JSC::JSUint8Array*>(element.get());
         if (UNLIKELY(!array)) {
             return throwTypeError(lexicalGlobalObject, throwScope, "_getBuffer can only be called when all buffers are Uint8Array"_s);
         }
@@ -208,7 +208,7 @@ JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
             }
             auto buffer = array->possiblySharedBuffer();
             JSC::JSUint8Array* newArray = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, buffer, n, len - n);
-            iter->set(vm, this, newArray);
+            element.set(vm, this, newArray);
             offset += n;
             break;
         }

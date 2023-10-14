@@ -49,6 +49,12 @@ $ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 16 all
 $ sudo pacman -S llvm clang lld
 ```
 
+```bash#Fedora
+$ sudo dnf install 'dnf-command(copr)'
+$ sudo dnf copr enable -y @fedora-llvm-team/llvm-snapshots
+$ sudo dnf install llvm clang lld
+```
+
 {% /codetabs %}
 
 If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-16.0.6).
@@ -98,6 +104,10 @@ $ sudo apt install cargo ccache cmake git golang libtool ninja-build pkg-config 
 $ sudo pacman -S base-devel ccache cmake esbuild git go libiconv libtool make ninja pkg-config python rust sed unzip
 ```
 
+```bash#Fedora
+$ sudo dnf install cargo ccache cmake git golang libtool ninja-build pkg-config rustc golang-github-evanw-esbuild libatomic-static libstdc++-static sed unzip
+```
+
 {% /codetabs %}
 
 {% details summary="Ubuntu — Unable to locate package esbuild" %}
@@ -120,11 +130,11 @@ Zig can be installed either with our npm package [`@oven/zig`](https://www.npmjs
 
 ```bash
 $ bun install -g @oven/zig
-$ zigup 0.12.0-dev.163+6780a6bbf
+$ zigup 0.12.0-dev.888+130227491
 ```
 
 {% callout %}
-We last updated Zig on **July 18th, 2023**
+We last updated Zig on **October 12th, 2023**
 {% /callout %}
 
 ## First Build
@@ -375,34 +385,12 @@ $ valgrind --fair-sched=try --track-origins=yes bun-debug <args>
 
 ## Updating `WebKit`
 
-The Bun team will occasionally bump the version of WebKit used in Bun. When this happens, you may see something like this with you run `git status`.
-
-```bash
-$ git status
-On branch my-branch
-Changes not staged for commit:
-  (use "git add <file>..." to update what will be committed)
-  (use "git restore <file>..." to discard changes in working directory)
-	modified:   src/bun.js/WebKit (new commits)
-```
-
-For performance reasons, `make submodule` does not automatically update the WebKit submodule. To update, run the following commands from the root of the Bun repo:
+The Bun team will occasionally bump the version of WebKit used in Bun. When this happens, you may see errors in `src/bun.js/bindings` during builds. When you see this, install the latest version of `bun-webkit` and re-compile.
 
 ```bash
 $ bun install
 $ make cpp
 ```
-
-<!-- Check the [Bun repo](https://github.com/oven-sh/bun/tree/main/src/bun.js) to get the hash of the commit of WebKit is currently being used.
-
-{% image width="270" src="https://github.com/oven-sh/bun/assets/3084745/51730b73-89ef-4358-9a41-9563a60a54be" /%} -->
-
-<!--
-```bash
-$ cd src/bun.js/WebKit
-$ git fetch
-$ git checkout <hash>
-``` -->
 
 ## Troubleshooting
 
@@ -463,7 +451,7 @@ If you see an error about `cmakeconfig.h` not being found, this is because the p
 $ bun install
 ```
 
-Check to see the command installed webkit, and you can manully look for `node_modules/bun-webkit-{platform}-{arch}`:
+Check to see the command installed webkit, and you can manually look for `node_modules/bun-webkit-{platform}-{arch}`:
 
 ```bash
 # this should reveal two directories. if not, something went wrong

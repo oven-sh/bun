@@ -23,6 +23,8 @@
       "url": ["node_modules/url"],
       "util": ["node_modules/util"],
       "zlib": ["node_modules/browserify-zlib"]
-    }
+    },
+    "noEmit": true,
+    "allowJs": true
   }
 }

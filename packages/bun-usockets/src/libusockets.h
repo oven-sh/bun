@@ -132,7 +132,7 @@ struct us_timer_t *us_create_timer(struct us_loop_t *loop, int fallthrough, unsi
 void *us_timer_ext(struct us_timer_t *timer);
 
 /* */
-void us_timer_close(struct us_timer_t *timer);
+void us_timer_close(struct us_timer_t *timer, int fallthrough);
 
 /* Arm a timer with a delay from now and eventually a repeat delay.
  * Specify 0 as repeat delay to disable repeating. Specify both 0 to disarm. */
@@ -391,6 +391,7 @@ struct us_socket_t *us_socket_wrap_with_tls(int ssl, struct us_socket_t *s, stru
 int us_socket_raw_write(int ssl, struct us_socket_t *s, const char *data, int length, int msg_more);
 struct us_socket_t* us_socket_open(int ssl, struct us_socket_t * s, int is_client, char* ip, int ip_length);
 int us_raw_root_certs(struct us_cert_string_t**out);
+unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, const char **dest, int *port, int *is_ipv6);
 
 #ifdef __cplusplus
 }

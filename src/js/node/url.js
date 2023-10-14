@@ -370,7 +370,8 @@ Url.prototype.parse = function (url, parseQueryString, slashesDenoteHost) {
     this.search = rest.substr(qm);
     this.query = rest.substr(qm + 1);
     if (parseQueryString) {
-      this.query = new URLSearchParams(this.query);
+      const query = this.query;
+      this.query = new URLSearchParams(query).toJSON();
     }
     rest = rest.slice(0, qm);
   } else if (parseQueryString) {

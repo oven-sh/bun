@@ -72,6 +72,7 @@ using namespace JSC;
     macro(createInternalModuleById) \
     macro(createNativeReadableStream) \
     macro(createReadableStream) \
+    macro(createUsedReadableStream) \
     macro(createUninitializedArrayBuffer) \
     macro(createWritableStreamFromInternal) \
     macro(cwd) \

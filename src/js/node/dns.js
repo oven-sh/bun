@@ -1,5 +1,5 @@
 // Hardcoded module "node:dns"
-// only resolve4, resolve, lookup, resolve6 and resolveSrv are implemented.
+// only resolve4, resolve, lookup, resolve6, resolveSrv, and reverse are implemented.
 const dns = Bun.dns;
 
 function getServers() {

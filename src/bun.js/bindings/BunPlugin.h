@@ -15,6 +15,8 @@ using namespace JSC;
 
 class BunPlugin {
 public:
+    using VirtualModuleMap = WTF::HashMap<String, JSC::Strong<JSC::JSObject>>;
+
     // This is a list of pairs of regexps and functions to match against
     class Group {
 
@@ -67,7 +69,15 @@ public:
         {
         }
 
-        EncodedJSValue run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path);
+        VirtualModuleMap* virtualModules = nullptr;
+        JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path);
+
+        ~OnLoad()
+        {
+            if (virtualModules) {
+                delete virtualModules;
+            }
+        }
     };
 
     class OnResolve final : public Base {
@@ -78,8 +88,14 @@ public:
         {
         }
 
-        EncodedJSValue run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path, BunString* importer);
+        JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path, BunString* importer);
     };
 };
 
+class GlobalObject;
+
 } // namespace Zig
+
+namespace Bun {
+JSC::JSValue runVirtualModule(Zig::GlobalObject*, BunString* specifier);
+}

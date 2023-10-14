@@ -30,7 +30,7 @@ void Bun__internal_dispatch_ready_poll(void* loop, void* poll);
 #include <stdint.h>
 #endif
 
-void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs);
+void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs, void*);
 
 /* Pointer tags are used to indicate a Bun pointer versus a uSockets pointer */
 #define UNSET_BITS_49_UNTIL_64 0x0000FFFFFFFFFFFF
@@ -174,12 +174,19 @@ void us_loop_run(struct us_loop_t *loop) {
     }
 }
 
+void bun_on_tick_before(void* ctx);
+void bun_on_tick_after(void* ctx);
 
-void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs) {
+
+void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs, void* tickCallbackContext) {
     us_loop_integrate(loop);
 
     if (loop->num_polls == 0)
         return;
+
+    if (tickCallbackContext) {
+        bun_on_tick_before(tickCallbackContext);
+    }
 
     /* Emit pre callback */
     us_internal_loop_pre(loop);
@@ -201,6 +208,10 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs) {
         loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, NULL);
     }
 #endif
+
+    if (tickCallbackContext) {
+        bun_on_tick_after(tickCallbackContext);
+    }
 
     /* Iterate ready polls, dispatching them by type */
     for (loop->current_ready_poll = 0; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {
@@ -403,14 +414,18 @@ struct us_timer_t *us_create_timer(struct us_loop_t *loop, int fallthrough, unsi
 #endif
 
 #ifdef LIBUS_USE_EPOLL
-void us_timer_close(struct us_timer_t *timer) {
+void us_timer_close(struct us_timer_t *timer, int fallthrough) {
     struct us_internal_callback_t *cb = (struct us_internal_callback_t *) timer;
 
     us_poll_stop(&cb->p, cb->loop);
     close(us_poll_fd(&cb->p));
 
-    /* (regular) sockets are the only polls which are not freed immediately */
-    us_poll_free((struct us_poll_t *) timer, cb->loop);
+     /* (regular) sockets are the only polls which are not freed immediately */
+    if(fallthrough){
+        us_free(timer);
+    }else {
+        us_poll_free((struct us_poll_t *) timer, cb->loop);
+    }
 }
 
 void us_timer_set(struct us_timer_t *t, void (*cb)(struct us_timer_t *t), int ms, int repeat_ms) {
@@ -427,7 +442,7 @@ void us_timer_set(struct us_timer_t *t, void (*cb)(struct us_timer_t *t), int ms
     us_poll_start((struct us_poll_t *) t, internal_cb->loop, LIBUS_SOCKET_READABLE);
 }
 #else
-void us_timer_close(struct us_timer_t *timer) {
+void us_timer_close(struct us_timer_t *timer, int fallthrough) {
     struct us_internal_callback_t *internal_cb = (struct us_internal_callback_t *) timer;
 
     struct kevent64_s event;
@@ -435,7 +450,11 @@ void us_timer_close(struct us_timer_t *timer) {
     kevent64(internal_cb->loop->fd, &event, 1, NULL, 0, 0, NULL);
 
     /* (regular) sockets are the only polls which are not freed immediately */
-    us_poll_free((struct us_poll_t *) timer, internal_cb->loop);
+    if(fallthrough){
+        us_free(timer);
+    }else {
+        us_poll_free((struct us_poll_t *) timer, internal_cb->loop);
+    }
 }
 
 void us_timer_set(struct us_timer_t *t, void (*cb)(struct us_timer_t *t), int ms, int repeat_ms) {

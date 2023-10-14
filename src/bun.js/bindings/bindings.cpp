@@ -2169,6 +2169,14 @@ JSC__JSValue ReadableStream__empty(Zig::GlobalObject* globalObject)
     return JSValue::encode(JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s));
 }
 
+JSC__JSValue ReadableStream__used(Zig::GlobalObject* globalObject)
+{
+    auto& vm = globalObject->vm();
+    auto clientData = WebCore::clientData(vm);
+    auto* function = globalObject->getDirect(vm, clientData->builtinNames().createUsedReadableStreamPrivateName()).getObject();
+    return JSValue::encode(JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s));
+}
+
 JSC__JSValue JSC__JSValue__createRangeError(const ZigString* message, const ZigString* arg1,
     JSC__JSGlobalObject* globalObject)
 {
@@ -4534,6 +4542,14 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0
         globalObject->m_asyncContextData.get()->getInternalField(0),
         JSC::JSValue::decode(JSValue3),
         JSC::JSValue::decode(JSValue4));
+}
+
+extern "C" WebCore::AbortSignal* WebCore__AbortSignal__new(JSC__JSGlobalObject* globalObject)
+{
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(globalObject);
+    auto* context = thisObject->scriptExecutionContext();
+    RefPtr<WebCore::AbortSignal> abortSignal = WebCore::AbortSignal::create(context);
+    return abortSignal.leakRef();
 }
 
 extern "C" JSC__JSValue WebCore__AbortSignal__create(JSC__JSGlobalObject* globalObject)

@@ -465,7 +465,7 @@ JSValue fetchCommonJSModule(
         }
     }
 
-    if (JSC::JSValue virtualModuleResult = JSValue::decode(Bun__runVirtualModule(globalObject, specifier))) {
+    if (JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier)) {
         JSPromise* promise = jsCast<JSPromise*>(handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, specifier, referrer));
         switch (promise->status(vm)) {
         case JSPromise::Status::Rejected: {
@@ -640,7 +640,7 @@ static JSValue fetchESMSourceCode(
         }
     }
 
-    if (JSC::JSValue virtualModuleResult = JSValue::decode(Bun__runVirtualModule(globalObject, specifier))) {
+    if (JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier)) {
         return handleVirtualModuleResult<allowPromise>(globalObject, virtualModuleResult, res, specifier, referrer);
     }
 

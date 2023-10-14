@@ -1541,7 +1541,6 @@ pub const VirtualMachine = struct {
 
     fn normalizeSpecifierForResolution(specifier_: []const u8, query_string: *[]const u8) []const u8 {
         var specifier = specifier_;
-        if (strings.hasPrefixComptime(specifier, "file://")) specifier = specifier["file://".len..];
 
         if (strings.indexOfChar(specifier, '?')) |i| {
             query_string.* = specifier[i..];

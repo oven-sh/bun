@@ -2,7 +2,7 @@ name: bun-release
 concurrency: release
 env:
   BUN_VERSION: ${{ github.event.inputs.tag || github.event.release.tag_name || 'canary' }}
-  BUN_LATEST: ${{ github.event.inputs.is-latest || github.event.release.prerelease == 'false' }}
+  BUN_LATEST: ${{ (github.event.inputs.is-latest || github.event.release.tag_name) && 'true' || 'false' }}
 on:
   release:
     types:
@@ -116,9 +116,26 @@ jobs:
           bun-version: latest
       - name: Install Dependencies
         run: bun install
+      - name: Setup Tag
+        if: ${{ env.BUN_VERSION == 'canary' }}
+        run: |
+          VERSION=$(bun --version)
+          TAG="${VERSION}-canary.$(date +'%Y%m%dT%H%M%S')"
+          echo "Setup tag: ${TAG}"
+          echo "TAG=${TAG}" >> ${GITHUB_ENV}
       - name: Build
         run: bun run build
-      - name: Release
+        env:
+          BUN_VERSION: ${{ env.TAG || env.BUN_VERSION }}
+      - name: Release (canary)
+        if: ${{ env.BUN_VERSION == 'canary' }}
+        uses: JS-DevTools/npm-publish@v1
+        with:
+          package: packages/bun-types/dist/package.json
+          token: ${{ secrets.NPM_TOKEN }}
+          tag: canary
+      - name: Release (latest)
+        if: ${{ env.BUN_LATEST == 'true' }}
         uses: JS-DevTools/npm-publish@v1
         with:
           package: packages/bun-types/dist/package.json

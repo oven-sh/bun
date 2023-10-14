@@ -191,9 +191,6 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 #include "DOMJITHelpers.h"
 #include <JavaScriptCore/DFGAbstractHeap.h>
 
-#include "webcrypto/JSCryptoKey.h"
-#include "webcrypto/JSSubtleCrypto.h"
-
 #include "JSDOMFormData.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructor.h"
@@ -206,6 +203,7 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 #include "JSDOMConvertStrings.h"
 #include "JSDOMConvertUnion.h"
 #include "AddEventListenerOptions.h"
+#include "JSSocketAddress.h"
 
 #include "ErrorStackTrace.h"
 #include "CallSite.h"
@@ -216,6 +214,9 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 #include <wtf/text/Base64.h>
 #include "simdutf.h"
 #include "libusockets.h"
+#include "KeyObject.h"
+#include "webcrypto/JSCryptoKey.h"
+#include "webcrypto/JSSubtleCrypto.h"
 
 constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 
@@ -1758,6 +1759,41 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
         if (string == "events"_s) {
             return JSValue::encode(WebCore::JSEventEmitter::getConstructor(vm, globalObject));
         }
+
+        if (string == "internal/crypto"_s) {
+            // auto sourceOrigin = callFrame->callerSourceOrigin(vm).url();
+            // bool isBuiltin = sourceOrigin.protocolIs("builtin"_s);
+            // if (!isBuiltin) {
+            //     return JSC::JSValue::encode(JSC::jsUndefined());
+            // }
+            auto* obj = constructEmptyObject(globalObject);
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "symmetricKeySize"_s)), JSC::JSFunction::create(vm, globalObject, 1, "symmetricKeySize"_s, KeyObject__SymmetricKeySize, ImplementationVisibility::Public, NoIntrinsic), 0);
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "asymmetricKeyType"_s)), JSC::JSFunction::create(vm, globalObject, 1, "asymmetricKeyType"_s, KeyObject__AsymmetricKeyType, ImplementationVisibility::Public, NoIntrinsic), 0);
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "asymmetricKeyDetails"_s)), JSC::JSFunction::create(vm, globalObject, 1, "asymmetricKeyDetails"_s, KeyObject_AsymmetricKeyDetails, ImplementationVisibility::Public, NoIntrinsic), 0);
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "equals"_s)), JSC::JSFunction::create(vm, globalObject, 2, "equals"_s, KeyObject__Equals, ImplementationVisibility::Public, NoIntrinsic), 0);
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "exports"_s)), JSC::JSFunction::create(vm, globalObject, 2, "exports"_s, KeyObject__Exports, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createSecretKey"_s)), JSC::JSFunction::create(vm, globalObject, 1, "createSecretKey"_s, KeyObject__createSecretKey, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createPublicKey"_s)), JSC::JSFunction::create(vm, globalObject, 1, "createPublicKey"_s, KeyObject__createPublicKey, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createPrivateKey"_s)), JSC::JSFunction::create(vm, globalObject, 1, "createPrivateKey"_s, KeyObject__createPrivateKey, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+            obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "generateKeySync"_s)), JSC::JSFunction::create(vm, globalObject, 2, "generateKeySync"_s, KeyObject__generateKeySync, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+            obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "generateKeyPairSync"_s)), JSC::JSFunction::create(vm, globalObject, 2, "generateKeyPairSync"_s, KeyObject__generateKeyPairSync, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+            return JSValue::encode(obj);
+        }
+
         if (string == "internal/tls"_s) {
             auto* obj = constructEmptyObject(globalObject);
 
@@ -2877,6 +2913,11 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(structure);
         });
 
+    m_JSSocketAddressStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(JSSocketAddress::createStructure(init.vm, init.owner));
+        });
+
     // Change prototype from null to object for synthetic modules.
     m_moduleNamespaceObjectStructure.initLater(
         [](const Initializer<Structure>& init) {
@@ -3188,6 +3229,14 @@ void GlobalObject::finishCreation(VM& vm)
             init.setPrototype(prototype);
             init.setStructure(structure);
             init.setConstructor(constructor);
+        });
+
+    m_JSCryptoKey.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
+            Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(init.owner);
+            auto* prototype = JSCryptoKey::createPrototype(init.vm, *globalObject);
+            auto* structure = JSCryptoKey::createStructure(init.vm, init.owner, JSValue(prototype));
+            init.set(structure);
         });
 
     m_JSHTTPSResponseSinkClassStructure.initLater(
@@ -3660,6 +3709,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 
     putDirectBuiltinFunction(vm, this, builtinNames.createFIFOPrivateName(), streamInternalsCreateFIFOCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.createEmptyReadableStreamPrivateName(), readableStreamCreateEmptyReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    putDirectBuiltinFunction(vm, this, builtinNames.createUsedReadableStreamPrivateName(), readableStreamCreateUsedReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.consumeReadableStreamPrivateName(), readableStreamConsumeReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.createNativeReadableStreamPrivateName(), readableStreamCreateNativeReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.requireESMPrivateName(), importMetaObjectRequireESMCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
@@ -3833,6 +3883,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_callSiteStructure.visit(visitor);
     thisObject->m_emitReadableNextTickFunction.visit(visitor);
     thisObject->m_JSBufferSubclassStructure.visit(visitor);
+    thisObject->m_JSCryptoKey.visit(visitor);
+
     thisObject->m_cryptoObject.visit(visitor);
     thisObject->m_JSDOMFileConstructor.visit(visitor);
 
@@ -3850,6 +3902,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_commonJSModuleObjectStructure.visit(visitor);
     thisObject->m_memoryFootprintStructure.visit(visitor);
     thisObject->m_commonJSFunctionArgumentsStructure.visit(visitor);
+    thisObject->m_JSSocketAddressStructure.visit(visitor);
     thisObject->m_cachedGlobalObjectStructure.visit(visitor);
     thisObject->m_cachedGlobalProxyStructure.visit(visitor);
 
@@ -4021,16 +4074,45 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* g
     globalObject->queueMicrotask(function, JSValue(bitwise_cast<double>(reinterpret_cast<uintptr_t>(ptr))), JSValue(bitwise_cast<double>(reinterpret_cast<uintptr_t>(callback))), jsUndefined(), jsUndefined());
 }
 
-JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject,
+JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,
     JSModuleLoader* loader, JSValue key,
     JSValue referrer, JSValue origin)
 {
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(jsGlobalObject);
+
     ErrorableString res;
     res.success = false;
-    BunString keyZ = Bun::toString(globalObject, key);
-    BunString referrerZ = referrer && !referrer.isUndefinedOrNull() && referrer.isString() ? Bun::toString(globalObject, referrer) : BunStringEmpty;
+
+    if (key.isString()) {
+        if (auto* virtualModules = globalObject->onLoadPlugins.virtualModules) {
+            auto keyString = key.toWTFString(globalObject);
+            if (virtualModules->contains(keyString)) {
+                return JSC::Identifier::fromString(globalObject->vm(), keyString);
+            }
+        }
+    }
+
+    BunString keyZ;
+    if (key.isString()) {
+        auto moduleName = jsCast<JSString*>(key)->value(globalObject);
+        if (moduleName.startsWith("file://"_s)) {
+            auto url = WTF::URL(moduleName);
+            if (url.isValid() && !url.isEmpty()) {
+                keyZ = Bun::toStringRef(url.fileSystemPath());
+            } else {
+                keyZ = Bun::toStringRef(moduleName);
+            }
+        } else {
+            keyZ = Bun::toStringRef(moduleName);
+        }
+    } else {
+        keyZ = Bun::toStringRef(globalObject, key);
+    }
+    BunString referrerZ = referrer && !referrer.isUndefinedOrNull() && referrer.isString() ? Bun::toStringRef(globalObject, referrer) : BunStringEmpty;
     ZigString queryString = { 0, 0 };
     Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ, &queryString);
+    keyZ.deref();
+    referrerZ.deref();
 
     if (res.success) {
         if (queryString.len > 0) {
@@ -4045,25 +4127,60 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject,
     }
 }
 
-JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* globalObject,
+JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,
     JSModuleLoader*,
     JSString* moduleNameValue,
     JSValue parameters,
     const SourceOrigin& sourceOrigin)
 {
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(jsGlobalObject);
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* promise = JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
     RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
 
+    if (auto* virtualModules = globalObject->onLoadPlugins.virtualModules) {
+        auto keyString = moduleNameValue->value(globalObject);
+        if (virtualModules->contains(keyString)) {
+            auto resolvedIdentifier = JSC::Identifier::fromString(vm, keyString);
+
+            auto result = JSC::importModule(globalObject, resolvedIdentifier,
+                JSC::jsUndefined(), parameters, JSC::jsUndefined());
+
+            RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
+            return result;
+        }
+    }
+
     auto sourceURL = sourceOrigin.url();
     ErrorableString resolved;
-    auto moduleNameZ = Bun::toString(globalObject, moduleNameValue);
-    auto sourceOriginZ = sourceURL.isEmpty() ? BunStringCwd : Bun::toString(sourceURL.fileSystemPath());
+    BunString moduleNameZ;
+
+    auto moduleName = moduleNameValue->value(globalObject);
+#if BUN_DEBUG
+    auto startRefCount = moduleName.impl()->refCount();
+#endif
+    if (moduleName.startsWith("file://"_s)) {
+        auto url = WTF::URL(moduleName);
+        if (url.isValid() && !url.isEmpty()) {
+            moduleNameZ = Bun::toStringRef(url.fileSystemPath());
+        } else {
+            moduleNameZ = Bun::toStringRef(moduleName);
+        }
+    } else {
+        moduleNameZ = Bun::toStringRef(moduleName);
+    }
+    auto sourceOriginZ = sourceURL.isEmpty() ? BunStringCwd : Bun::toStringRef(sourceURL.fileSystemPath());
     ZigString queryString = { 0, 0 };
     resolved.success = false;
     Zig__GlobalObject__resolve(&resolved, globalObject, &moduleNameZ, &sourceOriginZ, &queryString);
+    moduleNameZ.deref();
+    sourceOriginZ.deref();
+#if BUN_DEBUG
+    // TODO: ASSERT doesnt work right now
+    RELEASE_ASSERT(startRefCount == moduleName.impl()->refCount());
+#endif
     if (!resolved.success) {
         throwException(scope, resolved.result.err, globalObject);
         return promise->rejectWithCaughtException(globalObject, scope);

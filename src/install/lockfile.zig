@@ -2743,18 +2743,6 @@ pub const Package = extern struct {
                     const dep_version = string_builder.appendWithHash(String, version_string_.slice(string_buf), version_string_.hash);
                     const sliced = dep_version.sliced(lockfile.buffers.string_bytes.items);
 
-                    const tag: ?Dependency.Version.Tag = brk: {
-                        if (lockfile.workspace_versions.get(key.hash)) |workspace_version| {
-                            var query_group = try Semver.Query.parse(allocator, dep_version.slice(string_buf), sliced);
-                            defer query_group.deinit();
-                            if (query_group.satisfies(workspace_version)) {
-                                break :brk .workspace;
-                            }
-                        }
-
-                        break :brk null;
-                    };
-
                     const dependency = Dependency{
                         .name = name.value,
                         .name_hash = name.hash,
@@ -2762,11 +2750,10 @@ pub const Package = extern struct {
                             group.behavior.setOptional(package_version.optional_peer_dependencies_len > i)
                         else
                             group.behavior,
-                        .version = Dependency.parseWithOptionalTag(
+                        .version = Dependency.parse(
                             allocator,
                             name.value,
                             sliced.slice,
-                            tag,
                             &sliced,
                             log,
                         ) orelse Dependency.Version{},

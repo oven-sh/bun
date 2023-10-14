@@ -1040,7 +1040,10 @@ pub const Blob = struct {
                     break :brk result;
                 },
                 .err => |err| {
-                    return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                    return JSC.JSPromise.rejectedPromiseValue(
+                        globalThis,
+                        err.withPath(pathlike.path.slice()).toJSC(globalThis),
+                    );
                 },
             }
             unreachable;
@@ -1080,8 +1083,13 @@ pub const Blob = struct {
                             needs_async.* = true;
                             return .zero;
                         }
-
-                        return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                        if (comptime !needs_open) {
+                            return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                        }
+                        return JSC.JSPromise.rejectedPromiseValue(
+                            globalThis,
+                            err.withPath(pathlike.path.slice()).toJSC(globalThis),
+                        );
                     },
                 }
             }
@@ -1110,7 +1118,10 @@ pub const Blob = struct {
                     break :brk result;
                 },
                 .err => |err| {
-                    return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                    return JSC.JSPromise.rejectedPromiseValue(
+                        globalThis,
+                        err.withPath(pathlike.path.slice()).toJSC(globalThis),
+                    );
                 },
             }
             unreachable;
@@ -1145,7 +1156,13 @@ pub const Blob = struct {
                         needs_async.* = true;
                         return .zero;
                     }
-                    return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                    if (comptime !needs_open) {
+                        return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                    }
+                    return JSC.JSPromise.rejectedPromiseValue(
+                        globalThis,
+                        err.withPath(pathlike.path.slice()).toJSC(globalThis),
+                    );
                 },
             }
         }
@@ -2289,7 +2306,7 @@ pub const Blob = struct {
                                 this.source_fd = 0;
                             }
 
-                            this.system_error = errno.toSystemError();
+                            this.system_error = errno.withPath(this.destination_file_store.pathlike.path.slice()).toSystemError();
                             return AsyncIO.asError(errno.errno);
                         },
                     };

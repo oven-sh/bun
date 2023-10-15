@@ -199,29 +199,29 @@ namespace uWS
 
     private:
         std::string fallback;
-        /* This guy really has only 30 bits since we reserve two highest bits to chunked encoding parsing state */
-        unsigned int remainingStreamingBytes = 0;
+        /* This guy really has only 62 bits since we reserve two highest bits to chunked encoding parsing state */
+        std::uint64_t remainingStreamingBytes = 0;
 
         const size_t MAX_FALLBACK_SIZE = 1024 * 4;
 
-        /* Returns UINT_MAX on error. Maximum 999999999 is allowed. */
-        static unsigned int toUnsignedInteger(std::string_view str)
+        /* Returns UINT64_MAX on error. Maximum 999999999999999999 is allowed. */
+        static std::uint64_t toUnsignedInteger(std::string_view str)
         {
-            /* We assume at least 32-bit integer giving us safely 999999999 (9 number of 9s) */
-            if (str.length() > 9)
+            /* We assume 999999999999999999 (18 number of 9s) */
+            if (str.length() > 18)
             {
-                return UINT_MAX;
+                return UINT64_MAX;
             }
 
-            unsigned int unsignedIntegerValue = 0;
+            uint64_t unsignedIntegerValue = 0;
             for (char c : str)
             {
                 /* As long as the letter is 0-9 we cannot overflow. */
                 if (c < '0' || c > '9')
                 {
-                    return UINT_MAX;
+                    return UINT64_MAX;
                 }
-                unsignedIntegerValue = unsignedIntegerValue * 10u + ((unsigned int)c - (unsigned int)'0');
+                unsignedIntegerValue = unsignedIntegerValue * 10ull + ((uint64_t)c - (uint64_t)'0');
             }
             return unsignedIntegerValue;
         }
@@ -474,7 +474,7 @@ namespace uWS
          * or [consumed, nullptr] for "break; I am closed or upgraded to websocket"
          * or [whatever, fullptr] for "break and close me, I am a parser error!" */
         template <int CONSUME_MINIMALLY>
-        std::pair<unsigned int, void *> fenceAndConsumePostPadded(char *data, unsigned int length, void *user, void *reserved, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler)
+        std::pair<uint64_t, void *> fenceAndConsumePostPadded(char *data, uint64_t length, void *user, void *reserved, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler)
         {
 
             /* How much data we CONSUMED (to throw away) */
@@ -574,16 +574,16 @@ namespace uWS
                         {
                             return {0, FULLPTR};
                         }
-                        unsigned int consumed = (length - (unsigned int)dataToConsume.length());
+                        uint64_t consumed = (length - (uint64_t)dataToConsume.length());
                         data = (char *)dataToConsume.data();
-                        length = (unsigned int)dataToConsume.length();
+                        length = (uint64_t)dataToConsume.length();
                         consumedTotal += consumed;
                     }
                 }
                 else if (contentLengthString.length())
                 {
                     remainingStreamingBytes = toUnsignedInteger(contentLengthString);
-                    if (remainingStreamingBytes == UINT_MAX)
+                    if (remainingStreamingBytes == UINT16_MAX)
                     {
                         /* Parser error */
                         return {0, FULLPTR};
@@ -591,7 +591,7 @@ namespace uWS
 
                     if (!CONSUME_MINIMALLY)
                     {
-                        unsigned int emittable = std::min<unsigned int>(remainingStreamingBytes, length);
+                        uint64_t emittable = std::min<uint64_t>(remainingStreamingBytes, length);
                         dataHandler(user, std::string_view(data, emittable), emittable == remainingStreamingBytes);
                         remainingStreamingBytes -= emittable;
 
@@ -616,7 +616,7 @@ namespace uWS
         }
 
     public:
-        void *consumePostPadded(char *data, unsigned int length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler, MoveOnlyFunction<void *(void *)> &&errorHandler)
+        void *consumePostPadded(char *data, uint64_t length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler, MoveOnlyFunction<void *(void *)> &&errorHandler)
         {
             /* This resets BloomFilter by construction, but later we also reset it again.
              * Optimize this to skip resetting twice (req could be made global) */
@@ -638,7 +638,7 @@ namespace uWS
                         return FULLPTR;
                     }
                     data = (char *)dataToConsume.data();
-                    length = (unsigned int)dataToConsume.length();
+                    length = (uint64_t)dataToConsume.length();
                 }
                 else
                 {
@@ -688,7 +688,7 @@ namespace uWS
                 fallback.append(data, maxCopyDistance);
 
                 // break here on break
-                std::pair<unsigned int, void *> consumed = fenceAndConsumePostPadded<true>(fallback.data(), (unsigned int)fallback.length(), user, reserved, &req, requestHandler, dataHandler);
+                std::pair<uint64_t, void *> consumed = fenceAndConsumePostPadded<true>(fallback.data(), (unsigned int)fallback.length(), user, reserved, &req, requestHandler, dataHandler);
                 if (consumed.second != user)
                 {
                     return consumed.second;
@@ -759,7 +759,7 @@ namespace uWS
                 }
             }
 
-            std::pair<unsigned int, void *> consumed = fenceAndConsumePostPadded<false>(data, length, user, reserved, &req, requestHandler, dataHandler);
+            std::pair<uint64_t, void *> consumed = fenceAndConsumePostPadded<false>(data, length, user, reserved, &req, requestHandler, dataHandler);
             if (consumed.second != user)
             {
                 return consumed.second;

@@ -10,7 +10,7 @@ const { MessageChannel, BroadcastChannel, Worker: WebWorker } = globalThis;
 const SHARE_ENV = Symbol("nodejs.worker_threads.SHARE_ENV");
 
 const isMainThread = Bun.isMainThread;
-let { workerData, threadId, _receiveMessageOnPort } = $lazy("worker_threads");
+let [_workerData, _threadId, _receiveMessageOnPort] = $lazy("worker_threads");
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 
@@ -100,6 +100,8 @@ const MessagePort = _MessagePort;
 
 let resourceLimits = {};
 
+let workerData = _workerData;
+let threadId = _threadId;
 function receiveMessageOnPort(port: MessagePort) {
   let res = _receiveMessageOnPort(port);
   if (!res) return undefined;
@@ -223,7 +225,7 @@ class Worker extends EventEmitter {
   }
 
   threadId() {
-    return threadId;
+    return _threadId;
   }
 
   ref() {

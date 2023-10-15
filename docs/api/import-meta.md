@@ -19,7 +19,7 @@ import.meta.resolveSync("zod")
 ---
 
 - `import.meta.dir`
-- Absolute path to the directory containing the current file, e.g. `/path/to/project`. Equivalent to `__dirname` in CommonJS modules (and Node.js)
+- Absolute path to the current working directory of the bun process containing the current file, e.g. `/path/to/project`. Equivalent to `__dirname` in CommonJS modules (and Node.js)
 
 ---
 

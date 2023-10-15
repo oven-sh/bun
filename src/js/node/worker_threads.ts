@@ -10,7 +10,7 @@ const { MessageChannel, BroadcastChannel, Worker: WebWorker } = globalThis;
 const SHARE_ENV = Symbol("nodejs.worker_threads.SHARE_ENV");
 
 const isMainThread = Bun.isMainThread;
-let [workerData, threadId, _receiveMessageOnPort] = $lazy("worker_threads");
+const { workerData, threadId, _receiveMessageOnPort } = $lazy("worker_threads");
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 
@@ -170,7 +170,7 @@ function fakeParentPort() {
 
   return fake;
 }
-let parentPort: MessagePort | null = isMainThread ? null : fakeParentPort();
+const parentPort: MessagePort | null = isMainThread ? null : fakeParentPort();
 
 function getEnvironmentData() {
   return process.env;
@@ -220,6 +220,10 @@ class Worker extends EventEmitter {
     this.#worker.addEventListener("message", this.#onMessage.bind(this));
     this.#worker.addEventListener("messageerror", this.#onMessageError.bind(this));
     this.#worker.addEventListener("open", this.#onOpen.bind(this));
+  }
+
+  threadId() {
+    return threadId;
   }
 
   ref() {

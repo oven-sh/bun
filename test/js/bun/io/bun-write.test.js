@@ -80,6 +80,31 @@ it("Bun.file not found returns ENOENT", async () => {
   await gcTick();
 });
 
+it("Bun.write file not found returns ENOENT, issue#6336", async () => {
+  const dst = Bun.file(path.join(tmpdir(), "does/not/exist.txt"));
+  try {
+    await gcTick();
+    await Bun.write(dst, "");
+    await gcTick();
+  } catch (exception) {
+    expect(exception.code).toBe("ENOENT");
+    expect(exception.path).toBe(dst.name);
+  }
+
+  const src = Bun.file(path.join(tmpdir(), `test-bun-write-${Date.now()}.txt`));
+  await Bun.write(src, "");
+  try {
+    await gcTick();
+    await Bun.write(dst, src);
+    await gcTick();
+  } catch (exception) {
+    expect(exception.code).toBe("ENOENT");
+    expect(exception.path).toBe(dst.name);
+  } finally {
+    fs.unlinkSync(src.name);
+  }
+});
+
 it("Bun.write('out.txt', 'string')", async () => {
   for (let erase of [true, false]) {
     if (erase) {

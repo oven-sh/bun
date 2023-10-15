@@ -10,7 +10,7 @@ const { MessageChannel, BroadcastChannel, Worker: WebWorker } = globalThis;
 const SHARE_ENV = Symbol("nodejs.worker_threads.SHARE_ENV");
 
 const isMainThread = Bun.isMainThread;
-let [_workerData, _threadId, _receiveMessageOnPort] = $lazy("worker_threads");
+let [workerData, threadId, _receiveMessageOnPort] = $lazy("worker_threads");
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 
@@ -53,8 +53,6 @@ function injectFakeEmitter(Class) {
       }
     }
   }
-
-  Class.prototype.threadId = _threadId;
 
   Class.prototype.on = function (event, listener) {
     this.addEventListener(event, functionForEventType(event, listener));
@@ -102,8 +100,6 @@ const MessagePort = _MessagePort;
 
 let resourceLimits = {};
 
-let workerData = _workerData;
-let threadId = _threadId;
 function receiveMessageOnPort(port: MessagePort) {
   let res = _receiveMessageOnPort(port);
   if (!res) return undefined;

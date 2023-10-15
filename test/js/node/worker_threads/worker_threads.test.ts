@@ -87,7 +87,7 @@ test("all worker_threads worker instance properties are present", () => {
   expect(worker).toHaveProperty("rawListeners");
   expect(worker).toHaveProperty("listenerCount");
   expect(worker).toHaveProperty("eventNames");
-})
+});
 
 test("receiveMessageOnPort works across threads", () => {
   const { port1, port2 } = new MessageChannel();

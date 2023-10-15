@@ -5344,14 +5344,15 @@ pub const CallFrame = opaque {
         var ptr = self.argumentsPtr();
         return switch (@as(u4, @min(len, max))) {
             0 => .{ .ptr = undefined, .len = 0 },
-            4 => Arguments(max).init(comptime @min(4, max), ptr),
-            2 => Arguments(max).init(comptime @min(2, max), ptr),
-            6 => Arguments(max).init(comptime @min(6, max), ptr),
-            3 => Arguments(max).init(comptime @min(3, max), ptr),
-            8 => Arguments(max).init(comptime @min(8, max), ptr),
-            5 => Arguments(max).init(comptime @min(5, max), ptr),
             1 => Arguments(max).init(comptime @min(1, max), ptr),
+            2 => Arguments(max).init(comptime @min(2, max), ptr),
+            3 => Arguments(max).init(comptime @min(3, max), ptr),
+            4 => Arguments(max).init(comptime @min(4, max), ptr),
+            5 => Arguments(max).init(comptime @min(5, max), ptr),
+            6 => Arguments(max).init(comptime @min(6, max), ptr),
             7 => Arguments(max).init(comptime @min(7, max), ptr),
+            8 => Arguments(max).init(comptime @min(8, max), ptr),
+            9 => Arguments(max).init(comptime @min(9, max), ptr),
             else => unreachable,
         };
     }

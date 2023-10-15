@@ -111,21 +111,21 @@ class Query extends PublicPromise {
 
   then() {
     this[_run]();
-    return super.then(...arguments);
+    return super.$then.$apply(this, arguments);
   }
 
   catch() {
     this[_run]();
-    return super.catch(...arguments);
+    return super.$catch.$apply(this, arguments);
   }
 
   finally() {
     this[_run]();
-    return super.finally(...arguments);
+    return super.$finally.$apply(this, arguments);
   }
 }
-Object.defineProperty(Query.prototype, Symbol.species, { value: PublicPromise });
-Object.defineProperty(Query.prototype, Symbol.toStringTag, { value: "Query" });
+Object.defineProperty(Query, Symbol.species, { value: PublicPromise });
+Object.defineProperty(Query, Symbol.toStringTag, { value: "Query" });
 init(Query.prototype.resolve, Query.prototype.reject);
 
 function createConnection({ hostname, port, username, password, tls, query, database }, onConnected, onClose) {
@@ -199,6 +199,8 @@ function loadOptions(o) {
   password ||= o.password || o.pass || env.PGPASSWORD || "";
   tls ||= o.tls || o.ssl;
   adapter ||= o.adapter || "postgres";
+
+  port = Number(port);
 
   if (!Number.isSafeInteger(port) || port < 1 || port > 65535) {
     throw new Error(`Invalid port: ${port}`);

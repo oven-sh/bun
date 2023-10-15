@@ -724,10 +724,17 @@ pub const AnySocket = union(enum) {
         );
 
         if (comptime Environment.allow_assert) {
-            debug("us_socket_write({d}) = {d}", .{ this.getNativeHandle(), data.len, result });
+            debug("us_socket_write({any}, {d}) = {d}", .{ this.getNativeHandle(), data.len, result });
         }
 
         return result;
+    }
+
+    pub fn getNativeHandle(this: AnySocket) ?*anyopaque {
+        return us_socket_get_native_handle(
+            @intFromBool(this.isSSL()),
+            this.socket(),
+        ).?;
     }
 
     pub fn rawWrite(this: AnySocket, data: []const u8, msg_more: bool) i32 {

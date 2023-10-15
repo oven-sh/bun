@@ -41,13 +41,13 @@ pub const InitCommand = struct {
     fn prompt(
         alloc: std.mem.Allocator,
         comptime label: string,
-        default: []const u8,
+        default: string,
+        hide_default: bool,
         _: bool,
     ) ![]const u8 {
-        Output.pretty(label, .{});
-        if (default.len > 0) {
-            Output.pretty("<d>({s}):<r> ", .{default});
-        }
+        Output.pretty(label ++ "<d>{s}:<r> ", .{
+            if (default.len == 0 or hide_default) "" else try std.mem.concat(alloc, u8, &.{ " (", default, ")" }),
+        });
 
         Output.flush();
 
@@ -93,9 +93,16 @@ pub const InitCommand = struct {
 
     const PackageJSONFields = struct {
         name: string = "project",
-        type: string = "module",
-        object: *js_ast.E.Object = undefined,
+        version: string = "1.0.0",
+        description: string = "A bun project.",
         entry_point: string = "",
+        type: string = "module",
+        test_command: string = "echo \"Error: no test specified\" && exit 1",
+        git_repository: string = "",
+        keywords: string = "",
+        author: string = "",
+        license: string = "ISC",
+        object: *js_ast.E.Object = undefined,
     };
 
     pub fn exec(alloc: std.mem.Allocator, argv: [][*:0]u8) !void {
@@ -227,14 +234,65 @@ pub const InitCommand = struct {
 
                 fields.name = try normalizePackageName(alloc, try prompt(
                     alloc,
-                    "<r><cyan>package name<r> ",
+                    "<r><cyan>package name<r>",
                     fields.name,
+                    false,
                     Output.enable_ansi_colors_stdout,
                 ));
+                fields.version = try prompt(
+                    alloc,
+                    "<r><cyan>version<r>",
+                    fields.version,
+                    false,
+                    Output.enable_ansi_colors_stdout,
+                );
+                fields.description = try prompt(
+                    alloc,
+                    "<r><cyan>description<r>",
+                    fields.description,
+                    true,
+                    Output.enable_ansi_colors_stdout,
+                );
                 fields.entry_point = try prompt(
                     alloc,
-                    "<r><cyan>entry point<r> ",
+                    "<r><cyan>entry point<r>",
                     fields.entry_point,
+                    false,
+                    Output.enable_ansi_colors_stdout,
+                );
+                fields.test_command = try prompt(
+                    alloc,
+                    "<r><cyan>test command<r>",
+                    fields.test_command,
+                    true,
+                    Output.enable_ansi_colors_stdout,
+                );
+                fields.git_repository = try prompt(
+                    alloc,
+                    "<r><cyan>git repository<r>",
+                    fields.git_repository,
+                    false,
+                    Output.enable_ansi_colors_stdout,
+                );
+                fields.keywords = try prompt(
+                    alloc,
+                    "<r><cyan>keywords<r>",
+                    fields.keywords,
+                    false,
+                    Output.enable_ansi_colors_stdout,
+                );
+                fields.author = try prompt(
+                    alloc,
+                    "<r><cyan>author<r>",
+                    fields.author,
+                    false,
+                    Output.enable_ansi_colors_stdout,
+                );
+                fields.license = try prompt(
+                    alloc,
+                    "<r><cyan>license<r>",
+                    fields.license,
+                    false,
                     Output.enable_ansi_colors_stdout,
                 );
                 try Output.writer().writeAll("\n");
@@ -271,6 +329,8 @@ pub const InitCommand = struct {
 
         {
             try fields.object.putString(alloc, "name", fields.name);
+            try fields.object.putString(alloc, "version", fields.version);
+            try fields.object.putString(alloc, "description", fields.description);
             if (fields.entry_point.len > 0) {
                 if (fields.object.hasProperty("module")) {
                     try fields.object.putString(alloc, "module", fields.entry_point);
@@ -282,6 +342,40 @@ pub const InitCommand = struct {
                     try fields.object.putString(alloc, "type", "module");
                 }
             }
+
+            var scripts_obj = js_ast.Expr.init(js_ast.E.Object, js_ast.E.Object{}, logger.Loc.Empty);
+            try scripts_obj.data.e_object.putString(alloc, "test", fields.test_command);
+            try fields.object.put(alloc, "scripts", scripts_obj);
+
+            if (fields.git_repository.len > 0) {
+                var repository_obj = js_ast.Expr.init(js_ast.E.Object, js_ast.E.Object{}, logger.Loc.Empty);
+                try repository_obj.data.e_object.putString(alloc, "type", "git");
+                try repository_obj.data.e_object.putString(alloc, "url", try std.mem.concat(alloc, u8, &.{ "git+", fields.git_repository, ".git" }));
+                try fields.object.put(alloc, "repository", repository_obj);
+
+                var bugs_obj = js_ast.Expr.init(js_ast.E.Object, js_ast.E.Object{}, logger.Loc.Empty);
+                try bugs_obj.data.e_object.putString(alloc, "url", try std.mem.concat(alloc, u8, &.{ fields.git_repository, "/issues" }));
+                try fields.object.put(alloc, "bugs", bugs_obj);
+
+                try fields.object.putString(alloc, "homepage", try std.mem.concat(alloc, u8, &.{ fields.git_repository, "#readme" }));
+            }
+
+            if (fields.keywords.len > 0) {
+                var keywords_arr = js_ast.Expr.init(js_ast.E.Array, js_ast.E.Array{}, logger.Loc.Empty);
+                var tokenizer = std.mem.tokenizeScalar(u8, fields.keywords, ' ');
+                while (tokenizer.next()) |keyword| {
+                    var str = js_ast.Expr.init(js_ast.E.String, js_ast.E.String{}, logger.Loc.Empty);
+                    str.data.e_string.data = keyword;
+                    try keywords_arr.data.e_array.push(alloc, str);
+                }
+                try fields.object.put(alloc, "keywords", keywords_arr);
+            }
+
+            if (fields.author.len > 0) {
+                try fields.object.putString(alloc, "author", fields.author);
+            }
+
+            try fields.object.putString(alloc, "license", fields.license);
 
             const needs_dev_dependencies = brk: {
                 if (fields.object.get("devDependencies")) |deps| {

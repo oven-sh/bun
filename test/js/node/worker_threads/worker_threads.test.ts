@@ -42,7 +42,7 @@ test("all worker_threads module properties are present", () => {
   expect(resourceLimits).toBeDefined();
   expect(SHARE_ENV).toBeDefined();
   expect(setEnvironmentData).toBeDefined();
-  expect(threadId).toBeDefined();
+  expect(threadId).toBeNumber();
   expect(workerData).toBeUndefined();
   expect(BroadcastChannel).toBeDefined();
   expect(MessageChannel).toBeDefined();
@@ -87,6 +87,32 @@ test("all worker_threads worker instance properties are present", () => {
   expect(worker).toHaveProperty("rawListeners");
   expect(worker).toHaveProperty("listenerCount");
   expect(worker).toHaveProperty("eventNames");
+
+  expect(worker.threadId).toBeNumber();
+  expect(worker.ref).toBeFunction();
+  expect(worker.unref).toBeFunction();
+  expect(worker.stdin).toBeNull();
+  expect(worker.stdout).toBeNull();
+  expect(worker.stderr).toBeNull();
+  expect(worker.performance).toBeUndefined();
+  expect(worker.terminate).toBeFunction();
+  expect(worker.postMessage).toBeFunction();
+  expect(worker.getHeapSnapshot).toBeFunction();
+  expect(worker.setMaxListeners).toBeFunction();
+  expect(worker.getMaxListeners).toBeFunction();
+  expect(worker.emit).toBeFunction();
+  expect(worker.addListener).toBeFunction();
+  expect(worker.on).toBeFunction();
+  expect(worker.prependListener).toBeFunction();
+  expect(worker.once).toBeFunction();
+  expect(worker.prependOnceListener).toBeFunction();
+  expect(worker.removeListener).toBeFunction();
+  expect(worker.off).toBeFunction();
+  expect(worker.removeAllListeners).toBeFunction();
+  expect(worker.listeners).toBeFunction();
+  expect(worker.rawListeners).toBeFunction();
+  expect(worker.listenerCount).toBeFunction();
+  expect(worker.eventNames).toBeFunction();
 });
 
 test("receiveMessageOnPort works across threads", () => {

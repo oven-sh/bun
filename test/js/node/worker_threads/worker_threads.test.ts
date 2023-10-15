@@ -16,7 +16,7 @@ import {
   MessagePort,
   Worker,
 } from "worker_threads";
-test("all properties are present", () => {
+test("all worker_threads module properties are present", () => {
   expect(wt).toHaveProperty("getEnvironmentData");
   expect(wt).toHaveProperty("isMainThread");
   expect(wt).toHaveProperty("markAsUntransferable");
@@ -60,9 +60,38 @@ test("all properties are present", () => {
   }).toThrow("not yet implemented");
 });
 
+test("all worker_threads worker instance properties are present", () => {
+  const worker = new Worker(new URL("./worker.js", import.meta.url).href);
+  expect(worker).toHaveProperty("threadId");
+  expect(worker).toHaveProperty("ref");
+  expect(worker).toHaveProperty("unref");
+  expect(worker).toHaveProperty("stdin");
+  expect(worker).toHaveProperty("stdout");
+  expect(worker).toHaveProperty("stderr");
+  expect(worker).toHaveProperty("performance");
+  expect(worker).toHaveProperty("terminate");
+  expect(worker).toHaveProperty("postMessage");
+  expect(worker).toHaveProperty("getHeapSnapshot");
+  expect(worker).toHaveProperty("setMaxListeners");
+  expect(worker).toHaveProperty("getMaxListeners");
+  expect(worker).toHaveProperty("emit");
+  expect(worker).toHaveProperty("addListener");
+  expect(worker).toHaveProperty("on");
+  expect(worker).toHaveProperty("prependListener");
+  expect(worker).toHaveProperty("once");
+  expect(worker).toHaveProperty("prependOnceListener");
+  expect(worker).toHaveProperty("removeListener");
+  expect(worker).toHaveProperty("off");
+  expect(worker).toHaveProperty("removeAllListeners");
+  expect(worker).toHaveProperty("listeners");
+  expect(worker).toHaveProperty("rawListeners");
+  expect(worker).toHaveProperty("listenerCount");
+  expect(worker).toHaveProperty("eventNames");
+})
+
 test("receiveMessageOnPort works across threads", () => {
   const { port1, port2 } = new MessageChannel();
-  var worker = new wt.Worker(new URL("./worker.js", import.meta.url).href, {
+  const worker = new Worker(new URL("./worker.js", import.meta.url).href, {
     workerData: port2,
     transferList: [port2],
   });
@@ -77,7 +106,7 @@ test("receiveMessageOnPort works across threads", () => {
 });
 
 test("receiveMessageOnPort works with FIFO", () => {
-  const { port1, port2 } = new wt.MessageChannel();
+  const { port1, port2 } = new MessageChannel();
 
   const message1 = { hello: "world" };
   const message2 = { foo: "bar" };

@@ -54,6 +54,8 @@ function injectFakeEmitter(Class) {
     }
   }
 
+  Class.prototype.threadId = _threadId;
+
   Class.prototype.on = function (event, listener) {
     this.addEventListener(event, functionForEventType(event, listener));
 
@@ -261,7 +263,7 @@ class Worker extends EventEmitter {
   }
 
   terminate() {
-    var onExitPromise = this.#onExitPromise;
+    const onExitPromise = this.#onExitPromise;
     if (onExitPromise) {
       return $isPromise(onExitPromise) ? onExitPromise : Promise.resolve(onExitPromise);
     }

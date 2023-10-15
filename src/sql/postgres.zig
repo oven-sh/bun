@@ -61,6 +61,59 @@ pub const protocol = struct {
         pub const Writer = NewWriter(@This());
     };
 
+    pub const StackReader = struct {
+        buffer: []const u8 = "",
+        offset: *usize,
+        message_start: *usize,
+
+        pub fn markMessageStart(this: @This()) void {
+            this.message_start.* = this.offset.*;
+        }
+
+        pub fn init(buffer: []const u8, offset: *usize, message_start: *usize) protocol.NewReader(StackReader) {
+            return .{
+                .wrapped = .{
+                    .buffer = buffer,
+                    .offset = offset,
+                    .message_start = message_start,
+                },
+            };
+        }
+
+        pub fn peek(this: StackReader) []const u8 {
+            return this.buffer[this.offset.*..];
+        }
+        pub fn skip(this: StackReader, count: usize) void {
+            if (this.offset.* + count > this.buffer.len) {
+                this.offset.* = this.buffer.len;
+                return;
+            }
+
+            this.offset.* += count;
+        }
+        pub fn ensureCapacity(this: StackReader, count: usize) bool {
+            return this.buffer.len > (this.offset.* + count);
+        }
+        pub fn read(this: StackReader, count: usize) anyerror!Data {
+            const offset = this.offset.*;
+            this.skip(count);
+            return Data{
+                .temporary = this.buffer[offset .. offset + count],
+            };
+        }
+        pub fn readZ(this: StackReader) anyerror!Data {
+            const remaining = this.peek();
+            if (bun.strings.indexOfChar(remaining, 0)) |zero| {
+                this.skip(zero + 1);
+                return Data{
+                    .temporary = remaining[0..zero],
+                };
+            }
+
+            return error.ShortRead;
+        }
+    };
+
     pub fn NewWriterWrap(
         comptime Context: type,
         comptime offsetFn_: (fn (ctx: Context) usize),
@@ -266,17 +319,27 @@ pub const protocol = struct {
 
     pub fn NewReaderWrap(
         comptime Context: type,
+        comptime markMessageStartFn_: (fn (ctx: Context) void),
+        comptime peekFn_: (fn (ctx: Context) []const u8),
+        comptime skipFn_: (fn (ctx: Context, count: usize) void),
         comptime ensureCapacityFn_: (fn (ctx: Context, count: usize) bool),
         comptime readFunction_: (fn (ctx: Context, count: usize) anyerror!Data),
-        comptime readZ_: (fn (ctx: Context, count: usize) anyerror!Data),
+        comptime readZ_: (fn (ctx: Context) anyerror!Data),
     ) type {
         return struct {
             wrapped: Context,
             const readFn = readFunction_;
             const readZFn = readZ_;
             const ensureCapacityFn = ensureCapacityFn_;
+            const skipFn = skipFn_;
+            const peekFn = peekFn_;
+            const markMessageStartFn = markMessageStartFn_;
 
             pub const Ctx = Context;
+
+            pub inline fn markMessageStart(this: @This()) void {
+                markMessageStartFn(this.wrapped);
+            }
 
             pub inline fn read(this: @This(), count: usize) anyerror!Data {
                 return try readFn(this.wrapped, count);
@@ -290,8 +353,11 @@ pub const protocol = struct {
             }
 
             pub fn skip(this: @This(), count: usize) anyerror!void {
-                var input = try readFn(this.wrapped, count);
-                input.deinit();
+                skipFn(this.wrapped, count);
+            }
+
+            pub fn peek(this: @This()) []const u8 {
+                return peekFn(this.wrapped);
             }
 
             pub inline fn readZ(this: @This()) anyerror!Data {
@@ -308,6 +374,14 @@ pub const protocol = struct {
                 var data = try this.read(@sizeOf((Int)));
                 defer data.deinit();
                 return @byteSwap(@as(Int, data.slice()[0..@sizeOf(Int)].*));
+            }
+
+            pub fn peekInt(this: @This(), comptime Int: type) ?Int {
+                const remain = this.peek();
+                if (remain.len < @sizeOf((Int))) {
+                    return null;
+                }
+                return @byteSwap(@as(Int, remain.slice()[0..@sizeOf(Int)].*));
             }
 
             pub fn expectInt(this: @This(), comptime Int: type, comptime value: comptime_int) !bool {
@@ -343,7 +417,7 @@ pub const protocol = struct {
     }
 
     pub fn NewReader(comptime Context: type) type {
-        return NewReaderWrap(Context, Context.ensureReadCapacity, Context.readData, Context.readDataZ);
+        return NewReaderWrap(Context, Context.markMessageStart, Context.skip, Context.peek, Context.ensureLength, Context.read, Context.readZ);
     }
 
     pub fn NewWriter(comptime Context: type) type {
@@ -1617,6 +1691,9 @@ pub const PostgresSQLQuery = struct {
 
         connection.flushData();
 
+        connection.requests.writeItem(this) catch {};
+        this.ref();
+
         return .undefined;
     }
 
@@ -1818,7 +1895,9 @@ pub const PostgresRequest = struct {
         comptime Context: type,
         reader: protocol.NewReader(Context),
     ) !void {
-        while (!reader.isEmpty()) {
+        while (true) {
+            reader.markMessageStart();
+
             switch (try reader.int(u8)) {
                 'D' => try connection.on(.DataRow, Context, reader),
                 'd' => try connection.on(.CopyData, Context, reader),
@@ -1857,10 +1936,11 @@ pub const PostgresRequest = struct {
 pub const PostgresSQLConnection = struct {
     socket: Socket,
     status: Status = Status.connecting,
-    ref_count: u32 = 0,
+    ref_count: u32 = 1,
 
     write_buffer: bun.OffsetByteList = .{},
-    read_buffer: bun.ByteList = .{},
+    read_buffer: bun.OffsetByteList = .{},
+    last_message_start: u32 = 0,
     requests: PostgresRequest.Queue,
 
     poll_ref: bun.JSC.PollRef = .{},
@@ -1877,6 +1957,15 @@ pub const PostgresSQLConnection = struct {
 
     pending_disconnect: bool = false,
 
+    on_connect: JSC.Strong = .{},
+    on_close: JSC.Strong = .{},
+
+    database: []const u8 = "",
+    user: []const u8 = "",
+    password: []const u8 = "",
+    options: []const u8 = "",
+    options_buf: []const u8 = "",
+
     pub const Status = enum {
         disconnected,
         connecting,
@@ -1891,24 +1980,247 @@ pub const PostgresSQLConnection = struct {
         return this.has_pending_activity.load(.Acquire);
     }
 
+    fn updateHasPendingActivity(this: *PostgresSQLConnection) void {
+        @fence(.Release);
+        this.has_pending_activity.store(this.requests.readableLength() > 0 or this.status == .connecting, .Release);
+    }
+
     pub fn setStatus(this: *PostgresSQLConnection, status: Status) void {
+        defer this.updateHasPendingActivity();
+
+        if (this.status == status) return;
+
         this.status = status;
+        switch (status) {
+            .connected => {
+                const on_connect = this.on_connect.swap();
+                if (on_connect == .zero) return;
+                on_connect.callWithThis(
+                    this.globalObject,
+                    this.js_value,
+                    &[_]JSC.JSValue{
+                        this.js_value,
+                    },
+                );
+            },
+            else => {},
+        }
     }
 
     pub fn finalize(this: *PostgresSQLConnection) callconv(.C) void {
+        this.js_value = .zero;
         this.deref();
     }
 
     pub fn flushData(this: *PostgresSQLConnection) void {
-        const wrote = this.socket.write(this.write_buffer.slice(), false);
+        const chunk = this.write_buffer.remaining();
+        if (chunk.len == 0) return;
+        const wrote = this.socket.write(chunk, false);
         if (wrote > 0) {
             this.write_buffer.consume(@intCast(wrote));
         }
     }
 
+    pub fn fail(this: *PostgresSQLConnection, message: []const u8, err: anyerror) void {
+        defer this.updateHasPendingActivity();
+        if (this.status == .failed) return;
+        debug("failed: {s}: {s}", .{ message, err });
+
+        this.status = .failed;
+        if (!this.socket.isClosed()) this.socket.close();
+        const on_close = this.on_close.swap();
+        if (on_close == .zero) return;
+        const instance = this.globalObject.createErrorInstance("{s}", .{message});
+        instance.put(this.globalObject, &JSC.ZigString.init("code"), bun.String.init(@errorName(err)));
+        on_close.callWithThis(
+            this.globalObject,
+            this.js_value,
+            &[_]JSC.JSValue{
+                instance,
+            },
+        );
+    }
+
+    pub fn onClose(this: *PostgresSQLConnection) void {
+        this.fail("Connection closed", error.ConnectionClosed);
+    }
+
+    pub fn onOpen(this: *PostgresSQLConnection, socket: uws.AnySocket) void {
+        this.socket = socket;
+
+        this.poll_ref.ref(this.globalObject.bunVM());
+
+        var msg = protocol.StartupMessage{ .user = Data{ .temporary = this.user }, .database = Data{ .temporary = this.database }, .options = Data{ .temporary = this.options } };
+        msg.writeInternal(Writer, this.writer()) catch |err| {
+            socket.close();
+            this.fail("Failed to write startup message", err);
+        };
+    }
+
+    pub fn onTimeout(this: *PostgresSQLConnection) void {
+        _ = this;
+        debug("onTimeout", .{});
+    }
+
+    pub fn onDrain(this: *PostgresSQLConnection) void {
+        this.flushData();
+    }
+
+    pub fn onData(this: *PostgresSQLConnection, data: []const u8) void {
+        if (this.read_buffer.remaining().len == 0) {
+            var consumed: usize = 0;
+            var offset: usize = 0;
+            const reader = protocol.StackReader.init(data, &consumed, &offset);
+            PostgresRequest.onData(this, protocol.StackReader, reader) catch |err| {
+                if (err == error.ShortRead) {
+                    this.read_buffer.head = 0;
+                    this.read_buffer.byte_list.len = 0;
+                    this.read_buffer.write(bun.default_allocator, data[offset..]) catch @panic("failed to write to read buffer");
+                } else {
+                    this.fail("Failed to read data", err);
+                }
+            };
+            return;
+        }
+
+        {
+            this.read_buffer.write(bun.default_allocator, data) catch @panic("failed to write to read buffer");
+            PostgresRequest.onData(this, Reader, this.bufferedReader()) catch |err| {
+                if (err != error.ShortRead) {
+                    this.fail("Failed to read data", err);
+                }
+                return;
+            };
+            this.last_message_start = 0;
+        }
+    }
+
     pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) ?*PostgresSQLConnection {
-        _ = callframe;
-        _ = globalObject;
+        var vm = globalObject.bunVM();
+        const arguments = callframe.arguments(9).slice();
+        const hostname_str = arguments[0].toBunString(globalObject);
+        const port = arguments[1].coerce(i32, globalObject);
+
+        const username_str = arguments[2].toBunString(globalObject);
+        const password_str = arguments[3].toBunString(globalObject);
+        const database_str = arguments[4].toBunString(globalObject);
+        const tls_object = arguments[5];
+        var username: []const u8 = "";
+        var password: []const u8 = "";
+        var database: []const u8 = "";
+        var options: []const u8 = "";
+
+        const options_str = arguments[6].toBunString(globalObject);
+
+        const options_buf: []u8 = brk: {
+            var b = bun.StringBuilder{};
+            b.cap += username_str.utf8ByteLength() + 1 + password_str.utf8ByteLength() + 1 + database_str.utf8ByteLength() + 1 + options_str.utf8ByteLength() + 1;
+
+            b.allocate(bun.default_allocator) catch {};
+            var u = username_str.toUTF8WithoutRef(bun.default_allocator);
+            defer u.deinit();
+            username = b.append(u.slice());
+
+            var p = password_str.toUTF8WithoutRef(bun.default_allocator);
+            defer p.deinit();
+            password = b.append(p.slice());
+
+            var d = database_str.toUTF8WithoutRef(bun.default_allocator);
+            defer d.deinit();
+            database = b.append(d.slice());
+
+            var o = options_str.toUTF8WithoutRef(bun.default_allocator);
+            defer o.deinit();
+            options = b.append(o.slice());
+
+            break :brk b.allocatedSlice();
+        };
+
+        const on_connect = arguments[7];
+        const on_close = arguments[8];
+        var ptr = bun.default_allocator.create(PostgresSQLConnection) catch |err| {
+            globalObject.throwError(err, "failed to allocate connection");
+            return null;
+        };
+
+        ptr.* = PostgresSQLConnection{
+            .globalObject = globalObject,
+            .on_connect = JSC.Strong.create(on_connect, globalObject),
+            .on_close = JSC.Strong.create(on_close, globalObject),
+            .database = database,
+            .user = username,
+            .password = password,
+            .options = options,
+            .options_buf = options_buf,
+            .socket = undefined,
+        };
+
+        ptr.socket = socket: {
+            const hostname = hostname_str.toUTF8(bun.default_allocator);
+            defer hostname.deinit();
+            if (tls_object.isEmptyOrUndefinedOrNull()) {
+                var ctx = vm.rareData().postgresql_context.tcp orelse brk: {
+                    var ctx_ = uws.us_create_bun_socket_context(0, vm.event_loop_handle, @sizeOf(*PostgresSQLConnection), uws.us_bun_socket_context_options_t{}).?;
+                    uws.NewSocketHandler(false).configure(ctx_, false, *PostgresSQLConnection, SocketHandler(false));
+                    vm.rareData().postgresql_context.tcp = ctx_;
+                    break :brk ctx_;
+                };
+                break :socket Socket{
+                    .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, *PostgresSQLConnection, ptr) orelse {
+                        globalObject.throwError(error.ConnectionFailed, "failed to connect to postgresql");
+                        ptr.deinit();
+                        return .zero;
+                    },
+                };
+            } else {
+                // TODO:
+                globalObject.throwTODO("TLS is not supported yet");
+                ptr.deinit();
+                return .zero;
+            }
+        };
+
+        return ptr;
+    }
+
+    fn SocketHandler(comptime ssl: bool) type {
+        return struct {
+            const SocketType = uws.NewSocketHandler(ssl);
+            fn _socket(s: SocketType) Socket {
+                if (comptime ssl) {
+                    return Socket{ .SocketTLS = s };
+                }
+
+                return Socket{ .Socket = s };
+            }
+            pub fn onOpen(this: *PostgresSQLConnection, socket: SocketType) void {
+                this.onOpen(_socket(socket));
+            }
+
+            pub fn onClose(this: *PostgresSQLConnection, socket: SocketType, _: i32, _: ?*anyopaque) void {
+                this.onClose(_socket(socket));
+            }
+
+            pub fn onEnd(this: *PostgresSQLConnection, socket: SocketType) void {
+                this.onClose(_socket(socket));
+            }
+
+            pub fn onConnectError(this: *PostgresSQLConnection, socket: SocketType, _: i32) void {
+                this.onClose(_socket(socket));
+            }
+
+            pub fn onTimeout(this: *PostgresSQLConnection, socket: SocketType) void {
+                this.onTimeout(_socket(socket));
+            }
+
+            pub fn onData(this: *PostgresSQLConnection, socket: SocketType, data: []const u8) void {
+                this.onData(_socket(socket), data);
+            }
+
+            pub fn onWritable(this: *PostgresSQLConnection, socket: SocketType) void {
+                this.onDrain(_socket(socket));
+            }
+        };
     }
 
     pub fn ref(this: *@This()) void {
@@ -1918,10 +2230,12 @@ pub const PostgresSQLConnection = struct {
 
     pub fn doRef(this: *@This(), _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) void {
         this.poll_ref.ref(this.globalObject.bunVM());
+        this.updateHasPendingActivity();
     }
 
     pub fn doUnref(this: *@This(), _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) void {
         this.poll_ref.unref(this.globalObject.bunVM());
+        this.updateHasPendingActivity();
     }
 
     pub fn deref(this: *@This()) void {
@@ -1944,9 +2258,14 @@ pub const PostgresSQLConnection = struct {
         var iter = this.statements.valueIterator();
         while (iter.next()) |stmt| {
             stmt.connection = null;
+            stmt.deref();
         }
         this.statements.deinit(bun.default_allocator);
         this.write_buffer.deinit(bun.default_allocator);
+        this.read_buffer.deinit(bun.default_allocator);
+        this.on_close.deinit();
+        this.on_connect.deinit();
+        bun.default_allocator.free(this.options_buf);
         bun.default_allocator.destroy(this);
     }
 
@@ -1964,12 +2283,6 @@ pub const PostgresSQLConnection = struct {
         }
 
         return this.requests.peekItem(0);
-    }
-
-    fn advance(this: *PostgresSQLConnection) void {
-        if (this.requests.readItem()) |query| {
-            query.deref();
-        }
     }
 
     pub const Writer = struct {
@@ -1990,8 +2303,57 @@ pub const PostgresSQLConnection = struct {
     };
 
     pub fn writer(this: *PostgresSQLConnection) protocol.NewWriter(Writer) {
-        return Writer{
-            .connection = this,
+        return .{
+            .wrapped = .{
+                .connection = this,
+            },
+        };
+    }
+
+    pub const Reader = struct {
+        connection: *PostgresSQLConnection,
+
+        pub fn markMessageStart(this: Reader) void {
+            this.last_message_start = this.connection.read_buffer.head;
+        }
+
+        pub fn peek(this: Reader) []const u8 {
+            return this.connection.read_buffer.remaining();
+        }
+        pub fn skip(this: Reader, count: usize) void {
+            this.connection.read_buffer.head = @min(this.connection.read_buffer.head + @as(u32, @truncate(count)), this.connection.read_buffer.len());
+        }
+        pub fn ensureCapacity(this: Reader, count: usize) bool {
+            return this.connection.read_buffer.head + count <= this.connection.read_buffer.len();
+        }
+        pub fn read(this: Reader, count: usize) anyerror!Data {
+            var remaining = this.connection.read_buffer.remaining();
+            if (@as(usize, remaining.len) < count) {
+                return error.ShortRead;
+            }
+
+            this.skip(count);
+            return Data{
+                .temporary = remaining[0..count],
+            };
+        }
+        pub fn readZ(this: Reader) anyerror!Data {
+            const remain = this.connection.read_buffer.remaining();
+
+            if (bun.strings.indexOfChar(remain, 0)) |zero| {
+                this.skip(zero + 1);
+                return Data{
+                    .temporary = remain[0..zero],
+                };
+            }
+
+            return error.ShortRead;
+        }
+    };
+
+    pub fn bufferedReader(this: *PostgresSQLConnection) protocol.NewReader(Reader) {
+        return .{
+            .wrapped = .{ .connection = this },
         };
     }
 
@@ -2107,14 +2469,7 @@ pub const PostgresSQLConnection = struct {
                 this.setStatus(.connected);
                 this.is_ready_for_query = true;
 
-                var query = this.current() orelse return;
-
-                switch (query.status) {
-                    .pending => {
-                        try query.drain(this, this.globalObject);
-                    },
-                    else => {},
-                }
+                this.flushData();
             },
             .CommandComplete => {
                 var request = this.current() orelse return error.ExpectedRequest;

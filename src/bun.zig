@@ -465,6 +465,10 @@ pub const OffsetByteList = struct {
         return this.byte_list.slice()[0..this.head];
     }
 
+    pub fn remaining(this: *OffsetByteList) []u8 {
+        return this.byte_list.slice()[this.head..];
+    }
+
     pub fn consume(self: *OffsetByteList, bytes: u32) void {
         self.head +|= bytes;
         if (self.head >= self.byte_list.len) {
@@ -473,7 +477,7 @@ pub const OffsetByteList = struct {
         }
     }
 
-    pub fn len(self: *OffsetByteList) u32 {
+    pub fn len(self: *const OffsetByteList) u32 {
         return self.byte_list.len - self.head;
     }
 

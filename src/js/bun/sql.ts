@@ -129,8 +129,18 @@ Object.defineProperty(Query.prototype, Symbol.species, { value: PublicPromise })
 Object.defineProperty(Query.prototype, Symbol.toStringTag, { value: "Query" });
 init(Query.prototype.resolve, Query.prototype.reject);
 
-function createConnection({ hostname, port, username, password, tls, query }, onConnected, onClose) {
-  return new PostgresSQLConnection(hostname, port, username, password, tls, query, onConnected, onClose);
+function createConnection({ hostname, port, username, password, tls, query, database }, onConnected, onClose) {
+  return new PostgresSQLConnection(
+    hostname,
+    Number(port),
+    username || "",
+    password || "",
+    database || "",
+    tls || null,
+    query || "",
+    onConnected,
+    onClose,
+  );
 }
 
 function normalizeStrings(strings) {

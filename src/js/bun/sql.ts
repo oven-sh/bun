@@ -252,7 +252,7 @@ function SQL(o) {
   }
 
   function connectedSQL(strings, values) {
-    return new Query(connection.query(normalizeStrings(strings), values), closedConnectionHandler);
+    return new Query(new PostgresSQLQuery(normalizeStrings(strings), values), closedConnectionHandler);
   }
 
   function closedSQL(strings, values) {

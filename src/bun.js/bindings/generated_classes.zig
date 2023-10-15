@@ -4449,6 +4449,28 @@ pub const JSPostgresSQLQuery = struct {
         return result;
     }
 
+    extern fn PostgresSQLQueryPrototype__bindingSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn PostgresSQLQueryPrototype__bindingGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `PostgresSQLQuery.binding` setter
+    /// This value will be visited by the garbage collector.
+    pub fn bindingSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        PostgresSQLQueryPrototype__bindingSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `PostgresSQLQuery.binding` getter
+    /// This value will be visited by the garbage collector.
+    pub fn bindingGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = PostgresSQLQueryPrototype__bindingGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
     /// Get the PostgresSQLQuery constructor value.
     /// This loads lazily from the global object.
     pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {

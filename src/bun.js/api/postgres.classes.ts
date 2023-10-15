@@ -54,7 +54,7 @@ export default [
         length: 0,
       },
     },
-    values: ["pendingValue"],
+    values: ["pendingValue", "binding"],
     estimatedSize: true,
   }),
 ];

@@ -1937,6 +1937,7 @@ public:
     DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
     mutable JSC::WriteBarrier<JSC::Unknown> m_pendingValue;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_binding;
 };
 
 class JSRequest final : public JSC::JSDestructibleObject {

@@ -214,6 +214,14 @@ pub const protocol = struct {
         L: String,
         R: String,
 
+        pub fn deinit(this: *FieldMessage) void {
+            switch (this) {
+                inline else => |message| {
+                    message.deref();
+                },
+            }
+        }
+
         pub fn decodeList(comptime Context: type, reader: NewReader(Context)) !std.ArrayListUnmanaged(FieldMessage) {
             var messages = std.ArrayListUnmanaged(FieldMessage){};
             while (true) {
@@ -274,10 +282,16 @@ pub const protocol = struct {
                 return try readFn(this.wrapped, count);
             }
 
-            pub inline fn eatMessage(this: @This(), comptime msg: []const u8) anyerror!void {
+            pub inline fn eatMessage(this: @This(), comptime msg_: []const u8) anyerror!void {
+                const msg = msg_[1..];
                 var input = try readFn(this.wrapped, msg.len);
                 defer input.deinit();
                 if (bun.strings.eqlLong(input.slice(), msg)) return;
+            }
+
+            pub fn skip(this: @This(), count: usize) anyerror!void {
+                var input = try readFn(this.wrapped, count);
+                input.deinit();
             }
 
             pub inline fn readZ(this: @This()) anyerror!Data {
@@ -482,6 +496,28 @@ pub const protocol = struct {
         pub const decode = decoderWrap(Authentication, decodeInternal).decode;
     };
 
+    pub const ParameterStatus = struct {
+        name: Data = .{ .empty = {} },
+        value: Data = .{ .empty = {} },
+
+        pub fn deinit(this: *@This()) void {
+            this.name.deinit();
+            this.value.deinit();
+        }
+
+        pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReader(Container)) !void {
+            const length = try reader.length();
+            std.debug.assert(length >= 4);
+
+            this.* = .{
+                .name = try reader.readZ(),
+                .value = try reader.readZ(),
+            };
+        }
+
+        pub const decode = decoderWrap(ParameterStatus, decodeInternal).decode;
+    };
+
     pub const BackendKeyData = struct {
         process_id: u32 = 0,
         secret_key: u32 = 0,
@@ -499,6 +535,13 @@ pub const protocol = struct {
 
     pub const ErrorResponse = struct {
         messages: std.ArrayListUnmanaged(FieldMessage) = .{},
+
+        pub fn deinit(this: *ErrorResponse) void {
+            for (this.messages.items) |message| {
+                message.deinit();
+            }
+            this.messages.deinit(bun.default_allocator);
+        }
 
         pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReader(Container)) !void {
             var remaining_bytes = try reader.length();
@@ -680,7 +723,14 @@ pub const protocol = struct {
     };
 
     pub const RowDescription = struct {
-        fields: []FieldDescription = &[_]FieldDescription{},
+        fields: []const FieldDescription = &[_]FieldDescription{},
+        pub fn deinit(this: *@This()) void {
+            for (this.fields) |field| {
+                field.deinit();
+            }
+
+            bun.default_allocator.free(this.fields);
+        }
 
         pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReader(Container)) !void {
             var remaining_bytes = try reader.length();
@@ -1062,6 +1112,12 @@ pub const protocol = struct {
 
     pub const NoticeResponse = struct {
         messages: std.ArrayListUnmanaged(FieldMessage) = .{},
+        pub fn deinit(this: *NoticeResponse) void {
+            for (this.messages.items) |message| {
+                message.deinit();
+            }
+            this.messages.deinit(bun.default_allocator);
+        }
         pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReader(Container)) !void {
             var remaining_bytes = try reader.length();
             remaining_bytes -|= 4;
@@ -1366,14 +1422,148 @@ pub const PostgresSQLQuery = struct {
     query: bun.String = bun.String.empty,
     cursor_name: bun.String = bun.String.empty,
     thisValue: JSC.JSValue = .undefined,
+    target: JSC.JSValue = .undefined,
+    status: Status = Status.pending,
+    ref_count: u32 = 1,
 
     pub usingnamespace JSC.Codegen.JSPostgresSQLQuery;
 
+    pub const Status = enum {
+        pending,
+        running,
+        success,
+        fail,
+    };
+
+    pub fn deinit(this: *@This()) void {
+        if (this.statement) |statement| {
+            statement.deref();
+        }
+        this.query.deref();
+        this.cursor_name.deref();
+    }
+
+    pub fn finalize(this: *@This()) callconv(.C) void {
+        this.thisValue = .zero;
+        this.target = .zero;
+        this.deref();
+    }
+
+    pub fn deref(this: *@This()) void {
+        const ref_count = this.ref_count;
+        this.ref_count -= 1;
+
+        if (ref_count == 1) {
+            this.deinit();
+            bun.default_allocator.free(this);
+        }
+    }
+
+    pub fn ref(this: *@This()) void {
+        std.debug.assert(this.ref_count > 0);
+        this.ref_count += 1;
+    }
+
+    pub fn onNoData(this: *@This(), globalObject: *JSC.JSGlobalObject) void {
+        if (this.thisValue == .zero) {
+            this.deref();
+            return;
+        }
+
+        this.deref();
+        JSC.VirtualMachine.get().rareData().postgresql_context.onQueryResolveFn.get().?.callWithThis(
+            globalObject,
+            this.thisValue,
+            &[_]JSC.JSValue{
+                JSC.JSValue.undefined,
+            },
+        );
+    }
+    pub fn onError(this: *@This(), err: protocol.ErrorResponse, globalObject: *JSC.JSGlobalObject) void {
+        if (this.thisValue == .zero) {
+            this.deref();
+            return;
+        }
+        var b = bun.StringBuilder{};
+        for (err.messages.items) |msg| {
+            b.cap += switch (msg) {
+                inline else => |m| m.utf8ByteLength(),
+            } + 1;
+        }
+        b.allocate(bun.default_allocator) catch {};
+
+        for (err.messages.items) |msg| {
+            _ = b.append(msg);
+            _ = b.append("\n");
+        }
+        const instance = globalObject.createSyntaxErrorInstance("Postgres error occurred\n{s}", .{b.allocatedSlice()});
+        b.deinit(bun.default_allocator);
+
+        this.deref();
+        _ = JSC.VirtualMachine.get().rareData().postgresql_context.onQueryRejectFn.get().?.callWithThis(
+            globalObject,
+            this.thisValue,
+            &[_]JSC.JSValue{
+                instance,
+            },
+        );
+    }
+
+    pub fn onSuccess(this: *@This(), _: []const u8, globalObject: *JSC.JSGlobalObject) void {
+        if (this.thisValue == .zero) {
+            this.deref();
+            return;
+        }
+
+        const pending_value = PostgresSQLQuery.pendingValueGetCached(this.thisValue) orelse JSC.JSValue.undefined;
+        this.deref();
+        _ = JSC.VirtualMachine.get().rareData().postgresql_context.onQueryResolveFn.get().?.callWithThis(
+            globalObject,
+            this.thisValue,
+            &[_]JSC.JSValue{
+                pending_value,
+            },
+        );
+    }
+
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) ?*PostgresSQLQuery {
-        _ = globalThis;
-        const args_ = callframe.arguments(3);
-        const args = args_.slice();
-        _ = args;
+        _ = callframe;
+        globalThis.throw("PostgresSQLQuery cannot be constructed directly");
+        return null;
+    }
+
+    pub fn call(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const arguments = callframe.arguments(2).slice();
+        const query = arguments[0];
+        const values = arguments[1];
+
+        if (!query.isString()) {
+            globalThis.throw("query must be a string", .{});
+            return .zero;
+        }
+
+        if (values.jsType() != .Array) {
+            globalThis.throwTypeError("values must be an array", .{});
+            return .zero;
+        }
+
+        var ptr = bun.default_allocator.create(PostgresSQLQuery) catch |err| {
+            globalThis.throwError(err, "failed to allocate query");
+            return .zero;
+        };
+
+        const this_value = JSC.Codegen.JSPostgresSQLQuery.toJS(globalThis);
+        this_value.ensureStillAlive();
+        PostgresSQLQuery.bindingSetCached(this_value, globalThis, values);
+
+        ptr.* = .{
+            .query = query.toBunString(globalThis),
+            .thisValue = this_value,
+            .target = query,
+        };
+        ptr.query.ref();
+
+        return this_value;
     }
 
     pub fn push(this: *PostgresSQLQuery, globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) void {
@@ -1387,29 +1577,45 @@ pub const PostgresSQLQuery = struct {
     }
 
     pub fn doRun(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        var arguments_ = callframe.arguments(3);
+        var arguments_ = callframe.arguments(2);
         const arguments = arguments_.slice();
         var connection = arguments[0].as(PostgresSQLConnection) orelse {
             globalObject.throwTypeError("connection must be a PostgresSQLConnection");
             return .zero;
         };
-        _ = connection;
-
-        var values_array = arguments[1];
-
         var query = arguments[1];
 
-        if (!values_array.jsType().isArray()) {
-            globalObject.throwInvalidArgumentType("run", "values", "Array");
+        if (!query.isObject()) {
+            globalObject.throwInvalidArgumentType("run", "query", "Query");
             return .zero;
         }
-        if (!query.isString()) {
-            globalObject.throwInvalidArgumentType("run", "query", "string");
-            return .zero;
+        this.target = query;
+        this.thisValue = callframe.this();
+        const binding_value = PostgresSQLQuery.bindingGetCached(callframe.this()) orelse .zero;
+
+        var writer = connection.writer();
+        if (this.statement) |stmt| {
+            PostgresRequest.bindAndExecute(globalObject, stmt, binding_value, PostgresSQLConnection.Writer, writer) catch |err| {
+                globalObject.throwError(err, "failed to bind and execute query");
+                return .zero;
+            };
+        } else {
+            const signature = PostgresRequest.prepareAndQuery(globalObject, this.query, binding_value, PostgresSQLConnection.Writer, writer) catch |err| {
+                globalObject.throwError(err, "failed to prepare query");
+                return .zero;
+            };
+            var stmt = bun.default_allocator.create(PostgresSQLStatement) catch |err| {
+                globalObject.throwError(err, "failed to allocate statement");
+                return .zero;
+            };
+
+            stmt.* = .{
+                .signature = signature,
+            };
+            this.statement = stmt;
         }
 
-        var statement = this.statement orelse {};
-        _ = statement;
+        connection.flushData();
 
         return .undefined;
     }
@@ -1420,6 +1626,12 @@ pub const PostgresSQLQuery = struct {
         _ = this;
 
         return .undefined;
+    }
+
+    comptime {
+        if (!JSC.is_bindgen) {
+            @export(call, .{ .name = "PostgresqlQuery__createInstance" });
+        }
     }
 };
 
@@ -1597,6 +1809,8 @@ pub const PostgresRequest = struct {
             },
         };
         try exec.writeInternal(Context, writer);
+
+        try writer.write(protocol.Flush);
     }
 
     pub fn onData(
@@ -1628,22 +1842,16 @@ pub const PostgresRequest = struct {
                 'c' => try connection.on(.CopyDone, Context, reader),
                 'W' => try connection.on(.CopyBothResponse, Context, reader),
 
-                'A' => try reader.notSupported("NotificationResponse"),
-                'V' => try reader.notSupported("FunctionCallResponse"),
-                'v' => try reader.notSupported("NegotiateProtocolVersion"),
-
                 else => |c| {
                     debug("Unknown message: {d}", .{c});
+                    const to_skip = try reader.length();
+                    try reader.skip(to_skip);
                 },
             }
         }
     }
 
-    pub const Operation = union(enum) {
-        Query: *PostgresSQLQuery,
-    };
-
-    pub const Queue = std.fifo.LinearFifo(Operation, .Dynamic);
+    pub const Queue = std.fifo.LinearFifo(*PostgresSQLQuery, .Dynamic);
 };
 
 pub const PostgresSQLConnection = struct {
@@ -1651,7 +1859,7 @@ pub const PostgresSQLConnection = struct {
     status: Status = Status.connecting,
     ref_count: u32 = 0,
 
-    write_buffer: bun.ByteList = .{},
+    write_buffer: bun.OffsetByteList = .{},
     read_buffer: bun.ByteList = .{},
     requests: PostgresRequest.Queue,
 
@@ -1662,6 +1870,20 @@ pub const PostgresSQLConnection = struct {
     has_pending_activity: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
     js_value: JSC.JSValue = JSC.JSValue.undefined,
 
+    is_ready_for_query: bool = false,
+
+    backend_parameters: bun.StringMap = bun.StringMap.init(bun.default_allocator, true),
+    backend_key_data: protocol.BackendKeyData = .{},
+
+    pending_disconnect: bool = false,
+
+    pub const Status = enum {
+        disconnected,
+        connecting,
+        connected,
+        failed,
+    };
+
     pub usingnamespace JSC.Codegen.JSPostgresSQLConnection;
 
     pub fn hasPendingActivity(this: *PostgresSQLConnection) callconv(.C) bool {
@@ -1669,8 +1891,19 @@ pub const PostgresSQLConnection = struct {
         return this.has_pending_activity.load(.Acquire);
     }
 
+    pub fn setStatus(this: *PostgresSQLConnection, status: Status) void {
+        this.status = status;
+    }
+
     pub fn finalize(this: *PostgresSQLConnection) callconv(.C) void {
         this.deref();
+    }
+
+    pub fn flushData(this: *PostgresSQLConnection) void {
+        const wrote = this.socket.write(this.write_buffer.slice(), false);
+        if (wrote > 0) {
+            this.write_buffer.consume(@intCast(wrote));
+        }
     }
 
     pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) ?*PostgresSQLConnection {
@@ -1704,7 +1937,7 @@ pub const PostgresSQLConnection = struct {
     pub fn doClose(this: *@This(), globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) void {
         _ = globalObject;
         this.disconnect();
-        this.write_buffer.deinitWithAllocator(bun.default_allocator);
+        this.write_buffer.deinit(bun.default_allocator);
     }
 
     pub fn deinit(this: *@This()) void {
@@ -1713,7 +1946,7 @@ pub const PostgresSQLConnection = struct {
             stmt.connection = null;
         }
         this.statements.deinit(bun.default_allocator);
-        this.write_buffer.deinitWithAllocator(bun.default_allocator);
+        this.write_buffer.deinit(bun.default_allocator);
         bun.default_allocator.destroy(this);
     }
 
@@ -1734,7 +1967,32 @@ pub const PostgresSQLConnection = struct {
     }
 
     fn advance(this: *PostgresSQLConnection) void {
-        _ = this.requests.readItem();
+        if (this.requests.readItem()) |query| {
+            query.deref();
+        }
+    }
+
+    pub const Writer = struct {
+        connection: *PostgresSQLConnection,
+
+        pub fn write(this: Writer, data: []const u8) anyerror!void {
+            var buffer = &this.connection.write_buffer;
+            try buffer.write(bun.default_allocator, data);
+        }
+
+        pub fn pwrite(this: Writer, data: []const u8, index: usize) anyerror!void {
+            @memcpy(this.connection.write_buffer.byte_list.slice()[index..][0..data.len], data);
+        }
+
+        pub fn offset(this: Writer) usize {
+            return this.connection.write_buffer.head;
+        }
+    };
+
+    pub fn writer(this: *PostgresSQLConnection) protocol.NewWriter(Writer) {
+        return Writer{
+            .connection = this,
+        };
     }
 
     const CellPutter = struct {
@@ -1800,6 +2058,9 @@ pub const PostgresSQLConnection = struct {
 
     pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.EnumLiteral), comptime Context: type, reader: protocol.NewReader(Context)) !void {
         debug("on({s})", .{@typeName(MessageType)});
+        if (comptime MessageType != .ReadyForQuery) {
+            this.is_ready_for_query = false;
+        }
 
         switch (comptime MessageType) {
             .DataRow => {
@@ -1824,34 +2085,144 @@ pub const PostgresSQLConnection = struct {
                 );
                 request.push(row);
             },
-            .CopyData => {},
-            .ParameterStatus => {},
-            .ReadyForQuery => {},
-            .CommandComplete => {},
-            .BindComplete => {},
-            .ParseComplete => {},
-            .ParameterDescription => {},
-            .RowDescription => {},
-            .Authentication => {},
-            .NoData => {},
-            .BackendKeyData => {},
-            .ErrorResponse => {},
-            .PortalSuspended => {},
-            .CloseComplete => {},
-            .CopyInResponse => {},
-            .NoticeResponse => {},
-            .EmptyQueryResponse => {},
-            .CopyOutResponse => {},
-            .CopyDone => {},
-            .CopyBothResponse => {},
+            .CopyData => {
+                var copy_data: protocol.CopyData = undefined;
+                try copy_data.decodeInternal(Context, reader);
+                copy_data.data.deinit();
+            },
+            .ParameterStatus => {
+                var parameter_status: protocol.ParameterStatus = undefined;
+                try parameter_status.decodeInternal(Context, reader);
+                defer {
+                    parameter_status.deinit();
+                }
+                try this.backend_parameters.insert(parameter_status.name.slice(), parameter_status.value.slice());
+            },
+            .ReadyForQuery => {
+                if (this.pending_disconnect) {
+                    this.disconnect();
+                    return;
+                }
+
+                this.setStatus(.connected);
+                this.is_ready_for_query = true;
+
+                var query = this.current() orelse return;
+
+                switch (query.status) {
+                    .pending => {
+                        try query.drain(this, this.globalObject);
+                    },
+                    else => {},
+                }
+            },
+            .CommandComplete => {
+                var request = this.current() orelse return error.ExpectedRequest;
+
+                var cmd: protocol.CommandComplete = undefined;
+                try cmd.decodeInternal(Context, reader);
+                defer {
+                    cmd.deinit();
+                }
+                debug("-> {s}", .{cmd.command_tag.slice()});
+                _ = this.requests.discard(1);
+                request.onSuccess(cmd.command_tag.slice(), this, this.globalObject);
+            },
+            .BindComplete => {
+                try reader.eatMessage(protocol.BindComplete);
+                _ = this.current() orelse return error.ExpectedRequest;
+            },
+            .ParseComplete => {
+                try reader.eatMessage(protocol.ParseComplete);
+                _ = this.current() orelse return error.ExpectedRequest;
+            },
+            .ParameterDescription => {
+                var description: protocol.ParameterDescription = undefined;
+                try description.decodeInternal(Context, reader);
+                var request = this.current() orelse return error.ExpectedRequest;
+                var statement = request.statement orelse return error.ExpectedStatement;
+                statement.parameters = description.parameters;
+            },
+            .RowDescription => {
+                var description: protocol.RowDescription = undefined;
+                try description.decodeInternal(Context, reader);
+                errdefer description.deinit();
+                var request = this.current() orelse return error.ExpectedRequest;
+                var statement = request.statement orelse return error.ExpectedStatement;
+                statement.fields = description.fields;
+            },
+            .Authentication => {
+                var auth: protocol.Authentication = undefined;
+                try auth.decodeInternal(Context, reader);
+
+                debug("TODO auth: {s}", .{@tagName(std.meta.activeTag(auth))});
+            },
+            .NoData => {
+                try reader.eatMessage(protocol.NoData);
+                var request = this.current() orelse return error.ExpectedRequest;
+                _ = this.requests.discard(1);
+                request.onNoData(this, this.globalObject);
+            },
+            .BackendKeyData => {
+                try this.backend_key_data.decodeInternal(Context, reader);
+            },
+            .ErrorResponse => {
+                var err: protocol.ErrorResponse = undefined;
+                try err.decodeInternal(Context, reader);
+                defer {
+                    err.deinit();
+                }
+                var request = this.current() orelse return error.ExpectedRequest;
+                _ = this.requests.discard(1);
+                request.onError(err, this, this.globalObject);
+            },
+            .PortalSuspended => {
+                try reader.eatMessage(protocol.PortalSuspended);
+                var request = this.current() orelse return error.ExpectedRequest;
+                _ = request;
+                _ = this.requests.discard(1);
+                debug("TODO PortalSuspended", .{});
+            },
+            .CloseComplete => {
+                try reader.eatMessage(protocol.CloseComplete);
+                var request = this.current() orelse return error.ExpectedRequest;
+                _ = this.requests.discard(1);
+                request.onSuccess("CLOSECOMPLETE", this, this.globalObject);
+            },
+            .CopyInResponse => {
+                debug("TODO CopyInResponse", .{});
+            },
+            .NoticeResponse => {
+                debug("UNSUPPORTED NoticeResponse", .{});
+                var resp: protocol.NoticeResponse = undefined;
+
+                try resp.decodeInternal(Context, reader);
+                resp.deinit();
+            },
+            .EmptyQueryResponse => {
+                try reader.eatMessage(protocol.EmptyQueryResponse);
+                var request = this.current() orelse return error.ExpectedRequest;
+                _ = this.requests.discard(1);
+                request.onSuccess("", this, this.globalObject);
+            },
+            .CopyOutResponse => {
+                debug("TODO CopyOutResponse", .{});
+            },
+            .CopyDone => {
+                debug("TODO CopyDone", .{});
+            },
+            .CopyBothResponse => {
+                debug("TODO CopyBothResponse", .{});
+            },
         }
     }
 };
 
 pub const PostgresSQLStatement = struct {
     cached_structure: JSC.Strong = .{},
-    ref_count: u32 = 0,
+    ref_count: u32 = 1,
     fields: []const protocol.FieldDescription = &[_]protocol.FieldDescription{},
+    parameters: []const i32 = &[_]i32{},
     signature: Signature,
     pub fn ref(this: *@This()) void {
         std.debug.assert(this.ref_count > 0);
@@ -1874,6 +2245,7 @@ pub const PostgresSQLStatement = struct {
             field.deinit();
         }
         bun.default_allocator.free(this.fields);
+        bun.default_allocator.free(this.parameters);
         this.cached_structure.deinit();
         this.signature.deinit();
         bun.default_allocator.destroy(this);
@@ -1900,18 +2272,6 @@ pub const PostgresSQLStatement = struct {
             return structure_;
         };
     }
-
-    pub const Row = struct {
-        object: JSC.JSValue,
-        statement: *PostgresSQLStatement,
-    };
-};
-
-pub const Status = enum {
-    disconnected,
-    connecting,
-    connected,
-    failed,
 };
 
 const Signature = struct {

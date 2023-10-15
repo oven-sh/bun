@@ -17828,6 +17828,19 @@ extern "C" EncodedJSValue PostgresSQLQueryPrototype__pendingValueGetCachedValue(
     return JSValue::encode(thisObject->m_pendingValue.get());
 }
 
+extern "C" void PostgresSQLQueryPrototype__bindingSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSPostgresSQLQuery*>(JSValue::decode(thisValue));
+    thisObject->m_binding.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue PostgresSQLQueryPrototype__bindingGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSPostgresSQLQuery*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_binding.get());
+}
+
 void JSPostgresSQLQueryPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
@@ -18002,6 +18015,7 @@ void JSPostgresSQLQuery::visitAdditionalChildren(Visitor& visitor)
     JSPostgresSQLQuery* thisObject = this;
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     visitor.append(thisObject->m_pendingValue);
+    visitor.append(thisObject->m_binding);
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN(JSPostgresSQLQuery);

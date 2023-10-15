@@ -1489,6 +1489,20 @@ pub const PostgresSQLContext = struct {
 
     onQueryResolveFn: JSC.Strong = .{},
     onQueryRejectFn: JSC.Strong = .{},
+
+    pub fn init(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        var ctx = &globalObject.bunVM().rareData().postgresql_context;
+        ctx.onQueryResolveFn.create(callframe.argument(0), globalObject);
+        ctx.onQueryRejectFn.create(callframe.argument(1), globalObject);
+    }
+
+    comptime {
+        if (!JSC.is_bindgen) {
+            @export(init, .{
+                .name = "PostgresSQLContext__init",
+            });
+        }
+    }
 };
 
 pub const PostgresSQLQuery = struct {
@@ -1707,7 +1721,7 @@ pub const PostgresSQLQuery = struct {
 
     comptime {
         if (!JSC.is_bindgen) {
-            @export(call, .{ .name = "PostgresqlQuery__createInstance" });
+            @export(call, .{ .name = "PostgresSQLQuery__createInstance" });
         }
     }
 };

@@ -107,7 +107,7 @@
 #include "JavaScriptCore/FunctionPrototype.h"
 #include "JavaScriptCore/GetterSetter.h"
 #include "napi.h"
-#include "JSSQLiteiteStatement.h"
+#include "JSSQLiteStatement.h"
 #include "ModuleLoader.h"
 #include "NodeVMScript.h"
 #include "ProcessIdentifier.h"
@@ -1635,6 +1635,9 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
     return JSC::JSValue::encode(jsUndefined());
 }
 
+extern "C" JSC::EncodedJSValue PostgresSQLQuery__createInstance(JSC::JSGlobalObject*, JSC::CallFrame*);
+extern "C" JSC::EncodedJSValue PostgresSQLContext__init(JSC::JSGlobalObject*, JSC::CallFrame*);
+
 // we're trying out a new way to do this lazy loading
 // this is $lazy() in js code
 JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
@@ -1867,6 +1870,24 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
             obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "getWindowSize"_s)), JSFunction::create(vm, globalObject, 0, "getWindowSize"_s, Bun::Process_functionInternalGetWindowSize, ImplementationVisibility::Public), 2);
 
             return JSValue::encode(obj);
+        }
+
+        if (string == "bun:sql"_s) {
+            auto* obj = constructEmptyObject(globalObject);
+
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createQuery"_s)),
+                JSC::JSFunction::create(vm, globalObject, 0, "createQuery"_s, PostgresSQLQuery__createInstance, ImplementationVisibility::Public), 0);
+
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "init"_s)),
+                JSC::JSFunction::create(vm, globalObject, 0, "init"_s, PostgresSQLContext__init, ImplementationVisibility::Public), 0);
+
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "PostgresSQLConnection"_s)),
+                globalObject->JSPostgresSQLConnectionConstructor(), 0);
+
+            return JSC::JSValue::encode(obj);
         }
 
         if (UNLIKELY(string == "noop"_s)) {

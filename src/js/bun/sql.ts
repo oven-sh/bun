@@ -14,8 +14,7 @@ const _queryStatus = Symbol("status");
 const _handler = Symbol("handler");
 const PublicPromise = Promise;
 
-const { PostgresSQLConnection, PostgresSQLQuery, PostgresSQLStatement, init } = $lazy("bun:sql");
-const { escapeString, escapeIdentifier } = PostgresSQLConnection;
+const { createQuery, PostgresSQLConnection, init } = $lazy("bun:sql");
 
 class Query extends PublicPromise {
   [_resolve];
@@ -262,7 +261,7 @@ function SQL(o) {
   }
 
   function connectedSQL(strings, values) {
-    return new Query(new PostgresSQLQuery(normalizeStrings(strings), values), closedConnectionHandler);
+    return new Query(createQuery(normalizeStrings(strings), values), closedConnectionHandler);
   }
 
   function closedSQL(strings, values) {
@@ -270,7 +269,7 @@ function SQL(o) {
   }
 
   function pendingSQL(strings, values) {
-    return new Query(new PostgresSQLQuery(normalizeStrings(strings), values), pendingConnectionHandler);
+    return new Query(createQuery(normalizeStrings(strings), values), pendingConnectionHandler);
   }
 
   function sql(strings, ...values) {

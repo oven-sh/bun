@@ -345,6 +345,10 @@ export default [
         fn: "toBeWithin",
         length: 2,
       },
+      toEqualIgnoringWhitespace: {
+        fn: "toEqualIgnoringWhitespace",
+        length: 1,
+      },
       toBeSymbol: {
         fn: "toBeSymbol",
         length: 0,

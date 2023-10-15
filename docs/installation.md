@@ -1,6 +1,8 @@
 Bun ships as a single executable that can be installed a few different ways.
 
-## macOS and Linux
+## Installing
+
+### macOS and Linux
 
 {% callout %}
 **Linux users** — The `unzip` package is required to install Bun. Use `sudo apt install unzip` to install `unzip` package.
@@ -35,7 +37,7 @@ $ proto install bun
 
 {% /codetabs %}
 
-## Windows
+### Windows
 
 Bun provides a _limited, experimental_ native build for Windows. At the moment, only the Bun runtime is supported.
 
@@ -66,6 +68,59 @@ $ docker pull oven/bun:slim
 $ docker pull oven/bun:alpine
 $ docker pull oven/bun:distroless
 ```
+
+## Checking installation
+
+To check that Bun was installed successfully, open a new terminal window and run `bun --version`.
+
+```sh
+$ bun --version
+1.x.y
+```
+
+To see the precise commit of [oven-sh/bun](https://github.com/oven-sh/bun) that you're using, run `bun --revision`.
+
+```sh
+$ bun --revision
+1.x.y+b7982ac1318937560f38e0f8eb18f45eaa43480f
+```
+
+If you've installed Bun but are seeing a `command not found` error, you may have to manually add the installation directory (`~/.bun/bin`) to your `PATH`.
+
+{% details summary="How to add to your `PATH`" %}
+First, determine what shell you're using:
+
+```sh
+$ echo $SHELL
+/bin/zsh # or /bin/bash or /bin/fish
+```
+
+Then add these lines below to bottom of your shell's configuration file.
+
+{% codetabs %}
+
+```bash#~/.zshrc
+# add to ~/.zshrc
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
+```
+
+```bash#~/.bashrc
+# add to ~/.bashrc
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
+```
+
+```sh#~/.config/fish/config.fish
+# add to ~/.config/fish/config.fish
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
+```
+
+{% /codetabs %}
+Save the file. You'll need to open a new shell/terminal window for the changes to take effect.
+
+{% /details %}
 
 ## Upgrading
 

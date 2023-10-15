@@ -26,10 +26,10 @@ Below is a quick "cheat sheet" that doubles as a table of contents. Click an ite
 
 ---
 
-<!-- - [`File`](#file)
-- _Browser only_. A subclass of `Blob` that represents a file. Has a `name` and `lastModified` timestamp. There is experimental support in Node.js v20; Bun does not support `File` yet; most of its functionality is provided by `BunFile`.
+- [`File`](#file)
+- A subclass of `Blob` that represents a file. Has a `name` and `lastModified` timestamp. There is experimental support in Node.js v20.
 
---- -->
+---
 
 - [`BunFile`](#bunfile)
 - _Bun only_. A subclass of `Blob` that represents a lazily-loaded file on disk. Created with `Bun.file(path)`.

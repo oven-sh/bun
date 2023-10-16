@@ -402,11 +402,11 @@ CLANG_FLAGS = $(INCLUDE_DIRS) \
 		-DBUILDING_WITH_CMAKE=1 \
 		-DBUN_SINGLE_THREADED_PER_VM_ENTRY_SCOPE=1 \
 		-DNAPI_EXPERIMENTAL=ON \
+		-DNDEBUG=1 \
 		-DNOMINMAX \
 		-DIS_BUILD \
 		-DBUILDING_JSCONLY__ \
 		-DASSERT_ENABLED=0 \
-		-DENABLE_BUN_SKIP_FAILING_ASSERTIONS=1 \
 		-fvisibility=hidden \
 		-fvisibility-inlines-hidden
 
@@ -928,7 +928,7 @@ jsc: jsc-build jsc-copy-headers jsc-bindings
 .PHONY: jsc-build
 jsc-build: $(JSC_BUILD_STEPS)
 .PHONY: jsc-bindings
-jsc-bindings: bindings
+jsc-bindings: headers bindings
 
 .PHONY: clone-submodules
 clone-submodules:
@@ -1258,7 +1258,6 @@ jsc-build-mac-compile-debug:
 			-DUSE_PTHREAD_JIT_PERMISSIONS_API=ON \
 			-DENABLE_REMOTE_INSPECTOR=ON \
 			-DUSE_VISIBILITY_ATTRIBUTE=1 \
-			-DENABLE_BUN_SKIP_FAILING_ASSERTIONS=1 \
 			$(WEBKIT_DIR) \
 			$(WEBKIT_DEBUG_DIR) && \
 	CFLAGS="$(CFLAGS) -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -ffat-lto-objects" \

@@ -4,7 +4,7 @@
 generator client {
   provider = "prisma-client-js"
   output   = "client"
-  
+  %binaryTargets%
 }
 
 datasource db {
@@ -15,7 +15,7 @@ datasource db {
 model User {
   id    Int     @id @default(autoincrement())
   testId Int
-  email String 
+  email String
   name  String?
   posts Post[]
 }

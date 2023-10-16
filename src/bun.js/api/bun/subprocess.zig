@@ -2054,7 +2054,7 @@ pub const Subprocess = struct {
                     const result = cb.callWithThis(
                         this.globalThis,
                         this.this_jsvalue,
-                        &[_]JSValue{data},
+                        &[_]JSValue{ data, this.this_jsvalue },
                     );
                     data.ensureStillAlive();
                     if (result.isAnyError()) {

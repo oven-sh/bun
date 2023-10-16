@@ -224,8 +224,8 @@ class Worker extends EventEmitter {
     this.#worker.addEventListener("open", this.#onOpen.bind(this));
   }
 
-  threadId() {
-    return _threadId;
+  get threadId() {
+    return this.#worker.threadId;
   }
 
   ref() {

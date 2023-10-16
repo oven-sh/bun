@@ -10,10 +10,10 @@ using namespace JSC;
 extern "C" EncodedJSValue JSC__createStructure(JSC::JSGlobalObject* globalObject, unsigned int inlineCapacity, BunString* names)
 {
     auto& vm = globalObject->vm();
-    JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureConcurrently(globalObject->objectPrototype(), inlineCapacity);
+    Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), inlineCapacity);
     PropertyOffset offset = 0;
     for (unsigned i = 0; i < inlineCapacity; i++) {
-        const Identifier& ident = JSC::Identifier::fromString(vm, Bun::toWTFString(names[i]));
+        Identifier ident = JSC::Identifier::fromString(vm, Bun::toWTFString(names[i]));
         structure = structure->addPropertyTransition(vm, structure, JSC::PropertyName(ident), 0, offset);
     }
 

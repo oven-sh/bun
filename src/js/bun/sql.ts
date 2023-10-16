@@ -126,7 +126,10 @@ class Query extends PublicPromise {
 }
 Object.defineProperty(Query, Symbol.species, { value: PublicPromise });
 Object.defineProperty(Query, Symbol.toStringTag, { value: "Query" });
-init(Query.prototype.resolve, Query.prototype.reject);
+init(
+  (query, result) => query.resolve(result),
+  (query, reject) => query.reject(reject),
+);
 
 function createConnection({ hostname, port, username, password, tls, query, database }, onConnected, onClose) {
   return new PostgresSQLConnection(
@@ -263,7 +266,7 @@ function SQL(o) {
   }
 
   function connectedSQL(strings, values) {
-    return new Query(createQuery(normalizeStrings(strings), values), closedConnectionHandler);
+    return new Query(createQuery(normalizeStrings(strings), values), connectedHandler);
   }
 
   function closedSQL(strings, values) {

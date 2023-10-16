@@ -677,6 +677,13 @@ pub const AnySocket = union(enum) {
     SocketTCP: SocketTCP,
     SocketTLS: SocketTLS,
 
+    pub fn setTimeout(this: AnySocket, seconds: c_uint) void {
+        switch (this) {
+            .SocketTCP => this.SocketTCP.setTimeout(seconds),
+            .SocketTLS => this.SocketTLS.setTimeout(seconds),
+        }
+    }
+
     pub fn shutdown(this: AnySocket) void {
         debug("us_socket_shutdown({d})", .{@intFromPtr(this.socket())});
         return us_socket_shutdown(

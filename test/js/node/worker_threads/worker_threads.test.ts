@@ -88,7 +88,7 @@ test("all worker_threads worker instance properties are present", () => {
   expect(worker).toHaveProperty("listenerCount");
   expect(worker).toHaveProperty("eventNames");
 
-  expect(worker.threadId).toBeFunction();
+  expect(worker.threadId).toBeNumber();
   expect(worker.ref).toBeFunction();
   expect(worker.unref).toBeFunction();
   expect(worker.stdin).toBeNull();

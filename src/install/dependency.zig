@@ -96,7 +96,7 @@ pub fn cloneWithDifferentBuffers(this: *const Dependency, name_buf: []const u8, 
         .version = Dependency.parseWithTag(
             builder.lockfile.allocator,
             new_name,
-            String.Builder.stringHash(new_name.slice(name_buf)),
+            String.Builder.stringHash(new_name.slice(out_slice)),
             new_literal.slice(out_slice),
             this.version.tag,
             &sliced,

@@ -2666,7 +2666,7 @@ pub const PackageManager = struct {
             .npm, .dist_tag => {
                 if (version.tag == .npm) {
                     if (this.lockfile.workspace_versions.count() > 0) resolve_from_workspace: {
-                        if (this.lockfile.workspace_versions.get(@truncate(name_hash))) |workspace_version| {
+                        if (this.lockfile.workspace_versions.get(name_hash)) |workspace_version| {
                             if (version.value.npm.version.satisfies(workspace_version)) {
                                 const root_package = this.lockfile.rootPackage() orelse break :resolve_from_workspace;
                                 const root_dependencies = root_package.dependencies.get(this.lockfile.buffers.dependencies.items);
@@ -2674,6 +2674,8 @@ pub const PackageManager = struct {
 
                                 for (root_dependencies, root_resolutions) |root_dep, workspace_package_id| {
                                     if (workspace_package_id != invalid_package_id and root_dep.version.tag == .workspace and root_dep.name_hash == name_hash) {
+                                        // make sure verifyResolutions sees this resolution as a valid package id
+                                        this.lockfile.buffers.resolutions.items[dependency_id] = workspace_package_id;
                                         return .{
                                             .package = this.lockfile.packages.get(workspace_package_id),
                                             .is_first_time = false,
@@ -6370,7 +6372,6 @@ pub const PackageManager = struct {
                     request.name = allocator.dupe(u8, name) catch unreachable;
                     request.name_hash = String.Builder.stringHash(name);
                 } else if (version.tag == .github and version.value.github.committish.isEmpty()) {
-                    request.name = input;
                     request.name_hash = String.Builder.stringHash(version.literal.slice(input));
                 } else {
                     request.name_hash = String.Builder.stringHash(version.literal.slice(input));
@@ -7885,7 +7886,7 @@ pub const PackageManager = struct {
                         manager.root_dependency_list = dep_lists[0];
                         try builder.allocate();
 
-                        var all_name_hashes = brk: {
+                        const all_name_hashes: []PackageNameHash = brk: {
                             if (!manager.summary.overrides_changed) break :brk &.{};
                             const hashes_len = manager.lockfile.overrides.map.entries.len + lockfile.overrides.map.entries.len;
                             if (hashes_len == 0) break :brk &.{};
@@ -7928,7 +7929,7 @@ pub const PackageManager = struct {
                             }
                         }
 
-                        if (manager.summary.overrides_changed) {
+                        if (manager.summary.overrides_changed and all_name_hashes.len > 0) {
                             for (manager.lockfile.buffers.dependencies.items, 0..) |*dependency, dependency_i| {
                                 if (std.mem.indexOfScalar(PackageNameHash, all_name_hashes, dependency.name_hash)) |_| {
                                     manager.lockfile.buffers.resolutions.items[dependency_i] = invalid_package_id;

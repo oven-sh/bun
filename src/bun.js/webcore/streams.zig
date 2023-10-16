@@ -3848,7 +3848,7 @@ pub const FIFO = struct {
 
     pub fn getAvailableToReadOnLinux(this: *FIFO) u32 {
         var len: c_int = 0;
-        const rc: c_int = std.c.ioctl(this.fd, std.os.linux.T.FIONREAD, &len);
+        const rc: c_int = std.c.ioctl(this.fd, std.os.linux.T.FIONREAD, @as(*c_int, &len));
         if (rc != 0) {
             len = 0;
         }

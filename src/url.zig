@@ -103,7 +103,7 @@ pub const URL = struct {
 
     pub const HostFormatter = struct {
         host: string,
-        port: string = "80",
+        port: string = "",
         is_https: bool = false,
 
         pub fn format(formatter: HostFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {

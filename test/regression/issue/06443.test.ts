@@ -6,7 +6,7 @@ describe("Bun.serve()", () => {
     cert: file(new URL("../fixtures/cert.pem", import.meta.url)),
     key: file(new URL("../fixtures/cert.key", import.meta.url)),
   };
-  
+
   const servers = [
     {
       port: 0,
@@ -37,4 +37,3 @@ describe("Bun.serve()", () => {
     }
   });
 });
-

@@ -55,21 +55,21 @@ it("Blob inspect", () => {
   expect(Bun.inspect(new Response(new Blob()))).toBe(`Response (0 KB) {
   ok: true,
   url: "",
-  headers: Headers {},
+  status: 200,
   statusText: "",
+  headers: Headers {},
   redirected: false,
   bodyUsed: false,
-  status: 200,
   [Blob detached]
 }`);
   expect(Bun.inspect(new Response("Hello"))).toBe(`Response (5 bytes) {
   ok: true,
   url: "",
-  headers: Headers {},
+  status: 200,
   statusText: "",
+  headers: Headers {},
   redirected: false,
   bodyUsed: false,
-  status: 200,
   Blob (5 bytes)
 }`);
 });

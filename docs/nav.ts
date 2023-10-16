@@ -355,7 +355,7 @@ export default {
     page("project/benchmarking", "Benchmarking", {
       description: `Bun is designed for performance. Learn how to benchmark Bun yourself.`,
     }),
-    page("project/development", "Development", {
+    page("project/contributing", "Contributing", {
       description: "Learn how to contribute to Bun and get your local development environment up and running.",
     }),
     page("project/licensing", "License", {

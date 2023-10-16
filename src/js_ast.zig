@@ -1714,7 +1714,7 @@ pub const E = struct {
             if (comptime !Environment.isWasm) {
                 if (value == @trunc(value) and (value < std.math.maxInt(i32) and value > std.math.minInt(i32))) {
                     const int_value = @as(i64, @intFromFloat(value));
-                    const abs = @as(u64, @intCast(std.math.absInt(int_value) catch return null));
+                    const abs = @as(u64, @intCast(@abs(int_value)));
                     if (abs < double_digit.len) {
                         return if (int_value < 0)
                             neg_double_digit[abs]
@@ -5994,6 +5994,7 @@ pub const Ast = struct {
     /// This is a list of named exports that may exist in a CommonJS module
     /// We use this with `commonjs_at_runtime` to re-export CommonJS
     commonjs_export_names: []string = &([_]string{}),
+    import_meta_ref: Ref = Ref.None,
 
     pub const CommonJSNamedExport = struct {
         loc_ref: LocRef,

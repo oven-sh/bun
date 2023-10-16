@@ -225,6 +225,7 @@ pub const ReadableStream = struct {
     extern fn ReadableStream__isDisturbed(possibleReadableStream: JSValue, globalObject: *JSGlobalObject) bool;
     extern fn ReadableStream__isLocked(possibleReadableStream: JSValue, globalObject: *JSGlobalObject) bool;
     extern fn ReadableStream__empty(*JSGlobalObject) JSC.JSValue;
+    extern fn ReadableStream__used(*JSGlobalObject) JSC.JSValue;
     extern fn ReadableStream__cancel(stream: JSValue, *JSGlobalObject) void;
     extern fn ReadableStream__abort(stream: JSValue, *JSGlobalObject) void;
     extern fn ReadableStream__detach(stream: JSValue, *JSGlobalObject) void;
@@ -365,6 +366,12 @@ pub const ReadableStream = struct {
         JSC.markBinding(@src());
 
         return ReadableStream__empty(globalThis);
+    }
+
+    pub fn used(globalThis: *JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+
+        return ReadableStream__used(globalThis);
     }
 
     const Base = @import("../../ast/base.zig");
@@ -2634,6 +2641,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         }
 
         fn flushFromJSNoWait(this: *@This()) JSC.Node.Maybe(JSValue) {
+            log("flushFromJSNoWait", .{});
             if (this.hasBackpressure() or this.done) {
                 return .{ .result = JSValue.jsNumberFromInt32(0) };
             }
@@ -3595,6 +3603,9 @@ pub const ByteStream = struct {
                     this.buffer = try std.ArrayList(u8).initCapacity(bun.default_allocator, chunk.len);
                     this.buffer.appendSliceAssumeCapacity(chunk);
                 },
+                .err => {
+                    this.pending.result = .{ .err = stream.err };
+                },
                 else => unreachable,
             }
             return;
@@ -3603,6 +3614,9 @@ pub const ByteStream = struct {
         switch (stream) {
             .temporary_and_done, .temporary => {
                 try this.buffer.appendSlice(chunk);
+            },
+            .err => {
+                this.pending.result = .{ .err = stream.err };
             },
             // We don't support the rest of these yet
             else => unreachable,
@@ -3834,7 +3848,7 @@ pub const FIFO = struct {
 
     pub fn getAvailableToReadOnLinux(this: *FIFO) u32 {
         var len: c_int = 0;
-        const rc: c_int = std.c.ioctl(this.fd, std.os.linux.T.FIONREAD, &len);
+        const rc: c_int = std.c.ioctl(this.fd, std.os.linux.T.FIONREAD, @as(*c_int, &len));
         if (rc != 0) {
             len = 0;
         }

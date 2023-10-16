@@ -41,3 +41,6 @@ import * as tsd from "tsd";
     env: { ...process.env, dummy: "" },
   });
 }
+{
+  Bun.TOML.parse("asdf = asdf");
+}

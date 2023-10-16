@@ -181,7 +181,7 @@ pub const struct_hostent = extern struct {
     h_length: c_int,
     h_addr_list: [*c][*c]u8,
 
-    pub fn toJSReponse(this: *struct_hostent, _: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime lookup_name: []const u8) JSC.JSValue {
+    pub fn toJSResponse(this: *struct_hostent, _: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime lookup_name: []const u8) JSC.JSValue {
 
         // A cname lookup always returns a single record but we follow the common API here.
         if (comptime strings.eqlComptime(lookup_name, "cname")) {
@@ -289,7 +289,7 @@ pub const struct_nameinfo = extern struct {
     node: [*c]u8,
     service: [*c]u8,
 
-    pub fn toJSReponse(this: *struct_nameinfo, _: std.mem.Allocator, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJSResponse(this: *struct_nameinfo, _: std.mem.Allocator, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         const array = JSC.JSValue.createEmptyArray(globalThis, 2); // [node, service]
 
         if (this.node != null) {
@@ -326,7 +326,7 @@ pub const struct_nameinfo = extern struct {
                     function(this, Error.get(status), timeouts, null);
                     return;
                 }
-                function(this, null, timeouts, .{ node, service });
+                function(this, null, timeouts, .{ .node = node, .service = service });
                 return;
             }
         }.handle;
@@ -733,7 +733,7 @@ pub const struct_ares_caa_reply = extern struct {
     value: [*c]u8,
     length: usize,
 
-    pub fn toJSReponse(this: *struct_ares_caa_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
+    pub fn toJSResponse(this: *struct_ares_caa_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
         var arena = @import("root").bun.ArenaAllocator.init(stack.get());
         defer arena.deinit();
@@ -811,7 +811,7 @@ pub const struct_ares_srv_reply = extern struct {
     weight: c_ushort,
     port: c_ushort,
 
-    pub fn toJSReponse(this: *struct_ares_srv_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
+    pub fn toJSResponse(this: *struct_ares_srv_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
         var arena = @import("root").bun.ArenaAllocator.init(stack.get());
         defer arena.deinit();
@@ -894,7 +894,7 @@ pub const struct_ares_mx_reply = extern struct {
     host: [*c]u8,
     priority: c_ushort,
 
-    pub fn toJSReponse(this: *struct_ares_mx_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
+    pub fn toJSResponse(this: *struct_ares_mx_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
         var arena = @import("root").bun.ArenaAllocator.init(stack.get());
         defer arena.deinit();
@@ -968,7 +968,7 @@ pub const struct_ares_txt_reply = extern struct {
     txt: [*c]u8,
     length: usize,
 
-    pub fn toJSReponse(this: *struct_ares_txt_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
+    pub fn toJSResponse(this: *struct_ares_txt_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
         var arena = @import("root").bun.ArenaAllocator.init(stack.get());
         defer arena.deinit();
@@ -1048,7 +1048,7 @@ pub const struct_ares_naptr_reply = extern struct {
     order: c_ushort,
     preference: c_ushort,
 
-    pub fn toJSReponse(this: *struct_ares_naptr_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
+    pub fn toJSResponse(this: *struct_ares_naptr_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
         var arena = @import("root").bun.ArenaAllocator.init(stack.get());
         defer arena.deinit();
@@ -1140,7 +1140,7 @@ pub const struct_ares_soa_reply = extern struct {
     expire: c_uint,
     minttl: c_uint,
 
-    pub fn toJSReponse(this: *struct_ares_soa_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
+    pub fn toJSResponse(this: *struct_ares_soa_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
         var arena = @import("root").bun.ArenaAllocator.init(stack.get());
         defer arena.deinit();
@@ -1252,7 +1252,7 @@ pub extern fn ares_set_servers_csv(channel: *Channel, servers: [*c]const u8) c_i
 pub extern fn ares_set_servers_ports_csv(channel: *Channel, servers: [*c]const u8) c_int;
 pub extern fn ares_get_servers(channel: *Channel, servers: *?*struct_ares_addr_port_node) c_int;
 pub extern fn ares_get_servers_ports(channel: *Channel, servers: *?*struct_ares_addr_port_node) c_int;
-pub extern fn ares_inet_ntop(af: c_int, src: ?*const anyopaque, dst: [*c]u8, size: ares_socklen_t) [*c]const u8;
+pub extern fn ares_inet_ntop(af: c_int, src: ?*const anyopaque, dst: [*c]u8, size: ares_socklen_t) ?[*:0]const u8;
 pub extern fn ares_inet_pton(af: c_int, src: [*c]const u8, dst: ?*anyopaque) c_int;
 pub const ARES_SUCCESS = 0;
 pub const ARES_ENODATA = 1;

@@ -329,7 +329,7 @@ void JSFetchHeaders::finishCreation(VM& vm)
 void JSFetchHeaders::computeMemoryCost()
 {
     m_memoryCost = wrapped().memoryCost();
-    globalObject()->vm().heap.reportExtraMemoryAllocated(m_memoryCost);
+    globalObject()->vm().heap.reportExtraMemoryAllocated(this, m_memoryCost);
 }
 
 JSObject* JSFetchHeaders::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)

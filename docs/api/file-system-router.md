@@ -93,6 +93,7 @@ interface Bun {
       style: "nextjs";
       origin?: string;
       assetPrefix?: string;
+      fileExtensions?: string[];
     });
 
     reload(): void;

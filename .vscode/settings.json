@@ -7,8 +7,7 @@
   "search.followSymlinks": false,
   "search.useIgnoreFiles": true,
   "zig.buildOnSave": false,
-  // We do this until we upgrade to latest Zig so that zls doesn't break our code.
-  "zig.formattingProvider": "extension",
+  "zig.formattingProvider": "zls",
   "zig.buildArgs": ["obj", "-Dfor-editor"],
   "zig.buildOption": "build",
   "zig.buildFilePath": "${workspaceFolder}/build.zig",
@@ -27,7 +26,8 @@
     "editor.formatOnSave": true
   },
   "zig.zls.enableInlayHints": false,
-
+  "zig.zls.enabled": true,
+  "git.ignoreSubmodules": true,
   "[jsx]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode",
     "editor.formatOnSave": true
@@ -80,7 +80,9 @@
     "src/deps/zstd": true,
     "test/snippets/package-json-exports/_node_modules_copy": true,
     "src/js/out": true,
-    "src/packages/bun-uws/fuzzing/seed-corpus/": true
+    "packages/bun-uws/fuzzing/seed-corpus/": true,
+    "**/*.dep": true,
+    "**/CMakeFiles": true
   },
   "C_Cpp.files.exclude": {
     "**/.vscode": true,

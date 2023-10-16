@@ -103,7 +103,7 @@ pub const URL = struct {
 
     pub const HostFormatter = struct {
         host: string,
-        port: string = "80",
+        port: string = "",
         is_https: bool = false,
 
         pub fn format(formatter: HostFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
@@ -1097,8 +1097,11 @@ pub const FormData = struct {
                             break :brk field.content_type.slice(buf);
                         }
                         if (filename_str.len > 0) {
-                            if (bun.HTTP.MimeType.byExtensionNoDefault(std.fs.path.extension(filename_str))) |mime| {
-                                break :brk mime.value;
+                            const extension = std.fs.path.extension(filename_str);
+                            if (extension.len > 0) {
+                                if (bun.HTTP.MimeType.byExtensionNoDefault(extension[1..extension.len])) |mime| {
+                                    break :brk mime.value;
+                                }
                             }
                         }
 

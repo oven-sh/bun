@@ -290,4 +290,27 @@ describe("Bun.build", () => {
     // depends on the ws package in the test/node_modules.
     expect(content).toContain("var websocket = __toESM(require_websocket(), 1);");
   });
+
+  test("module() throws error", async () => {
+    expect(() =>
+      Bun.build({
+        entrypoints: [join(import.meta.dir, "./fixtures/trivial/bundle-ws.ts")],
+        plugins: [
+          {
+            name: "test",
+            setup: b => {
+              b.module("ad", () => {
+                return {
+                  exports: {
+                    hello: "world",
+                  },
+                  loader: "object",
+                };
+              });
+            },
+          },
+        ],
+      }),
+    ).toThrow();
+  });
 });

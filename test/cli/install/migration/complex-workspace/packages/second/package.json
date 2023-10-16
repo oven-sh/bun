@@ -1,0 +1,12 @@
+{
+  "name": "second",
+  "version": "3.0.0",
+  "dependencies": {
+    "body-parser": "npm:express@*",
+    "express": "npm:svelte@*",
+    "hello": "0.3.2",
+    "lol": "*",
+    "not-body-parser": "*",
+    "svelte": "4.1.0"
+  }
+}

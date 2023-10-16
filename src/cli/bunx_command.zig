@@ -23,7 +23,8 @@ pub const BunxCommand = struct {
 
         var new_str = try allocator.allocSentinel(u8, input.len + prefixLength, 0);
         if (input[0] == '@') {
-            if (strings.indexAnyComptime(input, "/")) |index| {
+            if (strings.indexAnyComptime(input, "/")) |slashIndex| {
+                const index = slashIndex + 1;
                 @memcpy(new_str[0..index], input[0..index]);
                 @memcpy(new_str[index .. index + prefixLength], "create-");
                 @memcpy(new_str[index + prefixLength ..], input[index..]);
@@ -235,6 +236,8 @@ pub const BunxCommand = struct {
 
         const initial_bin_name = if (strings.eqlComptime(update_request.name, "typescript"))
             "tsc"
+        else if (update_request.version.tag == .github)
+            update_request.version.value.github.repo.slice(update_request.version_buf)
         else if (strings.lastIndexOfChar(update_request.name, '/')) |index|
             update_request.name[index + 1 ..]
         else
@@ -261,22 +264,37 @@ pub const BunxCommand = struct {
         else
             update_request.version.literal.slice(update_request.version_buf);
 
+        const package_fmt = brk: {
+            if (update_request.version.tag == .github) {
+                break :brk update_request.version.literal.slice(update_request.version_buf);
+            }
+
+            break :brk try std.fmt.allocPrint(
+                ctx.allocator,
+                "{s}@{s}",
+                .{
+                    update_request.name,
+                    display_version,
+                },
+            );
+        };
+
         const PATH_FOR_BIN_DIRS = PATH;
         if (PATH.len > 0) {
             PATH = try std.fmt.allocPrint(
                 ctx.allocator,
-                bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR ++ "/{s}@{s}--bunx/node_modules/.bin:{s}",
-                .{ update_request.name, display_version, PATH },
+                bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR ++ "/{s}--bunx/node_modules/.bin:{s}",
+                .{ package_fmt, PATH },
             );
         } else {
             PATH = try std.fmt.allocPrint(
                 ctx.allocator,
-                bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR ++ "/{s}@{s}--bunx/node_modules/.bin",
-                .{ update_request.name, display_version },
+                bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR ++ "/{s}--bunx/node_modules/.bin",
+                .{package_fmt},
             );
         }
         try this_bundler.env.map.put("PATH", PATH);
-        const bunx_cache_dir = PATH[0 .. bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR.len + "/--bunx@".len + update_request.name.len + display_version.len];
+        const bunx_cache_dir = PATH[0 .. bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR.len + "/--bunx".len + package_fmt.len];
 
         var absolute_in_cache_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "/{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, initial_bin_name }) catch unreachable;
@@ -361,8 +379,8 @@ pub const BunxCommand = struct {
 
         var bunx_install_dir_path = try std.fmt.allocPrint(
             ctx.allocator,
-            bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR ++ "/{s}@{s}--bunx",
-            .{ update_request.name, display_version },
+            bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR ++ "/{s}--bunx",
+            .{package_fmt},
         );
 
         // TODO: fix this after zig upgrade
@@ -377,19 +395,13 @@ pub const BunxCommand = struct {
         }
 
         var args_buf = [_]string{
-            try std.fs.selfExePathAlloc(ctx.allocator), "add", "--no-summary",
-            try std.fmt.allocPrint(
-                ctx.allocator,
-                "{s}@{s}",
-                .{
-                    update_request.name,
-                    display_version,
-                },
-            ),
+            try std.fs.selfExePathAlloc(ctx.allocator), "add",        "--no-summary",
+            package_fmt,
             // disable the manifest cache when a tag is specified
             // so that @latest is fetched from the registry
-            "--no-cache",
+                                           "--no-cache",
         };
+
         const argv_to_use: []const string = args_buf[0 .. args_buf.len - @as(usize, @intFromBool(update_request.version.tag != .dist_tag))];
 
         var child_process = std.ChildProcess.init(argv_to_use, default_allocator);

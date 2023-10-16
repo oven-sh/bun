@@ -75,11 +75,23 @@ test.each([
 });
 describe.each([
   ["a", true, 5],
+  ["b", false, 5],
+])("test.each", (a, b, c) => {
+  expectType<string>(a);
+  expectType<boolean>(b);
+  expectType<number | string>(c);
+});
+describe.each([
+  ["a", true, 5],
   ["b", false, "asdf"],
 ])("test.each", (a, b, c) => {
   expectType<string>(a);
   expectType<boolean>(b);
   expectType<number | string>(c);
+});
+describe.each([{ asdf: "asdf" }, { asdf: "asdf" }])("test.each", (a, b, c) => {
+  expectType<{ asdf: string }>(a);
+  expectType<{ asdf: string }>(c);
 });
 
 // no inference on data
@@ -111,4 +123,9 @@ describe.each(dataAsConst)("test.each", (...args) => {
   expectType<string>(args[0]);
   expectType<boolean>(args[1]);
   expectType<string | number>(args[2]);
+});
+describe.each(dataAsConst)("test.each", (a, b, c) => {
+  expectType<"a" | "b">(a);
+  expectType<boolean>(b);
+  expectType<5 | "asdf">(c);
 });

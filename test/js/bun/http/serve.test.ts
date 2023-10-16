@@ -1212,3 +1212,95 @@ it("#5859 arrayBuffer", async () => {
   await Bun.write("/tmp/bad", new Uint8Array([0xfd]));
   expect(async () => await Bun.file("/tmp/bad").json()).toThrow();
 });
+
+it("server.requestIP (v4)", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch(req, server) {
+      return Response.json(server.requestIP(req));
+    },
+    hostname: "127.0.0.1",
+  });
+
+  const response = await fetch(`http://${server.hostname}:${server.port}`).then(x => x.json());
+  expect(response).toEqual({
+    address: "127.0.0.1",
+    family: "IPv4",
+    port: expect.any(Number),
+  });
+  server.stop(true);
+});
+
+it("server.requestIP (v6)", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch(req, server) {
+      return Response.json(server.requestIP(req));
+    },
+    hostname: "::1",
+  });
+
+  const response = await fetch(`http://localhost:${server.port}`).then(x => x.json());
+  expect(response).toEqual({
+    address: "::1",
+    family: "IPv6",
+    port: expect.any(Number),
+  });
+  server.stop(true);
+});
+
+it("server.requestIP (unix)", async () => {
+  const unix = "/tmp/bun-serve.sock";
+  const server = Bun.serve({
+    unix,
+    fetch(req, server) {
+      return Response.json(server.requestIP(req));
+    },
+  });
+  const requestText = `GET / HTTP/1.1\r\nHost: localhost\r\n\r\n`;
+  const received: Buffer[] = [];
+  const { resolve, promise } = Promise.withResolvers<void>();
+  const connection = await Bun.connect({
+    unix,
+    socket: {
+      data(socket, data) {
+        received.push(data);
+        resolve();
+      },
+    },
+  });
+  connection.write(requestText);
+  connection.flush();
+  await promise;
+  expect(Buffer.concat(received).toString()).toEndWith("\r\n\r\nnull");
+  connection.end();
+  server.stop(true);
+});
+
+it("should response with HTTP 413 when request body is larger than maxRequestBodySize, issue#6031", async () => {
+  const server = Bun.serve({
+    port: 0,
+    maxRequestBodySize: 10,
+    fetch(req, server) {
+      return new Response("OK");
+    },
+  });
+
+  {
+    const resp = await fetch(`http://${server.hostname}:${server.port}`, {
+      method: "POST",
+      body: "A".repeat(10),
+    });
+    expect(resp.status).toBe(200);
+    expect(await resp.text()).toBe("OK");
+  }
+  {
+    const resp = await fetch(`http://${server.hostname}:${server.port}`, {
+      method: "POST",
+      body: "A".repeat(11),
+    });
+    expect(resp.status).toBe(413);
+  }
+
+  server.stop(true);
+});

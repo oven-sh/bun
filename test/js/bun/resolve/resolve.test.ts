@@ -92,7 +92,6 @@ it("file url in import resolves", async () => {
   });
   writeFileSync(`${dir}/test.js`, `import {foo} from 'file://${dir}/index.js';\nconsole.log(foo);`);
 
-  console.log("dir", dir);
   const { exitCode, stdout } = Bun.spawnSync({
     cmd: [bunExe(), `${dir}/test.js`],
     env: bunEnv,
@@ -102,13 +101,97 @@ it("file url in import resolves", async () => {
   expect(stdout.toString("utf8")).toBe("1\n");
 });
 
+it("invalid file url in import throws error", async () => {
+  const dir = tempDirWithFiles("fileurl", {});
+  writeFileSync(`${dir}/test.js`, `import {foo} from 'file://\0invalid url';\nconsole.log(foo);`);
+
+  const { exitCode, stdout, stderr } = Bun.spawnSync({
+    cmd: [bunExe(), `${dir}/test.js`],
+    env: bunEnv,
+    cwd: import.meta.dir,
+  });
+  expect(exitCode).not.toBe(0);
+  expect(stderr.toString("utf8")).toContain("file://\0invalid url");
+});
+
 it("file url in await import resolves", async () => {
   const dir = tempDirWithFiles("fileurl", {
     "index.js": "export const foo = 1;",
   });
   writeFileSync(`${dir}/test.js`, `const {foo} = await import('file://${dir}/index.js');\nconsole.log(foo);`);
 
-  console.log("dir", dir);
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), `${dir}/test.js`],
+    env: bunEnv,
+    cwd: import.meta.dir,
+  });
+  expect(exitCode).toBe(0);
+  expect(stdout.toString("utf8")).toBe("1\n");
+});
+
+it("file url with special characters in await import resolves", async () => {
+  const filename = "🅱️ndex.js";
+  const dir = tempDirWithFiles("file url", {
+    [filename]: "export const foo = 1;",
+  });
+  writeFileSync(
+    `${dir}/test.js`,
+    `const {foo} = await import('file://${dir.replace(/ /g, "%20")}/${encodeURIComponent(
+      filename,
+    )}');\nconsole.log(foo);`,
+  );
+
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), `${dir}/test.js`],
+    env: bunEnv,
+    cwd: import.meta.dir,
+  });
+  expect(exitCode).toBe(0);
+  expect(stdout.toString("utf8")).toBe("1\n");
+});
+
+it("file url with special characters not encoded in await import resolves", async () => {
+  const filename = "🅱️ndex.js";
+  const dir = tempDirWithFiles("file url", {
+    [filename]: "export const foo = 1;",
+  });
+  writeFileSync(`${dir}/test.js`, `const {foo} = await import('file://${dir}/${filename}');\nconsole.log(foo);`);
+
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), `${dir}/test.js`],
+    env: bunEnv,
+    cwd: import.meta.dir,
+  });
+  expect(exitCode).toBe(0);
+  expect(stdout.toString("utf8")).toBe("1\n");
+});
+
+it("file url with special characters in import statement resolves", async () => {
+  const filename = "🅱️ndex.js";
+  const dir = tempDirWithFiles("file url", {
+    [filename]: "export const foo = 1;",
+  });
+  writeFileSync(
+    `${dir}/test.js`,
+    `import {foo} from 'file://${dir.replace(/ /g, "%20")}/${encodeURIComponent(filename)}';\nconsole.log(foo);`,
+  );
+
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), `${dir}/test.js`],
+    env: bunEnv,
+    cwd: import.meta.dir,
+  });
+  expect(exitCode).toBe(0);
+  expect(stdout.toString("utf8")).toBe("1\n");
+});
+
+it("file url with special characters not encoded in import statement resolves", async () => {
+  const filename = "🅱️ndex.js";
+  const dir = tempDirWithFiles("file url", {
+    [filename]: "export const foo = 1;",
+  });
+  writeFileSync(`${dir}/test.js`, `import {foo} from 'file://${dir}/${filename}';\nconsole.log(foo);`);
+
   const { exitCode, stdout } = Bun.spawnSync({
     cmd: [bunExe(), `${dir}/test.js`],
     env: bunEnv,
@@ -124,7 +207,6 @@ it("file url in require resolves", async () => {
   });
   writeFileSync(`${dir}/test.js`, `const {foo} = require('file://${dir}/index.js');\nconsole.log(foo);`);
 
-  console.log("dir", dir);
   const { exitCode, stdout } = Bun.spawnSync({
     cmd: [bunExe(), `${dir}/test.js`],
     env: bunEnv,
@@ -132,6 +214,61 @@ it("file url in require resolves", async () => {
   });
   expect(exitCode).toBe(0);
   expect(stdout.toString("utf8")).toBe("1\n");
+});
+
+it("file url with special characters in require resolves", async () => {
+  const filename = "🅱️ndex.js";
+  const dir = tempDirWithFiles("file url", {
+    [filename]: "export const foo = 1;",
+  });
+  writeFileSync(
+    `${dir}/test.js`,
+    `const {foo} = require('file://${dir.replace(/ /g, "%20")}/${encodeURIComponent(filename)}');\nconsole.log(foo);`,
+  );
+
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), `${dir}/test.js`],
+    env: bunEnv,
+    cwd: import.meta.dir,
+  });
+  expect(exitCode).toBe(0);
+  expect(stdout.toString("utf8")).toBe("1\n");
+});
+
+it("file url in require.resolve resolves", async () => {
+  const dir = tempDirWithFiles("fileurl", {
+    "index.js": "export const foo = 1;",
+  });
+  writeFileSync(`${dir}/test.js`, `const to = require.resolve('file://${dir}/index.js');\nconsole.log(to);`);
+
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), `${dir}/test.js`],
+    env: bunEnv,
+    cwd: import.meta.dir,
+  });
+  expect(exitCode).toBe(0);
+  expect(stdout.toString("utf8")).toBe(`${dir}/index.js\n`);
+});
+
+it("file url with special characters in require resolves", async () => {
+  const filename = "🅱️ndex.js";
+  const dir = tempDirWithFiles("file url", {
+    [filename]: "export const foo = 1;",
+  });
+  writeFileSync(
+    `${dir}/test.js`,
+    `const to = require.resolve('file://${dir.replace(/ /g, "%20")}/${encodeURIComponent(
+      filename,
+    )}');\nconsole.log(to);`,
+  );
+
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), `${dir}/test.js`],
+    env: bunEnv,
+    cwd: import.meta.dir,
+  });
+  expect(exitCode).toBe(0);
+  expect(stdout.toString("utf8")).toBe(`${dir}/${filename}\n`);
 });
 
 it("import long string should not segfault", async () => {

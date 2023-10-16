@@ -45,7 +45,7 @@ void CallSite::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSCStac
         m_function.set(vm, this, JSC::jsUndefined());
         m_flags |= static_cast<unsigned int>(Flags::IsStrict);
     } else {
-        if (callFrame) {
+        if (callFrame && callFrame->thisValue()) {
             // We know that we're not in strict mode
             m_thisValue.set(vm, this, callFrame->thisValue().toThis(globalObject, JSC::ECMAMode::sloppy()));
         } else {

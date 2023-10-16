@@ -1631,7 +1631,7 @@ pub const PostgresSQLQuery = struct {
             return;
         }
 
-        this.deref();
+        defer this.deref();
         var vm = JSC.VirtualMachine.get();
         const function = vm.rareData().postgresql_context.onQueryResolveFn.get().?;
         globalObject.queueMicrotask(function, &[_]JSC.JSValue{ targetValue, JSC.JSValue.undefined });
@@ -1663,7 +1663,7 @@ pub const PostgresSQLQuery = struct {
         this.status = .fail;
         b.deinit(bun.default_allocator);
 
-        this.deref();
+        defer this.deref();
         // TODO: error handling
         var vm = JSC.VirtualMachine.get();
         const function = vm.rareData().postgresql_context.onQueryRejectFn.get().?;
@@ -1680,7 +1680,7 @@ pub const PostgresSQLQuery = struct {
 
         const pending_value = PostgresSQLQuery.pendingValueGetCached(thisValue) orelse JSC.JSValue.undefined;
         this.status = .success;
-        this.deref();
+        defer this.deref();
 
         var vm = JSC.VirtualMachine.get();
         const function = vm.rareData().postgresql_context.onQueryResolveFn.get().?;
@@ -2129,15 +2129,9 @@ pub const PostgresSQLConnection = struct {
             .connected => {
                 const on_connect = this.on_connect.swap();
                 if (on_connect == .zero) return;
+                this.globalObject.queueMicrotask(on_connect, &[_]JSC.JSValue{this.js_value});
                 this.poll_ref.unref(this.globalObject.bunVM());
                 this.updateHasPendingActivity();
-                _ = on_connect.callWithThis(
-                    this.globalObject,
-                    this.js_value,
-                    &[_]JSC.JSValue{
-                        this.js_value,
-                    },
-                );
             },
             else => {},
         }
@@ -2657,7 +2651,7 @@ pub const PostgresSQLConnection = struct {
                 }
                 debug("-> {s}", .{cmd.command_tag.slice()});
                 _ = this.requests.discard(1);
-                this.updateRef();
+                defer this.updateRef();
                 request.onSuccess(cmd.command_tag.slice(), this.globalObject);
             },
             .BindComplete => {

@@ -4532,6 +4532,7 @@ pub const JSPostgresSQLQuery = struct {
             @export(PostgresSQLQuery.doRun, .{ .name = "PostgresSQLQueryPrototype__doRun" });
             @export(PostgresSQLQuery.estimatedSize, .{ .name = "PostgresSQLQuery__estimatedSize" });
             @export(PostgresSQLQuery.finalize, .{ .name = "PostgresSQLQueryClass__finalize" });
+            @export(PostgresSQLQuery.hasPendingActivity, .{ .name = "PostgresSQLQuery__hasPendingActivity" });
         }
     }
 };

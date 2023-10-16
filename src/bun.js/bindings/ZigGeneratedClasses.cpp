@@ -17913,6 +17913,12 @@ extern "C" EncodedJSValue PostgresSQLQuery__getConstructor(Zig::GlobalObject* gl
     return JSValue::encode(globalObject->JSPostgresSQLQueryConstructor());
 }
 
+extern "C" bool PostgresSQLQuery__hasPendingActivity(void* ptr);
+bool JSPostgresSQLQuery::hasPendingActivity(void* ctx)
+{
+    return PostgresSQLQuery__hasPendingActivity(ctx);
+}
+
 JSPostgresSQLQuery::~JSPostgresSQLQuery()
 {
     if (m_ctx) {
@@ -18016,6 +18022,8 @@ void JSPostgresSQLQuery::visitAdditionalChildren(Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     visitor.append(thisObject->m_pendingValue);
     visitor.append(thisObject->m_binding);
+
+    visitor.addOpaqueRoot(this->wrapped());
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN(JSPostgresSQLQuery);

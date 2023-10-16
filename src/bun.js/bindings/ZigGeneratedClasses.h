@@ -1928,9 +1928,36 @@ public:
         : Base(vm, structure)
     {
         m_ctx = sinkPtr;
+        m_weakThis = JSC::Weak<JSPostgresSQLQuery>(this, getOwner());
     }
 
     void finishCreation(JSC::VM&);
+
+    JSC::Weak<JSPostgresSQLQuery> m_weakThis;
+
+    static bool hasPendingActivity(void* ctx);
+
+    class Owner final : public JSC::WeakHandleOwner {
+    public:
+        bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, JSC::AbstractSlotVisitor& visitor, const char** reason) final
+        {
+            auto* controller = JSC::jsCast<JSPostgresSQLQuery*>(handle.slot()->asCell());
+            if (JSPostgresSQLQuery::hasPendingActivity(controller->wrapped())) {
+                if (UNLIKELY(reason))
+                    *reason = "has pending activity";
+                return true;
+            }
+
+            return visitor.containsOpaqueRoot(context);
+        }
+        void finalize(JSC::Handle<JSC::Unknown>, void* context) final {}
+    };
+
+    static JSC::WeakHandleOwner* getOwner()
+    {
+        static NeverDestroyed<Owner> m_owner;
+        return &m_owner.get();
+    }
 
     DECLARE_VISIT_CHILDREN;
     template<typename Visitor> void visitAdditionalChildren(Visitor&);

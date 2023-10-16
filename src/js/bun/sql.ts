@@ -77,7 +77,7 @@ class Query extends PublicPromise {
   reject(x) {
     this[_queryStatus] &= ~queryStatus_active;
     this[_queryStatus] |= queryStatus_error;
-    return this[_resolve](x);
+    return this[_reject](x);
   }
 
   cancel() {

@@ -42,6 +42,7 @@ export default [
     construct: true,
     finalize: true,
     configurable: false,
+    hasPendingActivity: true,
     JSType: "0b11101110",
     klass: {},
     proto: {

@@ -1,4 +1,3 @@
-
-process.on("message", (message) => {
-    process.send("pong:" + message);
+process.on("message", message => {
+  process.send("pong:" + message);
 });

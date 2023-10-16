@@ -216,7 +216,7 @@ template<typename DOMClass> inline void setSubclassStructureIfNeeded(JSC::JSGlob
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // If the new target isn't actually callable
-    if (!newTarget->isCallable())
+    if (UNLIKELY(!newTarget->isCallable()))
         newTarget = constructor;
 
     auto* functionGlobalObject = JSC::getFunctionRealm(lexicalGlobalObject, newTarget);

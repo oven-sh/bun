@@ -143,7 +143,7 @@ var require_primordials = __commonJS({
       PromiseReject(err) {
         return Promise.reject(err);
       },
-      ReflectApply: Reflect["apply"],
+      ReflectApply: $getByIdDirect(Reflect, "apply"),
       RegExpPrototypeTest(self, value) {
         return self.test(value);
       },

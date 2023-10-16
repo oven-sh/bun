@@ -46,7 +46,7 @@ public:
     void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
     static void destroy(JSCell*) {}
 
-    size_t length() { return m_deque.size(); }
+    inline size_t length() { return m_deque.size(); }
     void push(JSC::VM& vm, JSC::JSValue v)
     {
         m_deque.append(WriteBarrier<Unknown>());

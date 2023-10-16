@@ -880,6 +880,5 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   Console.prototype.error = Console.prototype.warn;
   Console.prototype.groupCollapsed = Console.prototype.group;
 
-  console.log("loaded console");
   return Console;
 }

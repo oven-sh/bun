@@ -1,5 +1,5 @@
 // TODO: Use native code and JSC intrinsics for everything in this file.
-// Avoid using this file if possible.
+// Do not use this file for new code, many things here will be slow especailly when intrinsics for these operations is available.
 // It is primarily used for `internal/util`
 
 const createSafeIterator = (factory, next) => {
@@ -20,13 +20,17 @@ const createSafeIterator = (factory, next) => {
   return SafeIterator;
 };
 
+// Intrinsics do not have `call` as a valid identifier, so this cannot be `Function.prototype.call.bind`.
+const FunctionPrototypeCall = $getByIdDirect(Function.prototype, "call");
+
 function getGetter(cls, getter) {
-  var g = cls.prototype.__lookupGetter__(getter);
-  return (...args) => g.$call(...args);
+  // TODO: __lookupGetter__ is deprecated, but Object.getOwnPropertyDescriptor doesn't work on built-ins like Typed Arrays.
+  return FunctionPrototypeCall.bind(cls.prototype.__lookupGetter__(getter));
 }
 
 function uncurryThis(func) {
-  return (...args) => func.$call(...args);
+  // Intrinsics do not have `call` as a valid identifier, so this cannot be `Function.prototype.call.bind`.
+  return FunctionPrototypeCall.bind(func);
 }
 
 const copyProps = (src, dest) => {
@@ -143,7 +147,7 @@ export default {
   ObjectPrototypeToString: uncurryThis(Object.prototype.toString),
   ObjectSeal: Object.seal,
   ObjectSetPrototypeOf: Object.setPrototypeOf,
-  ReflectApply: Reflect["apply"],
+  ReflectApply: $getByIdDirect(Reflect, "apply"),
   ReflectOwnKeys: Reflect.ownKeys,
   RegExp,
   RegExpPrototypeExec: uncurryThis(RegExp.prototype.exec),

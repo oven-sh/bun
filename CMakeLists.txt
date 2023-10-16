@@ -151,6 +151,7 @@ if (NOT WIN32)
     set(CMAKE_C_COMPILER "${REAL_CC}")
     set(CMAKE_CXX_COMPILER "${REAL_CXX}")
     set(CMAKE_AR "${AR}")
+    set(CMAKE_OSX_DEPLOYMENT_TARGET ${MIN_MACOS_VERSION})
     find_program(CMAKE_RANLIB NAMES llvm-16-ranlib llvm-ranlib)
 
     # else let cmake find msvc
@@ -263,7 +264,224 @@ if (NOT DEFINED LIBICONV_PATH)
     set(LIBICONV_PATH "${BREW_PREFIX_PATH}/opt/libiconv/lib/libiconv.a")
 endif()
 
+# TODOL: not sure if this is needed
+set(OPTIMIZATION_LEVEL "-O3 ${MARCH_NATIVE}")
+set(DEBUG_OPTIMIZATION_LEVEL "-O1 ${MARCH_NATIVE} -gdwarf-4")
+set(CFLAGS_WITHOUT_MARCH "${MACOS_MIN_FLAG} ${OPTIMIZATION_LEVEL} -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden")
+set(BUN_CFLAGS "${MACOS_MIN_FLAG} ${MARCH_NATIVE} ${OPTIMIZATION_LEVEL} -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden")
+set(BUN_TMP_DIR "/tmp/make-bun")
+set(CFLAGS "${CFLAGS_WITHOUT_MARCH} ${MARCH_NATIVE}")
+
+set(DEFAULT_USE_BMALLOC "1")
+
+# Conditional setting of USE_BMALLOC
+if(NOT DEFINED USE_BMALLOC)
+    set(USE_BMALLOC ${DEFAULT_USE_BMALLOC})
+endif()
+
+
+# jsc start
+# Set via postinstall
+if(NOT EXISTS "${JSC_BASE_DIR}")
+    file(GLOB BUN_WEBKIT_DIRS "bun-webkit")
+    list(GET BUN_WEBKIT_DIRS 0 FIRST_BUN_WEBKIT_DIR)
+    if(EXISTS "${FIRST_BUN_WEBKIT_DIR}")
+        set(JSC_BASE_DIR "${FIRST_BUN_WEBKIT_DIR}")
+    else()
+        set(JSC_BASE_DIR "$ENV{HOME}/webkit-build")
+    endif()
+endif()
+
+set(DEFAULT_JSC_LIB "${JSC_BASE_DIR}/lib")
+set(DEFAULT_JSC_LIB_DEBUG "${DEFAULT_JSC_LIB}")
+
+if(EXISTS "${WEBKIT_RELEASE_DIR_LTO}/lib")
+    set(DEFAULT_JSC_LIB "${WEBKIT_RELEASE_DIR_LTO}/lib")
+endif()
+
+if(EXISTS "${WEBKIT_RELEASE_DIR}/lib")
+    set(DEFAULT_JSC_LIB_DEBUG "${WEBKIT_RELEASE_DIR}/lib")
+endif()
+
+if(NOT DEFINED JSC_LIB)
+    set(JSC_LIB ${DEFAULT_JSC_LIB})
+endif()
+
+if(NOT DEFINED JSC_LIB_DEBUG)
+    set(JSC_LIB_DEBUG ${DEFAULT_JSC_LIB_DEBUG})
+endif()
+
+if(NOT DEFINED JSC_INCLUDE_DIR)
+    set(JSC_INCLUDE_DIR "${JSC_BASE_DIR}/include")
+endif()
+
+if(NOT DEFINED ZLIB_INCLUDE_DIR)
+    set(ZLIB_INCLUDE_DIR "${BUN_DEPS_DIR}/zlib")
+endif()
+
+if(NOT DEFINED ZLIB_LIB_DIR)
+    set(ZLIB_LIB_DIR "${BUN_DEPS_DIR}/zlib")
+endif()
+
+set(JSC_FILES
+    "${JSC_LIB}/libJavaScriptCore.a"
+    "${JSC_LIB}/libWTF.a"
+    "${JSC_LIB}/libbmalloc.a"
+)
+set(JSC_FILES_DEBUG
+    "${JSC_LIB_DEBUG}/libJavaScriptCore.a"
+    "${JSC_LIB_DEBUG}/libWTF.a"
+    "${JSC_LIB_DEBUG}/libbmalloc.a"
+)
+
+if(NOT DEFINED ENABLE_MIMALLOC)
+    set(ENABLE_MIMALLOC 1)
+endif()
+
+# https://github.com/microsoft/mimalloc/issues/512
+# Linking mimalloc via object file on macOS x64 can cause heap corruption
+set(_MIMALLOC_FILE "libmimalloc.o")
+set(_MIMALLOC_INPUT_PATH "CMakeFiles/mimalloc-obj.dir/src/static.c.o")
+set(_MIMALLOC_DEBUG_FILE "libmimalloc-debug.a")
+set(_MIMALLOC_OBJECT_FILE 1)
+set(_MIMALLOC_LINK "${BUN_DEPS_OUT_DIR}/${_MIMALLOC_FILE}")
+set(DEFAULT_LINKER_FLAGS "")
+
+set(JSC_BUILD_STEPS "")
+
+if("${OS_NAME}" STREQUAL "linux")
+    list(APPEND JSC_BUILD_STEPS "jsc-build-linux")
+    set(_MIMALLOC_LINK "${BUN_DEPS_OUT_DIR}/${_MIMALLOC_FILE}")
+    set(DEFAULT_LINKER_FLAGS "-pthread -ldl")
+elseif("${OS_NAME}" STREQUAL "darwin")
+    set(_MIMALLOC_OBJECT_FILE 0)
+    list(APPEND JSC_BUILD_STEPS "jsc-build-mac" "jsc-copy-headers")
+    set(_MIMALLOC_FILE "libmimalloc.a")
+    set(_MIMALLOC_INPUT_PATH "libmimalloc.a")
+    set(_MIMALLOC_LINK "-lmimalloc")
+endif()
+
+if(${ENABLE_MIMALLOC} EQUAL 1)
+    set(MIMALLOC_FILE ${_MIMALLOC_FILE})
+    set(MIMALLOC_INPUT_PATH ${_MIMALLOC_INPUT_PATH})
+endif()
+
+# jsc end
+
+if("${OS_NAME}" STREQUAL "darwin")
+    set(STRIP "/usr/bin/strip")
+elseif("${OS_NAME}" STREQUAL "linux")
+    find_program(LLVM_STRIP NAMES llvm-strip)
+    find_program(LLVM_STRIP_16 NAMES llvm-strip-16)
+    find_program(SYSTEM_STRIP NAMES strip)
+    if(LLVM_STRIP)
+        set(STRIP ${LLVM_STRIP})
+    elseif(LLVM_STRIP_16)
+        set(STRIP ${LLVM_STRIP_16})
+    elseif(SYSTEM_STRIP)
+        set(STRIP ${SYSTEM_STRIP})
+    else()
+        message(FATAL_ERROR "Missing strip")
+    endif()
+endif()
+
+set(SRC_DIR "src/bun.js/bindings")
+set(MODULES_DIR "src/bun.js/modules")
+set(OBJ_DIR "src/bun.js/bindings-obj")
+set(DEBUG_OBJ_DIR "src/bun.js/debug-bindings-obj")
+
+# List of source files
+file(GLOB SRC_FILES "${SRC_DIR}/*.cpp")
+file(GLOB MODULES_FILES "${MODULES_DIR}/*.cpp")
+file(GLOB SRC_WEBCORE_FILES "${SRC_DIR}/webcore/*.cpp")
+file(GLOB SRC_SQLITE_FILES "${SRC_DIR}/sqlite/*.cpp")
+file(GLOB SRC_NODE_OS_FILES "${SRC_DIR}/node_os/*.cpp")
+file(GLOB SRC_IO_FILES "src/io/*.cpp")
+file(GLOB SRC_BUILTINS_FILES "src/js/out/*.cpp")
+file(GLOB SRC_WEBCRYPTO_FILES "${SRC_DIR}/webcrypto/*.cpp")
+
+# Include directories
+set(ALL_JSC_INCLUDE_DIRS
+    ${WEBKIT_RELEASE_DIR}/WTF/Headers
+    ${WEBKIT_RELEASE_DIR}/ICU/Headers
+    ${WEBKIT_RELEASE_DIR}/bmalloc/Headers
+    ${WEBKIT_RELEASE_DIR}
+    ${WEBKIT_RELEASE_DIR}/include
+    ${WEBKIT_RELEASE_DIR}/JavaScriptCore/PrivateHeaders
+    ${WEBKIT_RELEASE_DIR}/bmalloc/PrivateHeaders
+    ${WEBKIT_RELEASE_DIR}/WTF/PrivateHeaders
+)
+
+set(SHARED_INCLUDE_DIR
+    ${CMAKE_SOURCE_DIR}/${SRC_DIR}
+    ${CMAKE_SOURCE_DIR}/src/js/builtins
+    ${CMAKE_SOURCE_DIR}/src/js/out
+    ${CMAKE_SOURCE_DIR}/${MODULES_DIR}
+    ${JSC_INCLUDE_DIR}
+)
+
+set(MAC_INCLUDE_DIRS
+    ${ALL_JSC_INCLUDE_DIRS}
+    ${SHARED_INCLUDE_DIR}
+    ${WEBKIT_DIR}/Source
+)
+
+set(LINUX_INCLUDE_DIRS
+    ${ALL_JSC_INCLUDE_DIRS}
+    ${SHARED_INCLUDE_DIR}
+    ${ZLIB_INCLUDE_DIR}
+)
+
+set(UWS_INCLUDE_DIR
+    ${BUN_DIR}/packages/bun-usockets/src
+    ${BUN_DIR}/packages
+    ${BUN_DEPS_DIR}
+)
+
+set(INCLUDE_DIRS
+    ${UWS_INCLUDE_DIR}
+    ${BUN_DEPS_DIR}/mimalloc/include
+    ${BUN_DEPS_DIR}/zstd/include
+    src/napi
+    ${BUN_DEPS_DIR}/boringssl/include
+    ${BUN_DEPS_DIR}/c-ares/include
+    ${MODULES_DIR}
+)
+
+# Depending on the target OS, you can add include directories
+if(OS_NAME STREQUAL "darwin")
+    include_directories(${MAC_INCLUDE_DIRS})
+elseif(OS_NAME STREQUAL "linux")
+    include_directories(${LINUX_INCLUDE_DIRS})
+endif()
+
+include_directories(${INCLUDE_DIRS})
+
+# ... the rest of your CMake logic
+
+
+add_custom_target(
+    js
+    COMMAND ${CMAKE_COMMAND} -E env NODE_ENV=production bun src/js/_codegen/index.ts
+)
+
+add_custom_target(
+    static-hash-table
+    COMMAND bun src/js/_codegen/static-hash-tables.ts
+)
 
 
 
-message(STATUS "#### : ${BREW_PREFIX_PATH}")
+
+add_custom_target(
+    cpp
+    COMMAND echo "${CMAKE_COMMAND}"
+)
+
+add_custom_target(
+    link
+)
+
+
+
+message(STATUS "#### : ${JSC_FILES_DEBUG}")

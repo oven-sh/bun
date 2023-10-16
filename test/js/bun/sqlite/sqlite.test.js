@@ -602,9 +602,7 @@ it("#3991", () => {
 
 it("#5872", () => {
   const db = new Database(":memory:");
-  db.run(
-      "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)"
-  );
+  db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)");
   const query = db.query("INSERT INTO foo (greeting) VALUES ($greeting);");
   const result = query.all({ $greeting: "sup" });
   expect(result).toEqual([]);

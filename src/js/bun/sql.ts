@@ -161,7 +161,6 @@ function loadOptions(o) {
     const urlString = env.POSTGRES_URL || env.DATABASE_URL || env.PGURL || env.PG_URL;
     if (urlString) {
       url = new URL(urlString);
-      console.log(url)
       o = {};
     }
   } else if (o && typeof o === "object") {

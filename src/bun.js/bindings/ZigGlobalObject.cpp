@@ -2213,9 +2213,17 @@ static inline EncodedJSValue functionPerformanceNowBody(JSGlobalObject* globalOb
     return JSValue::encode(jsDoubleNumber(result));
 }
 
+static inline EncodedJSValue functionPerformanceGetEntriesByNameBody(JSGlobalObject* globalObject) {
+    auto& vm = globalObject->vm();
+    auto* global = reinterpret_cast<GlobalObject*>(globalObject);
+    auto array = JSC::JSArray::create(vm, global->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), 0);
+    return JSValue::encode(array);
+}
+
 extern "C" {
 class JSPerformanceObject;
 static JSC_DECLARE_HOST_FUNCTION(functionPerformanceNow);
+static JSC_DECLARE_HOST_FUNCTION(functionPerformanceGetEntriesByName);
 static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(functionPerformanceNowWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject*, JSPerformanceObject*));
 }
 
@@ -2276,6 +2284,10 @@ private:
         this->putDirect(vm, JSC::Identifier::fromString(vm, "mark"_s), noopNotImplemented, JSC::PropertyAttribute::Function | 0);
         this->putDirect(vm, JSC::Identifier::fromString(vm, "markResourceTiming"_s), noopNotImplemented, JSC::PropertyAttribute::Function | 0);
         this->putDirect(vm, JSC::Identifier::fromString(vm, "measure"_s), noopNotImplemented, JSC::PropertyAttribute::Function | 0);
+        // this is a stub impl for getEntriesByName(https://github.com/oven-sh/bun/issues/6537)
+        JSFunction* getEntriesByName = JSFunction::create(
+            vm, globalObject(), 0, String("getEntriesByName"_s), functionPerformanceGetEntriesByName, ImplementationVisibility::Public, NoIntrinsic, functionPerformanceGetEntriesByName, nullptr);
+        this->putDirect(vm, JSC::Identifier::fromString(vm, "getEntriesByName"_s), getEntriesByName, JSC::PropertyAttribute::Function | 0);
 
         this->putDirect(
             vm,
@@ -2289,6 +2301,12 @@ const ClassInfo JSPerformanceObject::s_info = { "Performance"_s, &Base::s_info, 
 JSC_DEFINE_HOST_FUNCTION(functionPerformanceNow, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return functionPerformanceNowBody(globalObject);
+}
+
+
+JSC_DEFINE_HOST_FUNCTION(functionPerformanceGetEntriesByName, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return functionPerformanceGetEntriesByNameBody(globalObject);
 }
 
 JSC_DEFINE_JIT_OPERATION(functionPerformanceNowWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSPerformanceObject* castedThis))

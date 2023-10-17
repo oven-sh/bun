@@ -67,6 +67,7 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
                 args,
                 comptime Flavor.sync,
             );
+
             switch (result) {
                 .err => |err| {
                     globalObject.throwValue(JSC.JSValue.c(err.toJS(globalObject)));
@@ -108,14 +109,6 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
-            switch (comptime FunctionEnum) {
-                .readdir, .lstat, .stat, .readFile, .realpath, .copyFile, .cp => {},
-                else => {
-                    globalObject.throw("Not implemented yet", .{});
-                    return .zero;
-                },
-            }
-
             var arguments = callframe.arguments(8);
 
             var slice = ArgumentsSlice.init(globalObject.bunVM(), arguments.ptr[0..arguments.len]);
@@ -142,57 +135,12 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
 
             // TODO: handle globalObject.throwValue
 
-            if (comptime FunctionEnum == .readdir) {
-                return JSC.Node.AsyncReaddirTask.create(globalObject, args, slice.vm, slice.arena);
-            }
-
-            if (comptime FunctionEnum == .readFile) {
-                return JSC.Node.AsyncReadFileTask.create(globalObject, args, slice.vm, slice.arena);
-            }
-
-            if (comptime FunctionEnum == .realpath) {
-                return JSC.Node.AsyncRealpathTask.create(globalObject, args, slice.vm, slice.arena);
-            }
-
-            if (comptime FunctionEnum == .stat or FunctionEnum == .lstat) {
-                return JSC.Node.AsyncStatTask.create(globalObject, args, slice.vm, FunctionEnum == .lstat, slice.arena);
-            }
-
-            if (comptime FunctionEnum == .copyFile) {
-                return JSC.Node.AsyncCopyFileTask.create(globalObject, args, slice.vm, slice.arena);
-            }
-
+            const Task = @field(JSC.Node.Async, @tagName(FunctionEnum));
             if (comptime FunctionEnum == .cp) {
-                return JSC.Node.AsyncCpTask.create(globalObject, args, slice.vm, slice.arena);
+                return Task.create(globalObject, args, globalObject.bunVM(), slice.arena);
+            } else {
+                return Task.create(globalObject, args, globalObject.bunVM());
             }
-
-            // defer {
-            //     for (arguments.len) |arg| {
-            //         JSC.C.JSValueUnprotect(ctx, arg);
-            //     }
-            //     slice.arena.deinit();
-            // }
-
-            // const args = if (comptime Arguments != void)
-            //     Arguments.fromJS(ctx, &slice, exception)
-            // else
-            //     Arguments{};
-            // if (exception.* != null) return null;
-
-            // const result: Maybe(Result) = Function(this, comptime Flavor.sync, args);
-            // switch (result) {
-            //     .err => |err| {
-            //         exception.* = err.toJS(ctx);
-            //         return null;
-            //     },
-            //     .result => |res| {
-            //         return switch (comptime Result) {
-            //             void => JSC.JSValue.jsUndefined().asRef(),
-            //             else => res.toJS(ctx),
-            //         };
-            //     },
-            // }
-            // unreachable;
         }
     };
     return NodeBindingClosure.bind;

@@ -109,73 +109,86 @@ class StatWatcher extends EventEmitter {
 }
 
 var access = function access(...args) {
-    callbackify(fs.accessSync, args);
+    callbackify(fs.access, args);
   },
   appendFile = function appendFile(...args) {
-    callbackify(fs.appendFileSync, args);
+    callbackify(fs.appendFile, args);
   },
   close = function close(...args) {
-    callbackify(fs.closeSync, args);
+    callbackify(fs.close, args);
   },
   rm = function rm(...args) {
-    callbackify(fs.rmSync, args);
+    callbackify(fs.rm, args);
   },
   rmdir = function rmdir(...args) {
-    callbackify(fs.rmdirSync, args);
+    callbackify(fs.rmdir, args);
   },
   copyFile = function copyFile(...args) {
     const callback = args[args.length - 1];
     if (typeof callback !== "function") {
-      // TODO: set code
-      throw new TypeError("Callback must be a function");
+      const err = new TypeError("Callback must be a function");
+      err.code = "ERR_INVALID_ARG_TYPE";
+      throw err;
     }
 
     fs.copyFile(...args).then(result => callback(null, result), callback);
   },
-  exists = function exists(...args) {
-    callbackify(fs.existsSync, args);
+  exists = function exists(path, callback) {
+    if (typeof callback !== "function") {
+      const err = new TypeError("Callback must be a function");
+      err.code = "ERR_INVALID_ARG_TYPE";
+      throw err;
+    }
+    try {
+      fs.exists.$apply(fs, [path]).then(
+        existed => callback(existed),
+        _ => callback(false),
+      );
+    } catch (e) {
+      callback(false);
+    }
   },
   chown = function chown(...args) {
-    callbackify(fs.chownSync, args);
+    callbackify(fs.chown, args);
   },
   chmod = function chmod(...args) {
-    callbackify(fs.chmodSync, args);
+    callbackify(fs.chmod, args);
   },
   fchmod = function fchmod(...args) {
-    callbackify(fs.fchmodSync, args);
+    callbackify(fs.fchmod, args);
   },
   fchown = function fchown(...args) {
-    callbackify(fs.fchownSync, args);
+    callbackify(fs.fchown, args);
   },
   fstat = function fstat(...args) {
-    callbackify(fs.fstatSync, args);
+    callbackify(fs.fstat, args);
   },
   fsync = function fsync(...args) {
-    callbackify(fs.fsyncSync, args);
+    callbackify(fs.fsync, args);
   },
   ftruncate = function ftruncate(...args) {
-    callbackify(fs.ftruncateSync, args);
+    callbackify(fs.ftruncate, args);
   },
   futimes = function futimes(...args) {
-    callbackify(fs.futimesSync, args);
+    callbackify(fs.futimes, args);
   },
   lchmod = function lchmod(...args) {
-    callbackify(fs.lchmodSync, args);
+    callbackify(fs.lchmod, args);
   },
   lchown = function lchown(...args) {
-    callbackify(fs.lchownSync, args);
+    callbackify(fs.lchown, args);
   },
   link = function link(...args) {
-    callbackify(fs.linkSync, args);
+    callbackify(fs.link, args);
   },
   mkdir = function mkdir(...args) {
-    callbackify(fs.mkdirSync, args);
+    callbackify(fs.mkdir, args);
   },
   mkdtemp = function mkdtemp(...args) {
-    callbackify(fs.mkdtempSync, args);
+    callbackify(fs.mkdtemp, args);
   },
   open = function open(...args) {
-    callbackify(fs.openSync, args);
+    callbackify(fs.open, args);
   },
   read = function read(fd, buffer, offsetOrOptions, length, position, callback) {
     let offset = offsetOrOptions;
@@ -210,7 +223,7 @@ var access = function access(...args) {
     });
   },
   write = function write(...args) {
-    callbackify(fs.writeSync, args);
+    callbackify(fs.write, args);
   },
   readdir = function readdir(...args) {
     const callback = args[args.length - 1];
@@ -231,10 +244,10 @@ var access = function access(...args) {
     fs.readFile(...args).then(result => callback(null, result), callback);
   },
   writeFile = function writeFile(...args) {
-    callbackify(fs.writeFileSync, args);
+    callbackify(fs.writeFile, args);
   },
   readlink = function readlink(...args) {
-    callbackify(fs.readlinkSync, args);
+    callbackify(fs.readlink, args);
   },
   realpath = function realpath(...args) {
     const callback = args[args.length - 1];
@@ -246,7 +259,7 @@ var access = function access(...args) {
     fs.realpath(...args).then(result => callback(null, result), callback);
   },
   rename = function rename(...args) {
-    callbackify(fs.renameSync, args);
+    callbackify(fs.rename, args);
   },
   lstat = function lstat(...args) {
     const callback = args[args.length - 1];
@@ -267,19 +280,19 @@ var access = function access(...args) {
     fs.stat(...args).then(result => callback(null, result), callback);
   },
   symlink = function symlink(...args) {
-    callbackify(fs.symlinkSync, args);
+    callbackify(fs.symlink, args);
   },
   truncate = function truncate(...args) {
-    callbackify(fs.truncateSync, args);
+    callbackify(fs.truncate, args);
   },
   unlink = function unlink(...args) {
-    callbackify(fs.unlinkSync, args);
+    callbackify(fs.unlink, args);
   },
   utimes = function utimes(...args) {
-    callbackify(fs.utimesSync, args);
+    callbackify(fs.utimes, args);
   },
   lutimes = function lutimes(...args) {
-    callbackify(fs.lutimesSync, args);
+    callbackify(fs.lutimes, args);
   },
   accessSync = fs.accessSync.bind(fs),
   appendFileSync = fs.appendFileSync.bind(fs),
@@ -406,16 +419,18 @@ function unwatchFile(filename, listener) {
 }
 
 function callbackify(fsFunction, args) {
+  const callback = args[args.length - 1];
   try {
-    const result = fsFunction.apply(fs, args.slice(0, args.length - 1));
-    const callback = args[args.length - 1];
-    if (typeof callback === "function") {
-      queueMicrotask(() => callback(null, result));
-    }
+    var result = fsFunction.$apply(fs, args.slice(0, args.length - 1));
+    result.then(
+      (...args) => callback(null, ...args),
+      err => callback(err),
+    );
   } catch (e) {
-    const callback = args[args.length - 1];
     if (typeof callback === "function") {
-      queueMicrotask(() => callback(e));
+      callback(e);
+    } else {
+      throw e;
     }
   }
 }
@@ -874,7 +889,7 @@ var WriteStreamClass = (WriteStream = function WriteStream(path, options = defau
     tempThis.fd = fs.openSync(path, flags, mode);
   }
 
-  NativeWritable.call(this, tempThis.fd, {
+  NativeWritable.$call(this, tempThis.fd, {
     ...options,
     decodeStrings: false,
     autoDestroy,
@@ -978,7 +993,7 @@ WriteStreamPrototype[writeStreamPathFastPathCallSymbol] = function WriteStreamPa
     },
     err => {
       readStream[kIoDone] = this[kIoDone] = true;
-      WriteStream_errorOrDestroy.call(this, err);
+      WriteStream_errorOrDestroy.$call(this, err);
       readStream.emit("error", err);
     },
   );
@@ -994,7 +1009,7 @@ WriteStreamPrototype.disableBunFastPath = function disableBunFastPath() {
 
 function WriteStream_handleWrite(er, bytes) {
   if (er) {
-    return WriteStream_errorOrDestroy.call(this, er);
+    return WriteStream_errorOrDestroy.$call(this, er);
   }
 
   this.bytesWritten += bytes;
@@ -1026,11 +1041,11 @@ WriteStreamPrototype._destroy = function _destroy(err, cb) {
   }
 
   if (this[kIoDone]) {
-    this.once(kIoDone, () => WriteStream_internalClose.call(this, err, cb));
+    this.once(kIoDone, () => WriteStream_internalClose.$call(this, err, cb));
     return;
   }
 
-  WriteStream_internalClose.call(this, err, cb);
+  WriteStream_internalClose.$call(this, err, cb);
 };
 
 WriteStreamPrototype.close = function close(cb) {
@@ -1065,7 +1080,7 @@ WriteStreamPrototype.write = function write(chunk, encoding, cb) {
   const callback = native
     ? (err, bytes) => {
         this[kIoDone] = false;
-        WriteStream_handleWrite.call(this, err, bytes);
+        WriteStream_handleWrite.$call(this, err, bytes);
         this.emit(kIoDone);
         if (cb) !err ? cb() : cb(err);
       }
@@ -1074,7 +1089,7 @@ WriteStreamPrototype.write = function write(chunk, encoding, cb) {
   if (this._write) {
     return this._write(chunk, encoding, callback);
   } else {
-    return NativeWritable.prototype.write.call(this, chunk, encoding, callback, native);
+    return NativeWritable.prototype.write.$call(this, chunk, encoding, callback, native);
   }
 };
 
@@ -1084,7 +1099,7 @@ WriteStreamPrototype._writev = undefined;
 
 WriteStreamPrototype.end = function end(chunk, encoding, cb) {
   var native = this.pos === undefined;
-  return NativeWritable.prototype.end.call(this, chunk, encoding, cb, native);
+  return NativeWritable.prototype.end.$call(this, chunk, encoding, cb, native);
 };
 
 WriteStreamPrototype._destroy = function _destroy(err, cb) {

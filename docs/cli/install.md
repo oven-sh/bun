@@ -23,19 +23,11 @@ sudo apt install --install-recommends linux-generic-hwe-20.04
 
 {% /details %}
 
-## Manage dependencies
-
-### `bun install`
-
 To install all dependencies of a project:
 
 ```bash
 $ bun install
 ```
-
-On Linux, `bun install` tends to install packages 20-100x faster than `npm install`. On macOS, it's more like 4-80x.
-
-![package install benchmark](https://user-images.githubusercontent.com/709451/147004342-571b6123-17a9-49a2-8bfd-dcfc5204047e.png)
 
 Running `bun install` will:
 
@@ -43,23 +35,7 @@ Running `bun install` will:
 - **Run** your project's `{pre|post}install` and `{pre|post}prepare` scripts at the appropriate time. For security reasons Bun _does not execute_ lifecycle scripts of installed dependencies.
 - **Write** a `bun.lockb` lockfile to the project root.
 
-To install in production mode (i.e. without `devDependencies`):
-
-```bash
-$ bun install --production
-```
-
-To install with reproducible dependencies, use `--frozen-lockfile`. If your `package.json` disagrees with `bun.lockb`, Bun will exit with an error. This is useful for production builds and CI environments.
-
-```bash
-$ bun install --frozen-lockfile
-```
-
-To perform a dry run (i.e. don't actually install anything):
-
-```bash
-$ bun install --dry-run
-```
+## Logging
 
 To modify logging verbosity:
 
@@ -68,8 +44,113 @@ $ bun install --verbose # debug logging
 $ bun install --silent  # no logging
 ```
 
-{% details summary="Configuring behavior" %}
-The default behavior of `bun install` can be configured in `bun.toml`:
+## Lifecycle scripts
+
+Unlike other npm clients, Bun does not execute arbitrary lifecycle scripts like `postinstall` for installed dependencies. Executing arbitrary scripts represents a potential security risk.
+
+To tell Bun to allow lifecycle scripts for a particular package, add the package to `trustedDependencies` in your package.json.
+
+```json-diff
+  {
+    "name": "my-app",
+    "version": "1.0.0",
++   "trustedDependencies": ["my-trusted-package"]
+  }
+```
+
+Then re-install the package. Bun will read this field and run lifecycle scripts for `my-trusted-package`.
+
+## Workspaces
+
+Bun supports `"workspaces"` in package.json. For complete documentation refer to [Package manager > Workspaces](/docs/install/workspaces).
+
+```json#package.json
+{
+  "name": "my-app",
+  "version": "1.0.0",
+  "workspaces": ["packages/*"],
+  "dependencies": {
+    "preact": "^10.5.13"
+  }
+}
+```
+
+## Overrides and resolutions
+
+Bun supports npm's `"overrides"` and Yarn's `"resolutions"` in `package.json`. These are mechanisms for specifying a version range for _metadependencies_—the dependencies of your dependencies. Refer to [Package manager > Overrides and resolutions](/docs/install/overrides) for complete documentation.
+
+```json-diff#package.json
+  {
+    "name": "my-app",
+    "dependencies": {
+      "foo": "^2.0.0"
+    },
++   "overrides": {
++     "bar": "~4.4.0"
++   }
+  }
+```
+
+## Global packages
+
+To install a package globally, use the `-g`/`--global` flag. Typically this is used for installing command-line tools.
+
+```bash
+$ bun install --global cowsay # or `bun install -g cowsay`
+$ cowsay "Bun!"
+ ______
+< Bun! >
+ ------
+        \   ^__^
+         \  (oo)\_______
+            (__)\       )\/\
+                ||----w |
+                ||     ||
+```
+
+## Production mode
+
+To install in production mode (i.e. without `devDependencies` or `optionalDependencies`):
+
+```bash
+$ bun install --production
+```
+
+For reproducible installs, use `--frozen-lockfile`. This will install the exact versions of each package specified in the lockfile. If your `package.json` disagrees with `bun.lockb`, Bun will exit with an error. The lockfile will not be updated.
+
+```bash
+$ bun install --frozen-lockfile
+```
+
+For more information on Bun's binary lockfile `bun.lockb`, refer to [Package manager > Lockfile](/docs/install/lockfile).
+
+## Dry run
+
+To perform a dry run (i.e. don't actually install anything):
+
+```bash
+$ bun install --dry-run
+```
+
+## Non-npm dependencies
+
+Bun supports installing dependencies from Git, GitHub, and local or remotely-hosted tarballs. For complete documentation refer to [Package manager > Git, GitHub, and tarball dependencies](/docs/cli/add).
+
+```json#package.json
+{
+  "dependencies": {
+    "dayjs": "git+https://github.com/iamkun/dayjs.git",
+    "lodash": "git+ssh://github.com/lodash/lodash.git#4.17.21",
+    "moment": "git@github.com:moment/moment.git",
+    "zod": "github:colinhacks/zod",
+    "react": "https://registry.npmjs.org/react/-/react-18.2.0.tgz"
+  }
+}
+```
+
+## Configuration
+
+The default behavior of `bun install` can be configured in `bunfig.toml`. The default values are shown below.
 
 ```toml
 [install]
@@ -93,215 +174,9 @@ frozenLockfile = false
 dryRun = false
 ```
 
-{% /details %}
-
-### `bun add`
-
-To add a particular package:
-
-```bash
-$ bun add preact
-```
-
-To specify a version, version range, or tag:
-
-```bash
-$ bun add zod@3.20.0
-$ bun add zod@^3.0.0
-$ bun add zod@latest
-```
-
-To add a package as a dev dependency (`"devDependencies"`):
-
-```bash
-$ bun add --dev @types/react
-$ bun add -d @types/react
-```
-
-To add a package as an optional dependency (`"optionalDependencies"`):
-
-```bash
-$ bun add --optional lodash
-```
-
-To add a package and pin to the resolved version, use `--exact`. This will resolve the version of the package and add it to your `package.json` with an exact version number instead of a version range.
-
-```bash
-$ bun add react --exact
-```
-
-This will add the following to your `package.json`:
-
-```jsonc
-{
-  "dependencies": {
-    // without --exact
-    "react": "^18.2.0", // this matches >= 18.2.0 < 19.0.0
-
-    // with --exact
-    "react": "18.2.0" // this matches only 18.2.0 exactly
-  }
-}
-```
-
-To install a package globally:
-
-```bash
-$ bun add --global cowsay # or `bun add -g cowsay`
-$ cowsay "Bun!"
- ______
-< Bun! >
- ------
-        \   ^__^
-         \  (oo)\_______
-            (__)\       )\/\
-                ||----w |
-                ||     ||
-```
-
-{% details summary="Configuring global installation behavior" %}
-
-```toml
-[install]
-# where `bun install --global` installs packages
-globalDir = "~/.bun/install/global"
-
-# where globally-installed package bins are linked
-globalBinDir = "~/.bun/bin"
-```
-
-{% /details %}
-To view a complete list of options for a given command:
-
-```bash
-$ bun add --help
-```
-
-### `bun remove`
-
-To remove a dependency:
-
-```bash
-$ bun remove preact
-```
-
-## Local packages (`bun link`)
-
-Use `bun link` in a local directory to register the current package as a "linkable" package.
-
-```bash
-$ cd /path/to/cool-pkg
-$ cat package.json
-{
-  "name": "cool-pkg",
-  "version": "1.0.0"
-}
-$ bun link
-bun link v1.x (7416672e)
-Success! Registered "cool-pkg"
-
-To use cool-pkg in a project, run:
-  bun link cool-pkg
-
-Or add it in dependencies in your package.json file:
-  "cool-pkg": "link:cool-pkg"
-```
-
-This package can now be "linked" into other projects using `bun link cool-pkg`. This will create a symlink in the `node_modules` directory of the target project, pointing to the local directory.
-
-```bash
-$ cd /path/to/my-app
-$ bun link cool-pkg
-```
-
-In addition, the `--save` flag can be used to add `cool-pkg` to the `dependencies` field of your app's package.json with a special version specifier that tells Bun to load from the registered local directory instead of installing from `npm`:
-
-```json-diff
-  {
-    "name": "my-app",
-    "version": "1.0.0",
-    "dependencies": {
-+     "cool-pkg": "link:cool-pkg"
-    }
-  }
-```
-
-## Trusted dependencies
-
-Unlike other npm clients, Bun does not execute arbitrary lifecycle scripts for installed dependencies, such as `postinstall`. These scripts represent a potential security risk, as they can execute arbitrary code on your machine.
-
-<!-- Bun maintains an allow-list of popular packages containing `postinstall` scripts that are known to be safe. To run lifecycle scripts for packages that aren't on this list, add the package to `trustedDependencies` in your package.json. -->
-
-To tell Bun to allow lifecycle scripts for a particular package, add the package to `trustedDependencies` in your package.json.
-
-<!-- ```json-diff
-  {
-    "name": "my-app",
-    "version": "1.0.0",
-+   "trustedDependencies": {
-+     "my-trusted-package": "*"
-+   }
-  }
-``` -->
-
-```json-diff
-  {
-    "name": "my-app",
-    "version": "1.0.0",
-+   "trustedDependencies": ["my-trusted-package"]
-  }
-```
-
-Bun reads this field and will run lifecycle scripts for `my-trusted-package`.
-
-<!-- If you specify a version range, Bun will only execute lifecycle scripts if the resolved package version matches the range. -->
-<!--
-```json
-{
-  "name": "my-app",
-  "version": "1.0.0",
-  "trustedDependencies": {
-    "my-trusted-package": "^1.0.0"
-  }
-}
-``` -->
-
-## Git dependencies
-
-To add a dependency from a git repository:
-
-```bash
-$ bun install git@github.com:moment/moment.git
-```
-
-Bun supports a variety of protocols, including [`github`](https://docs.npmjs.com/cli/v9/configuring-npm/package-json#github-urls), [`git`](https://docs.npmjs.com/cli/v9/configuring-npm/package-json#git-urls-as-dependencies), `git+ssh`, `git+https`, and many more.
-
-```json
-{
-  "dependencies": {
-    "dayjs": "git+https://github.com/iamkun/dayjs.git",
-    "lodash": "git+ssh://github.com/lodash/lodash.git#4.17.21",
-    "moment": "git@github.com:moment/moment.git",
-    "zod": "github:colinhacks/zod"
-  }
-}
-```
-
-## Tarball dependencies
-
-A package name can correspond to a publically hosted `.tgz` file. During `bun install`, Bun will download and install the package from the specified tarball URL, rather than from the package registry.
-
-```json#package.json
-{
-  "dependencies": {
-    "zod": "https://registry.npmjs.org/zod/-/zod-3.21.4.tgz"
-  }
-}
-```
-
 ## CI/CD
 
-Looking to speed up your CI? Use the official `oven-sh/setup-bun` action to install `bun` in a GitHub Actions pipeline.
+Looking to speed up your CI? Use the official [`oven-sh/setup-bun`](https://github.com/oven-sh/setup-bun) action to install `bun` in a GitHub Actions pipeline.
 
 ```yaml#.github/workflows/release.yml
 name: bun-types

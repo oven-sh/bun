@@ -385,6 +385,16 @@ test(".env with zero length strings", () => {
   expect(stdout).toBe("||0|0");
 });
 
+test("process with zero length environment variable", () => {
+  const dir = tempDirWithFiles("process-issue-zerolength", {
+    "index.ts": "console.log(`'${process.env.TEST_ENV_VAR}'`);",
+  });
+  const { stdout } = bunRun(`${dir}/index.ts`, {
+    TEST_ENV_VAR: "",
+  });
+  expect(stdout).toBe("''");
+});
+
 test(".env in a folder doesn't throw an error", () => {
   const dir = tempDirWithFiles("dotenv-issue-3670", {
     ".env": {

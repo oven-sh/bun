@@ -511,8 +511,8 @@ pub const BundleV2 = struct {
                                     source,
                                     import_record.range,
                                     this.graph.allocator,
-                                    "Could not resolve Node.js builtin: \"{s}\". To use Node.js builtins, set target to 'node' or 'bun'",
-                                    .{path_to_use},
+                                    "Browser build cannot {s} Node.js module: \"{s}\". To use Node.js builtins, set target to 'node' or 'bun'",
+                                    .{ import_record.kind.errorLabel(), path_to_use },
                                     import_record.kind,
                                 ) catch unreachable;
                             } else {
@@ -1914,8 +1914,8 @@ pub const BundleV2 = struct {
                                         source,
                                         import_record.range,
                                         this.graph.allocator,
-                                        "Could not resolve Node.js builtin: \"{s}\". To use Node.js builtins, set target to 'node' or 'bun'",
-                                        .{import_record.path.text},
+                                        "Browser build cannot {s} Node.js builtin: \"{s}\". To use Node.js builtins, set target to 'node' or 'bun'",
+                                        .{ import_record.kind.errorLabel(), import_record.path.text },
                                         import_record.kind,
                                     ) catch @panic("unexpected log error");
                                 } else {
@@ -2276,6 +2276,7 @@ pub const ParseTask = struct {
     tree_shaking: bool = false,
     known_target: ?options.Target = null,
     module_type: options.ModuleType = .unknown,
+    emit_decorator_metadata: bool = false,
     ctx: *BundleV2,
     package_version: string = "",
 
@@ -2298,6 +2299,7 @@ pub const ParseTask = struct {
             .jsx = resolve_result.jsx,
             .source_index = source_index orelse Index.invalid,
             .module_type = resolve_result.module_type,
+            .emit_decorator_metadata = resolve_result.emit_decorator_metadata,
             .package_version = if (resolve_result.package_json) |package_json| package_json.version else "",
         };
     }
@@ -2600,6 +2602,7 @@ pub const ParseTask = struct {
         opts.features.minify_syntax = bundler.options.minify_syntax;
         opts.features.minify_identifiers = bundler.options.minify_identifiers;
         opts.features.should_fold_typescript_constant_expressions = opts.features.inlining or loader.isTypeScript();
+        opts.features.emit_decorator_metadata = bundler.options.emit_decorator_metadata;
 
         opts.tree_shaking = if (source.index.isRuntime()) true else bundler.options.tree_shaking;
         opts.module_type = task.module_type;
@@ -9799,15 +9802,45 @@ const LinkerContext = struct {
                         // time, so we emit a debug message and rewrite the value to the literal
                         // "undefined" instead of emitting an error.
                         symbol.import_item_status = .missing;
-                        c.log.addRangeWarningFmt(
+                        if (c.resolver.opts.target == .browser and JSC.HardcodedModule.Aliases.has(next_source.path.pretty, .bun)) {
+                            c.log.addRangeWarningFmtWithNote(
+                                source,
+                                r,
+                                c.allocator,
+                                "Browser polyfill for module \"{s}\" doesn't have a matching export named \"{s}\"",
+                                .{
+                                    next_source.path.pretty,
+                                    named_import.alias.?,
+                                },
+                                "Bun's bundler defaults to browser builds instead of node or bun builds. If you want to use node or bun builds, you can set the target to \"node\" or \"bun\" in the bundler options.",
+                                .{},
+                                r,
+                            ) catch unreachable;
+                        } else {
+                            c.log.addRangeWarningFmt(
+                                source,
+                                r,
+                                c.allocator,
+                                "Import \"{s}\" will always be undefined because there is no matching export in \"{s}\"",
+                                .{
+                                    named_import.alias.?,
+                                    next_source.path.pretty,
+                                },
+                            ) catch unreachable;
+                        }
+                    } else if (c.resolver.opts.target == .browser and JSC.HardcodedModule.Aliases.has(next_source.path.pretty, .browser)) {
+                        c.log.addRangeErrorFmtWithNote(
                             source,
                             r,
                             c.allocator,
-                            "Import \"{s}\" will always be undefined because there is no matching export in \"{s}\"",
+                            "Browser polyfill for module \"{s}\" doesn't have a matching export named \"{s}\"",
                             .{
-                                named_import.alias.?,
                                 next_source.path.pretty,
+                                named_import.alias.?,
                             },
+                            "Bun's bundler defaults to browser builds instead of node or bun builds. If you want to use node or bun builds, you can set the target to \"node\" or \"bun\" in the bundler options.",
+                            .{},
+                            r,
                         ) catch unreachable;
                     } else {
                         c.log.addRangeErrorFmt(

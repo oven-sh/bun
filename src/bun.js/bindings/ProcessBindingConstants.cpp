@@ -685,9 +685,6 @@ static JSValue processBindingConstantsGetFs(VM& vm, JSObject* bindingObject)
 #ifdef O_DIRECTORY
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "O_DIRECTORY"_s)), jsNumber(O_DIRECTORY));
 #endif
-#ifdef O_EXCL
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "O_EXCL"_s)), jsNumber(O_EXCL));
-#endif
 #ifdef O_NOATIME
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "O_NOATIME"_s)), jsNumber(O_NOATIME));
 #endif
@@ -1082,15 +1079,18 @@ static JSValue processBindingConstantsGetZlib(VM& vm, JSObject* bindingObject)
     return object;
 }
 
-static const HashTableValue ProcessBindingConstantsValues[] = {
-    { "os"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, processBindingConstantsGetOs } },
-    { "fs"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, processBindingConstantsGetFs } },
-    { "crypto"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, processBindingConstantsGetCrypto } },
-    { "zlib"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, processBindingConstantsGetZlib } },
-    { "trace"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, processBindingConstantsGetTrace } },
-};
+/* Source for ProcessBindingConstants.lut.h
+@begin processBindingConstantsTable
+    os             processBindingConstantsGetOs                PropertyCallback
+    fs             processBindingConstantsGetFs                PropertyCallback
+    crypto         processBindingConstantsGetCrypto            PropertyCallback
+    zlib           processBindingConstantsGetZlib              PropertyCallback
+    trace          processBindingConstantsGetTrace             PropertyCallback
+@end
+*/
+#include "ProcessBindingConstants.lut.h"
 
-const ClassInfo ProcessBindingConstants::s_info = { "ProcessBindingConstants"_s, Base::info(), nullptr, nullptr, CREATE_METHOD_TABLE(ProcessBindingConstants) };
+const ClassInfo ProcessBindingConstants::s_info = { "ProcessBindingConstants"_s, &Base::s_info, &processBindingConstantsTable, nullptr, CREATE_METHOD_TABLE(ProcessBindingConstants) };
 
 ProcessBindingConstants* ProcessBindingConstants::create(VM& vm, Structure* structure)
 {
@@ -1107,8 +1107,7 @@ Structure* ProcessBindingConstants::createStructure(VM& vm, JSGlobalObject* glob
 void ProcessBindingConstants::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, ProcessBindingConstants::info(), ProcessBindingConstantsValues, *this);
-    ASSERT(inherits(vm, info()));
+    ASSERT(inherits(info()));
 }
 
 template<typename Visitor>

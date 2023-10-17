@@ -80,6 +80,31 @@ it("Bun.file not found returns ENOENT", async () => {
   await gcTick();
 });
 
+it("Bun.write file not found returns ENOENT, issue#6336", async () => {
+  const dst = Bun.file(path.join(tmpdir(), "does/not/exist.txt"));
+  try {
+    await gcTick();
+    await Bun.write(dst, "");
+    await gcTick();
+  } catch (exception) {
+    expect(exception.code).toBe("ENOENT");
+    expect(exception.path).toBe(dst.name);
+  }
+
+  const src = Bun.file(path.join(tmpdir(), `test-bun-write-${Date.now()}.txt`));
+  await Bun.write(src, "");
+  try {
+    await gcTick();
+    await Bun.write(dst, src);
+    await gcTick();
+  } catch (exception) {
+    expect(exception.code).toBe("ENOENT");
+    expect(exception.path).toBe(dst.name);
+  } finally {
+    fs.unlinkSync(src.name);
+  }
+});
+
 it("Bun.write('out.txt', 'string')", async () => {
   for (let erase of [true, false]) {
     if (erase) {
@@ -298,6 +323,16 @@ it("offset should work #4963", async () => {
   const slice = file.slice(2, file.size);
   const contents = await slice.text();
   expect(contents).toBe("ntents");
+});
+
+it("length should be limited by file size #5080", async () => {
+  const filename = tmpdir() + "/bun.test.offset2.txt";
+  await Bun.write(filename, "contents");
+  const file = Bun.file(filename);
+  const slice = file.slice(2, 1024);
+  const contents = await slice.text();
+  expect(contents).toBe("ntents");
+  expect(contents.length).toBeLessThanOrEqual(file.size);
 });
 
 it("#2674", async () => {

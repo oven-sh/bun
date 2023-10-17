@@ -118,6 +118,7 @@ pub fn WorkTask(comptime Context: type, comptime async_io: bool) type {
         }
 
         pub fn runFromThreadPool(task: *TaskType) void {
+            JSC.markBinding(@src());
             var this = @fieldParentPtr(This, "task", task);
             Context.run(this.ctx, this);
         }
@@ -303,6 +304,48 @@ const PollPendingModulesTask = JSC.ModuleLoader.AsyncModule.Queue;
 // const PromiseTask = JSInternalPromise.Completion.PromiseTask;
 const GetAddrInfoRequestTask = JSC.DNS.GetAddrInfoRequest.Task;
 const JSCDeferredWorkTask = JSCScheduler.JSCDeferredWorkTask;
+
+const Stat = JSC.Node.Async.stat;
+const Lstat = JSC.Node.Async.lstat;
+const Fstat = JSC.Node.Async.fstat;
+const Open = JSC.Node.Async.open;
+const ReadFile = JSC.Node.Async.readFile;
+const WriteFile = JSC.Node.Async.writeFile;
+const CopyFile = JSC.Node.Async.copyFile;
+const Read = JSC.Node.Async.read;
+const Write = JSC.Node.Async.write;
+const Truncate = JSC.Node.Async.truncate;
+const FTruncate = JSC.Node.Async.ftruncate;
+const Readdir = JSC.Node.Async.readdir;
+const Readv = JSC.Node.Async.readv;
+const Writev = JSC.Node.Async.writev;
+const Close = JSC.Node.Async.close;
+const Rm = JSC.Node.Async.rm;
+const Rmdir = JSC.Node.Async.rmdir;
+const Chown = JSC.Node.Async.chown;
+const FChown = JSC.Node.Async.fchown;
+const Utimes = JSC.Node.Async.utimes;
+const Lutimes = JSC.Node.Async.lutimes;
+const Chmod = JSC.Node.Async.chmod;
+const Fchmod = JSC.Node.Async.fchmod;
+const Link = JSC.Node.Async.link;
+const Symlink = JSC.Node.Async.symlink;
+const Readlink = JSC.Node.Async.readlink;
+const Realpath = JSC.Node.Async.realpath;
+const Mkdir = JSC.Node.Async.mkdir;
+const Fsync = JSC.Node.Async.fsync;
+const Rename = JSC.Node.Async.rename;
+const Fdatasync = JSC.Node.Async.fdatasync;
+const Access = JSC.Node.Async.access;
+const AppendFile = JSC.Node.Async.appendFile;
+const Mkdtemp = JSC.Node.Async.mkdtemp;
+const Exists = JSC.Node.Async.exists;
+const Futimes = JSC.Node.Async.futimes;
+const Lchmod = JSC.Node.Async.lchmod;
+const Lchown = JSC.Node.Async.lchown;
+const Unlink = JSC.Node.Async.unlink;
+
+// Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
     Microtask,
@@ -321,13 +364,49 @@ pub const Task = TaggedPointerUnion(.{
     GetAddrInfoRequestTask,
     FSWatchTask,
     JSCDeferredWorkTask,
-
-    // PromiseTask,
-    // TimeoutTasklet,
+    Stat,
+    Lstat,
+    Fstat,
+    Open,
+    ReadFile,
+    WriteFile,
+    CopyFile,
+    Read,
+    Write,
+    Truncate,
+    FTruncate,
+    Readdir,
+    Close,
+    Rm,
+    Rmdir,
+    Chown,
+    FChown,
+    Utimes,
+    Lutimes,
+    Chmod,
+    Fchmod,
+    Link,
+    Symlink,
+    Readlink,
+    Realpath,
+    Mkdir,
+    Fsync,
+    Fdatasync,
+    Writev,
+    Readv,
+    Rename,
+    Access,
+    AppendFile,
+    Mkdtemp,
+    Exists,
+    Futimes,
+    Lchmod,
+    Lchown,
+    Unlink,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
-    task: Task = undefined,
+    task: if (JSC.is_bindgen) void else Task = undefined,
     next: ?*ConcurrentTask = null,
     auto_delete: bool = false,
 
@@ -348,14 +427,19 @@ pub const ConcurrentTask = struct {
     }
 
     pub fn createFrom(task: anytype) *ConcurrentTask {
+        JSC.markBinding(@src());
         return create(Task.init(task));
     }
 
     pub fn fromCallback(ptr: anytype, comptime callback: anytype) *ConcurrentTask {
+        JSC.markBinding(@src());
+
         return create(ManagedTask.New(std.meta.Child(@TypeOf(ptr)), callback).init(ptr));
     }
 
     pub fn from(this: *ConcurrentTask, of: anytype, auto_deinit: AutoDeinit) *ConcurrentTask {
+        JSC.markBinding(@src());
+
         this.* = .{
             .task = Task.init(of),
             .next = null,
@@ -377,6 +461,7 @@ pub const GarbageCollectionController = struct {
     gc_repeating_timer: *uws.Timer = undefined,
     gc_timer_interval: i32 = 0,
     gc_repeating_timer_fast: bool = true,
+    disabled: bool = false,
 
     pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
         var actual = vm.event_loop_handle.?;
@@ -391,8 +476,12 @@ pub const GarbageCollectionController = struct {
                 }
             } else |_| {}
         }
-        this.gc_repeating_timer.set(this, onGCRepeatingTimer, gc_timer_interval, gc_timer_interval);
         this.gc_timer_interval = gc_timer_interval;
+
+        this.disabled = vm.bundler.env.has("BUN_GC_TIMER_DISABLE");
+
+        if (!this.disabled)
+            this.gc_repeating_timer.set(this, onGCRepeatingTimer, gc_timer_interval, gc_timer_interval);
     }
 
     pub fn scheduleGCTimer(this: *GarbageCollectionController) void {
@@ -406,6 +495,7 @@ pub const GarbageCollectionController = struct {
 
     pub fn onGCTimer(timer: *uws.Timer) callconv(.C) void {
         var this = timer.as(*GarbageCollectionController);
+        if (this.disabled) return;
         this.gc_timer_state = .run_on_next_tick;
     }
 
@@ -450,11 +540,12 @@ pub const GarbageCollectionController = struct {
     }
 
     pub fn processGCTimer(this: *GarbageCollectionController) void {
-        var vm = this.bunVM().global.vm();
+        if (this.disabled) return;
+        var vm = this.bunVM().jsc;
         this.processGCTimerWithHeapSize(vm, vm.blockBytesAllocated());
     }
 
-    pub fn processGCTimerWithHeapSize(this: *GarbageCollectionController, vm: *JSC.VM, this_heap_size: usize) void {
+    fn processGCTimerWithHeapSize(this: *GarbageCollectionController, vm: *JSC.VM, this_heap_size: usize) void {
         const prev = this.gc_last_heap_size;
 
         switch (this.gc_timer_state) {
@@ -490,7 +581,8 @@ pub const GarbageCollectionController = struct {
     }
 
     pub fn performGC(this: *GarbageCollectionController) void {
-        var vm = this.bunVM().global.vm();
+        if (this.disabled) return;
+        var vm = this.bunVM().jsc;
         vm.collectAsync();
         this.gc_last_heap_size = vm.blockBytesAllocated();
     }
@@ -515,7 +607,7 @@ comptime {
 
 pub const DeferredRepeatingTask = *const (fn (*anyopaque) bool);
 pub const EventLoop = struct {
-    tasks: Queue = undefined,
+    tasks: if (JSC.is_bindgen) void else Queue = undefined,
     concurrent_tasks: ConcurrentTask.Queue = ConcurrentTask.Queue{},
     global: *JSGlobalObject = undefined,
     virtual_machine: *JSC.VirtualMachine = undefined,
@@ -530,7 +622,7 @@ pub const EventLoop = struct {
 
     pub fn tickWhilePaused(this: *EventLoop, done: *bool) void {
         while (!done.*) {
-            this.virtual_machine.event_loop_handle.?.tick();
+            this.virtual_machine.event_loop_handle.?.tick(this.virtual_machine.jsc);
         }
     }
     extern fn JSC__JSGlobalObject__drainMicrotasks(*JSC.JSGlobalObject) void;
@@ -662,6 +754,162 @@ pub const EventLoop = struct {
                     any.runFromJS();
                     any.deinit();
                 },
+                @field(Task.Tag, typeBaseName(@typeName(Stat))) => {
+                    var any: *Stat = task.get(Stat).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Lstat))) => {
+                    var any: *Lstat = task.get(Lstat).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Fstat))) => {
+                    var any: *Fstat = task.get(Fstat).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Open))) => {
+                    var any: *Open = task.get(Open).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(ReadFile))) => {
+                    var any: *ReadFile = task.get(ReadFile).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(WriteFile))) => {
+                    var any: *WriteFile = task.get(WriteFile).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(CopyFile))) => {
+                    var any: *CopyFile = task.get(CopyFile).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Read))) => {
+                    var any: *Read = task.get(Read).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Write))) => {
+                    var any: *Write = task.get(Write).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Truncate))) => {
+                    var any: *Truncate = task.get(Truncate).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Writev))) => {
+                    var any: *Writev = task.get(Writev).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Readv))) => {
+                    var any: *Readv = task.get(Readv).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Rename))) => {
+                    var any: *Rename = task.get(Rename).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(FTruncate))) => {
+                    var any: *FTruncate = task.get(FTruncate).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Readdir))) => {
+                    var any: *Readdir = task.get(Readdir).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Close))) => {
+                    var any: *Close = task.get(Close).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Rm))) => {
+                    var any: *Rm = task.get(Rm).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Rmdir))) => {
+                    var any: *Rmdir = task.get(Rmdir).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Chown))) => {
+                    var any: *Chown = task.get(Chown).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(FChown))) => {
+                    var any: *FChown = task.get(FChown).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Utimes))) => {
+                    var any: *Utimes = task.get(Utimes).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Lutimes))) => {
+                    var any: *Lutimes = task.get(Lutimes).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Chmod))) => {
+                    var any: *Chmod = task.get(Chmod).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Fchmod))) => {
+                    var any: *Fchmod = task.get(Fchmod).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Link))) => {
+                    var any: *Link = task.get(Link).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Symlink))) => {
+                    var any: *Symlink = task.get(Symlink).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Readlink))) => {
+                    var any: *Readlink = task.get(Readlink).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Realpath))) => {
+                    var any: *Realpath = task.get(Realpath).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Mkdir))) => {
+                    var any: *Mkdir = task.get(Mkdir).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Fsync))) => {
+                    var any: *Fsync = task.get(Fsync).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Fdatasync))) => {
+                    var any: *Fdatasync = task.get(Fdatasync).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Access))) => {
+                    var any: *Access = task.get(Access).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(AppendFile))) => {
+                    var any: *AppendFile = task.get(AppendFile).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Mkdtemp))) => {
+                    var any: *Mkdtemp = task.get(Mkdtemp).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Exists))) => {
+                    var any: *Exists = task.get(Exists).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Futimes))) => {
+                    var any: *Futimes = task.get(Futimes).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Lchmod))) => {
+                    var any: *Lchmod = task.get(Lchmod).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Lchown))) => {
+                    var any: *Lchown = task.get(Lchown).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Unlink))) => {
+                    var any: *Unlink = task.get(Unlink).?;
+                    any.runFromJSThread();
+                },
                 else => if (Environment.allow_assert) {
                     bun.Output.prettyln("\nUnexpected tag: {s}\n", .{@tagName(task.tag())});
                 } else {
@@ -683,6 +931,7 @@ pub const EventLoop = struct {
     }
 
     pub fn tickConcurrentWithCount(this: *EventLoop) usize {
+        JSC.markBinding(@src());
         var concurrent = this.concurrent_tasks.popBatch();
         const count = concurrent.count;
         if (count == 0)
@@ -740,8 +989,9 @@ pub const EventLoop = struct {
         }
 
         if (loop.num_polls > 0 or loop.active > 0) {
-            loop.tick();
             this.processGCTimer();
+            loop.tick(ctx.jsc);
+
             ctx.onAfterEventLoop();
             // this.afterUSocketsTick();
         }
@@ -764,8 +1014,8 @@ pub const EventLoop = struct {
         }
 
         if (loop.num_polls > 0 or loop.active > 0) {
-            loop.tickWithTimeout(timeoutMs);
             this.processGCTimer();
+            loop.tickWithTimeout(timeoutMs, ctx.jsc);
             ctx.onAfterEventLoop();
             // this.afterUSocketsTick();
         }
@@ -789,8 +1039,8 @@ pub const EventLoop = struct {
             }
         }
 
-        loop.tick();
         this.processGCTimer();
+        loop.tick(ctx.jsc);
         ctx.onAfterEventLoop();
         this.tickConcurrent();
         this.tick();
@@ -812,8 +1062,8 @@ pub const EventLoop = struct {
         }
 
         if (loop.active > 0) {
-            loop.tick();
             this.processGCTimer();
+            loop.tick(ctx.jsc);
             ctx.onAfterEventLoop();
             // this.afterUSocketsTick();
         }
@@ -824,13 +1074,15 @@ pub const EventLoop = struct {
     }
 
     pub fn tick(this: *EventLoop) void {
+        JSC.markBinding(@src());
+
         var ctx = this.virtual_machine;
         this.tickConcurrent();
 
         this.processGCTimer();
 
         var global = ctx.global;
-        var global_vm = global.vm();
+        var global_vm = ctx.jsc;
         while (true) {
             while (this.tickWithCount() > 0) : (this.global.handleRejectedPromises()) {
                 this.tickConcurrent();
@@ -851,12 +1103,12 @@ pub const EventLoop = struct {
     }
 
     pub fn waitForPromise(this: *EventLoop, promise: JSC.AnyPromise) void {
-        switch (promise.status(this.global.vm())) {
+        switch (promise.status(this.virtual_machine.jsc)) {
             JSC.JSPromise.Status.Pending => {
-                while (promise.status(this.global.vm()) == .Pending) {
+                while (promise.status(this.virtual_machine.jsc) == .Pending) {
                     this.tick();
 
-                    if (promise.status(this.global.vm()) == .Pending) {
+                    if (promise.status(this.virtual_machine.jsc) == .Pending) {
                         this.autoTick();
                     }
                 }
@@ -868,16 +1120,16 @@ pub const EventLoop = struct {
     // TODO: this implementation is terrible
     // we should not be checking the millitimestamp every time
     pub fn waitForPromiseWithTimeout(this: *EventLoop, promise: JSC.AnyPromise, timeout: u32) bool {
-        return switch (promise.status(this.global.vm())) {
+        return switch (promise.status(this.virtual_machine.jsc)) {
             JSC.JSPromise.Status.Pending => {
                 if (timeout == 0) {
                     return false;
                 }
                 var start_time = std.time.milliTimestamp();
-                while (promise.status(this.global.vm()) == .Pending) {
+                while (promise.status(this.virtual_machine.jsc) == .Pending) {
                     this.tick();
 
-                    if (promise.status(this.global.vm()) == .Pending) {
+                    if (promise.status(this.virtual_machine.jsc) == .Pending) {
                         const remaining = std.time.milliTimestamp() - start_time;
                         if (remaining >= timeout) {
                             return false;
@@ -893,6 +1145,7 @@ pub const EventLoop = struct {
     }
 
     pub fn enqueueTask(this: *EventLoop, task: Task) void {
+        JSC.markBinding(@src());
         this.tasks.writeItem(task) catch unreachable;
     }
 
@@ -905,7 +1158,7 @@ pub const EventLoop = struct {
 
     pub fn callTask(timer: *uws.Timer) callconv(.C) void {
         var task = Task.from(timer.as(*anyopaque));
-        timer.deinit();
+        defer timer.deinit(true);
 
         JSC.VirtualMachine.get().enqueueTask(task);
     }
@@ -916,7 +1169,7 @@ pub const EventLoop = struct {
             this.virtual_machine.event_loop_handle = uws.Loop.get();
             this.virtual_machine.gc_controller.init(this.virtual_machine);
             // _ = actual.addPostHandler(*JSC.EventLoop, this, JSC.EventLoop.afterUSocketsTick);
-            // _ = actual.addPreHandler(*JSC.VM, this.virtual_machine.global.vm(), JSC.VM.drainMicrotasks);
+            // _ = actual.addPreHandler(*JSC.VM, this.virtual_machine.jsc, JSC.VM.drainMicrotasks);
         }
     }
 
@@ -995,7 +1248,7 @@ pub const MiniEventLoop = struct {
         while (!isDone(context)) {
             if (this.tickConcurrentWithCount() == 0 and this.tasks.count == 0) {
                 this.loop.num_polls += 1;
-                this.loop.tick();
+                this.loop.tick(null);
                 this.loop.num_polls -= 1;
             }
 
@@ -1086,7 +1339,7 @@ pub const AnyEventLoop = union(enum) {
                 // var concurrent = bun.default_allocator.create(ConcurrentTask) catch unreachable;
                 // _ = concurrent.from(JSC.Task.init(&@field(ctx, field)));
                 // concurrent.auto_delete = true;
-                // this.jsc.enqueueTaskConcurrent(concurrent);
+                // this.virtual_machine.jsc.enqueueTaskConcurrent(concurrent);
             },
             .mini => {
                 this.mini.enqueueTaskConcurrent(Context, ParentContext, ctx, Callback, field);

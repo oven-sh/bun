@@ -268,6 +268,9 @@ it("supports serialize/deserialize", () => {
   } catch (e) {
     expect(e.message).toBe("attempt to write a readonly database");
   }
+
+  // https://github.com/oven-sh/bun/issues/3712#issuecomment-1725259824
+  expect(Database.deserialize(input)).toBeInstanceOf(Database);
 });
 
 it("db.query()", () => {
@@ -346,6 +349,13 @@ it("db.query()", () => {
       }),
     ),
   ).toBe(JSON.stringify([{ id: 1, name: "Hello" }]));
+
+  const domjit = db.query("SELECT * FROM test");
+  (function (domjit) {
+    for (let i = 0; i < 100000; i++) {
+      domjit.get().name;
+    }
+  })(domjit);
 
   db.close();
 
@@ -588,4 +598,12 @@ it("#3991", () => {
   expect(x.abc).toBeUndefined();
 
   expect(x.id).toBe("foobar");
+});
+
+it("#5872", () => {
+  const db = new Database(":memory:");
+  db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)");
+  const query = db.query("INSERT INTO foo (greeting) VALUES ($greeting);");
+  const result = query.all({ $greeting: "sup" });
+  expect(result).toEqual([]);
 });

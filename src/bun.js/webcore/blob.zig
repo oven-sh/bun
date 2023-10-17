@@ -1040,7 +1040,10 @@ pub const Blob = struct {
                     break :brk result;
                 },
                 .err => |err| {
-                    return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                    return JSC.JSPromise.rejectedPromiseValue(
+                        globalThis,
+                        err.withPath(pathlike.path.slice()).toJSC(globalThis),
+                    );
                 },
             }
             unreachable;
@@ -1080,8 +1083,13 @@ pub const Blob = struct {
                             needs_async.* = true;
                             return .zero;
                         }
-
-                        return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                        if (comptime !needs_open) {
+                            return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                        }
+                        return JSC.JSPromise.rejectedPromiseValue(
+                            globalThis,
+                            err.withPath(pathlike.path.slice()).toJSC(globalThis),
+                        );
                     },
                 }
             }
@@ -1110,7 +1118,10 @@ pub const Blob = struct {
                     break :brk result;
                 },
                 .err => |err| {
-                    return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                    return JSC.JSPromise.rejectedPromiseValue(
+                        globalThis,
+                        err.withPath(pathlike.path.slice()).toJSC(globalThis),
+                    );
                 },
             }
             unreachable;
@@ -1145,7 +1156,13 @@ pub const Blob = struct {
                         needs_async.* = true;
                         return .zero;
                     }
-                    return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                    if (comptime !needs_open) {
+                        return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                    }
+                    return JSC.JSPromise.rejectedPromiseValue(
+                        globalThis,
+                        err.withPath(pathlike.path.slice()).toJSC(globalThis),
+                    );
                 },
             }
         }
@@ -1680,6 +1697,7 @@ pub const Blob = struct {
             read_completion: HTTPClient.NetworkThread.Completion = undefined,
             read_len: SizeType = 0,
             read_off: SizeType = 0,
+            read_eof: bool = false,
             size: SizeType = 0,
             buffer: []u8 = undefined,
             task: HTTPClient.NetworkThread.Task = undefined,
@@ -1797,8 +1815,7 @@ pub const Blob = struct {
 
             pub fn onRead(this: *ReadFile, completion: *HTTPClient.NetworkThread.Completion, result: AsyncIO.ReadError!usize) void {
                 defer this.doReadLoop();
-
-                this.read_len = @as(SizeType, @truncate(result catch |err| {
+                const read_len = @as(SizeType, @truncate(result catch |err| {
                     if (@hasField(HTTPClient.NetworkThread.Completion, "result")) {
                         this.errno = AsyncIO.asError(-completion.result);
                         this.system_error = (bun.sys.Error{
@@ -1821,6 +1838,8 @@ pub const Blob = struct {
                     this.read_len = 0;
                     return;
                 }));
+                this.read_eof = read_len == 0;
+                this.read_len = read_len;
             }
 
             fn runAsync(this: *ReadFile, task: *ReadFileTask) void {
@@ -1930,7 +1949,7 @@ pub const Blob = struct {
                 this.read_off += this.read_len;
                 var remain = this.buffer[@min(this.read_off, @as(Blob.SizeType, @truncate(this.buffer.len)))..];
 
-                if (remain.len > 0 and this.errno == null) {
+                if (remain.len > 0 and this.errno == null and !this.read_eof) {
                     this.doRead();
                     return;
                 }
@@ -2287,7 +2306,7 @@ pub const Blob = struct {
                                 this.source_fd = 0;
                             }
 
-                            this.system_error = errno.toSystemError();
+                            this.system_error = errno.withPath(this.destination_file_store.pathlike.path.slice()).toSystemError();
                             return AsyncIO.asError(errno.errno);
                         },
                     };
@@ -2737,17 +2756,7 @@ pub const Blob = struct {
         value: JSC.JSValue,
         global: *JSGlobalObject,
     ) JSC.JSValue {
-        if (value.isError()) {
-            return JSC.JSPromise.rejectedPromiseValue(global, value);
-        }
-
-        if (value.jsType() == .JSPromise)
-            return value;
-
-        return JSPromise.resolvedPromiseValue(
-            global,
-            value,
-        );
+        return JSC.JSPromise.wrap(global, value);
     }
 
     pub fn getText(
@@ -3011,12 +3020,13 @@ pub const Blob = struct {
             }
         }
 
+        const offset = this.offset +| @as(SizeType, @intCast(relativeStart));
         const len = @as(SizeType, @intCast(@max(relativeEnd -| relativeStart, 0)));
 
         // This copies over the is_all_ascii flag
         // which is okay because this will only be a <= slice
         var blob = this.dupe();
-        blob.offset = @as(SizeType, @intCast(relativeStart));
+        blob.offset = offset;
         blob.size = len;
 
         // infer the content type if it was not specified
@@ -3671,11 +3681,7 @@ pub const Blob = struct {
             if (comptime lifetime != .temporary) this.setIsASCIIFlag(true);
         }
 
-        if (comptime lifetime == .temporary) {
-            return ZigString.init(buf).toJSONObject(global);
-        } else {
-            return ZigString.init(buf).toJSONObject(global);
-        }
+        return ZigString.init(buf).toJSONObject(global);
     }
 
     pub fn toFormDataWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u8, comptime _: Lifetime) JSValue {

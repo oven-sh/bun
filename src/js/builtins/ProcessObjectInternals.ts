@@ -24,27 +24,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// TODO: move this to native code?
-export function binding(bindingName) {
-  if (bindingName === "constants") {
-    return $processBindingConstants;
-  }
-  const issue = {
-    fs: 3546,
-    buffer: 2020,
-    natives: 2254,
-    uv: 2891,
-  }[bindingName];
-  if (issue) {
-    throw new Error(
-      `process.binding("${bindingName}") is not implemented in Bun. Track the status & thumbs up the issue: https://github.com/oven-sh/bun/issues/${issue}`,
-    );
-  }
-  throw new TypeError(
-    `process.binding("${bindingName}") is not implemented in Bun. If that breaks something, please file an issue and include a reproducible code sample.`,
-  );
-}
-
 export function getStdioWriteStream(fd) {
   const tty = require("node:tty");
 
@@ -110,7 +89,8 @@ export function getStdinStream(fd) {
 
   const tty = require("node:tty");
 
-  const stream = new tty.ReadStream(fd);
+  const ReadStream = tty.isatty(fd) ? tty.ReadStream : require("node:fs").ReadStream;
+  const stream = new ReadStream(fd);
 
   const originalOn = stream.on;
   stream.on = function (event, listener) {
@@ -126,7 +106,7 @@ export function getStdinStream(fd) {
     if (event === "readable") {
       ref();
     }
-    return originalOn.call(this, event, listener);
+    return originalOn.$call(this, event, listener);
   };
 
   stream.fd = fd;
@@ -134,13 +114,13 @@ export function getStdinStream(fd) {
   const originalPause = stream.pause;
   stream.pause = function () {
     unref();
-    return originalPause.call(this);
+    return originalPause.$call(this);
   };
 
   const originalResume = stream.resume;
   stream.resume = function () {
     ref();
-    return originalResume.call(this);
+    return originalResume.$call(this);
   };
 
   async function internalRead(stream) {
@@ -272,6 +252,11 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
       // but allows much quicker checks.
 
       class FixedCircularBuffer {
+        top: number;
+        bottom: number;
+        list: Array<FixedCircularBuffer | undefined>;
+        next: FixedCircularBuffer | null;
+
         constructor() {
           this.bottom = 0;
           this.top = 0;
@@ -303,6 +288,9 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
       }
 
       class FixedQueue {
+        head: FixedCircularBuffer;
+        tail: FixedCircularBuffer;
+
         constructor() {
           this.head = this.tail = new FixedCircularBuffer();
         }
@@ -400,4 +388,9 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
   }
 
   return nextTick;
+}
+
+$getter;
+export function mainModule() {
+  return $requireMap.$get(Bun.main);
 }

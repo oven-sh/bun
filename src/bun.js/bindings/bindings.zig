@@ -1969,6 +1969,12 @@ pub const AbortSignal = extern opaque {
         return cppFn("create", .{global});
     }
 
+    extern fn WebCore__AbortSignal__new(*JSGlobalObject) *AbortSignal;
+    pub fn new(global: *JSGlobalObject) *AbortSignal {
+        JSC.markBinding(@src());
+        return WebCore__AbortSignal__new(global);
+    }
+
     pub fn createAbortError(message: *const ZigString, code: *const ZigString, global: *JSGlobalObject) JSValue {
         return cppFn("createAbortError", .{ message, code, global });
     }
@@ -3034,7 +3040,7 @@ pub const JSValue = enum(JSValueReprInt) {
     zero = 0,
     undefined = @as(JSValueReprInt, @bitCast(@as(i64, 0xa))),
     null = @as(JSValueReprInt, @bitCast(@as(i64, 0x2))),
-    true = @as(JSValueReprInt, @bitCast(@as(i64, 0x4))),
+    true = FFI.TrueI64,
     false = @as(JSValueReprInt, @bitCast(@as(i64, 0x6))),
     _,
 
@@ -3224,7 +3230,7 @@ pub const JSValue = enum(JSValueReprInt) {
             };
         }
 
-        pub fn isObject(this: JSType) bool {
+        pub inline fn isObject(this: JSType) bool {
             // inline constexpr bool isObjectType(JSType type) { return type >= ObjectType; }
             return @intFromEnum(this) >= @intFromEnum(JSType.Object);
         }
@@ -3527,7 +3533,7 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn createEmptyObject(global: *JSGlobalObject, len: usize) JSValue {
-        std.debug.assert(len <= 64); // max inline capacity JSC allows is 64. If you run into this, just set it to 0.
+        std.debug.assert(len <= 63); // max inline capacity JSC allows is 63. If you run into this, just set it to 0.
         return cppFn("createEmptyObject", .{ global, len });
     }
 
@@ -3903,6 +3909,10 @@ pub const JSValue = enum(JSValueReprInt) {
             return jsNumberFromInt32(@as(i32, @intCast(i)));
         }
 
+        return jsNumberFromPtrSize(i);
+    }
+
+    pub fn jsNumberFromPtrSize(i: usize) JSValue {
         return jsNumberFromDouble(@as(f64, @floatFromInt(@as(i52, @intCast(@as(u51, @truncate(i)))))));
     }
 
@@ -4255,6 +4265,7 @@ pub const JSValue = enum(JSValueReprInt) {
         method,
         headers,
         status,
+        statusText,
         url,
         body,
         data,
@@ -4924,6 +4935,34 @@ pub const JSValue = enum(JSValueReprInt) {
     pub inline fn deserialize(bytes: []const u8, global: *JSGlobalObject) JSValue {
         return Bun__JSValue__deserialize(global, bytes.ptr, @intCast(bytes.len));
     }
+
+    extern fn Bun__serializeJSValue(global: *JSC.JSGlobalObject, value: JSValue) SerializedScriptValue.External;
+    extern fn Bun__SerializedScriptSlice__free(*anyopaque) void;
+
+    pub const SerializedScriptValue = struct {
+        data: []const u8,
+        handle: *anyopaque,
+
+        const External = extern struct {
+            bytes: ?[*]const u8,
+            size: isize,
+            handle: ?*anyopaque,
+        };
+
+        pub inline fn deinit(self: @This()) void {
+            Bun__SerializedScriptSlice__free(self.handle);
+        }
+    };
+
+    /// Throws a JS exception and returns null if the serialization fails, otherwise returns a SerializedScriptValue.
+    /// Must be freed when you are done with the bytes.
+    pub inline fn serialize(this: JSValue, global: *JSGlobalObject) ?SerializedScriptValue {
+        const value = Bun__serializeJSValue(global, this);
+        return if (value.bytes) |bytes|
+            .{ .data = bytes[0..@intCast(value.size)], .handle = value.handle.? }
+        else
+            null;
+    }
 };
 
 extern "c" fn AsyncContextFrame__withAsyncContextIfNeeded(global: *JSGlobalObject, callback: JSValue) JSValue;
@@ -5492,6 +5531,7 @@ pub const URL = opaque {
     extern fn URL__getHref(*String) String;
     extern fn URL__getFileURLString(*String) String;
     extern fn URL__getHrefJoin(*String, *String) String;
+    extern fn URL__pathFromFileURL(*String) String;
 
     pub fn hrefFromString(str: bun.String) String {
         JSC.markBinding(@src());
@@ -5510,6 +5550,12 @@ pub const URL = opaque {
         JSC.markBinding(@src());
         var input = str;
         return URL__getFileURLString(&input);
+    }
+
+    pub fn pathFromFileURL(str: bun.String) String {
+        JSC.markBinding(@src());
+        var input = str;
+        return URL__pathFromFileURL(&input);
     }
 
     /// This percent-encodes the URL, punycode-encodes the hostname, and returns the result
@@ -5816,7 +5862,7 @@ pub fn initialize() void {
                     \\
                     \\    https://github.com/oven-sh/webkit/blob/main/Source/JavaScriptCore/runtime/OptionsList.h
                     \\
-                    \\Environment variables must be prefixed with "BUN_JSC_". This code runs before .env files are loaded, so those won't work here. 
+                    \\Environment variables must be prefixed with "BUN_JSC_". This code runs before .env files are loaded, so those won't work here.
                     \\
                     \\Warning: options change between releases of Bun and WebKit without notice. This is not a stable API, you should not rely on it beyond debugging something, and it may be removed entirely in a future version of Bun.
                 ,

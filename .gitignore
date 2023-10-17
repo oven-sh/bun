@@ -6,6 +6,7 @@ packages/*/*.wasm
 profile.json
 
 node_modules
+.envrc
 .swcrc
 yarn.lock
 dist
@@ -123,6 +124,7 @@ cold-jsc-start
 cold-jsc-start.d
 
 /test.ts
+/test.js
 
 src/js/out/modules*
 src/js/out/functions*

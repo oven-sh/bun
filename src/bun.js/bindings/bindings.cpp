@@ -19,6 +19,7 @@
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/JSArrayBuffer.h"
 #include "JavaScriptCore/JSArrayInlines.h"
+#include "JavaScriptCore/ErrorInstanceInlines.h"
 
 #include "JavaScriptCore/JSCallbackObject.h"
 #include "JavaScriptCore/JSClassRef.h"
@@ -229,6 +230,47 @@ AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSC
         }
 
         return AsymmetricMatcherResult::FAIL;
+    } else if (auto* expectArrayContaining = jsDynamicCast<JSExpectArrayContaining*>(matcherPropCell)) {
+        JSValue expectedArrayValue = expectArrayContaining->m_arrayValue.get();
+
+        if (JSC::isArray(globalObject, otherProp)) {
+            if (JSC::isArray(globalObject, expectedArrayValue)) {
+                JSArray* expectedArray = jsDynamicCast<JSArray*>(expectedArrayValue);
+                JSArray* otherArray = jsDynamicCast<JSArray*>(otherProp);
+
+                unsigned expectedLength = expectedArray->length();
+                unsigned otherLength = otherArray->length();
+
+                // A empty array is all array's subset
+                if (expectedLength == 0) {
+                    return AsymmetricMatcherResult::PASS;
+                }
+
+                // O(m*n) but works for now
+                for (unsigned m = 0; m < expectedLength; m++) {
+                    JSValue expectedValue = expectedArray->getIndex(globalObject, m);
+                    bool found = false;
+
+                    for (unsigned n = 0; n < otherLength; n++) {
+                        JSValue otherValue = otherArray->getIndex(globalObject, n);
+                        ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
+                        Vector<std::pair<JSValue, JSValue>, 16> stack;
+                        if (Bun__deepEquals<false, true>(globalObject, expectedValue, otherValue, stack, &scope, true)) {
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if (!found) {
+                        return AsymmetricMatcherResult::FAIL;
+                    }
+                }
+
+                return AsymmetricMatcherResult::PASS;
+            }
+        }
+
+        return AsymmetricMatcherResult::FAIL;
     }
 
     return AsymmetricMatcherResult::NOT_MATCHER;
@@ -306,10 +348,8 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     // need to check this before primitives, asymmetric matchers
     // can match against any type of value.
     if constexpr (enableAsymmetricMatchers) {
-        JSCell* c1 = v1.asCell();
-        JSCell* c2 = v2.asCell();
-        if (v2.isCell() && !v2.isEmpty() && c2->type() == JSC::JSType(JSDOMWrapperType)) {
-            switch (matchAsymmetricMatcher(globalObject, c2, v1, scope)) {
+        if (v2.isCell() && !v2.isEmpty() && v2.asCell()->type() == JSC::JSType(JSDOMWrapperType)) {
+            switch (matchAsymmetricMatcher(globalObject, v2.asCell(), v1, scope)) {
             case AsymmetricMatcherResult::FAIL:
                 return false;
             case AsymmetricMatcherResult::PASS:
@@ -318,8 +358,8 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 // continue comparison
                 break;
             }
-        } else if (v1.isCell() && !v1.isEmpty() && c1->type() == JSC::JSType(JSDOMWrapperType)) {
-            switch (matchAsymmetricMatcher(globalObject, c1, v2, scope)) {
+        } else if (v1.isCell() && !v1.isEmpty() && v1.asCell()->type() == JSC::JSType(JSDOMWrapperType)) {
+            switch (matchAsymmetricMatcher(globalObject, v1.asCell(), v2, scope)) {
             case AsymmetricMatcherResult::FAIL:
                 return false;
             case AsymmetricMatcherResult::PASS:
@@ -576,7 +616,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     case Float64ArrayType:
     case BigInt64ArrayType:
     case BigUint64ArrayType: {
-        if (!isTypedArrayType(static_cast<JSC::JSType>(c2Type))) {
+        if (!isTypedArrayType(static_cast<JSC::JSType>(c2Type)) || c1Type != c2Type) {
             return false;
         }
 
@@ -627,6 +667,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     case JSDOMWrapperType: {
         if (c2Type == JSDOMWrapperType) {
             // https://github.com/oven-sh/bun/issues/4089
+            // https://github.com/oven-sh/bun/issues/6492
             auto* url2 = jsDynamicCast<JSDOMURL*>(v2);
             auto* url1 = jsDynamicCast<JSDOMURL*>(v1);
 
@@ -635,19 +676,15 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 if ((url2 == nullptr) != (url1 == nullptr)) {
                     return false;
                 }
-
-                if (url2 && url1) {
-                    return url1->wrapped().href() != url2->wrapped().href();
-                }
-            } else {
-                if (url2 && url1) {
-                    // toEqual should return false when the URLs' href is not equal
-                    // But you could have added additional properties onto the
-                    // url object itself, so we must check those as well
-                    // But it's definitely not equal if the href() is not the same
-                    if (url1->wrapped().href() != url2->wrapped().href()) {
-                        return false;
-                    }
+            } 
+            
+            if (url2 && url1) {
+                // toEqual or toStrictEqual should return false when the URLs' href is not equal
+                // But you could have added additional properties onto the
+                // url object itself, so we must check those as well
+                // But it's definitely not equal if the href() is not the same
+                if (url1->wrapped().href() != url2->wrapped().href()) {
+                    return false;
                 }
             }
         }
@@ -1045,7 +1082,9 @@ void WebCore__FetchHeaders__toUWSResponse(WebCore__FetchHeaders* arg0, bool is_s
 
 WebCore__FetchHeaders* WebCore__FetchHeaders__createEmpty()
 {
-    return new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    headers->relaxAdoptionRequirement();
+    return headers;
 }
 void WebCore__FetchHeaders__append(WebCore__FetchHeaders* headers, const ZigString* arg1, const ZigString* arg2,
     JSC__JSGlobalObject* lexicalGlobalObject)
@@ -1074,6 +1113,7 @@ WebCore__FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC__JSGlobalObject* 
     RETURN_IF_EXCEPTION(throwScope, nullptr);
 
     auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    headers->relaxAdoptionRequirement();
     if (init) {
         // `fill` doesn't set an exception on the VM if it fails, it returns an
         //  ExceptionOr<void>.  So we need to check for the exception and, if set,
@@ -1112,6 +1152,7 @@ WebCore__FetchHeaders* WebCore__FetchHeaders__cloneThis(WebCore__FetchHeaders* h
 {
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
     auto* clone = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    clone->relaxAdoptionRequirement();
     WebCore::propagateException(*lexicalGlobalObject, throwScope,
         clone->fill(*headers));
     return clone;
@@ -1181,6 +1222,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
 {
     PicoHTTPHeaders pico_headers = *reinterpret_cast<const PicoHTTPHeaders*>(arg1);
     auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    headers->relaxAdoptionRequirement(); // This prevents an assertion later, but may not be the proper approach.
 
     if (pico_headers.len > 0) {
         HTTPHeaderMap map = HTTPHeaderMap();
@@ -1223,6 +1265,8 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(JSC__JSGlobalObject*
     size_t i = 0;
 
     auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    headers->relaxAdoptionRequirement(); // This prevents an assertion later, but may not be the proper approach.
+
     HTTPHeaderMap map = HTTPHeaderMap();
 
     for (const auto& header : req) {
@@ -1246,7 +1290,6 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(JSC__JSGlobalObject*
         if (i > 56)
             __builtin_unreachable();
     }
-
     headers->setInternalHeaders(WTFMove(map));
     return headers;
 }
@@ -1354,15 +1397,22 @@ BunString WebCore__DOMURL__fileSystemPath(WebCore__DOMURL* arg0)
 extern "C" JSC__JSValue ZigString__toJSONObject(const ZigString* strPtr, JSC::JSGlobalObject* globalObject)
 {
     auto str = Zig::toString(*strPtr);
-    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
-    auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
-    JSValue result = JSONParseWithException(globalObject, str);
-    if (auto* exception = scope.exception()) {
-        scope.clearException();
-        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(exception->value()));
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    // JSONParseWithException does not propagate exceptions as expected. See #5859
+    JSValue result = JSONParse(globalObject, str);
+
+    if (!result && !scope.exception()) {
+        scope.throwException(globalObject, createSyntaxError(globalObject, "Failed to parse JSON"_s));
     }
 
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+    if (scope.exception()) {
+        auto* exception = scope.exception();
+        scope.clearException();
+        return JSC::JSValue::encode(exception);
+    }
+
+    return JSValue::encode(result);
 }
 
 JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
@@ -2063,7 +2113,7 @@ JSC__JSValue JSC__JSModuleLoader__evaluate(JSC__JSGlobalObject* globalObject, co
     JSC::VM& vm = globalObject->vm();
 
     JSC::SourceCode sourceCode = JSC::makeSource(
-        src, JSC::SourceOrigin { origin }, origin.fileSystemPath(),
+        src, JSC::SourceOrigin { origin }, JSC::SourceTaintedOrigin::Untainted, origin.fileSystemPath(),
         WTF::TextPosition(), JSC::SourceProviderSourceType::Module);
     globalObject->moduleLoader()->provideFetch(globalObject, jsString(vm, origin.fileSystemPath()), WTFMove(sourceCode));
     auto* promise = JSC::importModule(globalObject, JSC::Identifier::fromString(vm, origin.fileSystemPath()), JSValue(jsString(vm, referrer.fileSystemPath())), JSValue(), JSValue());
@@ -2113,6 +2163,14 @@ JSC__JSValue ReadableStream__empty(Zig::GlobalObject* globalObject)
     auto& vm = globalObject->vm();
     auto clientData = WebCore::clientData(vm);
     auto* function = globalObject->getDirect(vm, clientData->builtinNames().createEmptyReadableStreamPrivateName()).getObject();
+    return JSValue::encode(JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s));
+}
+
+JSC__JSValue ReadableStream__used(Zig::GlobalObject* globalObject)
+{
+    auto& vm = globalObject->vm();
+    auto clientData = WebCore::clientData(vm);
+    auto* function = globalObject->getDirect(vm, clientData->builtinNames().createUsedReadableStreamPrivateName()).getObject();
     return JSValue::encode(JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s));
 }
 
@@ -2303,29 +2361,31 @@ JSC__JSValue JSC__JSValue__createStringArray(JSC__JSGlobalObject* globalObject, 
 
     JSC::JSArray* array = nullptr;
     {
+        JSC::GCDeferralContext deferralContext(vm);
         JSC::ObjectInitializationScope initializationScope(vm);
         if ((array = JSC::JSArray::tryCreateUninitializedRestricted(
-                 initializationScope, nullptr,
+                 initializationScope, &deferralContext,
                  globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
                  arg2))) {
 
             if (!clone) {
                 for (size_t i = 0; i < arg2; ++i) {
-                    array->putDirectIndex(globalObject, i, JSC::jsString(vm, Zig::toString(arg1[i])));
+                    array->putDirectIndex(globalObject, i, JSC::jsString(vm, Zig::toString(arg1[i]), &deferralContext));
                 }
             } else {
                 for (size_t i = 0; i < arg2; ++i) {
-                    array->putDirectIndex(globalObject, i, JSC::jsString(vm, Zig::toStringCopy(arg1[i])));
+                    array->putDirectIndex(globalObject, i, JSC::jsString(vm, Zig::toStringCopy(arg1[i]), &deferralContext));
                 }
             }
         }
-    }
-    if (!array) {
-        JSC::throwOutOfMemoryError(globalObject, scope);
-        return JSC::JSValue::encode(JSC::JSValue());
-    }
 
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSValue(array)));
+        if (!array) {
+            JSC::throwOutOfMemoryError(globalObject, scope);
+            return JSC::JSValue::encode(JSC::JSValue());
+        }
+
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSValue(array)));
+    }
 }
 
 JSC__JSValue JSC__JSGlobalObject__createAggregateError(JSC__JSGlobalObject* globalObject,
@@ -2803,7 +2863,7 @@ JSC__VM* JSC__JSGlobalObject__vm(JSC__JSGlobalObject* arg0) { return &arg0->vm()
 
 void JSC__JSGlobalObject__handleRejectedPromises(JSC__JSGlobalObject* arg0)
 {
-    return static_cast<Zig::GlobalObject*>(arg0)->handleRejectedPromises();
+    return jsCast<Zig::GlobalObject*>(arg0)->handleRejectedPromises();
 }
 
 #pragma mark - JSC::JSValue
@@ -3012,20 +3072,16 @@ JSC__JSValue JSC__JSValue__jsNumberFromUint64(uint64_t arg0)
 
 int64_t JSC__JSValue__toInt64(JSC__JSValue val)
 {
-    JSC::JSValue _val = JSC::JSValue::decode(val);
-
-    int64_t result = JSC::tryConvertToInt52(_val.asDouble());
-    if (result != JSC::JSValue::notInt52) {
-        return result;
-    }
-
-    if (_val.isHeapBigInt()) {
-
-        if (auto* heapBigInt = _val.asHeapBigInt()) {
+    JSC::JSValue value = JSC::JSValue::decode(val);
+    ASSERT(value.isHeapBigInt() || value.isNumber());
+    if (value.isHeapBigInt()) {
+        if (auto* heapBigInt = value.asHeapBigInt()) {
             return heapBigInt->toBigInt64(heapBigInt);
         }
     }
-    return _val.asAnyInt();
+    if (value.isInt32())
+        return value.asInt32();
+    return static_cast<int64_t>(value.asDouble());
 }
 
 uint8_t JSC__JSValue__asBigIntCompare(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, JSC__JSValue JSValue1)
@@ -3086,28 +3142,28 @@ JSC__JSValue JSC__JSValue__fromUInt64NoTruncate(JSC__JSGlobalObject* globalObjec
 
 uint64_t JSC__JSValue__toUInt64NoTruncate(JSC__JSValue val)
 {
-    JSC::JSValue _val = JSC::JSValue::decode(val);
+    JSC::JSValue value = JSC::JSValue::decode(val);
+    ASSERT(value.isHeapBigInt() || value.isNumber());
 
-    int64_t result = JSC::tryConvertToInt52(_val.asDouble());
+    if (value.isHeapBigInt()) {
+        if (auto* heapBigInt = value.asHeapBigInt()) {
+            return heapBigInt->toBigUInt64(heapBigInt);
+        }
+    }
+
+    if (value.isInt32()) {
+        return static_cast<uint64_t>(value.asInt32());
+    }
+    ASSERT(value.isDouble());
+
+    int64_t result = JSC::tryConvertToInt52(value.asDouble());
     if (result != JSC::JSValue::notInt52) {
         if (result < 0)
             return 0;
 
         return static_cast<uint64_t>(result);
     }
-
-    if (_val.isHeapBigInt()) {
-
-        if (auto* heapBigInt = _val.asHeapBigInt()) {
-            return heapBigInt->toBigUInt64(heapBigInt);
-        }
-    }
-
-    if (!_val.isNumber()) {
-        return 0;
-    }
-
-    return static_cast<uint64_t>(_val.asAnyInt());
+    return 0;
 }
 
 JSC__JSValue JSC__JSValue__createObject2(JSC__JSGlobalObject* globalObject, const ZigString* arg1,
@@ -4046,6 +4102,7 @@ enum class BuiltinNamesMap : uint8_t {
     method,
     headers,
     status,
+    statusText,
     url,
     body,
     data,
@@ -4064,6 +4121,9 @@ static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigne
     }
     case BuiltinNamesMap::headers: {
         return clientData->builtinNames().headersPublicName();
+    }
+    case BuiltinNamesMap::statusText: {
+        return clientData->builtinNames().statusTextPublicName();
     }
     case BuiltinNamesMap::status: {
         return clientData->builtinNames().statusPublicName();
@@ -4483,6 +4543,14 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0
         globalObject->m_asyncContextData.get()->getInternalField(0),
         JSC::JSValue::decode(JSValue3),
         JSC::JSValue::decode(JSValue4));
+}
+
+extern "C" WebCore::AbortSignal* WebCore__AbortSignal__new(JSC__JSGlobalObject* globalObject)
+{
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(globalObject);
+    auto* context = thisObject->scriptExecutionContext();
+    RefPtr<WebCore::AbortSignal> abortSignal = WebCore::AbortSignal::create(context);
+    return abortSignal.leakRef();
 }
 
 extern "C" JSC__JSValue WebCore__AbortSignal__create(JSC__JSGlobalObject* globalObject)

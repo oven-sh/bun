@@ -482,6 +482,7 @@ pub const Options = struct {
     to_commonjs_ref: Ref = Ref.None,
     to_esm_ref: Ref = Ref.None,
     require_ref: ?Ref = null,
+    import_meta_ref: Ref = Ref.None,
     indent: usize = 0,
     externals: []u32 = &[_]u32{},
     runtime_imports: runtime.Runtime.Imports = runtime.Runtime.Imports{},
@@ -2051,7 +2052,20 @@ fn NewPrinter(
                 .e_import_meta => {
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
-                    p.print("import.meta");
+                    if (!p.options.import_meta_ref.isValid()) {
+                        // Most of the time, leave it in there
+                        p.print("import.meta");
+                    } else {
+                        // Note: The bundler will not hit this code path. The bundler will replace
+                        // the ImportMeta AST node with a regular Identifier AST node.
+                        //
+                        // This is currently only used in Bun's runtime for CommonJS modules
+                        // referencing import.meta
+                        if (comptime Environment.allow_assert)
+                            std.debug.assert(p.options.module_type == .cjs);
+
+                        p.printSymbol(p.options.import_meta_ref);
+                    }
                 },
                 .e_commonjs_export_identifier => |id| {
                     p.printSpaceBeforeIdentifier();
@@ -2179,6 +2193,7 @@ fn NewPrinter(
                     }
                 },
                 .e_require_call_target => {
+                    p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
 
                     if (p.options.module_type == .cjs or !is_bun_platform) {
@@ -2188,6 +2203,7 @@ fn NewPrinter(
                     }
                 },
                 .e_require_resolve_call_target => {
+                    p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
 
                     if (p.options.module_type == .cjs or !is_bun_platform) {
@@ -2656,7 +2672,7 @@ fn NewPrinter(
                 .e_number => |e| {
                     const value = e.value;
 
-                    const absValue = @fabs(value);
+                    const absValue = @abs(value);
 
                     if (std.math.isNan(value)) {
                         p.printSpaceBeforeIdentifier();
@@ -3180,10 +3196,26 @@ fn NewPrinter(
                                         hex_chars[cursor.c & 15],
                                     });
                                 },
-                                else => {
-                                    p.print("\\u{");
-                                    std.fmt.formatInt(cursor.c, 16, .lower, .{}, p) catch unreachable;
-                                    p.print("}");
+
+                                else => |c| {
+                                    const k = c - 0x10000;
+                                    const lo = @as(usize, @intCast(first_high_surrogate + ((k >> 10) & 0x3FF)));
+                                    const hi = @as(usize, @intCast(first_low_surrogate + (k & 0x3FF)));
+
+                                    p.print(&[_]u8{
+                                        '\\',
+                                        'u',
+                                        hex_chars[lo >> 12],
+                                        hex_chars[(lo >> 8) & 15],
+                                        hex_chars[(lo >> 4) & 15],
+                                        hex_chars[lo & 15],
+                                        '\\',
+                                        'u',
+                                        hex_chars[hi >> 12],
+                                        hex_chars[(hi >> 8) & 15],
+                                        hex_chars[(hi >> 4) & 15],
+                                        hex_chars[hi & 15],
+                                    });
                                 },
                             }
                         },

@@ -86,6 +86,8 @@ describe("URLSearchParams", () => {
 
     // @ts-expect-error
     expect(params.toJSON()).toEqual(props);
+
+    expect(Array.from(params.keys())).toHaveLength(params.size);
   });
 
   describe("non-standard extensions", () => {

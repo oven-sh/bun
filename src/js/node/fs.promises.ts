@@ -9,14 +9,6 @@ var fs = Bun.fs();
 // in some cases, node swaps around arguments or makes small tweaks to the return type
 // this is just better than nothing.
 const notrace = "::bunternal::";
-var promisify = {
-  [notrace]: fsFunction => {
-    return async function (...args) {
-      await 1;
-      return fsFunction.apply(fs, args);
-    };
-  },
-}[notrace];
 
 function watch(
   filename: string | Buffer | URL,
@@ -139,72 +131,57 @@ async function opendir(dir: string) {
 }
 
 export default {
-  access: promisify(fs.accessSync),
-  appendFile: promisify(fs.appendFileSync),
-  close: promisify(fs.closeSync),
+  access: fs.access.bind(fs),
+  appendFile: fs.appendFile.bind(fs),
+  close: fs.close.bind(fs),
   copyFile: fs.copyFile.bind(fs),
   cp,
-  exists: promisify(fs.existsSync),
-  chown: promisify(fs.chownSync),
-  chmod: promisify(fs.chmodSync),
-  fchmod: promisify(fs.fchmodSync),
-  fchown: promisify(fs.fchownSync),
-  fstat: promisify(fs.fstatSync),
-  fsync: promisify(fs.fsyncSync),
-  ftruncate: promisify(fs.ftruncateSync),
-  futimes: promisify(fs.futimesSync),
-  lchmod: promisify(fs.lchmodSync),
-  lchown: promisify(fs.lchownSync),
-  link: promisify(fs.linkSync),
+  exists: fs.exists.bind(fs),
+  chown: fs.chown.bind(fs),
+  chmod: fs.chmod.bind(fs),
+  fchmod: fs.fchmod.bind(fs),
+  fchown: fs.fchown.bind(fs),
+  fstat: fs.fstat.bind(fs),
+  fsync: fs.fsync.bind(fs),
+  ftruncate: fs.ftruncate.bind(fs),
+  futimes: fs.futimes.bind(fs),
+  lchmod: fs.lchmod.bind(fs),
+  lchown: fs.lchown.bind(fs),
+  link: fs.link.bind(fs),
   lstat: fs.lstat.bind(fs),
-  mkdir: promisify(fs.mkdirSync),
-  mkdtemp: promisify(fs.mkdtempSync),
-  open: promisify(fs.openSync),
-  read: promisify(fs.readSync),
-  write: promisify(fs.writeSync),
+  mkdir: fs.mkdir.bind(fs),
+  mkdtemp: fs.mkdtemp.bind(fs),
+  open: fs.open.bind(fs),
+  read: fs.read.bind(fs),
+  write: fs.write.bind(fs),
   readdir: fs.readdir.bind(fs),
   readFile: fs.readFile.bind(fs),
-  writeFile: promisify(fs.writeFileSync),
-  readlink: promisify(fs.readlinkSync),
+  writeFile: fs.writeFile.bind(fs),
+  readlink: fs.readlink.bind(fs),
   realpath: fs.realpath.bind(fs),
-  rename: promisify(fs.renameSync),
+  rename: fs.rename.bind(fs),
   stat: fs.stat.bind(fs),
-  symlink: promisify(fs.symlinkSync),
-  truncate: promisify(fs.truncateSync),
-  unlink: promisify(fs.unlinkSync),
-  utimes: promisify(fs.utimesSync),
-  lutimes: promisify(fs.lutimesSync),
-  rm: promisify(fs.rmSync),
-  rmdir: promisify(fs.rmdirSync),
-  writev: (fd, buffers, position) => {
-    return new Promise((resolve, reject) => {
-      try {
-        var bytesWritten = fs.writevSync(fd, buffers, position);
-      } catch (err) {
-        reject(err);
-        return;
-      }
-
-      resolve({
-        bytesWritten,
-        buffers,
-      });
-    });
+  symlink: fs.symlink.bind(fs),
+  truncate: fs.truncate.bind(fs),
+  unlink: fs.unlink.bind(fs),
+  utimes: fs.utimes.bind(fs),
+  lutimes: fs.lutimes.bind(fs),
+  rm: fs.rm.bind(fs),
+  rmdir: fs.rmdir.bind(fs),
+  writev: async (fd, buffers, position) => {
+    var bytesWritten = await fs.writev(fd, buffers, position);
+    return {
+      bytesWritten,
+      buffers,
+    };
   },
-  readv: (fd, buffers, position) => {
-    return new Promise((resolve, reject) => {
-      try {
-        var bytesRead = fs.readvSync(fd, buffers, position);
-      } catch (err) {
-        reject(err);
-        return;
-      }
+  readv: async (fd, buffers, position) => {
+    var bytesRead = await fs.readv(fd, buffers, position);
 
-      resolve({
-        bytesRead,
-        buffers,
-      });
-    });
+    return {
+      bytesRead,
+      buffers,
+    };
   },
   constants,
   watch,

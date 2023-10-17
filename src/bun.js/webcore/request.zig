@@ -50,6 +50,7 @@ const InternalBlob = JSC.WebCore.InternalBlob;
 const BodyMixin = JSC.WebCore.BodyMixin;
 const Body = JSC.WebCore.Body;
 const Blob = JSC.WebCore.Blob;
+const Response = JSC.WebCore.Response;
 
 const body_value_pool_size: u16 = 256;
 pub const BodyValueRef = bun.HiveRef(Body.Value, body_value_pool_size);
@@ -68,7 +69,7 @@ pub const Request = struct {
     signal: ?*AbortSignal = null,
     body: *BodyValueRef,
     method: Method = Method.GET,
-    uws_request: ?*uws.Request = null,
+    request_context: JSC.API.AnyRequestContext = JSC.API.AnyRequestContext.Null,
     https: bool = false,
     upgrader: ?*anyopaque = null,
 
@@ -89,7 +90,7 @@ pub const Request = struct {
     pub fn getContentType(
         this: *Request,
     ) ?ZigString.Slice {
-        if (this.uws_request) |req| {
+        if (this.request_context.getRequest()) |req| {
             if (req.header("content-type")) |value| {
                 return ZigString.Slice.fromUTF8NeverFree(value);
             }
@@ -324,7 +325,7 @@ pub const Request = struct {
         if (this.url.length() > 0)
             return this.url.byteSlice().len;
 
-        if (this.uws_request) |req| {
+        if (this.request_context.getRequest()) |req| {
             const req_url = req.url();
             if (req_url.len > 0 and req_url[0] == '/') {
                 if (req.header("host")) |host| {
@@ -351,7 +352,7 @@ pub const Request = struct {
     pub fn ensureURL(this: *Request) !void {
         if (!this.url.isEmpty()) return;
 
-        if (this.uws_request) |req| {
+        if (this.request_context.getRequest()) |req| {
             const req_url = req.url();
             if (req_url.len > 0 and req_url[0] == '/') {
                 if (req.header("host")) |host| {
@@ -507,10 +508,9 @@ pub const Request = struct {
         };
         const values_to_try = values_to_try_[0 .. @as(usize, @intFromBool(!is_first_argument_a_url)) +
             @as(usize, @intFromBool(arguments.len > 1 and arguments[1].isObject()))];
-
         for (values_to_try) |value| {
             const value_type = value.jsType();
-
+            const explicit_check = values_to_try.len == 2 and value_type == .FinalObject and values_to_try[1].jsType() == .DOMWrapper;
             if (value_type == .DOMWrapper) {
                 if (value.as(Request)) |request| {
                     if (values_to_try.len == 1) {
@@ -543,12 +543,12 @@ pub const Request = struct {
 
                 if (value.as(JSC.WebCore.Response)) |response| {
                     if (!fields.contains(.method)) {
-                        req.method = response.body.init.method;
+                        req.method = response.init.method;
                         fields.insert(.method);
                     }
 
                     if (!fields.contains(.headers)) {
-                        if (response.body.init.headers) |headers| {
+                        if (response.init.headers) |headers| {
                             req.headers = headers.cloneThis(globalThis);
                             fields.insert(.headers);
                         }
@@ -608,9 +608,8 @@ pub const Request = struct {
             }
 
             if (!fields.contains(.signal)) {
-                if (value.get(globalThis, "signal")) |signal_| {
+                if (value.getTruthy(globalThis, "signal")) |signal_| {
                     fields.insert(.signal);
-
                     if (AbortSignal.fromJS(signal_)) |signal| {
                         //Keep it alive
                         signal_.ensureStillAlive();
@@ -625,24 +624,26 @@ pub const Request = struct {
             }
 
             if (!fields.contains(.method) or !fields.contains(.headers)) {
-                if (Body.Init.init(globalThis.allocator(), globalThis, value) catch null) |init| {
-                    if (!fields.contains(.method)) {
-                        req.method = init.method;
-                        fields.insert(.method);
+                if (Response.Init.init(globalThis.allocator(), globalThis, value) catch null) |init| {
+                    if (!explicit_check or (explicit_check and value.fastGet(globalThis, .method) != null)) {
+                        if (!fields.contains(.method)) {
+                            req.method = init.method;
+                            fields.insert(.method);
+                        }
                     }
-
-                    if (init.headers) |headers| {
-                        if (!fields.contains(.headers)) {
-                            req.headers = headers;
-                            fields.insert(.headers);
-                        } else {
-                            headers.deref();
+                    if (!explicit_check or (explicit_check and value.fastGet(globalThis, .headers) != null)) {
+                        if (init.headers) |headers| {
+                            if (!fields.contains(.headers)) {
+                                req.headers = headers;
+                                fields.insert(.headers);
+                            } else {
+                                headers.deref();
+                            }
                         }
                     }
                 }
             }
         }
-
         if (req.url.isEmpty()) {
             globalThis.throw("Failed to construct 'Request': url is required.", .{});
             req.finalizeWithoutDeinit();
@@ -724,7 +725,7 @@ pub const Request = struct {
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
         if (this.headers == null) {
-            if (this.uws_request) |req| {
+            if (this.request_context.getRequest()) |req| {
                 this.headers = FetchHeaders.createFromUWS(globalThis, req);
             } else {
                 this.headers = FetchHeaders.createEmpty();
@@ -743,7 +744,7 @@ pub const Request = struct {
 
     pub fn cloneHeaders(this: *Request, globalThis: *JSGlobalObject) ?*FetchHeaders {
         if (this.headers == null) {
-            if (this.uws_request) |uws_req| {
+            if (this.request_context.getRequest()) |uws_req| {
                 this.headers = FetchHeaders.createFromUWS(globalThis, uws_req);
             }
         }

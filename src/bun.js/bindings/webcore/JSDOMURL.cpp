@@ -64,6 +64,7 @@ using namespace JSC;
 static JSC_DECLARE_HOST_FUNCTION(jsDOMURLPrototypeFunction_toJSON);
 static JSC_DECLARE_HOST_FUNCTION(jsDOMURLConstructorFunction_createObjectURL);
 static JSC_DECLARE_HOST_FUNCTION(jsDOMURLConstructorFunction_revokeObjectURL);
+static JSC_DECLARE_HOST_FUNCTION(jsDOMURLConstructorFunction_canParse);
 static JSC_DECLARE_HOST_FUNCTION(jsDOMURLPrototypeFunction_toString);
 
 // Attributes
@@ -131,6 +132,7 @@ using JSDOMURLDOMConstructor = JSDOMConstructor<JSDOMURL>;
 static const HashTableValue JSDOMURLConstructorTableValues[] = {
     { "createObjectURL"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsDOMURLConstructorFunction_createObjectURL, 1 } },
     { "revokeObjectURL"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsDOMURLConstructorFunction_revokeObjectURL, 1 } },
+    { "canParse"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsDOMURLConstructorFunction_canParse, 2 } },
 };
 
 static inline EncodedJSValue constructJSDOMURL1(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
@@ -686,6 +688,33 @@ static inline JSC::EncodedJSValue jsDOMURLConstructorFunction_revokeObjectURLBod
 JSC_DEFINE_HOST_FUNCTION(jsDOMURLConstructorFunction_revokeObjectURL, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSDOMURL>::callStatic<jsDOMURLConstructorFunction_revokeObjectURLBody>(*lexicalGlobalObject, *callFrame, "revokeObjectURL");
+}
+
+static inline JSC::EncodedJSValue jsDOMURLConstructorFunction_canParseBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    if (UNLIKELY(callFrame->argumentCount() < 1))
+        return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
+
+    EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
+    auto url = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+
+    EnsureStillAliveScope argument1 = callFrame->argument(1);
+    String base;
+    if (!argument1.value().isUndefinedOrNull()) {
+        base = convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
+        RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    }
+
+    return JSValue::encode(jsBoolean(DOMURL::canParse(url, base)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsDOMURLConstructorFunction_canParse, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSDOMURL>::callStatic<jsDOMURLConstructorFunction_canParseBody>(*lexicalGlobalObject, *callFrame, "canParse");
 }
 
 #if ENABLE(MEDIA_SOURCE)

@@ -96,7 +96,7 @@
       "request": "launch",
       "name": "bun test [*]",
       "program": "bun-debug",
-      "args": ["test"],
+      "args": ["test", "js/node"],
       "cwd": "${workspaceFolder}/test",
       "env": {
         "FORCE_COLOR": "1",
@@ -110,7 +110,7 @@
       "request": "launch",
       "name": "bun test [*] (fast)",
       "program": "bun-debug",
-      "args": ["test"],
+      "args": ["test", "js"],
       // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
       "cwd": "${workspaceFolder}/test",
       "env": {
@@ -324,10 +324,9 @@
       "cwd": "${fileDirname}",
       "console": "internalConsole",
       "env": {
-        "BUN_DEBUG_QUIET_LOGS": "1"
+        "BUN_DEBUG_ALL": "1"
       }
     },
-
     {
       "type": "lldb",
       "request": "launch",

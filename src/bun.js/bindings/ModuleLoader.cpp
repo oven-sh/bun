@@ -27,7 +27,6 @@
 #include "EventEmitter.h"
 #include "JSEventEmitter.h"
 
-#include "CommonJSModuleRecord.h"
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/Completion.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
@@ -93,12 +92,19 @@ generateInternalModuleSourceCode(JSC::JSGlobalObject* globalObject, InternalModu
         exportNames.reserveCapacity(len);
         exportValues.ensureCapacity(len);
 
-        exportNames.append(vm.propertyNames->defaultKeyword);
-        exportValues.append(object);
+        bool hasDefault = false;
 
         for (auto& entry : properties) {
+            if (UNLIKELY(entry == vm.propertyNames->defaultKeyword)) {
+                hasDefault = true;
+            }
             exportNames.append(entry);
             exportValues.append(object->get(globalObject, entry));
+        }
+
+        if (!hasDefault) {
+            exportNames.append(vm.propertyNames->defaultKeyword);
+            exportValues.append(object);
         }
     };
 }
@@ -139,7 +145,7 @@ PendingVirtualModuleResult* PendingVirtualModuleResult::create(VM& vm, Structure
 }
 Structure* PendingVirtualModuleResult::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(CellType, StructureFlags), info());
+    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
 }
 
 PendingVirtualModuleResult::PendingVirtualModuleResult(VM& vm, Structure* structure)
@@ -459,7 +465,7 @@ JSValue fetchCommonJSModule(
         }
     }
 
-    if (JSC::JSValue virtualModuleResult = JSValue::decode(Bun__runVirtualModule(globalObject, specifier))) {
+    if (JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier)) {
         JSPromise* promise = jsCast<JSPromise*>(handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, specifier, referrer));
         switch (promise->status(vm)) {
         case JSPromise::Status::Rejected: {
@@ -534,7 +540,7 @@ JSValue fetchCommonJSModule(
             RELEASE_AND_RETURN(scope, {});
         }
 
-        target->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), value, value.isCell() && value.isCallable() ? JSC::PropertyAttribute::Function | 0 : 0);
+        target->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), value, 0);
         target->hasEvaluated = true;
         RELEASE_AND_RETURN(scope, target);
     }
@@ -634,7 +640,7 @@ static JSValue fetchESMSourceCode(
         }
     }
 
-    if (JSC::JSValue virtualModuleResult = JSValue::decode(Bun__runVirtualModule(globalObject, specifier))) {
+    if (JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier)) {
         return handleVirtualModuleResult<allowPromise>(globalObject, virtualModuleResult, res, specifier, referrer);
     }
 

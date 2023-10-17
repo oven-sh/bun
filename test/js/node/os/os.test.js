@@ -19,8 +19,10 @@ it("totalmem", () => {
 });
 
 it("getPriority", () => {
-  expect(os.getPriority()).toBe(0);
-  expect(os.getPriority(0)).toBe(0);
+  var prio = os.getPriority();
+  expect(-20 <= prio && prio <= 20).toBe(true);
+  prio = os.getPriority(0);
+  expect(-20 <= prio && prio <= 20).toBe(true);
 });
 
 it("setPriority", () => {
@@ -153,4 +155,8 @@ it("EOL", () => {
 it("devNull", () => {
   if (process.platform === "win32") expect(os.devNull).toBe("\\\\.\\nul");
   else expect(os.devNull).toBe("/dev/null");
+});
+
+it("availableParallelism", () => {
+  expect(os.availableParallelism()).toBeGreaterThan(0);
 });

@@ -4,6 +4,8 @@ name: Configuring a monorepo using workspaces
 
 Bun's package manager supports npm `"workspaces"`. This allows you to split a codebase into multiple distinct "packages" that live in the same repository, can depend on each other, and (when possible) share a `node_modules` directory.
 
+Clone [this sample project](https://github.com/colinhacks/bun-workspaces) to experiment with workspaces.
+
 ---
 
 The root `package.json` should not contain any `"dependencies"`, `"devDependencies"`, etc. Each individual package should be self-contained and declare its own dependencies. Similarly, it's conventional to declare `"private": true` to avoid accidentally publishing the root package to `npm`.
@@ -35,13 +37,13 @@ It's common to place all packages in a `packages` directory. The `"workspaces"` 
 
 ---
 
-To add one workspace as a dependency of another, modify its `package.json`. Here we're adding `stuff-a` as a dependency of `stuff-b`.
+To add dependencies between workspaces, use the `"workspace:*"` syntax. Here we're adding `stuff-a` as a dependency of `stuff-b`.
 
-```json#packages/stuff-b/package.json
+```json-diff#packages/stuff-b/package.json
 {
   "name": "stuff-b",
   "dependencies": {
-+   "stuff-a": "*"
++   "stuff-a": "workspace:*"
   }
 }
 ```

@@ -367,7 +367,6 @@ function FFIBuilder(params, returnType, functionToCall, name) {
       break;
     }
   }
-
   wrap.native = functionToCall;
   wrap.ptr = functionToCall.ptr;
   return wrap;
@@ -382,6 +381,7 @@ const native = {
 
 function dlopen(path, options) {
   const result = nativeDLOpen(path, options);
+  if (result instanceof Error) throw result;
 
   for (let key in result.symbols) {
     var symbol = result.symbols[key];

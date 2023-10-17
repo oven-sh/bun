@@ -286,12 +286,12 @@ function execFile(file, args, options, callback) {
     let stdout;
     let stderr;
     if (encoding || (child.stdout && readableEncoding)) {
-      stdout = ArrayPrototypeJoin.call(_stdout, "");
+      stdout = ArrayPrototypeJoin.$call(_stdout, "");
     } else {
       stdout = BufferConcat(_stdout);
     }
     if (encoding || (child.stderr && readableEncoding)) {
-      stderr = ArrayPrototypeJoin.call(_stderr, "");
+      stderr = ArrayPrototypeJoin.$call(_stderr, "");
     } else {
       stderr = BufferConcat(_stderr);
     }
@@ -301,7 +301,7 @@ function execFile(file, args, options, callback) {
       return;
     }
 
-    if (args?.length) cmd += ` ${ArrayPrototypeJoin.call(args, " ")}`;
+    if (args?.length) cmd += ` ${ArrayPrototypeJoin.$call(args, " ")}`;
     if (!ex) {
       let message = `Command failed: ${cmd}`;
       if (stderr) message += `\n${stderr}`;
@@ -353,7 +353,7 @@ function execFile(file, args, options, callback) {
       "data",
       maxBuffer === Infinity
         ? function onUnlimitedSizeBufferedData(chunk) {
-            ArrayPrototypePush.call(_stdout, chunk);
+            ArrayPrototypePush.$call(_stdout, chunk);
           }
         : encoding
         ? function onChildStdoutEncoded(chunk) {
@@ -370,12 +370,12 @@ function execFile(file, args, options, callback) {
                 encodedStdoutLen += actualLen;
               }
               const truncatedLen = maxBuffer - (encodedStdoutLen - actualLen);
-              ArrayPrototypePush.call(_stdout, StringPrototypeSlice.apply(chunk, 0, truncatedLen));
+              ArrayPrototypePush.$call(_stdout, StringPrototypeSlice.$apply(chunk, 0, truncatedLen));
 
               ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stdout");
               kill();
             } else {
-              ArrayPrototypePush.call(_stdout, chunk);
+              ArrayPrototypePush.$call(_stdout, chunk);
             }
           }
         : function onChildStdoutRaw(chunk) {
@@ -383,12 +383,12 @@ function execFile(file, args, options, callback) {
 
             if (stdoutLen > maxBuffer) {
               const truncatedLen = maxBuffer - (stdoutLen - chunk.length);
-              ArrayPrototypePush.call(_stdout, chunk.slice(0, truncatedLen));
+              ArrayPrototypePush.$call(_stdout, chunk.slice(0, truncatedLen));
 
               ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stdout");
               kill();
             } else {
-              ArrayPrototypePush.call(_stdout, chunk);
+              ArrayPrototypePush.$call(_stdout, chunk);
             }
           },
     );
@@ -401,7 +401,7 @@ function execFile(file, args, options, callback) {
       "data",
       maxBuffer === Infinity
         ? function onUnlimitedSizeBufferedData(chunk) {
-            ArrayPrototypePush.call(_stderr, chunk);
+            ArrayPrototypePush.$call(_stderr, chunk);
           }
         : encoding
         ? function onChildStderrEncoded(chunk) {
@@ -418,12 +418,12 @@ function execFile(file, args, options, callback) {
                 encodedStderrLen += actualLen;
               }
               const truncatedLen = maxBuffer - (encodedStderrLen - actualLen);
-              ArrayPrototypePush.call(_stderr, StringPrototypeSlice.call(chunk, 0, truncatedLen));
+              ArrayPrototypePush.$call(_stderr, StringPrototypeSlice.$call(chunk, 0, truncatedLen));
 
               ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stderr");
               kill();
             } else {
-              ArrayPrototypePush.call(_stderr, chunk);
+              ArrayPrototypePush.$call(_stderr, chunk);
             }
           }
         : function onChildStderrRaw(chunk) {
@@ -431,12 +431,12 @@ function execFile(file, args, options, callback) {
 
             if (stderrLen > maxBuffer) {
               const truncatedLen = maxBuffer - (stderrLen - chunk.length);
-              ArrayPrototypePush.call(_stderr, StringPrototypeSlice.call(chunk, 0, truncatedLen));
+              ArrayPrototypePush.$call(_stderr, StringPrototypeSlice.$call(chunk, 0, truncatedLen));
 
               ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stderr");
               kill();
             } else {
-              ArrayPrototypePush.call(_stderr, chunk);
+              ArrayPrototypePush.$call(_stderr, chunk);
             }
           },
     );
@@ -595,7 +595,7 @@ function spawnSync(file, args, options) {
 
   if (!success) {
     result.error = new SystemError(result.output[2], options.file, "spawnSync", -1, result.status);
-    result.error.spawnargs = ArrayPrototypeSlice.call(options.args, 1);
+    result.error.spawnargs = ArrayPrototypeSlice.$call(options.args, 1);
   }
 
   return result;
@@ -630,7 +630,7 @@ function execFileSync(file, args, options) {
   // if (inheritStderr && ret.stderr) process.stderr.write(ret.stderr);
 
   const errArgs = [options.argv0 || file];
-  ArrayPrototypePush.apply(errArgs, args);
+  ArrayPrototypePush.$apply(errArgs, args);
   const err = checkExecSyncError(ret, errArgs);
 
   if (err) throw err;
@@ -679,16 +679,16 @@ function stdioStringToArray(stdio, channel) {
     case "ignore":
     case "overlapped":
     case "pipe":
-      ArrayPrototypePush.call(options, stdio, stdio, stdio);
+      ArrayPrototypePush.$call(options, stdio, stdio, stdio);
       break;
     case "inherit":
-      ArrayPrototypePush.call(options, 0, 1, 2);
+      ArrayPrototypePush.$call(options, 0, 1, 2);
       break;
     default:
       throw new ERR_INVALID_ARG_VALUE("stdio", stdio);
   }
 
-  if (channel) ArrayPrototypePush.call(options, channel);
+  if (channel) ArrayPrototypePush.$call(options, channel);
 
   return options;
 }
@@ -738,19 +738,19 @@ function fork(modulePath, args = [], options) {
   validateArgumentNullCheck(options.execPath, "options.execPath");
 
   // Prepare arguments for fork:
-  execArgv = options.execArgv || process.execArgv;
-  validateArgumentsNullCheck(execArgv, "options.execArgv");
+  // execArgv = options.execArgv || process.execArgv;
+  // validateArgumentsNullCheck(execArgv, "options.execArgv");
 
-  if (execArgv === process.execArgv && process._eval != null) {
-    const index = ArrayPrototypeLastIndexOf.call(execArgv, process._eval);
-    if (index > 0) {
-      // Remove the -e switch to avoid fork bombing ourselves.
-      execArgv = ArrayPrototypeSlice.call(execArgv);
-      ArrayPrototypeSplice.call(execArgv, index - 1, 2);
-    }
-  }
+  // if (execArgv === process.execArgv && process._eval != null) {
+  //   const index = ArrayPrototypeLastIndexOf.$call(execArgv, process._eval);
+  //   if (index > 0) {
+  //     // Remove the -e switch to avoid fork bombing ourselves.
+  //     execArgv = ArrayPrototypeSlice.$call(execArgv);
+  //     ArrayPrototypeSplice.$call(execArgv, index - 1, 2);
+  //   }
+  // }
 
-  args = [...execArgv, modulePath, ...args];
+  args = [/*...execArgv,*/ modulePath, ...args];
 
   if (typeof options.stdio === "string") {
     options.stdio = stdioStringToArray(options.stdio, "ipc");
@@ -758,7 +758,7 @@ function fork(modulePath, args = [], options) {
     // Use a separate fd=3 for the IPC channel. Inherit stdin, stdout,
     // and stderr from the parent if silent isn't set.
     options.stdio = stdioStringToArray(options.silent ? "pipe" : "inherit", "ipc");
-  } else if (!ArrayPrototypeIncludes.call(options.stdio, "ipc")) {
+  } else if (!ArrayPrototypeIncludes.$call(options.stdio, "ipc")) {
     throw new ERR_CHILD_PROCESS_IPC_REQUIRED("options.stdio");
   }
 
@@ -772,7 +772,7 @@ function convertToValidSignal(signal) {
   if (typeof signal === "number" && getSignalsToNamesMapping()[signal]) return signal;
 
   if (typeof signal === "string") {
-    const signalName = signals[StringPrototypeToUpperCase.call(signal)];
+    const signalName = signals[StringPrototypeToUpperCase.$call(signal)];
     if (signalName) return signalName;
   }
 
@@ -801,7 +801,7 @@ function getSignalsToNamesMapping() {
 
 function normalizeExecFileArgs(file, args, options, callback) {
   if (ArrayIsArray(args)) {
-    args = ArrayPrototypeSlice.call(args);
+    args = ArrayPrototypeSlice.$call(args);
   } else if (args != null && typeof args === "object") {
     callback = options;
     options = args;
@@ -866,7 +866,7 @@ function normalizeSpawnArguments(file, args, options) {
   if (file.length === 0) throw new ERR_INVALID_ARG_VALUE("file", file, "cannot be empty");
 
   if (ArrayIsArray(args)) {
-    args = ArrayPrototypeSlice.call(args);
+    args = ArrayPrototypeSlice.$call(args);
   } else if (args == null) {
     args = [];
   } else if (typeof args !== "object") {
@@ -912,7 +912,7 @@ function normalizeSpawnArguments(file, args, options) {
   // Handle shell
   if (options.shell) {
     validateArgumentNullCheck(options.shell, "options.shell");
-    const command = ArrayPrototypeJoin.call([file, ...args], " ");
+    const command = ArrayPrototypeJoin.$call([file, ...args], " ");
     // TODO: Windows moment
     // Set the shell, switches, and commands.
     // if (process.platform === "win32") {
@@ -935,9 +935,9 @@ function normalizeSpawnArguments(file, args, options) {
 
   // Handle argv0
   if (typeof options.argv0 === "string") {
-    ArrayPrototypeUnshift.call(args, options.argv0);
+    ArrayPrototypeUnshift.$call(args, options.argv0);
   } else {
-    ArrayPrototypeUnshift.call(args, file);
+    ArrayPrototypeUnshift.$call(args, file);
   }
 
   const env = options.env || process.env;
@@ -959,7 +959,7 @@ function checkExecSyncError(ret, args, cmd) {
     ObjectAssign(err, ret);
   } else if (ret.status !== 0) {
     let msg = "Command failed: ";
-    msg += cmd || ArrayPrototypeJoin.call(args, " ");
+    msg += cmd || ArrayPrototypeJoin.$call(args, " ");
     if (ret.stderr && ret.stderr.length > 0) msg += `\n${ret.stderr.toString()}`;
     err = genericNodeError(msg, ret);
   }
@@ -1019,7 +1019,7 @@ class ChildProcess extends EventEmitter {
 
       if (this.spawnfile) err.path = this.spawnfile;
 
-      err.spawnargs = ArrayPrototypeSlice.call(this.spawnargs, 1);
+      err.spawnargs = ArrayPrototypeSlice.$call(this.spawnargs, 1);
       this.emit("error", err);
     } else {
       this.emit("exit", this.exitCode, this.signalCode);
@@ -1132,8 +1132,8 @@ class ChildProcess extends EventEmitter {
     //   if (options.envPairs === undefined) options.envPairs = [];
     //   else validateArray(options.envPairs, "options.envPairs");
 
-    //   ArrayPrototypePush.call(options.envPairs, `NODE_CHANNEL_FD=${ipcFd}`);
-    //   ArrayPrototypePush.call(
+    //   ArrayPrototypePush.$call(options.envPairs, `NODE_CHANNEL_FD=${ipcFd}`);
+    //   ArrayPrototypePush.$call(
     //     options.envPairs,
     //     `NODE_CHANNEL_SERIALIZATION_MODE=${serialization}`
     //   );
@@ -1174,6 +1174,7 @@ class ChildProcess extends EventEmitter {
       env: env || process.env,
       detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,
       onExit: (handle, exitCode, signalCode, err) => {
+        $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
         this.#handle = handle;
         this.pid = this.#handle.pid;
 
@@ -1188,6 +1189,8 @@ class ChildProcess extends EventEmitter {
       ipc: ipc ? this.#emitIpcMessage.bind(this) : undefined,
     });
     this.pid = this.#handle.pid;
+
+    $debug("ChildProcess: spawn", this.pid, spawnargs);
 
     onSpawnNT(this);
 
@@ -1298,7 +1301,7 @@ function nodeToBun(item) {
     return item;
   } else {
     const result = nodeToBunLookup[item];
-    if (result === undefined) throw new Error("Invalid stdio option");
+    if (result === undefined) throw new Error(`Invalid stdio option "${item}"`);
     return result;
   }
 }
@@ -1430,7 +1433,7 @@ function validateMaxBuffer(maxBuffer) {
 }
 
 function validateArgumentNullCheck(arg, propName) {
-  if (typeof arg === "string" && StringPrototypeIncludes.call(arg, "\u0000")) {
+  if (typeof arg === "string" && StringPrototypeIncludes.$call(arg, "\u0000")) {
     throw new ERR_INVALID_ARG_VALUE(propName, arg, "must be a string without null bytes");
   }
 }
@@ -1487,9 +1490,9 @@ const validateAbortSignal = (signal, name) => {
 /** @type {validateOneOf} */
 const validateOneOf = (value, name, oneOf) => {
   // const validateOneOf = hideStackFrames((value, name, oneOf) => {
-  if (!ArrayPrototypeIncludes.call(oneOf, value)) {
-    const allowed = ArrayPrototypeJoin.call(
-      ArrayPrototypeMap.call(oneOf, v => (typeof v === "string" ? `'${v}'` : String(v))),
+  if (!ArrayPrototypeIncludes.$call(oneOf, value)) {
+    const allowed = ArrayPrototypeJoin.$call(
+      ArrayPrototypeMap.$call(oneOf, v => (typeof v === "string" ? `'${v}'` : String(v))),
       ", ",
     );
     const reason = "must be one of: " + allowed;
@@ -1516,7 +1519,7 @@ const validateObject = (value, name, options = null) => {
   const nullable = options?.nullable ?? false;
   if (
     (!nullable && value === null) ||
-    (!allowArray && ArrayIsArray.call(value)) ||
+    (!allowArray && ArrayIsArray.$call(value)) ||
     (typeof value !== "object" && (!allowFunction || typeof value !== "function"))
   ) {
     throw new ERR_INVALID_ARG_TYPE(name, "object", value);
@@ -1562,8 +1565,8 @@ function nullCheck(path, propName, throwError = true) {
   // We can only perform meaningful checks on strings and Uint8Arrays.
   if (
     (!pathIsString && !pathIsUint8Array) ||
-    (pathIsString && !StringPrototypeIncludes.call(path, "\u0000")) ||
-    (pathIsUint8Array && !Uint8ArrayPrototypeIncludes.call(path, 0))
+    (pathIsString && !StringPrototypeIncludes.$call(path, "\u0000")) ||
+    (pathIsUint8Array && !Uint8ArrayPrototypeIncludes.$call(path, 0))
   ) {
     return;
   }
@@ -1698,7 +1701,7 @@ function genericNodeError(message, options) {
 //         typeof value === "string",
 //         "All expected entries have to be of type string"
 //       );
-//       if (ArrayPrototypeIncludes.call(kTypes, value)) {
+//       if (ArrayPrototypeIncludes.$call(kTypes, value)) {
 //         ArrayPrototypePush(types, StringPrototypeToLowerCase(value));
 //       } else if (RegExpPrototypeExec(classRegExp, value) !== null) {
 //         ArrayPrototypePush(instances, value);
@@ -1716,8 +1719,8 @@ function genericNodeError(message, options) {
 //     if (instances.length > 0) {
 //       const pos = ArrayPrototypeIndexOf(types, "object");
 //       if (pos !== -1) {
-//         ArrayPrototypeSplice.call(types, pos, 1);
-//         ArrayPrototypePush.call(instances, "Object");
+//         ArrayPrototypeSplice.$call(types, pos, 1);
+//         ArrayPrototypePush.$call(instances, "Object");
 //       }
 //     }
 
@@ -1752,7 +1755,7 @@ function genericNodeError(message, options) {
 //     if (other.length > 0) {
 //       if (other.length > 2) {
 //         const last = ArrayPrototypePop(other);
-//         msg += `one of ${ArrayPrototypeJoin.call(other, ", ")}, or ${last}`;
+//         msg += `one of ${ArrayPrototypeJoin.$call(other, ", ")}, or ${last}`;
 //       } else if (other.length === 2) {
 //         msg += `one of ${other[0]} or ${other[1]}`;
 //       } else {

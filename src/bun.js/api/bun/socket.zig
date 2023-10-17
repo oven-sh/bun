@@ -771,7 +771,7 @@ pub const Listener = struct {
             Socket.dataSetCached(this_socket.getThisValue(globalObject), globalObject, default_data);
         }
         socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, this_socket);
-        socket.timeout(120000);
+        socket.setTimeout(120000);
     }
 
     // pub fn addServerName(this: *Listener, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
@@ -996,7 +996,12 @@ pub const Listener = struct {
                 handlers.vm.allocator.destroy(handlers_ptr);
                 handlers.promise.deinit();
                 bun.default_allocator.destroy(tls);
-                exception.* = ZigString.static("Failed to connect").toErrorInstance(globalObject).asObjectRef();
+                const err = JSC.SystemError{
+                    .message = bun.String.static("Failed to connect"),
+                    .syscall = bun.String.static("connect"),
+                    .code = if (port == null) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
+                };
+                exception.* = err.toErrorInstance(globalObject).asObjectRef();
                 return .zero;
             };
             tls.poll_ref.ref(handlers.vm);
@@ -1022,7 +1027,12 @@ pub const Listener = struct {
                 handlers.vm.allocator.destroy(handlers_ptr);
                 handlers.promise.deinit();
                 bun.default_allocator.destroy(tcp);
-                exception.* = ZigString.static("Failed to connect").toErrorInstance(globalObject).asObjectRef();
+                const err = JSC.SystemError{
+                    .message = bun.String.static("Failed to connect"),
+                    .syscall = bun.String.static("connect"),
+                    .code = if (port == null) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
+                };
+                exception.* = err.toErrorInstance(globalObject).asObjectRef();
                 return .zero;
             };
             tcp.poll_ref.ref(handlers.vm);
@@ -1205,6 +1215,12 @@ fn NewSocket(comptime ssl: bool) type {
                 .errno = errno,
                 .message = bun.String.static("Failed to connect"),
                 .syscall = bun.String.static("connect"),
+
+                // For some reason errno is 0 which causes this to be success.
+                // Unix socket case wont hit this callback because it instantly errors.
+                .code = bun.String.static("ECONNREFUSED"),
+                // .code = bun.String.static(@tagName(bun.sys.getErrno(errno))),
+                // .code = bun.String.static(@tagName(@as(bun.C.E, @enumFromInt(errno)))),
             };
 
             if (callback == .zero) {
@@ -1583,7 +1599,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return .zero;
             }
 
-            this.socket.timeout(@as(c_uint, @intCast(t)));
+            this.socket.setTimeout(@as(c_uint, @intCast(t)));
 
             return JSValue.jsUndefined();
         }
@@ -1913,7 +1929,7 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn finalize(this: *This) callconv(.C) void {
-            log("finalize()", .{});
+            log("finalize() {d}", .{@intFromPtr(this)});
             if (!this.detached) {
                 this.detached = true;
                 if (!this.socket.isClosed()) {
@@ -2936,6 +2952,17 @@ pub fn NewWrappedHandler(comptime tls: bool) type {
             }
         }
         pub fn onTimeout(
+            this: WrappedSocket,
+            socket: Socket,
+        ) void {
+            if (comptime tls) {
+                TLSSocket.onTimeout(this.tls, socket);
+            } else {
+                TLSSocket.onTimeout(this.tcp, socket);
+            }
+        }
+
+        pub fn onLongTimeout(
             this: WrappedSocket,
             socket: Socket,
         ) void {

@@ -245,17 +245,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_getAll, (JSGlobalObject
     return JSValue::encode(array);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_getSetCookie, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(fetchHeadersGetSetCookie, (JSC::JSGlobalObject * lexicalGlobalObject, VM& vm, WebCore::FetchHeaders* impl))
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSFetchHeaders* castedThis = jsDynamicCast<JSFetchHeaders*>(callFrame->thisValue());
-    if (UNLIKELY(!castedThis)) {
-        return JSValue::encode(jsUndefined());
-    }
 
-    auto& impl = castedThis->wrapped();
-    auto values = impl.getSetCookieHeaders();
+    auto values = impl->getSetCookieHeaders();
     unsigned count = values.size();
 
     if (!count) {
@@ -263,18 +257,29 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_getSetCookie, (JSGlobal
     }
 
     JSC::JSArray* array = constructEmptyArray(lexicalGlobalObject, nullptr, count);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
     if (UNLIKELY(!array)) {
         throwOutOfMemoryError(lexicalGlobalObject, scope);
-        return JSValue::encode(jsUndefined());
+        return encodedJSValue();
     }
 
     for (unsigned i = 0; i < count; ++i) {
         array->putDirectIndex(lexicalGlobalObject, i, jsString(vm, values[i]));
-        RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
+        RETURN_IF_EXCEPTION(scope, encodedJSValue());
     }
 
     return JSValue::encode(array);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_getSetCookie, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    JSFetchHeaders* castedThis = jsDynamicCast<JSFetchHeaders*>(callFrame->thisValue());
+    if (UNLIKELY(!castedThis)) {
+        return JSValue::encode(jsUndefined());
+    }
+    auto& impl = castedThis->wrapped();
+    return fetchHeadersGetSetCookie(lexicalGlobalObject, vm, &impl);
 }
 
 /* Hash table for prototype */
@@ -324,7 +329,7 @@ void JSFetchHeaders::finishCreation(VM& vm)
 void JSFetchHeaders::computeMemoryCost()
 {
     m_memoryCost = wrapped().memoryCost();
-    globalObject()->vm().heap.reportExtraMemoryAllocated(m_memoryCost);
+    globalObject()->vm().heap.reportExtraMemoryAllocated(this, m_memoryCost);
 }
 
 JSObject* JSFetchHeaders::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -688,7 +693,6 @@ extern void* _ZTVN7WebCore12FetchHeadersE[];
 
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<FetchHeaders>&& impl)
 {
-
     if constexpr (std::is_polymorphic_v<FetchHeaders>) {
 #if ENABLE(BINDING_INTEGRITY)
         const void* actualVTablePointer = getVTablePointer(impl.ptr());

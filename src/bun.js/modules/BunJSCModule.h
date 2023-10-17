@@ -238,7 +238,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateMemoryFootprint,
                   &peak_rss, &current_commit, &peak_commit, &page_faults);
 
   // mi_process_info produces incorrect rss size on linux.
-  Zig::getRSS(&current_rss);
+  Bun::getRSS(&current_rss);
 
   VM &vm = globalObject->vm();
   JSC::JSObject *object = JSC::constructEmptyObject(
@@ -746,7 +746,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
 namespace Zig {
 DEFINE_NATIVE_MODULE(BunJSC)
 {
-    INIT_NATIVE_MODULE(33);
+    INIT_NATIVE_MODULE(34);
 
     putNativeFn(Identifier::fromString(vm, "callerSourceOrigin"_s), functionCallerSourceOrigin);
     putNativeFn(Identifier::fromString(vm, "jscDescribe"_s), functionDescribe);

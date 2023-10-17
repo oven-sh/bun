@@ -12,7 +12,7 @@ Install the `bun-types` npm package:
 
 ```bash
 # yarn/npm/pnpm work too, "bun-types" is an ordinary npm package
-bun add bun-types
+bun add -d bun-types
 ```
 
 # Usage
@@ -21,9 +21,11 @@ Add this to your `tsconfig.json` or `jsconfig.json`:
 
 ```jsonc-diff
   {
-    
-+   "types": ["bun-types"],
-    
+    "compilerOptions": {
++     "types": ["bun-types"]
+      // other options...
+    }
+
     // other options...
   }
 ```

@@ -238,3 +238,23 @@ extern "C" size_t WTF__base64URLEncode(const unsigned char* __restrict inputData
 
     return destinationDataBufferSize;
 }
+
+namespace Bun {
+String base64URLEncodeToString(Vector<uint8_t> data)
+{
+    auto size = data.size();
+    size_t encodedLength = ((size * 4) + 2) / 3;
+    if (!encodedLength)
+        return String();
+
+    LChar* ptr;
+    auto result = String::createUninitialized(encodedLength, ptr);
+    if (UNLIKELY(!ptr)) {
+        RELEASE_ASSERT_NOT_REACHED();
+        return String();
+    }
+    encodedLength = WTF__base64URLEncode(data.data(), data.size(), ptr, encodedLength);
+    RELEASE_ASSERT(result.length() == encodedLength);
+    return result;
+}
+}

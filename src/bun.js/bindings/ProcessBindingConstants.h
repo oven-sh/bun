@@ -1,3 +1,4 @@
+#pragma once
 #include "root.h"
 
 namespace Bun {
@@ -11,12 +12,15 @@ public:
 
     using Base = JSC::JSNonFinalObject;
 
+    static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
+
     static ProcessBindingConstants* create(JSC::VM& vm, JSC::Structure* structure);
     static Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
 
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(ProcessBindingConstants, Base);
         return &vm.plainObjectSpace();
     }
 

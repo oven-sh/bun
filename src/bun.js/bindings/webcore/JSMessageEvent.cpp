@@ -295,7 +295,7 @@ void JSMessageEvent::finishCreation(VM& vm)
 
     // static_assert(!std::is_base_of<ActiveDOMObject, MessageEvent>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
 
-    vm.heap.reportExtraMemoryAllocated(wrapped().memoryCost());
+    vm.heap.reportExtraMemoryAllocated(this, wrapped().memoryCost());
 }
 
 JSObject* JSMessageEvent::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)

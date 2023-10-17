@@ -667,6 +667,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     case JSDOMWrapperType: {
         if (c2Type == JSDOMWrapperType) {
             // https://github.com/oven-sh/bun/issues/4089
+            // https://github.com/oven-sh/bun/issues/6492
             auto* url2 = jsDynamicCast<JSDOMURL*>(v2);
             auto* url1 = jsDynamicCast<JSDOMURL*>(v1);
 
@@ -675,19 +676,15 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 if ((url2 == nullptr) != (url1 == nullptr)) {
                     return false;
                 }
-
-                if (url2 && url1) {
-                    return url1->wrapped().href() != url2->wrapped().href();
-                }
-            } else {
-                if (url2 && url1) {
-                    // toEqual should return false when the URLs' href is not equal
-                    // But you could have added additional properties onto the
-                    // url object itself, so we must check those as well
-                    // But it's definitely not equal if the href() is not the same
-                    if (url1->wrapped().href() != url2->wrapped().href()) {
-                        return false;
-                    }
+            } 
+            
+            if (url2 && url1) {
+                // toEqual or toStrictEqual should return false when the URLs' href is not equal
+                // But you could have added additional properties onto the
+                // url object itself, so we must check those as well
+                // But it's definitely not equal if the href() is not the same
+                if (url1->wrapped().href() != url2->wrapped().href()) {
+                    return false;
                 }
             }
         }
@@ -4105,6 +4102,7 @@ enum class BuiltinNamesMap : uint8_t {
     method,
     headers,
     status,
+    statusText,
     url,
     body,
     data,
@@ -4123,6 +4121,9 @@ static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigne
     }
     case BuiltinNamesMap::headers: {
         return clientData->builtinNames().headersPublicName();
+    }
+    case BuiltinNamesMap::statusText: {
+        return clientData->builtinNames().statusTextPublicName();
     }
     case BuiltinNamesMap::status: {
         return clientData->builtinNames().statusPublicName();

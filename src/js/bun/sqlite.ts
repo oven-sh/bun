@@ -307,6 +307,8 @@ class Database {
       throw new Error("SQL query cannot be empty.");
     }
 
+    const willCache = this.#cachedQueriesKeys.length < Database.MAX_QUERY_CACHE_SIZE;
+
     // this list should be pretty small
     var index = this.#cachedQueriesLengths.indexOf(query.length);
     while (index !== -1) {
@@ -325,8 +327,6 @@ class Database {
       }
       return stmt;
     }
-
-    const willCache = this.#cachedQueriesKeys.length < Database.MAX_QUERY_CACHE_SIZE;
 
     var stmt = this.prepare(query, undefined, willCache ? constants.SQLITE_PREPARE_PERSISTENT : 0);
 

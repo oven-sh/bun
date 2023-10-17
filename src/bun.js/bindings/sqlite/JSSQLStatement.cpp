@@ -1257,7 +1257,6 @@ static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGloba
 
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-
     JSC::VM& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto castedThis = jsDynamicCast<JSSQLStatement*>(callFrame->thisValue());
@@ -1289,7 +1288,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
 
     size_t columnCount = castedThis->columnNames->size();
     JSValue result = jsUndefined();
-
     if (status == SQLITE_ROW) {
         // this is a count from UPDATE or another query like that
         if (columnCount == 0) {
@@ -1311,11 +1309,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
             result = resultArray;
         }
     } else if (status == SQLITE_DONE) {
-        if (columnCount == 0) {
-            result = jsNumber(sqlite3_changes(castedThis->version_db->db));
-        } else {
-            result = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
-        }
+        result = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
     }
 
     if (UNLIKELY(status != SQLITE_DONE && status != SQLITE_OK)) {

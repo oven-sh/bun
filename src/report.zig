@@ -247,10 +247,21 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
 }
 
 var globalError_ranOnce = false;
+var error_return_trace: ?*std.builtin.StackTrace = null;
 
 export fn Bun__crashReportWrite(ctx: *CrashReportWriter, bytes_ptr: [*]const u8, len: usize) void {
-    if (len > 0)
+    if (error_return_trace) |trace| {
+        if (len > 0) {
+            ctx.print("{s}\n{}", .{ bytes_ptr[0..len], trace });
+        } else {
+            ctx.print("{}\n", .{trace});
+        }
+        return;
+    }
+
+    if (len > 0) {
         ctx.print("{s}\n", .{bytes_ptr[0..len]});
+    }
 }
 
 extern "C" fn Bun__crashReportDumpStackTrace(ctx: *anyopaque) void;
@@ -274,6 +285,10 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
         .{ @errorName(name), bun.fmt.hexIntUpper(addr) },
     );
     printMetadata();
+    if (comptime Environment.isDebug) {
+        error_return_trace = @errorReturnTrace();
+    }
+
     if (comptime !@import("root").bun.JSC.is_bindgen) {
         std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
         Bun__crashReportDumpStackTrace(&crash_report_writer);
@@ -290,10 +305,8 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
     }
 
     crash_report_writer.file = null;
-    if (comptime Environment.isDebug) {
-        if (@errorReturnTrace()) |stack| {
-            std.debug.dumpStackTrace(stack.*);
-        }
+    if (error_return_trace) |trace| {
+        std.debug.dumpStackTrace(trace.*);
     }
 
     std.c._exit(128 + @as(u8, @truncate(@as(u8, @intCast(@max(signal, 0))))));
@@ -302,11 +315,19 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
 pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace())) noreturn {
     @setCold(true);
 
+    error_return_trace = trace_;
+
     if (@atomicRmw(bool, &globalError_ranOnce, .Xchg, true, .Monotonic)) {
         Global.exit(1);
     }
 
     switch (err) {
+        // error.BrokenPipe => {
+        //     if (comptime Environment.isNative) {
+        //         // if stdout/stderr was closed, we don't need to print anything
+        //         std.c._exit(bun.JSC.getGlobalExitCodeForPipeFailure());
+        //     }
+        // },
         error.SyntaxError => {
             Output.prettyError(
                 "\n<r><red>SyntaxError<r><d>:<r> An error occurred while parsing code",

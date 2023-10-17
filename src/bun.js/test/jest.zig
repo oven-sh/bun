@@ -808,9 +808,17 @@ pub const DescribeScope = struct {
         return false;
     }
 
+    fn isWithinTodoScope(this: *const DescribeScope) bool {
+        if (this.tag == .todo) return true;
+        if (this.parent != null) return this.parent.?.isWithinTodoScope();
+        return false;
+    }
+
     pub fn shouldEvaluateScope(this: *const DescribeScope) bool {
-        if (this.isWithinSkipScope()) return false;
-        if (Jest.runner.?.only and this.isWithinOnlyScope()) return true;
+        if (this.tag == .skip or
+            this.tag == .todo) return false;
+        if (Jest.runner.?.only and this.tag == .only) return true;
+        if (this.parent != null) return this.parent.?.shouldEvaluateScope();
         return true;
     }
 

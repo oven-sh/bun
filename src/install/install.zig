@@ -1705,7 +1705,7 @@ pub const PackageManager = struct {
 
     peer_dependencies: std.ArrayListUnmanaged(DependencyID) = .{},
 
-    // name hash from alias package name -> aliased package name
+    // name hash from alias package name -> aliased package dependency version info
     known_npm_aliases: NpmAliasMap = .{},
 
     const PreallocatedNetworkTasks = std.BoundedArray(NetworkTask, 1024);

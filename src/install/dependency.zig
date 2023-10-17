@@ -1,5 +1,4 @@
 const bun = @import("root").bun;
-const Output = bun.Output;
 const logger = bun.logger;
 const Environment = @import("../env.zig");
 const Install = @import("./install.zig");
@@ -38,8 +37,6 @@ const URI = union(Tag) {
         remote,
     };
 };
-
-const debug = Output.scoped(.Dependency, true);
 
 name_hash: PackageNameHash = 0,
 name: String = .{},

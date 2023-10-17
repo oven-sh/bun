@@ -5311,11 +5311,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         port = @intCast(listener.getLocalPort());
 
                         var buf: [64]u8 = [_]u8{0} ** 64;
-                        var len: i32 = 64;
                         var is_ipv6: bool = false;
-                        listener.socket().localAddressText(&buf, &len, &is_ipv6);
-                        if (len > 0) {
-                            var ip = bun.String.create(buf[0..@as(usize, @intCast(len))]);
+
+                        if (listener.socket().localAddressText(&buf, &is_ipv6)) |slice| {
+                            var ip = bun.String.create(slice);
                             return JSSocketAddress__create(
                                 this.globalThis,
                                 ip.toJS(this.globalThis),

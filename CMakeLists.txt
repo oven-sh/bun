@@ -91,7 +91,6 @@ else()
         message(FATAL_ERROR "No bun or node found")
     endif()
 endif()
-unset(EXE_BUN CACHE)
 unset(EXE_NODE CACHE)
 
 
@@ -413,10 +412,15 @@ set(ALL_JSC_INCLUDE_DIRS
 )
 
 set(SHARED_INCLUDE_DIR
-    ${CMAKE_SOURCE_DIR}/${SRC_DIR}
+    ${CMAKE_SOURCE_DIR}/src/bun.js/bindings
     ${CMAKE_SOURCE_DIR}/src/js/builtins
     ${CMAKE_SOURCE_DIR}/src/js/out
-    ${CMAKE_SOURCE_DIR}/${MODULES_DIR}
+    ${CMAKE_SOURCE_DIR}/src/bun.js/bindings
+    ${CMAKE_SOURCE_DIR}/src/bun.js/bindings/webcore
+    ${CMAKE_SOURCE_DIR}/src/bun.js/bindings/webcrypto
+    ${CMAKE_SOURCE_DIR}/src/bun.js/bindings/sqlite
+    ${CMAKE_SOURCE_DIR}/src/bun.js/bindings/node_os
+    ${CMAKE_SOURCE_DIR}/src/bun.js/modules
     ${JSC_INCLUDE_DIR}
 )
 
@@ -462,25 +466,38 @@ include_directories(${INCLUDE_DIRS})
 
 add_custom_target(
     js
-    COMMAND ${CMAKE_COMMAND} -E env NODE_ENV=production bun src/js/_codegen/index.ts
+    COMMAND ${CMAKE_COMMAND} -E env NODE_ENV=production bun ${CMAKE_SOURCE_DIR}/src/js/_codegen/index.ts
+    DEPENDS ${CMAKE_SOURCE_DIR}/src/js/_codegen/index.ts
 )
 
 add_custom_target(
     static-hash-table
-    COMMAND bun src/js/_codegen/static-hash-tables.ts
+    ${EXE_BUN} ${CMAKE_SOURCE_DIR}/src/js/_codegen/static-hash-tables.ts
+    DEPENDS ${CMAKE_SOURCE_DIR}/src/js/_codegen/static-hash-tables.ts
 )
 
 
+file(GLOB_RECURSE SRCS ${SRC_DIR}/*.cpp)
+file(GLOB_RECURSE SRCS2 src/bun.js/modules/*.cpp)
+list(APPEND SRCS ${SRCS2})
+file(GLOB_RECURSE SRCS2 src/io/*.cpp)
+list(APPEND SRCS ${SRCS2})
+file(GLOB_RECURSE SRCS2 src/js/out/*.cpp)
+list(APPEND SRCS ${SRCS2})
 
 
 add_custom_target(
-    cpp
-    COMMAND echo "${CMAKE_COMMAND}"
+    zig-obj
+    COMMAND ${ZIG} build obj -freference-trace -Dcpu="${CPU_TARGET}"
 )
 
-add_custom_target(
-    link
+add_executable(
+    bun
+
+    ${CMAKE_SOURCE_DIR}/packages/debug-bun-linux-x64/bun-debug.o
+    ${SRCS}
 )
+add_dependencies(bun js static-hash-table zig-obj)
 
 
 

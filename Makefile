@@ -1485,12 +1485,12 @@ wasm-return1:
 	$(ZIG) build-lib -OReleaseSmall test/bun.js/wasm-return-1-test.zig -femit-bin=test/bun.js/wasm-return-1-test.wasm -target wasm32-freestanding
 
 generate-classes:
-	bun src/bun.js/scripts/generate-classes.ts
+	bun src/codegen/generate-classes.ts
 	$(ZIG) fmt src/bun.js/bindings/generated_classes.zig
 	$(CLANG_FORMAT) -i src/bun.js/bindings/ZigGeneratedClasses.h src/bun.js/bindings/ZigGeneratedClasses.cpp
 
 generate-sink:
-	bun src/bun.js/scripts/generate-jssink.js
+	bun src/codegen/generate-jssink.js
 	$(CLANG_FORMAT) -i  src/bun.js/bindings/JSSink.cpp  src/bun.js/bindings/JSSink.h
 	./src/bun.js/scripts/create_hash_table src/bun.js/bindings/JSSink.cpp > src/bun.js/bindings/JSSinkLookupTable.h
 	$(SED) -i -e 's/#include "Lookup.h"//' src/bun.js/bindings/JSSinkLookupTable.h

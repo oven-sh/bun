@@ -16,11 +16,11 @@ function toIdentifier(propertyName) {
 }
 
 const directoriesToSearch = [
-  resolve(`${import.meta.dir}/../`),
-  resolve(`${import.meta.dir}/../api`),
-  resolve(`${import.meta.dir}/../test`),
-  resolve(`${import.meta.dir}/../webcore`),
-  resolve(`${import.meta.dir}/../node`),
+  resolve(`${import.meta.dir}/../bun.js/`),
+  resolve(`${import.meta.dir}/../bun.js/api`),
+  resolve(`${import.meta.dir}/../bun.js/test`),
+  resolve(`${import.meta.dir}/../bun.js/webcore`),
+  resolve(`${import.meta.dir}/../bun.js/node`),
 ];
 
 function symbolName(typeName, name) {

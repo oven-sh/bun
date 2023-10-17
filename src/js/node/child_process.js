@@ -1174,6 +1174,7 @@ class ChildProcess extends EventEmitter {
       env: env || process.env,
       detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,
       onExit: (handle, exitCode, signalCode, err) => {
+        $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
         this.#handle = handle;
         this.pid = this.#handle.pid;
 
@@ -1188,6 +1189,8 @@ class ChildProcess extends EventEmitter {
       ipc: ipc ? this.#emitIpcMessage.bind(this) : undefined,
     });
     this.pid = this.#handle.pid;
+
+    $debug("ChildProcess: spawn", this.pid, spawnargs);
 
     onSpawnNT(this);
 

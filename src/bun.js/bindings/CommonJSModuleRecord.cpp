@@ -523,6 +523,7 @@ public:
     {
         Base::finishCreation(vm);
         ASSERT(inherits(info()));
+        reifyStaticProperties(vm, info(), JSCommonJSModulePrototypeTableValues, *this);
 
         this->putDirectNativeFunction(
             vm,

@@ -5622,7 +5622,7 @@ pub const PackageManager = struct {
             .resolve_tasks = TaskChannel.init(),
             .lockfile = undefined,
             .root_package_json_file = package_json_file,
-            .waiter = try Waker.init(ctx.allocator),
+            .waiter = Waiter.fromUWSLoop(uws.Loop.get()),
             .workspaces = workspaces,
             // .progress
             .uws_event_loop = uws.Loop.get(),
@@ -5703,7 +5703,9 @@ pub const PackageManager = struct {
             .resolve_tasks = TaskChannel.init(),
             .lockfile = undefined,
             .root_package_json_file = undefined,
-            .waiter = try Waker.init(allocator),
+            .waiter = Waiter.fromUWSLoop(uws.Loop.get()),
+            .uws_event_loop = uws.Loop.get(),
+            .file_poll_store = JSC.FilePoll.Store.init(allocator),
             .workspaces = std.StringArrayHashMap(?Semver.Version).init(allocator),
         };
         manager.lockfile = try allocator.create(Lockfile);

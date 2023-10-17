@@ -397,9 +397,9 @@ pub const RunCommand = struct {
         }
 
         pub fn deinit(this: *PostinstallSubprocess, alloc: std.mem.Allocator) void {
-            _ = this.stdout_poll.unregister(this.package_manager.uws_event_loop);
-            _ = this.stderr_poll.unregister(this.package_manager.uws_event_loop);
-            _ = this.pid_poll.unregister(this.package_manager.uws_event_loop);
+            _ = this.stdout_poll.unregister(this.package_manager.uws_event_loop, false);
+            _ = this.stderr_poll.unregister(this.package_manager.uws_event_loop, false);
+            _ = this.pid_poll.unregister(this.package_manager.uws_event_loop, false);
 
             _ = bun.sys.close(this.stdout_poll.fileDescriptor());
             _ = bun.sys.close(this.stderr_poll.fileDescriptor());

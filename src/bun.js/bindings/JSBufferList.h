@@ -46,7 +46,7 @@ public:
     void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
     static void destroy(JSCell*) {}
 
-    size_t length() { return m_deque.size(); }
+    inline size_t length() { return m_deque.size(); }
     void push(JSC::VM& vm, JSC::JSValue v)
     {
         m_deque.append(WriteBarrier<Unknown>());
@@ -100,6 +100,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBufferListPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)

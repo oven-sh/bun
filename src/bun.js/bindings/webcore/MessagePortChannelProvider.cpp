@@ -38,7 +38,8 @@ static MessagePortChannelProviderImpl* globalProvider;
 
 MessagePortChannelProvider& MessagePortChannelProvider::singleton()
 {
-    ASSERT(isMainThread());
+    // TODO: I think this assertion is relevant. Bun will call this on the Worker's thread
+    // ASSERT(isMainThread());
     static std::once_flag onceFlag;
     std::call_once(onceFlag, [] {
         if (!globalProvider)

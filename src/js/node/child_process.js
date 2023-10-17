@@ -1198,13 +1198,6 @@ class ChildProcess extends EventEmitter {
       this.send = this.#send;
       this.disconnect = this.#disconnect;
     }
-
-    // this.stdout?.on("data", data => {
-    //   process.stderr.write(data);
-    // });
-    // this.stderr?.on("data", data => {
-    //   process.stderr.write(data);
-    // });
   }
 
   #emitIpcMessage(message) {

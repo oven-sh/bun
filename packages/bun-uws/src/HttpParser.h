@@ -37,7 +37,7 @@ namespace uWS
 {
 
     /* We require at least this much post padding */
-    static const unsigned int MINIMUM_HTTP_POST_PADDING = 32;
+    static const uint64_t MINIMUM_HTTP_POST_PADDING = 32;
     static void *FULLPTR = (void *)~(uintptr_t)0;
 
     struct HttpRequest
@@ -679,16 +679,16 @@ namespace uWS
             }
             else if (fallback.length())
             {
-                unsigned int had = (unsigned int)fallback.length();
+                uint64_t had = (uint64_t)fallback.length();
 
                 size_t maxCopyDistance = std::min<size_t>(MAX_FALLBACK_SIZE - fallback.length(), (size_t)length);
 
                 /* We don't want fallback to be short string optimized, since we want to move it */
-                fallback.reserve(fallback.length() + maxCopyDistance + std::max<unsigned int>(MINIMUM_HTTP_POST_PADDING, sizeof(std::string)));
+                fallback.reserve(fallback.length() + maxCopyDistance + std::max<uint64_t>(MINIMUM_HTTP_POST_PADDING, sizeof(std::string)));
                 fallback.append(data, maxCopyDistance);
 
                 // break here on break
-                std::pair<uint64_t, void *> consumed = fenceAndConsumePostPadded<true>(fallback.data(), (unsigned int)fallback.length(), user, reserved, &req, requestHandler, dataHandler);
+                std::pair<uint64_t, void *> consumed = fenceAndConsumePostPadded<true>(fallback.data(), (uint64_t)fallback.length(), user, reserved, &req, requestHandler, dataHandler);
                 if (consumed.second != user)
                 {
                     return consumed.second;
@@ -719,14 +719,14 @@ namespace uWS
                                 return FULLPTR;
                             }
                             data = (char *)dataToConsume.data();
-                            length = (unsigned int)dataToConsume.length();
+                            length = (uint64_t)dataToConsume.length();
                         }
                         else
                         {
                             // this is exactly the same as above!
-                            if (remainingStreamingBytes >= (unsigned int)length)
+                            if (remainingStreamingBytes >= (uint64_t)length)
                             {
-                                void *returnedUser = dataHandler(user, std::string_view(data, length), remainingStreamingBytes == (unsigned int)length);
+                                void *returnedUser = dataHandler(user, std::string_view(data, length), remainingStreamingBytes == (uint64_t)length);
                                 remainingStreamingBytes -= length;
                                 return returnedUser;
                             }

@@ -61,7 +61,7 @@ namespace uWS {
             // extract state bits
             uint64_t bits = /*state &*/ STATE_IS_CHUNKED;
 
-            state = (state & STATE_SIZE_MASK) * 16u + number;
+            state = (state & STATE_SIZE_MASK) * 16ull + number;
 
             state |= bits;
             data.remove_prefix(1);

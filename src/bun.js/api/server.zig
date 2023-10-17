@@ -2988,7 +2988,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             var needs_content_type = true;
             const content_type: MimeType = brk: {
-                if (response.body.init.headers) |headers_| {
+                if (response.init.headers) |headers_| {
                     if (headers_.fastGet(.ContentType)) |content| {
                         needs_content_type = false;
                         break :brk MimeType.byName(content.slice());
@@ -3008,7 +3008,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             };
 
             var has_content_disposition = false;
-            if (response.body.init.headers) |headers_| {
+            if (response.init.headers) |headers_| {
                 has_content_disposition = headers_.fastHas(.ContentDisposition);
                 needs_content_range = needs_content_range and headers_.fastHas(.ContentRange);
                 if (needs_content_range) {
@@ -3018,7 +3018,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.writeStatus(status);
                 this.writeHeaders(headers_);
 
-                response.body.init.headers = null;
+                response.init.headers = null;
                 headers_.deref();
             } else if (needs_content_range) {
                 status = 206;

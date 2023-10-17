@@ -625,6 +625,7 @@ pub const Version = struct {
     pub const NpmInfo = struct {
         name: String,
         version: Semver.Query.Group,
+        is_alias: bool = false,
 
         fn eql(this: NpmInfo, that: NpmInfo, this_buf: []const u8, that_buf: []const u8) bool {
             return this.name.eql(that.name, this_buf, that_buf) and this.version.eql(that.version);
@@ -711,7 +712,7 @@ pub fn parseWithOptionalTag(
 pub fn parseWithTag(
     allocator: std.mem.Allocator,
     alias: String,
-    _alias_hash: ?PackageNameHash,
+    alias_hash: ?PackageNameHash,
     dependency: string,
     tag: Dependency.Version.Tag,
     sliced: *const SlicedString,
@@ -723,10 +724,10 @@ pub fn parseWithTag(
         .npm => {
             var input = dependency;
 
-            var is_npm_alias = false;
+            var is_alias = false;
             const name = brk: {
                 if (strings.hasPrefixComptime(input, "npm:")) {
-                    is_npm_alias = true;
+                    is_alias = true;
                     var str = input["npm:".len..];
                     var i: usize = @intFromBool(str.len > 0 and str[0] == '@');
 
@@ -744,6 +745,8 @@ pub fn parseWithTag(
 
                 break :brk alias;
             };
+
+            is_alias = is_alias and alias_hash != null;
 
             // Strip single leading v
             // v1.0.0 -> 1.0.0
@@ -765,6 +768,7 @@ pub fn parseWithTag(
                 .literal = sliced.value(),
                 .value = .{
                     .npm = .{
+                        .is_alias = is_alias,
                         .name = name,
                         .version = version,
                     },
@@ -772,14 +776,12 @@ pub fn parseWithTag(
                 .tag = .npm,
             };
 
-            if (is_npm_alias) {
-                if (_alias_hash) |alias_hash| {
-                    PackageManager.instance.known_npm_aliases.put(
-                        allocator,
-                        alias_hash,
-                        result,
-                    ) catch unreachable;
-                }
+            if (is_alias) {
+                PackageManager.instance.known_npm_aliases.put(
+                    allocator,
+                    alias_hash.?,
+                    result,
+                ) catch unreachable;
             }
 
             return result;

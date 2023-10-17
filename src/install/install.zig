@@ -3033,24 +3033,25 @@ pub const PackageManager = struct {
                             }
                             curr = query.next;
                         }
-
                         curr_list = queries.next;
                     }
                 }
             }
 
-            if (this.lockfile.overrides.get(name_hash)) |new| {
-                debug("override: {s} -> {s}", .{ this.lockfile.str(&dependency.version.literal), this.lockfile.str(&new.literal) });
-                name = switch (new.tag) {
-                    .dist_tag => new.value.dist_tag.name,
-                    .git => new.value.git.package_name,
-                    .github => new.value.github.package_name,
-                    .npm => new.value.npm.name,
-                    .tarball => new.value.tarball.package_name,
-                    else => name,
-                };
-                name_hash = String.Builder.stringHash(this.lockfile.str(&name));
-                break :version new;
+            if (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias) {
+                if (this.lockfile.overrides.get(name_hash)) |new| {
+                    debug("override: {s} -> {s}", .{ this.lockfile.str(&dependency.version.literal), this.lockfile.str(&new.literal) });
+                    name = switch (new.tag) {
+                        .dist_tag => new.value.dist_tag.name,
+                        .git => new.value.git.package_name,
+                        .github => new.value.github.package_name,
+                        .npm => new.value.npm.name,
+                        .tarball => new.value.tarball.package_name,
+                        else => name,
+                    };
+                    name_hash = String.Builder.stringHash(this.lockfile.str(&name));
+                    break :version new;
+                }
             }
 
             break :version dependency.version;

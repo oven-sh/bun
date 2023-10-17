@@ -1896,6 +1896,7 @@ extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
   hrtime                           constructProcessHrtimeObject             PropertyCallback
   isBun                            constructIsBun                           PropertyCallback
   kill                             Process_functionKill                     Function 2
+  mainModule                       JSBuiltin                                ReadOnly|Builtin|Accessor|Function 0
   memoryUsage                      constructMemoryUsage                     PropertyCallback
   moduleLoadList                   Process_stubEmptyArray                   PropertyCallback
   nextTick                         constructProcessNextTickFn               PropertyCallback

@@ -389,3 +389,8 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
 
   return nextTick;
 }
+
+$getter;
+export function mainModule() {
+  return $requireMap.$get(Bun.main);
+}

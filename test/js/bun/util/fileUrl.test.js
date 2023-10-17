@@ -21,7 +21,7 @@ describe("fileURLToPath", () => {
   it("should add absolute part to relative file (#6456)", () => {
     const url = pathToFileURL("foo.txt");
     expect(url.href).toBe(`file://${process.cwd()}/foo.txt`);
-  })
+  });
 
   describe("should fail on non URLs", () => {
     const fuzz = [1, true, Symbol("foo"), {}, [], () => {}, null, undefined, NaN, Infinity, -Infinity, new Boolean()];

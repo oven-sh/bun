@@ -16,9 +16,8 @@
 #include "wtf/URL.h"
 #include "JavaScriptCore/TypedArrayInlines.h"
 #include "JavaScriptCore/PropertyNameArray.h"
-#include "Buffer.h"
+#include "JSBuffer.h"
 #include "GCDefferalContext.h"
-#include "Buffer.h"
 
 #include <JavaScriptCore/DOMJITAbstractHeap.h>
 #include "DOMJITIDLConvert.h"

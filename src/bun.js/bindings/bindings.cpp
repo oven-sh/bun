@@ -676,8 +676,8 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 if ((url2 == nullptr) != (url1 == nullptr)) {
                     return false;
                 }
-            } 
-            
+            }
+
             if (url2 && url1) {
                 // toEqual or toStrictEqual should return false when the URLs' href is not equal
                 // But you could have added additional properties onto the
@@ -4000,10 +4000,6 @@ bool JSC__JSValue__isTerminationException(JSC__JSValue JSValue0, JSC__VM* arg1)
 
 void JSC__VM__shrinkFootprint(JSC__VM* arg0) { arg0->shrinkFootprintWhenIdle(); };
 void JSC__VM__whenIdle(JSC__VM* arg0, void (*ArgFn1)()) { arg0->whenIdle(ArgFn1); };
-
-JSC__VM* JSC__VM__create(unsigned char HeapType0)
-{
-}
 
 void JSC__VM__holdAPILock(JSC__VM* arg0, void* ctx, void (*callback)(void* arg0))
 {

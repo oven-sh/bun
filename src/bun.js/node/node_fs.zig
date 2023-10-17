@@ -3576,6 +3576,8 @@ pub const NodeFS = struct {
 
             return ret.success;
         }
+
+        return Maybe(Return.CopyFile).todo;
     }
 
     pub fn exists(this: *NodeFS, args: Arguments.Exists, comptime flavor: Flavor) Maybe(Return.Exists) {
@@ -4962,6 +4964,10 @@ pub const NodeFS = struct {
     pub fn cp(this: *NodeFS, args: Arguments.Cp, comptime flavor: Flavor) Maybe(Return.Cp) {
         comptime std.debug.assert(flavor == .sync);
 
+        if (comptime Environment.isWindows) {
+            return Maybe(Return.Cp).todo;
+        }
+
         var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var src = args.src.sliceZ(&src_buf);
@@ -5351,6 +5357,11 @@ pub const NodeFS = struct {
     /// Directory scanning + clonefile will block this thread, then each individual file copy (what the sync version
     /// calls "_copySingleFileSync") will be dispatched as a separate task.
     pub fn cpAsync(this: *NodeFS, task: *AsyncCpTask) void {
+        if (comptime Environment.isWindows) {
+            task.finishConcurrently(Maybe(Return.Cp).todo);
+            return;
+        }
+
         const args = task.args;
         var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;

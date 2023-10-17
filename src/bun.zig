@@ -1678,6 +1678,10 @@ const WindowsStat = extern struct {
     mtim: std.c.timespec,
     ctim: std.c.timespec,
 
+    pub fn birthtime(_: *const WindowsStat) std.c.timespec {
+        return std.c.timespec{ .tv_nsec = 0, .tv_sec = 0 };
+    }
+
     pub fn mtime(this: *const WindowsStat) std.c.timespec {
         return this.mtim;
     }
@@ -1910,6 +1914,9 @@ pub inline fn serializableInto(comptime T: type, init: anytype) T {
 /// Like std.fs.Dir.makePath except instead of infinite looping on dangling
 /// symlink, it deletes the symlink and tries again.
 pub fn makePath(dir: std.fs.Dir, sub_path: []const u8) !void {
+    if (comptime Environment.isWindows) {
+        @panic("TODO: Windows makePath");
+    }
     var it = try std.fs.path.componentIterator(sub_path);
     var component = it.last() orelse return;
     while (true) {

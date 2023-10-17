@@ -1294,7 +1294,7 @@ pub const Printer = struct {
             // internal for debugging, print the lockfile as custom json
             // limited to debug because we don't want people to rely on this format.
             if (Environment.isDebug) {
-                if (std.os.getenv("JSON")) |_| {
+                if (std.process.hasEnvVarConstant("JSON")) {
                     try std.json.stringify(
                         this.lockfile,
                         .{

@@ -20,9 +20,7 @@
 #include "JavaScriptCore/JSWeakMapInlines.h"
 #include "JavaScriptCore/JSWithScope.h"
 #include "JavaScriptCore/JSGlobalProxyInlines.h"
-#include "Buffer.h"
 #include "GCDefferalContext.h"
-#include "Buffer.h"
 
 #include <JavaScriptCore/DOMJITAbstractHeap.h>
 #include "DOMJITIDLConvert.h"

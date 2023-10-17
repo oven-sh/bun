@@ -56,12 +56,18 @@
 #include "JavaScriptCore/Weak.h"
 #include "JavaScriptCore/WeakInlines.h"
 
+
+
 namespace WebCore {
 using namespace JSC;
 
-JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
 
+
+
+
+JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
+{
+    
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -88,7 +94,9 @@ JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexic
         onClose = AsyncContextFrame::create(globalObject, onClose, asyncContext);
     }
 
-    if (WebCore::JSReadableArrayBufferSinkController* ArrayBufferSinkController = JSC::jsDynamicCast<WebCore::JSReadableArrayBufferSinkController*>(callFrame->thisValue())) {
+
+
+     if (WebCore::JSReadableArrayBufferSinkController* ArrayBufferSinkController = JSC::jsDynamicCast<WebCore::JSReadableArrayBufferSinkController*>(callFrame->thisValue())) {
         if (ArrayBufferSinkController->wrapped() == nullptr) {
             scope.throwException(globalObject, JSC::createTypeError(globalObject, "Cannot start stream with closed controller"_s));
             return JSC::JSValue::encode(JSC::jsUndefined());
@@ -96,6 +104,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexic
 
         ArrayBufferSinkController->start(globalObject, readableStream, onPull, onClose);
     }
+
 
     else if (WebCore::JSReadableFileSinkController* FileSinkController = JSC::jsDynamicCast<WebCore::JSReadableFileSinkController*>(callFrame->thisValue())) {
         if (FileSinkController->wrapped() == nullptr) {
@@ -106,6 +115,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexic
         FileSinkController->start(globalObject, readableStream, onPull, onClose);
     }
 
+
     else if (WebCore::JSReadableHTTPResponseSinkController* HTTPResponseSinkController = JSC::jsDynamicCast<WebCore::JSReadableHTTPResponseSinkController*>(callFrame->thisValue())) {
         if (HTTPResponseSinkController->wrapped() == nullptr) {
             scope.throwException(globalObject, JSC::createTypeError(globalObject, "Cannot start stream with closed controller"_s));
@@ -114,6 +124,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexic
 
         HTTPResponseSinkController->start(globalObject, readableStream, onPull, onClose);
     }
+
 
     else if (WebCore::JSReadableHTTPSResponseSinkController* HTTPSResponseSinkController = JSC::jsDynamicCast<WebCore::JSReadableHTTPSResponseSinkController*>(callFrame->thisValue())) {
         if (HTTPSResponseSinkController->wrapped() == nullptr) {
@@ -132,29 +143,29 @@ JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexic
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsUndefined()));
 }
 
-void JSArrayBufferSink::ref()
-{
+
+  void JSArrayBufferSink::ref() {
     if (!m_sinkPtr)
-        return;
+      return;
 
     m_refCount++;
     if (m_refCount == 1) {
-        ArrayBufferSink__updateRef(m_sinkPtr, true);
+      ArrayBufferSink__updateRef(m_sinkPtr, true);
     }
-}
+  }
 
-void JSArrayBufferSink::unref()
-{
+  void JSArrayBufferSink::unref() {
     if (!m_sinkPtr)
-        return;
+      return;
 
-    m_refCount = std::max(0, m_refCount - 1);
-    if (!m_refCount) {
+      m_refCount = std::max(0, m_refCount - 1);
+      if (!m_refCount)
+      {
         ArrayBufferSink__updateRef(m_sinkPtr, false);
-    }
-}
+      }
+  }
 
-JSC_DEFINE_HOST_FUNCTION(ArrayBufferSink__ref, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(ArrayBufferSink__ref, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
     auto* sink = jsDynamicCast<WebCore::JSArrayBufferSink*>(callFrame->thisValue());
@@ -162,9 +173,11 @@ JSC_DEFINE_HOST_FUNCTION(ArrayBufferSink__ref, (JSC::JSGlobalObject * lexicalGlo
         sink->ref();
     }
     return JSC::JSValue::encode(JSC::jsUndefined());
+
 }
 
-JSC_DEFINE_HOST_FUNCTION(ArrayBufferSink__unref, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+
+JSC_DEFINE_HOST_FUNCTION(ArrayBufferSink__unref, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
     auto* sink = jsDynamicCast<WebCore::JSArrayBufferSink*>(callFrame->thisValue());
@@ -172,6 +185,7 @@ JSC_DEFINE_HOST_FUNCTION(ArrayBufferSink__unref, (JSC::JSGlobalObject * lexicalG
         sink->unref();
     }
     return JSC::JSValue::encode(JSC::jsUndefined());
+
 }
 
 JSC_DEFINE_CUSTOM_GETTER(functionArrayBufferSink__getter, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
@@ -182,10 +196,11 @@ JSC_DEFINE_CUSTOM_GETTER(functionArrayBufferSink__getter, (JSC::JSGlobalObject *
     return JSC::JSValue::encode(globalObject->ArrayBufferSink());
 }
 
-JSC_DECLARE_HOST_FUNCTION(JSReadableArrayBufferSinkController__close);
-JSC_DEFINE_HOST_FUNCTION(JSReadableArrayBufferSinkController__close, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
 
+JSC_DECLARE_HOST_FUNCTION(JSReadableArrayBufferSinkController__close);
+JSC_DEFINE_HOST_FUNCTION(JSReadableArrayBufferSinkController__close, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
+{
+    
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -195,7 +210,7 @@ JSC_DEFINE_HOST_FUNCTION(JSReadableArrayBufferSinkController__close, (JSC::JSGlo
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
-    void* ptr = controller->wrapped();
+    void *ptr = controller->wrapped();
     if (ptr == nullptr) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -206,9 +221,9 @@ JSC_DEFINE_HOST_FUNCTION(JSReadableArrayBufferSinkController__close, (JSC::JSGlo
 }
 
 JSC_DECLARE_HOST_FUNCTION(JSReadableArrayBufferSinkController__end);
-JSC_DEFINE_HOST_FUNCTION(JSReadableArrayBufferSinkController__end, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(JSReadableArrayBufferSinkController__end, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
 {
-
+    
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -218,7 +233,7 @@ JSC_DEFINE_HOST_FUNCTION(JSReadableArrayBufferSinkController__end, (JSC::JSGloba
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
-    void* ptr = controller->wrapped();
+    void *ptr = controller->wrapped();
     if (ptr == nullptr) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -227,10 +242,11 @@ JSC_DEFINE_HOST_FUNCTION(JSReadableArrayBufferSinkController__end, (JSC::JSGloba
     return ArrayBufferSink__endWithSink(ptr, lexicalGlobalObject);
 }
 
-JSC_DECLARE_HOST_FUNCTION(ArrayBufferSink__doClose);
-JSC_DEFINE_HOST_FUNCTION(ArrayBufferSink__doClose, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
 
+JSC_DECLARE_HOST_FUNCTION(ArrayBufferSink__doClose);
+JSC_DEFINE_HOST_FUNCTION(ArrayBufferSink__doClose, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
+{
+    
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -240,7 +256,7 @@ JSC_DEFINE_HOST_FUNCTION(ArrayBufferSink__doClose, (JSC::JSGlobalObject * lexica
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
-    void* ptr = sink->wrapped();
+    void *ptr = sink->wrapped();
     if (ptr == nullptr) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -250,29 +266,31 @@ JSC_DEFINE_HOST_FUNCTION(ArrayBufferSink__doClose, (JSC::JSGlobalObject * lexica
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-void JSFileSink::ref()
-{
+
+
+
+  void JSFileSink::ref() {
     if (!m_sinkPtr)
-        return;
+      return;
 
     m_refCount++;
     if (m_refCount == 1) {
-        FileSink__updateRef(m_sinkPtr, true);
+      FileSink__updateRef(m_sinkPtr, true);
     }
-}
+  }
 
-void JSFileSink::unref()
-{
+  void JSFileSink::unref() {
     if (!m_sinkPtr)
-        return;
+      return;
 
-    m_refCount = std::max(0, m_refCount - 1);
-    if (!m_refCount) {
+      m_refCount = std::max(0, m_refCount - 1);
+      if (!m_refCount)
+      {
         FileSink__updateRef(m_sinkPtr, false);
-    }
-}
+      }
+  }
 
-JSC_DEFINE_HOST_FUNCTION(FileSink__ref, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(FileSink__ref, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
     auto* sink = jsDynamicCast<WebCore::JSFileSink*>(callFrame->thisValue());
@@ -280,9 +298,11 @@ JSC_DEFINE_HOST_FUNCTION(FileSink__ref, (JSC::JSGlobalObject * lexicalGlobalObje
         sink->ref();
     }
     return JSC::JSValue::encode(JSC::jsUndefined());
+
 }
 
-JSC_DEFINE_HOST_FUNCTION(FileSink__unref, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+
+JSC_DEFINE_HOST_FUNCTION(FileSink__unref, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
     auto* sink = jsDynamicCast<WebCore::JSFileSink*>(callFrame->thisValue());
@@ -290,6 +310,7 @@ JSC_DEFINE_HOST_FUNCTION(FileSink__unref, (JSC::JSGlobalObject * lexicalGlobalOb
         sink->unref();
     }
     return JSC::JSValue::encode(JSC::jsUndefined());
+
 }
 
 JSC_DEFINE_CUSTOM_GETTER(functionFileSink__getter, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
@@ -300,10 +321,11 @@ JSC_DEFINE_CUSTOM_GETTER(functionFileSink__getter, (JSC::JSGlobalObject * lexica
     return JSC::JSValue::encode(globalObject->FileSink());
 }
 
-JSC_DECLARE_HOST_FUNCTION(JSReadableFileSinkController__close);
-JSC_DEFINE_HOST_FUNCTION(JSReadableFileSinkController__close, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
 
+JSC_DECLARE_HOST_FUNCTION(JSReadableFileSinkController__close);
+JSC_DEFINE_HOST_FUNCTION(JSReadableFileSinkController__close, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
+{
+    
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -313,7 +335,7 @@ JSC_DEFINE_HOST_FUNCTION(JSReadableFileSinkController__close, (JSC::JSGlobalObje
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
-    void* ptr = controller->wrapped();
+    void *ptr = controller->wrapped();
     if (ptr == nullptr) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -324,9 +346,9 @@ JSC_DEFINE_HOST_FUNCTION(JSReadableFileSinkController__close, (JSC::JSGlobalObje
 }
 
 JSC_DECLARE_HOST_FUNCTION(JSReadableFileSinkController__end);
-JSC_DEFINE_HOST_FUNCTION(JSReadableFileSinkController__end, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(JSReadableFileSinkController__end, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
 {
-
+    
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -336,7 +358,7 @@ JSC_DEFINE_HOST_FUNCTION(JSReadableFileSinkController__end, (JSC::JSGlobalObject
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
-    void* ptr = controller->wrapped();
+    void *ptr = controller->wrapped();
     if (ptr == nullptr) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -345,10 +367,11 @@ JSC_DEFINE_HOST_FUNCTION(JSReadableFileSinkController__end, (JSC::JSGlobalObject
     return FileSink__endWithSink(ptr, lexicalGlobalObject);
 }
 
-JSC_DECLARE_HOST_FUNCTION(FileSink__doClose);
-JSC_DEFINE_HOST_FUNCTION(FileSink__doClose, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
 
+JSC_DECLARE_HOST_FUNCTION(FileSink__doClose);
+JSC_DEFINE_HOST_FUNCTION(FileSink__doClose, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
+{
+    
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -358,7 +381,7 @@ JSC_DEFINE_HOST_FUNCTION(FileSink__doClose, (JSC::JSGlobalObject * lexicalGlobal
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
-    void* ptr = sink->wrapped();
+    void *ptr = sink->wrapped();
     if (ptr == nullptr) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -368,29 +391,31 @@ JSC_DEFINE_HOST_FUNCTION(FileSink__doClose, (JSC::JSGlobalObject * lexicalGlobal
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-void JSHTTPResponseSink::ref()
-{
+
+
+
+  void JSHTTPResponseSink::ref() {
     if (!m_sinkPtr)
-        return;
+      return;
 
     m_refCount++;
     if (m_refCount == 1) {
-        HTTPResponseSink__updateRef(m_sinkPtr, true);
+      HTTPResponseSink__updateRef(m_sinkPtr, true);
     }
-}
+  }
 
-void JSHTTPResponseSink::unref()
-{
+  void JSHTTPResponseSink::unref() {
     if (!m_sinkPtr)
-        return;
+      return;
 
-    m_refCount = std::max(0, m_refCount - 1);
-    if (!m_refCount) {
+      m_refCount = std::max(0, m_refCount - 1);
+      if (!m_refCount)
+      {
         HTTPResponseSink__updateRef(m_sinkPtr, false);
-    }
-}
+      }
+  }
 
-JSC_DEFINE_HOST_FUNCTION(HTTPResponseSink__ref, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(HTTPResponseSink__ref, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
     auto* sink = jsDynamicCast<WebCore::JSHTTPResponseSink*>(callFrame->thisValue());
@@ -398,9 +423,11 @@ JSC_DEFINE_HOST_FUNCTION(HTTPResponseSink__ref, (JSC::JSGlobalObject * lexicalGl
         sink->ref();
     }
     return JSC::JSValue::encode(JSC::jsUndefined());
+
 }
 
-JSC_DEFINE_HOST_FUNCTION(HTTPResponseSink__unref, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+
+JSC_DEFINE_HOST_FUNCTION(HTTPResponseSink__unref, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
     auto* sink = jsDynamicCast<WebCore::JSHTTPResponseSink*>(callFrame->thisValue());
@@ -408,6 +435,7 @@ JSC_DEFINE_HOST_FUNCTION(HTTPResponseSink__unref, (JSC::JSGlobalObject * lexical
         sink->unref();
     }
     return JSC::JSValue::encode(JSC::jsUndefined());
+
 }
 
 JSC_DEFINE_CUSTOM_GETTER(functionHTTPResponseSink__getter, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
@@ -418,10 +446,11 @@ JSC_DEFINE_CUSTOM_GETTER(functionHTTPResponseSink__getter, (JSC::JSGlobalObject 
     return JSC::JSValue::encode(globalObject->HTTPResponseSink());
 }
 
-JSC_DECLARE_HOST_FUNCTION(JSReadableHTTPResponseSinkController__close);
-JSC_DEFINE_HOST_FUNCTION(JSReadableHTTPResponseSinkController__close, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
 
+JSC_DECLARE_HOST_FUNCTION(JSReadableHTTPResponseSinkController__close);
+JSC_DEFINE_HOST_FUNCTION(JSReadableHTTPResponseSinkController__close, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
+{
+    
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -431,7 +460,7 @@ JSC_DEFINE_HOST_FUNCTION(JSReadableHTTPResponseSinkController__close, (JSC::JSGl
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
-    void* ptr = controller->wrapped();
+    void *ptr = controller->wrapped();
     if (ptr == nullptr) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -442,9 +471,9 @@ JSC_DEFINE_HOST_FUNCTION(JSReadableHTTPResponseSinkController__close, (JSC::JSGl
 }
 
 JSC_DECLARE_HOST_FUNCTION(JSReadableHTTPResponseSinkController__end);
-JSC_DEFINE_HOST_FUNCTION(JSReadableHTTPResponseSinkController__end, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(JSReadableHTTPResponseSinkController__end, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
 {
-
+    
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -454,7 +483,7 @@ JSC_DEFINE_HOST_FUNCTION(JSReadableHTTPResponseSinkController__end, (JSC::JSGlob
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
-    void* ptr = controller->wrapped();
+    void *ptr = controller->wrapped();
     if (ptr == nullptr) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -463,10 +492,11 @@ JSC_DEFINE_HOST_FUNCTION(JSReadableHTTPResponseSinkController__end, (JSC::JSGlob
     return HTTPResponseSink__endWithSink(ptr, lexicalGlobalObject);
 }
 
-JSC_DECLARE_HOST_FUNCTION(HTTPResponseSink__doClose);
-JSC_DEFINE_HOST_FUNCTION(HTTPResponseSink__doClose, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
 
+JSC_DECLARE_HOST_FUNCTION(HTTPResponseSink__doClose);
+JSC_DEFINE_HOST_FUNCTION(HTTPResponseSink__doClose, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
+{
+    
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -476,7 +506,7 @@ JSC_DEFINE_HOST_FUNCTION(HTTPResponseSink__doClose, (JSC::JSGlobalObject * lexic
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
-    void* ptr = sink->wrapped();
+    void *ptr = sink->wrapped();
     if (ptr == nullptr) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -486,29 +516,31 @@ JSC_DEFINE_HOST_FUNCTION(HTTPResponseSink__doClose, (JSC::JSGlobalObject * lexic
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-void JSHTTPSResponseSink::ref()
-{
+
+
+
+  void JSHTTPSResponseSink::ref() {
     if (!m_sinkPtr)
-        return;
+      return;
 
     m_refCount++;
     if (m_refCount == 1) {
-        HTTPSResponseSink__updateRef(m_sinkPtr, true);
+      HTTPSResponseSink__updateRef(m_sinkPtr, true);
     }
-}
+  }
 
-void JSHTTPSResponseSink::unref()
-{
+  void JSHTTPSResponseSink::unref() {
     if (!m_sinkPtr)
-        return;
+      return;
 
-    m_refCount = std::max(0, m_refCount - 1);
-    if (!m_refCount) {
+      m_refCount = std::max(0, m_refCount - 1);
+      if (!m_refCount)
+      {
         HTTPSResponseSink__updateRef(m_sinkPtr, false);
-    }
-}
+      }
+  }
 
-JSC_DEFINE_HOST_FUNCTION(HTTPSResponseSink__ref, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(HTTPSResponseSink__ref, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
     auto* sink = jsDynamicCast<WebCore::JSHTTPSResponseSink*>(callFrame->thisValue());
@@ -516,9 +548,11 @@ JSC_DEFINE_HOST_FUNCTION(HTTPSResponseSink__ref, (JSC::JSGlobalObject * lexicalG
         sink->ref();
     }
     return JSC::JSValue::encode(JSC::jsUndefined());
+
 }
 
-JSC_DEFINE_HOST_FUNCTION(HTTPSResponseSink__unref, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+
+JSC_DEFINE_HOST_FUNCTION(HTTPSResponseSink__unref, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
     auto* sink = jsDynamicCast<WebCore::JSHTTPSResponseSink*>(callFrame->thisValue());
@@ -526,6 +560,7 @@ JSC_DEFINE_HOST_FUNCTION(HTTPSResponseSink__unref, (JSC::JSGlobalObject * lexica
         sink->unref();
     }
     return JSC::JSValue::encode(JSC::jsUndefined());
+
 }
 
 JSC_DEFINE_CUSTOM_GETTER(functionHTTPSResponseSink__getter, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
@@ -536,10 +571,11 @@ JSC_DEFINE_CUSTOM_GETTER(functionHTTPSResponseSink__getter, (JSC::JSGlobalObject
     return JSC::JSValue::encode(globalObject->HTTPSResponseSink());
 }
 
-JSC_DECLARE_HOST_FUNCTION(JSReadableHTTPSResponseSinkController__close);
-JSC_DEFINE_HOST_FUNCTION(JSReadableHTTPSResponseSinkController__close, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
 
+JSC_DECLARE_HOST_FUNCTION(JSReadableHTTPSResponseSinkController__close);
+JSC_DEFINE_HOST_FUNCTION(JSReadableHTTPSResponseSinkController__close, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
+{
+    
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -549,7 +585,7 @@ JSC_DEFINE_HOST_FUNCTION(JSReadableHTTPSResponseSinkController__close, (JSC::JSG
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
-    void* ptr = controller->wrapped();
+    void *ptr = controller->wrapped();
     if (ptr == nullptr) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -560,9 +596,9 @@ JSC_DEFINE_HOST_FUNCTION(JSReadableHTTPSResponseSinkController__close, (JSC::JSG
 }
 
 JSC_DECLARE_HOST_FUNCTION(JSReadableHTTPSResponseSinkController__end);
-JSC_DEFINE_HOST_FUNCTION(JSReadableHTTPSResponseSinkController__end, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(JSReadableHTTPSResponseSinkController__end, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
 {
-
+    
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -572,7 +608,7 @@ JSC_DEFINE_HOST_FUNCTION(JSReadableHTTPSResponseSinkController__end, (JSC::JSGlo
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
-    void* ptr = controller->wrapped();
+    void *ptr = controller->wrapped();
     if (ptr == nullptr) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -581,10 +617,11 @@ JSC_DEFINE_HOST_FUNCTION(JSReadableHTTPSResponseSinkController__end, (JSC::JSGlo
     return HTTPSResponseSink__endWithSink(ptr, lexicalGlobalObject);
 }
 
-JSC_DECLARE_HOST_FUNCTION(HTTPSResponseSink__doClose);
-JSC_DEFINE_HOST_FUNCTION(HTTPSResponseSink__doClose, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
 
+JSC_DECLARE_HOST_FUNCTION(HTTPSResponseSink__doClose);
+JSC_DEFINE_HOST_FUNCTION(HTTPSResponseSink__doClose, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
+{
+    
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -594,7 +631,7 @@ JSC_DEFINE_HOST_FUNCTION(HTTPSResponseSink__doClose, (JSC::JSGlobalObject * lexi
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
-    void* ptr = sink->wrapped();
+    void *ptr = sink->wrapped();
     if (ptr == nullptr) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -604,8 +641,10 @@ JSC_DEFINE_HOST_FUNCTION(HTTPSResponseSink__doClose, (JSC::JSGlobalObject * lexi
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-#include "JSSinkLookupTable.h"
 
+
+#include "JSSinkLookupTable.h"
+  
 /* Source for JSArrayBufferSinkPrototypeTableValues.lut.h
 @begin JSArrayBufferSinkPrototypeTable
   close      ArrayBufferSink__doClose         ReadOnly|DontDelete|Function 0
@@ -618,6 +657,7 @@ JSC_DEFINE_HOST_FUNCTION(HTTPSResponseSink__doClose, (JSC::JSGlobalObject * lexi
 @end
 */
 
+
 /* Source for JSReadableArrayBufferSinkControllerPrototypeTableValues.lut.h
 @begin JSReadableArrayBufferSinkControllerPrototypeTable
   close        JSReadableArrayBufferSinkController__close      ReadOnly|DontDelete|Function 0
@@ -628,6 +668,7 @@ JSC_DEFINE_HOST_FUNCTION(HTTPSResponseSink__doClose, (JSC::JSGlobalObject * lexi
 @end
 */
 
+  
 /* Source for JSFileSinkPrototypeTableValues.lut.h
 @begin JSFileSinkPrototypeTable
   close      FileSink__doClose         ReadOnly|DontDelete|Function 0
@@ -640,6 +681,7 @@ JSC_DEFINE_HOST_FUNCTION(HTTPSResponseSink__doClose, (JSC::JSGlobalObject * lexi
 @end
 */
 
+
 /* Source for JSReadableFileSinkControllerPrototypeTableValues.lut.h
 @begin JSReadableFileSinkControllerPrototypeTable
   close        JSReadableFileSinkController__close      ReadOnly|DontDelete|Function 0
@@ -650,6 +692,7 @@ JSC_DEFINE_HOST_FUNCTION(HTTPSResponseSink__doClose, (JSC::JSGlobalObject * lexi
 @end
 */
 
+  
 /* Source for JSHTTPResponseSinkPrototypeTableValues.lut.h
 @begin JSHTTPResponseSinkPrototypeTable
   close      HTTPResponseSink__doClose         ReadOnly|DontDelete|Function 0
@@ -662,6 +705,7 @@ JSC_DEFINE_HOST_FUNCTION(HTTPSResponseSink__doClose, (JSC::JSGlobalObject * lexi
 @end
 */
 
+
 /* Source for JSReadableHTTPResponseSinkControllerPrototypeTableValues.lut.h
 @begin JSReadableHTTPResponseSinkControllerPrototypeTable
   close        JSReadableHTTPResponseSinkController__close      ReadOnly|DontDelete|Function 0
@@ -672,6 +716,7 @@ JSC_DEFINE_HOST_FUNCTION(HTTPSResponseSink__doClose, (JSC::JSGlobalObject * lexi
 @end
 */
 
+  
 /* Source for JSHTTPSResponseSinkPrototypeTableValues.lut.h
 @begin JSHTTPSResponseSinkPrototypeTable
   close      HTTPSResponseSink__doClose         ReadOnly|DontDelete|Function 0
@@ -684,6 +729,7 @@ JSC_DEFINE_HOST_FUNCTION(HTTPSResponseSink__doClose, (JSC::JSGlobalObject * lexi
 @end
 */
 
+
 /* Source for JSReadableHTTPSResponseSinkControllerPrototypeTableValues.lut.h
 @begin JSReadableHTTPSResponseSinkControllerPrototypeTable
   close        JSReadableHTTPSResponseSinkController__close      ReadOnly|DontDelete|Function 0
@@ -694,6 +740,7 @@ JSC_DEFINE_HOST_FUNCTION(HTTPSResponseSink__doClose, (JSC::JSGlobalObject * lexi
 @end
 */
 
+  
 #pragma mark - ArrayBufferSink
 
 class JSArrayBufferSinkPrototype final : public JSC::JSNonFinalObject {
@@ -730,41 +777,42 @@ private:
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSArrayBufferSinkPrototype, JSArrayBufferSinkPrototype::Base);
 
 class JSReadableArrayBufferSinkControllerPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-
-    static JSReadableArrayBufferSinkControllerPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSReadableArrayBufferSinkControllerPrototype* ptr = new (NotNull, JSC::allocateCell<JSReadableArrayBufferSinkControllerPrototype>(vm)) JSReadableArrayBufferSinkControllerPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm, globalObject);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableArrayBufferSinkControllerPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSReadableArrayBufferSinkControllerPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableArrayBufferSinkControllerPrototype, JSReadableArrayBufferSinkControllerPrototype::Base);
+    public:
+        using Base = JSC::JSNonFinalObject;
+    
+        static JSReadableArrayBufferSinkControllerPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+        {
+            JSReadableArrayBufferSinkControllerPrototype* ptr = new (NotNull, JSC::allocateCell<JSReadableArrayBufferSinkControllerPrototype>(vm)) JSReadableArrayBufferSinkControllerPrototype(vm, globalObject, structure);
+            ptr->finishCreation(vm, globalObject);
+            return ptr;
+        }
+    
+        DECLARE_INFO;
+        template<typename CellType, JSC::SubspaceAccess>
+        static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+        {
+            STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableArrayBufferSinkControllerPrototype, Base);
+            return &vm.plainObjectSpace();
+        }
+        static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+        {
+            return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        }
+    
+    private:
+        JSReadableArrayBufferSinkControllerPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+            : Base(vm, structure)
+        {
+        }
+    
+        void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+    };
+    STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableArrayBufferSinkControllerPrototype, JSReadableArrayBufferSinkControllerPrototype::Base);
 
 const ClassInfo JSArrayBufferSinkPrototype::s_info = { "ArrayBufferSink"_s, &Base::s_info, &JSArrayBufferSinkPrototypeTable, nullptr, CREATE_METHOD_TABLE(JSArrayBufferSinkPrototype) };
 const ClassInfo JSArrayBufferSink::s_info = { "ArrayBufferSink"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSArrayBufferSink) };
 const ClassInfo JSArrayBufferSinkConstructor::s_info = { "ArrayBufferSink"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSArrayBufferSinkConstructor) };
+
 
 const ClassInfo JSReadableArrayBufferSinkControllerPrototype::s_info = { "ReadableArrayBufferSinkController"_s, &Base::s_info, &JSReadableArrayBufferSinkControllerPrototypeTable, nullptr, CREATE_METHOD_TABLE(JSReadableArrayBufferSinkControllerPrototype) };
 const ClassInfo JSReadableArrayBufferSinkController::s_info = { "ReadableArrayBufferSinkController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableArrayBufferSinkController) };
@@ -775,6 +823,7 @@ JSArrayBufferSink::~JSArrayBufferSink()
         ArrayBufferSink__finalize(m_sinkPtr);
     }
 }
+
 
 JSReadableArrayBufferSinkController::~JSReadableArrayBufferSinkController()
 {
@@ -793,18 +842,17 @@ JSObject* JSReadableArrayBufferSinkController::createPrototype(VM& vm, JSDOMGlob
     return JSReadableArrayBufferSinkControllerPrototype::create(vm, &globalObject, JSReadableArrayBufferSinkControllerPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
 }
 
-void JSReadableArrayBufferSinkController::detach()
-{
+void JSReadableArrayBufferSinkController::detach() {
     m_sinkPtr = nullptr;
     m_onPull.clear();
 
     auto readableStream = m_weakReadableStream.get();
     auto onClose = m_onClose.get();
-
+    
     if (readableStream && onClose) {
         auto callData = JSC::getCallData(onClose);
-        if (callData.type != JSC::CallData::Type::None) {
-            JSC::JSGlobalObject* globalObject = this->globalObject();
+        if(callData.type != JSC::CallData::Type::None) {
+            JSC::JSGlobalObject *globalObject = this->globalObject();
             JSC::MarkedArgumentBuffer arguments;
             arguments.append(readableStream);
             arguments.append(jsUndefined());
@@ -815,6 +863,7 @@ void JSReadableArrayBufferSinkController::detach()
     m_onClose.clear();
     m_weakReadableStream.clear();
 }
+
 
 JSArrayBufferSinkConstructor* JSArrayBufferSinkConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSObject* prototype)
 {
@@ -844,10 +893,10 @@ void JSArrayBufferSinkConstructor::finishCreation(VM& vm, JSC::JSGlobalObject* g
     initializeProperties(vm, globalObject, prototype);
 }
 
-JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSArrayBufferSinkConstructor::construct(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
-{
+JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSArrayBufferSinkConstructor::construct(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) {
     return ArrayBufferSink__construct(globalObject, callFrame);
 }
+
 
 void JSArrayBufferSinkConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSObject* prototype)
 {
@@ -885,6 +934,7 @@ void JSReadableArrayBufferSinkController::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 }
 
+
 void JSArrayBufferSink::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
     auto* thisObject = jsCast<JSArrayBufferSink*>(cell);
@@ -907,6 +957,7 @@ void JSReadableArrayBufferSinkController::analyzeHeap(JSCell* cell, HeapAnalyzer
     Base::analyzeHeap(cell, analyzer);
 }
 
+
 template<typename Visitor>
 void JSReadableArrayBufferSinkController::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
@@ -917,7 +968,7 @@ void JSReadableArrayBufferSinkController::visitChildrenImpl(JSCell* cell, Visito
     visitor.append(thisObject->m_onClose);
     void* ptr = thisObject->m_sinkPtr;
     if (ptr)
-        visitor.addOpaqueRoot(ptr);
+      visitor.addOpaqueRoot(ptr);
 }
 
 DEFINE_VISIT_CHILDREN(JSReadableArrayBufferSinkController);
@@ -930,13 +981,13 @@ void JSArrayBufferSink::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     void* ptr = thisObject->m_sinkPtr;
     if (ptr)
-        visitor.addOpaqueRoot(ptr);
+      visitor.addOpaqueRoot(ptr);
 }
 
 DEFINE_VISIT_CHILDREN(JSArrayBufferSink);
 
-void JSReadableArrayBufferSinkController::start(JSC::JSGlobalObject* globalObject, JSC::JSValue readableStream, JSC::JSValue onPull, JSC::JSValue onClose)
-{
+
+void JSReadableArrayBufferSinkController::start(JSC::JSGlobalObject *globalObject, JSC::JSValue readableStream, JSC::JSValue onPull, JSC::JSValue onClose) {
     this->m_weakReadableStream = JSC::Weak<JSC::JSObject>(readableStream.getObject());
     this->m_onPull.set(globalObject->vm(), this, onPull);
     this->m_onClose.set(globalObject->vm(), this, onClose);
@@ -947,10 +998,13 @@ void JSArrayBufferSink::destroy(JSCell* cell)
     static_cast<JSArrayBufferSink*>(cell)->JSArrayBufferSink::~JSArrayBufferSink();
 }
 
+
 void JSReadableArrayBufferSinkController::destroy(JSCell* cell)
 {
     static_cast<JSReadableArrayBufferSinkController*>(cell)->JSReadableArrayBufferSinkController::~JSReadableArrayBufferSinkController();
 }
+
+
 
 #pragma mark - FileSink
 
@@ -988,41 +1042,42 @@ private:
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSFileSinkPrototype, JSFileSinkPrototype::Base);
 
 class JSReadableFileSinkControllerPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-
-    static JSReadableFileSinkControllerPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSReadableFileSinkControllerPrototype* ptr = new (NotNull, JSC::allocateCell<JSReadableFileSinkControllerPrototype>(vm)) JSReadableFileSinkControllerPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm, globalObject);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableFileSinkControllerPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSReadableFileSinkControllerPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableFileSinkControllerPrototype, JSReadableFileSinkControllerPrototype::Base);
+    public:
+        using Base = JSC::JSNonFinalObject;
+    
+        static JSReadableFileSinkControllerPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+        {
+            JSReadableFileSinkControllerPrototype* ptr = new (NotNull, JSC::allocateCell<JSReadableFileSinkControllerPrototype>(vm)) JSReadableFileSinkControllerPrototype(vm, globalObject, structure);
+            ptr->finishCreation(vm, globalObject);
+            return ptr;
+        }
+    
+        DECLARE_INFO;
+        template<typename CellType, JSC::SubspaceAccess>
+        static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+        {
+            STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableFileSinkControllerPrototype, Base);
+            return &vm.plainObjectSpace();
+        }
+        static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+        {
+            return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        }
+    
+    private:
+        JSReadableFileSinkControllerPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+            : Base(vm, structure)
+        {
+        }
+    
+        void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+    };
+    STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableFileSinkControllerPrototype, JSReadableFileSinkControllerPrototype::Base);
 
 const ClassInfo JSFileSinkPrototype::s_info = { "FileSink"_s, &Base::s_info, &JSFileSinkPrototypeTable, nullptr, CREATE_METHOD_TABLE(JSFileSinkPrototype) };
 const ClassInfo JSFileSink::s_info = { "FileSink"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSFileSink) };
 const ClassInfo JSFileSinkConstructor::s_info = { "FileSink"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSFileSinkConstructor) };
+
 
 const ClassInfo JSReadableFileSinkControllerPrototype::s_info = { "ReadableFileSinkController"_s, &Base::s_info, &JSReadableFileSinkControllerPrototypeTable, nullptr, CREATE_METHOD_TABLE(JSReadableFileSinkControllerPrototype) };
 const ClassInfo JSReadableFileSinkController::s_info = { "ReadableFileSinkController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableFileSinkController) };
@@ -1033,6 +1088,7 @@ JSFileSink::~JSFileSink()
         FileSink__finalize(m_sinkPtr);
     }
 }
+
 
 JSReadableFileSinkController::~JSReadableFileSinkController()
 {
@@ -1051,18 +1107,17 @@ JSObject* JSReadableFileSinkController::createPrototype(VM& vm, JSDOMGlobalObjec
     return JSReadableFileSinkControllerPrototype::create(vm, &globalObject, JSReadableFileSinkControllerPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
 }
 
-void JSReadableFileSinkController::detach()
-{
+void JSReadableFileSinkController::detach() {
     m_sinkPtr = nullptr;
     m_onPull.clear();
 
     auto readableStream = m_weakReadableStream.get();
     auto onClose = m_onClose.get();
-
+    
     if (readableStream && onClose) {
         auto callData = JSC::getCallData(onClose);
-        if (callData.type != JSC::CallData::Type::None) {
-            JSC::JSGlobalObject* globalObject = this->globalObject();
+        if(callData.type != JSC::CallData::Type::None) {
+            JSC::JSGlobalObject *globalObject = this->globalObject();
             JSC::MarkedArgumentBuffer arguments;
             arguments.append(readableStream);
             arguments.append(jsUndefined());
@@ -1073,6 +1128,7 @@ void JSReadableFileSinkController::detach()
     m_onClose.clear();
     m_weakReadableStream.clear();
 }
+
 
 JSFileSinkConstructor* JSFileSinkConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSObject* prototype)
 {
@@ -1102,10 +1158,10 @@ void JSFileSinkConstructor::finishCreation(VM& vm, JSC::JSGlobalObject* globalOb
     initializeProperties(vm, globalObject, prototype);
 }
 
-JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSFileSinkConstructor::construct(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
-{
+JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSFileSinkConstructor::construct(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) {
     return FileSink__construct(globalObject, callFrame);
 }
+
 
 void JSFileSinkConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSObject* prototype)
 {
@@ -1143,6 +1199,7 @@ void JSReadableFileSinkController::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 }
 
+
 void JSFileSink::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
     auto* thisObject = jsCast<JSFileSink*>(cell);
@@ -1165,6 +1222,7 @@ void JSReadableFileSinkController::analyzeHeap(JSCell* cell, HeapAnalyzer& analy
     Base::analyzeHeap(cell, analyzer);
 }
 
+
 template<typename Visitor>
 void JSReadableFileSinkController::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
@@ -1175,7 +1233,7 @@ void JSReadableFileSinkController::visitChildrenImpl(JSCell* cell, Visitor& visi
     visitor.append(thisObject->m_onClose);
     void* ptr = thisObject->m_sinkPtr;
     if (ptr)
-        visitor.addOpaqueRoot(ptr);
+      visitor.addOpaqueRoot(ptr);
 }
 
 DEFINE_VISIT_CHILDREN(JSReadableFileSinkController);
@@ -1188,13 +1246,13 @@ void JSFileSink::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     void* ptr = thisObject->m_sinkPtr;
     if (ptr)
-        visitor.addOpaqueRoot(ptr);
+      visitor.addOpaqueRoot(ptr);
 }
 
 DEFINE_VISIT_CHILDREN(JSFileSink);
 
-void JSReadableFileSinkController::start(JSC::JSGlobalObject* globalObject, JSC::JSValue readableStream, JSC::JSValue onPull, JSC::JSValue onClose)
-{
+
+void JSReadableFileSinkController::start(JSC::JSGlobalObject *globalObject, JSC::JSValue readableStream, JSC::JSValue onPull, JSC::JSValue onClose) {
     this->m_weakReadableStream = JSC::Weak<JSC::JSObject>(readableStream.getObject());
     this->m_onPull.set(globalObject->vm(), this, onPull);
     this->m_onClose.set(globalObject->vm(), this, onClose);
@@ -1205,10 +1263,13 @@ void JSFileSink::destroy(JSCell* cell)
     static_cast<JSFileSink*>(cell)->JSFileSink::~JSFileSink();
 }
 
+
 void JSReadableFileSinkController::destroy(JSCell* cell)
 {
     static_cast<JSReadableFileSinkController*>(cell)->JSReadableFileSinkController::~JSReadableFileSinkController();
 }
+
+
 
 #pragma mark - HTTPResponseSink
 
@@ -1246,41 +1307,42 @@ private:
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSHTTPResponseSinkPrototype, JSHTTPResponseSinkPrototype::Base);
 
 class JSReadableHTTPResponseSinkControllerPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-
-    static JSReadableHTTPResponseSinkControllerPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSReadableHTTPResponseSinkControllerPrototype* ptr = new (NotNull, JSC::allocateCell<JSReadableHTTPResponseSinkControllerPrototype>(vm)) JSReadableHTTPResponseSinkControllerPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm, globalObject);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableHTTPResponseSinkControllerPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSReadableHTTPResponseSinkControllerPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableHTTPResponseSinkControllerPrototype, JSReadableHTTPResponseSinkControllerPrototype::Base);
+    public:
+        using Base = JSC::JSNonFinalObject;
+    
+        static JSReadableHTTPResponseSinkControllerPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+        {
+            JSReadableHTTPResponseSinkControllerPrototype* ptr = new (NotNull, JSC::allocateCell<JSReadableHTTPResponseSinkControllerPrototype>(vm)) JSReadableHTTPResponseSinkControllerPrototype(vm, globalObject, structure);
+            ptr->finishCreation(vm, globalObject);
+            return ptr;
+        }
+    
+        DECLARE_INFO;
+        template<typename CellType, JSC::SubspaceAccess>
+        static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+        {
+            STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableHTTPResponseSinkControllerPrototype, Base);
+            return &vm.plainObjectSpace();
+        }
+        static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+        {
+            return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        }
+    
+    private:
+        JSReadableHTTPResponseSinkControllerPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+            : Base(vm, structure)
+        {
+        }
+    
+        void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+    };
+    STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableHTTPResponseSinkControllerPrototype, JSReadableHTTPResponseSinkControllerPrototype::Base);
 
 const ClassInfo JSHTTPResponseSinkPrototype::s_info = { "HTTPResponseSink"_s, &Base::s_info, &JSHTTPResponseSinkPrototypeTable, nullptr, CREATE_METHOD_TABLE(JSHTTPResponseSinkPrototype) };
 const ClassInfo JSHTTPResponseSink::s_info = { "HTTPResponseSink"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHTTPResponseSink) };
 const ClassInfo JSHTTPResponseSinkConstructor::s_info = { "HTTPResponseSink"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHTTPResponseSinkConstructor) };
+
 
 const ClassInfo JSReadableHTTPResponseSinkControllerPrototype::s_info = { "ReadableHTTPResponseSinkController"_s, &Base::s_info, &JSReadableHTTPResponseSinkControllerPrototypeTable, nullptr, CREATE_METHOD_TABLE(JSReadableHTTPResponseSinkControllerPrototype) };
 const ClassInfo JSReadableHTTPResponseSinkController::s_info = { "ReadableHTTPResponseSinkController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableHTTPResponseSinkController) };
@@ -1291,6 +1353,7 @@ JSHTTPResponseSink::~JSHTTPResponseSink()
         HTTPResponseSink__finalize(m_sinkPtr);
     }
 }
+
 
 JSReadableHTTPResponseSinkController::~JSReadableHTTPResponseSinkController()
 {
@@ -1309,18 +1372,17 @@ JSObject* JSReadableHTTPResponseSinkController::createPrototype(VM& vm, JSDOMGlo
     return JSReadableHTTPResponseSinkControllerPrototype::create(vm, &globalObject, JSReadableHTTPResponseSinkControllerPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
 }
 
-void JSReadableHTTPResponseSinkController::detach()
-{
+void JSReadableHTTPResponseSinkController::detach() {
     m_sinkPtr = nullptr;
     m_onPull.clear();
 
     auto readableStream = m_weakReadableStream.get();
     auto onClose = m_onClose.get();
-
+    
     if (readableStream && onClose) {
         auto callData = JSC::getCallData(onClose);
-        if (callData.type != JSC::CallData::Type::None) {
-            JSC::JSGlobalObject* globalObject = this->globalObject();
+        if(callData.type != JSC::CallData::Type::None) {
+            JSC::JSGlobalObject *globalObject = this->globalObject();
             JSC::MarkedArgumentBuffer arguments;
             arguments.append(readableStream);
             arguments.append(jsUndefined());
@@ -1331,6 +1393,7 @@ void JSReadableHTTPResponseSinkController::detach()
     m_onClose.clear();
     m_weakReadableStream.clear();
 }
+
 
 JSHTTPResponseSinkConstructor* JSHTTPResponseSinkConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSObject* prototype)
 {
@@ -1360,10 +1423,10 @@ void JSHTTPResponseSinkConstructor::finishCreation(VM& vm, JSC::JSGlobalObject* 
     initializeProperties(vm, globalObject, prototype);
 }
 
-JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSHTTPResponseSinkConstructor::construct(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
-{
+JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSHTTPResponseSinkConstructor::construct(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) {
     return HTTPResponseSink__construct(globalObject, callFrame);
 }
+
 
 void JSHTTPResponseSinkConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSObject* prototype)
 {
@@ -1401,6 +1464,7 @@ void JSReadableHTTPResponseSinkController::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 }
 
+
 void JSHTTPResponseSink::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
     auto* thisObject = jsCast<JSHTTPResponseSink*>(cell);
@@ -1423,6 +1487,7 @@ void JSReadableHTTPResponseSinkController::analyzeHeap(JSCell* cell, HeapAnalyze
     Base::analyzeHeap(cell, analyzer);
 }
 
+
 template<typename Visitor>
 void JSReadableHTTPResponseSinkController::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
@@ -1433,7 +1498,7 @@ void JSReadableHTTPResponseSinkController::visitChildrenImpl(JSCell* cell, Visit
     visitor.append(thisObject->m_onClose);
     void* ptr = thisObject->m_sinkPtr;
     if (ptr)
-        visitor.addOpaqueRoot(ptr);
+      visitor.addOpaqueRoot(ptr);
 }
 
 DEFINE_VISIT_CHILDREN(JSReadableHTTPResponseSinkController);
@@ -1446,13 +1511,13 @@ void JSHTTPResponseSink::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     void* ptr = thisObject->m_sinkPtr;
     if (ptr)
-        visitor.addOpaqueRoot(ptr);
+      visitor.addOpaqueRoot(ptr);
 }
 
 DEFINE_VISIT_CHILDREN(JSHTTPResponseSink);
 
-void JSReadableHTTPResponseSinkController::start(JSC::JSGlobalObject* globalObject, JSC::JSValue readableStream, JSC::JSValue onPull, JSC::JSValue onClose)
-{
+
+void JSReadableHTTPResponseSinkController::start(JSC::JSGlobalObject *globalObject, JSC::JSValue readableStream, JSC::JSValue onPull, JSC::JSValue onClose) {
     this->m_weakReadableStream = JSC::Weak<JSC::JSObject>(readableStream.getObject());
     this->m_onPull.set(globalObject->vm(), this, onPull);
     this->m_onClose.set(globalObject->vm(), this, onClose);
@@ -1463,10 +1528,13 @@ void JSHTTPResponseSink::destroy(JSCell* cell)
     static_cast<JSHTTPResponseSink*>(cell)->JSHTTPResponseSink::~JSHTTPResponseSink();
 }
 
+
 void JSReadableHTTPResponseSinkController::destroy(JSCell* cell)
 {
     static_cast<JSReadableHTTPResponseSinkController*>(cell)->JSReadableHTTPResponseSinkController::~JSReadableHTTPResponseSinkController();
 }
+
+
 
 #pragma mark - HTTPSResponseSink
 
@@ -1504,41 +1572,42 @@ private:
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSHTTPSResponseSinkPrototype, JSHTTPSResponseSinkPrototype::Base);
 
 class JSReadableHTTPSResponseSinkControllerPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-
-    static JSReadableHTTPSResponseSinkControllerPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSReadableHTTPSResponseSinkControllerPrototype* ptr = new (NotNull, JSC::allocateCell<JSReadableHTTPSResponseSinkControllerPrototype>(vm)) JSReadableHTTPSResponseSinkControllerPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm, globalObject);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableHTTPSResponseSinkControllerPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSReadableHTTPSResponseSinkControllerPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableHTTPSResponseSinkControllerPrototype, JSReadableHTTPSResponseSinkControllerPrototype::Base);
+    public:
+        using Base = JSC::JSNonFinalObject;
+    
+        static JSReadableHTTPSResponseSinkControllerPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+        {
+            JSReadableHTTPSResponseSinkControllerPrototype* ptr = new (NotNull, JSC::allocateCell<JSReadableHTTPSResponseSinkControllerPrototype>(vm)) JSReadableHTTPSResponseSinkControllerPrototype(vm, globalObject, structure);
+            ptr->finishCreation(vm, globalObject);
+            return ptr;
+        }
+    
+        DECLARE_INFO;
+        template<typename CellType, JSC::SubspaceAccess>
+        static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+        {
+            STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableHTTPSResponseSinkControllerPrototype, Base);
+            return &vm.plainObjectSpace();
+        }
+        static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+        {
+            return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        }
+    
+    private:
+        JSReadableHTTPSResponseSinkControllerPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+            : Base(vm, structure)
+        {
+        }
+    
+        void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+    };
+    STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableHTTPSResponseSinkControllerPrototype, JSReadableHTTPSResponseSinkControllerPrototype::Base);
 
 const ClassInfo JSHTTPSResponseSinkPrototype::s_info = { "HTTPSResponseSink"_s, &Base::s_info, &JSHTTPSResponseSinkPrototypeTable, nullptr, CREATE_METHOD_TABLE(JSHTTPSResponseSinkPrototype) };
 const ClassInfo JSHTTPSResponseSink::s_info = { "HTTPSResponseSink"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHTTPSResponseSink) };
 const ClassInfo JSHTTPSResponseSinkConstructor::s_info = { "HTTPSResponseSink"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHTTPSResponseSinkConstructor) };
+
 
 const ClassInfo JSReadableHTTPSResponseSinkControllerPrototype::s_info = { "ReadableHTTPSResponseSinkController"_s, &Base::s_info, &JSReadableHTTPSResponseSinkControllerPrototypeTable, nullptr, CREATE_METHOD_TABLE(JSReadableHTTPSResponseSinkControllerPrototype) };
 const ClassInfo JSReadableHTTPSResponseSinkController::s_info = { "ReadableHTTPSResponseSinkController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableHTTPSResponseSinkController) };
@@ -1549,6 +1618,7 @@ JSHTTPSResponseSink::~JSHTTPSResponseSink()
         HTTPSResponseSink__finalize(m_sinkPtr);
     }
 }
+
 
 JSReadableHTTPSResponseSinkController::~JSReadableHTTPSResponseSinkController()
 {
@@ -1567,18 +1637,17 @@ JSObject* JSReadableHTTPSResponseSinkController::createPrototype(VM& vm, JSDOMGl
     return JSReadableHTTPSResponseSinkControllerPrototype::create(vm, &globalObject, JSReadableHTTPSResponseSinkControllerPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
 }
 
-void JSReadableHTTPSResponseSinkController::detach()
-{
+void JSReadableHTTPSResponseSinkController::detach() {
     m_sinkPtr = nullptr;
     m_onPull.clear();
 
     auto readableStream = m_weakReadableStream.get();
     auto onClose = m_onClose.get();
-
+    
     if (readableStream && onClose) {
         auto callData = JSC::getCallData(onClose);
-        if (callData.type != JSC::CallData::Type::None) {
-            JSC::JSGlobalObject* globalObject = this->globalObject();
+        if(callData.type != JSC::CallData::Type::None) {
+            JSC::JSGlobalObject *globalObject = this->globalObject();
             JSC::MarkedArgumentBuffer arguments;
             arguments.append(readableStream);
             arguments.append(jsUndefined());
@@ -1589,6 +1658,7 @@ void JSReadableHTTPSResponseSinkController::detach()
     m_onClose.clear();
     m_weakReadableStream.clear();
 }
+
 
 JSHTTPSResponseSinkConstructor* JSHTTPSResponseSinkConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSObject* prototype)
 {
@@ -1618,10 +1688,10 @@ void JSHTTPSResponseSinkConstructor::finishCreation(VM& vm, JSC::JSGlobalObject*
     initializeProperties(vm, globalObject, prototype);
 }
 
-JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSHTTPSResponseSinkConstructor::construct(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
-{
+JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSHTTPSResponseSinkConstructor::construct(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) {
     return HTTPSResponseSink__construct(globalObject, callFrame);
 }
+
 
 void JSHTTPSResponseSinkConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSObject* prototype)
 {
@@ -1659,6 +1729,7 @@ void JSReadableHTTPSResponseSinkController::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 }
 
+
 void JSHTTPSResponseSink::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
     auto* thisObject = jsCast<JSHTTPSResponseSink*>(cell);
@@ -1681,6 +1752,7 @@ void JSReadableHTTPSResponseSinkController::analyzeHeap(JSCell* cell, HeapAnalyz
     Base::analyzeHeap(cell, analyzer);
 }
 
+
 template<typename Visitor>
 void JSReadableHTTPSResponseSinkController::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
@@ -1691,7 +1763,7 @@ void JSReadableHTTPSResponseSinkController::visitChildrenImpl(JSCell* cell, Visi
     visitor.append(thisObject->m_onClose);
     void* ptr = thisObject->m_sinkPtr;
     if (ptr)
-        visitor.addOpaqueRoot(ptr);
+      visitor.addOpaqueRoot(ptr);
 }
 
 DEFINE_VISIT_CHILDREN(JSReadableHTTPSResponseSinkController);
@@ -1704,13 +1776,13 @@ void JSHTTPSResponseSink::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     void* ptr = thisObject->m_sinkPtr;
     if (ptr)
-        visitor.addOpaqueRoot(ptr);
+      visitor.addOpaqueRoot(ptr);
 }
 
 DEFINE_VISIT_CHILDREN(JSHTTPSResponseSink);
 
-void JSReadableHTTPSResponseSinkController::start(JSC::JSGlobalObject* globalObject, JSC::JSValue readableStream, JSC::JSValue onPull, JSC::JSValue onClose)
-{
+
+void JSReadableHTTPSResponseSinkController::start(JSC::JSGlobalObject *globalObject, JSC::JSValue readableStream, JSC::JSValue onPull, JSC::JSValue onClose) {
     this->m_weakReadableStream = JSC::Weak<JSC::JSObject>(readableStream.getObject());
     this->m_onPull.set(globalObject->vm(), this, onPull);
     this->m_onClose.set(globalObject->vm(), this, onClose);
@@ -1721,15 +1793,18 @@ void JSHTTPSResponseSink::destroy(JSCell* cell)
     static_cast<JSHTTPSResponseSink*>(cell)->JSHTTPSResponseSink::~JSHTTPSResponseSink();
 }
 
+
 void JSReadableHTTPSResponseSinkController::destroy(JSCell* cell)
 {
     static_cast<JSReadableHTTPSResponseSinkController*>(cell)->JSReadableHTTPSResponseSinkController::~JSReadableHTTPSResponseSinkController();
 }
 
-JSObject* createJSSinkPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, SinkID sinkID)
-{
-    switch (sinkID) {
 
+
+  JSObject* createJSSinkPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, SinkID sinkID)
+  {
+      switch (sinkID) {
+    
     case ArrayBufferSink:
         return JSArrayBufferSinkPrototype::create(vm, globalObject, JSArrayBufferSinkPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
 
@@ -1742,59 +1817,60 @@ JSObject* createJSSinkPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, 
     case HTTPSResponseSink:
         return JSHTTPSResponseSinkPrototype::create(vm, globalObject, JSHTTPSResponseSinkPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
 
-    default:
-        RELEASE_ASSERT_NOT_REACHED();
+default: 
+    RELEASE_ASSERT_NOT_REACHED();
     }
 }
 JSObject* createJSSinkControllerPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, SinkID sinkID)
 {
     switch (sinkID) {
+  
+  case ArrayBufferSink:
+      return JSReadableArrayBufferSinkControllerPrototype::create(vm, globalObject, JSReadableArrayBufferSinkControllerPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
 
-    case ArrayBufferSink:
-        return JSReadableArrayBufferSinkControllerPrototype::create(vm, globalObject, JSReadableArrayBufferSinkControllerPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+  case FileSink:
+      return JSReadableFileSinkControllerPrototype::create(vm, globalObject, JSReadableFileSinkControllerPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
 
-    case FileSink:
-        return JSReadableFileSinkControllerPrototype::create(vm, globalObject, JSReadableFileSinkControllerPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+  case HTTPResponseSink:
+      return JSReadableHTTPResponseSinkControllerPrototype::create(vm, globalObject, JSReadableHTTPResponseSinkControllerPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
 
-    case HTTPResponseSink:
-        return JSReadableHTTPResponseSinkControllerPrototype::create(vm, globalObject, JSReadableHTTPResponseSinkControllerPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+  case HTTPSResponseSink:
+      return JSReadableHTTPSResponseSinkControllerPrototype::create(vm, globalObject, JSReadableHTTPSResponseSinkControllerPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
 
-    case HTTPSResponseSink:
-        return JSReadableHTTPSResponseSinkControllerPrototype::create(vm, globalObject, JSReadableHTTPSResponseSinkControllerPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
-
-    default:
-        RELEASE_ASSERT_NOT_REACHED();
-    }
+default: 
+  RELEASE_ASSERT_NOT_REACHED();
+  }
 }
 Structure* createJSSinkControllerStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, SinkID sinkID)
 {
     switch (sinkID) {
+  
+  case ArrayBufferSink: {
+    auto* prototype = createJSSinkControllerPrototype(vm, globalObject, sinkID);
+    return JSReadableArrayBufferSinkController::createStructure(vm, globalObject, prototype);
+  }
 
-    case ArrayBufferSink: {
-        auto* prototype = createJSSinkControllerPrototype(vm, globalObject, sinkID);
-        return JSReadableArrayBufferSinkController::createStructure(vm, globalObject, prototype);
-    }
+  case FileSink: {
+    auto* prototype = createJSSinkControllerPrototype(vm, globalObject, sinkID);
+    return JSReadableFileSinkController::createStructure(vm, globalObject, prototype);
+  }
 
-    case FileSink: {
-        auto* prototype = createJSSinkControllerPrototype(vm, globalObject, sinkID);
-        return JSReadableFileSinkController::createStructure(vm, globalObject, prototype);
-    }
+  case HTTPResponseSink: {
+    auto* prototype = createJSSinkControllerPrototype(vm, globalObject, sinkID);
+    return JSReadableHTTPResponseSinkController::createStructure(vm, globalObject, prototype);
+  }
 
-    case HTTPResponseSink: {
-        auto* prototype = createJSSinkControllerPrototype(vm, globalObject, sinkID);
-        return JSReadableHTTPResponseSinkController::createStructure(vm, globalObject, prototype);
-    }
+  case HTTPSResponseSink: {
+    auto* prototype = createJSSinkControllerPrototype(vm, globalObject, sinkID);
+    return JSReadableHTTPSResponseSinkController::createStructure(vm, globalObject, prototype);
+  }
 
-    case HTTPSResponseSink: {
-        auto* prototype = createJSSinkControllerPrototype(vm, globalObject, sinkID);
-        return JSReadableHTTPSResponseSinkController::createStructure(vm, globalObject, prototype);
-    }
-
-    default:
-        RELEASE_ASSERT_NOT_REACHED();
-    }
+default:
+    RELEASE_ASSERT_NOT_REACHED();
+  }
 }
 } // namespace WebCore
+
 
 extern "C" JSC__JSValue ArrayBufferSink__createObject(JSC__JSGlobalObject* arg0, void* sinkPtr)
 {
@@ -1822,6 +1898,7 @@ extern "C" void ArrayBufferSink__detachPtr(JSC__JSValue JSValue0)
         sink->detach();
         return;
     }
+        
 
     if (auto* controller = JSC::jsDynamicCast<WebCore::JSReadableArrayBufferSinkController*>(JSC::JSValue::decode(JSValue0))) {
         controller->detach();
@@ -1829,13 +1906,13 @@ extern "C" void ArrayBufferSink__detachPtr(JSC__JSValue JSValue0)
     }
 }
 
-extern "C" JSC__JSValue ArrayBufferSink__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue stream, void* sinkPtr, void** controllerValue)
+extern "C" JSC__JSValue ArrayBufferSink__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue stream, void* sinkPtr, void **controllerValue)
 {
     auto& vm = arg0->vm();
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
 
     JSC::Structure* structure = WebCore::getDOMStructure<WebCore::JSReadableArrayBufferSinkController>(vm, *globalObject);
-    WebCore::JSReadableArrayBufferSinkController* controller = WebCore::JSReadableArrayBufferSinkController::create(vm, globalObject, structure, sinkPtr);
+    WebCore::JSReadableArrayBufferSinkController *controller = WebCore::JSReadableArrayBufferSinkController::create(vm, globalObject, structure, sinkPtr);
     *controllerValue = reinterpret_cast<void*>(JSC::JSValue::encode(controller));
     return globalObject->assignToStream(JSC::JSValue::decode(stream), controller);
 }
@@ -1847,7 +1924,7 @@ extern "C" void ArrayBufferSink__onReady(JSC__JSValue controllerValue, JSC__JSVa
     JSC::JSValue function = controller->m_onPull.get();
     if (!function)
         return;
-    JSC::JSGlobalObject* globalObject = controller->globalObject();
+    JSC::JSGlobalObject *globalObject = controller->globalObject();
 
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(controller);
@@ -1859,6 +1936,7 @@ extern "C" void ArrayBufferSink__onReady(JSC__JSValue controllerValue, JSC__JSVa
 
 extern "C" void ArrayBufferSink__onStart(JSC__JSValue controllerValue)
 {
+
 }
 
 extern "C" void ArrayBufferSink__onClose(JSC__JSValue controllerValue, JSC__JSValue reason)
@@ -1879,6 +1957,7 @@ extern "C" void ArrayBufferSink__onClose(JSC__JSValue controllerValue, JSC__JSVa
     arguments.append(JSC::JSValue::decode(reason));
     AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);
 }
+
 
 extern "C" JSC__JSValue FileSink__createObject(JSC__JSGlobalObject* arg0, void* sinkPtr)
 {
@@ -1906,6 +1985,7 @@ extern "C" void FileSink__detachPtr(JSC__JSValue JSValue0)
         sink->detach();
         return;
     }
+        
 
     if (auto* controller = JSC::jsDynamicCast<WebCore::JSReadableFileSinkController*>(JSC::JSValue::decode(JSValue0))) {
         controller->detach();
@@ -1913,13 +1993,13 @@ extern "C" void FileSink__detachPtr(JSC__JSValue JSValue0)
     }
 }
 
-extern "C" JSC__JSValue FileSink__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue stream, void* sinkPtr, void** controllerValue)
+extern "C" JSC__JSValue FileSink__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue stream, void* sinkPtr, void **controllerValue)
 {
     auto& vm = arg0->vm();
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
 
     JSC::Structure* structure = WebCore::getDOMStructure<WebCore::JSReadableFileSinkController>(vm, *globalObject);
-    WebCore::JSReadableFileSinkController* controller = WebCore::JSReadableFileSinkController::create(vm, globalObject, structure, sinkPtr);
+    WebCore::JSReadableFileSinkController *controller = WebCore::JSReadableFileSinkController::create(vm, globalObject, structure, sinkPtr);
     *controllerValue = reinterpret_cast<void*>(JSC::JSValue::encode(controller));
     return globalObject->assignToStream(JSC::JSValue::decode(stream), controller);
 }
@@ -1931,7 +2011,7 @@ extern "C" void FileSink__onReady(JSC__JSValue controllerValue, JSC__JSValue amt
     JSC::JSValue function = controller->m_onPull.get();
     if (!function)
         return;
-    JSC::JSGlobalObject* globalObject = controller->globalObject();
+    JSC::JSGlobalObject *globalObject = controller->globalObject();
 
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(controller);
@@ -1943,6 +2023,7 @@ extern "C" void FileSink__onReady(JSC__JSValue controllerValue, JSC__JSValue amt
 
 extern "C" void FileSink__onStart(JSC__JSValue controllerValue)
 {
+
 }
 
 extern "C" void FileSink__onClose(JSC__JSValue controllerValue, JSC__JSValue reason)
@@ -1963,6 +2044,7 @@ extern "C" void FileSink__onClose(JSC__JSValue controllerValue, JSC__JSValue rea
     arguments.append(JSC::JSValue::decode(reason));
     AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);
 }
+
 
 extern "C" JSC__JSValue HTTPResponseSink__createObject(JSC__JSGlobalObject* arg0, void* sinkPtr)
 {
@@ -1990,6 +2072,7 @@ extern "C" void HTTPResponseSink__detachPtr(JSC__JSValue JSValue0)
         sink->detach();
         return;
     }
+        
 
     if (auto* controller = JSC::jsDynamicCast<WebCore::JSReadableHTTPResponseSinkController*>(JSC::JSValue::decode(JSValue0))) {
         controller->detach();
@@ -1997,13 +2080,13 @@ extern "C" void HTTPResponseSink__detachPtr(JSC__JSValue JSValue0)
     }
 }
 
-extern "C" JSC__JSValue HTTPResponseSink__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue stream, void* sinkPtr, void** controllerValue)
+extern "C" JSC__JSValue HTTPResponseSink__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue stream, void* sinkPtr, void **controllerValue)
 {
     auto& vm = arg0->vm();
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
 
     JSC::Structure* structure = WebCore::getDOMStructure<WebCore::JSReadableHTTPResponseSinkController>(vm, *globalObject);
-    WebCore::JSReadableHTTPResponseSinkController* controller = WebCore::JSReadableHTTPResponseSinkController::create(vm, globalObject, structure, sinkPtr);
+    WebCore::JSReadableHTTPResponseSinkController *controller = WebCore::JSReadableHTTPResponseSinkController::create(vm, globalObject, structure, sinkPtr);
     *controllerValue = reinterpret_cast<void*>(JSC::JSValue::encode(controller));
     return globalObject->assignToStream(JSC::JSValue::decode(stream), controller);
 }
@@ -2015,7 +2098,7 @@ extern "C" void HTTPResponseSink__onReady(JSC__JSValue controllerValue, JSC__JSV
     JSC::JSValue function = controller->m_onPull.get();
     if (!function)
         return;
-    JSC::JSGlobalObject* globalObject = controller->globalObject();
+    JSC::JSGlobalObject *globalObject = controller->globalObject();
 
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(controller);
@@ -2027,6 +2110,7 @@ extern "C" void HTTPResponseSink__onReady(JSC__JSValue controllerValue, JSC__JSV
 
 extern "C" void HTTPResponseSink__onStart(JSC__JSValue controllerValue)
 {
+
 }
 
 extern "C" void HTTPResponseSink__onClose(JSC__JSValue controllerValue, JSC__JSValue reason)
@@ -2047,6 +2131,7 @@ extern "C" void HTTPResponseSink__onClose(JSC__JSValue controllerValue, JSC__JSV
     arguments.append(JSC::JSValue::decode(reason));
     AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);
 }
+
 
 extern "C" JSC__JSValue HTTPSResponseSink__createObject(JSC__JSGlobalObject* arg0, void* sinkPtr)
 {
@@ -2074,6 +2159,7 @@ extern "C" void HTTPSResponseSink__detachPtr(JSC__JSValue JSValue0)
         sink->detach();
         return;
     }
+        
 
     if (auto* controller = JSC::jsDynamicCast<WebCore::JSReadableHTTPSResponseSinkController*>(JSC::JSValue::decode(JSValue0))) {
         controller->detach();
@@ -2081,13 +2167,13 @@ extern "C" void HTTPSResponseSink__detachPtr(JSC__JSValue JSValue0)
     }
 }
 
-extern "C" JSC__JSValue HTTPSResponseSink__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue stream, void* sinkPtr, void** controllerValue)
+extern "C" JSC__JSValue HTTPSResponseSink__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue stream, void* sinkPtr, void **controllerValue)
 {
     auto& vm = arg0->vm();
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
 
     JSC::Structure* structure = WebCore::getDOMStructure<WebCore::JSReadableHTTPSResponseSinkController>(vm, *globalObject);
-    WebCore::JSReadableHTTPSResponseSinkController* controller = WebCore::JSReadableHTTPSResponseSinkController::create(vm, globalObject, structure, sinkPtr);
+    WebCore::JSReadableHTTPSResponseSinkController *controller = WebCore::JSReadableHTTPSResponseSinkController::create(vm, globalObject, structure, sinkPtr);
     *controllerValue = reinterpret_cast<void*>(JSC::JSValue::encode(controller));
     return globalObject->assignToStream(JSC::JSValue::decode(stream), controller);
 }
@@ -2099,7 +2185,7 @@ extern "C" void HTTPSResponseSink__onReady(JSC__JSValue controllerValue, JSC__JS
     JSC::JSValue function = controller->m_onPull.get();
     if (!function)
         return;
-    JSC::JSGlobalObject* globalObject = controller->globalObject();
+    JSC::JSGlobalObject *globalObject = controller->globalObject();
 
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(controller);
@@ -2111,6 +2197,7 @@ extern "C" void HTTPSResponseSink__onReady(JSC__JSValue controllerValue, JSC__JS
 
 extern "C" void HTTPSResponseSink__onStart(JSC__JSValue controllerValue)
 {
+
 }
 
 extern "C" void HTTPSResponseSink__onClose(JSC__JSValue controllerValue, JSC__JSValue reason)
@@ -2131,3 +2218,4 @@ extern "C" void HTTPSResponseSink__onClose(JSC__JSValue controllerValue, JSC__JS
     arguments.append(JSC::JSValue::decode(reason));
     AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);
 }
+

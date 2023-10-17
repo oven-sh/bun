@@ -348,10 +348,8 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     // need to check this before primitives, asymmetric matchers
     // can match against any type of value.
     if constexpr (enableAsymmetricMatchers) {
-        JSCell* c1 = v1.asCell();
-        JSCell* c2 = v2.asCell();
-        if (v2.isCell() && !v2.isEmpty() && c2->type() == JSC::JSType(JSDOMWrapperType)) {
-            switch (matchAsymmetricMatcher(globalObject, c2, v1, scope)) {
+        if (v2.isCell() && !v2.isEmpty() && v2.asCell()->type() == JSC::JSType(JSDOMWrapperType)) {
+            switch (matchAsymmetricMatcher(globalObject, v2.asCell(), v1, scope)) {
             case AsymmetricMatcherResult::FAIL:
                 return false;
             case AsymmetricMatcherResult::PASS:
@@ -360,8 +358,8 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 // continue comparison
                 break;
             }
-        } else if (v1.isCell() && !v1.isEmpty() && c1->type() == JSC::JSType(JSDOMWrapperType)) {
-            switch (matchAsymmetricMatcher(globalObject, c1, v2, scope)) {
+        } else if (v1.isCell() && !v1.isEmpty() && v1.asCell()->type() == JSC::JSType(JSDOMWrapperType)) {
+            switch (matchAsymmetricMatcher(globalObject, v1.asCell(), v2, scope)) {
             case AsymmetricMatcherResult::FAIL:
                 return false;
             case AsymmetricMatcherResult::PASS:
@@ -1084,7 +1082,9 @@ void WebCore__FetchHeaders__toUWSResponse(WebCore__FetchHeaders* arg0, bool is_s
 
 WebCore__FetchHeaders* WebCore__FetchHeaders__createEmpty()
 {
-    return new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    headers->relaxAdoptionRequirement();
+    return headers;
 }
 void WebCore__FetchHeaders__append(WebCore__FetchHeaders* headers, const ZigString* arg1, const ZigString* arg2,
     JSC__JSGlobalObject* lexicalGlobalObject)
@@ -1113,6 +1113,7 @@ WebCore__FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC__JSGlobalObject* 
     RETURN_IF_EXCEPTION(throwScope, nullptr);
 
     auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    headers->relaxAdoptionRequirement();
     if (init) {
         // `fill` doesn't set an exception on the VM if it fails, it returns an
         //  ExceptionOr<void>.  So we need to check for the exception and, if set,
@@ -1151,6 +1152,7 @@ WebCore__FetchHeaders* WebCore__FetchHeaders__cloneThis(WebCore__FetchHeaders* h
 {
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
     auto* clone = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    clone->relaxAdoptionRequirement();
     WebCore::propagateException(*lexicalGlobalObject, throwScope,
         clone->fill(*headers));
     return clone;
@@ -1220,6 +1222,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
 {
     PicoHTTPHeaders pico_headers = *reinterpret_cast<const PicoHTTPHeaders*>(arg1);
     auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    headers->relaxAdoptionRequirement(); // This prevents an assertion later, but may not be the proper approach.
 
     if (pico_headers.len > 0) {
         HTTPHeaderMap map = HTTPHeaderMap();
@@ -1262,6 +1265,8 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(JSC__JSGlobalObject*
     size_t i = 0;
 
     auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    headers->relaxAdoptionRequirement(); // This prevents an assertion later, but may not be the proper approach.
+
     HTTPHeaderMap map = HTTPHeaderMap();
 
     for (const auto& header : req) {
@@ -1285,7 +1290,6 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(JSC__JSGlobalObject*
         if (i > 56)
             __builtin_unreachable();
     }
-
     headers->setInternalHeaders(WTFMove(map));
     return headers;
 }
@@ -2357,29 +2361,31 @@ JSC__JSValue JSC__JSValue__createStringArray(JSC__JSGlobalObject* globalObject, 
 
     JSC::JSArray* array = nullptr;
     {
+        JSC::GCDeferralContext deferralContext(vm);
         JSC::ObjectInitializationScope initializationScope(vm);
         if ((array = JSC::JSArray::tryCreateUninitializedRestricted(
-                 initializationScope, nullptr,
+                 initializationScope, &deferralContext,
                  globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
                  arg2))) {
 
             if (!clone) {
                 for (size_t i = 0; i < arg2; ++i) {
-                    array->putDirectIndex(globalObject, i, JSC::jsString(vm, Zig::toString(arg1[i])));
+                    array->putDirectIndex(globalObject, i, JSC::jsString(vm, Zig::toString(arg1[i]), &deferralContext));
                 }
             } else {
                 for (size_t i = 0; i < arg2; ++i) {
-                    array->putDirectIndex(globalObject, i, JSC::jsString(vm, Zig::toStringCopy(arg1[i])));
+                    array->putDirectIndex(globalObject, i, JSC::jsString(vm, Zig::toStringCopy(arg1[i]), &deferralContext));
                 }
             }
         }
-    }
-    if (!array) {
-        JSC::throwOutOfMemoryError(globalObject, scope);
-        return JSC::JSValue::encode(JSC::JSValue());
-    }
 
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSValue(array)));
+        if (!array) {
+            JSC::throwOutOfMemoryError(globalObject, scope);
+            return JSC::JSValue::encode(JSC::JSValue());
+        }
+
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSValue(array)));
+    }
 }
 
 JSC__JSValue JSC__JSGlobalObject__createAggregateError(JSC__JSGlobalObject* globalObject,
@@ -2857,7 +2863,7 @@ JSC__VM* JSC__JSGlobalObject__vm(JSC__JSGlobalObject* arg0) { return &arg0->vm()
 
 void JSC__JSGlobalObject__handleRejectedPromises(JSC__JSGlobalObject* arg0)
 {
-    return static_cast<Zig::GlobalObject*>(arg0)->handleRejectedPromises();
+    return jsCast<Zig::GlobalObject*>(arg0)->handleRejectedPromises();
 }
 
 #pragma mark - JSC::JSValue
@@ -3066,20 +3072,16 @@ JSC__JSValue JSC__JSValue__jsNumberFromUint64(uint64_t arg0)
 
 int64_t JSC__JSValue__toInt64(JSC__JSValue val)
 {
-    JSC::JSValue _val = JSC::JSValue::decode(val);
-
-    int64_t result = JSC::tryConvertToInt52(_val.asDouble());
-    if (result != JSC::JSValue::notInt52) {
-        return result;
-    }
-
-    if (_val.isHeapBigInt()) {
-
-        if (auto* heapBigInt = _val.asHeapBigInt()) {
+    JSC::JSValue value = JSC::JSValue::decode(val);
+    ASSERT(value.isHeapBigInt() || value.isNumber());
+    if (value.isHeapBigInt()) {
+        if (auto* heapBigInt = value.asHeapBigInt()) {
             return heapBigInt->toBigInt64(heapBigInt);
         }
     }
-    return _val.asAnyInt();
+    if (value.isInt32())
+        return value.asInt32();
+    return static_cast<int64_t>(value.asDouble());
 }
 
 uint8_t JSC__JSValue__asBigIntCompare(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, JSC__JSValue JSValue1)
@@ -3140,28 +3142,28 @@ JSC__JSValue JSC__JSValue__fromUInt64NoTruncate(JSC__JSGlobalObject* globalObjec
 
 uint64_t JSC__JSValue__toUInt64NoTruncate(JSC__JSValue val)
 {
-    JSC::JSValue _val = JSC::JSValue::decode(val);
+    JSC::JSValue value = JSC::JSValue::decode(val);
+    ASSERT(value.isHeapBigInt() || value.isNumber());
 
-    int64_t result = JSC::tryConvertToInt52(_val.asDouble());
+    if (value.isHeapBigInt()) {
+        if (auto* heapBigInt = value.asHeapBigInt()) {
+            return heapBigInt->toBigUInt64(heapBigInt);
+        }
+    }
+
+    if (value.isInt32()) {
+        return static_cast<uint64_t>(value.asInt32());
+    }
+    ASSERT(value.isDouble());
+
+    int64_t result = JSC::tryConvertToInt52(value.asDouble());
     if (result != JSC::JSValue::notInt52) {
         if (result < 0)
             return 0;
 
         return static_cast<uint64_t>(result);
     }
-
-    if (_val.isHeapBigInt()) {
-
-        if (auto* heapBigInt = _val.asHeapBigInt()) {
-            return heapBigInt->toBigUInt64(heapBigInt);
-        }
-    }
-
-    if (!_val.isNumber()) {
-        return 0;
-    }
-
-    return static_cast<uint64_t>(_val.asAnyInt());
+    return 0;
 }
 
 JSC__JSValue JSC__JSValue__createObject2(JSC__JSGlobalObject* globalObject, const ZigString* arg1,

@@ -140,7 +140,6 @@ using namespace JSC;
     macro(makeDOMException) \
     macro(makeGetterTypeError) \
     macro(makeThisTypeError) \
-    macro(map) \
     macro(method) \
     macro(nextTick) \
     macro(normalize) \
@@ -193,8 +192,6 @@ using namespace JSC;
     macro(resolve) \
     macro(resolveSync) \
     macro(resume) \
-    macro(search) \
-    macro(searchParams) \
     macro(self) \
     macro(sep) \
     macro(setBody) \

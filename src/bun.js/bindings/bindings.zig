@@ -4935,6 +4935,34 @@ pub const JSValue = enum(JSValueReprInt) {
     pub inline fn deserialize(bytes: []const u8, global: *JSGlobalObject) JSValue {
         return Bun__JSValue__deserialize(global, bytes.ptr, @intCast(bytes.len));
     }
+
+    extern fn Bun__serializeJSValue(global: *JSC.JSGlobalObject, value: JSValue) SerializedScriptValue.External;
+    extern fn Bun__SerializedScriptSlice__free(*anyopaque) void;
+
+    pub const SerializedScriptValue = struct {
+        data: []const u8,
+        handle: *anyopaque,
+
+        const External = extern struct {
+            bytes: ?[*]const u8,
+            size: isize,
+            handle: ?*anyopaque,
+        };
+
+        pub inline fn deinit(self: @This()) void {
+            Bun__SerializedScriptSlice__free(self.handle);
+        }
+    };
+
+    /// Throws a JS exception and returns null if the serialization fails, otherwise returns a SerializedScriptValue.
+    /// Must be freed when you are done with the bytes.
+    pub inline fn serialize(this: JSValue, global: *JSGlobalObject) ?SerializedScriptValue {
+        const value = Bun__serializeJSValue(global, this);
+        return if (value.bytes) |bytes|
+            .{ .data = bytes[0..@intCast(value.size)], .handle = value.handle.? }
+        else
+            null;
+    }
 };
 
 extern "c" fn AsyncContextFrame__withAsyncContextIfNeeded(global: *JSGlobalObject, callback: JSValue) JSValue;

@@ -8,9 +8,15 @@
 using namespace JSC;
 using namespace WebCore;
 
-/// This is used for Bun.spawn() IPC because otherwise we would have to copy the data once to get it to zig, then write it.
-/// Returns `true` on success, `false` on failure + throws a JS error.
-extern "C" bool Bun__serializeJSValueForSubprocess(JSGlobalObject* globalObject, EncodedJSValue encodedValue, int fd)
+// Must be synced with bindings.zig's JSValue.SerializedScriptValue.External
+struct SerializedValueSlice {
+    uint8_t* bytes;
+    size_t size;
+    WebCore::SerializedScriptValue* value;
+};
+
+/// Returns a "slice" that also contains a pointer to the SerializedScriptValue. Must be freed by the caller
+extern "C" SerializedValueSlice Bun__serializeJSValue(JSGlobalObject* globalObject, EncodedJSValue encodedValue)
 {
     JSValue value = JSValue::decode(encodedValue);
 
@@ -25,19 +31,23 @@ extern "C" bool Bun__serializeJSValueForSubprocess(JSGlobalObject* globalObject,
     if (serialized.hasException()) {
         WebCore::propagateException(*globalObject, scope,
             serialized.releaseException());
-        RELEASE_AND_RETURN(scope, false);
+        RELEASE_AND_RETURN(scope, { 0 });
     }
 
     auto serializedValue = serialized.releaseReturnValue();
-    auto bytes = serializedValue.ptr()->wireBytes();
 
-    uint8_t id = 2; // IPCMessageType.SerializedMessage
-    write(fd, &id, sizeof(uint8_t));
-    uint32_t size = bytes.size();
-    write(fd, &size, sizeof(uint32_t));
-    write(fd, bytes.data(), size);
+    auto bytes = serializedValue->wireBytes();
 
-    RELEASE_AND_RETURN(scope, true);
+    return {
+        bytes.data(),
+        bytes.size(),
+        &serializedValue.leakRef(),
+    };
+}
+
+extern "C" void Bun__SerializedScriptSlice__free(SerializedScriptValue* value)
+{
+    delete value;
 }
 
 extern "C" EncodedJSValue Bun__JSValue__deserialize(JSGlobalObject* globalObject, const uint8_t* bytes, size_t size)

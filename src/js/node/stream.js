@@ -106,10 +106,10 @@ var require_primordials = __commonJS({
       },
       Error,
       FunctionPrototypeCall(fn, thisArgs, ...args) {
-        return fn.call(thisArgs, ...args);
+        return fn.$call(thisArgs, ...args);
       },
       FunctionPrototypeSymbolHasInstance(self, instance) {
-        return Function.prototype[Symbol.hasInstance].call(self, instance);
+        return Function.prototype[Symbol.hasInstance].$call(self, instance);
       },
       MathFloor: Math.floor,
       Number,
@@ -143,7 +143,7 @@ var require_primordials = __commonJS({
       PromiseReject(err) {
         return Promise.reject(err);
       },
-      ReflectApply: Reflect.apply,
+      ReflectApply: $getByIdDirect(Reflect, "apply"),
       RegExpPrototypeTest(self, value) {
         return self.test(value);
       },
@@ -210,7 +210,7 @@ var require_util = __commonJS({
             return;
           }
           called = true;
-          callback.apply(this, args);
+          callback.$apply(this, args);
         };
       },
       createDeferredPromise: function () {
@@ -1161,7 +1161,7 @@ var require_end_of_stream = __commonJS({
           return;
         }
         if (!readable || readableFinished) {
-          callback.call(stream);
+          callback.$call(stream);
         }
       };
       let readableFinished = isReadableFinished(stream, false);
@@ -1174,26 +1174,26 @@ var require_end_of_stream = __commonJS({
           return;
         }
         if (!writable || writableFinished) {
-          callback.call(stream);
+          callback.$call(stream);
         }
       };
       const onerror = err => {
-        callback.call(stream, err);
+        callback.$call(stream, err);
       };
       let closed = isClosed(stream);
       const onclose = () => {
         closed = true;
         const errored = isWritableErrored(stream) || isReadableErrored(stream);
         if (errored && typeof errored !== "boolean") {
-          return callback.call(stream, errored);
+          return callback.$call(stream, errored);
         }
         if (readable && !readableFinished && isReadableNodeStream(stream, true)) {
-          if (!isReadableFinished(stream, false)) return callback.call(stream, new ERR_STREAM_PREMATURE_CLOSE());
+          if (!isReadableFinished(stream, false)) return callback.$call(stream, new ERR_STREAM_PREMATURE_CLOSE());
         }
         if (writable && !writableFinished) {
-          if (!isWritableFinished(stream, false)) return callback.call(stream, new ERR_STREAM_PREMATURE_CLOSE());
+          if (!isWritableFinished(stream, false)) return callback.$call(stream, new ERR_STREAM_PREMATURE_CLOSE());
         }
-        callback.call(stream);
+        callback.$call(stream);
       };
       const onrequest = () => {
         stream.req.on("finish", onfinish);
@@ -1263,7 +1263,7 @@ var require_end_of_stream = __commonJS({
         const abort = () => {
           const endCallback = callback;
           cleanup();
-          endCallback.call(
+          endCallback.$call(
             stream,
             new AbortError(void 0, {
               cause: options.signal.reason,
@@ -1276,7 +1276,7 @@ var require_end_of_stream = __commonJS({
           const originalCallback = callback;
           callback = once((...args) => {
             options.signal.removeEventListener("abort", abort);
-            originalCallback.apply(stream, args);
+            originalCallback.$apply(stream, args);
           });
           options.signal.addEventListener("abort", abort);
         }
@@ -1450,7 +1450,7 @@ var require_operators = __commonJS({
             resume = null;
           }
         }
-      }.call(this);
+      }.$call(this);
     }
     function asIndexedPairs(options = void 0) {
       if (options != null) {
@@ -1476,10 +1476,10 @@ var require_operators = __commonJS({
           }
           yield [index++, val];
         }
-      }.call(this);
+      }.$call(this);
     }
     async function some(fn, options = void 0) {
-      for await (const unused of filter.call(this, fn, options)) {
+      for await (const unused of filter.$call(this, fn, options)) {
         return true;
       }
       return false;
@@ -1488,7 +1488,7 @@ var require_operators = __commonJS({
       if (typeof fn !== "function") {
         throw new ERR_INVALID_ARG_TYPE("fn", ["Function", "AsyncFunction"], fn);
       }
-      return !(await some.call(
+      return !(await some.$call(
         this,
         async (...args) => {
           return !(await fn(...args));
@@ -1497,7 +1497,7 @@ var require_operators = __commonJS({
       ));
     }
     async function find(fn, options) {
-      for await (const result of filter.call(this, fn, options)) {
+      for await (const result of filter.$call(this, fn, options)) {
         return result;
       }
       return void 0;
@@ -1510,7 +1510,7 @@ var require_operators = __commonJS({
         await fn(value, options2);
         return kEmpty;
       }
-      for await (const unused of map.call(this, forEachFn, options));
+      for await (const unused of map.$call(this, forEachFn, options));
     }
     function filter(fn, options) {
       if (typeof fn !== "function") {
@@ -1522,7 +1522,7 @@ var require_operators = __commonJS({
         }
         return kEmpty;
       }
-      return map.call(this, filterFn, options);
+      return map.$call(this, filterFn, options);
     }
     var ReduceAwareErrMissingArgs = class extends ERR_MISSING_ARGS {
       constructor() {
@@ -1622,12 +1622,12 @@ var require_operators = __commonJS({
       return result;
     }
     function flatMap(fn, options) {
-      const values = map.call(this, fn, options);
+      const values = map.$call(this, fn, options);
       return async function* flatMap2() {
         for await (const val of values) {
           yield* val;
         }
-      }.call(this);
+      }.$call(this);
     }
     function toIntegerOrInfinity(number) {
       number = Number2(number);
@@ -1673,7 +1673,7 @@ var require_operators = __commonJS({
             yield val;
           }
         }
-      }.call(this);
+      }.$call(this);
     }
     function take(number, options = void 0) {
       if (options != null) {
@@ -1711,7 +1711,7 @@ var require_operators = __commonJS({
             return;
           }
         }
-      }.call(this);
+      }.$call(this);
     }
     module.exports.streamReturningOperators = {
       asIndexedPairs,
@@ -2001,7 +2001,7 @@ var require_legacy = __commonJS({
 
     function Stream(options) {
       if (!(this instanceof Stream)) return new Stream(options);
-      EE.call(this, options);
+      EE.$call(this, options);
     }
     Stream.prototype = {};
     ObjectSetPrototypeOf(Stream.prototype, EE.prototype);
@@ -2274,7 +2274,7 @@ var require_readable = __commonJS({
         if (typeof construct === "function") this._construct = construct;
         if (signal && !isDuplex) addAbortSignal(signal, this);
       }
-      Stream.call(this, options);
+      Stream.$call(this, options);
 
       destroyImpl.construct(this, () => {
         if (this._readableState.needReadable) {
@@ -2287,7 +2287,7 @@ var require_readable = __commonJS({
     ObjectSetPrototypeOf(Readable, Stream);
 
     Readable.prototype.on = function (ev, fn) {
-      const res = Stream.prototype.on.call(this, ev, fn);
+      const res = Stream.prototype.on.$call(this, ev, fn);
       const state = this._readableState;
       if (ev === "data") {
         state.readableListening = this.listenerCount("readable") > 0;
@@ -2975,7 +2975,7 @@ var require_readable = __commonJS({
     };
     Readable.prototype.addListener = Readable.prototype.on;
     Readable.prototype.removeListener = function (ev, fn) {
-      const res = Stream.prototype.removeListener.call(this, ev, fn);
+      const res = Stream.prototype.removeListener.$call(this, ev, fn);
       if (ev === "readable") {
         runOnNextTick(updateReadableListening, this);
       }
@@ -2983,7 +2983,7 @@ var require_readable = __commonJS({
     };
     Readable.prototype.off = Readable.prototype.removeListener;
     Readable.prototype.removeAllListeners = function (ev) {
-      const res = Stream.prototype.removeAllListeners.apply(this, arguments);
+      const res = Stream.prototype.removeAllListeners.$apply(this, arguments);
       if (ev === "readable" || ev === void 0) {
         runOnNextTick(updateReadableListening, this);
       }
@@ -3433,7 +3433,7 @@ var require_writable = __commonJS({
         if (typeof options.construct === "function") this._construct = options.construct;
         if (options.signal) addAbortSignal(options.signal, this);
       }
-      Stream.call(this, options);
+      Stream.$call(this, options);
 
       destroyImpl.construct(this, () => {
         const state = this._writableState;
@@ -4003,7 +4003,7 @@ var require_writable = __commonJS({
       if (!state.destroyed && (state.bufferedIndex < state.buffered.length || state[kOnFinished].length)) {
         runOnNextTick(errorBuffer, state);
       }
-      destroy.call(this, err, cb);
+      destroy.$call(this, err, cb);
       return this;
     };
     Writable.prototype._undestroy = destroyImpl.undestroy;
@@ -4387,8 +4387,8 @@ var require_duplex = __commonJS({
 
     function Duplex(options) {
       if (!(this instanceof Duplex)) return new Duplex(options);
-      Readable.call(this, options);
-      Writable.call(this, options);
+      Readable.$call(this, options);
+      Writable.$call(this, options);
 
       if (options) {
         this.allowHalfOpen = options.allowHalfOpen !== false;
@@ -4473,7 +4473,7 @@ var require_transform = __commonJS({
     var Duplex = require_duplex();
     function Transform(options) {
       if (!(this instanceof Transform)) return new Transform(options);
-      Duplex.call(this, options);
+      Duplex.$call(this, options);
 
       this._readableState.sync = false;
       this[kCallback] = null;
@@ -4519,7 +4519,7 @@ var require_transform = __commonJS({
     }
     function prefinish() {
       if (this._final !== final) {
-        final.call(this);
+        final.$call(this);
       }
     }
     Transform.prototype._final = final;
@@ -4570,7 +4570,7 @@ var require_passthrough = __commonJS({
 
     function PassThrough(options) {
       if (!(this instanceof PassThrough)) return new PassThrough(options);
-      Transform.call(this, options);
+      Transform.$call(this, options);
     }
     PassThrough.prototype = {};
 
@@ -4643,7 +4643,7 @@ var require_pipeline = __commonJS({
       if (!Readable) {
         Readable = require_readable();
       }
-      yield* Readable.prototype[SymbolAsyncIterator].call(val);
+      yield* Readable.prototype[SymbolAsyncIterator].$call(val);
     }
     async function pump(iterable, writable, finish, { end }) {
       let error;
@@ -4806,7 +4806,7 @@ var require_pipeline = __commonJS({
             const then = (_ret = ret) === null || _ret === void 0 ? void 0 : _ret.then;
             if (typeof then === "function") {
               finishCount++;
-              then.call(
+              then.$call(
                 ret,
                 val => {
                   value = val;
@@ -5478,7 +5478,7 @@ const _fileSink = Symbol("fileSink");
 const _native = Symbol("native");
 
 function NativeWritable(pathOrFdOrSink, options = {}) {
-  Writable.call(this, options);
+  Writable.$call(this, options);
 
   this[_native] = true;
 
@@ -5521,7 +5521,7 @@ const WritablePrototypeWrite = Writable.prototype.write;
 NativeWritable.prototype.write = function NativeWritablePrototypeWrite(chunk, encoding, cb, native) {
   if (!(native ?? this[_native])) {
     this[_native] = false;
-    return WritablePrototypeWrite.call(this, chunk, encoding, cb);
+    return WritablePrototypeWrite.$call(this, chunk, encoding, cb);
   }
 
   var fileSink = this[_fileSink] ?? NativeWritable_lazyConstruct(this);
@@ -5550,7 +5550,7 @@ NativeWritable.prototype.write = function NativeWritablePrototypeWrite(chunk, en
 };
 const WritablePrototypeEnd = Writable.prototype.end;
 NativeWritable.prototype.end = function end(chunk, encoding, cb, native) {
-  return WritablePrototypeEnd.call(this, chunk, encoding, cb, native ?? this[_native]);
+  return WritablePrototypeEnd.$call(this, chunk, encoding, cb, native ?? this[_native]);
 };
 
 function NativeWritable_internalDestroy(error, cb) {

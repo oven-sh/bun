@@ -200,10 +200,6 @@ static uint32_t getPropertyAttributes(napi_property_descriptor prop)
     //     result |= JSC::PropertyAttribute::ReadOnly;
     // }
 
-    if (prop.method) {
-        result |= JSC::PropertyAttribute::Function;
-    }
-
     return result;
 }
 
@@ -257,7 +253,7 @@ static void defineNapiProperty(Zig::GlobalObject* globalObject, JSC::JSObject* t
         value = JSC::JSValue(function);
         // }
 
-        to->putDirect(vm, propertyName, value, getPropertyAttributes(property) | JSC::PropertyAttribute::Function);
+        to->putDirect(vm, propertyName, value, getPropertyAttributes(property));
         return;
     }
 

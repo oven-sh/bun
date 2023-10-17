@@ -10,7 +10,7 @@
 //
 // This means context tracking is *kind-of* manual. If we recieve a callback in native code
 // - In Zig, call jsValue.withAsyncContextIfNeeded(); which returns another JSValue. Store that and
-//   then run .call() on it later.
+//   then run .$call() on it later.
 // - In C++, call AsyncContextFrame::withAsyncContextIfNeeded(jsValue). Then to call it,
 //   use AsyncContextFrame:: call(...) instead of JSC:: call.
 //
@@ -277,7 +277,7 @@ class AsyncResource {
     var prev = get();
     set(this.#snapshot);
     try {
-      return fn.apply(thisArg, args);
+      return fn.$apply(thisArg, args);
     } catch (error) {
       throw error;
     } finally {

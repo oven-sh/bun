@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { isAscii } from "buffer";
 
 export function fmtCPPString(str: string) {
   return (
@@ -41,4 +42,12 @@ export function resolveSyncOrNull(specifier: string, from: string) {
   } catch {
     return null;
   }
+}
+
+export function checkAscii(str: string) {
+  if (!isAscii(Buffer.from(str))) {
+    throw new Error(`non-ascii character in string "${str}". this will not be a valid ASCIILiteral`);
+  }
+
+  return str;
 }

@@ -2287,7 +2287,7 @@ private:
         // this is a stub impl for getEntriesByName(https://github.com/oven-sh/bun/issues/6537)
         JSFunction* getEntriesByName = JSFunction::create(
             vm, globalObject(), 0, String("getEntriesByName"_s), functionPerformanceGetEntriesByName, ImplementationVisibility::Public, NoIntrinsic, functionPerformanceGetEntriesByName, nullptr);
-        this->putDirect(vm, JSC::Identifier::fromString(vm, "getEntriesByName"_s), getEntriesByName, JSC::PropertyAttribute::Function | 0);
+        this->putDirect(vm, JSC::Identifier::fromString(vm, "getEntriesByName"_s), getEntriesByName, 0);
 
         this->putDirect(
             vm,

@@ -3035,9 +3035,13 @@ pub const PackageManager = struct {
                         }
                         curr_list = queries.next;
                     }
+
+                    // fallthrough. a package that matches the name of an alias but does not match
+                    // the version should be enqueued as a normal npm dependency, overrides allowed
                 }
             }
 
+            // allow overriding all dependencies unless the dependency is coming directly from an alias, "npm:<this dep>"
             if (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias) {
                 if (this.lockfile.overrides.get(name_hash)) |new| {
                     debug("override: {s} -> {s}", .{ this.lockfile.str(&dependency.version.literal), this.lockfile.str(&new.literal) });

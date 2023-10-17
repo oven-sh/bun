@@ -1626,7 +1626,7 @@ const NetworkChannel = sync.Channel(*NetworkTask, .{ .Static = 8192 });
 const ThreadPool = bun.ThreadPool;
 const PackageManifestMap = std.HashMapUnmanaged(PackageNameHash, Npm.PackageManifest, IdentityContext(PackageNameHash), 80);
 const RepositoryMap = std.HashMapUnmanaged(u64, bun.FileDescriptor, IdentityContext(u64), 80);
-const NpmAliasMap = std.HashMapUnmanaged(PackageNameHash, String, IdentityContext(u64), 80);
+const NpmAliasMap = std.HashMapUnmanaged(PackageNameHash, Dependency.Version, IdentityContext(u64), 80);
 
 pub const CacheLevel = struct {
     use_cache_control_headers: bool,
@@ -3018,14 +3018,27 @@ pub const PackageManager = struct {
             else => dependency.name_hash,
         };
 
-        if (dependency.version.tag == .npm) {
-            if (this.known_npm_aliases.get(name_hash)) |aliased| {
-                name = aliased;
-                name_hash = String.Builder.stringHash(this.lockfile.str(&name));
-            }
-        }
-
         const version = version: {
+            if (dependency.version.tag == .npm) {
+                if (this.known_npm_aliases.get(name_hash)) |aliased| {
+                    const group = dependency.version.value.npm.version;
+                    var curr_list: ?*const Semver.Query.List = &aliased.value.npm.version.head;
+                    while (curr_list) |queries| {
+                        var curr: ?*const Semver.Query = &queries.head;
+                        while (curr) |query| {
+                            if (group.satisfies(query.range.left.version) or group.satisfies(query.range.right.version)) {
+                                name = aliased.value.npm.name;
+                                name_hash = String.Builder.stringHash(this.lockfile.str(&name));
+                                break :version aliased;
+                            }
+                            curr = query.next;
+                        }
+
+                        curr_list = queries.next;
+                    }
+                }
+            }
+
             if (this.lockfile.overrides.get(name_hash)) |new| {
                 debug("override: {s} -> {s}", .{ this.lockfile.str(&dependency.version.literal), this.lockfile.str(&new.literal) });
                 name = switch (new.tag) {
@@ -3039,6 +3052,7 @@ pub const PackageManager = struct {
                 name_hash = String.Builder.stringHash(this.lockfile.str(&name));
                 break :version new;
             }
+
             break :version dependency.version;
         };
         var loaded_manifest: ?Npm.PackageManifest = null;

@@ -723,40 +723,23 @@ pub fn parseWithTag(
         .npm => {
             var input = dependency;
 
+            var is_npm_alias = false;
             const name = brk: {
                 if (strings.hasPrefixComptime(input, "npm:")) {
+                    is_npm_alias = true;
                     var str = input["npm:".len..];
                     var i: usize = @intFromBool(str.len > 0 and str[0] == '@');
 
                     while (i < str.len) : (i += 1) {
                         if (str[i] == '@') {
                             input = str[i + 1 ..];
-                            const name_str = sliced.sub(str[0..i]).value();
-                            if (_alias_hash) |alias_hash| {
-                                debug("Adding npm alias for: {s}", .{str[0..i]});
-                                PackageManager.instance.known_npm_aliases.put(
-                                    allocator,
-                                    alias_hash,
-                                    name_str,
-                                ) catch unreachable;
-                            }
-                            break :brk name_str;
+                            break :brk sliced.sub(str[0..i]).value();
                         }
                     }
 
                     input = str[i..];
 
-                    const name_str = sliced.sub(str[0..i]).value();
-                    if (_alias_hash) |alias_hash| {
-                        debug("Adding npm alias for: {s}", .{str[0..i]});
-                        PackageManager.instance.known_npm_aliases.put(
-                            allocator,
-                            alias_hash,
-                            name_str,
-                        ) catch unreachable;
-                    }
-
-                    break :brk name_str;
+                    break :brk sliced.sub(str[0..i]).value();
                 }
 
                 break :brk alias;
@@ -778,7 +761,7 @@ pub fn parseWithTag(
                 return null;
             };
 
-            return .{
+            const result = Version{
                 .literal = sliced.value(),
                 .value = .{
                     .npm = .{
@@ -788,6 +771,18 @@ pub fn parseWithTag(
                 },
                 .tag = .npm,
             };
+
+            if (is_npm_alias) {
+                if (_alias_hash) |alias_hash| {
+                    PackageManager.instance.known_npm_aliases.put(
+                        allocator,
+                        alias_hash,
+                        result,
+                    ) catch unreachable;
+                }
+            }
+
+            return result;
         },
         .dist_tag => {
             var tag_to_use = sliced.value();

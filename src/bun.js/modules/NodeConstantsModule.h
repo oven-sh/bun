@@ -983,10 +983,6 @@ DEFINE_NATIVE_MODULE(NodeConstants) {
   put(Identifier::fromString(vm, "POINT_CONVERSION_HYBRID"_s),
       jsNumber(POINT_CONVERSION_HYBRID));
 
-  for (auto name : exportNames) {
-    printf("exporting %s\n", name.utf8().data());
-  }
-
   // RETURN_NATIVE_MODULE();
 }
 

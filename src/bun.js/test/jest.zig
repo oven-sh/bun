@@ -793,14 +793,25 @@ pub const DescribeScope = struct {
     current_test_id: TestRunner.Test.ID = 0,
     value: JSValue = .zero,
     done: bool = false,
-    is_skip: bool = false,
     skip_count: u32 = 0,
     tag: Tag = .pass,
 
-    pub fn isAllSkipped(this: *const DescribeScope) bool {
-        if (this.is_skip) return true;
-        const total = this.tests.items.len;
-        return total > 0 and @as(usize, this.skip_count) >= total;
+    fn isWithinOnlyScope(this: *const DescribeScope) bool {
+        if (this.tag == .only) return true;
+        if (this.parent != null) return this.parent.?.isWithinOnlyScope();
+        return false;
+    }
+
+    fn isWithinSkipScope(this: *const DescribeScope) bool {
+        if (this.tag == .skip) return true;
+        if (this.parent != null) return this.parent.?.isWithinSkipScope();
+        return false;
+    }
+
+    pub fn shouldEvaluateScope(this: *const DescribeScope) bool {
+        if (this.isWithinSkipScope()) return false;
+        if (Jest.runner.?.only and this.isWithinOnlyScope()) return true;
+        return true;
     }
 
     pub fn push(new: *DescribeScope) void {
@@ -1114,7 +1125,7 @@ pub const DescribeScope = struct {
 
         var i: TestRunner.Test.ID = 0;
 
-        if (!this.isAllSkipped()) {
+        if (this.shouldEvaluateScope()) {
             if (this.runCallback(globalObject, .beforeAll)) |_| {
                 while (i < end) {
                     Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, 0, this);
@@ -1168,7 +1179,7 @@ pub const DescribeScope = struct {
             return;
         }
 
-        if (!this.isAllSkipped()) {
+        if (this.shouldEvaluateScope()) {
             // Run the afterAll callbacks, in reverse order
             // unless there were no tests for this scope
             if (this.execCallback(globalThis, .afterAll)) |err| {
@@ -1267,8 +1278,8 @@ pub const TestRunnerTask = struct {
         var test_: TestScope = this.describe.tests.items[test_id];
         describe.current_test_id = test_id;
 
-        if (test_.func == .zero or (describe.is_skip and test_.tag != .only)) {
-            var tag = if (describe.is_skip) describe.tag else test_.tag;
+        if (test_.func == .zero or !describe.shouldEvaluateScope()) {
+            var tag = if (!describe.shouldEvaluateScope()) describe.tag else test_.tag;
             switch (tag) {
                 .todo => {
                     this.processTestResult(globalThis, .{ .todo = {} }, test_, test_id, describe);
@@ -1609,8 +1620,7 @@ inline fn createScope(
             .label = label,
             .parent = parent,
             .file_id = parent.file_id,
-            .tag = if (parent.is_skip) parent.tag else tag,
-            .is_skip = is_skip or parent.is_skip,
+            .tag = tag,
         };
 
         return scope.run(globalThis, function, &.{});
@@ -1983,8 +1993,7 @@ fn eachBind(
                     .label = formattedLabel,
                     .parent = parent,
                     .file_id = parent.file_id,
-                    .tag = if (parent.is_skip) parent.tag else .pass,
-                    .is_skip = parent.is_skip,
+                    .tag = .pass,
                 };
 
                 const ret = scope.run(globalThis, function, function_args);

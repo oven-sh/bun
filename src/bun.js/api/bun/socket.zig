@@ -1929,7 +1929,7 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn finalize(this: *This) callconv(.C) void {
-            log("finalize()", .{});
+            log("finalize() {d}", .{@intFromPtr(this)});
             if (!this.detached) {
                 this.detached = true;
                 if (!this.socket.isClosed()) {

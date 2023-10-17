@@ -279,5 +279,13 @@ pub fn BabyList(comptime Type: type) type {
 
             return this.len - initial;
         }
+
+        pub fn writeTypeAsBytesAssumeCapacity(this: *@This(), comptime Int: type, int: Int) void {
+            if (comptime Type != u8)
+                @compileError("Unsupported for type " ++ @typeName(Type));
+            std.debug.assert(this.cap >= this.len + @sizeOf(Int));
+            @as([*]align(1) Int, @ptrCast(this.ptr[this.len .. this.len + @sizeOf(Int)]))[0] = int;
+            this.len += @sizeOf(Int);
+        }
     };
 }

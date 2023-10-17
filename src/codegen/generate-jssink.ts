@@ -1,7 +1,6 @@
 import { resolve } from "path";
 
 const classes = ["ArrayBufferSink", "FileSink", "HTTPResponseSink", "HTTPSResponseSink"];
-const SINK_COUNT = 5;
 
 function names(name) {
   return {
@@ -951,5 +950,5 @@ extern "C" void ${name}__onClose(JSC__JSValue controllerValue, JSC__JSValue reas
   return templ;
 }
 
-await Bun.write(resolve(import.meta.dir + "/../bindings/JSSink.h"), header());
-await Bun.write(resolve(import.meta.dir + "/../bindings/JSSink.cpp"), await implementation());
+await Bun.write(resolve(import.meta.dir + "/../bun.js/bindings/JSSink.h"), header());
+await Bun.write(resolve(import.meta.dir + "/../bun.js/bindings/JSSink.cpp"), await implementation());

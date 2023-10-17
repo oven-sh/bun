@@ -8,7 +8,6 @@
   "search.useIgnoreFiles": true,
   "zig.buildOnSave": false,
   "zig.formattingProvider": "zls",
-  "zig.buildArgs": ["obj", "-Dfor-editor"],
   "zig.buildOption": "build",
   "zig.buildFilePath": "${workspaceFolder}/build.zig",
   "[zig]": {

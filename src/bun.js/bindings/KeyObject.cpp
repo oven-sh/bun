@@ -1178,7 +1178,6 @@ JSC::EncodedJSValue KeyObject__createPublicKey(JSC::JSGlobalObject* globalObject
 
 JSC::EncodedJSValue KeyObject__createSecretKey(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-
     JSValue bufferArg = callFrame->uncheckedArgument(0);
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1194,7 +1193,6 @@ JSC::EncodedJSValue KeyObject__createSecretKey(JSC::JSGlobalObject* lexicalGloba
     auto type = bufferArgCell->type();
 
     switch (type) {
-
     case DataViewType:
     case Uint8ArrayType:
     case Uint8ClampedArrayType:
@@ -1236,6 +1234,7 @@ JSC::EncodedJSValue KeyObject__createSecretKey(JSC::JSGlobalObject* lexicalGloba
         throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "ERR_INVALID_ARG_TYPE: expected Buffer or array-like object"_s));
         return JSValue::encode(JSC::jsUndefined());
     }
+    ASSERT_NOT_REACHED();
 }
 
 JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
@@ -2071,8 +2070,8 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
         publicExponentArray[0] = (uint8_t)(publicExponent >> 24);
         publicExponentArray[1] = (uint8_t)(publicExponent >> 16);
         publicExponentArray[2] = (uint8_t)(publicExponent >> 8);
-        publicExponentArray[3] = (uint8_t)publicExponent;           
-        
+        publicExponentArray[3] = (uint8_t)publicExponent;
+
         int modulusLength = modulusLengthJS.toUInt32(lexicalGlobalObject);
         auto returnValue = JSC::JSValue {};
         auto keyPairCallback = [&](CryptoKeyPair&& pair) {
@@ -2107,17 +2106,17 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
         }
         auto namedCurve = namedCurveJS.toWTFString(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, encodedJSValue());
-        if(namedCurve == "P-384"_s || namedCurve == "p384"_s || namedCurve == "secp384r1"_s) {
+        if (namedCurve == "P-384"_s || namedCurve == "p384"_s || namedCurve == "secp384r1"_s) {
             namedCurve = "P-384"_s;
-        } else if(namedCurve == "P-256"_s || namedCurve == "p256"_s || namedCurve == "prime256v1"_s) {
+        } else if (namedCurve == "P-256"_s || namedCurve == "p256"_s || namedCurve == "prime256v1"_s) {
             namedCurve = "P-256"_s;
-        } else if(namedCurve == "P-521"_s || namedCurve == "p521"_s || namedCurve == "secp521r1"_s) {
+        } else if (namedCurve == "P-521"_s || namedCurve == "p521"_s || namedCurve == "secp521r1"_s) {
             namedCurve = "P-521"_s;
-        }else {
+        } else {
             throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "curve not supported"_s));
-            return JSValue::encode(JSC::jsUndefined());    
+            return JSValue::encode(JSC::jsUndefined());
         }
-        
+
         auto result = CryptoKeyEC::generatePair(CryptoAlgorithmIdentifier::ECDSA, namedCurve, true, CryptoKeyUsageSign | CryptoKeyUsageVerify);
         if (result.hasException()) {
             WebCore::propagateException(*lexicalGlobalObject, scope, result.releaseException());

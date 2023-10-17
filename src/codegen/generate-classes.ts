@@ -2,7 +2,7 @@
 import { unlinkSync } from "fs";
 import { readdirSync } from "fs";
 import { resolve } from "path";
-import type { Field, ClassDefinition } from "./class-definitions";
+import type { Field, ClassDefinition } from "../bun.js/scripts/class-definitions";
 
 const CommonIdentifiers = {
   "name": true,
@@ -284,26 +284,6 @@ export function generateHashTable(nameToUse, symbolName, typeName, obj, props = 
     rows.push(propRow(symbolName, typeName, name, props[name], wrapped, defaultPropertyAttributes));
   }
 
-  //   static const HashTableValue JSWebSocketPrototypeTableValues[] = {
-  //     { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocketConstructor, 0 } },
-  //     { "URL"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_URL, 0 } },
-  //     { "url"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_url, 0 } },
-  //     { "readyState"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_readyState, 0 } },
-  //     { "bufferedAmount"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_bufferedAmount, 0 } },
-  //     { "onopen"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_onopen, setJSWebSocket_onopen } }, },
-  //     { "onmessage"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_onmessage, setJSWebSocket_onmessage } }, },
-  //     { "onerror"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_onerror, setJSWebSocket_onerror } }, },
-  //     { "onclose"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_onclose, setJSWebSocket_onclose } }, },
-  //     { "protocol"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_protocol, 0 } },
-  //     { "extensions"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_extensions, 0 } },
-  //     { "binaryType"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_binaryType, setJSWebSocket_binaryType } }, },
-  //     { "send"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebSocketPrototypeFunction_send (intptr_t)(1) } },
-  //     { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebSocketPrototypeFunction_close (intptr_t)(0) } },
-  //     { "CONNECTING"_s, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 0 } },
-  //     { "OPEN"_s, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 1 } },
-  //     { "CLOSING"_s, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 2 } },
-  //     { "CLOSED"_s, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 3 } },
-  // };
   return `
   static const HashTableValue ${nameToUse}TableValues[] = {${rows.length > 0 ? "\n" + rows.join("  ,\n") + "\n" : ""}};
 `;
@@ -1714,7 +1694,7 @@ pub const StaticCallbackType = fn(*JSC.JSGlobalObject, *JSC.CallFrame) callconv(
 
 `;
 
-function findClasses() {
+function findClassesOldBehavior() {
   var classes = [];
   for (let directory of directoriesToSearch) {
     readdirSync(directory).forEach(file => {
@@ -1734,7 +1714,23 @@ function findClasses() {
   return classes;
 }
 
-const classes = findClasses();
+function findClasses(argv: string[]) {
+  const classes = [];
+  for (const file of argv) {
+    const result = require(file);
+    if (!(result?.default?.length ?? 0)) continue;
+    console.log("Found", result.default.length, "classes from", file);
+    for (let { name } of result.default) {
+      console.log(`  - ${name}`);
+    }
+
+    classes.push(...result.default);
+  }
+  classes.sort((a, b) => (a.name < b.name ? -1 : 1));
+  return classes;
+}
+
+const classes = process.argv.length > 2 ? findClasses(process.argv.slice(2)) : findClassesOldBehavior();
 
 function writeAndUnlink(path, content) {
   try {
@@ -1815,13 +1811,12 @@ function writeCppSerializers() {
   }
   `;
 
-  for (let klass of classes) {
-  }
-
   return output;
 }
 
-await writeAndUnlink(`${import.meta.dir}/../bindings/generated_classes.zig`, [
+const bindingDir = `${import.meta.dir}/../bun.js/bindings`;
+
+await writeAndUnlink(`${bindingDir}/generated_classes.zig`, [
   ZIG_GENERATED_CLASSES_HEADER,
 
   ...classes.map(a => generateZig(a.name, a).trim()).join("\n"),
@@ -1834,26 +1829,26 @@ comptime {
   `,
 ]);
 const allHeaders = classes.map(a => generateHeader(a.name, a));
-await writeAndUnlink(`${import.meta.dir}/../bindings/ZigGeneratedClasses.h`, [
+await writeAndUnlink(`${bindingDir}/ZigGeneratedClasses.h`, [
   GENERATED_CLASSES_HEADER[0],
   ...[...new Set(extraIncludes.map(a => `#include "${a}";` + "\n"))],
   GENERATED_CLASSES_HEADER[1],
   ...allHeaders,
   GENERATED_CLASSES_FOOTER,
 ]);
-await writeAndUnlink(`${import.meta.dir}/../bindings/ZigGeneratedClasses.cpp`, [
+await writeAndUnlink(`${bindingDir}/ZigGeneratedClasses.cpp`, [
   GENERATED_CLASSES_IMPL_HEADER,
   ...classes.map(a => generateImpl(a.name, a)),
   writeCppSerializers(classes),
   GENERATED_CLASSES_IMPL_FOOTER,
 ]);
 await writeAndUnlink(
-  `${import.meta.dir}/../bindings/ZigGeneratedClasses+lazyStructureHeader.h`,
+  `${bindingDir}/ZigGeneratedClasses+lazyStructureHeader.h`,
   classes.map(a => generateLazyClassStructureHeader(a.name, a)).join("\n"),
 );
 
 await writeAndUnlink(
-  `${import.meta.dir}/../bindings/ZigGeneratedClasses+DOMClientIsoSubspaces.h`,
+  `${bindingDir}/ZigGeneratedClasses+DOMClientIsoSubspaces.h`,
   classes.map(a =>
     [
       `std::unique_ptr<GCClient::IsoSubspace> ${clientSubspaceFor(a.name)};`,
@@ -1863,7 +1858,7 @@ await writeAndUnlink(
 );
 
 await writeAndUnlink(
-  `${import.meta.dir}/../bindings/ZigGeneratedClasses+DOMIsoSubspaces.h`,
+  `${bindingDir}/ZigGeneratedClasses+DOMIsoSubspaces.h`,
   classes.map(a =>
     [
       `std::unique_ptr<IsoSubspace> ${subspaceFor(a.name)};`,
@@ -1873,7 +1868,7 @@ await writeAndUnlink(
 );
 
 await writeAndUnlink(
-  `${import.meta.dir}/../bindings/ZigGeneratedClasses+lazyStructureImpl.h`,
+  `${bindingDir}/ZigGeneratedClasses+lazyStructureImpl.h`,
   initLazyClasses(classes.map(a => generateLazyClassStructureImpl(a.name, a))) + "\n" + visitLazyClasses(classes),
 );
 

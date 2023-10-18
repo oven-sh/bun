@@ -582,7 +582,7 @@ pub const HTMLString = extern struct {
 
     pub fn toString(this: HTMLString) bun.String {
         const bytes = this.slice();
-        if (bun.strings.isAllASCII(bytes)) {
+        if (bytes.len > 0 and bun.strings.isAllASCII(bytes)) {
             return bun.String.createExternal(bytes, true, @constCast(bytes.ptr), &deinit_external);
         }
         defer this.deinit();

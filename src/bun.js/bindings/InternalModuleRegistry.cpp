@@ -120,16 +120,23 @@ DEFINE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE, InternalModuleRegistry);
 InternalModuleRegistry* InternalModuleRegistry::create(VM& vm, Structure* structure)
 {
     InternalModuleRegistry* registry = new (NotNull, allocateCell<InternalModuleRegistry>(vm)) InternalModuleRegistry(vm, structure);
-    for (uint8_t i = 0; i < BUN_INTERNAL_MODULE_COUNT; i++) {
-        registry->internalField(static_cast<Field>(i))
-            .set(vm, registry, jsUndefined());
-    }
+    registry->finishCreation(vm);
     return registry;
+}
+
+void InternalModuleRegistry::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+
+    for (uint8_t i = 0; i < BUN_INTERNAL_MODULE_COUNT; i++) {
+        this->internalField(static_cast<Field>(i)).set(vm, this, jsUndefined());
+    }
 }
 
 Structure* InternalModuleRegistry::createStructure(VM& vm, JSGlobalObject* globalObject)
 {
-    return Structure::create(vm, globalObject, jsNull(), TypeInfo(InternalFieldTupleType, StructureFlags), info(), 0, 48);
+    return Structure::create(vm, globalObject, jsNull(), TypeInfo(InternalFieldTupleType, StructureFlags), info(), 0, 0);
 }
 
 JSValue InternalModuleRegistry::requireId(JSGlobalObject* globalObject, VM& vm, Field id)
@@ -152,7 +159,7 @@ JSC_DEFINE_HOST_FUNCTION(InternalModuleRegistry::jsCreateInternalModuleById, (JS
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto id = callframe->argument(0).toUInt32(lexicalGlobalObject);
 
-    auto registry = static_cast<Zig::GlobalObject*>(lexicalGlobalObject)->internalModuleRegistry();
+    auto registry = jsCast<Zig::GlobalObject*>(lexicalGlobalObject)->internalModuleRegistry();
     auto mod = registry->createInternalModuleById(lexicalGlobalObject, vm, static_cast<Field>(id));
     RETURN_IF_EXCEPTION(throwScope, {});
     registry->internalField(static_cast<Field>(id)).set(vm, registry, mod);

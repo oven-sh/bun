@@ -7,8 +7,7 @@
   "search.followSymlinks": false,
   "search.useIgnoreFiles": true,
   "zig.buildOnSave": false,
-  // We do this until we upgrade to latest Zig so that zls doesn't break our code.
-  "zig.formattingProvider": "extension",
+  "zig.formattingProvider": "zls",
   "zig.buildArgs": ["obj", "-Dfor-editor"],
   "zig.buildOption": "build",
   "zig.buildFilePath": "${workspaceFolder}/build.zig",
@@ -223,7 +222,6 @@
     "valarray": "cpp",
     "codecvt": "cpp"
   },
-  "cmake.configureOnOpen": false,
   "C_Cpp.errorSquiggles": "enabled",
   "eslint.workingDirectories": ["packages/bun-types"],
   "typescript.tsdk": "node_modules/typescript/lib"

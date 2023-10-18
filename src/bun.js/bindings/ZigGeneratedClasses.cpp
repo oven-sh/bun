@@ -25241,10 +25241,8 @@ bool JSTCPSocket::hasPendingActivity(void* ctx)
 
 JSTCPSocket::~JSTCPSocket()
 {
-    printf("~JSTCPSocket\n");
     if (m_ctx) {
         TCPSocketClass__finalize(m_ctx);
-        m_ctx = nullptr;
     }
 }
 void JSTCPSocket::destroy(JSCell* cell)

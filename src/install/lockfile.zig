@@ -666,6 +666,7 @@ fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequ
                             dep.version = Dependency.parse(
                                 old.allocator,
                                 dep.name,
+                                dep.name_hash,
                                 sliced.slice,
                                 &sliced,
                                 null,
@@ -2203,6 +2204,7 @@ pub const OverrideMap = struct {
             .version = Dependency.parse(
                 lockfile.allocator,
                 name,
+                name_hash,
                 literalSliced.slice,
                 &literalSliced,
                 log,
@@ -2780,6 +2782,7 @@ pub const Package = extern struct {
                         .version = Dependency.parse(
                             allocator,
                             name.value,
+                            name.hash,
                             sliced.slice,
                             &sliced,
                             log,
@@ -3067,6 +3070,7 @@ pub const Package = extern struct {
         var dependency_version = Dependency.parseWithOptionalTag(
             allocator,
             external_alias.value,
+            external_alias.hash,
             sliced.slice,
             tag,
             &sliced,
@@ -3136,6 +3140,7 @@ pub const Package = extern struct {
                     if (Dependency.parseWithTag(
                         allocator,
                         external_alias.value,
+                        external_alias.hash,
                         path.slice,
                         .workspace,
                         &path,

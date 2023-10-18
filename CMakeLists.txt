@@ -2,49 +2,11 @@ cmake_minimum_required(VERSION 3.25)
 cmake_policy(SET CMP0091 NEW)
 set(CMAKE_COLOR_DIAGNOSTICS ON)
 
-# --- LLVM ---
-# This has to be done before `project` in order to override the default compiler
-if(UNIX)
-    set(LLVM_VERSION 17)
-
-    # function(validate_llvm_path validator_result_var item)
-    #     execute_process(COMMAND ${item}/bin/llvm-config --version OUTPUT_VARIABLE FOUND_LLVM_VERSION)
-    #     if (FOUND_LLVM_VERSION MATCHES "^${LLVM_VERSION}.")
-    #         set(${validator_result_var} TRUE PARENT_SCOPE)
-    #     else()
-    #         message(STATUS "Found LLVM version: ${FOUND_LLVM_VERSION}")
-    #         set(${validator_result_var} FALSE PARENT_SCOPE)
-    #     endif()
-    # endfunction()
-
-    find_path(
-        LLVM_PREFIX
-        NAMES bin/clang++-${LLVM_VERSION} bin/clang-${LLVM_VERSION} bin/clang++ bin/clang
-        PATHS ENV PATH /usr /usr/local /opt/homebrew/opt/llvm@${LLVM_VERSION} /opt/homebrew
-        NO_CACHE
-        DOC "Path to LLVM binary directory"
-    )
-    if(LLVM_PREFIX MATCHES "/$")
-        string(REGEX REPLACE "/$" "" LLVM_PREFIX "${LLVM_PREFIX}")
-    endif()
-
-    if (NOT EXISTS "${LLVM_PREFIX}/bin/clang")
-        message(FATAL_ERROR "Could not find LLVM ${LLVM_VERSION} installed on your system.")
-    endif()
-
-    set(CMAKE_CXX_COMPILER "${LLVM_PREFIX}/bin/clang++")
-    set(CMAKE_C_COMPILER "${LLVM_PREFIX}/bin/clang")
-    set(CMAKE_CXX_COMPILER_ID "Clang")
-    message(STATUS "Using LLVM at: ${LLVM_PREFIX}")
-endif()
-
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_C_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_C_STANDARD_REQUIRED ON)
-project(Bun VERSION "1.0.7")
+set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
+message(STATUS "Building in ${BUN_WORKDIR}")
 
 # --- Build Type ---
+# This is done at the start simply so this is the first message printed
 if(NOT CMAKE_BUILD_TYPE)
     message(WARNING "No CMAKE_BUILD_TYPE value specified, defaulting to Debug.\nSet a build type with -DCMAKE_BUILD_TYPE=<Debug|Release>")
     set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Choose the type of build (Debug, Release)" FORCE)
@@ -63,10 +25,45 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
     set(DEBUG OFF)
     set(ZIG_OPTIMIZE "ReleaseFast")
-    set(bun "bun")
+    set(bun "bun-profile")
 endif()
 
-# --- Build Flags ---
+# --- LLVM ---
+# This has to be done before `project` in order to override the default compiler
+if(UNIX)
+    set(LLVM_VERSION 17)
+
+    find_path(
+        LLVM_PREFIX
+        NAMES bin/clang++-${LLVM_VERSION} bin/clang-${LLVM_VERSION} bin/clang++ bin/clang
+        PATHS ENV PATH /usr /usr/local /opt/homebrew/opt/llvm@${LLVM_VERSION} /opt/homebrew
+        DOC "Path to LLVM binary directory"
+    )
+    if(LLVM_PREFIX MATCHES "/$")
+        string(REGEX REPLACE "/$" "" LLVM_PREFIX "${LLVM_PREFIX}")
+    endif()
+
+    if (NOT EXISTS "${LLVM_PREFIX}/bin/clang")
+        message(FATAL_ERROR "Could not find LLVM ${LLVM_VERSION} installed on your system.")
+    endif()
+
+    set(CMAKE_CXX_COMPILER "${LLVM_PREFIX}/bin/clang++")
+    set(CMAKE_C_COMPILER "${LLVM_PREFIX}/bin/clang")
+    set(CMAKE_CXX_COMPILER_ID "Clang")
+    set(STRIP "${LLVM_PREFIX}/bin/llvm-strip")
+    set(DSYMUTIL "${LLVM_PREFIX}/bin/dsymutil")
+
+    message(STATUS "Found LLVM ${LLVM_VERSION}: ${LLVM_PREFIX}")
+else()
+    set(STRIP "strip")
+endif()
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_C_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+project(Bun VERSION "1.0.7")
+
 set(DEFAULT_ON_UNLESS_WINDOWS ON)
 if (WIN32)
     set(DEFAULT_ON_UNLESS_WINDOWS OFF)
@@ -76,6 +73,7 @@ if (APPLE)
     set(DEFAULT_ON_UNLESS_APPLE OFF)
 endif()
 
+# -- Build Flags --
 option(USE_STATIC_SQLITE "Statically link SQLite?" ${DEFAULT_ON_UNLESS_APPLE})
 option(USE_CUSTOM_ZLIB "Use Bun's recommended version of zlib" ${DEFAULT_ON_UNLESS_WINDOWS})
 option(USE_CUSTOM_BORINGSSL "Use Bun's recommended version of BoringSSL" ON)
@@ -91,8 +89,13 @@ option(USE_BASELINE_BUILD "Build Bun for baseline (older) CPUs" OFF)
 
 set(ERROR_LIMIT 100 CACHE STRING "Maximum number of errors to show when compiling C++ code")
 
+set(ARCH x86_64)
+if (CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|arm")
+    set(ARCH arm64)
+endif()
+
 if(NOT CPU_TARGET)
-    set(CPU_TARGET "native" CACHE STRING "CPU target for the compiler" FORCE)
+    set(CPU_TARGET ${ARCH} CACHE STRING "CPU target for the compiler" FORCE)
     if (ARCH STREQUAL "x86_64")
         if (NOT MSVC)
             if (USE_BASELINE_BUILD)
@@ -105,12 +108,18 @@ if(NOT CPU_TARGET)
 endif()
 message(STATUS "Building for CPU Target: ${CPU_TARGET}")
 
+if(USE_CONFIGURE_DEPENDS)
+    set(CONFIGURE_DEPENDS "CONFIGURE_DEPENDS")
+else()
+    set(CONFIGURE_DEPENDS "")
+endif()
 # --- CLI Paths ---
 
 # Zig Compiler
 function(validate_zig validator_result_var item)
     set(${validator_result_var} FALSE PARENT_SCOPE)
     # We will allow any valid zig compiler, as long as it contains some text from `zig zen`
+    # Ideally we would do a version or feature check, but that would be quite slow
     execute_process(COMMAND ${item} zen OUTPUT_VARIABLE ZIG_ZEN_OUTPUT)
     if(ZIG_ZEN_OUTPUT MATCHES "Together we serve the users")
         set(${validator_result_var} TRUE PARENT_SCOPE)
@@ -123,6 +132,13 @@ message(STATUS "Found Zig Compiler: ${ZIG_COMPILER}")
 
 # Bun
 find_program(BUN_EXECUTABLE bun REQUIRED DOC "Path to an already built release of Bun")
+message(STATUS "Found Bun: ${BUN_EXECUTABLE}")
+
+# Prettier
+find_program(PRETTIER prettier DOC "Path to prettier" PATHS ./node_modules/.bin ENV PATH)
+
+# Esbuild (TODO: switch these to "bun build")
+find_program(ESBUILD esbuild DOC "Path to esbuild" PATHS ./node_modules/.bin ENV PATH)
 
 # CCache
 find_program(CCACHE_PROGRAM ccache)
@@ -167,7 +183,11 @@ if(NOT DEFINED ASSERT_ENABLED)
         set(ASSERT_ENABLED "0")
     endif()
 endif()
-message(STATUS "C++ Assertions: ${ASSERT_ENABLED}")
+if(ASSERT_ENABLED)
+    message(STATUS "C++ Assertions: ON")
+else()
+    message(STATUS "C++ Assertions: OFF")
+endif()
 
 # --- CMake Macros ---
 
@@ -175,13 +195,13 @@ message(STATUS "C++ Assertions: ${ASSERT_ENABLED}")
 macro(WEBKIT_ADD_SOURCE_DEPENDENCIES _source _deps)
     set(_tmp)
     get_source_file_property(_tmp ${_source} OBJECT_DEPENDS)
-    if (NOT _tmp)
+    if(NOT _tmp)
         set(_tmp "")
-    endif ()
+    endif()
 
-    foreach (f ${_deps})
+    foreach(f ${_deps})
         list(APPEND _tmp "${f}")
-    endforeach ()
+    endforeach()
 
     set_source_files_properties(${_source} PROPERTIES OBJECT_DEPENDS "${_tmp}")
     unset(_tmp)
@@ -190,13 +210,10 @@ endmacro()
 # --- BUILD ---
 
 set(BUN_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src")
-set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 set(BUN_DEPS_DIR "${BUN_SRC}/deps")
 set(BUN_CODEGEN_SRC "${BUN_SRC}/codegen")
 
-message(STATUS "Temp Directory: ${BUN_WORKDIR}")
-
-file(GLOB BUN_CPP CONFIGURE_DEPENDS
+file(GLOB BUN_CPP ${CONFIGURE_DEPENDS}
     "${BUN_SRC}/deps/*.cpp"
     "${BUN_SRC}/io/*.cpp"
     "${BUN_SRC}/bun.js/modules/*.cpp"
@@ -209,7 +226,7 @@ file(GLOB BUN_CPP CONFIGURE_DEPENDS
 )
 
 set(USOCKETS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/packages/bun-usockets/src")
-file(GLOB USOCKETS_FILES CONFIGURE_DEPENDS
+file(GLOB USOCKETS_FILES ${CONFIGURE_DEPENDS}
     "${USOCKETS_SRC}/*.c"
     "${USOCKETS_SRC}/eventing/*.c"
     "${USOCKETS_SRC}/internal/*.c"
@@ -218,7 +235,7 @@ file(GLOB USOCKETS_FILES CONFIGURE_DEPENDS
 )
 
 # --- Classes Generator ---
-file(GLOB BUN_CLASSES_TS CONFIGURE_DEPENDS
+file(GLOB BUN_CLASSES_TS ${CONFIGURE_DEPENDS}
     "${BUN_SRC}/bun.js/*.classes.ts"
     "${BUN_SRC}/bun.js/api/*.classes.ts"
     "${BUN_SRC}/bun.js/test/*.classes.ts"
@@ -263,7 +280,6 @@ set(BUN_OBJECT_LUT_SOURCES
 )
 set(BUN_HASH_LUT_GENERATOR "${BUN_CODEGEN_SRC}/create-hash-table.ts")
 macro(GENERATE_HASH_LUT _input _output _display_name)
-
     add_custom_command(
         OUTPUT ${_output}
         MAIN_DEPENDENCY ${BUN_HASH_LUT_GENERATOR}
@@ -306,7 +322,7 @@ add_custom_command(
 # --- Bundled TS/JS ---
 # Note: It's not worth doing this in parallel at the CMake/Ninja level, because this bundling
 # requires all the JS files to be known, but also Bun will use all cores during bundling anyways.
-file(GLOB BUN_TS_MODULES CONFIGURE_DEPENDS
+file(GLOB BUN_TS_MODULES ${CONFIGURE_DEPENDS}
     "${BUN_SRC}/js/node/*.ts"
     "${BUN_SRC}/js/node/*.js"
     "${BUN_SRC}/js/bun/*.js"
@@ -316,7 +332,7 @@ file(GLOB BUN_TS_MODULES CONFIGURE_DEPENDS
     "${BUN_SRC}/js/internal/*.js"
     "${BUN_SRC}/js/internal/*.ts"
 )
-file(GLOB BUN_TS_FUNCTIONS CONFIGURE_DEPENDS "${BUN_SRC}/js/builtins/*.ts")
+file(GLOB BUN_TS_FUNCTIONS ${CONFIGURE_DEPENDS} "${BUN_SRC}/js/builtins/*.ts")
 
 add_custom_command(
     OUTPUT 
@@ -342,6 +358,32 @@ add_custom_command(
     COMMENT "Bundling JS builtin functions"
 )
 
+# --- Peechy API ---
+add_custom_command(
+    OUTPUT "${BUN_SRC}/api/schema.js"
+           "${BUN_SRC}/api/schema.d.ts"
+           "${BUN_SRC}/api/schema.zig"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/node_modules/.bin/peechy"
+        "--schema" "${BUN_SRC}/api/schema.peechy"
+        "--esm" "${BUN_SRC}/api/schema.js"
+        "--ts" "${BUN_SRC}/api/schema.d.ts"
+        "--zig" "${BUN_SRC}/api/schema.zig"
+    COMMAND "${ZIG_COMPILER}" "fmt" "src/api/schema.zig"
+    COMMAND "${PRETTIER}" "--config=.prettierrc.cjs" "--write" "src/api/schema.js" "src/api/schema.d.ts"
+    DEPENDS "${BUN_SRC}/api/schema.peechy"
+    COMMENT "Building schema"
+)
+add_custom_command(
+    OUTPUT "${BUN_SRC}/analytics/analytics_schema.zig"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/node_modules/.bin/peechy"
+        "--schema" "${BUN_SRC}/analytics/schema.peechy"
+        "--zig" "${BUN_SRC}/analytics/analytics_schema.zig"
+    COMMAND "${ZIG_COMPILER}" "fmt" "${BUN_SRC}/analytics/analytics_schema.zig"
+    DEPENDS "${BUN_SRC}/api/schema.peechy"
+    COMMENT "Building analytics_schema.zig"
+)
 
 # --- Zig Object ---
 file(GLOB ZIG_FILES
@@ -351,12 +393,17 @@ file(GLOB ZIG_FILES
     "${BUN_SRC}/**/**/**/*.zig"
 )
 
-set(BUN_ZIG_OBJ "${BUN_WORKDIR}/${bun}.o")
+if(DEBUG)
+    set(BUN_ZIG_OBJ "${BUN_WORKDIR}/CMakeFiles/bun-debug.o")
+else()
+    set(BUN_ZIG_OBJ "${BUN_WORKDIR}/CMakeFiles/bun.o")
+endif()
+
 add_custom_command(
     OUTPUT "${BUN_ZIG_OBJ}"
     COMMAND "${ZIG_COMPILER}" "build" "obj"
         "-Doptimize=${ZIG_OPTIMIZE}"
-        "-Doutput-dir=${BUN_WORKDIR}"
+        "-Doutput-dir=${BUN_WORKDIR}/CMakeFiles"
         "-Dcpu=${CPU_TARGET}"
         "-Dgenerated-code=${BUN_WORKDIR}/codegen"
     DEPENDS
@@ -365,9 +412,11 @@ add_custom_command(
         "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.zig"
         "${BUN_WORKDIR}/js/ResolvedSourceTag.zig"
         "${BUN_IDENTIFIER_CACHE_OUT}"
+        "${BUN_SRC}/api/schema.zig"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Building zig code"
     VERBATIM
+    # This is here to show Zig's progress indicator
     USES_TERMINAL
 )
 
@@ -383,12 +432,6 @@ add_executable(
     "${BUN_WORKDIR}/js/WebCoreJSBuiltins.cpp"
     "${BUN_ZIG_OBJ}"
 )
-
-# Set /subsystem:console on bun for windows
-if (WIN32)
-    set_target_properties(${bun} PROPERTIES LINK_FLAGS " /SUBSYSTEM:CONSOLE ")
-endif()
-
 set_target_properties(${bun} PROPERTIES
     CXX_STANDARD 20
     CXX_STANDARD_REQUIRED YES
@@ -399,12 +442,15 @@ set_target_properties(${bun} PROPERTIES
     VISIBILITY_INLINES_HIDDEN YES
 )
 
+# Set /subsystem:console on bun for windows
+if (WIN32)
+    set_target_properties(${bun} PROPERTIES LINK_FLAGS " /SUBSYSTEM:CONSOLE ")
+endif()
+
 # --- Flags and Defines ---
-add_compile_options(
-    -D_HAS_EXCEPTIONS=0
-)
 add_compile_definitions(
     # TODO: are all of these variables strictly necessary?
+    "_HAS_EXCEPTIONS=0"
     "LIBUS_USE_OPENSSL=1"
     "UWS_HTTPRESPONSE_NO_WRITEMARK=1"
     "LIBUS_USE_BORINGSSL=1"
@@ -436,6 +482,7 @@ include_directories(
     src/napi
     src/deps
     src/deps/picohttpparser
+    # TODO: are all of these needed?
     ${WEBKIT_DIR}/WTF/Headers
     ${WEBKIT_DIR}/ICU/Headers
     ${WEBKIT_DIR}/bmalloc/Headers
@@ -448,21 +495,59 @@ include_directories(
     "${BUN_WORKDIR}/js"
 )
 
-if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-    if (NOT MSVC)
-        string(APPEND CMAKE_CXX_FLAGS " -g3 -O1")
-        string(APPEND CMAKE_C_FLAGS " -g3 -O1")
-    else()
-        string(APPEND CMAKE_CXX_FLAGS " /O1")
-        string(APPEND CMAKE_C_FLAGS " /O1")
-    endif()
+# Compile and Linker Flags
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_compile_definitions("BUN_DEBUG=1")
-elseif (NOT MSVC)
-    string(APPEND CMAKE_CXX_FLAGS " -O3 -femit-llvm" )
-    string(APPEND CMAKE_C_FLAGS " -O3 -femit-llvm")
-else ()
-    string(APPEND CMAKE_CXX_FLAGS " /O2" )
-    string(APPEND CMAKE_C_FLAGS " /O2")
+    if (NOT MSVC)
+        target_compile_options(${bun} PUBLIC -g3 -O1)
+    else()
+        target_compile_options(${bun} PUBLIC /O1)
+    endif()
+elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
+    if (MSVC)
+        target_compile_options(${bun} PUBLIC /O2)
+    else()
+        target_compile_options(${bun} PUBLIC -O3)
+    endif()
+endif()
+
+if(NOT MSVC)
+    target_compile_options(${bun} PUBLIC
+        -march=${CPU_TARGET}
+        -mtune=${CPU_TARGET}
+        -fconstexpr-steps=1271242
+        -fconstexpr-depth=27
+        -fno-exceptions
+        -fvisibility=hidden
+        -fvisibility-inlines-hidden
+        -fno-rtti
+        -ferror-limit=${ERROR_LIMIT}
+        -fPIC
+    )
+else() # MSVC
+    string(APPEND SUPPRESS_WARNING_NUMBERS
+        # JSC deletes operator delete to prevent accidental use
+        /wd4291
+        # we use #pragma mark in some places
+        /wd4068
+    )
+    string(APPEND CMAKE_CXX_FLAGS " /EHsc /GR-")
+    string(APPEND CMAKE_C_FLAGS " /EHsc /GR- /MP ${SUPPRESS_WARNING_NUMBERS} /experimental:c11atomics /std:c17")
+    string(APPEND CMAKE_CXX_FLAGS " /Zc:__cplusplus /Zc:inline /bigobj /MP ${SUPPRESS_WARNING_NUMBERS}")
+endif()
+
+if(APPLE)
+    if(ARCH STREQUAL "x86_64")
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "10.14")
+    else()
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0")
+    endif()
+    
+    target_link_options(${bun} PUBLIC "-dead_strip")
+    target_link_options(${bun} PUBLIC "-dead_strip_dylibs")
+    target_link_options(${bun} PUBLIC "-exported_symbols_list" "${BUN_SRC}/symbols.txt")
+    target_link_options(${bun} PUBLIC "-fno-keep-static-consts")
+    target_link_libraries(${bun} PRIVATE "resolv")
 endif()
 
 if (WIN32)
@@ -476,45 +561,6 @@ if (WIN32)
     set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
 endif()
 
-# if clang
-if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-    string(APPEND CMAKE_CXX_FLAGS " -fconstexpr-steps=1271242 -fconstexpr-depth=27")
-    string(APPEND CMAKE_CXX_FLAGS
-        " -fno-exceptions"
-        " -fno-rtti"
-        " -ferror-limit=100"
-        " -fvisibility=hidden"
-        " -fvisibility-inlines-hidden"
-    )
-    string(APPEND CMAKE_C_FLAGS
-        " -ferror-limit=${ERROR_LIMIT}"
-        " -fvisibility=hidden"
-        " -fvisibility-inlines-hidden"
-    )
-elseif(MSVC)
-    string(APPEND SUPPRESS_WARNING_NUMBERS
-        # JSC deletes operator delete to prevent accidental use
-        " /wd4291"
-        # we use #pragma mark in some places
-        " /wd4068"
-    )
-    string(APPEND CMAKE_CXX_FLAGS " /EHsc /GR-")
-    string(APPEND CMAKE_C_FLAGS " /EHsc /GR- /MP  ${SUPPRESS_WARNING_NUMBERS} /experimental:c11atomics /std:c17")
-    string(APPEND CMAKE_CXX_FLAGS " /Zc:__cplusplus /Zc:inline /bigobj /MP ${SUPPRESS_WARNING_NUMBERS}")
-endif()
-
-if (APPLE)
-    string(APPEND CMAKE_LINKER_FLAGS " -fno-keep-static-consts -Wl,-dead_strip -Wl,-dead_strip_dylibs")
-    string(APPEND CMAKE_CXX_FLAGS " -stdlib=libc++")
-    string(APPEND CMAKE_CXX_FLAGS " -mmacosx-version-min=11")
-    string(APPEND CMAKE_C_FLAGS " -mmacosx-version-min=11")
-endif()
-
-if (NOT MSVC)
-    string(APPEND CMAKE_CXX_FLAGS " -march=${CPU_TARGET} -mtune=${CPU_TARGET}")
-    string(APPEND CMAKE_C_FLAGS " -march=${CPU_TARGET} -mtune=${CPU_TARGET}")
-endif()
-
 if (APPLE)
     # TODO: a much better check can be done to find this path
     find_path(
@@ -525,9 +571,6 @@ if (APPLE)
         ICONV_DIR NAMES lib/libiconv.a
         PATHS ENV PATH /usr/local/opt/libiconv /opt/homebrew/opt/libiconv
     )
-    
-    # resolv might not go here. i think it's c-ares related.
-    target_link_libraries(${bun} PRIVATE "resolv")
 
     target_link_libraries(${bun} PRIVATE "icucore")
     target_link_libraries(${bun} PRIVATE "${ICONV_DIR}/lib/libiconv.a")
@@ -568,6 +611,24 @@ elseif (LINUX)
         " -Wl,--wrap=statx "
     )
 endif()
+
+# --- Stripped Binary "bun"
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    add_custom_command(
+        TARGET ${bun}
+        POST_BUILD
+        COMMAND ${DSYMUTIL} -o ${BUN_WORKDIR}/bun.dSYM ${BUN_WORKDIR}/${bun}
+        COMMENT "Stripping Symbols"
+    )
+    add_custom_command(
+        TARGET ${bun}
+        POST_BUILD
+        COMMAND ${STRIP} -s -x -S -o ${BUN_WORKDIR}/bun ${BUN_WORKDIR}/${bun}
+        COMMENT "Stripping Symbols"
+    )
+endif()
+
+# --- Dependencies ---
 
 if (USE_CUSTOM_ZLIB AND (NOT WIN32))
     target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/libz.a")
@@ -636,7 +697,7 @@ if (USE_CUSTOM_CARES)
     else()
         target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/libcares.a")
     endif()
-else ()
+else()
     find_package(c-ares CONFIG REQUIRED)
     target_link_libraries(${bun} PRIVATE c-ares::cares)
 endif()
@@ -648,7 +709,7 @@ if (USE_CUSTOM_BASE64)
     else()
         target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/libbase64.a")
     endif()
-else ()
+else()
     find_package(base64 REQUIRED)
     target_link_libraries(bun PRIVATE base64::base64)
 endif()
@@ -698,12 +759,6 @@ else()
     target_compile_definitions(${bun} PRIVATE "LAZY_LOAD_SQLITE=1")
 endif()
 
-
-if (NOT MSVC)
-    string(APPEND CMAKE_CXX_FLAGS " -fPIC")
-endif()
-
-
 if (NOT MSVC)
     target_link_libraries(${bun} PRIVATE "${WEBKIT_DIR}/lib/libWTF.a")
     target_link_libraries(${bun} PRIVATE "${WEBKIT_DIR}/lib/libJavaScriptCore.a")
@@ -729,8 +784,7 @@ else()
 
     # include_directories(C:/Users/windo/Build/WebKit/WebKitBuild/WTF/DerivedSources)
     # include_directories(C:/Users/windo/Build/WebKit/WebKitBuild/WTF/Headers)
-    file(COPY C:/Users/windo/Code/WebKit/WebKitBuild/cmakeconfig.h DESTINATION ${BUN_SRC}/bun.js/bindings)  
-    
+    file(COPY C:/Users/windo/Code/WebKit/WebKitBuild/cmakeconfig.h DESTINATION ${BUN_SRC}/bun.js/bindings)
 
     include_directories(C:/Users/windo/Code/WebKit/WebKitLibraries/win/include)
     link_directories(C:/Users/windo/Code/WebKit/WebKitLibraries/win/lib64)

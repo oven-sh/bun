@@ -187,11 +187,6 @@ BUN_CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE)  $(OPTIMIZATION_LEVEL) -fno-excep
 BUN_TMP_DIR := /tmp/make-bun
 CFLAGS=$(CFLAGS_WITHOUT_MARCH) $(MARCH_NATIVE)
 
-DEFAULT_USE_BMALLOC := 1
-
-
-USE_BMALLOC ?= DEFAULT_USE_BMALLOC
-
 # Set via postinstall
 ifeq (,$(realpath $(JSC_BASE_DIR)))
 	JSC_BASE_DIR = $(realpath $(firstword $(wildcard bun-webkit)))
@@ -1956,3 +1951,7 @@ setup: vendor-dev identifier-cache clean-bindings
 help: ## to print this help
 	@echo "For detailed build instructions, see https://bun.sh/docs/project/contributing"
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {gsub("\\\\n",sprintf("\n%22c",""), $$2);printf "\033[36m%-20s\033[0m \t\t%s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+
+print_linker_flags:
+	echo $(BUN_LLD_FLAGS) $(SYMBOLS) -W $(OPTIMIZATION_LEVEL) $(RELEASE_FLAGS)

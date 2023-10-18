@@ -135,3 +135,4 @@ make-dev-stats.csv
 
 .uuid
 tsconfig.tsbuildinfo
+build-release

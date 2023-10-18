@@ -16,9 +16,10 @@ let $debug_log_enabled = ((env) => (
     .join("_")
     .toUpperCase()})
 ))(Bun.env);
+let $debug_pid_prefix = Bun.env.SHOW_PID === '1';
 let $debug_log = $debug_log_enabled ? (...args) => {
   // warn goes to stderr without colorizing
-  console.warn(Bun.enableANSIColors ? '\\x1b[90m[${publicName}]\\x1b[0m' : '[${publicName}]', ...args);
+  console.warn(($debug_pid_prefix ? \`[\${process.pid}] \` : '') + (Bun.enableANSIColors ? '\\x1b[90m[${publicName}]\\x1b[0m' : '[${publicName}]'), ...args);
 } : () => {};
 `;
 }

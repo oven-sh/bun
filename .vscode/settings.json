@@ -222,7 +222,6 @@
     "valarray": "cpp",
     "codecvt": "cpp"
   },
-  "cmake.configureOnOpen": false,
   "C_Cpp.errorSquiggles": "enabled",
   "eslint.workingDirectories": ["packages/bun-types"],
   "typescript.tsdk": "node_modules/typescript/lib"

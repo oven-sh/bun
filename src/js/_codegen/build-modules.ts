@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { sliceSourceCode } from "./builtin-parser";
-import { cap, fmtCPPString, readdirRecursive, resolveSyncOrNull } from "./helpers";
+import { cap, checkAscii, fmtCPPString, readdirRecursive, resolveSyncOrNull } from "./helpers";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { builtinModules } from "node:module";
 import { BuildConfig } from "bun";
@@ -333,6 +333,9 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
 
 // This header is used by InternalModuleRegistry.cpp, and should only be included in that file.
 // It inlines all the strings for the module IDs.
+//
+// We cannot use ASCIILiteral's `_s` operator for the module source code because for long
+// strings it fails a constexpr assert. Instead, we do that assert in JS before we format the string
 fs.writeFileSync(
   path.join(BASE, "out/InternalModuleRegistryConstants.h"),
   `// clang-format off
@@ -346,7 +349,9 @@ namespace InternalModuleRegistryConstants {
     .map(
       (id, n) =>
         `//
-static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(bundledOutputs.darwin.get(id.slice(0, -3)))}_s;
+static constexpr ASCIILiteral ${idToEnumName(id)}Code = ASCIILiteral::fromLiteralUnsafe(${fmtCPPString(
+          checkAscii(bundledOutputs.darwin.get(id.slice(0, -3))),
+        )});
 //
 `,
     )
@@ -356,7 +361,9 @@ static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(bundledOu
     .map(
       (id, n) =>
         `//
-static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(bundledOutputs.win32.get(id.slice(0, -3)))}_s;
+static constexpr ASCIILiteral ${idToEnumName(id)}Code = ASCIILiteral::fromLiteralUnsafe(${fmtCPPString(
+          checkAscii(bundledOutputs.win32.get(id.slice(0, -3))),
+        )});
 //
 `,
     )
@@ -367,7 +374,9 @@ static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(bundledOu
     .map(
       (id, n) =>
         `//
-static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(bundledOutputs.linux.get(id.slice(0, -3)))}_s;
+static constexpr ASCIILiteral ${idToEnumName(id)}Code = ASCIILiteral::fromLiteralUnsafe(${fmtCPPString(
+          checkAscii(bundledOutputs.linux.get(id.slice(0, -3))),
+        )});
 //
 `,
     )

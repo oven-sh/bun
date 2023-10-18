@@ -1,9 +1,10 @@
+import type { BunFile } from 'bun';
 import { version } from '../modules/bun.js';
 import './console.js';
 import './process.js';
 import os from 'node:os';
 
-//? NodeJS Blob doesn't implement Blob.json(), so we need to polyfill it.
+//? NodeJS Blob doesn't implement these, so we need to polyfill them.
 Blob.prototype.json = async function json<T>(this: Blob): Promise<T> {
     try {
         return JSON.parse(await this.text()) as T;
@@ -12,6 +13,14 @@ Blob.prototype.json = async function json<T>(this: Blob): Promise<T> {
         throw err;
     }
 };
+Reflect.set(Blob.prototype, 'readable', undefined /*satisfies BunFile['readable']*/);
+Reflect.set(Blob.prototype, 'lastModified', -1 satisfies BunFile['lastModified']);
+Reflect.set(Blob.prototype, 'exists', (async function exists() {
+    return true;
+}) satisfies BunFile['exists']);
+Reflect.set(Blob.prototype, 'writer', (function writer() {
+    throw new TypeError('Blob is detached');
+}) satisfies BunFile['writer']);
 
 //? navigator global object polyfill
 Reflect.set(globalThis, 'navigator', {

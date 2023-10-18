@@ -8008,14 +8008,6 @@ pub const PackageManager = struct {
 
                         if (manager.summary.update > 0) root.scripts = .{};
                     }
-
-                    if (!root.scripts.filled) {
-                        maybe_root.scripts.enqueue(
-                            manager.lockfile,
-                            lockfile.buffers.string_bytes.items,
-                            strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir),
-                        );
-                    }
                 }
             },
             else => {},
@@ -8143,6 +8135,9 @@ pub const PackageManager = struct {
                 manager.log,
                 manager.options.enable.exact_versions,
             );
+            if (manager.lockfile.packages.len > 0) {
+                root = manager.lockfile.packages.get(0);
+            }
         }
 
         if (manager.lockfile.packages.len > 0) {

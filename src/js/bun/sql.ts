@@ -14,7 +14,7 @@ const _queryStatus = Symbol("status");
 const _handler = Symbol("handler");
 const PublicPromise = Promise;
 
-const { createQuery, PostgresSQLConnection, init } = $lazy("bun:sql");
+const { createConnection: _createConnection, createQuery, PostgresSQLConnection, init } = $lazy("bun:sql");
 
 class Query extends PublicPromise {
   [_resolve];
@@ -132,7 +132,7 @@ init(
 );
 
 function createConnection({ hostname, port, username, password, tls, query, database }, onConnected, onClose) {
-  return new PostgresSQLConnection(
+  return _createConnection(
     hostname,
     Number(port),
     username || "",

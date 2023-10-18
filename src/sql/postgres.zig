@@ -1673,12 +1673,16 @@ pub const PostgresSQLQuery = struct {
     pub fn onSuccess(this: *@This(), _: []const u8, globalObject: *JSC.JSGlobalObject) void {
         const thisValue = this.thisValue;
         const targetValue = this.target;
+        targetValue.ensureStillAlive();
+
         if (thisValue == .zero) {
             this.deref();
             return;
         }
 
         const pending_value = PostgresSQLQuery.pendingValueGetCached(thisValue) orelse JSC.JSValue.undefined;
+        pending_value.ensureStillAlive();
+
         this.status = .success;
         defer this.deref();
 
@@ -1756,7 +1760,6 @@ pub const PostgresSQLQuery = struct {
             return .zero;
         }
         this.target = query;
-        this.thisValue = callframe.this();
         const binding_value = PostgresSQLQuery.bindingGetCached(callframe.this()) orelse .zero;
         var query_str = this.query.toUTF8(bun.default_allocator);
         defer query_str.deinit();
@@ -2247,6 +2250,18 @@ pub const PostgresSQLConnection = struct {
     }
 
     pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) ?*PostgresSQLConnection {
+        _ = callframe;
+        globalObject.throw("PostgresSQLConnection cannot be constructed directly", .{});
+        return null;
+    }
+
+    comptime {
+        if (!JSC.is_bindgen) {
+            @export(call, .{ .name = "PostgresSQLConnection__createInstance" });
+        }
+    }
+
+    pub fn call(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         var vm = globalObject.bunVM();
         const arguments = callframe.arguments(9).slice();
         const hostname_str = arguments[0].toBunString(globalObject);
@@ -2291,7 +2306,7 @@ pub const PostgresSQLConnection = struct {
         const on_close = arguments[8];
         var ptr = bun.default_allocator.create(PostgresSQLConnection) catch |err| {
             globalObject.throwError(err, "failed to allocate connection");
-            return null;
+            return .zero;
         };
 
         ptr.* = PostgresSQLConnection{
@@ -2308,6 +2323,12 @@ pub const PostgresSQLConnection = struct {
             .statements = PreparedStatementsMap{},
         };
 
+        ptr.updateHasPendingActivity();
+        ptr.poll_ref.ref(vm);
+        const js_value = ptr.toJS(globalObject);
+        js_value.ensureStillAlive();
+        ptr.js_value = js_value;
+
         {
             const hostname = hostname_str.toUTF8(bun.default_allocator);
             defer hostname.deinit();
@@ -2322,20 +2343,18 @@ pub const PostgresSQLConnection = struct {
                     .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr) orelse {
                         globalObject.throwError(error.ConnectionFailed, "failed to connect to postgresql");
                         ptr.deinit();
-                        return null;
+                        return .zero;
                     },
                 };
             } else {
                 // TODO:
                 globalObject.throwTODO("TLS is not supported yet");
                 ptr.deinit();
-                return null;
+                return .zero;
             }
         }
-        ptr.updateHasPendingActivity();
-        ptr.poll_ref.ref(vm);
 
-        return ptr;
+        return js_value;
     }
 
     fn SocketHandler(comptime ssl: bool) type {

@@ -1636,6 +1636,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
 }
 
 extern "C" JSC::EncodedJSValue PostgresSQLQuery__createInstance(JSC::JSGlobalObject*, JSC::CallFrame*);
+extern "C" JSC::EncodedJSValue PostgresSQLConnection__createInstance(JSC::JSGlobalObject*, JSC::CallFrame*);
 extern "C" JSC::EncodedJSValue PostgresSQLContext__init(JSC::JSGlobalObject*, JSC::CallFrame*);
 
 // we're trying out a new way to do this lazy loading
@@ -1878,6 +1879,10 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
             obj->putDirect(
                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createQuery"_s)),
                 JSC::JSFunction::create(vm, globalObject, 0, "createQuery"_s, PostgresSQLQuery__createInstance, ImplementationVisibility::Public), 0);
+
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createConnection"_s)),
+                JSC::JSFunction::create(vm, globalObject, 0, "createConnection"_s, PostgresSQLConnection__createInstance, ImplementationVisibility::Public), 0);
 
             obj->putDirect(
                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "init"_s)),

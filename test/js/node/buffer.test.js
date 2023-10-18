@@ -1327,6 +1327,20 @@ it("Buffer.concat", () => {
   expect(Buffer.concat([array1, array2, array3], 222).length).toBe(222);
   expect(Buffer.concat([array1, array2, array3], 222).subarray(0, 128).join("")).toBe("100".repeat(128));
   expect(Buffer.concat([array1, array2, array3], 222).subarray(129, 222).join("")).toBe("200".repeat(222 - 129));
+  expect(() => {
+    Buffer.concat([array1], -1);
+  }).toThrow(RangeError);
+  expect(() => {
+    Buffer.concat([array1], "1");
+  }).toThrow(TypeError);
+  // issue#6570
+  expect(Buffer.concat([array1, array2, array3], undefined).join("")).toBe(
+    array1.join("") + array2.join("") + array3.join(""),
+  );
+  // issue#3639
+  expect(Buffer.concat([array1, array2, array3], 128 * 4).join("")).toBe(
+    array1.join("") + array2.join("") + array3.join("") + Buffer.alloc(128).join(""),
+  );
 });
 
 it("read", () => {

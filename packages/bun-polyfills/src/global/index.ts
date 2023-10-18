@@ -1,5 +1,5 @@
 import type { BunFile } from 'bun';
-import { version } from '../modules/bun.js';
+import { version, readableStreamToFormData } from '../modules/bun.js';
 import './console.js';
 import './process.js';
 import os from 'node:os';
@@ -13,6 +13,18 @@ Blob.prototype.json = async function json<T>(this: Blob): Promise<T> {
         throw err;
     }
 };
+Blob.prototype.formData = async function formData(this: Blob): Promise<FormData> {
+    if (this.type.startsWith('multipart/form-data;')) {
+        return new Response(this.stream(), { headers:
+            //? Good one Node: https://github.com/nodejs/node/issues/42266
+            { 'Content-Type': this.type.replace('webkitformboundary', 'WebkitFormBoundary') }
+        }).formData() as Promise<FormData>;
+    } else if (this.type === 'application/x-www-form-urlencoded') {
+        return readableStreamToFormData(this.stream());
+    } else {
+        throw new TypeError('Blob type is not well-formed multipart/form-data or application/x-www-form-urlencoded');
+    }
+}
 Reflect.set(Blob.prototype, 'readable', undefined /*satisfies BunFile['readable']*/);
 Reflect.set(Blob.prototype, 'lastModified', -1 satisfies BunFile['lastModified']);
 Reflect.set(Blob.prototype, 'exists', (async function exists() {
@@ -21,6 +33,10 @@ Reflect.set(Blob.prototype, 'exists', (async function exists() {
 Reflect.set(Blob.prototype, 'writer', (function writer() {
     throw new TypeError('Blob is detached');
 }) satisfies BunFile['writer']);
+
+//? NodeJS File doesn't implement these either
+File.prototype.json = Blob.prototype.json;
+File.prototype.formData = Blob.prototype.formData;
 
 //? navigator global object polyfill
 Reflect.set(globalThis, 'navigator', {

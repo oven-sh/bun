@@ -336,22 +336,26 @@ file(GLOB BUN_TS_FUNCTIONS ${CONFIGURE_DEPENDS} "${BUN_SRC}/js/builtins/*.ts")
 
 add_custom_command(
     OUTPUT 
-           "${BUN_WORKDIR}/js/InternalModuleRegistryConstants.h"
-           "${BUN_WORKDIR}/js/InternalModuleRegistry+createInternalModuleById.h"
-           "${BUN_WORKDIR}/js/InternalModuleRegistry+enum.h"
-           "${BUN_WORKDIR}/js/InternalModuleRegistry+numberOfModules.h"
-           "${BUN_WORKDIR}/js/NativeModuleImpl.h"
-           "${BUN_WORKDIR}/js/ResolvedSourceTag.zig"
-           "${BUN_WORKDIR}/js/SyntheticModuleType.h"
+           "${BUN_WORKDIR}/codegen/InternalModuleRegistryConstants.h"
+           "${BUN_WORKDIR}/codegen/InternalModuleRegistry+createInternalModuleById.h"
+           "${BUN_WORKDIR}/codegen/InternalModuleRegistry+enum.h"
+           "${BUN_WORKDIR}/codegen/InternalModuleRegistry+numberOfModules.h"
+           "${BUN_WORKDIR}/codegen/NativeModuleImpl.h"
+           "${BUN_WORKDIR}/codegen/ResolvedSourceTag.zig"
+           "${BUN_WORKDIR}/codegen/SyntheticModuleType.h"
     COMMAND ${BUN_EXECUTABLE} "${BUN_SRC}/codegen/bundle-modules.ts" "${BUN_WORKDIR}"
     DEPENDS ${BUN_TS_MODULES}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Bundling JS modules"
 )
-WEBKIT_ADD_SOURCE_DEPENDENCIES(${BUN_SRC}/bun.js/bindings/InternalModuleRegistry.cpp "${BUN_WORKDIR}/js/InternalModuleRegistryConstants.h")
+WEBKIT_ADD_SOURCE_DEPENDENCIES(
+    "${BUN_SRC}/bun.js/bindings/InternalModuleRegistry.cpp"
+    "${BUN_WORKDIR}/codegen/InternalModuleRegistryConstants.h"
+)
 
 add_custom_command(
-    OUTPUT "${BUN_WORKDIR}/js/WebCoreJSBuiltins.cpp" "${BUN_WORKDIR}/js/WebCoreJSBuiltins.h"
+    OUTPUT "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp"
+           "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.h"
     COMMAND ${BUN_EXECUTABLE} "${BUN_SRC}/codegen/bundle-functions.ts" "${BUN_WORKDIR}"
     DEPENDS ${BUN_TS_FUNCTIONS}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
@@ -410,7 +414,7 @@ add_custom_command(
         "${CMAKE_CURRENT_SOURCE_DIR}/build.zig"
         "${ZIG_FILES}"
         "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.zig"
-        "${BUN_WORKDIR}/js/ResolvedSourceTag.zig"
+        "${BUN_WORKDIR}/codegen/ResolvedSourceTag.zig"
         "${BUN_IDENTIFIER_CACHE_OUT}"
         "${BUN_SRC}/api/schema.zig"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
@@ -429,7 +433,7 @@ add_executable(
     ${BUN_ZIG_OBJ}
     "${BUN_WORKDIR}/codegen/JSSink.cpp"
     "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.cpp"
-    "${BUN_WORKDIR}/js/WebCoreJSBuiltins.cpp"
+    "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp"
     "${BUN_ZIG_OBJ}"
 )
 set_target_properties(${bun} PROPERTIES
@@ -492,7 +496,6 @@ include_directories(
     ${WEBKIT_DIR}/bmalloc/PrivateHeaders
     ${WEBKIT_DIR}/WTF/PrivateHeaders
     "${BUN_WORKDIR}/codegen"
-    "${BUN_WORKDIR}/js"
 )
 
 # Compile and Linker Flags

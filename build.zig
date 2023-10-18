@@ -321,8 +321,12 @@ pub fn build_(b: *Build) !void {
 
         obj.addOptions("build_options", actual_build_options.step(b));
 
-        obj.addModule("generated-classes", b.createModule(.{
+        // Generated Code
+        obj.addModule("generated/ZigGeneratedClasses.zig", b.createModule(.{
             .source_file = .{ .path = b.fmt("{s}/ZigGeneratedClasses.zig", .{generated_code_directory}) },
+        }));
+        obj.addModule("generated/ResolvedSourceTag.zig", b.createModule(.{
+            .source_file = .{ .path = b.fmt("{s}/ResolvedSourceTag.zig", .{generated_code_directory}) },
         }));
 
         obj.linkLibC();

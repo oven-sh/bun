@@ -206,7 +206,7 @@ pub const ResolvedSource = extern struct {
 
     tag: Tag = Tag.javascript,
 
-    pub const Tag = @import("../../js/out/ResolvedSourceTag.zig").ResolvedSourceTag;
+    pub const Tag = @import("generated/ResolvedSourceTag.zig").ResolvedSourceTag;
 };
 
 const Mimalloc = @import("../../allocators/mimalloc.zig");

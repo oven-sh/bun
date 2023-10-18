@@ -18,7 +18,8 @@ if (!CMAKE_BUILD_ROOT) {
 }
 
 const TMP_DIR = path.join(CMAKE_BUILD_ROOT, "tmp");
-const OUT_DIR = path.join(CMAKE_BUILD_ROOT, "js");
+const CODEGEN_DIR = path.join(CMAKE_BUILD_ROOT, "codegen");
+const JS_DIR = path.join(CMAKE_BUILD_ROOT, "js");
 
 const t = new Bun.Transpiler({ loader: "tsx" });
 
@@ -191,8 +192,8 @@ for (const [name, bundle, outputs] of [
           : "") +
         (usesAssert ? createAssertClientJS(idToPublicSpecifierOrEnumName(file.path).replace(/^node:|^bun:/, "")) : ""),
     );
-    const outputPath = path.join(OUT_DIR, name, file.path);
     if (name === "modules_dev") {
+      const outputPath = path.join(JS_DIR, file.path);
       fs.mkdirSync(path.dirname(outputPath), { recursive: true });
       fs.writeFileSync(outputPath, captured);
     }
@@ -227,14 +228,14 @@ function idToPublicSpecifierOrEnumName(id: string) {
 
 // This is a file with a single macro that is used in defining InternalModuleRegistry.h
 writeIfNotChanged(
-  path.join(OUT_DIR, "InternalModuleRegistry+numberOfModules.h"),
+  path.join(CODEGEN_DIR, "InternalModuleRegistry+numberOfModules.h"),
   `#define BUN_INTERNAL_MODULE_COUNT ${moduleList.length}\n`,
 );
 
 // This code slice is used in InternalModuleRegistry.h for inlining the enum. I dont think we
 // actually use this enum but it's probably a good thing to include.
 writeIfNotChanged(
-  path.join(OUT_DIR, "InternalModuleRegistry+enum.h"),
+  path.join(CODEGEN_DIR, "InternalModuleRegistry+enum.h"),
   `${
     moduleList
       .map((id, n) => {
@@ -247,7 +248,7 @@ writeIfNotChanged(
 
 // This code slice is used in InternalModuleRegistry.cpp. It defines the loading function for modules.
 writeIfNotChanged(
-  path.join(OUT_DIR, "InternalModuleRegistry+createInternalModuleById.h"),
+  path.join(CODEGEN_DIR, "InternalModuleRegistry+createInternalModuleById.h"),
   `// clang-format off
 JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalObject, VM& vm, Field id)
 {
@@ -275,7 +276,7 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
 // We cannot use ASCIILiteral's `_s` operator for the module source code because for long
 // strings it fails a constexpr assert. Instead, we do that assert in JS before we format the string
 writeIfNotChanged(
-  path.join(OUT_DIR, "InternalModuleRegistryConstants.h"),
+  path.join(CODEGEN_DIR, "InternalModuleRegistryConstants.h"),
   `// clang-format off
 #pragma once
 
@@ -327,7 +328,7 @@ static constexpr ASCIILiteral ${idToEnumName(id)}Code = ASCIILiteral::fromLitera
 
 // This is a generated enum for zig code (exports.zig)
 writeIfNotChanged(
-  path.join(OUT_DIR, "ResolvedSourceTag.zig"),
+  path.join(CODEGEN_DIR, "ResolvedSourceTag.zig"),
   `// zig fmt: off
 pub const ResolvedSourceTag = enum(u32) {
     // Predefined
@@ -352,7 +353,7 @@ ${Object.entries(nativeModuleIds)
 
 // This is a generated enum for c++ code (headers-handwritten.h)
 writeIfNotChanged(
-  path.join(OUT_DIR, "SyntheticModuleType.h"),
+  path.join(CODEGEN_DIR, "SyntheticModuleType.h"),
   `enum SyntheticModuleType : uint32_t {
     JavaScript = 0,
     PackageJSONTypeModule = 1,
@@ -380,7 +381,7 @@ ${Object.entries(nativeModuleEnumToId)
 
 // This is used in ModuleLoader.cpp to link to all the headers for native modules.
 writeIfNotChanged(
-  path.join(OUT_DIR, "NativeModuleImpl.h"),
+  path.join(CODEGEN_DIR, "NativeModuleImpl.h"),
   Object.values(nativeModuleEnums)
     .map(value => `#include "../../bun.js/modules/${value}Module.h"`)
     .join("\n") + "\n",

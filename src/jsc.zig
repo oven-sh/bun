@@ -87,3 +87,6 @@ pub const Subprocess = @import("./bun.js/api/bun.zig").Subprocess;
 ///  5. make clean-bindings && make bindings -j10
 ///
 pub const Codegen = @import("./bun.js/bindings/generated_classes.zig");
+
+pub const Weak = @import("./bun.js/Weak.zig").Weak;
+pub const NewWeakFinalizer = @import("./bun.js/Weak.zig").NewWeakFinalizer;

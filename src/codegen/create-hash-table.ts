@@ -1,12 +1,12 @@
 import { spawn } from "bun";
 import path from "path";
+import { writeIfNotChanged } from "./helpers";
 
 const input = process.argv[2];
-const out_dir = process.argv[3];
+const output = process.argv[3];
 
 const create_hash_table = path.join(import.meta.dir, "./create_hash_table");
 
-console.time("Generate LUT");
 const { stdout, exited } = spawn({
   cmd: [create_hash_table, input],
   stdout: "pipe",
@@ -18,6 +18,6 @@ str = str.replaceAll(/^\/\/.*$/gm, "");
 str = str.replaceAll(/^#include.*$/gm, "");
 str = str.replaceAll(`namespace JSC {`, "");
 str = str.replaceAll(`} // namespace JSC`, "");
-str = "// File generated via `make static-hash-table` / `make cpp`\n" + str.trim() + "\n";
-await Bun.write(input.replace(/\.cpp$/, ".lut.h").replace(/(\.lut)?\.txt$/, ".lut.h"), str);
-console.log("Wrote", path.join(out_dir, path.basename(process.cwd(), input.replace(/\.cpp$/, ".lut.h"))));
+str = "// File generated via `static-hash-table.ts`\n" + str.trim() + "\n";
+
+writeIfNotChanged(output, str);

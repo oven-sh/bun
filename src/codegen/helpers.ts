@@ -51,3 +51,14 @@ export function checkAscii(str: string) {
 
   return str;
 }
+
+export function writeIfNotChanged(file: string, contents: string) {
+  if (fs.existsSync(file)) {
+    const oldContents = fs.readFileSync(file, "utf8");
+    if (oldContents === contents) {
+      return;
+    }
+  }
+
+  fs.writeFileSync(file, contents);
+}

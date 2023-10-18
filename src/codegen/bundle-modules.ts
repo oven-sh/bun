@@ -1,11 +1,24 @@
+// This script is run when you change anything in src/js/*
 import fs from "fs";
 import path from "path";
 import { sliceSourceCode } from "./builtin-parser";
-import { cap, checkAscii, fmtCPPString, readdirRecursive, resolveSyncOrNull } from "./helpers";
+import { cap, checkAscii, fmtCPPString, readdirRecursive, resolveSyncOrNull, writeIfNotChanged } from "./helpers";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { builtinModules } from "node:module";
 import { BuildConfig } from "bun";
 import { define } from "./replacements";
+import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
+
+const BASE = path.join(import.meta.dir, "../js");
+const CMAKE_BUILD_ROOT = process.argv[2];
+
+if (!CMAKE_BUILD_ROOT) {
+  console.error("Usage: bun bundle-modules.ts <CMAKE_WORK_DIR>");
+  process.exit(1);
+}
+
+const TMP_DIR = path.join(CMAKE_BUILD_ROOT, "tmp");
+const OUT_DIR = path.join(CMAKE_BUILD_ROOT, "js");
 
 const t = new Bun.Transpiler({ loader: "tsx" });
 
@@ -16,89 +29,14 @@ function mark(log: string) {
   start = now;
 }
 
-const BASE = path.join(import.meta.dir, "../");
-const TMP = path.join(BASE, "out/tmp");
-
-const moduleList = ["bun", "node", "thirdparty", "internal"]
-  .flatMap(dir => readdirRecursive(path.join(BASE, dir)))
-  .filter(file => file.endsWith(".js") || (file.endsWith(".ts") && !file.endsWith(".d.ts")))
-  .map(file => file.slice(BASE.length))
-  .sort();
-
-const internalRegistry = new Map();
-
-// Build Registry
-for (let i = 0; i < moduleList.length; i++) {
-  const prefix = moduleList[i].startsWith("node/")
-    ? "node:"
-    : moduleList[i].startsWith("bun:")
-    ? "bun/"
-    : moduleList[i].startsWith("internal/")
-    ? "internal/"
-    : undefined;
-  if (prefix) {
-    const id = prefix + moduleList[i].slice(prefix.length).replaceAll(".", "/").slice(0, -3);
-    internalRegistry.set(id, i);
-  }
-}
-
-// Native Module registry
-const nativeModuleH = fs.readFileSync(path.join(BASE, "../bun.js/modules/_NativeModule.h"), "utf8");
-const nativeModuleDefine = nativeModuleH.match(/BUN_FOREACH_NATIVE_MODULE\(macro\)\s*\\\n((.*\\\n)*\n)/);
-if (!nativeModuleDefine) {
-  throw new Error(
-    "Could not find BUN_FOREACH_NATIVE_MODULE in _NativeModule.h. Knowing native module IDs is a part of the codegen process.",
-  );
-}
-let nextNativeModuleId = 0;
-const nativeModuleIds: Record<string, number> = {};
-const nativeModuleEnums: Record<string, string> = {};
-const nativeModuleEnumToId: Record<string, number> = {};
-for (const [_, idString, enumValue] of nativeModuleDefine[0].matchAll(/macro\((.*?),(.*?)\)/g)) {
-  const processedIdString = JSON.parse(idString.trim().replace(/_s$/, ""));
-  const processedEnumValue = enumValue.trim();
-  const processedNumericId = nextNativeModuleId++;
-  nativeModuleIds[processedIdString] = processedNumericId;
-  nativeModuleEnums[processedIdString] = processedEnumValue;
-  nativeModuleEnumToId[processedEnumValue] = processedNumericId;
-}
-
-mark("Scan internal registry");
-
-function codegenRequireId(id: string) {
-  return `(__intrinsic__getInternalField(__intrinsic__internalModuleRegistry, ${id}) || __intrinsic__createInternalModuleById(${id}))`;
-}
-
-function codegenRequireNativeModule(id: string) {
-  return `(__intrinsic__requireNativeModule(${id.replace(/node:/, "")}))`;
-}
-
-globalThis.requireTransformer = (specifier: string, from: string) => {
-  // this one is deprecated
-  if (specifier === "$shared") specifier = "./internal/shared.ts";
-
-  const directMatch = internalRegistry.get(specifier);
-  if (directMatch) return codegenRequireId(`${directMatch}/*${specifier}*/`);
-
-  if (specifier in nativeModuleIds) {
-    return codegenRequireNativeModule(JSON.stringify(specifier));
-  }
-
-  const relativeMatch =
-    resolveSyncOrNull(specifier, path.join(BASE, path.dirname(from))) ?? resolveSyncOrNull(specifier, BASE);
-
-  if (relativeMatch) {
-    const found = moduleList.indexOf(path.relative(BASE, relativeMatch));
-    if (found === -1) {
-      throw new Error(
-        `Builtin Bundler: "${specifier}" cannot be imported here because it doesn't get a module ID. Only files in "src/js" besides "src/js/builtins" can be used here. Note that the 'node:' or 'bun:' prefix is required here. `,
-      );
-    }
-    return codegenRequireId(`${found}/*${path.relative(BASE, relativeMatch)}*/`);
-  }
-
-  throw new Error(`Builtin Bundler: Could not resolve "${specifier}" in ${from}.`);
-};
+const {
+  //
+  moduleList,
+  nativeModuleIds,
+  nativeModuleEnumToId,
+  nativeModuleEnums,
+  requireTransformer,
+} = createInternalModuleRegistry(BASE);
 
 // Preprocess builtins
 const bundledEntryPoints: string[] = [];
@@ -112,7 +50,7 @@ for (let i = 0; i < moduleList.length; i++) {
         var isBuiltin = true;
         try {
           if (!builtinModules.includes(imp.path)) {
-            globalThis.requireTransformer(imp.path, moduleList[i]);
+            requireTransformer(imp.path, moduleList[i]);
           }
         } catch {
           isBuiltin = false;
@@ -134,7 +72,7 @@ for (let i = 0; i < moduleList.length; i++) {
           )
           .replace(/export\s*{\s*}\s*;/g, ""),
       true,
-      x => globalThis.requireTransformer(x, moduleList[i]),
+      x => requireTransformer(x, moduleList[i]),
     );
     let fileToTranspile = `// @ts-nocheck
 // GENERATED TEMP FILE - DO NOT EDIT
@@ -158,7 +96,7 @@ $$EXPORT$$(__intrinsic__exports).$$EXPORT_END$$;
     if (!exportOptimization) {
       fileToTranspile = `var $;` + fileToTranspile.replaceAll("__intrinsic__exports", "$");
     }
-    const outputPath = path.join(TMP, moduleList[i].slice(0, -3) + ".ts");
+    const outputPath = path.join(TMP_DIR, moduleList[i].slice(0, -3) + ".ts");
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
     fs.writeFileSync(outputPath, fileToTranspile);
     bundledEntryPoints.push(outputPath);
@@ -176,7 +114,7 @@ const config = ({ platform, debug }: { platform: string; debug?: boolean }) =>
     entrypoints: bundledEntryPoints,
     // Whitespace and identifiers are not minified to give better error messages when an error happens in our builtins
     minify: { syntax: !debug, whitespace: false },
-    root: TMP,
+    root: TMP_DIR,
     target: "bun",
     external: builtinModules,
     define: {
@@ -253,7 +191,7 @@ for (const [name, bundle, outputs] of [
           : "") +
         (usesAssert ? createAssertClientJS(idToPublicSpecifierOrEnumName(file.path).replace(/^node:|^bun:/, "")) : ""),
     );
-    const outputPath = path.join(BASE, "out", name, file.path);
+    const outputPath = path.join(OUT_DIR, name, file.path);
     if (name === "modules_dev") {
       fs.mkdirSync(path.dirname(outputPath), { recursive: true });
       fs.writeFileSync(outputPath, captured);
@@ -288,15 +226,15 @@ function idToPublicSpecifierOrEnumName(id: string) {
 }
 
 // This is a file with a single macro that is used in defining InternalModuleRegistry.h
-fs.writeFileSync(
-  path.join(BASE, "out/InternalModuleRegistry+numberOfModules.h"),
+writeIfNotChanged(
+  path.join(OUT_DIR, "InternalModuleRegistry+numberOfModules.h"),
   `#define BUN_INTERNAL_MODULE_COUNT ${moduleList.length}\n`,
 );
 
 // This code slice is used in InternalModuleRegistry.h for inlining the enum. I dont think we
 // actually use this enum but it's probably a good thing to include.
-fs.writeFileSync(
-  path.join(BASE, "out/InternalModuleRegistry+enum.h"),
+writeIfNotChanged(
+  path.join(OUT_DIR, "InternalModuleRegistry+enum.h"),
   `${
     moduleList
       .map((id, n) => {
@@ -308,8 +246,8 @@ fs.writeFileSync(
 );
 
 // This code slice is used in InternalModuleRegistry.cpp. It defines the loading function for modules.
-fs.writeFileSync(
-  path.join(BASE, "out/InternalModuleRegistry+createInternalModuleById.h"),
+writeIfNotChanged(
+  path.join(OUT_DIR, "InternalModuleRegistry+createInternalModuleById.h"),
   `// clang-format off
 JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalObject, VM& vm, Field id)
 {
@@ -336,8 +274,8 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
 //
 // We cannot use ASCIILiteral's `_s` operator for the module source code because for long
 // strings it fails a constexpr assert. Instead, we do that assert in JS before we format the string
-fs.writeFileSync(
-  path.join(BASE, "out/InternalModuleRegistryConstants.h"),
+writeIfNotChanged(
+  path.join(OUT_DIR, "InternalModuleRegistryConstants.h"),
   `// clang-format off
 #pragma once
 
@@ -388,8 +326,8 @@ static constexpr ASCIILiteral ${idToEnumName(id)}Code = ASCIILiteral::fromLitera
 );
 
 // This is a generated enum for zig code (exports.zig)
-fs.writeFileSync(
-  path.join(BASE, "out/ResolvedSourceTag.zig"),
+writeIfNotChanged(
+  path.join(OUT_DIR, "ResolvedSourceTag.zig"),
   `// zig fmt: off
 pub const ResolvedSourceTag = enum(u32) {
     // Predefined
@@ -413,8 +351,8 @@ ${Object.entries(nativeModuleIds)
 );
 
 // This is a generated enum for c++ code (headers-handwritten.h)
-fs.writeFileSync(
-  path.join(BASE, "out/SyntheticModuleType.h"),
+writeIfNotChanged(
+  path.join(OUT_DIR, "SyntheticModuleType.h"),
   `enum SyntheticModuleType : uint32_t {
     JavaScript = 0,
     PackageJSONTypeModule = 1,
@@ -441,20 +379,20 @@ ${Object.entries(nativeModuleEnumToId)
 );
 
 // This is used in ModuleLoader.cpp to link to all the headers for native modules.
-fs.writeFileSync(
-  path.join(BASE, "out/NativeModuleImpl.h"),
+writeIfNotChanged(
+  path.join(OUT_DIR, "NativeModuleImpl.h"),
   Object.values(nativeModuleEnums)
     .map(value => `#include "../../bun.js/modules/${value}Module.h"`)
     .join("\n") + "\n",
 );
 
 // This is used for debug builds for the base path for dynamic loading
-fs.writeFileSync(
-  path.join(BASE, "out/DebugPath.h"),
-  `// Using __FILE__ does not give an absolute file path
-// This is a workaround for that.
-#define BUN_DYNAMIC_JS_LOAD_PATH "${path.join(BASE, "out/")}"
-`,
-);
+// fs.writeFileSync(
+//   path.join(OUT_DIR, "DebugPath.h"),
+//   `// Using __FILE__ does not give an absolute file path
+// // This is a workaround for that.
+// #define BUN_DYNAMIC_JS_LOAD_PATH "${path.join(OUT_DIR, "")}"
+// `,
+// );
 
 mark("Generate Code");

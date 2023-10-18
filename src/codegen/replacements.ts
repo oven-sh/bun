@@ -1,4 +1,4 @@
-import { LoaderKeys } from "../../api/schema";
+import { LoaderKeys } from "../api/schema";
 import { sliceSourceCode } from "./builtin-parser";
 
 // This is a list of extra syntax replacements to do. Kind of like macros

@@ -480,7 +480,7 @@ JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalO
   }
 
   templ += `
-#include "JSSinkLookupTable.h"
+#include "JSSink.lut.h"
   `;
 
   for (let name of classes) {
@@ -960,5 +960,5 @@ Bun.spawnSync([
   process.execPath,
   join(import.meta.dir, "create-hash-table.ts"),
   resolve(outDir + "/JSSink.cpp"),
-  outDir,
+  join(outDir, "JSSink.lut.h"),
 ]);

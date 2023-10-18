@@ -67,8 +67,14 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
 endif()
 
 # --- Build Flags ---
-set(DEFAULT_ON_UNLESS_WINDOWS $<NOT:$<BOOL:${WIN32}>>)
-set(DEFAULT_ON_UNLESS_APPLE $<NOT:$<BOOL:${APPLE}>>)
+set(DEFAULT_ON_UNLESS_WINDOWS ON)
+if (WIN32)
+    set(DEFAULT_ON_UNLESS_WINDOWS OFF)
+endif()
+set(DEFAULT_ON_UNLESS_APPLE ON)
+if (APPLE)
+    set(DEFAULT_ON_UNLESS_APPLE OFF)
+endif()
 
 option(USE_STATIC_SQLITE "Statically link SQLite?" ${DEFAULT_ON_UNLESS_APPLE})
 option(USE_CUSTOM_ZLIB "Use Bun's recommended version of zlib" ${DEFAULT_ON_UNLESS_WINDOWS})
@@ -115,9 +121,7 @@ endfunction()
 find_program(ZIG_COMPILER zig REQUIRED DOC "Path to the Zig compiler" VALIDATOR validate_zig)
 message(STATUS "Found Zig Compiler: ${ZIG_COMPILER}")
 
-# An existing Buntime. This is a sort of chicken-and-egg problem where you need `bun` to build `bun`
-# maybe in the future we can make it possible to use bun-polyfills in combination
-# with Node to fufill this requirement.
+# Bun
 find_program(BUN_EXECUTABLE bun REQUIRED DOC "Path to an already built release of Bun")
 
 # CCache
@@ -165,12 +169,32 @@ if(NOT DEFINED ASSERT_ENABLED)
 endif()
 message(STATUS "C++ Assertions: ${ASSERT_ENABLED}")
 
-# ---
+# --- CMake Macros ---
+
+# Append the given dependencies to the source file
+macro(WEBKIT_ADD_SOURCE_DEPENDENCIES _source _deps)
+    set(_tmp)
+    get_source_file_property(_tmp ${_source} OBJECT_DEPENDS)
+    if (NOT _tmp)
+        set(_tmp "")
+    endif ()
+
+    foreach (f ${_deps})
+        list(APPEND _tmp "${f}")
+    endforeach ()
+
+    set_source_files_properties(${_source} PROPERTIES OBJECT_DEPENDS "${_tmp}")
+    unset(_tmp)
+endmacro()
+
+# --- BUILD ---
 
 set(BUN_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src")
-set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/${bun}.dir")
+set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 set(BUN_DEPS_DIR "${BUN_SRC}/deps")
 set(BUN_CODEGEN_SRC "${BUN_SRC}/codegen")
+
+message(STATUS "Temp Directory: ${BUN_WORKDIR}")
 
 file(GLOB BUN_CPP CONFIGURE_DEPENDS
     "${BUN_SRC}/deps/*.cpp"
@@ -202,87 +226,129 @@ file(GLOB BUN_CLASSES_TS CONFIGURE_DEPENDS
     "${BUN_SRC}/bun.js/node/*.classes.ts"
 )
 add_custom_command(
-    OUTPUT "${BUN_WORKDIR}/generated-classes/ZigGeneratedClasses.h"
-           "${BUN_WORKDIR}/generated-classes/ZigGeneratedClasses.cpp"
-           "${BUN_WORKDIR}/generated-classes/ZigGeneratedClasses+lazyStructureHeader.h"
-           "${BUN_WORKDIR}/generated-classes/ZigGeneratedClasses+DOMClientIsoSubspaces.h"
-           "${BUN_WORKDIR}/generated-classes/ZigGeneratedClasses+DOMIsoSubspaces.h"
-           "${BUN_WORKDIR}/generated-classes/ZigGeneratedClasses+lazyStructureImpl.h"
-           "${BUN_WORKDIR}/generated-classes/ZigGeneratedClasses.zig"
-    COMMAND ${BUN_EXECUTABLE} "${BUN_CODEGEN_SRC}/generate-classes.ts" ${BUN_CLASSES_TS} "${BUN_WORKDIR}/generated-classes"
+    OUTPUT "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.h"
+           "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.cpp"
+           "${BUN_WORKDIR}/codegen/ZigGeneratedClasses+lazyStructureHeader.h"
+           "${BUN_WORKDIR}/codegen/ZigGeneratedClasses+DOMClientIsoSubspaces.h"
+           "${BUN_WORKDIR}/codegen/ZigGeneratedClasses+DOMIsoSubspaces.h"
+           "${BUN_WORKDIR}/codegen/ZigGeneratedClasses+lazyStructureImpl.h"
+           "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.zig"
+    COMMAND ${BUN_EXECUTABLE} "${BUN_CODEGEN_SRC}/generate-classes.ts" ${BUN_CLASSES_TS} "${BUN_WORKDIR}/codegen"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     MAIN_DEPENDENCY "${BUN_CODEGEN_SRC}/generate-classes.ts"
     DEPENDS ${BUN_CLASSES_TS}
     VERBATIM
     COMMENT "Generating *.classes.ts bindings"
 )
-include_directories("${BUN_WORKDIR}/generated-classes")
 
-# JSSink generator
-# add_custom_command(
-#     OUTPUT "${BUN_SRC}/bun.js/bindings/JSSink.cpp"
-#            "${BUN_SRC}/bun.js/bindings/JSSink.h"
-#     COMMAND ${BUN_EXECUTABLE} "src/codegen/generate-jssink.ts"
-#     VERBATIM 
-#     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-#     COMMENT "Generating JSSink"
-# )
+# --- JSSink Generator ---
+add_custom_command(
+    OUTPUT "${BUN_WORKDIR}/codegen/JSSink.cpp"
+           "${BUN_WORKDIR}/codegen/JSSink.h"
+    COMMAND ${BUN_EXECUTABLE} "src/codegen/generate-jssink.ts" "${BUN_WORKDIR}/codegen"
+    VERBATIM 
+    MAIN_DEPENDENCY "src/codegen/generate-jssink.ts"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMENT "Generating JSSink"
+)
 
-# # Append the given dependencies to the source file
-# macro(WEBKIT_ADD_SOURCE_DEPENDENCIES _source _deps)
-#     set(_tmp)
-#     get_source_file_property(_tmp ${_source} OBJECT_DEPENDS)
-#     if (NOT _tmp)
-#         set(_tmp "")
-#     endif ()
+# --- .lut.h Generator ---
+set(BUN_OBJECT_LUT_SOURCES
+    bun.js/bindings/BunObject.cpp
+    bun.js/bindings/ZigGlobalObject.lut.txt
+    bun.js/bindings/JSBuffer.cpp
+    bun.js/bindings/Process.cpp
+    bun.js/bindings/ProcessBindingConstants.cpp
+    bun.js/bindings/ProcessBindingNatives.cpp
+)
+set(BUN_HASH_LUT_GENERATOR "${BUN_CODEGEN_SRC}/create-hash-table.ts")
+macro(GENERATE_HASH_LUT _input _output _display_name)
 
-#     foreach (f ${_deps})
-#         list(APPEND _tmp "${f}")
-#     endforeach ()
+    add_custom_command(
+        OUTPUT ${_output}
+        MAIN_DEPENDENCY ${BUN_HASH_LUT_GENERATOR}
+        DEPENDS ${_input}
+        COMMAND ${BUN_EXECUTABLE} ${BUN_HASH_LUT_GENERATOR} ${_input} ${_output}
+        VERBATIM
+        COMMENT "Generating ${_display_name}"
+    )
+    # list(APPEND JavaScriptCore_HEADERS ${_output})
+    WEBKIT_ADD_SOURCE_DEPENDENCIES(${_input} ${_output})
+endmacro()
+foreach(_file ${BUN_OBJECT_LUT_SOURCES})
+    get_filename_component(_name ${_file} NAME_WE)
 
-#     set_source_files_properties(${_source} PROPERTIES OBJECT_DEPENDS "${_tmp}")
-#     unset(_tmp)
-# endmacro()
+    # workaround for ZigGlobalObject
+    if(_name MATCHES "ZigGlobalObject")
+        set(_name "ZigGlobalObject")
+    endif()
 
-# # LUT generator
-# file(Bun_OBJECT_LUT_SOURCES
-#     src/bun.js/bindings/BunObject.cpp
-#     src/bun.js/bindings/ZigGlobalObject.lut.txt
-#     src/bun.js/bindings/JSBuffer.cpp
-#     src/bun.js/bindings/Process.cpp
-#     src/bun.js/bindings/ProcessBindingConstants.cpp
-#     src/bun.js/bindings/ProcessBindingNatives.cpp
-# )
-# set(HASH_LUT_GENERATOR ${BUN_SRC}/codegen/create_hash_table)
+    GENERATE_HASH_LUT(${BUN_SRC}/${_file} ${BUN_WORKDIR}/codegen/${_name}.lut.h ${_name}.lut.h)
+endforeach()
 
-# macro(GENERATE_HASH_LUT _input _output)
-#     add_custom_command(
-#         OUTPUT ${_output}
-#         MAIN_DEPENDENCY ${HASH_LUT_GENERATOR}
-#         DEPENDS ${_input}
-#         COMMAND ${PERL_EXECUTABLE} ${HASH_LUT_GENERATOR} ${_input} > ${_output}
-#         VERBATIM)
-#     list(APPEND JavaScriptCore_HEADERS ${_output})
-#     WEBKIT_ADD_SOURCE_DEPENDENCIES(${_input} ${_output})
-# endmacro()
+WEBKIT_ADD_SOURCE_DEPENDENCIES(${BUN_SRC}/bun.js/bindings/ZigGlobalObject.cpp ${BUN_WORKDIR}/codegen/ZigGlobalObject.lut.h)
 
-# # GENERATOR 1-A: LUT creator
-# foreach(_file ${JavaScriptCore_OBJECT_LUT_SOURCES})
-#     get_filename_component(_name ${_file} NAME_WE)
-#     GENERATE_HASH_LUT(${CMAKE_CURRENT_SOURCE_DIR}/${_file} ${JavaScriptCore_DERIVED_SOURCES_DIR}/${_name}.lut.h)
-# endforeach()
-
-set(IDENTIFIER_CACHE_FILES 
+# --- Identifier Cache ---
+set(BUN_IDENTIFIER_CACHE_OUT
     "${BUN_SRC}/js_lexer/id_continue_bitset.blob" 
     "${BUN_SRC}/js_lexer/id_continue_bitset.meta.blob" 
     "${BUN_SRC}/js_lexer/id_start_bitset.blob"
     "${BUN_SRC}/js_lexer/id_start_bitset.meta.blob")
+add_custom_command(
+    OUTPUT ${BUN_IDENTIFIER_CACHE_OUT}
+    MAIN_DEPENDENCY "${BUN_SRC}/js_lexer/identifier_data.zig"
+    DEPENDS "${BUN_SRC}/js_lexer/identifier_cache.zig"
+    COMMAND ${ZIG_COMPILER} run "${BUN_SRC}/js_lexer/identifier_data.zig"
+    VERBATIM
+    COMMENT "Building Identifier Cache"
+)
 
+# --- Bundled TS/JS ---
+# Note: It's not worth doing this in parallel at the CMake/Ninja level, because this bundling
+# requires all the JS files to be known, but also Bun will use all cores during bundling anyways.
+file(GLOB BUN_TS_MODULES CONFIGURE_DEPENDS
+    "${BUN_SRC}/js/node/*.ts"
+    "${BUN_SRC}/js/node/*.js"
+    "${BUN_SRC}/js/bun/*.js"
+    "${BUN_SRC}/js/bun/*.ts"
+    "${BUN_SRC}/js/thirdparty/*.js"
+    "${BUN_SRC}/js/thirdparty/*.ts"
+    "${BUN_SRC}/js/internal/*.js"
+    "${BUN_SRC}/js/internal/*.ts"
+)
+file(GLOB BUN_TS_FUNCTIONS CONFIGURE_DEPENDS "${BUN_SRC}/js/builtins/*.ts")
+
+add_custom_command(
+    OUTPUT 
+           "${BUN_WORKDIR}/js/InternalModuleRegistryConstants.h"
+           "${BUN_WORKDIR}/js/InternalModuleRegistry+createInternalModuleById.h"
+           "${BUN_WORKDIR}/js/InternalModuleRegistry+enum.h"
+           "${BUN_WORKDIR}/js/InternalModuleRegistry+numberOfModules.h"
+           "${BUN_WORKDIR}/js/NativeModuleImpl.h"
+           "${BUN_WORKDIR}/js/ResolvedSourceTag.zig"
+           "${BUN_WORKDIR}/js/SyntheticModuleType.h"
+    COMMAND ${BUN_EXECUTABLE} "${BUN_SRC}/codegen/bundle-modules.ts" "${BUN_WORKDIR}"
+    DEPENDS ${BUN_TS_MODULES}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMENT "Bundling JS modules"
+)
+WEBKIT_ADD_SOURCE_DEPENDENCIES(${BUN_SRC}/bun.js/bindings/InternalModuleRegistry.cpp "${BUN_WORKDIR}/js/InternalModuleRegistryConstants.h")
+
+add_custom_command(
+    OUTPUT "${BUN_WORKDIR}/js/WebCoreJSBuiltins.cpp" "${BUN_WORKDIR}/js/WebCoreJSBuiltins.h"
+    COMMAND ${BUN_EXECUTABLE} "${BUN_SRC}/codegen/bundle-functions.ts" "${BUN_WORKDIR}"
+    DEPENDS ${BUN_TS_FUNCTIONS}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMENT "Bundling JS builtin functions"
+)
+
+
+# --- Zig Object ---
 file(GLOB ZIG_FILES
     "${BUN_SRC}/*.zig"
-    "${BUN_SRC}/*/*.zig"
-    "${BUN_SRC}/*/**/*.zig"
-    "${BUN_SRC}/*/*/*/*.zig"
+    "${BUN_SRC}/**/*.zig"
+    "${BUN_SRC}/**/**/*.zig"
+    "${BUN_SRC}/**/**/**/*.zig"
 )
 
 set(BUN_ZIG_OBJ "${BUN_WORKDIR}/${bun}.o")
@@ -290,32 +356,38 @@ add_custom_command(
     OUTPUT "${BUN_ZIG_OBJ}"
     COMMAND "${ZIG_COMPILER}" "build" "obj"
         "-Doptimize=${ZIG_OPTIMIZE}"
-        "-Doutput-dir=${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/${bun}.dir"
+        "-Doutput-dir=${BUN_WORKDIR}"
         "-Dcpu=${CPU_TARGET}"
-        "-Dgenerated-files=${BUN_WORKDIR}"
-
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/build.zig ${ZIG_FILES} "${BUN_WORKDIR}/generated-classes/ZigGeneratedClasses.zig"
+        "-Dgenerated-code=${BUN_WORKDIR}/codegen"
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/build.zig"
+        "${ZIG_FILES}"
+        "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.zig"
+        "${BUN_WORKDIR}/js/ResolvedSourceTag.zig"
+        "${BUN_IDENTIFIER_CACHE_OUT}"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Building zig code"
     VERBATIM
     USES_TERMINAL
 )
 
-# add_executable(${bun} ${BUN_CPP} ${USOCKETS_FILES} ${BUN_ZIG_OBJ} ${EXTRA_SRC})
-add_executable(${bun} "/Users/dave/code/bun/src/bun.js/bindings/JSSocketAddress.cpp" "${BUN_ZIG_OBJ}")
+# -- The Buntime™️ ---
+add_executable(
+    ${bun}
+    
+    ${BUN_CPP}
+    ${USOCKETS_FILES}
+    ${BUN_ZIG_OBJ}
+    "${BUN_WORKDIR}/codegen/JSSink.cpp"
+    "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.cpp"
+    "${BUN_WORKDIR}/js/WebCoreJSBuiltins.cpp"
+    "${BUN_ZIG_OBJ}"
+)
 
 # Set /subsystem:console on bun for windows
 if (WIN32)
     set_target_properties(${bun} PROPERTIES LINK_FLAGS " /SUBSYSTEM:CONSOLE ")
 endif()
-
-# TODO: not good enough
-# add_custom_command(
-#     TARGET bun PRE_BUILD
-#     COMMAND ${BUN_EXECUTABLE} "${BUN_SRC}/js/_codegen/index.ts"
-#     DEPENDS "${BUN_SRC}/js/**/*.{js,ts}"
-#     COMMENT "Bundling JS modules"
-# )
 
 set_target_properties(${bun} PROPERTIES
     CXX_STANDARD 20
@@ -349,10 +421,10 @@ add_compile_definitions(
     "BUILDING_JSCONLY__"
     "NDEBUG=$<IF:$<CONFIG:ASSERT_ENABLED>,0,1>"
     "ASSERT_ENABLED=$<IF:$<CONFIG:ASSERT_ENABLED>,1,0>"
+    "BUN_DYNAMIC_JS_LOAD_PATH=\"${BUN_WORKDIR}/js\""
 )
 include_directories(
-    packages/bun-uws
-    packages
+    packages/
     packages/bun-usockets
     packages/bun-usockets/src
     src/bun.js/bindings
@@ -360,8 +432,6 @@ include_directories(
     src/bun.js/bindings/webcrypto
     src/bun.js/bindings/sqlite
     src/bun.js/modules
-    src/js/out
-    src/js/out/modules
     src/js/builtins
     src/napi
     src/deps
@@ -374,6 +444,8 @@ include_directories(
     ${WEBKIT_DIR}/JavaScriptCore/PrivateHeaders
     ${WEBKIT_DIR}/bmalloc/PrivateHeaders
     ${WEBKIT_DIR}/WTF/PrivateHeaders
+    "${BUN_WORKDIR}/codegen"
+    "${BUN_WORKDIR}/js"
 )
 
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -384,7 +456,7 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
         string(APPEND CMAKE_CXX_FLAGS " /O1")
         string(APPEND CMAKE_C_FLAGS " /O1")
     endif()
-    add_compile_definitions("BUN_DEBUG")
+    add_compile_definitions("BUN_DEBUG=1")
 elseif (NOT MSVC)
     string(APPEND CMAKE_CXX_FLAGS " -O3 -femit-llvm" )
     string(APPEND CMAKE_C_FLAGS " -O3 -femit-llvm")
@@ -400,6 +472,8 @@ if (WIN32)
         "_CRT_SECURE_NO_WARNINGS"
         "WIN32_LEAN_AND_MEAN=1"
     )
+
+    set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
 endif()
 
 # if clang
@@ -567,7 +641,6 @@ else ()
     target_link_libraries(${bun} PRIVATE c-ares::cares)
 endif()
 
-
 if (USE_CUSTOM_BASE64)
     include_directories(src/deps/base64/include)
     if (WIN32)
@@ -593,10 +666,6 @@ if (NOT WIN32)
     endif()
 endif()
 
-set_property(TARGET ${bun} PROPERTY
-    MSVC_RUNTIME_LIBRARY "MultiThreadedDLL"
-)
-
 if (USE_CUSTOM_LOLHTML)
     if (WIN32)
         target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/lolhtml.lib")
@@ -615,15 +684,17 @@ if (WIN32)
         find_package(libuv CONFIG REQUIRED )
         target_link_libraries(${bun} PRIVATE $<IF:$<TARGET_EXISTS:libuv::uv_a>,libuv::uv_a,libuv::uv>)
     endif()
-
+    message(STATUS "Found libuv: ${libuv_LIBRARIES}")
 endif()
 
 if (USE_STATIC_SQLITE)
     add_library(sqlite3 STATIC src/bun.js/bindings/sqlite/sqlite3.c)
     target_include_directories(sqlite3 PUBLIC src/bun.js/bindings/sqlite)
     target_link_libraries(bun PRIVATE sqlite3)
+    message(STATUS "Using static sqlite3")
     target_compile_definitions(${bun} PRIVATE "LAZY_LOAD_SQLITE=0")
 else()
+    message(STATUS "Using dynamicly linked sqlite3")
     target_compile_definitions(${bun} PRIVATE "LAZY_LOAD_SQLITE=1")
 endif()
 

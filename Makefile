@@ -424,7 +424,8 @@ ifeq ($(OS_NAME), darwin)
 SYMBOLS=-exported_symbols_list $(realpath src/symbols.txt)
 PLATFORM_LINKER_FLAGS += -DDU_DISABLE_RENAMING=1 \
 		-lstdc++ \
-		-fno-keep-static-consts -lresolv
+		-fno-keep-static-consts -lresolv \
+		-framework Security -framework CoreFoundation
 endif
 
 ifeq ($(OS_NAME),linux)

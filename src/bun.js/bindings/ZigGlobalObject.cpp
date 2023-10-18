@@ -2209,7 +2209,7 @@ static inline EncodedJSValue functionPerformanceNowBody(JSGlobalObject* globalOb
 static inline EncodedJSValue functionPerformanceGetEntriesByNameBody(JSGlobalObject* globalObject) {
     auto& vm = globalObject->vm();
     auto* global = reinterpret_cast<GlobalObject*>(globalObject);
-    auto* array = JSC::JSArray::create(vm, global->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), 0);
+    auto* array = JSC::constructEmptyArray(globalObject, nullptr);
     return JSValue::encode(array);
 }
 

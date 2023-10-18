@@ -5297,6 +5297,37 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             return JSC.JSValue.jsNumber(@as(i32, @intCast(@as(u31, @truncate(this.activeSocketsCount())))));
         }
 
+        pub fn getAddress(this: *ThisServer, globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {
+            switch (this.config.address) {
+                .unix => |unix| {
+                    var value = bun.String.create(bun.sliceTo(@constCast(unix), 0));
+                    defer value.deref();
+                    return value.toJS(globalThis);
+                },
+                .tcp => {
+                    var port: u16 = this.config.address.tcp.port;
+
+                    if (this.listener) |listener| {
+                        port = @intCast(listener.getLocalPort());
+
+                        var buf: [64]u8 = [_]u8{0} ** 64;
+                        var is_ipv6: bool = false;
+
+                        if (listener.socket().localAddressText(&buf, &is_ipv6)) |slice| {
+                            var ip = bun.String.create(slice);
+                            return JSSocketAddress__create(
+                                this.globalThis,
+                                ip.toJS(this.globalThis),
+                                port,
+                                is_ipv6,
+                            );
+                        }
+                    }
+                    return JSValue.jsNull();
+                },
+            }
+        }
+
         pub fn getHostname(this: *ThisServer, globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {
             if (this.cached_hostname.isEmpty()) {
                 if (this.listener) |listener| {

@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import nodefs from "node:fs";
 import { join as joinPath } from "node:path";
+import { unlinkSync } from "node:fs";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll } = createTest(import.meta.path);
 
 function listen(server: Server, protocol: string = "http"): Promise<URL> {
@@ -992,5 +993,89 @@ describe("node https server", async () => {
     } finally {
       done();
     }
+  });
+});
+
+describe("server.address should be valid IP", () => {
+  it("should return null before listening", done => {
+    const server = createServer((req, res) => {});
+    try {
+      expect(server.address()).toBeNull();
+      done();
+    } catch (err) {
+      done(err);
+    }
+  });
+  it("should return null after close", done => {
+    const server = createServer((req, res) => {});
+    server.listen(0, async (_err, host, port) => {
+      try {
+        expect(server.address()).not.toBeNull();
+        server.close();
+        expect(server.address()).toBeNull();
+        done();
+      } catch (err) {
+        done(err);
+      }
+    });
+  });
+  it("test default hostname, issue#5850", done => {
+    const server = createServer((req, res) => {});
+    server.listen(0, async (_err, host, port) => {
+      try {
+        const { address, family, port } = server.address();
+        expect(port).toBeInteger();
+        expect(port).toBeGreaterThan(0);
+        expect(port).toBeLessThan(65536);
+        expect(["::", "0.0.0.0"]).toContain(address);
+        if (address === "0.0.0.0") {
+          expect(family).toStrictEqual("IPv4");
+        } else {
+          expect(family).toStrictEqual("IPv6");
+        }
+        done();
+      } catch (err) {
+        done(err);
+      } finally {
+        server.close();
+      }
+    });
+  });
+  it.each([["localhost"], ["127.0.0.1"]])("test %s", (hostname, done) => {
+    const server = createServer((req, res) => {});
+    server.listen(0, hostname, async (_err, host, port) => {
+      try {
+        const { address, family } = server.address();
+        expect(port).toBeInteger();
+        expect(port).toBeGreaterThan(0);
+        expect(port).toBeLessThan(65536);
+        expect(["IPv4", "IPv6"]).toContain(family);
+        if (family === "IPv4") {
+          expect(address).toStrictEqual("127.0.0.1");
+        } else {
+          expect(address).toStrictEqual("::1");
+        }
+        done();
+      } catch (err) {
+        done(err);
+      } finally {
+        server.close();
+      }
+    });
+  });
+  it("test unix socket, issue#6413", done => {
+    const socketPath = `${tmpdir()}/bun-server-${Math.random().toString(32)}.sock`;
+    const server = createServer((req, res) => {});
+    server.listen(socketPath, async (_err, host, port) => {
+      try {
+        expect(server.address()).toStrictEqual(socketPath);
+        done();
+      } catch (err) {
+        done(err);
+      } finally {
+        server.close();
+        unlinkSync(socketPath);
+      }
+    });
   });
 });

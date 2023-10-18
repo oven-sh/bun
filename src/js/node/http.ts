@@ -447,13 +447,7 @@ class Server extends EventEmitter {
 
   address() {
     if (!this.#server) return null;
-
-    const address = this.#server.hostname;
-    return {
-      address,
-      family: isIPv6(address) ? "IPv6" : "IPv4",
-      port: this.#server.port,
-    };
+    return this.#server.address;
   }
 
   listen(port, host, backlog, onListen) {

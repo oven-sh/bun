@@ -2253,6 +2253,8 @@ pub const JSExpect = struct {
             @compileLog("Expected Expect.toBeTypeOf to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeTypeOf)));
         if (@TypeOf(Expect.toBeUndefined) != CallbackType)
             @compileLog("Expected Expect.toBeUndefined to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeUndefined)));
+        if (@TypeOf(Expect.toBeValidDate) != CallbackType)
+            @compileLog("Expected Expect.toBeValidDate to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeValidDate)));
         if (@TypeOf(Expect.toBeWithin) != CallbackType)
             @compileLog("Expected Expect.toBeWithin to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeWithin)));
         if (@TypeOf(Expect.toContain) != CallbackType)
@@ -2396,6 +2398,7 @@ pub const JSExpect = struct {
             @export(Expect.toBeTruthy, .{ .name = "ExpectPrototype__toBeTruthy" });
             @export(Expect.toBeTypeOf, .{ .name = "ExpectPrototype__toBeTypeOf" });
             @export(Expect.toBeUndefined, .{ .name = "ExpectPrototype__toBeUndefined" });
+            @export(Expect.toBeValidDate, .{ .name = "ExpectPrototype__toBeValidDate" });
             @export(Expect.toBeWithin, .{ .name = "ExpectPrototype__toBeWithin" });
             @export(Expect.toContain, .{ .name = "ExpectPrototype__toContain" });
             @export(Expect.toContainEqual, .{ .name = "ExpectPrototype__toContainEqual" });

@@ -361,6 +361,10 @@ export default [
         fn: "toBeDate",
         length: 0,
       },
+      toBeValidDate: {
+        fn: "toBeValidDate",
+        length: 0,
+      },
       toBeString: {
         fn: "toBeString",
         length: 0,

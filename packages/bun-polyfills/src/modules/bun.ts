@@ -41,7 +41,7 @@ export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satis
 
 //? These are automatically updated on build by tools/updateversions.ts, do not edit manually.
 export const version = '1.0.4' satisfies typeof Bun.version;
-export const revision = '44d6e8b0629789eba42bbeba3f5640acb0cb9852' satisfies typeof Bun.revision;
+export const revision = 'c26f06d52e9a55ac9b1beb289d50a59154fcd8ab' satisfies typeof Bun.revision;
 
 export const gc = (globalThis.gc ? (() => (globalThis.gc!(), process.memoryUsage().heapUsed)) : (() => {
     const err = new Error('[bun-polyfills] Garbage collection polyfills are only available when Node.js is ran with the --expose-gc flag.');
@@ -405,7 +405,17 @@ export const escapeHTML = ((input) => {
     return out;
 }) satisfies typeof Bun.escapeHTML;
 
-export const readableStreamToArrayBuffer = ((stream: ReadableStream<ArrayBufferView | ArrayBufferLike>): ArrayBuffer | Promise<ArrayBuffer> => {
+export const readableStreamToFormData = (async (stream, boundary) => {
+    if (boundary) {
+        if (typeof boundary !== 'string') boundary = new TextDecoder().decode(boundary);
+        return await new Response(stream, { headers: { 'content-type': `multipart/form-data; boundary="-${boundary}"` } }).formData();
+    }
+    const fd = new FormData();
+    new URLSearchParams(await readableStreamToText(stream)).forEach((v, k) => fd.set(k, v));
+    return fd;
+}) satisfies typeof Bun.readableStreamToFormData;
+
+export const readableStreamToArrayBuffer = ((stream) => {
     return (async () => {
         const sink = new ArrayBufferSink();
         const reader = stream.getReader();
@@ -417,32 +427,35 @@ export const readableStreamToArrayBuffer = ((stream: ReadableStream<ArrayBufferV
         return sink.end() as ArrayBuffer;
     })();
 }) satisfies typeof Bun.readableStreamToArrayBuffer;
-export const readableStreamToText = (async (stream: ReadableStream<ArrayBufferView | ArrayBuffer>) => {
+
+export const readableStreamToText = (async (stream) => {
     let result = '';
     // @ts-expect-error TODO: check why this suddenly errors in bun-types 1.0.4
-    const reader = stream.pipeThrough(new TextDecoderStream()).getReader(); ReadableStreamDefaultReader
+    const reader = stream.pipeThrough(new TextDecoderStream()).getReader();
     while (true) {
         const { done, value } = await reader.read();
-        //! for some reason "done" isnt being set to true so this is just infinitely looping at the moment... sigh
-        if (done || !value || !value?.byteLength) break;
+        if (done) break;
         result += value;
     }
     return result;
 }) satisfies typeof Bun.readableStreamToText;
-export const readableStreamToBlob = (async (stream: ReadableStream<any>) => {
+
+export const readableStreamToBlob = (async (stream) => {
     const parts = await readableStreamToArray(stream);
     return new Blob(parts as BlobPart[]);
 }) satisfies typeof Bun.readableStreamToBlob;
+
 export const readableStreamToArray = (async <T = unknown>(stream: ReadableStream<T>) => {
     const array = new Array<T>();
     const reader = stream.getReader();
     while (true) {
         const { done, value } = await reader.read();
-        if (done || !value || !(<any>value)?.length) break;
+        if (done) break;
         array.push(value as unknown as T);
     }
     return array;
 }) satisfies typeof Bun.readableStreamToArray;
+
 export const readableStreamToJSON = (async <T = unknown>(stream: ReadableStream<Uint8Array>) => {
     const text = await readableStreamToText(stream);
     try {

@@ -9,7 +9,6 @@ import * as ffi from './modules/ffi.js';
 
 globalThis.Bun = bun as typeof bun & {
     // TODO: Missing polyfills
-    readableStreamToFormData: typeof import('bun').readableStreamToFormData;
     build: typeof import('bun').build;
     connect: typeof import('bun').connect;
     listen: typeof import('bun').listen;

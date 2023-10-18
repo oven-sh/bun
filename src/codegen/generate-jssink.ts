@@ -1,4 +1,4 @@
-import { resolve } from "path";
+import { resolve, join } from "path";
 
 const classes = ["ArrayBufferSink", "FileSink", "HTTPResponseSink", "HTTPSResponseSink"];
 
@@ -14,6 +14,7 @@ function names(name) {
     writableStreamName: `JSWritableStreamSource${name}`,
   };
 }
+
 function header() {
   function classTemplate(name) {
     const { constructor, className, controller, writableStreamName } = names(name);
@@ -950,5 +951,14 @@ extern "C" void ${name}__onClose(JSC__JSValue controllerValue, JSC__JSValue reas
   return templ;
 }
 
-await Bun.write(resolve(import.meta.dir + "/../bun.js/bindings/JSSink.h"), header());
-await Bun.write(resolve(import.meta.dir + "/../bun.js/bindings/JSSink.cpp"), await implementation());
+const outDir = resolve(process.argv[2]);
+
+await Bun.write(resolve(outDir + "/JSSink.h"), header());
+await Bun.write(resolve(outDir + "/JSSink.cpp"), await implementation());
+
+Bun.spawnSync([
+  process.execPath,
+  join(import.meta.dir, "create-hash-table.ts"),
+  resolve(outDir + "/JSSink.cpp"),
+  outDir,
+]);

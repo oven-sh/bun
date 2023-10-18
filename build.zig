@@ -171,6 +171,8 @@ pub fn build_(b: *Build) !void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     optimize = b.standardOptimizeOption(.{});
 
+    const cmake_generated_directory = b.option([]const u8, "generated-files", "Set the generated files (CMake's BUN_WORKDIR)") orelse "./";
+
     var output_dir_buf = std.mem.zeroes([4096]u8);
     var bin_label = if (optimize == std.builtin.OptimizeMode.Debug) "packages/debug-bun-" else "packages/bun-";
 
@@ -318,6 +320,10 @@ pub fn build_(b: *Build) !void {
         }
 
         obj.addOptions("build_options", actual_build_options.step(b));
+
+        obj.addModule("generated-classes", b.createModule(.{
+            .source_file = .{ .path = b.fmt("{s}/generated-classes/ZigGeneratedClasses.zig", .{cmake_generated_directory}) },
+        }));
 
         obj.linkLibC();
 

@@ -14,7 +14,7 @@
 ///  5. make clean-bindings && make bindings -j10
 ///
 const JSC = @import("root").bun.JSC;
-const Classes = @import("./generated_classes_list.zig").Classes;
+const Classes = JSC.GeneratedClassesList;
 const Environment = @import("../../env.zig");
 const std = @import("std");
 

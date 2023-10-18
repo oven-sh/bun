@@ -2,7 +2,7 @@
 import { unlinkSync } from "fs";
 import { readdirSync } from "fs";
 import { resolve } from "path";
-import type { Field, ClassDefinition } from "../bun.js/scripts/class-definitions";
+import type { Field, ClassDefinition } from "./class-definitions";
 
 const CommonIdentifiers = {
   "name": true,
@@ -1681,56 +1681,33 @@ const ZIG_GENERATED_CLASSES_HEADER = `
 ///        - pub usingnamespace JSC.Codegen.JSMyClassName;
 ///  5. make clean-bindings && make bindings -j10
 ///  
-const JSC = @import("root").bun.JSC;
-const Classes = @import("./generated_classes_list.zig").Classes;
-const Environment = @import("../../env.zig");
+const bun = @import("root").bun;
+const JSC = bun.JSC;
+const Classes = JSC.GeneratedClassesList;
+const Environment = bun.Environment;
 const std = @import("std");
 
 pub const StaticGetterType = fn(*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue) callconv(.C) JSC.JSValue;
 pub const StaticSetterType = fn(*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue, JSC.JSValue) callconv(.C) bool;
 pub const StaticCallbackType = fn(*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
 
-
-
 `;
 
-function findClassesOldBehavior() {
-  var classes = [];
-  for (let directory of directoriesToSearch) {
-    readdirSync(directory).forEach(file => {
-      if (file.endsWith(".classes.ts")) {
-        const result = require(`${directory}/${file}`);
-        if (!(result?.default?.length ?? 0)) return;
-        console.log("Generated", result.default.length, "classes from", file);
-        for (let { name } of result.default) {
-          console.log(`  - ${name}`);
-        }
+const files = process.argv.slice(2);
+const outBase = files.pop();
 
-        classes.push(...result.default);
-      }
-    });
+const classes = [];
+for (const file of files) {
+  const result = require(file);
+  if (!(result?.default?.length ?? 0)) continue;
+  console.log("Found", result.default.length, "classes from", file);
+  for (let { name } of result.default) {
+    console.log(`  - ${name}`);
   }
-  classes.sort((a, b) => (a.name < b.name ? -1 : 1));
-  return classes;
+
+  classes.push(...result.default);
 }
-
-function findClasses(argv: string[]) {
-  const classes = [];
-  for (const file of argv) {
-    const result = require(file);
-    if (!(result?.default?.length ?? 0)) continue;
-    console.log("Found", result.default.length, "classes from", file);
-    for (let { name } of result.default) {
-      console.log(`  - ${name}`);
-    }
-
-    classes.push(...result.default);
-  }
-  classes.sort((a, b) => (a.name < b.name ? -1 : 1));
-  return classes;
-}
-
-const classes = process.argv.length > 2 ? findClasses(process.argv.slice(2)) : findClassesOldBehavior();
+classes.sort((a, b) => (a.name < b.name ? -1 : 1));
 
 function writeAndUnlink(path, content) {
   try {
@@ -1814,9 +1791,7 @@ function writeCppSerializers() {
   return output;
 }
 
-const bindingDir = `${import.meta.dir}/../bun.js/bindings`;
-
-await writeAndUnlink(`${bindingDir}/generated_classes.zig`, [
+await writeAndUnlink(`${outBase}/ZigGeneratedClasses.zig`, [
   ZIG_GENERATED_CLASSES_HEADER,
 
   ...classes.map(a => generateZig(a.name, a).trim()).join("\n"),
@@ -1825,30 +1800,30 @@ await writeAndUnlink(`${bindingDir}/generated_classes.zig`, [
 comptime {
   ${classes.map(a => `_ = ${className(a.name)};`).join("\n  ")}
 }
-  
+
   `,
 ]);
 const allHeaders = classes.map(a => generateHeader(a.name, a));
-await writeAndUnlink(`${bindingDir}/ZigGeneratedClasses.h`, [
+await writeAndUnlink(`${outBase}/ZigGeneratedClasses.h`, [
   GENERATED_CLASSES_HEADER[0],
   ...[...new Set(extraIncludes.map(a => `#include "${a}";` + "\n"))],
   GENERATED_CLASSES_HEADER[1],
   ...allHeaders,
   GENERATED_CLASSES_FOOTER,
 ]);
-await writeAndUnlink(`${bindingDir}/ZigGeneratedClasses.cpp`, [
+await writeAndUnlink(`${outBase}/ZigGeneratedClasses.cpp`, [
   GENERATED_CLASSES_IMPL_HEADER,
   ...classes.map(a => generateImpl(a.name, a)),
   writeCppSerializers(classes),
   GENERATED_CLASSES_IMPL_FOOTER,
 ]);
 await writeAndUnlink(
-  `${bindingDir}/ZigGeneratedClasses+lazyStructureHeader.h`,
+  `${outBase}/ZigGeneratedClasses+lazyStructureHeader.h`,
   classes.map(a => generateLazyClassStructureHeader(a.name, a)).join("\n"),
 );
 
 await writeAndUnlink(
-  `${bindingDir}/ZigGeneratedClasses+DOMClientIsoSubspaces.h`,
+  `${outBase}/ZigGeneratedClasses+DOMClientIsoSubspaces.h`,
   classes.map(a =>
     [
       `std::unique_ptr<GCClient::IsoSubspace> ${clientSubspaceFor(a.name)};`,
@@ -1858,7 +1833,7 @@ await writeAndUnlink(
 );
 
 await writeAndUnlink(
-  `${bindingDir}/ZigGeneratedClasses+DOMIsoSubspaces.h`,
+  `${outBase}/ZigGeneratedClasses+DOMIsoSubspaces.h`,
   classes.map(a =>
     [
       `std::unique_ptr<IsoSubspace> ${subspaceFor(a.name)};`,
@@ -1868,7 +1843,7 @@ await writeAndUnlink(
 );
 
 await writeAndUnlink(
-  `${bindingDir}/ZigGeneratedClasses+lazyStructureImpl.h`,
+  `${outBase}/ZigGeneratedClasses+lazyStructureImpl.h`,
   initLazyClasses(classes.map(a => generateLazyClassStructureImpl(a.name, a))) + "\n" + visitLazyClasses(classes),
 );
 

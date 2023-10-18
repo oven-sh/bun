@@ -4,7 +4,7 @@ import streams from 'node:stream';
 import { ReadableStream as NodeWebReadableStream } from 'node:stream/web';
 import { FileSink } from './filesink.js';
 import { SystemError } from '../../utils/errors.js';
-import type { FileBlob as BunFileBlob, FileSink as BunFileSink } from 'bun';
+import type { BunFile, FileBlob as BunFileBlob, FileSink as BunFileSink } from 'bun';
 
 type NodeJSStream = streams.Readable | streams.Writable;
 
@@ -42,10 +42,10 @@ export const NodeJSStreamFileBlob = class FileBlob extends Blob {
     readonly #slice: [number?, number?];
     #size: number;
 
-    slice(begin?: number, end?: number, contentType?: string): Blob;
-    slice(begin?: number, contentType?: string): Blob;
-    slice(contentType?: string): Blob;
-    slice(beginOrType?: number | string, endOrType?: number | string, contentType: string = this.type): Blob {
+    slice(begin?: number, end?: number, contentType?: string): BunFile;
+    slice(begin?: number, contentType?: string): BunFile;
+    slice(contentType?: string): BunFile;
+    slice(beginOrType?: number | string, endOrType?: number | string, contentType: string = this.type): BunFile {
         if (typeof beginOrType === 'string') return new FileBlob(this.#source, this.#slice, beginOrType);
         if (typeof endOrType === 'string') return new FileBlob(this.#source, [beginOrType, undefined], endOrType);
         return new FileBlob(this.#source, [beginOrType, endOrType], contentType);
@@ -81,6 +81,19 @@ export const NodeJSStreamFileBlob = class FileBlob extends Blob {
     override async json<TJSONReturnType = unknown>(): Promise<TJSONReturnType> {
         this.#blobStackFn = this.json;
         return JSON.parse(await this.text()) as Promise<TJSONReturnType>;
+    }
+
+    readonly lastModified: number = Date.now();
+    readable: ReadableStream<any> = undefined as any; //? broken on bun's side
+
+    async exists(): Promise<boolean> {
+        return false; // Yes Bun returns false for these at the time of writing
+    }
+
+    writer(): BunFileSink {
+        if (!this.#readable && !this.#iostream) throw new Error('Cannot get writer for a non-readable stream');
+        // @ts-expect-error stream types are just too annoying to make TS happy here but it works at runtime
+        return new FileSink(this.#source);
     }
 
     override get size(): number { return this.#size; }

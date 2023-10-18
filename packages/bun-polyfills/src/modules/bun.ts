@@ -41,7 +41,7 @@ export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satis
 
 //? These are automatically updated on build by tools/updateversions.ts, do not edit manually.
 export const version = '1.0.4' satisfies typeof Bun.version;
-export const revision = 'c26f06d52e9a55ac9b1beb289d50a59154fcd8ab' satisfies typeof Bun.revision;
+export const revision = 'd3c926dab84d766fa100fb4e0c119e741e22fbbf' satisfies typeof Bun.revision;
 
 export const gc = (globalThis.gc ? (() => (globalThis.gc!(), process.memoryUsage().heapUsed)) : (() => {
     const err = new Error('[bun-polyfills] Garbage collection polyfills are only available when Node.js is ran with the --expose-gc flag.');
@@ -51,11 +51,8 @@ export const gc = (globalThis.gc ? (() => (globalThis.gc!(), process.memoryUsage
 
 //getter(bun, 'cwd', proc.cwd); //! Can't named export a getter
 export const origin = '' satisfies typeof Bun.origin;
-// @ts-expect-error ---
 export const stdin = new NodeJSStreamFileBlob(process.stdin) satisfies typeof Bun.stdin;
-// @ts-expect-error ---
 export const stdout = new NodeJSStreamFileBlob(process.stdout) satisfies typeof Bun.stdout;
-// @ts-expect-error ---
 export const stderr = new NodeJSStreamFileBlob(process.stderr) satisfies typeof Bun.stderr;
 export const argv = [process.argv0, ...process.execArgv, ...process.argv.slice(1)] satisfies typeof Bun.argv;
 export const env = process.env satisfies typeof Bun.env;
@@ -248,13 +245,10 @@ export const spawn = ((...args) => {
     if (opts.stderr) opts.stdio[2] = opts.stderr;
     for (let i = 1; i < 3; i++) { // this intentionally skips stdin
         let std = opts.stdio[i];
-        // @ts-expect-error TODO: check why this suddenly errors in bun-types 1.0.4
-        if (isArrayBufferView(std)) stdio[i] = streams.Readable.fromWeb(new Blob([std]).stream());
-        // @ts-expect-error TODO: check why this suddenly errors in bun-types 1.0.4
-        else if (std instanceof Blob || isFileBlob(std)) stdio[i] = streams.Readable.fromWeb(std.stream());
-        // @ts-expect-error TODO: check why this suddenly errors in bun-types 1.0.4
-        else if (std instanceof ReadableStream) stdio[i] = streams.Readable.fromWeb(std);
-        // @ts-expect-error TODO: check why this suddenly errors in bun-types 1.0.4
+        // @types/node and bun-types have conflicting types for ReadableStream because of generics
+        if (isArrayBufferView(std)) stdio[i] = streams.Readable.fromWeb(new Blob([std]).stream() as import("stream/web").ReadableStream);
+        else if (std instanceof Blob || isFileBlob(std)) stdio[i] = streams.Readable.fromWeb(std.stream() as import("stream/web").ReadableStream);
+        else if (std instanceof ReadableStream) stdio[i] = streams.Readable.fromWeb(std as import("stream/web").ReadableStream);
         else if (std instanceof Response || std instanceof Request) stdio[i] = streams.Readable.fromWeb(std.body!);
         else stdio[i] = std;
     }
@@ -354,13 +348,10 @@ export const spawnSync = ((...args): SyncSubprocess => {
     if (opts.stderr) opts.stdio[2] = opts.stderr;
     for (let i = 1; i < 3; i++) { // this intentionally skips stdin
         let std = opts.stdio[i];
-        // @ts-expect-error TODO: check why this suddenly errors in bun-types 1.0.4
-        if (isArrayBufferView(std)) stdio[i] = streams.Readable.fromWeb(new Blob([std]).stream());
-        // @ts-expect-error TODO: check why this suddenly errors in bun-types 1.0.4
-        else if (std instanceof Blob || isFileBlob(std)) stdio[i] = streams.Readable.fromWeb(std.stream());
-        // @ts-expect-error TODO: check why this suddenly errors in bun-types 1.0.4
-        else if (std instanceof ReadableStream) stdio[i] = streams.Readable.fromWeb(std);
-        // @ts-expect-error TODO: check why this suddenly errors in bun-types 1.0.4
+        // @types/node and bun-types have conflicting types for ReadableStream because of generics
+        if (isArrayBufferView(std)) stdio[i] = streams.Readable.fromWeb(new Blob([std]).stream() as import("stream/web").ReadableStream);
+        else if (std instanceof Blob || isFileBlob(std)) stdio[i] = streams.Readable.fromWeb(std.stream() as import("stream/web").ReadableStream);
+        else if (std instanceof ReadableStream) stdio[i] = streams.Readable.fromWeb(std as import("stream/web").ReadableStream);
         else if (std instanceof Response || std instanceof Request) stdio[i] = streams.Readable.fromWeb(std.body!);
         else stdio[i] = std;
     }
@@ -405,12 +396,13 @@ export const escapeHTML = ((input) => {
     return out;
 }) satisfies typeof Bun.escapeHTML;
 
-export const readableStreamToFormData = (async (stream, boundary) => {
+export const readableStreamToFormData = (async (stream, boundary): Promise<FormData> => {
     if (boundary) {
         if (typeof boundary !== 'string') boundary = new TextDecoder().decode(boundary);
-        return await new Response(stream, { headers: { 'content-type': `multipart/form-data; boundary="-${boundary}"` } }).formData();
+        // @ts-expect-error @types/node Response parameters are missing ReadableStream but its supported.
+        return await new Response(stream, { headers: { 'content-type': `multipart/form-data; boundary="-${boundary}"` } }).formData() as FormData;
     }
-    const fd = new FormData();
+    const fd = new FormData() as FormData;
     new URLSearchParams(await readableStreamToText(stream)).forEach((v, k) => fd.set(k, v));
     return fd;
 }) satisfies typeof Bun.readableStreamToFormData;
@@ -430,7 +422,7 @@ export const readableStreamToArrayBuffer = ((stream) => {
 
 export const readableStreamToText = (async (stream) => {
     let result = '';
-    // @ts-expect-error TODO: check why this suddenly errors in bun-types 1.0.4
+    // @ts-expect-error Don't quite understand what's going wrong with these types but TextDecoderStream is supported here
     const reader = stream.pipeThrough(new TextDecoderStream()).getReader();
     while (true) {
         const { done, value } = await reader.read();

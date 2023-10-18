@@ -1,7 +1,7 @@
 import type { CryptoHashInterface, DigestEncoding, Hash } from 'bun';
 import nodecrypto from 'node:crypto';
 import os from 'node:os';
-import md4, { Md4 } from 'js-md4';
+import md4, { type Md4 } from 'js-md4';
 import { wyhash, adler32, crc32, cityhash32, cityhash64, murmur32v3, murmur64v2, murmur32v2 } from '../../../lib/zighash/index.mjs';
 
 export const bunHash = ((data, seed = 0): bigint => wyhash(data, BigInt(seed))) as typeof Bun.hash;

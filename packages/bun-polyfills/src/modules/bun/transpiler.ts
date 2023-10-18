@@ -1,6 +1,6 @@
 import type { JavaScriptLoader, TranspilerOptions, Transpiler as BunTranspiler, Import } from 'bun';
+import type { Message } from 'bun-wasm/schema';
 import { transformSync, scan, init } from 'bun-wasm';
-import { Message } from 'bun-wasm/schema';
 import $ from 'chalk';
 
 await init();

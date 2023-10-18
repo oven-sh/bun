@@ -2,6 +2,15 @@
   "type": "module",
   "name": "bun-polyfills",
   "module": "src/index.ts",
+  "scripts": {
+    "node": "tsx --no-warnings --enable-source-maps --import ./dist/src/repl.js",
+    "test": "node --no-warnings --loader ./tools/bun_test_loader.mjs",
+    "clean": "rm -rf dist",
+    "preprocess": "bun tools/updateversions.ts",
+    "build": "bun run clean && bun run preprocess && bunx tsc && bunx copyfiles \"./lib/**/*.wasm\" dist",
+    "build/wasm": "bun run build/zighash",
+    "build/zighash": "cd lib/zighash && bun run build && cd ../.."
+  },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.4",
     "@types/node": "^20.7.2",
@@ -14,20 +23,12 @@
   "peerDependencies": {
     "typescript": "^5.2.2"
   },
-  "scripts": {
-    "node": "tsx --no-warnings --enable-source-maps --import ./dist/src/repl.js",
-    "test": "node --no-warnings --loader ./tools/bun_test_loader.mjs",
-    "clean": "rm -rf dist",
-    "preprocess": "bun tools/updateversions.ts",
-    "build": "bun run clean && bun run preprocess && bunx tsc && bunx copyfiles \"./lib/**/*.wasm\" dist",
-    "build/wasm": "bun run build/zighash",
-    "build/zighash": "cd lib/zighash && bun run build && cd ../.."
-  },
   "dependencies": {
     "argon2": "^0.31.1",
     "bcryptjs": "^2.4.3",
     "bun-wasm": "link:bun-wasm",
     "chalk": "^5.3.0",
+    "expect": "^29.7.0",
     "js-md4": "^0.3.2",
     "koffi": "^2.6.1",
     "mmap-utils": "^1.0.0",

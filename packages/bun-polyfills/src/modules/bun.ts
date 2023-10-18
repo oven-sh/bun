@@ -28,6 +28,7 @@ import streams from 'node:stream';
 import workers from 'node:worker_threads';
 import chp, { type ChildProcess, type StdioOptions, type SpawnSyncReturns } from 'node:child_process';
 import { fileURLToPath as fileURLToPathNode, pathToFileURL as pathToFileURLNode } from 'node:url';
+import { expect } from 'expect';
 import npm_which from 'which';
 import openEditor from 'open-editor';
 import bcrypt from 'bcryptjs';
@@ -40,7 +41,7 @@ export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satis
 
 //? These are automatically updated on build by tools/updateversions.ts, do not edit manually.
 export const version = '1.0.4' satisfies typeof Bun.version;
-export const revision = '89d8939a45461a8205feb03f4e074a3ce195b6c0' satisfies typeof Bun.revision;
+export const revision = '44d6e8b0629789eba42bbeba3f5640acb0cb9852' satisfies typeof Bun.revision;
 
 export const gc = (globalThis.gc ? (() => (globalThis.gc!(), process.memoryUsage().heapUsed)) : (() => {
     const err = new Error('[bun-polyfills] Garbage collection polyfills are only available when Node.js is ran with the --expose-gc flag.');
@@ -559,6 +560,24 @@ export const password = {
         }
     },
 } satisfies typeof Bun.password;
+
+export const deepEquals = ((a, b) => {
+    try {
+        expect(a).toEqual(b);
+    } catch {
+        return false;
+    }
+    return true;
+}) satisfies typeof Bun.deepEquals;
+
+export const deepMatch = ((a, b) => {
+    try {
+        expect(b).toMatchObject(a as Record<string, unknown>);
+    } catch {
+        return false;
+    }
+    return true;
+}) satisfies typeof Bun.deepMatch;
 
 export const isMainThread = workers.isMainThread satisfies typeof Bun.isMainThread;
 

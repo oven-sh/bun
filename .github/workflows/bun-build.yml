@@ -1,5 +1,8 @@
 name: bun-build
 
+env:
+  ZIG_VERSION: 0.12.0-dev.888+130227491
+
 concurrency:
   group: bun-build-${{ github.ref || github.run_id }}
   cancel-in-progress: true
@@ -48,7 +51,8 @@ jobs:
         uses: actions/cache@v3
         with:
           key: ${{ runner.os }}-build-${{ matrix.id }}
-          path: build
+          path: |
+            build
       - name: Setup APT
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
@@ -58,6 +62,10 @@ jobs:
             cmake
             ccache
             ninja-build
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
       - name: Setup LLVM
         uses: KyleMayes/install-llvm-action@v1
         with:
@@ -70,9 +78,11 @@ jobs:
         uses: oven-sh/setup-bun@v1
         with:
           bun-version: latest
-      - name: Build
+      - name: Setup Dependencies
         run: |
           bun install -g esbuild
+      - name: Build
+        run: |
           bun run build
           ls
           ls build

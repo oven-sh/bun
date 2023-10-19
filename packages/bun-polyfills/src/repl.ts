@@ -11,7 +11,6 @@ globalThis.Bun = bun as typeof bun & {
     // TODO: Missing polyfills
     build: typeof import('bun').build;
     connect: typeof import('bun').connect;
-    listen: typeof import('bun').listen;
     CryptoHashInterface: typeof import('bun').CryptoHashInterface;
     CryptoHasher: typeof import('bun').CryptoHasher;
     FileSystemRouter: typeof import('bun').FileSystemRouter;

@@ -16,6 +16,7 @@ import {
 } from './bun/hashes.js';
 import { ArrayBufferSink as ArrayBufferSinkPolyfill } from './bun/arraybuffersink.js';
 import { FileBlob, NodeJSStreamFileBlob } from './bun/fileblob.js';
+import { listen as listenPolyfill } from './bun/tcp_listen.js';
 import TranspilerImpl from './bun/transpiler.js';
 import { mmap as mmapper } from './bun/mmap.js';
 import { SyncWorker } from '../utils/sync.mjs';
@@ -78,6 +79,8 @@ export const unsafe = {
 } satisfies typeof Bun['unsafe'];
 
 export const Transpiler = TranspilerImpl satisfies typeof Bun.Transpiler;
+
+export const listen = listenPolyfill satisfies typeof Bun.listen;
 
 export const SHA1 = SHA1Polyfill satisfies typeof Bun.SHA1;
 export const MD5 = MD5Polyfill satisfies typeof Bun.MD5;

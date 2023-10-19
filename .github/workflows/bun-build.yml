@@ -85,4 +85,4 @@ jobs:
       - name: Setup upterm session
         uses: lhotari/action-upterm@v1
         with:
-          limit-access-to-users: Electroid
+          limit-access-to-users: Electroid,paperdave,Jarred-Sumner

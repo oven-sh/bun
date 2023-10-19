@@ -49,12 +49,21 @@ jobs:
         with:
           key: ${{ runner.os }}-build-${{ matrix.id }}
           path: build
-      - name: Build
+      - name: Setup LLVM
+        uses: KyleMayes/install-llvm-action@v1
+        with:
+          version: "16"
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: "20"
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+      - name: Setup APT
         run: |
           sudo apt-get update -qq
-          wget https://apt.llvm.org/llvm.sh
-          chmod +x llvm.sh
-          sudo ./llvm.sh 16
           apt-get install -qq --no-install-recommends \
             lsb-release \
             software-properties-common \
@@ -74,17 +83,11 @@ jobs:
             rsync \
             ruby \
             unzip \
-            clang-16 \
-            lld-16 \
-            lldb-16 \
-            clangd-16 \
             xz-utils \
             tar \
             gzip \
-            ccache \
-            nodejs
-          npm install -g esbuild
-          npm install -g bun
+            ccache
+          bun install -g esbuild
           bun run build
           ls
           ls build

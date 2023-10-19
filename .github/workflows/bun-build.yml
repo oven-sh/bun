@@ -82,8 +82,7 @@ jobs:
         run: |
           bun install
           bun install -g esbuild
-      - name: Build
-        run: |
-          bun run build
-          ls
-          ls build
+      - name: Setup upterm session
+        uses: lhotari/action-upterm@v1
+        with:
+          limit-access-to-users: Electroid

@@ -81,7 +81,8 @@ ExceptionOr<bool> CryptoAlgorithmHMAC::platformVerify(const CryptoKeyHMAC& key, 
     if (!expectedSignature)
         return Exception { OperationError };
     // Using a constant time comparison to prevent timing attacks.
-    return signature.size() == expectedSignature->size() && !constantTimeMemcmp(expectedSignature->data(), signature.data(), expectedSignature->size());
+    // TODO(@paperdave 2023-10-18): change this back to constantTimeMemcmp once figure out the linking issue.
+    return signature.size() == expectedSignature->size() && !memcmp(expectedSignature->data(), signature.data(), expectedSignature->size());
 }
 
 } // namespace WebCore

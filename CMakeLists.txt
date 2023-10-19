@@ -495,7 +495,7 @@ add_compile_definitions(
     "BUN_DYNAMIC_JS_LOAD_PATH=\"${BUN_WORKDIR}/js\""
 )
 if(NOT ASSERT_ENABLED)
-    add_compile_definitions("NDEBUG")
+    add_compile_definitions("NDEBUG=1")
 endif()
 
 message(STATUS "${WEBKIT_INCLUDE_DIR}")
@@ -527,7 +527,7 @@ include_directories(
 # --- clang and linker flags ---
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     if(NOT MSVC)
-        target_compile_options(${bun} PUBLIC -g3 -Og)
+        target_compile_options(${bun} PUBLIC -g3 -O1)
     endif()
     add_compile_definitions("BUN_DEBUG=1")
     

@@ -1600,9 +1600,12 @@ pub const PostgresSQLQuery = struct {
         }
         this.query.deref();
         this.cursor_name.deref();
+
+        bun.default_allocator.destroy(this);
     }
 
     pub fn finalize(this: *@This()) callconv(.C) void {
+        debug("PostgresSQLQuery finalize", .{});
         this.thisValue = .zero;
         this.target = .zero;
         this.deref();
@@ -1614,7 +1617,6 @@ pub const PostgresSQLQuery = struct {
 
         if (ref_count == 1) {
             this.deinit();
-            bun.default_allocator.destroy(this);
         }
     }
 
@@ -2169,6 +2171,7 @@ pub const PostgresSQLConnection = struct {
     }
 
     pub fn finalize(this: *PostgresSQLConnection) callconv(.C) void {
+        debug("PostgresSQLConnection finalize", .{});
         this.js_value = .zero;
         this.deref();
     }
@@ -2236,6 +2239,19 @@ pub const PostgresSQLConnection = struct {
     }
 
     pub fn onData(this: *PostgresSQLConnection, data: []const u8) void {
+        const Deferrer = struct {
+            data: []const u8,
+            this: *PostgresSQLConnection,
+
+            pub fn run(d: *@This()) callconv(.C) void {
+                _onData(d.this, d.data);
+            }
+        };
+        var deferrer = Deferrer{ .data = data, .this = this };
+        this.globalObject.vm().runInDeferralContext(&deferrer, @ptrCast(&Deferrer.run));
+    }
+
+    fn _onData(this: *PostgresSQLConnection, data: []const u8) void {
         var vm = this.globalObject.bunVM();
         defer vm.drainMicrotasks();
         if (this.read_buffer.remaining().len == 0) {
@@ -2633,6 +2649,106 @@ pub const PostgresSQLConnection = struct {
         }
     };
 
+    pub const DataCell = extern struct {
+        tag: Tag,
+
+        value: Value,
+
+        pub const Tag = enum(u8) {
+            null = 0,
+            string = 1,
+            double = 2,
+            int32 = 3,
+            int64 = 4,
+            boolean = 5,
+            date = 6,
+            bytea = 7,
+            json = 8,
+        };
+
+        pub const Value = extern union {
+            null: u8,
+            string: bun.WTF.StringImpl,
+            double: f64,
+            int32: i32,
+            int64: i64,
+            boolean: bool,
+            date: f64,
+            bytea: [2]usize,
+            json: bun.WTF.StringImpl,
+        };
+
+        pub fn deinit(this: *DataCell) void {
+            switch (this.tag) {
+                .string => {
+                    this.value.string.deref();
+                },
+                .json => {
+                    this.value.json.deref();
+                },
+                else => {},
+            }
+        }
+
+        extern fn WTF__parseDateFromNullTerminatedCharacters([*:0]const u8) f64;
+
+        pub const Putter = struct {
+            list: []DataCell,
+            fields: []const protocol.FieldDescription,
+
+            extern fn JSC__constructObjectFromDataCell(*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue, [*]DataCell, u32) JSC.JSValue;
+            pub fn toJS(this: *Putter, globalObject: *JSC.JSGlobalObject, array: JSC.JSValue, structure: JSC.JSValue) JSC.JSValue {
+                return JSC__constructObjectFromDataCell(globalObject, array, structure, this.list.ptr, @truncate(this.fields.len));
+            }
+
+            pub fn put(this: *Putter, index: u32, optional_bytes: ?*Data) anyerror!bool {
+                var bytes_ = optional_bytes orelse {
+                    this.list[index] = DataCell{ .tag = .null, .value = .{ .null = 0 } };
+                    return true;
+                };
+                const bytes = bytes_.slice();
+
+                switch (@as(types.Tag, @enumFromInt(this.fields[index].type_oid))) {
+                    .number => {
+                        switch (bytes.len) {
+                            0 => {
+                                this.list[index] = DataCell{ .tag = .null, .value = .{ .null = 0 } };
+                            },
+                            2 => {
+                                this.list[index] = DataCell{ .tag = .int32, .value = .{ .int32 = @as(i32, @as(short, @bitCast(bytes[0..2].*))) } };
+                            },
+                            4 => {
+                                this.list[index] = DataCell{ .tag = .int32, .value = .{ .int32 = @as(i32, @bitCast(bytes[0..4].*)) } };
+                            },
+                            else => {
+                                var eight: i64 = 0;
+                                @memcpy(@as(*[8]u8, @ptrCast(&eight))[0..bytes.len], bytes[0..@min(8, bytes.len)]);
+                                eight = @byteSwap(eight);
+                                this.list[index] = DataCell{ .tag = .int64, .value = .{ .int64 = eight } };
+                            },
+                        }
+                    },
+                    .json => {
+                        this.list[index] = DataCell{ .tag = .json, .value = .{ .json = bun.String.create(bytes).value.WTFStringImpl } };
+                    },
+                    .boolean => {
+                        this.list[index] = DataCell{ .tag = .boolean, .value = .{ .boolean = bytes.len > 0 and bytes[0] == 't' } };
+                    },
+                    .time, .datetime, .date => {
+                        this.list[index] = DataCell{ .tag = .date, .value = .{ .date = WTF__parseDateFromNullTerminatedCharacters(bytes_.sliceZ().ptr) } };
+                    },
+                    .bytea => {
+                        this.list[index] = DataCell{ .tag = .bytea, .value = .{ .bytea = .{ @intFromPtr(bytes_.slice().ptr), bytes.len } } };
+                    },
+                    else => {
+                        this.list[index] = DataCell{ .tag = .string, .value = .{ .string = bun.String.create(bytes).value.WTFStringImpl } };
+                    },
+                }
+                return true;
+            }
+        };
+    };
+
     pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.EnumLiteral), comptime Context: type, reader: protocol.NewReader(Context)) !void {
         debug("on({s})", .{@tagName(MessageType)});
         if (comptime MessageType != .ReadyForQuery) {
@@ -2644,18 +2760,21 @@ pub const PostgresSQLConnection = struct {
                 var request = this.current() orelse return error.ExpectedRequest;
                 var statement = request.statement orelse return error.ExpectedStatement;
 
-                statement.cached_structure.clear();
-
                 var structure = statement.structure(this.js_value, this.globalObject);
                 std.debug.assert(!structure.isEmptyOrUndefinedOrNull());
 
-                var row = JSC.JSObject.uninitialized(this.globalObject, structure);
-                row.ensureStillAlive();
+                var stack_buf: [64]DataCell = undefined;
+                var cells: []DataCell = stack_buf[0..@min(statement.fields.len, stack_buf.len)];
 
-                var putter = CellPutter{
-                    .object = row,
-                    .vm = this.globalObject.vm(),
-                    .globalObject = this.globalObject,
+                var free_cells = false;
+                defer if (free_cells) bun.default_allocator.free(cells);
+                if (statement.fields.len >= 64) {
+                    cells = try bun.default_allocator.alloc(DataCell, statement.fields.len);
+                    free_cells = true;
+                }
+
+                var putter = DataCell.Putter{
+                    .list = cells,
                     .fields = statement.fields,
                 };
 
@@ -2663,9 +2782,15 @@ pub const PostgresSQLConnection = struct {
                     &putter,
                     Context,
                     reader,
-                    CellPutter.put,
+                    DataCell.Putter.put,
                 );
-                request.push(this.globalObject, row);
+
+                const pending_value = PostgresSQLQuery.pendingValueGetCached(request.thisValue) orelse .zero;
+                const result = putter.toJS(this.globalObject, pending_value, structure);
+
+                if (pending_value == .zero) {
+                    PostgresSQLQuery.pendingValueSetCached(request.thisValue, this.globalObject, result);
+                }
             },
             .CopyData => {
                 var copy_data: protocol.CopyData = undefined;
@@ -2855,6 +2980,8 @@ pub const PostgresSQLStatement = struct {
     }
 
     pub fn deinit(this: *PostgresSQLStatement) void {
+        debug("PostgresSQLStatement deinit", .{});
+
         std.debug.assert(this.ref_count == 0);
 
         for (this.fields) |*field| {

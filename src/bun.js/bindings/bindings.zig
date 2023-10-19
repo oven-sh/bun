@@ -5102,6 +5102,13 @@ pub const VM = extern struct {
         cppFn("holdAPILock", .{ this, ctx, callback });
     }
 
+    extern fn JSC__runInDeferralContext(this: *VM, ctx: ?*anyopaque, callback: *const fn (ctx: ?*anyopaque) callconv(.C) void) void;
+
+    pub fn runInDeferralContext(this: *VM, ctx: ?*anyopaque, callback: *const fn (ctx: ?*anyopaque) callconv(.C) void) void {
+        JSC.markBinding(@src());
+        JSC__runInDeferralContext(this, ctx, callback);
+    }
+
     pub fn deferGC(this: *VM, ctx: ?*anyopaque, callback: *const fn (ctx: ?*anyopaque) callconv(.C) void) void {
         cppFn("deferGC", .{ this, ctx, callback });
     }

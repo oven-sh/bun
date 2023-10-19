@@ -676,8 +676,8 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 if ((url2 == nullptr) != (url1 == nullptr)) {
                     return false;
                 }
-            } 
-            
+            }
+
             if (url2 && url1) {
                 // toEqual or toStrictEqual should return false when the URLs' href is not equal
                 // But you could have added additional properties onto the
@@ -4688,6 +4688,11 @@ CPP_DECL double JSC__JSValue__getUnixTimestamp(JSC__JSValue timeValue)
         return PNaN;
 
     return date->internalNumber();
+}
+
+extern "C" double WTF__parseDateFromNullTerminatedCharacters(const char* nullTerminatedChars)
+{
+    return WTF::parseDateFromNullTerminatedCharacters(nullTerminatedChars);
 }
 
 extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNullTerminatedString(JSC::JSGlobalObject* globalObject, const char* nullTerminatedChars)

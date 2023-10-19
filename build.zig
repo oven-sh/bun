@@ -205,7 +205,7 @@ pub fn build_(b: *Build) !void {
 
     var triplet = triplet_buf[0 .. osname.len + cpuArchName.len + 1];
 
-    if (b.option([]const u8, "output-dir", "target to install to") orelse std.os.getenv("OUTPUT_DIR")) |output_dir_| {
+    if (b.option([]const u8, "output-dir", "target to install to")) |output_dir_| {
         output_dir = try pathRel(b.allocator, b.install_prefix, output_dir_);
     } else {
         const output_dir_base = try std.fmt.bufPrint(&output_dir_buf, "{s}{s}", .{ bin_label, triplet });
@@ -264,7 +264,7 @@ pub fn build_(b: *Build) !void {
             }
         }
 
-        const is_canary = (std.os.getenvZ("BUN_CANARY") orelse "0")[0] == '1';
+        const is_canary = (b.env_map.get("BUN_CANARY") orelse "0")[0] == '1';
         break :brk .{
             .canary = is_canary,
             .sha = git_sha,

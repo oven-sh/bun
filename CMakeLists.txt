@@ -139,8 +139,12 @@ find_program(ZIG_COMPILER zig REQUIRED DOC "Path to the Zig compiler" VALIDATOR 
 message(STATUS "Found Zig Compiler: ${ZIG_COMPILER}")
 
 # Bun
-find_program(BUN_EXECUTABLE bun ${REQUIRED_IF_NOT_WINDOWS} DOC "Path to an already built release of Bun")
-message(STATUS "Found Bun: ${BUN_EXECUTABLE}")
+if(NOT WIN32)
+    find_program(BUN_EXECUTABLE bun REQUIRED DOC "Path to an already built release of Bun")
+    message(STATUS "Found Bun: ${BUN_EXECUTABLE}")
+else()
+    set(BUN_EXECUTABLE "echo")
+endif()
 
 # Prettier
 find_program(PRETTIER prettier DOC "Path to prettier" PATHS ./node_modules/.bin ENV PATH)
@@ -158,44 +162,54 @@ endif()
 
 # --- Dependencies ---
 
-# WebKit
-if(NOT WEBKIT_DIR AND NOT WINDOWS)
-    # TODO: allow this to point to the actual webkit cmake file to allow easier rebuilds
-    find_path(
-        WEBKIT_DIR
-        NAMES lib/libJavaScriptCore.a
-        PATHS
-        ${CMAKE_CURRENT_SOURCE_DIR}/bun-webkit
-        DOC "Path to WebKit build directory"
-    )
-    # ensure libWTF.a, libJavaScriptCore.a, and libbmalloc.a exist
+if(NOT WIN32)
+    message(STATUS "not window")
+    # WebKit
     if(NOT WEBKIT_DIR)
-        message(FATAL_ERROR "Could not find WebKit build directory. Please set WEBKIT_DIR to the directory containing lib/libJavaScriptCore.a. Did you forget to run `bun install` beforehand.")
+        # TODO: allow this to point to the actual webkit cmake file to allow easier rebuilds
+        find_path(
+            WEBKIT_DIR
+            NAMES lib/libJavaScriptCore.a
+            PATHS
+            ${CMAKE_CURRENT_SOURCE_DIR}/bun-webkit
+            DOC "Path to WebKit build directory"
+        )
+        # ensure libWTF.a, libJavaScriptCore.a, and libbmalloc.a exist
+        if(NOT WEBKIT_DIR)
+            message(FATAL_ERROR "Could not find WebKit build directory. Please set WEBKIT_DIR to the directory containing lib/libJavaScriptCore.a. Did you forget to run `bun install` beforehand.")
+        endif()
+        if (NOT EXISTS "${WEBKIT_DIR}/lib/libWTF.a" OR NOT EXISTS "${WEBKIT_DIR}/lib/libJavaScriptCore.a" OR NOT EXISTS "${WEBKIT_DIR}/lib/libbmalloc.a")
+            message(FATAL_ERROR "WebKit directory ${WEBKIT_DIR} does not contain all the required files for Bun.")
+        endif()
     endif()
-    if (NOT EXISTS "${WEBKIT_DIR}/lib/libWTF.a" OR NOT EXISTS "${WEBKIT_DIR}/lib/libJavaScriptCore.a" OR NOT EXISTS "${WEBKIT_DIR}/lib/libbmalloc.a")
-        message(FATAL_ERROR "WebKit directory ${WEBKIT_DIR} does not contain all the required files for Bun.")
-    endif()
-endif()
-message(STATUS "Found WebKit: ${WEBKIT_DIR}")
+    message(STATUS "Found WebKit: ${WEBKIT_DIR}")
 
-# C++ Assertions
-# It is very important that the value of ASSERT_ENABLED is the same for both Bun and WebKit,
-# If this is not the case, everything will crash as the sizes and offsets of things will be different
-if(NOT DEFINED ASSERT_ENABLED)
-    if(WEBKIT_DIR MATCHES "/bun-webkit$|WebKitBuild/Release$")
-        set(ASSERT_ENABLED "0")
-    elseif(WEBKIT_DIR MATCHES "/WebKitBuild/Debug$")
-        set(ASSERT_ENABLED "1")
-    else()
-        message(WARNING "Could not guess default value for ASSERT_ENABLED.")
-        set(ASSERT_ENABLED "0")
+    # C++ Assertions
+    # It is very important that the value of ASSERT_ENABLED is the same for both Bun and WebKit,
+    # If this is not the case, everything will crash as the sizes and offsets of things will be different
+    if(NOT DEFINED ASSERT_ENABLED)
+        if(WEBKIT_DIR MATCHES "/bun-webkit$|WebKitBuild/Release$")
+            set(ASSERT_ENABLED "0")
+        elseif(WEBKIT_DIR MATCHES "/WebKitBuild/Debug$")
+            set(ASSERT_ENABLED "1")
+        else()
+            message(WARNING "Could not guess default value for ASSERT_ENABLED.")
+            set(ASSERT_ENABLED "0")
+        endif()
     endif()
-endif()
-if(ASSERT_ENABLED)
-    message(STATUS "C++ Assertions: ON")
+    if(ASSERT_ENABLED)
+        message(STATUS "C++ Assertions: ON")
+    else()
+        message(STATUS "C++ Assertions: OFF")
+    endif()
 else()
-    message(STATUS "C++ Assertions: OFF")
+    # TODO: Real checking
+    set(WEBKIT_DIR "C:\\Users\\windo\\Code\\WebKit\\bun-webkit-x64")
+    set(ASSERT_ENABLED "0")
+    message(STATUS "Hardcoded WebKit: ${WEBKIT_DIR}")
 endif()
+
+set(WEBKIT_INCLUDE_DIR "${WEBKIT_DIR}/include")
 
 # --- CMake Macros ---
 
@@ -418,6 +432,7 @@ add_custom_command(
         "-Doutput-dir=${BUN_WORKDIR}/CMakeFiles"
         "-Dcpu=${CPU_TARGET}"
         "-Dgenerated-code=${BUN_WORKDIR}/codegen"
+        "-freference-trace=12"
     DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/build.zig"
         "${ZIG_FILES}"
@@ -481,6 +496,8 @@ add_compile_definitions(
     "BUN_DYNAMIC_JS_LOAD_PATH=\"${BUN_WORKDIR}/js\""
 )
 
+message(STATUS "${WEBKIT_INCLUDE_DIR}")
+
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/packages/
     ${CMAKE_CURRENT_SOURCE_DIR}/packages/bun-usockets
@@ -494,12 +511,11 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/napi
     ${CMAKE_CURRENT_SOURCE_DIR}/src/deps
     ${CMAKE_CURRENT_SOURCE_DIR}/src/deps/picohttpparser
-    # TODO: are all of these needed?
+    ${WEBKIT_INCLUDE_DIR}
     ${WEBKIT_DIR}/WTF/Headers
     ${WEBKIT_DIR}/ICU/Headers
     ${WEBKIT_DIR}/bmalloc/Headers
     ${WEBKIT_DIR}/
-    ${WEBKIT_DIR}/include
     ${WEBKIT_DIR}/JavaScriptCore/PrivateHeaders
     ${WEBKIT_DIR}/bmalloc/PrivateHeaders
     ${WEBKIT_DIR}/WTF/PrivateHeaders
@@ -509,17 +525,12 @@ include_directories(
 # --- clang and linker flags ---
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_compile_definitions("BUN_DEBUG=1")
-    if (NOT MSVC)
-        target_compile_options(${bun} PUBLIC -g3 -O1)
-    else()
-        target_compile_options(${bun} PUBLIC /O1)
-    endif()
 elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
-    if (MSVC)
-        target_compile_options(${bun} PUBLIC /O2)
-    else()
-        target_compile_options(${bun} PUBLIC -O3)
-    endif()
+    #if (MSVC)
+        #target_compile_options(${bun} PUBLIC /O2)
+    ##else()
+      #  target_compile_options(${bun} PUBLIC -O3)
+   # endif()
 endif()
 
 if(NOT MSVC)
@@ -544,9 +555,9 @@ if(NOT MSVC)
 else() # MSVC
     string(APPEND SUPPRESS_WARNING_NUMBERS
         # JSC deletes operator delete to prevent accidental use
-        /wd4291
+        "/wd4291 "
         # we use #pragma mark in some places
-        /wd4068
+        "/wd4068"
     )
     string(APPEND CMAKE_CXX_FLAGS " /EHsc /GR-")
     string(APPEND CMAKE_C_FLAGS " /EHsc /GR- /MP ${SUPPRESS_WARNING_NUMBERS} /experimental:c11atomics /std:c17")
@@ -647,7 +658,7 @@ if(APPLE)
 endif()
 
 # --- Stripped Binary "bun"
-if(CMAKE_BUILD_TYPE STREQUAL "Release")
+if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32)
     add_custom_command(
         TARGET ${bun}
         POST_BUILD

@@ -5,14 +5,14 @@ class GlobalObject;
 }
 
 #include "root.h"
-#include "JavaScriptCore/JSFunction.h"
-#include "JavaScriptCore/VM.h"
+#include <JavaScriptCore/JSFunction.h>
+#include <JavaScriptCore/VM.h>
 
 #include "headers-handwritten.h"
 #include "BunClientData.h"
-#include "JavaScriptCore/CallFrame.h"
+#include <JavaScriptCore/CallFrame.h>
 #include "js_native_api_types.h"
-#include "JavaScriptCore/JSWeakValue.h"
+#include <JavaScriptCore/JSWeakValue.h>
 #include "JSFFIFunction.h"
 
 namespace JSC {

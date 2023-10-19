@@ -14,7 +14,7 @@ const JSC = @import("root").bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const c_ares = bun.c_ares;
-
+const Async = bun.Async;
 const GetAddrInfoAsyncCallback = fn (i32, ?*std.c.addrinfo, ?*anyopaque) callconv(.C) void;
 const INET6_ADDRSTRLEN = if (bun.Environment.isWindows) 65 else 46;
 const IANA_DNS_PORT = 53;
@@ -42,7 +42,7 @@ const LibInfo = struct {
         const RTLD_LAZY = 1;
         const RTLD_LOCAL = 4;
 
-        handle = std.c.dlopen("libinfo.dylib", RTLD_LAZY | RTLD_LOCAL);
+        handle = bun.C.dlopen("libinfo.dylib", RTLD_LAZY | RTLD_LOCAL);
         if (handle == null)
             Output.debug("libinfo.dylib not found", .{});
         return handle;
@@ -120,7 +120,7 @@ const LibInfo = struct {
             return promise_value;
         }
         std.debug.assert(request.backend.libinfo.machport != null);
-        request.backend.libinfo.file_poll = bun.JSC.FilePoll.init(this.vm, std.math.maxInt(i32) - 1, .{}, GetAddrInfoRequest, request);
+        request.backend.libinfo.file_poll = bun.Async.FilePoll.init(this.vm, std.math.maxInt(i32) - 1, .{}, GetAddrInfoRequest, request);
         std.debug.assert(
             request.backend.libinfo.file_poll.?.registerWithFd(
                 this.vm.event_loop_handle.?,
@@ -645,7 +645,7 @@ pub fn ResolveInfoRequest(comptime cares_type: type, comptime type_name: []const
             var hasher = std.hash.Wyhash.init(0);
             hasher.update(name);
             const hash = hasher.final();
-            var poll_ref = JSC.PollRef.init();
+            var poll_ref = Async.KeepAlive.init();
             poll_ref.ref(globalThis.bunVM());
             request.* = .{
                 .resolver_for_caching = resolver,
@@ -742,7 +742,7 @@ pub const GetHostByAddrInfoRequest = struct {
         var hasher = std.hash.Wyhash.init(0);
         hasher.update(name);
         const hash = hasher.final();
-        var poll_ref = JSC.PollRef.init();
+        var poll_ref = Async.KeepAlive.init();
         poll_ref.ref(globalThis.bunVM());
         request.* = .{
             .resolver_for_caching = resolver,
@@ -997,7 +997,7 @@ pub const GetAddrInfoRequest = struct {
         comptime cache_field: []const u8,
     ) !*GetAddrInfoRequest {
         var request = try globalThis.allocator().create(GetAddrInfoRequest);
-        var poll_ref = JSC.PollRef.init();
+        var poll_ref = Async.KeepAlive.init();
         poll_ref.ref(globalThis.bunVM());
         request.* = .{
             .backend = backend,
@@ -1129,7 +1129,7 @@ pub const GetAddrInfoRequest = struct {
         },
 
         pub const LibInfo = struct {
-            file_poll: ?*bun.JSC.FilePoll = null,
+            file_poll: ?*bun.Async.FilePoll = null,
             machport: ?*anyopaque = null,
 
             extern fn getaddrinfo_send_reply(*anyopaque, *const JSC.DNS.LibInfo.GetaddrinfoAsyncHandleReply) bool;
@@ -1208,14 +1208,14 @@ pub const CAresReverse = struct {
 
     globalThis: *JSC.JSGlobalObject = undefined,
     promise: JSC.JSPromise.Strong,
-    poll_ref: JSC.PollRef,
+    poll_ref: Async.KeepAlive,
     allocated: bool = false,
     next: ?*@This() = null,
     name: []const u8,
 
     pub fn init(globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator, name: []const u8) !*@This() {
         var this = try allocator.create(@This());
-        var poll_ref = JSC.PollRef.init();
+        var poll_ref = Async.KeepAlive.init();
         poll_ref.ref(globalThis.bunVM());
         this.* = .{ .globalThis = globalThis, .promise = JSC.JSPromise.Strong.init(globalThis), .poll_ref = poll_ref, .allocated = true, .name = name };
         return this;
@@ -1279,14 +1279,14 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
 
         globalThis: *JSC.JSGlobalObject = undefined,
         promise: JSC.JSPromise.Strong,
-        poll_ref: JSC.PollRef,
+        poll_ref: Async.KeepAlive,
         allocated: bool = false,
         next: ?*@This() = null,
         name: []const u8,
 
         pub fn init(globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator, name: []const u8) !*@This() {
             var this = try allocator.create(@This());
-            var poll_ref = JSC.PollRef.init();
+            var poll_ref = Async.KeepAlive.init();
             poll_ref.ref(globalThis.bunVM());
             this.* = .{ .globalThis = globalThis, .promise = JSC.JSPromise.Strong.init(globalThis), .poll_ref = poll_ref, .allocated = true, .name = name };
             return this;
@@ -1352,11 +1352,11 @@ pub const DNSLookup = struct {
     promise: JSC.JSPromise.Strong,
     allocated: bool = false,
     next: ?*DNSLookup = null,
-    poll_ref: JSC.PollRef,
+    poll_ref: Async.KeepAlive,
 
     pub fn init(globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator) !*DNSLookup {
         var this = try allocator.create(DNSLookup);
-        var poll_ref = JSC.PollRef.init();
+        var poll_ref = Async.KeepAlive.init();
         poll_ref.ref(globalThis.bunVM());
 
         this.* = .{
@@ -1463,7 +1463,7 @@ pub const GlobalData = struct {
         global.* = .{
             .resolver = .{
                 .vm = vm,
-                .polls = std.AutoArrayHashMap(i32, ?*JSC.FilePoll).init(allocator),
+                .polls = std.AutoArrayHashMap(i32, ?*Async.FilePoll).init(allocator),
             },
         };
 
@@ -1476,7 +1476,7 @@ pub const DNSResolver = struct {
 
     channel: ?*c_ares.Channel = null,
     vm: *JSC.VirtualMachine,
-    polls: std.AutoArrayHashMap(i32, ?*JSC.FilePoll) = undefined,
+    polls: std.AutoArrayHashMap(i32, ?*Async.FilePoll) = undefined,
 
     pending_host_cache_cares: PendingCache = PendingCache.init(),
     pending_host_cache_native: PendingCache = PendingCache.init(),
@@ -1818,7 +1818,7 @@ pub const DNSResolver = struct {
 
     pub fn onDNSPoll(
         this: *DNSResolver,
-        poll: *JSC.FilePoll,
+        poll: *Async.FilePoll,
     ) void {
         var vm = this.vm;
         defer vm.drainMicrotasks();
@@ -1842,6 +1842,11 @@ pub const DNSResolver = struct {
         readable: bool,
         writable: bool,
     ) void {
+        if (comptime Environment.isWindows) {
+            bun.todo(@src(), {});
+            return;
+        }
+
         var vm = this.vm;
 
         if (!readable and !writable) {
@@ -1860,7 +1865,7 @@ pub const DNSResolver = struct {
         var poll_entry = this.polls.getOrPut(fd) catch unreachable;
 
         if (!poll_entry.found_existing) {
-            poll_entry.value_ptr.* = JSC.FilePoll.init(vm, bun.toFD(fd), .{}, DNSResolver, this);
+            poll_entry.value_ptr.* = Async.FilePoll.init(vm, bun.toFD(fd), .{}, DNSResolver, this);
         }
 
         var poll = poll_entry.value_ptr.*.?;
@@ -2020,8 +2025,8 @@ pub const DNSResolver = struct {
             return .zero;
         }
 
-        const ip = ip_str.toSliceClone(globalThis, bun.default_allocator).slice();
-
+        const ip_slice = ip_str.toSliceClone(globalThis, bun.default_allocator);
+        const ip = ip_slice.slice();
         var vm = globalThis.bunVM();
         var resolver = vm.rareData().globalDNSResolver(vm);
         var channel: *c_ares.Channel = switch (resolver.getChannel()) {
@@ -2032,7 +2037,7 @@ pub const DNSResolver = struct {
                     .code = bun.String.static(err.code()),
                     .message = bun.String.static(err.label()),
                 };
-
+                defer ip_slice.deinit();
                 globalThis.throwValue(system_error.toErrorInstance(globalThis));
                 return .zero;
             },

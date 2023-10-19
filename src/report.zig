@@ -62,9 +62,9 @@ pub const CrashReportWriter = struct {
 
         var base_dir: []const u8 = ".";
         if (bun.getenvZ("BUN_INSTALL")) |install_dir| {
-            base_dir = std.mem.trimRight(u8, install_dir, std.fs.path.sep_str);
-        } else if (bun.getenvZ("HOME")) |home_dir| {
-            base_dir = std.mem.trimRight(u8, home_dir, std.fs.path.sep_str);
+            base_dir = strings.withoutTrailingSlash(install_dir);
+        } else if (bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
+            base_dir = strings.withoutTrailingSlash(home_dir);
         }
         const file_path = std.fmt.bufPrintZ(
             &crash_reporter_path,
@@ -72,8 +72,13 @@ pub const CrashReportWriter = struct {
             .{ base_dir, Global.package_json_version, @as(u64, @intCast(@max(std.time.milliTimestamp(), 0))) },
         ) catch return;
 
-        std.fs.cwd().makeDir(std.fs.path.dirname(bun.asByteSlice(file_path)).?) catch {};
-        var file = std.fs.cwd().createFileZ(file_path, .{ .truncate = true }) catch return;
+        if (bun.path.nextDirname(file_path)) |dirname| {
+            _ = bun.sys.mkdirA(dirname, 0);
+        }
+
+        const call = bun.sys.open(file_path, std.os.O.TRUNC, 0);
+        call.throw() catch return;
+        var file = std.fs.File{ .handle = bun.fdcast(call.result) };
         this.file = std.io.bufferedWriter(
             file.writer(),
         );
@@ -85,7 +90,7 @@ pub const CrashReportWriter = struct {
 
         if (this.file_path.len > 0) {
             var tilda = false;
-            if (bun.getenvZ("HOME")) |home_dir| {
+            if (bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
                 if (strings.hasPrefix(display_path, home_dir)) {
                     display_path = display_path[home_dir.len..];
                     tilda = true;

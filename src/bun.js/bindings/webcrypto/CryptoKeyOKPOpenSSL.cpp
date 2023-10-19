@@ -33,6 +33,7 @@
 #include <wtf/text/Base64.h>
 #include <openssl/curve25519.h>
 #include "CommonCryptoDERUtilities.h"
+#include "Bun_base64URLEncodeToString.h"
 
 namespace WebCore {
 
@@ -349,9 +350,9 @@ CryptoKeyOKP::KeyMaterial CryptoKeyOKP::platformExportRaw() const
     if (namedCurve() == NamedCurve::Ed25519 && type() == CryptoKeyType::Private) {
         ASSERT(m_exportKey);
         const auto& exportKey = *m_exportKey;
-        return WTFMove(Vector<uint8_t>(exportKey.data(), exportKey.size()));
+        return Vector<uint8_t>(exportKey.data(), exportKey.size());
     }
-    return WTFMove(KeyMaterial(m_data.data(), m_data.size()));
+    return KeyMaterial(m_data.data(), m_data.size());
 }
 
 } // namespace WebCore

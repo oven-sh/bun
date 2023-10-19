@@ -13,8 +13,9 @@ const JSC = @import("root").bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const Which = @import("../../../which.zig");
-const uws = @import("../../../deps/uws.zig");
+const Async = bun.Async;
 const IPC = @import("../../ipc.zig");
+const uws = bun.uws;
 
 pub const Subprocess = struct {
     const log = Output.scoped(.Subprocess, false);
@@ -30,7 +31,7 @@ pub const Subprocess = struct {
     stdout: Readable,
     stderr: Readable,
     killed: bool = false,
-    poll_ref: ?*JSC.FilePoll = null,
+    poll_ref: ?*Async.FilePoll = null,
 
     exit_promise: JSC.Strong = .{},
     on_exit_callback: JSC.Strong = .{},
@@ -467,7 +468,7 @@ pub const Subprocess = struct {
     pub const BufferedInput = struct {
         remain: []const u8 = "",
         fd: bun.FileDescriptor = bun.invalid_fd,
-        poll_ref: ?*JSC.FilePoll = null,
+        poll_ref: ?*Async.FilePoll = null,
         written: usize = 0,
 
         source: union(enum) {
@@ -1560,7 +1561,7 @@ pub const Subprocess = struct {
         const watchfd = if (comptime Environment.isLinux) pidfd else pid;
 
         if (comptime !is_sync) {
-            var poll = JSC.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
+            var poll = Async.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
             subprocess.poll_ref = poll;
             switch (subprocess.poll_ref.?.register(
                 jsc_vm.event_loop_handle.?,
@@ -1623,7 +1624,7 @@ pub const Subprocess = struct {
         subprocess.closeIO(.stdin);
 
         {
-            var poll = JSC.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
+            var poll = Async.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
             subprocess.poll_ref = poll;
             switch (subprocess.poll_ref.?.register(
                 jsc_vm.event_loop_handle.?,

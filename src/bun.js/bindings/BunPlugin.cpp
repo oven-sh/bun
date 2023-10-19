@@ -1,27 +1,24 @@
 #include "BunPlugin.h"
 
 #include "headers-handwritten.h"
-#include "JavaScriptCore/CatchScope.h"
-#include "JavaScriptCore/JSGlobalObject.h"
-#include "JavaScriptCore/JSTypeInfo.h"
-#include "JavaScriptCore/Structure.h"
+#include <JavaScriptCore/CatchScope.h>
+#include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/JSTypeInfo.h>
+#include <JavaScriptCore/Structure.h>
 #include "helpers.h"
 #include "ZigGlobalObject.h"
-#include "JavaScriptCore/JavaScript.h"
-#include "JavaScriptCore/JSObjectInlines.h"
-#include "wtf/text/WTFString.h"
-#include "JavaScriptCore/JSCInlines.h"
-#include "JavaScriptCore/StrongInlines.h"
+#include <JavaScriptCore/JavaScript.h>
+#include <JavaScriptCore/JSObjectInlines.h>
+#include <wtf/text/WTFString.h>
+#include <JavaScriptCore/JSCInlines.h>
 
-#include "JavaScriptCore/ObjectConstructor.h"
-#include "JavaScriptCore/SubspaceInlines.h"
-#include "JavaScriptCore/RegExpObject.h"
-#include "JavaScriptCore/JSPromise.h"
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/SubspaceInlines.h>
+#include <JavaScriptCore/RegExpObject.h>
+#include <JavaScriptCore/JSPromise.h>
 #include "BunClientData.h"
-#include "isBuiltinModule.h"
-#include "JavaScriptCore/RegularExpression.h"
-#include "JavaScriptCore/JSMap.h"
-#include "JavaScriptCore/JSMapInlines.h"
+
+#include <JavaScriptCore/RegularExpression.h>
 
 namespace Zig {
 
@@ -37,7 +34,7 @@ static bool isValidNamespaceString(String& namespaceString)
     return namespaceRegex->match(namespaceString) > -1;
 }
 
-static EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target, BunPlugin::Base& plugin, void* ctx, OnAppendPluginCallback callback)
+static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target, BunPlugin::Base& plugin, void* ctx, OnAppendPluginCallback callback)
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -147,7 +144,8 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
     }
 
     global->requireMap()->remove(globalObject, moduleIdValue);
-    esmRegistry && esmRegistry->remove(globalObject, moduleIdValue);
+    if (esmRegistry)
+        esmRegistry->remove(globalObject, moduleIdValue);
 
     // bool hasBeenRequired = global->requireMap()->has(globalObject, moduleIdValue);
     // bool hasBeenImported = esmRegistry && esmRegistry->has(globalObject, moduleIdValue);
@@ -159,7 +157,7 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
     return JSValue::encode(jsUndefined());
 }
 
-static EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target, BunPlugin::Base& plugin, void* ctx, OnAppendPluginCallback callback)
+static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target, BunPlugin::Base& plugin, void* ctx, OnAppendPluginCallback callback)
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -212,7 +210,7 @@ static EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObject* g
     return JSValue::encode(jsUndefined());
 }
 
-static EncodedJSValue jsFunctionAppendOnResolvePluginGlobal(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target)
+static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginGlobal(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target)
 {
     Zig::GlobalObject* global = Zig::jsCast<Zig::GlobalObject*>(globalObject);
 
@@ -221,7 +219,7 @@ static EncodedJSValue jsFunctionAppendOnResolvePluginGlobal(JSC::JSGlobalObject*
     return jsFunctionAppendOnResolvePluginBody(globalObject, callframe, target, plugins, global->bunVM(), callback);
 }
 
-static EncodedJSValue jsFunctionAppendOnLoadPluginGlobal(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target)
+static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginGlobal(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target)
 {
     Zig::GlobalObject* global = Zig::jsCast<Zig::GlobalObject*>(globalObject);
 
@@ -265,7 +263,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionAppendOnResolvePluginBrowser, (JSC::JSGlobalO
     return jsFunctionAppendOnResolvePluginGlobal(globalObject, callframe, BunPluginTargetBrowser);
 }
 
-extern "C" EncodedJSValue jsFunctionBunPluginClear(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
+extern "C" JSC::EncodedJSValue jsFunctionBunPluginClear(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
 {
     Zig::GlobalObject* global = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     global->onLoadPlugins.fileNamespace.clear();
@@ -278,7 +276,7 @@ extern "C" EncodedJSValue jsFunctionBunPluginClear(JSC::JSGlobalObject* globalOb
     return JSValue::encode(jsUndefined());
 }
 
-extern "C" EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target)
+extern "C" JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target)
 {
     JSC::VM& vm = globalObject->vm();
     auto clientData = WebCore::clientData(vm);
@@ -365,7 +363,7 @@ extern "C" EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObject, JSC:
     RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
 }
 
-extern "C" EncodedJSValue jsFunctionBunPlugin(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
+extern "C" JSC::EncodedJSValue jsFunctionBunPlugin(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
 {
     Zig::GlobalObject* global = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     return setupBunPlugin(globalObject, callframe, BunPluginTargetBun);

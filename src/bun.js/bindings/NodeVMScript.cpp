@@ -1,25 +1,24 @@
 #include "root.h"
 
 #include "NodeVMScript.h"
-#include "JavaScriptCore/JSObjectInlines.h"
-#include "wtf/text/ExternalStringImpl.h"
+#include <JavaScriptCore/JSObjectInlines.h>
+#include <wtf/text/ExternalStringImpl.h>
 
-#include "JavaScriptCore/FunctionPrototype.h"
-#include "JavaScriptCore/HeapAnalyzer.h"
+#include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/HeapAnalyzer.h>
 
-#include "JavaScriptCore/JSDestructibleObjectHeapCellType.h"
-#include "JavaScriptCore/SlotVisitorMacros.h"
-#include "JavaScriptCore/ObjectConstructor.h"
-#include "JavaScriptCore/SubspaceInlines.h"
-#include "wtf/GetPtr.h"
-#include "wtf/PointerPreparations.h"
-#include "wtf/URL.h"
-#include "JavaScriptCore/TypedArrayInlines.h"
-#include "JavaScriptCore/PropertyNameArray.h"
-#include "JavaScriptCore/JSWeakMap.h"
-#include "JavaScriptCore/JSWeakMapInlines.h"
-#include "JavaScriptCore/JSWithScope.h"
-#include "JavaScriptCore/JSGlobalProxyInlines.h"
+#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
+#include <JavaScriptCore/SlotVisitorMacros.h>
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/SubspaceInlines.h>
+#include <wtf/GetPtr.h>
+#include <wtf/PointerPreparations.h>
+#include <wtf/URL.h>
+#include <JavaScriptCore/TypedArrayInlines.h>
+#include <JavaScriptCore/PropertyNameArray.h>
+#include <JavaScriptCore/JSWeakMap.h>
+#include <JavaScriptCore/JSWeakMapInlines.h>
+#include <JavaScriptCore/JSWithScope.h>
 #include "GCDefferalContext.h"
 
 #include <JavaScriptCore/DOMJITAbstractHeap.h>
@@ -126,7 +125,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     return JSValue::encode(JSValue(script));
 }
 
-static EncodedJSValue runInContext(JSGlobalObject* globalObject, NodeVMScript* script, JSObject* globalThis, JSScope* scope, JSValue optionsArg)
+static JSC::EncodedJSValue runInContext(JSGlobalObject* globalObject, NodeVMScript* script, JSObject* globalThis, JSScope* scope, JSValue optionsArg)
 {
     auto& vm = globalObject->vm();
 
@@ -168,7 +167,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptConstructorConstruct, (JSGlobalObject * globalObj
     return constructScript(globalObject, callFrame, callFrame->newTarget());
 }
 
-JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataRejected, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataRejected, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     auto& vm = globalObject->vm();
     return JSValue::encode(jsBoolean(true)); // TODO
@@ -425,7 +424,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
     return runInContext(globalObject, script, globalObject->globalThis(), contextScope, callFrame->argument(1));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(scriptGetSourceMapURL, (JSGlobalObject * globalObject, EncodedJSValue thisValueEncoded, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(scriptGetSourceMapURL, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValueEncoded, PropertyName))
 {
     auto& vm = globalObject->vm();
     JSValue thisValue = JSValue::decode(thisValueEncoded);

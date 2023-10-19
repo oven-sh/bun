@@ -12,16 +12,23 @@ pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, addr
 const CrashReporter = @import("./crash_reporter.zig");
 extern fn bun_warn_avx_missing(url: [*:0]const u8) void;
 
+pub extern "C" var _environ: ?*anyopaque;
+pub extern "C" var environ: ?*anyopaque;
+
 pub fn main() void {
     const bun = @import("root").bun;
     const Output = bun.Output;
     const Environment = bun.Environment;
-    if (comptime Environment.isWindows) {
-        bun.win32.populateArgv();
-    }
 
-    if (comptime Environment.isRelease)
+    if (comptime Environment.isRelease and Environment.isPosix)
         CrashReporter.start() catch unreachable;
+    if (comptime Environment.isWindows) {
+        environ = @ptrCast(std.os.environ.ptr);
+        _environ = @ptrCast(std.os.environ.ptr);
+        bun.win32.STDOUT_FD = bun.toFD(std.io.getStdOut().handle);
+        bun.win32.STDERR_FD = bun.toFD(std.io.getStdErr().handle);
+        bun.win32.STDIN_FD = bun.toFD(std.io.getStdin().handle);
+    }
 
     bun.start_time = std.time.nanoTimestamp();
 
@@ -41,3 +48,5 @@ pub fn main() void {
 }
 
 pub const build_options = @import("build_options");
+
+comptime {}

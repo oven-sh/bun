@@ -1,7 +1,7 @@
 #pragma once
 #include "root.h"
-#include "JavaScriptCore/JSInternalFieldObjectImpl.h"
-#include "JavaScriptCore/JSInternalFieldObjectImplInlines.h"
+#include <JavaScriptCore/JSInternalFieldObjectImpl.h>
+#include <JavaScriptCore/JSInternalFieldObjectImplInlines.h>
 #include "BunClientData.h"
 #include "InternalModuleRegistry+numberOfModules.h"
 

@@ -1,7 +1,7 @@
 #include "root.h"
 #include "headers-handwritten.h"
 
-#include "JavaScriptCore/JSCInlines.h"
+#include <JavaScriptCore/JSCInlines.h>
 #include "BunClientData.h"
 
 extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultResolve(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);

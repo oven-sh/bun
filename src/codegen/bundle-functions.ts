@@ -269,6 +269,7 @@ for (const { basename, functions } of files) {
   bundledCPP += `/* ${basename}.ts */\n`;
   const lowerBasename = low(basename);
   for (const fn of functions) {
+    const [code, count] = fmtCPPString(fn.source, true);
     const name = `${lowerBasename}${cap(fn.name)}Code`;
     bundledCPP += `// ${fn.name}
 const JSC::ConstructAbility s_${name}ConstructAbility = JSC::ConstructAbility::${fn.constructAbility};
@@ -276,8 +277,8 @@ const JSC::ConstructorKind s_${name}ConstructorKind = JSC::ConstructorKind::${fn
 const JSC::ImplementationVisibility s_${name}ImplementationVisibility = JSC::ImplementationVisibility::${fn.visibility};
 const int s_${name}Length = ${fn.source.length};
 static const JSC::Intrinsic s_${name}Intrinsic = JSC::NoIntrinsic;
-const char* const s_${name} = ${fmtCPPString(fn.source)};
-
+static const char s_${name}Bytes[${count}] = ${code};
+extern const char* s_${name} = s_${name}Bytes;
 `;
   }
   bundledCPP += `#define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \\
@@ -390,7 +391,7 @@ for (const { basename, functions, internal } of files) {
     const name = `${lowerBasename}${cap(fn.name)}Code`;
     bundledHeader += `// ${fn.name}
 #define WEBCORE_BUILTIN_${basename.toUpperCase()}_${fn.name.toUpperCase()} 1
-extern const char* const s_${name};
+extern const char* s_${name};
 extern const int s_${name}Length;
 extern const JSC::ConstructAbility s_${name}ConstructAbility;
 extern const JSC::ConstructorKind s_${name}ConstructorKind;

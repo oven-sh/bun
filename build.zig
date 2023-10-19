@@ -13,6 +13,11 @@ fn moduleSource(comptime out: []const u8) FileSource {
     }
 }
 
+fn exists(path: []const u8) bool {
+    _ = std.fs.openFileAbsolute(path, .{ .mode = .read_only }) catch return false;
+    return true;
+}
+
 const color_map = std.ComptimeStringMap([]const u8, .{
     &.{ "black", "30m" },
     &.{ "blue", "34m" },
@@ -48,6 +53,31 @@ fn addInternalPackages(b: *Build, step: *CompileStep, _: std.mem.Allocator, _: [
     };
 
     step.addModule("async_io", io);
+
+    step.addModule("zlib-internal", brk: {
+        if (target.isWindows()) {
+            break :brk b.createModule(.{ .source_file = FileSource.relative("src/deps/zlib.win32.zig") });
+        }
+
+        break :brk b.createModule(.{ .source_file = FileSource.relative("src/deps/zlib.posix.zig") });
+    });
+
+    var async_: *Module = brk: {
+        if (target.isDarwin() or target.isLinux() or target.isFreeBSD()) {
+            break :brk b.createModule(.{
+                .source_file = FileSource.relative("src/async/posix_event_loop.zig"),
+            });
+        } else if (target.isWindows()) {
+            break :brk b.createModule(.{
+                .source_file = FileSource.relative("src/async/windows_event_loop.zig"),
+            });
+        }
+
+        break :brk b.createModule(.{
+            .source_file = FileSource.relative("src/async/stub_event_loop.zig"),
+        });
+    };
+    step.addModule("async", async_);
 }
 
 const BunBuildOptions = struct {
@@ -60,6 +90,8 @@ const BunBuildOptions = struct {
 
     runtime_js_version: u64 = 0,
     fallback_html_version: u64 = 0,
+
+    tinycc: bool = true,
 
     pub fn updateRuntime(this: *BunBuildOptions) anyerror!void {
         if (std.fs.cwd().openFile("src/runtime.out.js", .{ .mode = .read_only })) |file| {
@@ -99,6 +131,7 @@ const BunBuildOptions = struct {
         opts.addOption(@TypeOf(this.base_path), "base_path", this.base_path);
         opts.addOption(@TypeOf(this.runtime_js_version), "runtime_js_version", this.runtime_js_version);
         opts.addOption(@TypeOf(this.fallback_html_version), "fallback_html_version", this.fallback_html_version);
+        opts.addOption(@TypeOf(this.tinycc), "tinycc", this.tinycc);
         return opts;
     }
 };
@@ -166,7 +199,11 @@ pub fn build_(b: *Build) !void {
     // what target to build for. Here we do not override the defaults, which
     // means any target is allowed, and the default is native. Other options
     // for restricting supported target set are available.
-    var target = b.standardTargetOptions(.{});
+    var target = b.standardTargetOptions(.{
+        .default_target = .{
+            // .os_tag = .windows,
+        },
+    });
     // Standard release options allow the person running `zig build` to select
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     optimize = b.standardOptimizeOption(.{});
@@ -205,7 +242,7 @@ pub fn build_(b: *Build) !void {
 
     var triplet = triplet_buf[0 .. osname.len + cpuArchName.len + 1];
 
-    if (b.option([]const u8, "output-dir", "target to install to")) |output_dir_| {
+    if (b.option([]const u8, "output-dir", "target to install to") orelse b.env_map.get("OUTPUT_DIR")) |output_dir_| {
         output_dir = try pathRel(b.allocator, b.install_prefix, output_dir_);
     } else {
         const output_dir_base = try std.fmt.bufPrint(&output_dir_buf, "{s}{s}", .{ bin_label, triplet });
@@ -237,6 +274,21 @@ pub fn build_(b: *Build) !void {
         .optimize = optimize,
         .main_mod_path = .{ .cwd_relative = b.pathFromRoot(".") },
     });
+
+    if (!exists(b.pathFromRoot(try std.fs.path.join(b.allocator, &.{
+        "src",
+        "js_lexer",
+        "id_continue_bitset.blob",
+    })))) {
+        const identifier_data = b.pathFromRoot(try std.fs.path.join(b.allocator, &.{ "src", "js_lexer", "identifier_data.zig" }));
+        var run_step = b.addSystemCommand(&.{
+            b.zig_exe,
+            "run",
+            identifier_data,
+        });
+        run_step.has_side_effects = true;
+        obj.step.dependOn(&run_step.step);
+    }
 
     b.reference_trace = 16;
 
@@ -330,12 +382,12 @@ pub fn build_(b: *Build) !void {
         }));
 
         obj.linkLibC();
-
+        obj.dll_export_fns = true;
         obj.strip = false;
-        obj.bundle_compiler_rt = false;
         obj.omit_frame_pointer = optimize != .Debug;
+        obj.subsystem = .Console;
         // Disable stack probing on x86 so we don't need to include compiler_rt
-        if (target.getCpuArch().isX86()) obj.disable_stack_probing = true;
+        if (target.getCpuArch().isX86() or target.isWindows()) obj.disable_stack_probing = true;
 
         if (b.option(bool, "for-editor", "Do not emit bin, just check for errors") orelse false) {
             // obj.emit_bin = .no_emit;

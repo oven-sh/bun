@@ -150,6 +150,59 @@ struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, vo
     return s;
 }
 
+// This function is the same as us_socket_close but:
+// - does not emit on_close event
+// - does not close
+struct us_socket_t *us_socket_detach(int ssl, struct us_socket_t *s) {
+    if (!us_socket_is_closed(0, s)) {
+        if (s->low_prio_state == 1) {
+            /* Unlink this socket from the low-priority queue */
+            if (!s->prev) s->context->loop->data.low_prio_head = s->next;
+            else s->prev->next = s->next;
+
+            if (s->next) s->next->prev = s->prev;
+
+            s->prev = 0;
+            s->next = 0;
+            s->low_prio_state = 0;
+        } else {
+            us_internal_socket_context_unlink_socket(s->context, s);
+        }
+        us_poll_stop((struct us_poll_t *) s, s->context->loop);
+
+        /* Link this socket to the close-list and let it be deleted after this iteration */
+        s->next = s->context->loop->data.closed_head;
+        s->context->loop->data.closed_head = s;
+
+        /* Any socket with prev = context is marked as closed */
+        s->prev = (struct us_socket_t *) s->context;
+
+        return s;
+    }
+    return s;
+}
+
+// This function is used for moving a socket between two different event loops
+struct us_socket_t *us_socket_attach(int ssl, LIBUS_SOCKET_DESCRIPTOR client_fd, struct us_socket_context_t *ctx, int flags, int socket_ext_size) {
+    struct us_poll_t *accepted_p = us_create_poll(ctx->loop, 0, sizeof(struct us_socket_t) - sizeof(struct us_poll_t) + socket_ext_size);
+    us_poll_init(accepted_p, client_fd, POLL_TYPE_SOCKET);
+    us_poll_start(accepted_p, ctx->loop, flags);
+
+    struct us_socket_t *s = (struct us_socket_t *) accepted_p;
+
+    s->context = ctx;
+    s->timeout = 0;
+    s->low_prio_state = 0;
+
+    /* We always use nodelay */
+    bsd_socket_nodelay(client_fd, 1);
+    us_internal_socket_context_link_socket(ctx, s);
+
+    if (ctx->on_open) ctx->on_open(s, 0, 0, 0);
+
+    return s;
+}
+
 struct us_socket_t *us_socket_pair(struct us_socket_context_t *ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR* fds) {
 #ifdef LIBUS_USE_LIBUV
     return 0;

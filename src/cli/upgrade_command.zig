@@ -78,7 +78,13 @@ pub const Version = struct {
         return this.tag["bun-v".len..];
     }
 
-    pub const platform_label = if (Environment.isMac) "darwin" else "linux";
+    pub const platform_label = switch (Environment.os) {
+        .mac => "darwin",
+        .linux => "linux",
+        .windows => "windows",
+        else => "TODO",
+    };
+
     pub const arch_label = if (Environment.isAarch64) "aarch64" else "x64";
     pub const triplet = platform_label ++ "-" ++ arch_label;
     const suffix = if (Environment.baseline) "-baseline" else "";
@@ -568,39 +574,79 @@ pub const UpgradeCommand = struct {
                     save_dir.deleteFileZ(tmpname) catch {};
                 }
 
-                const unzip_exe = which(&unzip_path_buf, env_loader.map.get("PATH") orelse "", filesystem.top_level_dir, "unzip") orelse {
-                    save_dir.deleteFileZ(tmpname) catch {};
-                    Output.prettyErrorln("<r><red>error:<r> Failed to locate \"unzip\" in PATH. bun upgrade needs \"unzip\" to work.", .{});
-                    Global.exit(1);
-                };
+                if (comptime Environment.isPosix) {
+                    const unzip_exe = which(&unzip_path_buf, env_loader.map.get("PATH") orelse "", filesystem.top_level_dir, "unzip") orelse {
+                        save_dir.deleteFileZ(tmpname) catch {};
+                        Output.prettyErrorln("<r><red>error:<r> Failed to locate \"unzip\" in PATH. bun upgrade needs \"unzip\" to work.", .{});
+                        Global.exit(1);
+                    };
 
-                // We could just embed libz2
-                // however, we want to be sure that xattrs are preserved
-                // xattrs are used for codesigning
-                // it'd be easy to mess that up
-                var unzip_argv = [_]string{
-                    bun.asByteSlice(unzip_exe),
-                    "-q",
-                    "-o",
-                    tmpname,
-                };
+                    // We could just embed libz2
+                    // however, we want to be sure that xattrs are preserved
+                    // xattrs are used for codesigning
+                    // it'd be easy to mess that up
+                    var unzip_argv = [_]string{
+                        bun.asByteSlice(unzip_exe),
+                        "-q",
+                        "-o",
+                        tmpname,
+                    };
 
-                var unzip_process = std.ChildProcess.init(&unzip_argv, ctx.allocator);
-                unzip_process.cwd = tmpdir_path;
-                unzip_process.stdin_behavior = .Inherit;
-                unzip_process.stdout_behavior = .Inherit;
-                unzip_process.stderr_behavior = .Inherit;
+                    var unzip_process = std.ChildProcess.init(&unzip_argv, ctx.allocator);
+                    unzip_process.cwd = tmpdir_path;
+                    unzip_process.stdin_behavior = .Inherit;
+                    unzip_process.stdout_behavior = .Inherit;
+                    unzip_process.stderr_behavior = .Inherit;
 
-                const unzip_result = unzip_process.spawnAndWait() catch |err| {
-                    save_dir.deleteFileZ(tmpname) catch {};
-                    Output.prettyErrorln("<r><red>error:<r> Failed to spawn unzip due to {s}.", .{@errorName(err)});
-                    Global.exit(1);
-                };
+                    const unzip_result = unzip_process.spawnAndWait() catch |err| {
+                        save_dir.deleteFileZ(tmpname) catch {};
+                        Output.prettyErrorln("<r><red>error:<r> Failed to spawn unzip due to {s}.", .{@errorName(err)});
+                        Global.exit(1);
+                    };
 
-                if (unzip_result.Exited != 0) {
-                    Output.prettyErrorln("<r><red>Unzip failed<r> (exit code: {d})", .{unzip_result.Exited});
-                    save_dir.deleteFileZ(tmpname) catch {};
-                    Global.exit(1);
+                    if (unzip_result.Exited != 0) {
+                        Output.prettyErrorln("<r><red>Unzip failed<r> (exit code: {d})", .{unzip_result.Exited});
+                        save_dir.deleteFileZ(tmpname) catch {};
+                        Global.exit(1);
+                    }
+                } else if (Environment.isWindows) {
+                    // Run a powershell script to unzip the file
+                    var unzip_script = try std.fmt.allocPrint(
+                        ctx.allocator,
+                        "Expand-Archive -Path {s} -DestinationPath {s} -Force",
+                        .{
+                            tmpname,
+                            tmpdir_path,
+                        },
+                    );
+
+                    var unzip_argv = [_]string{
+                        "powershell.exe",
+                        "-NoProfile",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-Command",
+                        unzip_script,
+                    };
+
+                    var unzip_process = std.ChildProcess.init(&unzip_argv, ctx.allocator);
+
+                    unzip_process.cwd = tmpdir_path;
+                    unzip_process.stdin_behavior = .Inherit;
+                    unzip_process.stdout_behavior = .Inherit;
+                    unzip_process.stderr_behavior = .Inherit;
+
+                    const unzip_result = unzip_process.spawnAndWait() catch |err| {
+                        save_dir.deleteFileZ(tmpname) catch {};
+                        Output.prettyErrorln("<r><red>error:<r> Failed to spawn unzip due to {s}.", .{@errorName(err)});
+                        Global.exit(1);
+                    };
+
+                    if (unzip_result.Exited != 0) {
+                        Output.prettyErrorln("<r><red>Unzip failed<r> (exit code: {d})", .{unzip_result.Exited});
+                        save_dir.deleteFileZ(tmpname) catch {};
+                        Global.exit(1);
+                    }
                 }
             }
             {
@@ -707,11 +753,20 @@ pub const UpgradeCommand = struct {
             }
 
             if (env_loader.map.get("BUN_DRY_RUN") == null) {
-                C.moveFileZ(save_dir.fd, exe, target_dir.fd, target_filename) catch |err| {
-                    save_dir_.deleteTree(version_name) catch {};
-                    Output.prettyErrorln("<r><red>error:<r> Failed to move new version of bun due to {s}. You could try the install script instead:\n   curl -fsSL https://bun.sh/install | bash", .{@errorName(err)});
-                    Global.exit(1);
-                };
+                if (comptime Environment.isWindows) {
+                    // On Windows, we cannot replace the running executable directly.
+                    // we rename the old executable to a temporary name, and then move the new executable to the old name.
+                    // This is because Windows locks the executable while it's running.
+
+                    // var tmpname = try std.fmt.allocPrint(ctx.allocator, "{s}.old.exe", .{target_filename});
+
+                } else {
+                    C.moveFileZ(save_dir.fd, exe, target_dir.fd, target_filename) catch |err| {
+                        save_dir_.deleteTree(version_name) catch {};
+                        Output.prettyErrorln("<r><red>error:<r> Failed to move new version of bun due to {s}. You could try the install script instead:\n   curl -fsSL https://bun.sh/install | bash", .{@errorName(err)});
+                        Global.exit(1);
+                    };
+                }
             }
 
             // Ensure completions are up to date.

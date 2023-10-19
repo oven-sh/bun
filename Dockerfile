@@ -22,7 +22,7 @@ ARG ZIG_URL="https://ziglang.org/builds/${ZIG_FILENAME}"
 ARG GIT_SHA=""
 ARG BUN_BASE_VERSION=1.0
 
-FROM bitnami/minideb:bullseye as bun-base
+FROM bitnami/minideb:bookworm as bun-base
 
 RUN install_packages ca-certificates curl wget lsb-release software-properties-common gnupg gnupg1 gnupg2 &&  \
     echo "deb https://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-16 main" > /etc/apt/sources.list.d/llvm.list && \

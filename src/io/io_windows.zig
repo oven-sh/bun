@@ -115,14 +115,14 @@ pub const Waker = struct {
         };
     }
 
-    pub fn wait(this: Waker) !u64 {
+    pub fn wait(this: Waker) u64 {
         var overlapped = [_]os.windows.OVERLAPPED_ENTRY{std.mem.zeroes(os.windows.OVERLAPPED_ENTRY)} ** 1;
         var removed: u32 = 0;
         _ = kernel32.GetQueuedCompletionStatusEx(this.iocp, &overlapped, 1, &removed, 0, 1);
         return 0;
     }
 
-    pub fn wake(this: Waker) !void {
+    pub fn wake(this: Waker) void {
         var overlapped: os.windows.OVERLAPPED = std.mem.zeroes(os.windows.OVERLAPPED);
         _ = kernel32.PostQueuedCompletionStatus(this.iocp, 1, completion_key, &overlapped);
     }

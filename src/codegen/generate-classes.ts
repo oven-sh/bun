@@ -285,8 +285,11 @@ export function generateHashTable(nameToUse, symbolName, typeName, obj, props = 
     rows.push(propRow(symbolName, typeName, name, props[name], wrapped, defaultPropertyAttributes));
   }
 
+  if (rows.length === 0) {
+    return "";
+  }
   return `
-  static const HashTableValue ${nameToUse}TableValues[] = {${rows.length > 0 ? "\n" + rows.join("  ,\n") + "\n" : ""}};
+  static const HashTableValue ${nameToUse}TableValues[${rows.length}] = {${"\n" + rows.join("  ,\n") + "\n"}};
 `;
 }
 

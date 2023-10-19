@@ -127,7 +127,7 @@ pub const TestRunner = struct {
 
         if (milliseconds > 0) {
             if (this.test_timeout_timer == null) {
-                this.test_timeout_timer = bun.uws.Timer.createFallthrough(bun.uws.Loop.get().?, this);
+                this.test_timeout_timer = bun.uws.Timer.createFallthrough(bun.uws.Loop.get(), this);
             }
 
             if (this.last_test_timeout_timer_duration != milliseconds) {
@@ -146,7 +146,7 @@ pub const TestRunner = struct {
         this.pending_test = null;
 
         // disable idling
-        JSC.VirtualMachine.get().event_loop_handle.?.wakeup();
+        JSC.VirtualMachine.get().wakeup();
     }
 
     pub fn drain(this: *TestRunner) void {

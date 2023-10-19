@@ -1,12 +1,12 @@
 #include "InternalModuleRegistry.h"
 
 #include "ZigGlobalObject.h"
-#include "JavaScriptCore/BuiltinUtils.h"
-#include "JavaScriptCore/JSFunction.h"
-#include "JavaScriptCore/LazyProperty.h"
-#include "JavaScriptCore/LazyPropertyInlines.h"
-#include "JavaScriptCore/VMTrapsInlines.h"
-#include "JavaScriptCore/JSModuleLoader.h"
+#include <JavaScriptCore/BuiltinUtils.h>
+#include <JavaScriptCore/JSFunction.h>
+#include <JavaScriptCore/LazyProperty.h>
+#include <JavaScriptCore/LazyPropertyInlines.h>
+#include <JavaScriptCore/VMTrapsInlines.h>
+#include <JavaScriptCore/JSModuleLoader.h>
 
 #include "InternalModuleRegistryConstants.h"
 

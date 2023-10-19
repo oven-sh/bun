@@ -123,7 +123,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "bun run [file]",
-      "program": "bun-debug",
+      "program": "./Build/debug/bun.exe",
       "args": ["run", "${file}", "${file}"],
       "cwd": "${fileDirname}",
       "env": {
@@ -307,11 +307,9 @@
       "name": "bun install",
       "program": "bun-debug",
       "args": ["install"],
-      "cwd": "${fileDirname}",
+      "cwd": "/Users/jarred/Build/worky",
       "console": "internalConsole",
-      "env": {
-        "BUN_DEBUG_ALL": "1"
-      }
+      "env": {}
     },
     {
       "type": "lldb",

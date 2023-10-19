@@ -2,18 +2,31 @@ import fs from "fs";
 import path from "path";
 import { isAscii } from "buffer";
 
-export function fmtCPPString(str: string) {
-  return (
-    '"' +
-    str
-      .replace(/\\/g, "\\\\")
-      .replace(/"/g, '\\"')
-      .replace(/\n/g, "\\n")
-      .replace(/\r/g, "\\r")
-      .replace(/\t/g, "\\t")
-      .replace(/\?/g, "\\?") + // https://stackoverflow.com/questions/1234582
-    '"'
-  );
+// MSVC has a max of 16k characters per string literal
+// Combining string literals didn't support constexpr apparently
+// so we have to do this the gigantic array way
+export function fmtCPPString(str: string, nullTerminated: boolean = true) {
+  const normalized = str + "\n";
+
+  var remain = normalized;
+
+  const chars =
+    "{" +
+    remain
+      .split("")
+      .map(a => a.charCodeAt(0))
+      .join(",") +
+    (nullTerminated ? ",0" : "") +
+    "}";
+  return [chars, normalized.length + (nullTerminated ? 1 : 0)];
+}
+
+export function declareASCIILiteral(name: string, value: string) {
+  const [chars, count] = fmtCPPString(value);
+  return `
+static constexpr const char ${name}Bytes[${count}] = ${chars};
+static constexpr ASCIILiteral ${name} = ASCIILiteral::fromLiteralUnsafe(${name}Bytes);
+  `;
 }
 
 export function cap(str: string) {

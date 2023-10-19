@@ -3,9 +3,9 @@
 #include "headers.h"
 #include "BunClientData.h"
 
-#include "JavaScriptCore/JSFunction.h"
-#include "JavaScriptCore/JSMicrotask.h"
-#include "JavaScriptCore/ObjectConstructor.h"
+#include <JavaScriptCore/JSFunction.h>
+#include <JavaScriptCore/JSMicrotask.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 
 #pragma mark - Node.js Path
 
@@ -70,55 +70,55 @@ JSC_DEFINE_HOST_FUNCTION(Path_functionDirname,
 {
     DEFINE_CALLBACK_FUNCTION_BODY(Bun__Path__dirname);
 }
-JSC_DECLARE_HOST_FUNCTION(Path_functionExtname);
+
 JSC_DEFINE_HOST_FUNCTION(Path_functionExtname,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     DEFINE_CALLBACK_FUNCTION_BODY(Bun__Path__extname);
 }
-JSC_DECLARE_HOST_FUNCTION(Path_functionFormat);
+
 JSC_DEFINE_HOST_FUNCTION(Path_functionFormat,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     DEFINE_CALLBACK_FUNCTION_BODY(Bun__Path__format);
 }
-JSC_DECLARE_HOST_FUNCTION(Path_functionIsAbsolute);
+
 JSC_DEFINE_HOST_FUNCTION(Path_functionIsAbsolute,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     DEFINE_CALLBACK_FUNCTION_BODY(Bun__Path__isAbsolute);
 }
-JSC_DECLARE_HOST_FUNCTION(Path_functionJoin);
+
 JSC_DEFINE_HOST_FUNCTION(Path_functionJoin,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     DEFINE_CALLBACK_FUNCTION_BODY(Bun__Path__join);
 }
-JSC_DECLARE_HOST_FUNCTION(Path_functionNormalize);
+
 JSC_DEFINE_HOST_FUNCTION(Path_functionNormalize,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     DEFINE_CALLBACK_FUNCTION_BODY(Bun__Path__normalize);
 }
-JSC_DECLARE_HOST_FUNCTION(Path_functionParse);
+
 JSC_DEFINE_HOST_FUNCTION(Path_functionParse,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     DEFINE_CALLBACK_FUNCTION_BODY(Bun__Path__parse);
 }
-JSC_DECLARE_HOST_FUNCTION(Path_functionRelative);
+
 JSC_DEFINE_HOST_FUNCTION(Path_functionRelative,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     DEFINE_CALLBACK_FUNCTION_BODY(Bun__Path__relative);
 }
-JSC_DECLARE_HOST_FUNCTION(Path_functionResolve);
+
 JSC_DEFINE_HOST_FUNCTION(Path_functionResolve,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     DEFINE_CALLBACK_FUNCTION_BODY(Bun__Path__resolve);
 }
-JSC_DECLARE_HOST_FUNCTION(Path_functionToNamespacedPath);
+
 JSC_DEFINE_HOST_FUNCTION(Path_functionToNamespacedPath,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {

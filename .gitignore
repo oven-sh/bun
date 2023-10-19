@@ -139,3 +139,17 @@ build-release
 
 *.lib
 *.pdb
+CMakeFiles
+build.ninja
+.ninja_deps
+.ninja_log
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+
+*.lib
+x64
+**/*.vcxproj*
+**/*.sln*
+**/*.dir
+**/*.pdb

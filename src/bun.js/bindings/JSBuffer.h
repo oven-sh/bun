@@ -23,7 +23,7 @@
 #include "root.h"
 
 #include <JavaScriptCore/JSGlobalObject.h>
-#include "wtf/NeverDestroyed.h"
+#include <wtf/NeverDestroyed.h>
 
 #include "BufferEncodingType.h"
 #include "headers-handwritten.h"

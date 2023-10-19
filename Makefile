@@ -38,7 +38,11 @@ NATIVE_OR_OLD_MARCH = -march=nehalem
 endif
 
 MIN_MACOS_VERSION ?= $(DEFAULT_MIN_MACOS_VERSION)
+<<<<<<< HEAD
+BUN_BASE_VERSION = 0.9
+=======
 BUN_BASE_VERSION = 1.0
+>>>>>>> main
 
 CI ?= false
 
@@ -66,7 +70,7 @@ PACKAGE_JSON_VERSION = $(BUN_BASE_VERSION).$(BUILD_ID)
 BUN_BUILD_TAG = bun-v$(PACKAGE_JSON_VERSION)
 BUN_RELEASE_BIN = $(PACKAGE_DIR)/bun
 PRETTIER ?= $(shell which prettier 2>/dev/null || echo "./node_modules/.bin/prettier")
-ESBUILD = $(shell which esbuild 2>/dev/null || echo "./node_modules/.bin/esbuild")
+ESBUILD = "$(shell which esbuild 2>/dev/null || echo "./node_modules/.bin/esbuild")"
 DSYMUTIL ?= $(shell which dsymutil 2>/dev/null || which dsymutil-15 2>/dev/null)
 WEBKIT_DIR ?= $(realpath src/bun.js/WebKit)
 WEBKIT_RELEASE_DIR ?= $(WEBKIT_DIR)/WebKitBuild/Release
@@ -74,7 +78,7 @@ WEBKIT_DEBUG_DIR ?= $(WEBKIT_DIR)/WebKitBuild/Debug
 WEBKIT_RELEASE_DIR_LTO ?= $(WEBKIT_DIR)/WebKitBuild/ReleaseLTO
 
 
-NPM_CLIENT ?= $(shell which bun 2>/dev/null || which npm 2>/dev/null)
+NPM_CLIENT = "$(shell which bun 2>/dev/null || which npm 2>/dev/null)"
 ZIG ?= $(shell which zig 2>/dev/null || echo -e "error: Missing zig. Please make sure zig is in PATH. Or set ZIG=/path/to-zig-executable")
 
 # We must use the same compiler version for the JavaScriptCore bindings and JavaScriptCore
@@ -757,7 +761,7 @@ USOCKETS_DIR = $(BUN_DIR)/packages/bun-usockets
 USOCKETS_SRC_DIR = $(USOCKETS_DIR)/src
 
 usockets:
-	rm -rf $(USOCKETS_DIR)/*.i $(USOCKETS_DIR)/*.bc $(USOCKETS_DIR)/*.o $(USOCKETS_DIR)/*.s $(USOCKETS_DIR)/*.ii $(USOCKETS_DIR)/*.s
+	rm -rf $(USOCKETS_DIR)/*.i $(USOCKETS_DIR)/*.bc $(USOCKETS_DIR)/*.o $(USOCKETS_DIR)/*.s $(USOCKETS_DIR)/*.ii $(USOCKETS_DIR)/*.s  $(BUN_DEPS_OUT_DIR)/libusockets.a
 	cd $(USOCKETS_DIR) && $(CC_WITH_CCACHE) -I$(USOCKETS_SRC_DIR)  -fno-builtin-malloc -fno-builtin-free -fno-builtin-realloc $(EMIT_LLVM_FOR_RELEASE)  $(MACOS_MIN_FLAG) -fPIC $(CFLAGS) $(UWS_CC_FLAGS) -save-temps -I$(BUN_DEPS_DIR)/uws/uSockets/src $(UWS_LDFLAGS) -g $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -c $(wildcard $(USOCKETS_SRC_DIR)/*.c) $(wildcard $(USOCKETS_SRC_DIR)/**/*.c)
 	cd $(USOCKETS_DIR) && $(CXX_WITH_CCACHE)  -I$(USOCKETS_SRC_DIR) -fno-builtin-malloc -fno-builtin-free -fno-builtin-realloc $(EMIT_LLVM_FOR_RELEASE) $(MACOS_MIN_FLAG)  -fPIC $(CXXFLAGS) $(UWS_CXX_FLAGS) -save-temps -I$(BUN_DEPS_DIR)/uws/uSockets/src $(UWS_LDFLAGS) -g $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL)  -c $(wildcard $(USOCKETS_SRC_DIR)/*.cpp) $(wildcard $(USOCKETS_SRC_DIR)/**/*.cpp)
 	cd $(USOCKETS_DIR) && $(AR) rcvs $(BUN_DEPS_OUT_DIR)/libusockets.a $(USOCKETS_DIR)/*.{o,bc}

@@ -1881,14 +1881,12 @@ pub const Command = struct {
                 Command.Tag.BunxCommand => {
                     Output.prettyErrorln(
                         \\<b>Usage: bunx <r><cyan>[...flags]<r> \<package\><d>[@version] [...flags and arguments]<r>
-                        \\bunx runs an npm package executable, automatically installing into a global shared cache if not installed in node_modules.
+                        \\Execute an npm package executable (CLI), automatically installing into a global shared cache if not installed in node_modules.
                         \\
                         \\Flags:
-                        \\
-                        \\  <cyan>--bun<r> Force the command to run with Bun instead of Node.js
+                        \\  <cyan>--bun<r>      Force the command to run with Bun instead of Node.js
                         \\
                         \\Examples<d>:<r>
-                        \\
                         \\  <b>bunx prisma migrate<r>
                         \\  <b>bunx prettier foo.js<r>
                         \\  <b>bunx<r> <cyan>--bun<r> <b>vite dev foo.js<r>

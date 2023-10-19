@@ -5227,6 +5227,7 @@ pub const PackageManager = struct {
                                             if (item.value) |v| {
                                                 const url = request.version.literal.slice(request.version_buf);
                                                 if (v.data == .e_string and v.data.e_string.eql(string, url)) {
+                                                    request.e_string = v.data.e_string;
                                                     remaining -= 1;
                                                     break;
                                                 }

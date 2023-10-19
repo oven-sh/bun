@@ -49,6 +49,32 @@ jobs:
         with:
           key: ${{ runner.os }}-build-${{ matrix.id }}
           path: build
+      - name: Setup APT
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          version: "1" # increment when packages change
+          packages: |
+            make
+            cmake
+            ccache
+            ninja-build
+            lsb-release
+            software-properties-common
+            gnupg
+            gnupg1
+            gnupg2
+            file
+            libc-dev
+            libxml2
+            libxml2-dev
+            rsync
+            unzip
+            xz-utils
+            tar
+            gzip
+            perl
+            python3
+            ruby
       - name: Setup LLVM
         uses: KyleMayes/install-llvm-action@v1
         with:
@@ -61,32 +87,8 @@ jobs:
         uses: oven-sh/setup-bun@v1
         with:
           bun-version: latest
-      - name: Setup APT
+      - name: Build
         run: |
-          sudo apt-get update -qq
-          apt-get install -qq --no-install-recommends \
-            lsb-release \
-            software-properties-common \
-            gnupg \
-            gnupg1 \
-            gnupg2 \
-            cmake \
-            file \
-            gnupg \
-            libc-dev \
-            libxml2 \
-            libxml2-dev \
-            make \
-            ninja-build \
-            perl \
-            python3 \
-            rsync \
-            ruby \
-            unzip \
-            xz-utils \
-            tar \
-            gzip \
-            ccache
           bun install -g esbuild
           bun run build
           ls

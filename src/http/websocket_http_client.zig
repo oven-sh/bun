@@ -91,7 +91,7 @@ fn buildRequestBody(
 
     const host_fmt = ZigURL.HostFormatter{
         .is_https = is_https,
-        .host = host_.slice(),
+        .host = host_.byteSlice(),
         .port = port,
     };
     const headers_ = static_headers[0 .. 1 + @as(usize, @intFromBool(client_protocol.len > 0))];
@@ -107,7 +107,7 @@ fn buildRequestBody(
             "{s}" ++
             "{s}" ++
             "\r\n",
-        .{ pathname_.slice(), host_fmt, pico_headers, extra_headers },
+        .{ pathname_.byteSlice(), host_fmt, pico_headers, extra_headers },
     );
 }
 

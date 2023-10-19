@@ -233,9 +233,6 @@ pub const Diagnostic = struct {
                 try stream.print("Failed to parse argument due to unexpected single dash\n", .{}),
             else => try stream.print("Error while parsing arguments: {s}\n", .{@errorName(err)}),
         }
-
-        // print error
-
     }
 };
 
@@ -361,6 +358,7 @@ pub fn helpFull(
             continue;
 
         const help_text = try helpText(context, param);
+        // only print flag if description is defined
         if (help_text.len > 0) {
             var cs = io.countingWriter(stream);
             try stream.print("\t", .{});
@@ -454,13 +452,6 @@ pub fn simplePrintParam(param: Param(Help)) !void {
 
         Output.pretty("<cyan>--{s}<r>", .{l});
     }
-
-    // switch (param.takes_value) {
-    //     .none => {},
-    //     .one => Output.pretty(" \\<{s}\\>", .{getValueSimple(param)}),
-    //     .one_optional => Output.pretty(" \\<{s}\\>?", .{getValueSimple(param)}),
-    //     .many => Output.pretty(" \\<{s}\\>...", .{getValueSimple(param)}),
-    // }
 }
 pub fn simpleHelp(
     params: []const Param(Help),

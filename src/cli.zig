@@ -31,6 +31,7 @@ const BunJS = @import("./bun_js.zig");
 const Install = @import("./install/install.zig");
 const bundler = bun.bundler;
 const DotEnv = @import("./env_loader.zig");
+const RunCommand_ = @import("./cli/run_command.zig").RunCommand;
 
 const fs = @import("fs.zig");
 const Router = @import("./router.zig");
@@ -156,7 +157,7 @@ pub const Arguments = struct {
         clap.parseParam("--inspect-brk <STR>?              Activate Bun's debugger, set breakpoint on first line of code and wait") catch unreachable,
         clap.parseParam("--if-present                      Exit if the entrypoint does not exist") catch unreachable,
         clap.parseParam("--no-install                      Disable auto install in the Bun runtime") catch unreachable,
-        clap.parseParam("-i                                    Automatically install dependencies and use global cache in Bun's runtime, equivalent to --install=fallback") catch unreachable,
+        clap.parseParam("-i                                        Automatically install dependencies and use global cache in Bun's runtime, equivalent to --install=fallback") catch unreachable,
         clap.parseParam("--install <STR>                   Install dependencies automatically when no node_modules are present, default: \"auto\". \"force\" to ignore node_modules, fallback to install any missing") catch unreachable,
         clap.parseParam("--prefer-offline                  Skip staleness checks for packages in the Bun runtime and resolve from disk") catch unreachable,
         clap.parseParam("--prefer-latest                   Use the latest matching versions of packages in the Bun runtime, always checking npm") catch unreachable,
@@ -175,7 +176,7 @@ pub const Arguments = struct {
         clap.parseParam("--silent                          Don't repeat the command for bun run") catch unreachable,
         clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
     };
-    const run_params = run_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
+    pub const run_params = run_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
     const bunx_commands = [_]ParamType{
         clap.parseParam("--silent                          Don't repeat the command for bun run") catch unreachable,
@@ -772,7 +773,7 @@ pub const Arguments = struct {
                 Output.prettyErrorln("<r><b>bun build <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
                 Output.prettyError("<r><red>error: Missing entrypoints. What would you like to bundle?<r>\n\n", .{});
                 Output.flush();
-                Output.pretty("Usage:\n  <d>$<r> <b><green>bun build<r> \\<entrypoint\\> [...\\<entrypoints\\>] <cyan>[flags]<r>  \n", .{});
+                Output.pretty("Usage:\n  <d>$<r> <b><green>bun build<r> \\<entrypoint\\> [...\\<entrypoints\\>] <cyan>[...flags]<r>  \n", .{});
                 Output.pretty("\nTo see full documentation:\n  <d>$<r> <b><green>bun build<r> --help\n", .{});
                 Output.flush();
                 Global.exit(1);
@@ -867,30 +868,37 @@ pub const HelpCommand = struct {
 
     // the spacing between commands here is intentional
     pub const cli_helptext_fmt =
-        \\  <b><magenta>run<r>       <d>./my-script.ts<r>       Run JavaScript with Bun, a package.json script, or a bin
-        \\  <b><magenta>test<r>                           Run unit tests with Bun
-        \\  <b><magenta>x<r>         <d>{s:<16}<r>     Install and execute a package bin <d>(bunx)<r>
+        \\<d>CLI:<r>
+        \\  <b>bun \<command\> --help<r> for detailed usage of given command.
+        \\  <b>bun upgrade<r> to get the latest version of Bun.
+        \\
+        \\<d>Runtime:<r>
+        \\  <b><magenta>run<r>       <d>./my-script.ts<r>       Execute a file with Bun
+        \\            <d>lint<r>                 Run a package.json script
+        \\  <b><magenta>x<r>         <d>{s:<16}<r>     Execute a package binary (CLI), installing if needed <d>(bunx)<r>
         \\  <b><magenta>repl<r>                           Start a REPL session with Bun
         \\
+        \\<d>Test runner:<r>
+        \\  <b><yellow>test<r>                           Run unit tests with Bun
+        \\
+        \\<d>Templating:<r>
         \\  <b><cyan>init<r>                           Start an empty Bun project from a blank template
         \\  <b><cyan>create<r>    <d>{s:<16}<r>     Create a new project from a template <d>(bun c)<r>
         \\
+        \\<d>Package manager:<r>
         \\  <b><blue>install<r>                        Install dependencies for a package.json <d>(bun i)<r>
         \\  <b><blue>add<r>       <d>{s:<16}<r>     Add a dependency to package.json <d>(bun a)<r>
         \\  <b><blue>remove<r>    <d>{s:<16}<r>     Remove a dependency from package.json <d>(bun rm)<r>
         \\  <b><blue>update<r>    <d>{s:<16}<r>     Update outdated dependencies
         \\  <b><blue>link<r>                           Link an npm package globally
         \\  <b><blue>unlink<r>                         Globally unlink an npm package
-        \\  <b>pm<r>                             More commands for managing packages
+        \\  <b><blue>pm \<subcommand\><r>                Additional package management utilities
         \\
+        \\<d>Bundler:<r>
         \\  <b><green>build<r>     <d>./a.ts ./b.jsx<r>       Bundle TypeScript & JavaScript into a single file
         \\
-        \\  <b><yellow>upgrade<r>                        Get the latest version of Bun
-        \\  <b>bun --help<r>                     Show all supported flags and commands
-        \\  <b>bun [command] --help<r>            Print helptext for a specific command
-        \\
-        \\  Learn more about Bun:          <magenta>https://bun.sh/docs<r>
-        \\  Join our Discord community:    <blue>https://bun.sh/discord<r>
+        \\Learn more about Bun:            <magenta>https://bun.sh/docs<r>
+        \\Join our Discord community:      <blue>https://bun.sh/discord<r>
         \\
     ;
 
@@ -1670,7 +1678,11 @@ pub const Command = struct {
                     Global.exit(1);
                 }
 
-                Output.prettyWarnln("<r><yellow>warn<r><d>:<r> failed to parse command\n", .{});
+                // if we get here, the command was not parsed
+                // or the user just ran `bun` with no arguments
+                if (ctx.positionals.len > 0) {
+                    Output.prettyWarnln("<r><yellow>warn<r><d>:<r> failed to parse command\n", .{});
+                }
                 Output.flush();
                 try HelpCommand.exec(allocator);
             },
@@ -1806,36 +1818,37 @@ pub const Command = struct {
                     HelpCommand.printWithReason(.explicit);
                 },
                 Command.Tag.RunCommand => {
-                    const intro_text =
-                        \\<b>Usage<r>: <b><green>bun run<r> <cyan>[flags]<r> \<file or script\>
-                    ;
+                    RunCommand_.printHelp(null);
+                    // const intro_text =
+                    //     \\<b>Usage<r>: <b><green>bun run<r> <cyan>[...flags]<r> \<file or script\>
+                    // ;
 
-                    const outro_text =
-                        \\<b>Examples:<r>
-                        \\  <d>Run a JavaScript or TypeScript file<r>
-                        \\  <b><green>bun run<r> <blue>./index.js<r>
-                        \\  <b><green>bun run<r> <blue>./index.tsx<r>
-                        \\
-                        \\  <d>Run a package.json script<r>
-                        \\  <b><green>bun run dev<r>
-                        \\  <b><green>bun run lint<r>
-                        \\
-                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/run<r>
-                        \\
-                    ;
+                    // const outro_text =
+                    //     \\<b>Examples:<r>
+                    //     \\  <d>Run a JavaScript or TypeScript file<r>
+                    //     \\  <b><green>bun run<r> <blue>./index.js<r>
+                    //     \\  <b><green>bun run<r> <blue>./index.tsx<r>
+                    //     \\
+                    //     \\  <d>Run a package.json script<r>
+                    //     \\  <b><green>bun run dev<r>
+                    //     \\  <b><green>bun run lint<r>
+                    //     \\
+                    //     \\Full documentation is available at <magenta>https://bun.sh/docs/cli/run<r>
+                    //     \\
+                    // ;
 
-                    Output.pretty(intro_text ++ "\n\n", .{});
-                    Output.flush();
-                    Output.pretty("<b>Flags:<r>", .{});
-                    Output.flush();
-                    clap.simpleHelp(&Arguments.run_params);
-                    Output.pretty("\n\n" ++ outro_text, .{});
-                    Output.flush();
+                    // Output.pretty(intro_text ++ "\n\n", .{});
+                    // Output.flush();
+                    // Output.pretty("<b>Flags:<r>", .{});
+                    // Output.flush();
+                    // clap.simpleHelp(&Arguments.run_params);
+                    // Output.pretty("\n\n" ++ outro_text, .{});
+                    // Output.flush();
                 },
 
                 .InitCommand => {
                     const intro_text =
-                        \\<b>Usage<r>: <b><green>bun build<r> <cyan>[flags]<r> [...entrypoints]
+                        \\<b>Usage<r>: <b><green>bun build<r> <cyan>[...flags]<r> [...entrypoints]
                         \\  Initialize a Bun project in the current directory.
                         \\  Creates a package.json, tsconfig.json, and bunfig.toml if they don't exist.
                         \\
@@ -1855,7 +1868,7 @@ pub const Command = struct {
 
                 Command.Tag.BunxCommand => {
                     Output.prettyErrorln(
-                        \\<b>Usage: bunx <r><cyan>[flags]<r> \<package\><d>[@version] [...flags and arguments]<r>
+                        \\<b>Usage: bunx <r><cyan>[...flags]<r> \<package\><d>[@version] [...flags and arguments]<r>
                         \\bunx runs an npm package executable, automatically installing into a global shared cache if not installed in node_modules.
                         \\
                         \\Flags:
@@ -1874,7 +1887,7 @@ pub const Command = struct {
                     const intro_text =
                         \\<b>Usage<r>:
                         \\  Transpile and bundle one more more files.
-                        \\  <b><green>bun build<r> <cyan>[flags]<r> [...entrypoints]
+                        \\  <b><green>bun build<r> <cyan>[...flags]<r> [...entrypoints]
                     ;
 
                     const outro_text =
@@ -1903,7 +1916,7 @@ pub const Command = struct {
                 },
                 Command.Tag.TestCommand => {
                     const intro_text =
-                        \\<b>Usage<r>: <b><green>bun test<r> <cyan>[flags]<r> [patterns...]
+                        \\<b>Usage<r>: <b><green>bun test<r> <cyan>[...flags]<r> [patterns...]
                         \\  Run all matching test files and print the results to stdout
                     ;
                     const outro_text =
@@ -1932,15 +1945,14 @@ pub const Command = struct {
                 },
                 Command.Tag.CreateCommand => {
                     Output.prettyErrorln(
-                        \\<b><cyan>bun create<r>: create a new project from a template
-                        \\
-                        \\<b>Usage<r>: <b><cyan>bun create<r> [template] [...args]
-                        \\       <b><cyan>bun create<r> [username/repo] [name]
+                        \\<b>Usage<r>:
+                        \\  <b><green>bun create<r> <blue>\<template\><r> <cyan>[...flags]<r> <blue>[dest]<r>
+                        \\  <b><green>bun create<r> <blue>\<username/repo\><r> <cyan>[...flags]<r> <blue>[dest]<r>
                         \\
                         \\If given a GitHub repository name, Bun will download it and use it as a template,
-                        \\otherwise it will run <b><magenta>bunx create-[template]<r> with the given arguments.
+                        \\otherwise it will run <b><magenta>bunx create-\<template\><r> with the given arguments.
                         \\
-                        \\Learn more about creating new projects: <magenta>https://bun.sh/docs/templates<r>
+                        \\Learn more about creating new projects: <magenta>https://bun.sh/docs/cli/bun-create<r>
                         \\
                     , .{});
                 },
@@ -1949,7 +1961,7 @@ pub const Command = struct {
                 },
                 Command.Tag.UpgradeCommand => {
                     const intro_text =
-                        \\<b>Usage<r>: <b><green>bun upgrade<r> <cyan>[flags]<r>
+                        \\<b>Usage<r>: <b><green>bun upgrade<r> <cyan>[...flags]<r>
                         \\  Upgrade Bun
                     ;
                     const outro_text =
@@ -1975,7 +1987,7 @@ pub const Command = struct {
                 },
                 Command.Tag.ReplCommand => {
                     const intro_text =
-                        \\<b>Usage<r>: <b><green>bun repl<r> <cyan>[flags]<r>
+                        \\<b>Usage<r>: <b><green>bun repl<r> <cyan>[...flags]<r>
                         \\  Open a Bun REPL
                         \\
                     ;

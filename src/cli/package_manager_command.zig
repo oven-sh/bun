@@ -44,7 +44,6 @@ const ByName = struct {
 };
 
 pub const PackageManagerCommand = struct {
-    // pub fn printHelp(_: std.mem.Allocator) void {}
     pub fn printHash(ctx: Command.Context, lockfile_: []const u8) !void {
         @setCold(true);
         var lockfile_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -98,7 +97,7 @@ pub const PackageManagerCommand = struct {
             \\  bun pm <b>cache rm<r>     clear the cache
             \\  bun pm <b>migrate<r>      migrate another package manager's lockfile without installing anything
             \\
-            \\Learn more about these at <magenta>https://bun.sh/docs/install/utilities<r>
+            \\Learn more about these at <magenta>https://bun.sh/docs/cli/pm<r>
             \\
         , .{});
     }

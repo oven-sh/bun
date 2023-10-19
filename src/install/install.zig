@@ -6239,6 +6239,7 @@ pub const PackageManager = struct {
                 Subcommand.install => {
                     const intro_text =
                         \\<b>Usage<r>: <b><green>bun install<r> <cyan>[flags]<r> [...\<pkg\>]
+                        \\<b>Alias: <b>bun i<r>
                         \\  Install the dependencies listed in package.json
                     ;
                     const outro_text =
@@ -6256,7 +6257,7 @@ pub const PackageManager = struct {
                     Output.pretty("\n\n<b>Flags:<r>", .{});
                     Output.flush();
                     clap.simpleHelp(&PackageManager.add_params);
-                    Output.pretty("\n\n" ++ outro_text, .{});
+                    Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
                     Output.flush();
                 },
                 Subcommand.update => {
@@ -6270,14 +6271,14 @@ pub const PackageManager = struct {
                         \\  <d>Update all dependencies:<r>
                         \\  <b><green>bun update<r>
                         \\
-                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/install#bun-update<r>
+                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/update<r>
                     ;
                     Output.pretty("\n" ++ intro_text, .{});
                     Output.flush();
                     Output.pretty("\n<b>Flags:<r>", .{});
                     Output.flush();
                     clap.simpleHelp(&PackageManager.add_params);
-                    Output.pretty("\n\n" ++ outro_text, .{});
+                    Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
                     Output.flush();
                 },
                 Subcommand.pm => {
@@ -6286,6 +6287,7 @@ pub const PackageManager = struct {
                 Subcommand.add => {
                     const intro_text =
                         \\<b>Usage<r>: <b><green>bun add<r> <cyan>[flags]<r> \<pkg\> [...\<pkg\>]
+                        \\<b>Alias: <b>bun a<r>
                     ;
                     const outro_text =
                         \\<b>Examples:<r>
@@ -6299,19 +6301,20 @@ pub const PackageManager = struct {
                         \\  <b><green>bun add -o lodash<r>
                         \\  <b><green>bun add --peer esbuild<r>
                         \\
-                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/install<r>
+                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/add<r>
                     ;
                     Output.pretty("\n" ++ intro_text, .{});
                     Output.flush();
                     Output.pretty("\n\n<b>Flags:<r>", .{});
                     Output.flush();
                     clap.simpleHelp(&PackageManager.add_params);
-                    Output.pretty("\n\n" ++ outro_text, .{});
+                    Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
                     Output.flush();
                 },
                 Subcommand.remove => {
                     const intro_text =
                         \\<b>Usage<r>: <b><green>bun remove<r> <cyan>[flags]<r> \<pkg\> [...\<pkg\>]
+                        \\<b>Alias: <b>bun r<r>
                         \\  Remove a package from package.json and uninstall from node_modules
                         \\
                     ;
@@ -6320,14 +6323,14 @@ pub const PackageManager = struct {
                         \\  <d>Remove a dependency<r>
                         \\  <b><green>bun remove ts-node<r>
                         \\
-                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/install#bun-remove<r>
+                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/remove<r>
                     ;
                     Output.pretty("\n" ++ intro_text, .{});
                     Output.flush();
                     Output.pretty("\n<b>Flags:<r>", .{});
                     Output.flush();
                     clap.simpleHelp(&PackageManager.remove_params);
-                    Output.pretty("\n\n" ++ outro_text, .{});
+                    Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
                     Output.flush();
                 },
                 Subcommand.link => {
@@ -6344,14 +6347,14 @@ pub const PackageManager = struct {
                         \\  <d>Add a previously-registered linkable package as a dependency of the current project.<r>
                         \\  <b><green>bun link \<package\><r>
                         \\
-                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/install#bun-link<r>
+                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/link<r>
                     ;
                     Output.pretty("\n" ++ intro_text, .{});
                     Output.flush();
                     Output.pretty("\n<b>Flags:<r>", .{});
                     Output.flush();
                     clap.simpleHelp(&PackageManager.link_params);
-                    Output.pretty("\n\n" ++ outro_text, .{});
+                    Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
                     Output.flush();
                 },
                 Subcommand.unlink => {
@@ -6362,10 +6365,10 @@ pub const PackageManager = struct {
                         \\  <d>Unregister the current directory as a linkable package.<r>
                         \\  <b><green>bun unlink<r>
                         \\
-                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/install#bun-link<r>
+                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/link<r>
                     ;
 
-                    Output.pretty("\n" ++ intro_text, .{});
+                    Output.pretty("\n" ++ intro_text ++ "\n", .{});
                     Output.flush();
                 },
             }
@@ -6395,8 +6398,6 @@ pub const PackageManager = struct {
             };
 
             if (args.flag("--help")) {
-                // Output.prettyln("\n<b><magenta>bun<r> (package manager) flags:<r>\n\n", .{});
-                // Output.flush();
                 printHelp(subcommand);
                 Global.exit(0);
             }
@@ -6653,87 +6654,23 @@ pub const PackageManager = struct {
 
         if (manager.options.positionals.len <= 1) {
             var examples_to_print: [3]string = undefined;
+            _ = examples_to_print;
 
             const off = @as(u64, @intCast(std.time.milliTimestamp()));
+            _ = off;
 
             switch (op) {
                 .add => {
-                    const filler = @import("../cli.zig").HelpCommand.packages_to_add_filler;
+                    Output.prettyWarnln("<r><red><b>error:<r> <red>no package specified to add<r>", .{});
+                    Output.flush();
+                    PackageManager.CommandLineArguments.printHelp(.add);
 
-                    examples_to_print[0] = filler[@as(usize, @intCast((off) % filler.len))];
-                    examples_to_print[1] = filler[@as(usize, @intCast((off + 1) % filler.len))];
-                    examples_to_print[2] = filler[@as(usize, @intCast((off + 2) % filler.len))];
-
-                    Output.prettyErrorln(
-                        \\
-                        \\<r><b>Usage:<r>
-                        \\
-                        \\  bun add <r><cyan>package-name@version<r>
-                        \\  bun add <r><cyan>package-name<r>
-                        \\  bun add <r><cyan>package-name a-second-package<r>
-                        \\
-                        \\<r><b>Examples:<r>
-                        \\
-                        \\  bun add -g {s}
-                        \\  bun add {s}
-                        \\  bun add {s}
-                        \\
-                    , .{ examples_to_print[0], examples_to_print[1], examples_to_print[2] });
-
-                    if (manager.options.global) {
-                        Output.prettyErrorln(
-                            \\
-                            \\<d>Shorthand: <b>bun a -g<r>
-                            \\
-                        , .{});
-                    } else {
-                        Output.prettyErrorln(
-                            \\
-                            \\<d>Shorthand: <b>bun a<r>
-                            \\
-                        , .{});
-                    }
                     Global.exit(0);
                 },
                 .remove => {
-                    const filler = @import("../cli.zig").HelpCommand.packages_to_remove_filler;
-
-                    examples_to_print[0] = filler[@as(usize, @intCast((off) % filler.len))];
-                    examples_to_print[1] = filler[@as(usize, @intCast((off + 1) % filler.len))];
-                    examples_to_print[2] = filler[@as(usize, @intCast((off + 2) % filler.len))];
-
-                    Output.prettyErrorln(
-                        \\
-                        \\<r><b>Usage:<r>
-                        \\
-                        \\  bun remove <r><red>package-name<r>
-                        \\  bun remove <r><red>package-name a-second-package<r>
-                        \\
-                        \\<r><b>Examples:<r>
-                        \\
-                        \\  bun remove {s} {s}
-                        \\  bun remove {s}
-                        \\
-                    , .{
-                        examples_to_print[0],
-                        examples_to_print[1],
-                        examples_to_print[2],
-                    });
-                    if (manager.options.global) {
-                        Output.prettyErrorln(
-                            \\
-                            \\<d>Shorthand: <b>bun rm -g<r>
-                            \\
-                        , .{});
-                    } else {
-                        Output.prettyErrorln(
-                            \\
-                            \\<d>Shorthand: <b>bun rm<r>
-                            \\
-                        , .{});
-                    }
-
+                    Output.prettyWarnln("<r><red><b>error:<r> no package specified to remove<r>", .{});
                     Output.flush();
+                    PackageManager.CommandLineArguments.printHelp(.remove);
 
                     Global.exit(0);
                 },

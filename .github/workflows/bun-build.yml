@@ -80,6 +80,7 @@ jobs:
           bun-version: latest
       - name: Setup Dependencies
         run: |
+          bun install
           bun install -g esbuild
       - name: Build
         run: |

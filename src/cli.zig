@@ -32,6 +32,7 @@ const Install = @import("./install/install.zig");
 const bundler = bun.bundler;
 const DotEnv = @import("./env_loader.zig");
 const RunCommand_ = @import("./cli/run_command.zig").RunCommand;
+const CreateCommand_ = @import("./cli/create_command.zig").CreateCommand;
 
 const fs = @import("fs.zig");
 const Router = @import("./router.zig");
@@ -1482,7 +1483,7 @@ pub const Command = struct {
                 };
                 if (print_help) {
                     Command.Tag.printHelp(.CreateCommand);
-                    Global.exit(1);
+                    Global.exit(0);
                     return;
                 }
 
@@ -1526,6 +1527,18 @@ pub const Command = struct {
                         \\
                         \\Then select "React" from the list of frameworks.
                         \\
+                    , .{});
+                    Global.exit(1);
+                    return;
+                }
+
+                // if template_name is "next"
+                // print message telling user to use "bun create next-app" instead
+                if (strings.eqlComptime(template_name, "next")) {
+                    Output.prettyErrorln(
+                        \\<yellow>warn: No template <b>create-next<r> found.
+                        \\To create a project with the official Next.js scaffolding tool, run
+                        \\  <b>bun create next-app <cyan>[destination]<r>
                     , .{});
                     Global.exit(1);
                     return;
@@ -1848,21 +1861,20 @@ pub const Command = struct {
 
                 .InitCommand => {
                     const intro_text =
-                        \\<b>Usage<r>: <b><green>bun build<r> <cyan>[...flags]<r> [...entrypoints]
+                        \\<b>Usage<r>: <b><green>bun init<r> <cyan>[...flags]<r> <blue>[\<entrypoint\> ...]<r>
                         \\  Initialize a Bun project in the current directory.
                         \\  Creates a package.json, tsconfig.json, and bunfig.toml if they don't exist.
                         \\
                         \\<b>Flags<r>:
+                        \\      <cyan>--help<r>             Print this menu
                         \\  <cyan>-y, --yes<r>             Accept all default options
-                        \\  <cyan>--minify<r>             Enable all minification flags
                         \\
                         \\<b>Examples:<r>
                         \\  <b><green>bun init<r>
-                        \\  <b><green>bun init --yes<r> <blue>./src/index.ts<r> <cyan>--outfile=bundle.js<r>
-                        \\
+                        \\  <b><green>bun init <cyan>--yes<r>
                     ;
 
-                    Output.pretty(intro_text, .{});
+                    Output.pretty(intro_text ++ "\n", .{});
                     Output.flush();
                 },
 
@@ -1916,7 +1928,7 @@ pub const Command = struct {
                 },
                 Command.Tag.TestCommand => {
                     const intro_text =
-                        \\<b>Usage<r>: <b><green>bun test<r> <cyan>[...flags]<r> [patterns...]
+                        \\<b>Usage<r>: <b><green>bun test<r> <cyan>[...flags]<r> <blue>[\<pattern\>...]<r>
                         \\  Run all matching test files and print the results to stdout
                     ;
                     const outro_text =
@@ -1933,7 +1945,7 @@ pub const Command = struct {
                         \\Full documentation is available at <magenta>https://bun.sh/docs/cli/test<r>
                         \\
                     ;
-                    Output.pretty("\n", .{});
+                    // Output.pretty("\n", .{});
                     Output.pretty(intro_text, .{});
                     Output.flush();
                     Output.pretty("\n\n<b>Flags:<r>", .{});
@@ -1944,17 +1956,28 @@ pub const Command = struct {
                     Output.flush();
                 },
                 Command.Tag.CreateCommand => {
-                    Output.prettyErrorln(
+                    const intro_text =
                         \\<b>Usage<r>:
                         \\  <b><green>bun create<r> <blue>\<template\><r> <cyan>[...flags]<r> <blue>[dest]<r>
                         \\  <b><green>bun create<r> <blue>\<username/repo\><r> <cyan>[...flags]<r> <blue>[dest]<r>
                         \\
+                        \\<b>Environment variables:
+                        \\  <cyan>GITHUB_ACCESS_TOKEN<r>      <d>Supply a token to download code from GitHub with a higher rate limit<r>
+                        \\  <cyan>GITHUB_API_DOMAIN<r>        <d>Configure custom/enterprise GitHub domain. Default \"api.github.com\".<r>
+                        \\  <cyan>NPM_CLIENT<r>               <d>Absolute path to the npm client executable<r>
+                    ;
+
+                    const outro_text =
                         \\If given a GitHub repository name, Bun will download it and use it as a template,
                         \\otherwise it will run <b><magenta>bunx create-\<template\><r> with the given arguments.
                         \\
                         \\Learn more about creating new projects: <magenta>https://bun.sh/docs/cli/bun-create<r>
-                        \\
-                    , .{});
+                    ;
+
+                    Output.pretty(intro_text, .{});
+                    Output.pretty("\n\n", .{});
+                    Output.pretty(outro_text, .{});
+                    Output.flush();
                 },
                 Command.Tag.HelpCommand => {
                     HelpCommand.printWithReason(.explicit);
@@ -1974,7 +1997,7 @@ pub const Command = struct {
                         \\
                         \\Full documentation is available at <magenta>https://bun.sh/docs/installation#upgrading<r>
                     ;
-                    Output.pretty("\n", .{});
+                    // Output.pretty("\n", .{});
                     Output.pretty(intro_text, .{});
                     Output.pretty("\n\n", .{});
                     Output.flush();

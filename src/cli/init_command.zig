@@ -99,6 +99,21 @@ pub const InitCommand = struct {
     };
 
     pub fn exec(alloc: std.mem.Allocator, argv: [][*:0]u8) !void {
+        const print_help = brk: {
+            for (argv) |arg_| {
+                const arg = bun.span(arg_);
+                if (strings.eqlComptime(arg, "--help")) {
+                    break :brk true;
+                }
+            }
+            break :brk false;
+        };
+
+        if (print_help) {
+            CLI.Command.Tag.printHelp(.InitCommand);
+            Global.exit(0);
+        }
+
         var fs = try Fs.FileSystem.init(null);
         const pathname = Fs.PathName.init(fs.topLevelDirWithoutTrailingSlash());
         const destination_dir = std.fs.cwd();

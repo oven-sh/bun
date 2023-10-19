@@ -79,7 +79,7 @@ var require_errors = __commonJS({
             _classCallCheck(this, NodeError2),
             (_this = _possibleConstructorReturn(
               this,
-              _getPrototypeOf(NodeError2).call(this, getMessage(arg1, arg2, arg3)),
+              _getPrototypeOf(NodeError2).$call(this, getMessage(arg1, arg2, arg3)),
             )),
             (_this.code = code),
             _this
@@ -298,7 +298,7 @@ var require_assertion_error = __commonJS({
       if (typeof Reflect == "undefined" || !Reflect.construct || Reflect.construct.sham) return !1;
       if (typeof Proxy == "function") return !0;
       try {
-        return Date.prototype.toString.call(Reflect.construct(Date, [], function () {})), !0;
+        return Date.prototype.toString.$call(Reflect.construct(Date, [], function () {})), !0;
       } catch {
         return !1;
       }
@@ -309,16 +309,16 @@ var require_assertion_error = __commonJS({
           ? (_construct = Reflect.construct)
           : (_construct = function (Parent2, args2, Class2) {
               var a = [null];
-              a.push.apply(a, args2);
-              var Constructor = Function.bind.apply(Parent2, a),
+              a.push.$apply(a, args2);
+              var Constructor = Function.bind.$apply(Parent2, a),
                 instance = new Constructor();
               return Class2 && _setPrototypeOf(instance, Class2.prototype), instance;
             }),
-        _construct.apply(null, arguments)
+        _construct.$apply(null, arguments)
       );
     }
     function _isNativeFunction(fn) {
-      return Function.toString.call(fn).indexOf("[native code]") !== -1;
+      return Function.toString.$call(fn).indexOf("[native code]") !== -1;
     }
     function _setPrototypeOf(o, p) {
       return (
@@ -663,7 +663,7 @@ var require_assertion_error = __commonJS({
           expected = options.expected,
           limit = Error.stackTraceLimit;
         if (((Error.stackTraceLimit = 0), message != null))
-          _this = _possibleConstructorReturn(this, _getPrototypeOf(AssertionError2).call(this, String(message)));
+          _this = _possibleConstructorReturn(this, _getPrototypeOf(AssertionError2).$call(this, String(message)));
         else if (
           (process.stderr &&
             process.stderr.isTTY &&
@@ -683,7 +683,7 @@ var require_assertion_error = __commonJS({
         )
           _this = _possibleConstructorReturn(
             this,
-            _getPrototypeOf(AssertionError2).call(this, createErrDiff(actual, expected, operator)),
+            _getPrototypeOf(AssertionError2).$call(this, createErrDiff(actual, expected, operator)),
           );
         else if (operator === "notDeepStrictEqual" || operator === "notStrictEqual") {
           var base = kReadableOperator[operator],
@@ -700,11 +700,11 @@ var require_assertion_error = __commonJS({
           res.length === 1
             ? (_this = _possibleConstructorReturn(
                 this,
-                _getPrototypeOf(AssertionError2).call(this, "".concat(base, " ").concat(res[0])),
+                _getPrototypeOf(AssertionError2).$call(this, "".concat(base, " ").concat(res[0])),
               ))
             : (_this = _possibleConstructorReturn(
                 this,
-                _getPrototypeOf(AssertionError2).call(
+                _getPrototypeOf(AssertionError2).$call(
                   this,
                   ""
                     .concat(
@@ -757,7 +757,7 @@ should equal
                 : (other = " ".concat(operator, " ").concat(other))),
             (_this = _possibleConstructorReturn(
               this,
-              _getPrototypeOf(AssertionError2).call(this, "".concat(_res).concat(other)),
+              _getPrototypeOf(AssertionError2).$call(this, "".concat(_res).concat(other)),
             ));
         }
         return (
@@ -902,7 +902,7 @@ var require_assert = __commonJS({
     function ok() {
       for (var _len = arguments.length, args = new Array(_len), _key = 0; _key < _len; _key++)
         args[_key] = arguments[_key];
-      innerOk.apply(void 0, [ok, args.length].concat(args));
+      innerOk.$apply(void 0, [ok, args.length].concat(args));
     }
     assert.ok = ok;
     assert.equal = function equal(actual, expected, message) {
@@ -1071,7 +1071,7 @@ var require_assert = __commonJS({
         ? !0
         : Error.isPrototypeOf(expected)
         ? !1
-        : expected.call({}, actual) === !0;
+        : expected.$call({}, actual) === !0;
     }
     function getActual(fn) {
       if (typeof fn != "function") throw new ERR_INVALID_ARG_TYPE("fn", "Function", fn);
@@ -1168,25 +1168,25 @@ var require_assert = __commonJS({
     assert.throws = function throws(promiseFn) {
       for (var _len2 = arguments.length, args = new Array(_len2 > 1 ? _len2 - 1 : 0), _key2 = 1; _key2 < _len2; _key2++)
         args[_key2 - 1] = arguments[_key2];
-      expectsError.apply(void 0, [throws, getActual(promiseFn)].concat(args));
+      expectsError.$apply(void 0, [throws, getActual(promiseFn)].concat(args));
     };
     assert.rejects = function rejects(promiseFn) {
       for (var _len3 = arguments.length, args = new Array(_len3 > 1 ? _len3 - 1 : 0), _key3 = 1; _key3 < _len3; _key3++)
         args[_key3 - 1] = arguments[_key3];
       return waitForActual(promiseFn).then(function (result) {
-        return expectsError.apply(void 0, [rejects, result].concat(args));
+        return expectsError.$apply(void 0, [rejects, result].concat(args));
       });
     };
     assert.doesNotThrow = function doesNotThrow(fn) {
       for (var _len4 = arguments.length, args = new Array(_len4 > 1 ? _len4 - 1 : 0), _key4 = 1; _key4 < _len4; _key4++)
         args[_key4 - 1] = arguments[_key4];
-      expectsNoError.apply(void 0, [doesNotThrow, getActual(fn)].concat(args));
+      expectsNoError.$apply(void 0, [doesNotThrow, getActual(fn)].concat(args));
     };
     assert.doesNotReject = function doesNotReject(fn) {
       for (var _len5 = arguments.length, args = new Array(_len5 > 1 ? _len5 - 1 : 0), _key5 = 1; _key5 < _len5; _key5++)
         args[_key5 - 1] = arguments[_key5];
       return waitForActual(fn).then(function (result) {
-        return expectsNoError.apply(void 0, [doesNotReject, result].concat(args));
+        return expectsNoError.$apply(void 0, [doesNotReject, result].concat(args));
       });
     };
     assert.ifError = function ifError(err) {
@@ -1240,7 +1240,7 @@ var require_assert = __commonJS({
     function strict() {
       for (var _len6 = arguments.length, args = new Array(_len6), _key6 = 0; _key6 < _len6; _key6++)
         args[_key6] = arguments[_key6];
-      innerOk.apply(void 0, [strict, args.length].concat(args));
+      innerOk.$apply(void 0, [strict, args.length].concat(args));
     }
     assert.strict = objectAssign(strict, assert, {
       equal: assert.strictEqual,

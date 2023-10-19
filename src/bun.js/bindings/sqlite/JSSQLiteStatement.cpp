@@ -188,7 +188,7 @@ public:
     JSC::JSValue rebind(JSGlobalObject* globalObject, JSC::JSValue values, bool clone);
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::JSFunctionType, StructureFlags), info());
     }
 
     bool need_update() { return version_db->version.load() != version; }
@@ -339,10 +339,6 @@ void JSSQLiteStatement::destroy(JSC::JSCell* cell)
     JSSQLiteStatement* thisObject = static_cast<JSSQLiteStatement*>(cell);
     sqlite3_finalize(thisObject->stmt);
     thisObject->stmt = nullptr;
-}
-
-void JSSQLiteStatementConstructor::destroy(JSC::JSCell* cell)
-{
 }
 
 static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3_stmt* stmt, int i, JSC::JSValue value, JSC::ThrowScope& scope, bool clone)
@@ -1064,7 +1060,7 @@ static const HashTableValue JSSQLiteStatementConstructorTableValues[] = {
     { "deserialize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementDeserialize, 2 } },
 };
 
-const ClassInfo JSSQLiteStatementConstructor::s_info = { "SQLStatement"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(JSSQLiteStatementConstructor) };
+const ClassInfo JSSQLStatementConstructor::s_info = { "SQLStatement"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSQLStatementConstructor) };
 
 void JSSQLiteStatementConstructor::finishCreation(VM& vm)
 {
@@ -1261,7 +1257,6 @@ static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGloba
 
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-
     JSC::VM& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto castedThis = jsDynamicCast<JSSQLiteStatement*>(callFrame->thisValue());
@@ -1293,7 +1288,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
 
     size_t columnCount = castedThis->columnNames->size();
     JSValue result = jsUndefined();
-
     if (status == SQLITE_ROW) {
         // this is a count from UPDATE or another query like that
         if (columnCount == 0) {
@@ -1315,11 +1309,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
             result = resultArray;
         }
     } else if (status == SQLITE_DONE) {
-        if (columnCount == 0) {
-            result = jsNumber(sqlite3_changes(castedThis->version_db->db));
-        } else {
-            result = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
-        }
+        result = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
     }
 
     if (UNLIKELY(status != SQLITE_DONE && status != SQLITE_OK)) {
@@ -1642,7 +1632,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFunctionFinalize, (JSC::JSGlobalObject * 
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
 }
 
-const ClassInfo JSSQLiteStatement::s_info = { "SQLStatement"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(JSSQLiteStatement) };
+const ClassInfo JSSQLStatement::s_info = { "SQLStatement"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSQLStatement) };
 
 /* Hash table for prototype */
 static const HashTableValue JSSQLiteStatementTableValues[] = {

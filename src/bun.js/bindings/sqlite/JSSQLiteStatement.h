@@ -50,25 +50,15 @@ namespace WebCore {
 class JSSQLiteStatementConstructor final : public JSC::JSFunction {
 public:
     using Base = JSC::JSFunction;
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+
     static JSSQLiteStatementConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure);
 
     DECLARE_INFO;
-    template<typename, SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return WebCore::subspaceForImpl<JSSQLiteStatementConstructor, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSSQLiteStatementConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSQLiteStatementConstructor = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSSQLiteStatementConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSQLiteStatementConstructor = std::forward<decltype(space)>(space); });
-    }
 
-    static void destroy(JSC::JSCell*);
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSFunctionType, StructureFlags), info());
     }
 
 private:
@@ -79,5 +69,6 @@ private:
 
     void finishCreation(JSC::VM&);
 };
+static_assert(sizeof(JSSQLiteStatementConstructor) == sizeof(JSFunction), "Allocate JSSQLiteStatementConstructor in JSFunction IsoSubspace");
 
 }

@@ -418,8 +418,6 @@ DEFINE_NATIVE_MODULE(NodeModule) {
   }
 
   put(JSC::Identifier::fromString(vm, "builtinModules"_s), builtinModules);
-
-  RETURN_NATIVE_MODULE();
 }
 
 } // namespace Zig

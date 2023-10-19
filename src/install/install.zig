@@ -1626,6 +1626,7 @@ const NetworkChannel = sync.Channel(*NetworkTask, .{ .Static = 8192 });
 const ThreadPool = bun.ThreadPool;
 const PackageManifestMap = std.HashMapUnmanaged(PackageNameHash, Npm.PackageManifest, IdentityContext(PackageNameHash), 80);
 const RepositoryMap = std.HashMapUnmanaged(u64, bun.FileDescriptor, IdentityContext(u64), 80);
+const NpmAliasMap = std.HashMapUnmanaged(PackageNameHash, Dependency.Version, IdentityContext(u64), 80);
 
 pub const CacheLevel = struct {
     use_cache_control_headers: bool,
@@ -1703,6 +1704,9 @@ pub const PackageManager = struct {
     ci_mode: bun.LazyBool(computeIsContinuousIntegration, @This(), "ci_mode") = .{},
 
     peer_dependencies: std.ArrayListUnmanaged(DependencyID) = .{},
+
+    // name hash from alias package name -> aliased package dependency version info
+    known_npm_aliases: NpmAliasMap = .{},
 
     const PreallocatedNetworkTasks = std.BoundedArray(NetworkTask, 1024);
     const NetworkTaskQueue = std.HashMapUnmanaged(u64, void, IdentityContext(u64), 80);
@@ -2666,7 +2670,7 @@ pub const PackageManager = struct {
             .npm, .dist_tag => {
                 if (version.tag == .npm) {
                     if (this.lockfile.workspace_versions.count() > 0) resolve_from_workspace: {
-                        if (this.lockfile.workspace_versions.get(@truncate(name_hash))) |workspace_version| {
+                        if (this.lockfile.workspace_versions.get(name_hash)) |workspace_version| {
                             if (version.value.npm.version.satisfies(workspace_version)) {
                                 const root_package = this.lockfile.rootPackage() orelse break :resolve_from_workspace;
                                 const root_dependencies = root_package.dependencies.get(this.lockfile.buffers.dependencies.items);
@@ -2674,6 +2678,8 @@ pub const PackageManager = struct {
 
                                 for (root_dependencies, root_resolutions) |root_dep, workspace_package_id| {
                                     if (workspace_package_id != invalid_package_id and root_dep.version.tag == .workspace and root_dep.name_hash == name_hash) {
+                                        // make sure verifyResolutions sees this resolution as a valid package id
+                                        this.lockfile.buffers.resolutions.items[dependency_id] = workspace_package_id;
                                         return .{
                                             .package = this.lockfile.packages.get(workspace_package_id),
                                             .is_first_time = false,
@@ -3011,20 +3017,47 @@ pub const PackageManager = struct {
             .dist_tag, .git, .github, .npm, .tarball, .workspace => String.Builder.stringHash(this.lockfile.str(&name)),
             else => dependency.name_hash,
         };
+
         const version = version: {
-            if (this.lockfile.overrides.get(name_hash)) |new| {
-                debug("override: {s} -> {s}", .{ this.lockfile.str(&dependency.version.literal), this.lockfile.str(&new.literal) });
-                name = switch (new.tag) {
-                    .dist_tag => new.value.dist_tag.name,
-                    .git => new.value.git.package_name,
-                    .github => new.value.github.package_name,
-                    .npm => new.value.npm.name,
-                    .tarball => new.value.tarball.package_name,
-                    else => name,
-                };
-                name_hash = String.Builder.stringHash(this.lockfile.str(&name));
-                break :version new;
+            if (dependency.version.tag == .npm) {
+                if (this.known_npm_aliases.get(name_hash)) |aliased| {
+                    const group = dependency.version.value.npm.version;
+                    var curr_list: ?*const Semver.Query.List = &aliased.value.npm.version.head;
+                    while (curr_list) |queries| {
+                        var curr: ?*const Semver.Query = &queries.head;
+                        while (curr) |query| {
+                            if (group.satisfies(query.range.left.version) or group.satisfies(query.range.right.version)) {
+                                name = aliased.value.npm.name;
+                                name_hash = String.Builder.stringHash(this.lockfile.str(&name));
+                                break :version aliased;
+                            }
+                            curr = query.next;
+                        }
+                        curr_list = queries.next;
+                    }
+
+                    // fallthrough. a package that matches the name of an alias but does not match
+                    // the version should be enqueued as a normal npm dependency, overrides allowed
+                }
             }
+
+            // allow overriding all dependencies unless the dependency is coming directly from an alias, "npm:<this dep>"
+            if (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias) {
+                if (this.lockfile.overrides.get(name_hash)) |new| {
+                    debug("override: {s} -> {s}", .{ this.lockfile.str(&dependency.version.literal), this.lockfile.str(&new.literal) });
+                    name = switch (new.tag) {
+                        .dist_tag => new.value.dist_tag.name,
+                        .git => new.value.git.package_name,
+                        .github => new.value.github.package_name,
+                        .npm => new.value.npm.name,
+                        .tarball => new.value.tarball.package_name,
+                        else => name,
+                    };
+                    name_hash = String.Builder.stringHash(this.lockfile.str(&name));
+                    break :version new;
+                }
+            }
+
             break :version dependency.version;
         };
         var loaded_manifest: ?Npm.PackageManifest = null;
@@ -6327,6 +6360,7 @@ pub const PackageManager = struct {
                 var version = Dependency.parseWithOptionalTag(
                     allocator,
                     if (alias) |name| String.init(input, name) else placeholder,
+                    if (alias) |name| String.Builder.stringHash(name) else null,
                     value,
                     null,
                     &SlicedString.init(input, value),
@@ -6341,6 +6375,7 @@ pub const PackageManager = struct {
                     if (Dependency.parseWithOptionalTag(
                         allocator,
                         placeholder,
+                        null,
                         input,
                         null,
                         &SlicedString.init(input, input),
@@ -7973,14 +8008,6 @@ pub const PackageManager = struct {
 
                         if (manager.summary.update > 0) root.scripts = .{};
                     }
-
-                    if (!root.scripts.filled) {
-                        maybe_root.scripts.enqueue(
-                            manager.lockfile,
-                            lockfile.buffers.string_bytes.items,
-                            strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir),
-                        );
-                    }
                 }
             },
             else => {},
@@ -8108,6 +8135,9 @@ pub const PackageManager = struct {
                 manager.log,
                 manager.options.enable.exact_versions,
             );
+            if (manager.lockfile.packages.len > 0) {
+                root = manager.lockfile.packages.get(0);
+            }
         }
 
         if (manager.lockfile.packages.len > 0) {

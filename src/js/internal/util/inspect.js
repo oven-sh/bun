@@ -56,7 +56,6 @@ const {
   ErrorCaptureStackTrace,
   ErrorPrototypeToString,
   FunctionPrototypeBind,
-  FunctionPrototypeCall,
   FunctionPrototypeToString,
   JSONStringify,
   MapPrototypeGetSize,
@@ -160,7 +159,7 @@ function checkBox(ctor) {
   return val => {
     if (!vmSafeInstanceof(val, ctor)) return false;
     try {
-      ctor.prototype.valueOf.call(val);
+      ctor.prototype.valueOf.$call(val);
     } catch {
       return false;
     }
@@ -1155,7 +1154,7 @@ function formatValue(ctx, value, recurseTimes, typedArray) {
       // a counter internally.
       const depth = ctx.depth === null ? null : ctx.depth - recurseTimes;
       const isCrossContext = proxy !== undefined || !(context instanceof Object);
-      const ret = FunctionPrototypeCall(maybeCustom, context, depth, getUserOptions(ctx, isCrossContext), inspect);
+      const ret = maybeCustom.$call(context, depth, getUserOptions(ctx, isCrossContext), inspect);
       // If the custom inspection method returned `this`, don't go into infinite recursion.
       if (ret !== context) {
         if (typeof ret !== "string") return formatValue(ctx, ret, recurseTimes);
@@ -2255,7 +2254,7 @@ function formatProperty(ctx, value, recurseTimes, key, type, desc, original = va
         (ctx.getters === "set" && desc.set !== undefined))
     ) {
       try {
-        const tmp = FunctionPrototypeCall(desc.get, original);
+        const tmp = desc.get.$call(original);
         ctx.indentationLvl += 2;
         if (tmp === null) {
           str = `${s(`[${label}:`, sp)} ${s("null", "null")}${s("]", sp)}`;

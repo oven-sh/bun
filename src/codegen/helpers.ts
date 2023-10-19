@@ -53,6 +53,8 @@ export function checkAscii(str: string) {
 }
 
 export function writeIfNotChanged(file: string, contents: string) {
+  if (Array.isArray(contents)) contents = contents.join("");
+
   if (fs.existsSync(file)) {
     const oldContents = fs.readFileSync(file, "utf8");
     if (oldContents === contents) {
@@ -63,7 +65,7 @@ export function writeIfNotChanged(file: string, contents: string) {
   try {
     fs.writeFileSync(file, contents);
   } catch (error) {
-    fs.mkdirSync(path.dirname(file));
+    fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, contents);
   }
 }

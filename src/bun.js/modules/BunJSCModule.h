@@ -27,7 +27,7 @@
 #include "wtf/MemoryFootprint.h"
 #include "wtf/text/WTFString.h"
 
-#include "Process.h"
+#include "BunProcess.h"
 #include <JavaScriptCore/SourceProviderCache.h>
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"

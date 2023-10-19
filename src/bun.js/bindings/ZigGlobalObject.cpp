@@ -94,7 +94,7 @@
 #include "JSStringDecoder.h"
 #include "JSReadableState.h"
 #include "JSReadableHelper.h"
-#include "Process.h"
+#include "BunProcess.h"
 #include "AsyncContextFrame.h"
 
 #include "WebCoreJSBuiltins.h"

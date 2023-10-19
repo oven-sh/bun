@@ -4,7 +4,7 @@
 
 <img align="right" src="https://user-images.githubusercontent.com/709451/182802334-d9c42afe-f35d-4a7b-86ea-9985f73f20c3.png" height="150px" style="float: right; padding: 30px;">
 
-This extension adds support for using [Bun](https://bun.sh/) with Visual Studio Code. Bun is an all-in-one toolkit for JavaScript and TypeScript apps.
+This extension adds support for using [Bun](https://bun.sh/) with Visual Studio Code. Bun (pronounced **_/bʌn/_**) is an all-in-one toolkit for JavaScript and TypeScript apps.
 
 At its core is the _Bun runtime_, a fast JavaScript runtime designed as a drop-in replacement for Node.js. It's written in Zig and powered by JavaScriptCore under the hood, dramatically reducing startup times and memory usage.
 
@@ -91,7 +91,7 @@ You can use the following configurations to customize the behavior of the Bun ex
 
   // If support for Bun should be added to the default "JavaScript Debug Terminal".
   "bun.debugTerminal.enabled": true,
-  
+
   // If the debugger should stop on the first line of the program.
   "bun.debugTerminal.stopOnEntry": false,
 }

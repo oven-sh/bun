@@ -136,3 +136,6 @@ make-dev-stats.csv
 .uuid
 tsconfig.tsbuildinfo
 build-release
+
+*.lib
+*.pdb

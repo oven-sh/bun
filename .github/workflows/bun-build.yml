@@ -52,7 +52,9 @@ jobs:
       - name: Build
         run: |
           sudo apt-get update -qq
-          curl -s https://apt.llvm.org/llvm.sh | sudo bash /dev/stdin "16"
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 16
           apt-get install -qq --no-install-recommends \
             lsb-release \
             software-properties-common \

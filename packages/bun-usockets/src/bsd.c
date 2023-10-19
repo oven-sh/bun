@@ -427,43 +427,12 @@ int bsd_would_block() {
 #endif
 }
 
-// return LIBUS_SOCKET_ERROR or the fd that represents listen socket
-// listen both on ipv6 and ipv4
-LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options) {
-    struct addrinfo hints, *result;
-    memset(&hints, 0, sizeof(struct addrinfo));
-
-    hints.ai_flags = AI_PASSIVE;
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-
-    char port_string[16];
-    snprintf(port_string, 16, "%d", port);
-
-    if (getaddrinfo(host, port_string, &hints, &result)) {
-        return LIBUS_SOCKET_ERROR;
-    }
-
-    LIBUS_SOCKET_DESCRIPTOR listenFd = LIBUS_SOCKET_ERROR;
-    struct addrinfo *listenAddr;
-    for (struct addrinfo *a = result; a && listenFd == LIBUS_SOCKET_ERROR; a = a->ai_next) {
-        if (a->ai_family == AF_INET6) {
-            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol);
-            listenAddr = a;
-        }
-    }
-
-    for (struct addrinfo *a = result; a && listenFd == LIBUS_SOCKET_ERROR; a = a->ai_next) {
-        if (a->ai_family == AF_INET) {
-            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol);
-            listenAddr = a;
-        }
-    }
-
-    if (listenFd == LIBUS_SOCKET_ERROR) {
-        freeaddrinfo(result);
-        return LIBUS_SOCKET_ERROR;
-    }
+inline LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd(
+    LIBUS_SOCKET_DESCRIPTOR listenFd,
+    struct addrinfo *listenAddr,
+    int port,
+    int options
+) {
 
     if (port != 0) {
         /* Otherwise, always enable SO_REUSEPORT and SO_REUSEADDR _unless_ options specify otherwise */
@@ -487,20 +456,74 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
 #endif
 
     }
-    
+
 #ifdef IPV6_V6ONLY
     int disabled = 0;
     setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, (void *) &disabled, sizeof(disabled));
 #endif
 
     if (bind(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen) || listen(listenFd, 512)) {
-        bsd_close_socket(listenFd);
-        freeaddrinfo(result);
         return LIBUS_SOCKET_ERROR;
     }
 
-    freeaddrinfo(result);
     return listenFd;
+}
+
+// return LIBUS_SOCKET_ERROR or the fd that represents listen socket
+// listen both on ipv6 and ipv4
+LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options) {
+    struct addrinfo hints, *result;
+    memset(&hints, 0, sizeof(struct addrinfo));
+
+    hints.ai_flags = AI_PASSIVE;
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+
+    char port_string[16];
+    snprintf(port_string, 16, "%d", port);
+
+    if (getaddrinfo(host, port_string, &hints, &result)) {
+        return LIBUS_SOCKET_ERROR;
+    }
+
+    LIBUS_SOCKET_DESCRIPTOR listenFd = LIBUS_SOCKET_ERROR;
+    struct addrinfo *listenAddr;
+    for (struct addrinfo *a = result; a != NULL; a = a->ai_next) {
+        if (a->ai_family == AF_INET6) {
+            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol);
+            if (listenFd == LIBUS_SOCKET_ERROR) {
+                continue;
+            }
+
+            listenAddr = a;
+            if (bsd_bind_listen_fd(listenFd, listenAddr, port, options) != LIBUS_SOCKET_ERROR) {
+                freeaddrinfo(result);
+                return listenFd;
+            }
+
+            bsd_close_socket(listenFd);
+        }
+    }
+
+    for (struct addrinfo *a = result; a != NULL; a = a->ai_next) {
+        if (a->ai_family == AF_INET) {
+            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol);
+            if (listenFd == LIBUS_SOCKET_ERROR) {
+                continue;
+            }
+
+            listenAddr = a;
+            if (bsd_bind_listen_fd(listenFd, listenAddr, port, options) != LIBUS_SOCKET_ERROR) {
+                freeaddrinfo(result);
+                return listenFd;
+            }
+
+            bsd_close_socket(listenFd);
+        }
+    }
+
+    freeaddrinfo(result);
+    return LIBUS_SOCKET_ERROR;
 }
 
 #ifndef _WIN32

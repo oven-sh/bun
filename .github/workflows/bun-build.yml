@@ -51,16 +51,16 @@ jobs:
           path: build
       - name: Build
         run: |
-          apt-get update -qq \
-          && apt-get install -qq --no-install-recommends \
+          apt-get update -qq
+          apt-get install -qq --no-install-recommends \
             ca-certificates \
             curl \
-            wget \
-          && echo "deb https://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-16 main" > /etc/apt/sources.list.d/llvm.list \
-          && echo "deb-src https://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-16 main" >> /etc/apt/sources.list.d/llvm.list \
-          && wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add - \
-          && curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - \
-          && apt-get install -qq --no-install-recommends \
+            wget
+          echo "deb https://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-16 main" > /etc/apt/sources.list.d/llvm.list
+          echo "deb-src https://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-16 main" >> /etc/apt/sources.list.d/llvm.list
+          wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add -
+          curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+          apt-get install -qq --no-install-recommends \
             lsb-release \
             software-properties-common \
             gnupg \
@@ -89,9 +89,9 @@ jobs:
             tar \
             gzip \
             ccache \
-            nodejs \
-          && npm install -g esbuild \
-          && npm install -g bun \
-          && bun run build
-          && ls
-          && ls build
+            nodejs
+          npm install -g esbuild
+          npm install -g bun
+          bun run build
+          ls
+          ls build

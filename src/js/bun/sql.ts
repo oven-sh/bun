@@ -127,8 +127,20 @@ class Query extends PublicPromise {
 Object.defineProperty(Query, Symbol.species, { value: PublicPromise });
 Object.defineProperty(Query, Symbol.toStringTag, { value: "Query" });
 init(
-  (query, result) => query.resolve(result),
-  (query, reject) => query.reject(reject),
+  (query, result) => {
+    try {
+      query.resolve(result);
+    } catch (e) {
+      console.log(e);
+    }
+  },
+  (query, reject) => {
+    try {
+      query.reject(reject);
+    } catch (e) {
+      console.log(e);
+    }
+  },
 );
 
 function createConnection({ hostname, port, username, password, tls, query, database }, onConnected, onClose) {

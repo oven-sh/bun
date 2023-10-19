@@ -1060,7 +1060,7 @@ static const HashTableValue JSSQLiteStatementConstructorTableValues[] = {
     { "deserialize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementDeserialize, 2 } },
 };
 
-const ClassInfo JSSQLStatementConstructor::s_info = { "SQLStatement"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSQLStatementConstructor) };
+const ClassInfo JSSQLiteStatementConstructor::s_info = { "SQLStatement"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSQLiteStatementConstructor) };
 
 void JSSQLiteStatementConstructor::finishCreation(VM& vm)
 {
@@ -1632,7 +1632,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFunctionFinalize, (JSC::JSGlobalObject * 
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
 }
 
-const ClassInfo JSSQLStatement::s_info = { "SQLStatement"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSQLStatement) };
+const ClassInfo JSSQLiteStatement::s_info = { "SQLStatement"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSQLiteStatement) };
 
 /* Hash table for prototype */
 static const HashTableValue JSSQLiteStatementTableValues[] = {

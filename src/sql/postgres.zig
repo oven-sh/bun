@@ -1737,13 +1737,15 @@ pub const PostgresSQLQuery = struct {
     }
 
     pub fn push(this: *PostgresSQLQuery, globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) void {
-        var pending_value = PostgresSQLQuery.pendingValueGetCached(this.thisValue) orelse JSC.JSValue.zero;
+        const thisValue = this.thisValue;
+        var pending_value = PostgresSQLQuery.pendingValueGetCached(thisValue) orelse JSC.JSValue.zero;
         if (pending_value.isEmptyOrUndefinedOrNull()) {
-            pending_value = JSC.JSValue.createEmptyArray(globalThis, 0);
-            PostgresSQLQuery.pendingValueSetCached(this.thisValue, globalThis, pending_value);
+            pending_value = JSC.JSValue.createEmptyArray(globalThis, 1);
+            pending_value.putIndex(globalThis, 0, value);
+            PostgresSQLQuery.pendingValueSetCached(thisValue, globalThis, pending_value);
+        } else {
+            pending_value.push(globalThis, value);
         }
-
-        pending_value.push(globalThis, value);
     }
 
     pub fn doRun(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -1837,6 +1839,7 @@ pub const PostgresRequest = struct {
         cursor_name: bun.String,
         globalObject: *JSC.JSGlobalObject,
         values_array: JSC.JSValue,
+        result_fields: []const protocol.FieldDescription,
         comptime Context: type,
         writer: protocol.NewWriter(Context),
     ) !void {
@@ -1935,7 +1938,30 @@ pub const PostgresRequest = struct {
             }
         }
 
-        try writer.short(0);
+        var any_non_text_fields: bool = false;
+        for (result_fields) |field| {
+            if (switch (@as(types.Tag, @enumFromInt(field.type_oid))) {
+                .bigint, .number => true,
+                else => false,
+            }) {
+                any_non_text_fields = true;
+                break;
+            }
+        }
+
+        if (any_non_text_fields) {
+            try writer.short(@truncate(result_fields.len));
+            for (result_fields) |field| {
+                try writer.short(
+                    switch (@as(types.Tag, @enumFromInt(field.type_oid))) {
+                        .bigint, .number => 1,
+                        else => 0,
+                    },
+                );
+            }
+        } else {
+            try writer.short(0);
+        }
 
         try length.write();
     }
@@ -1977,7 +2003,7 @@ pub const PostgresRequest = struct {
         signature: *Signature,
     ) !void {
         try writeQuery(query, signature.name, signature.fields, Context, writer);
-        try writeBind(signature.name, bun.String.empty, globalObject, array_value, Context, writer);
+        try writeBind(signature.name, bun.String.empty, globalObject, array_value, &.{}, Context, writer);
         var exec = protocol.Execute{
             .p = .{
                 .prepared_statement = signature.name,
@@ -2015,7 +2041,7 @@ pub const PostgresRequest = struct {
         comptime Context: type,
         writer: protocol.NewWriter(Context),
     ) !void {
-        try writeBind(statement.signature.name, bun.String.empty, globalObject, array_value, Context, writer);
+        try writeBind(statement.signature.name, bun.String.empty, globalObject, array_value, &.{}, Context, writer);
         var exec = protocol.Execute{
             .p = .{
                 .prepared_statement = statement.signature.name,
@@ -2560,45 +2586,47 @@ pub const PostgresSQLConnection = struct {
             };
             defer bytes_.deinit();
             const bytes = bytes_.slice();
+            const object = this.object;
+            object.ensureStillAlive();
 
             switch (@as(types.Tag, @enumFromInt(this.fields[index].type_oid))) {
                 .number => {
                     switch (bytes.len) {
                         0 => {
-                            putDirectOffset(this.object, this.vm, index, JSC.JSValue.jsNull());
+                            putDirectOffset(object, this.vm, index, JSC.JSValue.jsNull());
                         },
                         2 => {
-                            putDirectOffset(this.object, this.vm, index, JSC.JSValue.jsNumber(@as(int32, @as(short, @bitCast(bytes[0..2].*)))));
+                            putDirectOffset(object, this.vm, index, JSC.JSValue.jsNumber(@as(int32, @as(short, @bitCast(bytes[0..2].*)))));
                         },
                         4 => {
-                            putDirectOffset(this.object, this.vm, index, JSC.JSValue.jsNumber(@as(int32, @bitCast(bytes[0..4].*))));
+                            putDirectOffset(object, this.vm, index, JSC.JSValue.jsNumber(@as(int32, @bitCast(bytes[0..4].*))));
                         },
                         else => {
                             var eight: usize = 0;
                             @memcpy(@as(*[8]u8, @ptrCast(&eight))[0..bytes.len], bytes[0..@min(8, bytes.len)]);
                             eight = @byteSwap(eight);
-                            putDirectOffset(this.object, this.vm, index, JSC.JSValue.jsNumber(@as(f64, @bitCast(eight))));
+                            putDirectOffset(object, this.vm, index, JSC.JSValue.jsNumber(@as(f64, @bitCast(eight))));
                         },
                     }
                 },
                 .json => {
-                    var str = bun.String.fromUTF8(bytes);
+                    var str = bun.String.create(bytes);
                     defer str.deref();
-                    putDirectOffset(this.object, this.vm, index, str.toJSForParseJSON(this.globalObject));
+                    putDirectOffset(object, this.vm, index, str.toJSForParseJSON(this.globalObject));
                 },
                 .boolean => {
-                    putDirectOffset(this.object, this.vm, index, JSC.JSValue.jsBoolean(bytes.len > 0 and bytes[0] == 't'));
+                    putDirectOffset(object, this.vm, index, JSC.JSValue.jsBoolean(bytes.len > 0 and bytes[0] == 't'));
                 },
                 .time, .datetime, .date => {
-                    putDirectOffset(this.object, this.vm, index, JSC.JSValue.fromDateString(this.globalObject, bytes_.sliceZ()));
+                    putDirectOffset(object, this.vm, index, JSC.JSValue.fromDateString(this.globalObject, bytes_.sliceZ()));
                 },
                 .bytea => {
-                    putDirectOffset(this.object, this.vm, index, JSC.ArrayBuffer.createBuffer(this.globalObject, bytes));
+                    putDirectOffset(object, this.vm, index, JSC.ArrayBuffer.createBuffer(this.globalObject, bytes));
                 },
                 else => {
-                    var str = bun.String.fromUTF8(bytes);
+                    var str = bun.String.create(bytes);
                     defer str.deref();
-                    putDirectOffset(this.object, this.vm, index, str.toJS(this.globalObject));
+                    putDirectOffset(object, this.vm, index, str.toJS(this.globalObject));
                 },
             }
             return true;
@@ -2615,12 +2643,14 @@ pub const PostgresSQLConnection = struct {
             .DataRow => {
                 var request = this.current() orelse return error.ExpectedRequest;
                 var statement = request.statement orelse return error.ExpectedStatement;
-                var structure = statement.structure(this.globalObject);
+
+                statement.cached_structure.clear();
+
+                var structure = statement.structure(this.js_value, this.globalObject);
                 std.debug.assert(!structure.isEmptyOrUndefinedOrNull());
 
                 var row = JSC.JSObject.uninitialized(this.globalObject, structure);
                 row.ensureStillAlive();
-                request.push(this.globalObject, row);
 
                 var putter = CellPutter{
                     .object = row,
@@ -2628,12 +2658,14 @@ pub const PostgresSQLConnection = struct {
                     .globalObject = this.globalObject,
                     .fields = statement.fields,
                 };
+
                 try protocol.DataRow.decode(
                     &putter,
                     Context,
                     reader,
                     CellPutter.put,
                 );
+                request.push(this.globalObject, row);
             },
             .CopyData => {
                 var copy_data: protocol.CopyData = undefined;
@@ -2835,7 +2867,7 @@ pub const PostgresSQLStatement = struct {
         bun.default_allocator.destroy(this);
     }
 
-    pub fn structure(this: *PostgresSQLStatement, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn structure(this: *PostgresSQLStatement, owner: JSC.JSValue, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         return this.cached_structure.get() orelse {
             var names = bun.default_allocator.alloc(bun.String, this.fields.len) catch return .undefined;
             defer {
@@ -2845,10 +2877,11 @@ pub const PostgresSQLStatement = struct {
                 bun.default_allocator.free(names);
             }
             for (this.fields, names) |*field, *name| {
-                name.* = String.createAtomIfPossible(field.name.slice());
+                name.* = String.fromUTF8(field.name.slice());
             }
             var structure_ = JSC.JSObject.createStructure(
                 globalObject,
+                owner,
                 @truncate(this.fields.len),
                 names.ptr,
             );

@@ -58,23 +58,6 @@ jobs:
             cmake
             ccache
             ninja-build
-            lsb-release
-            software-properties-common
-            gnupg
-            gnupg1
-            gnupg2
-            file
-            libc-dev
-            libxml2
-            libxml2-dev
-            rsync
-            unzip
-            xz-utils
-            tar
-            gzip
-            perl
-            python3
-            ruby
       - name: Setup LLVM
         uses: KyleMayes/install-llvm-action@v1
         with:

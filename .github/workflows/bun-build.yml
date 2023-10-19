@@ -1,0 +1,97 @@
+name: bun-build
+
+concurrency:
+  group: bun-build-${{ github.ref || github.run_id }}
+  cancel-in-progress: true
+
+on: [push]
+  # push:
+  #   branches:
+  #     - main
+  #     - ci/*
+  #   paths:
+  #     # Build files
+  #     # Source files
+  #     - "src/**/*"
+  #     - "packages/{bun-usockets,bun-uws}/src/**/*"
+  # pull_request:
+  #   branches:
+  #     - main
+  #   paths:
+  #     # Build files
+  #     - "a"
+  #     # Source files
+  #     - "src/**/*"
+  #     - "packages/{bun-usockets,bun-uws}/src/**/*"
+  # workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ matrix.id }})
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: linux-x64
+            runner: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Restore Cache
+        uses: actions/cache@v3
+        with:
+          key: ${{ runner.os }}-build-${{ matrix.id }}
+          path: build
+      - name: Build
+        run: |
+          apt-get update -qq \
+          && apt-get install -qq --no-install-recommends \
+            ca-certificates \
+            curl \
+            wget \
+          && echo "deb https://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-16 main" > /etc/apt/sources.list.d/llvm.list \
+          && echo "deb-src https://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-16 main" >> /etc/apt/sources.list.d/llvm.list \
+          && wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add - \
+          && curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - \
+          && apt-get install -qq --no-install-recommends \
+            lsb-release \
+            software-properties-common \
+            gnupg \
+            gnupg1 \
+            gnupg2 \
+            cmake \
+            file \
+            git \
+            gnupg \
+            libc-dev \
+            libxml2 \
+            libxml2-dev \
+            make \
+            ninja-build \
+            perl \
+            python3 \
+            rsync \
+            ruby \
+            unzip \
+            clang-16 \
+            lld-16 \
+            lldb-16 \
+            clangd-16 \
+            xz-utils \
+            bash \
+            tar \
+            gzip \
+            ccache \
+            nodejs \
+          && npm install -g esbuild \
+          && npm install -g bun \
+          && bun run build
+          && ls
+          && ls build

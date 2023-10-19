@@ -45,8 +45,97 @@ void *sni_find(void *sni, const char *hostname);
 
 #if defined(__APPLE__) && defined(__MACH__)
 
-#include <CoreFoundation/CoreFoundation.h>
-#include <Security/Security.h>
+#include <dlfcn.h>
+
+// CoreFoundation Types, Enums & Macros
+#define CFSTR(cStr)  cf_funcs.__CFStringMakeConstantString("" cStr "")
+
+typedef int32_t OSStatus;
+typedef unsigned char Boolean;
+typedef signed long CFIndex;
+typedef void *CFArrayRef;
+typedef void *CFMutableArrayRef;
+typedef void *CFDataRef;
+typedef void *CFStringRef;
+typedef void *CFDictionaryRef;
+typedef void *CFNumberRef;
+
+typedef enum : CFIndex {
+    kCFCompareLessThan = -1L,
+    kCFCompareEqualTo = 0,
+    kCFCompareGreaterThan = 1
+} CFComparisonResult;
+
+typedef enum : CFIndex {
+    kCFNumberSInt32Type = 3L,
+} CFNumberType;
+
+// Security Framework Types, Enums & Macros
+#define kSecTrustSettingsResult CFSTR("kSecTrustSettingsResult")
+
+typedef void *SecCertificateRef;
+
+typedef enum : uint32_t {
+    kSecTrustSettingsDomainUser = 0,
+    kSecTrustSettingsDomainAdmin,
+    kSecTrustSettingsDomainSystem
+} SecTrustSettingsDomain;
+
+enum : OSStatus {
+    errSecSuccess = 0,
+    errSecNoTrustSettings = -25263,
+    errSecItemNotFound = -25300,
+};
+
+typedef enum : uint32_t {
+    kSecTrustSettingsResultInvalid = 0,   /* Never valid in a Trust Settings array or
+                                            * in an API call. */
+    kSecTrustSettingsResultTrustRoot,     /* Root cert is explicitly trusted */
+    kSecTrustSettingsResultTrustAsRoot,   /* Non-root cert is explicitly trusted */
+    kSecTrustSettingsResultDeny,          /* Cert is explicitly distrusted */
+    kSecTrustSettingsResultUnspecified    /* Neither trusted nor distrusted; evaluation
+                                            * proceeds as usual */
+} SecTrustSettingsResult;
+
+// CoreFoundation Functions
+struct {
+    void *handle;
+
+    void (*CFRelease)(void *cf);
+
+    CFMutableArrayRef (*CFArrayCreateMutable)(void *, CFIndex, void *);
+
+    const void *(*CFArrayGetValueAtIndex)(CFArrayRef, CFIndex);
+
+    CFIndex (*CFArrayGetCount)(CFArrayRef);
+
+    void (*CFArrayAppendValue)(CFMutableArrayRef, const void *);
+
+    const uint8_t *(*CFDataGetBytePtr)(CFDataRef);
+
+    CFIndex (*CFDataGetLength)(CFDataRef);
+
+    CFStringRef (*__CFStringMakeConstantString)(const char *);
+
+    CFComparisonResult (*CFStringCompare)(CFStringRef, CFStringRef, unsigned long);
+
+    Boolean (*CFDictionaryGetValueIfPresent)(CFDictionaryRef, const void *, const void **);
+
+    const void *(*CFDictionaryGetValue)(CFDictionaryRef, const void *);
+
+    Boolean (*CFNumberGetValue)(CFNumberRef, CFNumberType, void *);
+} cf_funcs;
+
+// Security Framework Functions
+struct {
+    void *handle;
+
+    CFDataRef (*SecCertificateCopyData)(SecCertificateRef);
+
+    OSStatus (*SecTrustSettingsCopyCertificates)(SecTrustSettingsDomain, CFArrayRef *);
+
+    OSStatus (*SecTrustSettingsCopyTrustSettings)(SecCertificateRef, SecTrustSettingsDomain, CFArrayRef *);
+} sec_funcs;
 
 #endif
 
@@ -603,12 +692,53 @@ int us_no_password_callback(char* buf, int size, int rwflag, void* u) {
 
 #if defined(__APPLE__) && defined(__MACH__)
 
+// Loads CF & Security frameworks and their functions into cf_funcs and sec_funcs.
+int us_internal_osx_load_frameworks(void) {
+    // Load CoreFoundation and Security Framework
+    void *cf_hnd = dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", RTLD_LAZY);
+    void *sec_hnd = dlopen("/System/Library/Frameworks/Security.framework/Security", RTLD_LAZY);
+    if (!cf_hnd || !sec_hnd) {
+        return 0;
+    }
+
+    // Helper macros for loading functions. None of these symbols should ever be NULL.
+#define LOAD_CF_FN(name, type) if ((cf_funcs.name = (type) dlsym(cf_hnd, #name)) == NULL) return 0
+#define LOAD_SEC_FN(name, type) if ((sec_funcs.name = (type) dlsym(sec_hnd, #name)) == NULL) return 0
+
+    // Load functions from CoreFoundation
+    cf_funcs.handle = cf_hnd;
+    LOAD_CF_FN(CFRelease, void (*)(void *));
+    LOAD_CF_FN(CFArrayCreateMutable, CFMutableArrayRef(*)(void *, CFIndex, void *));
+    LOAD_CF_FN(CFArrayGetValueAtIndex, const void *(*)(CFArrayRef, CFIndex));
+    LOAD_CF_FN(CFArrayGetCount, CFIndex(*)(CFArrayRef));
+    LOAD_CF_FN(CFArrayAppendValue, void(*)(CFMutableArrayRef, const void *));
+    LOAD_CF_FN(CFDataGetBytePtr, const uint8_t *(*)(CFDataRef));
+    LOAD_CF_FN(CFDataGetLength, CFIndex(*)(CFDataRef));
+    LOAD_CF_FN(__CFStringMakeConstantString, CFStringRef(*)(const char *));
+    LOAD_CF_FN(CFStringCompare, CFComparisonResult(*)(CFStringRef, CFStringRef, unsigned long));
+    LOAD_CF_FN(CFDictionaryGetValueIfPresent, Boolean(*)(CFDictionaryRef, const void *, const void **));
+    LOAD_CF_FN(CFDictionaryGetValue, const void *(*)(CFDictionaryRef, const void *));
+    LOAD_CF_FN(CFNumberGetValue, Boolean(*)(CFNumberRef, CFNumberType, void *));
+
+    // Load functions from Security Framework
+    sec_funcs.handle = sec_hnd;
+    LOAD_SEC_FN(SecCertificateCopyData, CFDataRef(*)(SecCertificateRef));
+    LOAD_SEC_FN(SecTrustSettingsCopyCertificates, OSStatus(*)(SecTrustSettingsDomain, CFArrayRef * ));
+    LOAD_SEC_FN(SecTrustSettingsCopyTrustSettings,
+                OSStatus(*)(SecCertificateRef, SecTrustSettingsDomain, CFArrayRef * ));
+
+#undef LOAD_SEC_FN
+#undef LOAD_CF_FN
+
+    return 1;
+}
+
 // Places aggregate trust setting for a given certificate from a domain into result.
 int us_internal_osx_cert_trust(SecTrustSettingsDomain domain, SecCertificateRef cert, SecTrustSettingsResult *result) {
     // Trust settings: CFArray of CFDictionary objects
     CFArrayRef trust_settings = NULL;
 
-    if (SecTrustSettingsCopyTrustSettings(cert, domain, &trust_settings) == errSecItemNotFound)
+    if (sec_funcs.SecTrustSettingsCopyTrustSettings(cert, domain, &trust_settings) == errSecItemNotFound)
         return 0;
 
     // From Apple Docs:
@@ -622,26 +752,26 @@ int us_internal_osx_cert_trust(SecTrustSettingsDomain domain, SecCertificateRef 
     if (trust_settings == NULL)
         return 0;
 
-    for (CFIndex i = 0; i < CFArrayGetCount(trust_settings); i++) {
+    for (CFIndex i = 0; i < cf_funcs.CFArrayGetCount(trust_settings); i++) {
         CFStringRef policy_name;
         int32_t trust_result;
 
-        CFDictionaryRef setting = (CFDictionaryRef) CFArrayGetValueAtIndex(trust_settings, i);
+        CFDictionaryRef setting = (CFDictionaryRef) cf_funcs.CFArrayGetValueAtIndex(trust_settings, i);
 
         // Reject settings for non-ssl policies
-        if (!CFDictionaryGetValueIfPresent(setting, CFSTR("kSecTrustSettingsPolicyName"),
+        if (!cf_funcs.CFDictionaryGetValueIfPresent(setting, CFSTR("kSecTrustSettingsPolicyName"),
                                            (const void **) &policy_name)) {
             continue;
         }
-        if (CFStringCompare(policy_name, CFSTR("sslServer"), 0) != kCFCompareEqualTo)
+        if (cf_funcs.CFStringCompare(policy_name, CFSTR("sslServer"), 0) != kCFCompareEqualTo)
             continue;
 
         // Get the trust result
-        CFNumberRef cf_trust_result = CFDictionaryGetValue(setting, kSecTrustSettingsResult);
+        CFNumberRef cf_trust_result = (CFNumberRef) cf_funcs.CFDictionaryGetValue(setting, kSecTrustSettingsResult);
         if (cf_trust_result == NULL)
             // See large comment above
             trust_result = kSecTrustSettingsResultTrustRoot;
-        else if (!CFNumberGetValue(cf_trust_result, kCFNumberSInt32Type, &trust_result))
+        else if (!cf_funcs.CFNumberGetValue(cf_trust_result, kCFNumberSInt32Type, &trust_result))
             trust_result = kSecTrustSettingsResultInvalid;
 
         switch (trust_result) {
@@ -657,7 +787,7 @@ int us_internal_osx_cert_trust(SecTrustSettingsDomain domain, SecCertificateRef 
     // See large comment above
     *result = kSecTrustSettingsResultTrustRoot;
 end:
-    CFRelease(trust_settings);
+    cf_funcs.CFRelease(trust_settings);
     return 1;
 }
 
@@ -667,7 +797,7 @@ int us_internal_osx_trusted_certs(SecTrustSettingsDomain domain, CFMutableArrayR
     // CFArray of SecCertificateRef
     CFArrayRef tmp;
 
-    OSStatus result = SecTrustSettingsCopyCertificates(domain, &tmp);
+    OSStatus result = sec_funcs.SecTrustSettingsCopyCertificates(domain, &tmp);
     switch (result) {
         case errSecSuccess:
             break;
@@ -679,29 +809,34 @@ int us_internal_osx_trusted_certs(SecTrustSettingsDomain domain, CFMutableArrayR
             return 0;
     }
 
-    for (CFIndex i = 0; i < CFArrayGetCount(tmp); i++) {
+    for (CFIndex i = 0; i < cf_funcs.CFArrayGetCount(tmp); i++) {
         SecTrustSettingsResult trust = kSecTrustSettingsResultUnspecified;
 
-        SecCertificateRef cert = (SecCertificateRef) CFArrayGetValueAtIndex(tmp, i);
+        SecCertificateRef cert = (SecCertificateRef) cf_funcs.CFArrayGetValueAtIndex(tmp, i);
         if (!us_internal_osx_cert_trust(domain, cert, &trust)) {
             ret = 0;
             goto end;
         }
 
         if (trust == kSecTrustSettingsResultTrustRoot || trust == kSecTrustSettingsResultTrustAsRoot)
-            CFArrayAppendValue(certs, cert);
+            cf_funcs.CFArrayAppendValue(certs, cert);
     }
 
 end:
-    CFRelease(tmp);
+    cf_funcs.CFRelease(tmp);
     return ret;
 }
 
 // Initializes native_certs with the trusted certificates in the OSX keychain.
 // Must be called with native_cert_instances_lock held.
 void us_internal_osx_init_native_certs(void) {
+    if (!us_internal_osx_load_frameworks()) {
+        OPENSSL_PUT_ERROR(SSL, ERR_R_SYS_LIB);
+        return;
+    }
+
     // CFMutableArray of SecCertificateRef
-    CFMutableArrayRef certs = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
+    CFMutableArrayRef certs = cf_funcs.CFArrayCreateMutable(NULL, 0, dlsym(cf_funcs.handle, "kCFTypeArrayCallBacks"));
 
     if (!us_internal_osx_trusted_certs(kSecTrustSettingsDomainUser, certs) ||
         !us_internal_osx_trusted_certs(kSecTrustSettingsDomainAdmin, certs) ||
@@ -710,26 +845,30 @@ void us_internal_osx_init_native_certs(void) {
         return;
     }
 
-    native_certs_size = (size_t) CFArrayGetCount(certs);
+    native_certs_size = (size_t) cf_funcs.CFArrayGetCount(certs);
     native_cert_instances = us_malloc(sizeof(X509 *) * native_certs_size);
 
     for (CFIndex i = 0; i < (CFIndex) native_certs_size; ++i) {
-        SecCertificateRef sec_cert = (SecCertificateRef) CFArrayGetValueAtIndex(certs, i);
+        SecCertificateRef sec_cert = (SecCertificateRef) cf_funcs.CFArrayGetValueAtIndex(certs, i);
 
-        CFDataRef der = SecCertificateCopyData(sec_cert);
-        const unsigned char *buf = CFDataGetBytePtr(der);
+        CFDataRef der = sec_funcs.SecCertificateCopyData(sec_cert);
+        const unsigned char *buf = cf_funcs.CFDataGetBytePtr(der);
 
-        X509 *ssl_cert = d2i_X509(NULL, &buf, CFDataGetLength(der));
+        X509 *ssl_cert = d2i_X509(NULL, &buf, cf_funcs.CFDataGetLength(der));
 
         if (ssl_cert == NULL)
             OPENSSL_PUT_ERROR(SSL, ERR_R_X509_LIB);
 
         native_cert_instances[i] = ssl_cert;
 
-        CFRelease(der);
+        cf_funcs.CFRelease(der);
     }
 
-    CFRelease(certs);
+    cf_funcs.CFRelease(certs);
+
+    // Close the frameworks, we don't need them anymore
+    dlclose(sec_funcs.handle);
+    dlclose(cf_funcs.handle);
 }
 
 #endif

@@ -51,8 +51,13 @@ jobs:
           path: build
       - name: Build
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -qq --no-install-recommends \
+          sudo su -
+          apt-get update -qq
+          echo "deb https://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-16 main" > /etc/apt/sources.list.d/llvm.list
+          echo "deb-src https://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-16 main" >> /etc/apt/sources.list.d/llvm.list
+          wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add -
+          curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+          apt-get install -qq --no-install-recommends \
             lsb-release \
             software-properties-common \
             gnupg \
@@ -60,6 +65,7 @@ jobs:
             gnupg2 \
             cmake \
             file \
+            git \
             gnupg \
             libc-dev \
             libxml2 \
@@ -76,9 +82,11 @@ jobs:
             lldb-16 \
             clangd-16 \
             xz-utils \
+            bash \
             tar \
             gzip \
-            ccache
+            ccache \
+            nodejs
           npm install -g esbuild
           npm install -g bun
           bun run build

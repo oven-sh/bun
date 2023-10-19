@@ -1309,6 +1309,7 @@ pub const InternalState = struct {
 
     allow_keepalive: bool = true,
     received_last_chunk: bool = false,
+    did_set_content_encoding: bool = false,
     transfer_encoding: Encoding = Encoding.identity,
     encoding: Encoding = Encoding.identity,
     content_encoding_i: u8 = std.math.maxInt(u8),
@@ -2710,10 +2711,10 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                 return;
             };
 
-            if (this.state.content_encoding_i < response.headers.len) {
+            if (this.state.content_encoding_i < response.headers.len and !this.state.did_set_content_encoding) {
                 // if it compressed with this header, it is no longer because we will decompress it
                 var mutable_headers = std.ArrayListUnmanaged(picohttp.Header){ .items = response.headers, .capacity = response.headers.len };
-                _ = mutable_headers.orderedRemove(this.state.content_encoding_i);
+                this.state.did_set_content_encoding = true;
                 response.headers = mutable_headers.items;
                 this.state.content_encoding_i = std.math.maxInt(@TypeOf(this.state.content_encoding_i));
                 // we need to reset the pending response because we removed a header

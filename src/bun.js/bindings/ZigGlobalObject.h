@@ -422,6 +422,7 @@ public:
 
 private:
     void addBuiltinGlobals(JSC::VM&);
+
     void finishCreation(JSC::VM&);
     friend void WebCore::JSBuiltinInternalFunctions::initialize(Zig::GlobalObject&);
     WebCore::JSBuiltinInternalFunctions m_builtinInternalFunctions;
@@ -517,7 +518,7 @@ private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     void* m_bunVM;
 
-    WebCore::SubtleCrypto* crypto = nullptr;
+    WebCore::SubtleCrypto* m_subtleCrypto = nullptr;
 
     WTF::Vector<JSC::Strong<JSC::JSPromise>> m_aboutToBeNotifiedRejectedPromises;
     WTF::Vector<JSC::Strong<JSC::JSFunction>> m_ffiFunctions;

@@ -10,7 +10,7 @@ test("require.cache", () => {
     stderr: "inherit",
   });
 
-  expect(stdout.toString().trim().endsWith("--pass--")).toBe(true);
+  expect(stdout.toString().trim()).toEndWith("--pass--");
   expect(exitCode).toBe(0);
 });
 
@@ -22,6 +22,6 @@ test("require.cache does not include unevaluated modules", () => {
     stderr: "inherit",
   });
 
-  expect(stdout.toString().trim().endsWith("--pass--")).toBe(true);
+  expect(stdout.toString().trim()).toEndWith("--pass--");
   expect(exitCode).toBe(0);
 });

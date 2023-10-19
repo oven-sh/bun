@@ -443,7 +443,7 @@ pub const MutableString = struct {
         }
     };
 
-    pub fn writeAll(self: *MutableString, bytes: string) !usize {
+    pub fn writeAll(self: *MutableString, bytes: string) std.mem.Allocator.Error!usize {
         try self.list.appendSlice(self.allocator, bytes);
         return bytes.len;
     }

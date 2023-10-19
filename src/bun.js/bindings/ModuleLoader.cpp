@@ -92,12 +92,19 @@ generateInternalModuleSourceCode(JSC::JSGlobalObject* globalObject, InternalModu
         exportNames.reserveCapacity(len);
         exportValues.ensureCapacity(len);
 
-        exportNames.append(vm.propertyNames->defaultKeyword);
-        exportValues.append(object);
+        bool hasDefault = false;
 
         for (auto& entry : properties) {
+            if (UNLIKELY(entry == vm.propertyNames->defaultKeyword)) {
+                hasDefault = true;
+            }
             exportNames.append(entry);
             exportValues.append(object->get(globalObject, entry));
+        }
+
+        if (!hasDefault) {
+            exportNames.append(vm.propertyNames->defaultKeyword);
+            exportValues.append(object);
         }
     };
 }
@@ -138,7 +145,7 @@ PendingVirtualModuleResult* PendingVirtualModuleResult::create(VM& vm, Structure
 }
 Structure* PendingVirtualModuleResult::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(CellType, StructureFlags), info());
+    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
 }
 
 PendingVirtualModuleResult::PendingVirtualModuleResult(VM& vm, Structure* structure)
@@ -533,7 +540,7 @@ JSValue fetchCommonJSModule(
             RELEASE_AND_RETURN(scope, {});
         }
 
-        target->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), value, value.isCell() && value.isCallable() ? JSC::PropertyAttribute::Function | 0 : 0);
+        target->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), value, 0);
         target->hasEvaluated = true;
         RELEASE_AND_RETURN(scope, target);
     }

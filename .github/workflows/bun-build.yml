@@ -81,6 +81,7 @@ jobs:
       - name: Setup Dependencies
         run: |
           bun install
+          bash .scripts/postinstall.sh
           bun install -g esbuild
       - name: Setup upterm session
         uses: lhotari/action-upterm@v1

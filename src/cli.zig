@@ -870,8 +870,8 @@ pub const HelpCommand = struct {
     // the spacing between commands here is intentional
     pub const cli_helptext_fmt =
         \\<d>CLI:<r>
-        \\  <b>bun \<command\> --help<r> for detailed usage of given command.
-        \\  <b>bun upgrade<r> to get the latest version of Bun.
+        \\  <b>upgrade<r>                        Upgrade to latest version of Bun.
+        \\  <d>\<command\><r> <b>--help<r>               Print help text for command.
         \\
         \\<d>Runtime:<r>
         \\  <b><magenta>run<r>       <d>./my-script.ts<r>       Execute a file with Bun
@@ -893,7 +893,7 @@ pub const HelpCommand = struct {
         \\  <b><blue>update<r>    <d>{s:<16}<r>     Update outdated dependencies
         \\  <b><blue>link<r>                           Link an npm package globally
         \\  <b><blue>unlink<r>                         Globally unlink an npm package
-        \\  <b><blue>pm \<subcommand\><r>                Additional package management utilities
+        \\  <b><blue>pm <d>\<subcommand\><r>                Additional package management utilities
         \\
         \\<d>Bundler:<r>
         \\  <b><green>build<r>     <d>./a.ts ./b.jsx<r>       Bundle TypeScript & JavaScript into a single file
@@ -922,7 +922,7 @@ pub const HelpCommand = struct {
 
         switch (reason) {
             .explicit => Output.pretty(
-                "<r><b><magenta>Bun<r>: a fast JavaScript runtime, package manager, bundler and test runner. <d>(" ++ Global.package_json_version ++ ")<r>\n\n" ++ cli_helptext_fmt,
+                "<r><b><magenta>Bun<r>: a fast JavaScript runtime, package manager, bundler, and test runner. <d>(" ++ Global.package_json_version ++ ")<r>\n\n" ++ cli_helptext_fmt,
                 args,
             ),
             .invalid_command => Output.prettyError(

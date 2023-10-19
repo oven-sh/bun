@@ -474,18 +474,18 @@ add_compile_definitions(
     "BUN_DYNAMIC_JS_LOAD_PATH=\"${BUN_WORKDIR}/js\""
 )
 include_directories(
-    packages/
-    packages/bun-usockets
-    packages/bun-usockets/src
-    src/bun.js/bindings
-    src/bun.js/bindings/webcore
-    src/bun.js/bindings/webcrypto
-    src/bun.js/bindings/sqlite
-    src/bun.js/modules
-    src/js/builtins
-    src/napi
-    src/deps
-    src/deps/picohttpparser
+    ${CMAKE_CURRENT_SOURCE_DIR}/packages/
+    ${CMAKE_CURRENT_SOURCE_DIR}/packages/bun-usockets
+    ${CMAKE_CURRENT_SOURCE_DIR}/packages/bun-usockets/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/bindings
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/bindings/webcore
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/bindings/webcrypto
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/bindings/sqlite
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/modules
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/js/builtins
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/napi
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/deps
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/deps/picohttpparser
     # TODO: are all of these needed?
     ${WEBKIT_DIR}/WTF/Headers
     ${WEBKIT_DIR}/ICU/Headers

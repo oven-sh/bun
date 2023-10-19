@@ -263,7 +263,7 @@ typedef struct {
     bool shared;
 } Bun__ArrayBuffer;
 
-#include "../../../js/out/SyntheticModuleType.h"
+#include "SyntheticModuleType.h"
 
 extern "C" const char* Bun__userAgent;
 

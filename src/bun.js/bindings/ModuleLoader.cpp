@@ -34,7 +34,7 @@
 #include <JavaScriptCore/JSMapInlines.h>
 
 #include "../modules/_NativeModule.h"
-#include "../../js/out/NativeModuleImpl.h"
+#include "NativeModuleImpl.h"
 
 #include "../modules/ObjectModule.h"
 

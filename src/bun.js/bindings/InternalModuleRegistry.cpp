@@ -64,7 +64,6 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
     return result;
 
 #if BUN_DEBUG
-#include "../../src/js/out/DebugPath.h"
 #define ASSERT_INTERNAL_MODULE(result, moduleName)                                                        \
     if (!result || !result.isCell() || !jsDynamicCast<JSObject*>(result)) {                               \
         printf("Expected \"%s\" to export a JSObject. Bun is going to crash.", moduleName.utf8().data()); \
@@ -149,7 +148,7 @@ JSValue InternalModuleRegistry::requireId(JSGlobalObject* globalObject, VM& vm, 
     return value;
 }
 
-#include "../../../src/js/out/InternalModuleRegistry+createInternalModuleById.h"
+#include "InternalModuleRegistry+createInternalModuleById.h"
 
 // This is called like @getInternalField(@internalModuleRegistry, 1) ?? @createInternalModuleById(1)
 // so we want to write it to the internal field when loaded.

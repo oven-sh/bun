@@ -15,11 +15,6 @@ globalThis.Bun = bun as typeof bun & {
     CryptoHashInterface: typeof import('bun').CryptoHashInterface;
     CryptoHasher: typeof import('bun').CryptoHasher;
     FileSystemRouter: typeof import('bun').FileSystemRouter;
-
-    //? Polyfilled but with broken types (See each one in ./src/modules/bun.ts for details)
-    stdout: typeof import('bun').stdout;
-    stderr: typeof import('bun').stderr;
-    stdin: typeof import('bun').stdin;
 };
 
 Reflect.set(globalThis, 'jsc', jsc);

@@ -375,9 +375,7 @@ ICU_FLAGS ?=
 # Ideally, we could just look up the linker search paths
 ifeq ($(OS_NAME),linux)
 LIB_ICU_PATH ?= $(JSC_LIB)
-	ICU_FLAGS += $(LIB_ICU_PATH)/libicuuc.a $(LIB_ICU_PATH)/libicudata.a $(LIB_ICU_PATH)/libicui18n.a
-else
-LIB_ICU_PATH ?= $(BUN_DEPS_DIR)
+ICU_FLAGS += $(LIB_ICU_PATH)/libicuuc.a $(LIB_ICU_PATH)/libicudata.a $(LIB_ICU_PATH)/libicui18n.a
 endif
 
 ifeq ($(OS_NAME),darwin)
@@ -1954,4 +1952,4 @@ help: ## to print this help
 
 
 print_linker_flags:
-	echo $(BUN_LLD_FLAGS) $(SYMBOLS) -W $(OPTIMIZATION_LEVEL) $(RELEASE_FLAGS)
+	@echo $(CLANG_FLAGS)

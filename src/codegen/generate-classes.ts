@@ -3,6 +3,7 @@ import { unlinkSync } from "fs";
 import { readdirSync } from "fs";
 import { resolve } from "path";
 import type { Field, ClassDefinition } from "./class-definitions";
+import { writeIfNotChanged } from "./helpers";
 
 const CommonIdentifiers = {
   "name": true,
@@ -1709,13 +1710,6 @@ for (const file of files) {
 }
 classes.sort((a, b) => (a.name < b.name ? -1 : 1));
 
-function writeAndUnlink(path, content) {
-  try {
-    unlinkSync(path);
-  } catch (e) {}
-  return Bun.write(path, content);
-}
-
 const GENERATED_CLASSES_FOOTER = `
 
 class StructuredCloneableSerialize {
@@ -1791,7 +1785,7 @@ function writeCppSerializers() {
   return output;
 }
 
-await writeAndUnlink(`${outBase}/ZigGeneratedClasses.zig`, [
+await writeIfNotChanged(`${outBase}/ZigGeneratedClasses.zig`, [
   ZIG_GENERATED_CLASSES_HEADER,
 
   ...classes.map(a => generateZig(a.name, a).trim()).join("\n"),
@@ -1804,25 +1798,25 @@ comptime {
   `,
 ]);
 const allHeaders = classes.map(a => generateHeader(a.name, a));
-await writeAndUnlink(`${outBase}/ZigGeneratedClasses.h`, [
+await writeIfNotChanged(`${outBase}/ZigGeneratedClasses.h`, [
   GENERATED_CLASSES_HEADER[0],
   ...[...new Set(extraIncludes.map(a => `#include "${a}";` + "\n"))],
   GENERATED_CLASSES_HEADER[1],
   ...allHeaders,
   GENERATED_CLASSES_FOOTER,
 ]);
-await writeAndUnlink(`${outBase}/ZigGeneratedClasses.cpp`, [
+await writeIfNotChanged(`${outBase}/ZigGeneratedClasses.cpp`, [
   GENERATED_CLASSES_IMPL_HEADER,
   ...classes.map(a => generateImpl(a.name, a)),
   writeCppSerializers(classes),
   GENERATED_CLASSES_IMPL_FOOTER,
 ]);
-await writeAndUnlink(
+await writeIfNotChanged(
   `${outBase}/ZigGeneratedClasses+lazyStructureHeader.h`,
   classes.map(a => generateLazyClassStructureHeader(a.name, a)).join("\n"),
 );
 
-await writeAndUnlink(
+await writeIfNotChanged(
   `${outBase}/ZigGeneratedClasses+DOMClientIsoSubspaces.h`,
   classes.map(a =>
     [
@@ -1832,7 +1826,7 @@ await writeAndUnlink(
   ),
 );
 
-await writeAndUnlink(
+await writeIfNotChanged(
   `${outBase}/ZigGeneratedClasses+DOMIsoSubspaces.h`,
   classes.map(a =>
     [
@@ -1842,9 +1836,7 @@ await writeAndUnlink(
   ),
 );
 
-await writeAndUnlink(
+await writeIfNotChanged(
   `${outBase}/ZigGeneratedClasses+lazyStructureImpl.h`,
   initLazyClasses(classes.map(a => generateLazyClassStructureImpl(a.name, a))) + "\n" + visitLazyClasses(classes),
 );
-
-export {};

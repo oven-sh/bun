@@ -60,5 +60,10 @@ export function writeIfNotChanged(file: string, contents: string) {
     }
   }
 
-  fs.writeFileSync(file, contents);
+  try {
+    fs.writeFileSync(file, contents);
+  } catch (error) {
+    fs.mkdirSync(path.dirname(file));
+    fs.writeFileSync(file, contents);
+  }
 }

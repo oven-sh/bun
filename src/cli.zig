@@ -869,10 +869,6 @@ pub const HelpCommand = struct {
 
     // the spacing between commands here is intentional
     pub const cli_helptext_fmt =
-        \\<d>CLI:<r>
-        \\  <b>upgrade<r>                        Upgrade to latest version of Bun.
-        \\  <d>\<command\><r> <b>--help<r>               Print help text for command.
-        \\
         \\<d>Runtime:<r>
         \\  <b><magenta>run<r>       <d>./my-script.ts<r>       Execute a file with Bun
         \\            <d>lint<r>                 Run a package.json script
@@ -897,6 +893,10 @@ pub const HelpCommand = struct {
         \\
         \\<d>Bundler:<r>
         \\  <b><green>build<r>     <d>./a.ts ./b.jsx<r>       Bundle TypeScript & JavaScript into a single file
+        \\
+        \\<d>CLI:<r>
+        \\  <b>upgrade<r>                        Upgrade to latest version of Bun.
+        \\  <d>\<command\><r> <b>--help<r>               Print help text for command.
         \\
         \\Learn more about Bun:            <magenta>https://bun.sh/docs<r>
         \\Join our Discord community:      <blue>https://bun.sh/discord<r>

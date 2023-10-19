@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.25)
+cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 set(CMAKE_COLOR_DIAGNOSTICS ON)
 
@@ -47,9 +47,9 @@ if(UNIX)
         message(FATAL_ERROR "Could not find LLVM ${LLVM_VERSION} installed on your system.")
     endif()
 
-    set(CMAKE_CXX_COMPILER "${LLVM_PREFIX}/bin/clang++")
-    set(CMAKE_C_COMPILER "${LLVM_PREFIX}/bin/clang")
-    set(CMAKE_CXX_COMPILER_ID "Clang")
+    set(CMAKE_CXX_COMPILER "${LLVM_PREFIX}/bin/clang++" CACHE STRING "CMAKE_CXX_COMPILER" FORCE)
+    set(CMAKE_C_COMPILER "${LLVM_PREFIX}/bin/clang" CACHE STRING "CMAKE_C_COMPILER" FORCE)
+    set(CMAKE_CXX_COMPILER_ID "Clang" CACHE STRING "CMAKE_CXX_COMPILER_ID" FORCE)
     set(STRIP "${LLVM_PREFIX}/bin/llvm-strip")
     set(DSYMUTIL "${LLVM_PREFIX}/bin/dsymutil")
 
@@ -66,13 +66,18 @@ project(Bun VERSION "1.0.7")
 
 set(DEFAULT_ON_UNLESS_WINDOWS ON)
 set(REQUIRED_IF_NOT_WINDOWS "REQUIRED")
-if (WIN32)
+if(WIN32)
     set(DEFAULT_ON_UNLESS_WINDOWS OFF)
     set(REQUIRED_IF_NOT_WINDOWS OFF)
 endif()
 set(DEFAULT_ON_UNLESS_APPLE ON)
-if (APPLE)
+if(APPLE)
     set(DEFAULT_ON_UNLESS_APPLE OFF)
+endif()
+
+set(CI OFF)
+if(DEFINED ENV{CI} OR DEFINED ENV{GITHUB_ACTIONS})
+    set(CI ON)
 endif()
 
 # -- Build Flags --
@@ -92,7 +97,7 @@ option(USE_BASELINE_BUILD "Build Bun for baseline (older) CPUs" OFF)
 set(ERROR_LIMIT 100 CACHE STRING "Maximum number of errors to show when compiling C++ code")
 
 set(ARCH x86_64)
-if (CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|arm")
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|arm")
     set(ARCH arm64)
 endif()
 
@@ -102,7 +107,7 @@ if(NOT CPU_TARGET)
         if (NOT MSVC)
             if (USE_BASELINE_BUILD)
                 set(CPU_TARGET "nehalem")
-            else ()
+            else()
                 set(CPU_TARGET "haswell")
             endif()
         endif()
@@ -115,6 +120,7 @@ if(USE_CONFIGURE_DEPENDS)
 else()
     set(CONFIGURE_DEPENDS "")
 endif()
+
 # --- CLI Paths ---
 
 # Zig Compiler
@@ -153,7 +159,7 @@ endif()
 # --- Dependencies ---
 
 # WebKit
-if(NOT WEBKIT_DIR)
+if(NOT WEBKIT_DIR AND NOT WINDOWS)
     # TODO: allow this to point to the actual webkit cmake file to allow easier rebuilds
     find_path(
         WEBKIT_DIR
@@ -220,7 +226,7 @@ file(GLOB BUN_CPP ${CONFIGURE_DEPENDS}
     "${BUN_SRC}/io/*.cpp"
     "${BUN_SRC}/bun.js/modules/*.cpp"
     "${BUN_SRC}/bun.js/bindings/*.cpp"
-    "${BUN_SRC}/bun.js/bindings/WebCore/*.cpp"
+    "${BUN_SRC}/bun.js/bindings/webcore/*.cpp"
     "${BUN_SRC}/bun.js/bindings/sqlite/*.cpp"
     "${BUN_SRC}/bun.js/bindings/webcrypto/*.cpp"
     "${BUN_SRC}/bun.js/bindings/webcrypto/*/*.cpp"
@@ -449,11 +455,10 @@ set_target_properties(${bun} PROPERTIES
 )
 
 # Set /subsystem:console on bun for windows
-if (WIN32)
+if(WIN32)
     set_target_properties(${bun} PROPERTIES LINK_FLAGS " /SUBSYSTEM:CONSOLE ")
 endif()
 
-# --- Flags and Defines ---
 add_compile_definitions(
     # TODO: are all of these variables strictly necessary?
     "_HAS_EXCEPTIONS=0"
@@ -475,6 +480,7 @@ add_compile_definitions(
     "ASSERT_ENABLED=$<IF:$<CONFIG:ASSERT_ENABLED>,1,0>"
     "BUN_DYNAMIC_JS_LOAD_PATH=\"${BUN_WORKDIR}/js\""
 )
+
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/packages/
     ${CMAKE_CURRENT_SOURCE_DIR}/packages/bun-usockets
@@ -500,7 +506,7 @@ include_directories(
     "${BUN_WORKDIR}/codegen"
 )
 
-# Compile and Linker Flags
+# --- clang and linker flags ---
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_compile_definitions("BUN_DEBUG=1")
     if (NOT MSVC)
@@ -517,6 +523,10 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
 endif()
 
 if(NOT MSVC)
+    if(NOT CI)
+        target_compile_options(${bun} PRIVATE -fdiagnostics-color=always)
+    endif()
+
     target_compile_options(${bun} PUBLIC
         -march=${CPU_TARGET}
         -mtune=${CPU_TARGET}
@@ -528,6 +538,8 @@ if(NOT MSVC)
         -fno-rtti
         -ferror-limit=${ERROR_LIMIT}
         -fPIC
+        -fno-omit-frame-pointer
+        -fno-semantic-interposition
     )
 else() # MSVC
     string(APPEND SUPPRESS_WARNING_NUMBERS
@@ -551,22 +563,71 @@ if(APPLE)
     target_link_options(${bun} PUBLIC "-dead_strip")
     target_link_options(${bun} PUBLIC "-dead_strip_dylibs")
     target_link_options(${bun} PUBLIC "-exported_symbols_list" "${BUN_SRC}/symbols.txt")
+    set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${BUN_SRC}/symbols.txt")
+
     target_link_options(${bun} PUBLIC "-fno-keep-static-consts")
     target_link_libraries(${bun} PRIVATE "resolv")
 endif()
 
-if (WIN32)
+if(UNIX AND NOT APPLE)
+    target_compile_options(${bun} PUBLIC
+        -std=c++2a
+    )
+    target_link_options(${bun} PUBLIC
+        "-static-libstdc++"
+        "-static-libgcc"
+        "-fuse-ld=lld"
+        "-Wl,-z,now"
+        "-Wl,--as-needed"
+        "-Wl,--gc-sections"
+        "-Wl,-z,stack-size=12800000"
+        "-Wl,--wrap=fcntl"
+        "-Wl,--wrap=fcntl64"
+        "-Wl,--wrap=stat64"
+        "-Wl,--wrap=pow"
+        "-Wl,--wrap=exp"
+        "-Wl,--wrap=log"
+        "-Wl,--wrap=log2"
+        "-Wl,--wrap=lstat"
+        "-Wl,--wrap=stat"
+        "-Wl,--wrap=fstat"
+        "-Wl,--wrap=fstatat"
+        "-Wl,--wrap=lstat64"
+        "-Wl,--wrap=stat64"
+        "-Wl,--wrap=fstat64"
+        "-Wl,--wrap=fstatat64"
+        "-Wl,--wrap=mknod"
+        "-Wl,--wrap=mknodat"
+        "-Wl,--wrap=statx "
+        "-Wl,--compress-debug-sections=zlib"
+        "-Bsymbolics-functions"
+        "-rdynamic"
+        "-Wl,--dynamic-list=${BUN_SRC}/symbols.dyn"
+        "-Wl,--version-script=${BUN_SRC}/linker.lds"
+    )
+    target_link_libraries(${bun} PRIVATE "c")
+    target_link_libraries(${bun} PRIVATE "libatomic.a")
+
+    target_link_libraries(${bun} PRIVATE "${WEBKIT_DIR}/lib/libicudata.a")
+    target_link_libraries(${bun} PRIVATE "${WEBKIT_DIR}/lib/libicui18n.a")
+    target_link_libraries(${bun} PRIVATE "${WEBKIT_DIR}/lib/libicuuc.a")
+
+    set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${BUN_SRC}/linker.lds")
+    set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${BUN_SRC}/symbols.dyn")
+endif()
+
+if(WIN32)
     add_compile_definitions(
         "WIN32"
         "_WINDOWS"
         "_CRT_SECURE_NO_WARNINGS"
         "WIN32_LEAN_AND_MEAN=1"
     )
-
+    
     set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
 endif()
 
-if (APPLE)
+if(APPLE)
     # TODO: a much better check can be done to find this path
     find_path(
         ICU4C_DIR NAMES lib/libicudata.a
@@ -583,38 +644,6 @@ if (APPLE)
     target_link_libraries(${bun} PRIVATE "${ICU4C_DIR}/lib/libicui18n.a")
     target_link_libraries(${bun} PRIVATE "${ICU4C_DIR}/lib/libicuuc.a")
     include_directories(${ICU4C_DIR}/include)
-elseif (LINUX)
-    string(APPEND CMAKE_CXX_FLAGS " -static-libstdc++ -static-libgcc -fno-omit-frame-pointer")
-    string(APPEND CMAKE_C_FLAGS " -static-libgcc -fno-omit-frame-pointer")
-    target_link_libraries(${bun} PRIVATE "c")
-    string(APPEND CMAKE_LINKER_FLAGS 
-        " -Wl,--compress-debug-sections=zlib "
-        " -l:libatomic.a "
-        " -Wl,-Bsymbolics-functions "
-        " -fno-semantic-interposition "
-        " -Wl,-z,now"
-        " -Wl,--as-needed"
-        " -Wl,--gc-sections"
-        " -Wl,-z,-stack-size=12800000"
-        " -Wl,--wrap=fcntl"
-        " -Wl,--wrap=fcntl64"
-        " -Wl,--wrap=stat64"
-        " -Wl,--wrap=pow"
-        " -Wl,--wrap=exp"
-        " -Wl,--wrap=log"
-        " -Wl,--wrap=log2"
-        " -Wl,--wrap=lstat"
-        " -Wl,--wrap=stat"
-        " -Wl,--wrap=fstat"
-        " -Wl,--wrap=fstatat"
-        " -Wl,--wrap=lstat64"
-        " -Wl,--wrap=stat64"
-        " -Wl,--wrap=fstat64"
-        " -Wl,--wrap=fstatat64"
-        " -Wl,--wrap=mknod"
-        " -Wl,--wrap=mknodat"
-        " -Wl,--wrap=statx "
-    )
 endif()
 
 # --- Stripped Binary "bun"
@@ -635,15 +664,15 @@ endif()
 
 # --- Dependencies ---
 
-if (USE_CUSTOM_ZLIB AND (NOT WIN32))
+if(USE_CUSTOM_ZLIB AND (NOT WIN32))
     target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/libz.a")
     include_directories(${BUN_DEPS_DIR}/zlib/include)
-else ()
+else()
     find_package(ZLIB REQUIRED)
     target_link_libraries(${bun} PRIVATE ZLIB::ZLIB)
-endif ()
+endif()
 
-if (USE_CUSTOM_BORINGSSL)
+if(USE_CUSTOM_BORINGSSL)
     include_directories(src/deps/boringssl/include)
     if (WIN32)
         target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/crypto.lib")
@@ -654,48 +683,52 @@ if (USE_CUSTOM_BORINGSSL)
         target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/libssl.a")
         target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/libdecrepit.a")
     endif()
-else ()
+else()
     include(FindBoringSSL)
     FindBoringSSL(${bun})
 endif()
 
-if (USE_CUSTOM_LIBARCHIVE)
+if(USE_CUSTOM_LIBARCHIVE)
     include_directories(src/deps/libarchive/include)
     if (WIN32)
         target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/archive.lib")
     else()
         target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/libarchive.a")
     endif()
-else ()
+else()
     find_package(LibArchive REQUIRED)
     target_link_libraries(${bun} PRIVATE LibArchive::LibArchive)
 endif()
 
-if (USE_CUSTOM_MIMALLOC)
+if(USE_CUSTOM_MIMALLOC)
     include_directories(src/deps/mimalloc/include)
     if (WIN32)
         target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/mimalloc-static.lib")
-    else()
+    elseif(APPLE)
+        # https://github.com/microsoft/mimalloc/issues/512
+        # Linking mimalloc via object file on macOS x64 can cause heap corruption
         target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/libmimalloc.a")
+    else()
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/libmimalloc.o")
     endif()
-else ()
+else()
     find_package(mimalloc REQUIRED)
     target_link_libraries(${bun} PRIVATE mimalloc)
 endif()
 
-if (USE_CUSTOM_ZSTD)
+if(USE_CUSTOM_ZSTD)
     include_directories(src/deps/zstd/include)
     if (WIN32)
         target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/zstd.lib")
     else()
         target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/libzstd.a")
     endif()
-else ()
+else()
     find_package(zstd CONFIG REQUIRED)
     target_link_libraries(${bun} PRIVATE zstd::libzstd)
 endif()
 
-if (USE_CUSTOM_CARES)
+if(USE_CUSTOM_CARES)
     include_directories(src/deps/c-ares/include)
     if (WIN32)
         target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/cares.lib")
@@ -707,7 +740,7 @@ else()
     target_link_libraries(${bun} PRIVATE c-ares::cares)
 endif()
 
-if (USE_CUSTOM_BASE64)
+if(USE_CUSTOM_BASE64)
     include_directories(src/deps/base64/include)
     if (WIN32)
         target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/base64.lib")
@@ -716,47 +749,47 @@ if (USE_CUSTOM_BASE64)
     endif()
 else()
     find_package(base64 REQUIRED)
-    target_link_libraries(bun PRIVATE base64::base64)
+    target_link_libraries(${bun} PRIVATE base64::base64)
 endif()
 
-if (NOT WIN32)
+if(NOT WIN32)
     if (USE_CUSTOM_TINYCC)
         if (WIN32)
             target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/tcc.lib")
         else()
             target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/libtcc.a")
         endif()
-    else ()
+    else()
         find_package(tinycc REQUIRED)
         target_link_libraries(${bun} PRIVATE tinycc::tinycc)
     endif()
 endif()
 
-if (USE_CUSTOM_LOLHTML)
+if(USE_CUSTOM_LOLHTML)
     if (WIN32)
         target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/lolhtml.lib")
     else()
         target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/liblolhtml.a")
     endif()
-else ()
+else()
     find_package(lolhtml REQUIRED)
     target_link_libraries(${bun} PRIVATE lolhtml::lolhtml)
 endif()
 
-if (WIN32)
+if(WIN32)
     if (USE_CUSTOM_LIBUV)
         target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/uv.lib")
-    else ()
+    else()
         find_package(libuv CONFIG REQUIRED )
         target_link_libraries(${bun} PRIVATE $<IF:$<TARGET_EXISTS:libuv::uv_a>,libuv::uv_a,libuv::uv>)
     endif()
     message(STATUS "Found libuv: ${libuv_LIBRARIES}")
 endif()
 
-if (USE_STATIC_SQLITE)
+if(USE_STATIC_SQLITE)
     add_library(sqlite3 STATIC src/bun.js/bindings/sqlite/sqlite3.c)
     target_include_directories(sqlite3 PUBLIC src/bun.js/bindings/sqlite)
-    target_link_libraries(bun PRIVATE sqlite3)
+    target_link_libraries(${bun} PRIVATE sqlite3)
     message(STATUS "Using static sqlite3")
     target_compile_definitions(${bun} PRIVATE "LAZY_LOAD_SQLITE=0")
 else()
@@ -764,7 +797,7 @@ else()
     target_compile_definitions(${bun} PRIVATE "LAZY_LOAD_SQLITE=1")
 endif()
 
-if (NOT MSVC)
+if(NOT MSVC)
     target_link_libraries(${bun} PRIVATE "${WEBKIT_DIR}/lib/libWTF.a")
     target_link_libraries(${bun} PRIVATE "${WEBKIT_DIR}/lib/libJavaScriptCore.a")
     target_link_libraries(${bun} PRIVATE "${WEBKIT_DIR}/lib/libbmalloc.a")

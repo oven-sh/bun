@@ -95,7 +95,7 @@ if (CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|arm")
 endif()
 
 if(NOT CPU_TARGET)
-    set(CPU_TARGET ${ARCH} CACHE STRING "CPU target for the compiler" FORCE)
+    set(CPU_TARGET "native" CACHE STRING "CPU target for the compiler" FORCE)
     if (ARCH STREQUAL "x86_64")
         if (NOT MSVC)
             if (USE_BASELINE_BUILD)

@@ -66,10 +66,10 @@ jobs:
         uses: goto-bus-stop/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
-      - name: Setup LLVM
-        uses: KyleMayes/install-llvm-action@v1
-        with:
-          version: "16"
+      # - name: Setup LLVM
+      #   uses: KyleMayes/install-llvm-action@v1
+      #   with:
+      #     version: "16"
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:

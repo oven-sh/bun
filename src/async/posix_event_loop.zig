@@ -202,12 +202,19 @@ pub const FilePoll = struct {
 
     pub fn deinit(this: *FilePoll) void {
         var vm = JSC.VirtualMachine.get();
-        this.deinitWithVM(vm);
+        var loop = vm.event_loop_handle.?;
+        this.deinitPossiblyDefer(vm, loop, vm.rareData().filePolls(vm), false);
     }
 
-    fn deinitPossiblyDefer(this: *FilePoll, vm: *JSC.VirtualMachine, loop: *Loop, polls: *FilePoll.Store) void {
+    pub fn deinitForceUnregister(this: *FilePoll) void {
+        var vm = JSC.VirtualMachine.get();
+        var loop = vm.event_loop_handle.?;
+        this.deinitPossiblyDefer(vm, loop, vm.rareData().filePolls(vm), true);
+    }
+
+    fn deinitPossiblyDefer(this: *FilePoll, vm: *JSC.VirtualMachine, loop: *Loop, polls: *FilePoll.Store, force_unregister: bool) void {
         if (this.isRegistered()) {
-            _ = this.unregister(loop);
+            _ = this.unregister(loop, force_unregister);
         }
 
         this.owner = Deactivated.owner;
@@ -219,7 +226,7 @@ pub const FilePoll = struct {
 
     pub fn deinitWithVM(this: *FilePoll, vm: *JSC.VirtualMachine) void {
         var loop = vm.event_loop_handle.?;
-        this.deinitPossiblyDefer(vm, loop, vm.rareData().filePolls(vm));
+        this.deinitPossiblyDefer(vm, loop, vm.rareData().filePolls(vm), false);
     }
 
     pub fn isRegistered(this: *const FilePoll) bool {
@@ -583,10 +590,12 @@ pub const FilePoll = struct {
 
             var event = linux.epoll_event{ .events = flags, .data = .{ .u64 = @intFromPtr(Pollable.init(this).ptr()) } };
 
+            var op: u32 = if (this.isRegistered() or this.flags.contains(.needs_rearm)) linux.EPOLL.CTL_MOD else linux.EPOLL.CTL_ADD;
+
             const ctl = linux.epoll_ctl(
                 watcher_fd,
-                if (this.isRegistered() or this.flags.contains(.needs_rearm)) linux.EPOLL.CTL_MOD else linux.EPOLL.CTL_ADD,
-                @as(std.os.fd_t, @intCast(fd)),
+                op,
+                @intCast(fd),
                 &event,
             );
             this.flags.insert(.was_ever_registered);
@@ -700,11 +709,11 @@ pub const FilePoll = struct {
 
     const invalid_fd = bun.invalid_fd;
 
-    pub fn unregister(this: *FilePoll, loop: *Loop) JSC.Maybe(void) {
-        return this.unregisterWithFd(loop, this.fd);
+    pub fn unregister(this: *FilePoll, loop: *Loop, force_unregister: bool) JSC.Maybe(void) {
+        return this.unregisterWithFd(loop, this.fd, force_unregister);
     }
 
-    pub fn unregisterWithFd(this: *FilePoll, loop: *Loop, fd: bun.UFileDescriptor) JSC.Maybe(void) {
+    pub fn unregisterWithFd(this: *FilePoll, loop: *Loop, fd: bun.UFileDescriptor, force_unregister: bool) JSC.Maybe(void) {
         if (!(this.flags.contains(.poll_readable) or this.flags.contains(.poll_writable) or this.flags.contains(.poll_process) or this.flags.contains(.poll_machport))) {
             // no-op
             return JSC.Maybe(void).success;
@@ -725,7 +734,7 @@ pub const FilePoll = struct {
             return JSC.Maybe(void).success;
         };
 
-        if (this.flags.contains(.needs_rearm)) {
+        if (this.flags.contains(.needs_rearm) and !force_unregister) {
             log("unregister: {s} ({d}) skipped due to needs_rearm", .{ @tagName(flag), fd });
             this.flags.remove(.poll_process);
             this.flags.remove(.poll_readable);
@@ -740,7 +749,7 @@ pub const FilePoll = struct {
             const ctl = linux.epoll_ctl(
                 watcher_fd,
                 linux.EPOLL.CTL_DEL,
-                @as(std.os.fd_t, @intCast(fd)),
+                @intCast(fd),
                 null,
             );
 

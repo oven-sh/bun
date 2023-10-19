@@ -40,7 +40,6 @@ const ReadPosition = i64;
 
 const Stats = JSC.Node.Stats;
 const Dirent = JSC.Node.Dirent;
-const Async = bun.Async;
 pub const FlavoredIO = struct {
     io: *AsyncIO,
 };
@@ -110,7 +109,7 @@ pub const Async = struct {
             globalObject: *JSC.JSGlobalObject,
             task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
             result: JSC.Maybe(ReturnType),
-            ref: JSC.PollRef = .{},
+            ref: bun.Async.KeepAlive = .{},
             tracker: JSC.AsyncTaskTracker,
 
             pub const Task = @This();
@@ -210,7 +209,7 @@ pub const AsyncCpTask = struct {
     globalObject: *JSC.JSGlobalObject,
     task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
     result: JSC.Maybe(Return.Cp),
-    ref: Async.KeepAlive = .{},
+    ref: bun.Async.KeepAlive = .{},
     arena: bun.ArenaAllocator,
     tracker: JSC.AsyncTaskTracker,
     has_result: std.atomic.Atomic(bool),

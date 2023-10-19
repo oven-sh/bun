@@ -1637,11 +1637,11 @@ const PackageInstall = struct {
                     return result;
                 } else |err| {
                     switch (err) {
-                        error.ENXIO => {
-                            supported_method = .copyfile;
-                            supported_method_to_use = .copyfile;
-                        },
-                        error.ENOENT => return Result{
+                        // error.ENXIO => {
+                        //     supported_method = .copyfile;
+                        //     supported_method_to_use = .copyfile;
+                        // },
+                        error.FileNotFound => return Result{
                             .fail = .{ .err = error.FileNotFound, .step = .opening_cache_dir },
                         },
                         else => return Result{

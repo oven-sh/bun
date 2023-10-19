@@ -2056,7 +2056,7 @@ pub const VirtualMachine = struct {
         try this.entry_point.generate(
             this.allocator,
             this.bun_watcher != .none,
-            Fs.PathName.init(entry_path),
+            entry_path,
             main_file_name,
         );
         this.eventLoop().ensureWaker();
@@ -2863,6 +2863,10 @@ pub const VirtualMachine = struct {
     };
 
     pub fn initIPCInstance(this: *VirtualMachine, fd: i32) void {
+        if (Environment.isWindows) {
+            Output.prettyWarnln("IPC is not supported on Windows", .{});
+            return;
+        }
         this.event_loop.ensureWaker();
         const context = uws.us_create_socket_context(0, this.event_loop_handle.?, @sizeOf(usize), .{}).?;
         IPC.Socket.configure(context, true, *IPCInstance, IPCInstance.Handlers);

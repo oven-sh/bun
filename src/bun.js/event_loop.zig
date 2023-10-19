@@ -620,7 +620,7 @@ pub const EventLoop = struct {
 
     pub fn tickWhilePaused(this: *EventLoop, done: *bool) void {
         while (!done.*) {
-            this.virtual_machine.event_loop_handle.?.tick(this.virtual_machine.jsc);
+            this.virtual_machine.event_loop_handle.?.tick();
         }
     }
     extern fn JSC__JSGlobalObject__drainMicrotasks(*JSC.JSGlobalObject) void;
@@ -991,7 +991,7 @@ pub const EventLoop = struct {
         if (loop.isActive()) {
             loop.tick();
             this.processGCTimer();
-            loop.tick(ctx.jsc);
+            loop.tick();
 
             ctx.onAfterEventLoop();
             // this.afterUSocketsTick();
@@ -1016,10 +1016,9 @@ pub const EventLoop = struct {
             }
         }
 
-        if (loop.num_polls > 0 or loop.active > 0) {
+        if (loop.isActive()) {
             loop.tickWithTimeout(timeoutMs);
             this.processGCTimer();
-            loop.tickWithTimeout(timeoutMs, ctx.jsc);
             ctx.onAfterEventLoop();
             // this.afterUSocketsTick();
         }
@@ -1050,7 +1049,7 @@ pub const EventLoop = struct {
         }
 
         this.processGCTimer();
-        loop.tick(ctx.jsc);
+        loop.tick();
         ctx.onAfterEventLoop();
         this.tickConcurrent();
         this.tick();
@@ -1075,7 +1074,7 @@ pub const EventLoop = struct {
         if (loop.isActive()) {
             loop.tick();
             this.processGCTimer();
-            loop.tick(ctx.jsc);
+            loop.tick();
             ctx.onAfterEventLoop();
             // this.afterUSocketsTick();
         }

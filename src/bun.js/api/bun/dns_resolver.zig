@@ -818,14 +818,14 @@ pub const CAresNameInfo = struct {
 
     globalThis: *JSC.JSGlobalObject = undefined,
     promise: JSC.JSPromise.Strong,
-    poll_ref: JSC.PollRef,
+    poll_ref: bun.Async.KeepAlive,
     allocated: bool = false,
     next: ?*@This() = null,
     name: []const u8,
 
     pub fn init(globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator, name: []const u8) !*@This() {
         var this = try allocator.create(@This());
-        var poll_ref = JSC.PollRef.init();
+        var poll_ref = bun.Async.KeepAlive.init();
         poll_ref.ref(globalThis.bunVM());
         this.* = .{ .globalThis = globalThis, .promise = JSC.JSPromise.Strong.init(globalThis), .poll_ref = poll_ref, .allocated = true, .name = name };
         return this;
@@ -906,7 +906,7 @@ pub const GetNameInfoRequest = struct {
         var hasher = std.hash.Wyhash.init(0);
         hasher.update(name);
         const hash = hasher.final();
-        var poll_ref = JSC.PollRef.init();
+        var poll_ref = bun.Async.KeepAlive.init();
         poll_ref.ref(globalThis.bunVM());
         request.* = .{
             .resolver_for_caching = resolver,

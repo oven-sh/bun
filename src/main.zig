@@ -27,7 +27,7 @@ pub fn main() void {
         _environ = @ptrCast(std.os.environ.ptr);
         bun.win32.STDOUT_FD = bun.toFD(std.io.getStdOut().handle);
         bun.win32.STDERR_FD = bun.toFD(std.io.getStdErr().handle);
-        bun.win32.STDIN_FD = bun.toFD(std.io.getStdin().handle);
+        bun.win32.STDIN_FD = bun.toFD(std.io.getStdIn().handle);
     }
 
     bun.start_time = std.time.nanoTimestamp();

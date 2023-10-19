@@ -451,6 +451,8 @@ pub fn simplePrintParam(param: Param(Help)) !void {
         }
 
         Output.pretty("<cyan>--{s}<r>", .{l});
+    } else {
+        Output.pretty("    ", .{});
     }
 }
 pub fn simpleHelp(

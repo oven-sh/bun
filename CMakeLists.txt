@@ -491,10 +491,12 @@ add_compile_definitions(
     "NOMINMAX"
     "IS_BUILD"
     "BUILDING_JSCONLY__"
-    "NDEBUG=$<IF:$<CONFIG:ASSERT_ENABLED>,0,1>"
     "ASSERT_ENABLED=$<IF:$<CONFIG:ASSERT_ENABLED>,1,0>"
     "BUN_DYNAMIC_JS_LOAD_PATH=\"${BUN_WORKDIR}/js\""
 )
+if(NOT ASSERT_ENABLED)
+    add_compile_definitions("NDEBUG")
+endif()
 
 message(STATUS "${WEBKIT_INCLUDE_DIR}")
 
@@ -524,7 +526,11 @@ include_directories(
 
 # --- clang and linker flags ---
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    if(NOT MSVC)
+        target_compile_options(${bun} PUBLIC -g3 -Og)
+    endif()
     add_compile_definitions("BUN_DEBUG=1")
+    
 elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
     #if (MSVC)
         #target_compile_options(${bun} PUBLIC /O2)
@@ -549,8 +555,8 @@ if(NOT MSVC)
         -fno-rtti
         -ferror-limit=${ERROR_LIMIT}
         -fPIC
-        -fno-omit-frame-pointer
-        -fno-semantic-interposition
+        # -fno-omit-frame-pointer
+        # -fno-semantic-interposition
     )
 else() # MSVC
     string(APPEND SUPPRESS_WARNING_NUMBERS

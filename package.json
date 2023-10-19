@@ -2,6 +2,7 @@
   "name": "bun",
   "dependencies": {
     "@vscode/debugadapter": "^1.61.0",
+    "bun-webkit": "0.0.1-1a49a1f94bf42ab4f8c6b11d7bbbb21e491d2d62",
     "esbuild": "^0.17.15",
     "eslint": "^8.20.0",
     "eslint-config-prettier": "^8.5.0",
@@ -28,8 +29,7 @@
   "devDependencies": {
     "@types/react": "^18.0.25",
     "@typescript-eslint/eslint-plugin": "^5.31.0",
-    "@typescript-eslint/parser": "^5.31.0",
-    "bun-webkit": "0.0.1-1a49a1f94bf42ab4f8c6b11d7bbbb21e491d2d62"
+    "@typescript-eslint/parser": "^5.31.0"
   },
   "version": "0.0.0",
   "prettier": "./.prettierrc.cjs"

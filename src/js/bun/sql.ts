@@ -252,7 +252,7 @@ function SQL(o) {
     query.reject(new Error("Connection closed"));
   }
 
-  function onConnected(err) {
+  function onConnected(err, result) {
     connected = !err;
     for (const handler of onConnect) {
       handler(err);
@@ -262,7 +262,7 @@ function SQL(o) {
 
   function onClose(err) {
     closed = true;
-    onConnected(err);
+    onConnected(err, undefined);
   }
 
   function connectedSQL(strings, values) {

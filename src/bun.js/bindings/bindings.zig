@@ -5076,6 +5076,13 @@ pub const VM = extern struct {
     pub fn deferGC(this: *VM, ctx: ?*anyopaque, callback: *const fn (ctx: ?*anyopaque) callconv(.C) void) void {
         cppFn("deferGC", .{ this, ctx, callback });
     }
+
+    extern fn JSC__runInDeferralContext(this: *VM, *anyopaque, *const fn (ctx: ?*anyopaque) callconv(.C) void) void;
+    pub fn runInDeferralContext(this: *VM, ctx: ?*anyopaque, callback: *const fn (ctx: ?*anyopaque) callconv(.C) void) void {
+        JSC.markBinding(@src());
+        JSC__runInDeferralContext(this, ctx, callback);
+    }
+
     extern fn JSC__VM__reportExtraMemory(*VM, usize) void;
     pub fn reportExtraMemory(this: *VM, size: usize) void {
         JSC.markBinding(@src());

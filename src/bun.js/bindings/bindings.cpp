@@ -4531,14 +4531,20 @@ extern "C" size_t JSC__VM__externalMemorySize(JSC__VM* vm)
 
 extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue JSValue3, JSC__JSValue JSValue4)
 {
+    JSC::JSValue arg1 = JSC::JSValue::decode(JSValue1);
+    JSC::JSValue arg3 = JSC::JSValue::decode(JSValue3);
+    JSC::JSValue arg4 = JSC::JSValue::decode(JSValue4);
+
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
     JSC::VM& vm = globalObject->vm();
+    StringBuilder builder;
+
     globalObject->queueMicrotask(
         JSValue(globalObject->performMicrotaskFunction()),
-        JSC::JSValue::decode(JSValue1),
+        arg1,
         globalObject->m_asyncContextData.get()->getInternalField(0),
-        JSC::JSValue::decode(JSValue3),
-        JSC::JSValue::decode(JSValue4));
+        arg3,
+        arg4);
 }
 
 extern "C" WebCore::AbortSignal* WebCore__AbortSignal__new(JSC__JSGlobalObject* globalObject)

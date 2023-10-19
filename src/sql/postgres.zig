@@ -1634,7 +1634,7 @@ pub const PostgresSQLQuery = struct {
         defer this.deref();
         var vm = JSC.VirtualMachine.get();
         const function = vm.rareData().postgresql_context.onQueryResolveFn.get().?;
-        globalObject.queueMicrotask(function, &[_]JSC.JSValue{ targetValue, JSC.JSValue.undefined });
+        globalObject.queueMicrotask(function, &[_]JSC.JSValue{targetValue});
     }
     pub fn onError(this: *@This(), err: protocol.ErrorResponse, globalObject: *JSC.JSGlobalObject) void {
         const thisValue = this.thisValue;
@@ -2132,7 +2132,9 @@ pub const PostgresSQLConnection = struct {
             .connected => {
                 const on_connect = this.on_connect.swap();
                 if (on_connect == .zero) return;
-                this.globalObject.queueMicrotask(on_connect, &[_]JSC.JSValue{this.js_value});
+                const js_value = this.js_value;
+                js_value.ensureStillAlive();
+                this.globalObject.queueMicrotask(on_connect, &[_]JSC.JSValue{ JSC.JSValue.jsNull(), js_value });
                 this.poll_ref.unref(this.globalObject.bunVM());
                 this.updateHasPendingActivity();
             },
@@ -2618,6 +2620,8 @@ pub const PostgresSQLConnection = struct {
 
                 var row = JSC.JSObject.uninitialized(this.globalObject, structure);
                 row.ensureStillAlive();
+                request.push(this.globalObject, row);
+
                 var putter = CellPutter{
                     .object = row,
                     .vm = this.globalObject.vm(),
@@ -2630,7 +2634,6 @@ pub const PostgresSQLConnection = struct {
                     reader,
                     CellPutter.put,
                 );
-                request.push(this.globalObject, row);
             },
             .CopyData => {
                 var copy_data: protocol.CopyData = undefined;

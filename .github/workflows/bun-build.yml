@@ -56,8 +56,8 @@ jobs:
             ca-certificates \
             curl \
             wget
-          echo "deb https://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-16 main" > /etc/apt/sources.list.d/llvm.list
-          echo "deb-src https://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-16 main" >> /etc/apt/sources.list.d/llvm.list
+          sudo echo "deb https://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-16 main" > /etc/apt/sources.list.d/llvm.list
+          sudo echo "deb-src https://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-16 main" >> /etc/apt/sources.list.d/llvm.list
           wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
           curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
           sudo apt-get install -qq --no-install-recommends \

@@ -65,8 +65,10 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 project(Bun VERSION "1.0.7")
 
 set(DEFAULT_ON_UNLESS_WINDOWS ON)
+set(REQUIRED_IF_NOT_WINDOWS "REQUIRED")
 if (WIN32)
     set(DEFAULT_ON_UNLESS_WINDOWS OFF)
+    set(REQUIRED_IF_NOT_WINDOWS OFF)
 endif()
 set(DEFAULT_ON_UNLESS_APPLE ON)
 if (APPLE)
@@ -131,7 +133,7 @@ find_program(ZIG_COMPILER zig REQUIRED DOC "Path to the Zig compiler" VALIDATOR 
 message(STATUS "Found Zig Compiler: ${ZIG_COMPILER}")
 
 # Bun
-find_program(BUN_EXECUTABLE bun REQUIRED DOC "Path to an already built release of Bun")
+find_program(BUN_EXECUTABLE bun ${REQUIRED_IF_NOT_WINDOWS} DOC "Path to an already built release of Bun")
 message(STATUS "Found Bun: ${BUN_EXECUTABLE}")
 
 # Prettier

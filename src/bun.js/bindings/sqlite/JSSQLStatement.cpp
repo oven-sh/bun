@@ -16,12 +16,12 @@
 #include <wtf/URL.h>
 #include <JavaScriptCore/TypedArrayInlines.h>
 #include <JavaScriptCore/PropertyNameArray.h>
-#include "Buffer.h"
 #include "GCDefferalContext.h"
 
 #include <JavaScriptCore/DOMJITAbstractHeap.h>
 #include "DOMJITIDLConvert.h"
 #include "DOMJITIDLType.h"
+#include "JSBuffer.h"
 #include "DOMJITIDLTypeFilter.h"
 #include "DOMJITHelpers.h"
 #include <JavaScriptCore/DFGAbstractHeap.h>

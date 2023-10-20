@@ -112,8 +112,8 @@ pub fn printMetadata() void {
 
     const cmd_label: string = if (CLI.cmd) |tag| @tagName(tag) else "Unknown";
 
-    const platform = if (Environment.isMac) "macOS" else "Linux";
-    const arch = if (Environment.isAarch64)
+    const platform = comptime Environment.os.displayString();
+    const arch = comptime if (Environment.isAarch64)
         if (Environment.isMac) "Silicon" else "arm64"
     else
         "x64";

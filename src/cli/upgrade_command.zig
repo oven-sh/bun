@@ -82,7 +82,7 @@ pub const Version = struct {
         .mac => "darwin",
         .linux => "linux",
         .windows => "windows",
-        else => "TODO",
+        else => @compileError("Unsupported OS for Bun Upgrade"),
     };
 
     pub const arch_label = if (Environment.isAarch64) "aarch64" else "x64";
@@ -144,7 +144,7 @@ pub const UpgradeCheckerThread = struct {
 
         if (!version.isCurrent()) {
             if (version.name()) |name| {
-                Output.prettyErrorln("\n<r><d>bun v{s} is out. Run <b><cyan>bun upgrade<r> to upgrade.\n", .{name});
+                Output.prettyErrorln("\n<r><d>Bun v{s} is out. Run <b><cyan>bun upgrade<r> to upgrade.\n", .{name});
                 Output.flush();
             }
         }
@@ -384,7 +384,7 @@ pub const UpgradeCommand = struct {
             progress.end();
             refresher.refresh();
             if (version.name()) |name| {
-                Output.prettyErrorln("bun v{s} is out, but not for this platform ({s}) yet.", .{
+                Output.prettyErrorln("Bun v{s} is out, but not for this platform ({s}) yet.", .{
                     name, Version.triplet,
                 });
             }
@@ -401,7 +401,14 @@ pub const UpgradeCommand = struct {
         @setCold(true);
 
         _exec(ctx) catch |err| {
-            Output.prettyErrorln("<r>bun upgrade failed with error: <red><b>{s}<r>\n\n<cyan>Please upgrade manually<r>:\n  <b>curl -fsSL https://bun.sh/install | bash<r>\n\n", .{@errorName(err)});
+            Output.prettyErrorln(
+                \\<r>Bun upgrade failed with error: <red><b>{s}<r>
+                \\
+                \\<cyan>Please upgrade manually<r>:
+                \\  <b>curl -fsSL https://bun.sh/install | bash<r>
+                \\
+                \\
+            , .{@errorName(err)});
             Global.exit(1);
         };
     }
@@ -444,7 +451,7 @@ pub const UpgradeCommand = struct {
             if (!Environment.is_canary) {
                 if (version.name() != null and version.isCurrent()) {
                     Output.prettyErrorln(
-                        "<r><green>Congrats!<r> You're already on the latest version of bun <d>(which is v{s})<r>",
+                        "<r><green>Congrats!<r> You're already on the latest version of Bun <d>(which is v{s})<r>",
                         .{
                             version.name().?,
                         },
@@ -455,16 +462,16 @@ pub const UpgradeCommand = struct {
 
             if (version.name() == null) {
                 Output.prettyErrorln(
-                    "<r><red>error:<r> bun versions are currently unavailable (the latest version name didn't match the expeccted format)",
+                    "<r><red>error:<r> Bun versions are currently unavailable (the latest version name didn't match the expeccted format)",
                     .{},
                 );
                 Global.exit(1);
             }
 
             if (!Environment.is_canary) {
-                Output.prettyErrorln("<r><b>bun <cyan>v{s}<r> is out<r>! You're on <blue>{s}<r>\n", .{ version.name().?, Global.package_json_version });
+                Output.prettyErrorln("<r><b>Bun <cyan>v{s}<r> is out<r>! You're on <blue>{s}<r>\n", .{ version.name().?, Global.package_json_version });
             } else {
-                Output.prettyErrorln("<r><b>Downgrading from bun <blue>{s}-canary<r> to bun <cyan>v{s}<r><r>\n", .{ Global.package_json_version, version.name().? });
+                Output.prettyErrorln("<r><b>Downgrading from Bun <blue>{s}-canary<r> to Bun <cyan>v{s}<r><r>\n", .{ Global.package_json_version, version.name().? });
             }
             Output.flush();
         } else {
@@ -536,7 +543,7 @@ pub const UpgradeCommand = struct {
             refresher.refresh();
 
             if (bytes.len == 0) {
-                Output.prettyErrorln("<r><red>error:<r> Failed to download the latest version of bun. Received empty content", .{});
+                Output.prettyErrorln("<r><red>error:<r> Failed to download the latest version of Bun. Received empty content", .{});
                 Global.exit(1);
             }
 
@@ -668,13 +675,13 @@ pub const UpgradeCommand = struct {
                     .max_output_bytes = 512,
                 }) catch |err| {
                     save_dir_.deleteTree(version_name) catch {};
-                    Output.prettyErrorln("<r><red>error<r> Failed to verify bun {s}<r>)", .{@errorName(err)});
+                    Output.prettyErrorln("<r><red>error<r> Failed to verify Bun {s}<r>)", .{@errorName(err)});
                     Global.exit(1);
                 };
 
                 if (result.term.Exited != 0) {
                     save_dir_.deleteTree(version_name) catch {};
-                    Output.prettyErrorln("<r><red>error<r> failed to verify bun<r> (exit code: {d})", .{result.term.Exited});
+                    Output.prettyErrorln("<r><red>error<r> failed to verify Bun<r> (exit code: {d})", .{result.term.Exited});
                     Global.exit(1);
                 }
 
@@ -690,7 +697,7 @@ pub const UpgradeCommand = struct {
                         save_dir_.deleteTree(version_name) catch {};
 
                         Output.prettyErrorln(
-                            "<r><red>error<r>: The downloaded version of bun (<red>{s}<r>) doesn't match the expected version (<b>{s}<r>)<r>. Cancelled upgrade",
+                            "<r><red>error<r>: The downloaded version of Bun (<red>{s}<r>) doesn't match the expected version (<b>{s}<r>)<r>. Cancelled upgrade",
                             .{
                                 version_string[0..@min(version_string.len, 512)],
                                 version_name,
@@ -712,7 +719,7 @@ pub const UpgradeCommand = struct {
             var target_dirname = current_executable_buf[0..target_dir_.len :0];
             var target_dir_it = std.fs.openIterableDirAbsoluteZ(target_dirname, .{}) catch |err| {
                 save_dir_.deleteTree(version_name) catch {};
-                Output.prettyErrorln("<r><red>error:<r> Failed to open bun's install directory {s}", .{@errorName(err)});
+                Output.prettyErrorln("<r><red>error:<r> Failed to open Bun's install directory {s}", .{@errorName(err)});
                 Global.exit(1);
             };
             var target_dir = target_dir_it.dir;
@@ -722,13 +729,13 @@ pub const UpgradeCommand = struct {
                 // Check if the versions are the same
                 const target_stat = target_dir.statFile(target_filename) catch |err| {
                     save_dir_.deleteTree(version_name) catch {};
-                    Output.prettyErrorln("<r><red>error:<r> Failed to stat target bun {s}", .{@errorName(err)});
+                    Output.prettyErrorln("<r><red>error:<r> Failed to stat target Bun {s}", .{@errorName(err)});
                     Global.exit(1);
                 };
 
                 const dest_stat = save_dir.statFile(exe) catch |err| {
                     save_dir_.deleteTree(version_name) catch {};
-                    Output.prettyErrorln("<r><red>error:<r> Failed to stat source bun {s}", .{@errorName(err)});
+                    Output.prettyErrorln("<r><red>error:<r> Failed to stat source Bun {s}", .{@errorName(err)});
                     Global.exit(1);
                 };
 
@@ -737,22 +744,23 @@ pub const UpgradeCommand = struct {
 
                     const target_hash = bun.hash(target_dir.readFile(target_filename, input_buf) catch |err| {
                         save_dir_.deleteTree(version_name) catch {};
-                        Output.prettyErrorln("<r><red>error:<r> Failed to read target bun {s}", .{@errorName(err)});
+                        Output.prettyErrorln("<r><red>error:<r> Failed to read target Bun {s}", .{@errorName(err)});
                         Global.exit(1);
                     });
 
                     const source_hash = bun.hash(save_dir.readFile(exe, input_buf) catch |err| {
                         save_dir_.deleteTree(version_name) catch {};
-                        Output.prettyErrorln("<r><red>error:<r> Failed to read source bun {s}", .{@errorName(err)});
+                        Output.prettyErrorln("<r><red>error:<r> Failed to read source Bun {s}", .{@errorName(err)});
                         Global.exit(1);
                     });
 
                     if (target_hash == source_hash) {
                         save_dir_.deleteTree(version_name) catch {};
                         Output.prettyErrorln(
-                            \\<r><green>Congrats!<r> You're already on the latest <b>canary<r><green> build of bun
+                            \\<r><green>Congrats!<r> You're already on the latest <b>canary<r><green> build of Bun
                             \\
                             \\To downgrade to the latest stable release, run <b><cyan>bun upgrade --stable<r>
+                            \\
                         ,
                             .{},
                         );
@@ -772,7 +780,7 @@ pub const UpgradeCommand = struct {
                 } else {
                     C.moveFileZ(save_dir.fd, exe, target_dir.fd, target_filename) catch |err| {
                         save_dir_.deleteTree(version_name) catch {};
-                        Output.prettyErrorln("<r><red>error:<r> Failed to move new version of bun due to {s}. You could try the install script instead:\n   curl -fsSL https://bun.sh/install | bash", .{@errorName(err)});
+                        Output.prettyErrorln("<r><red>error:<r> Failed to move new version of Bun due to {s}. You could try the install script instead:\n   curl -fsSL https://bun.sh/install | bash", .{@errorName(err)});
                         Global.exit(1);
                     };
                 }
@@ -802,7 +810,7 @@ pub const UpgradeCommand = struct {
                 Output.prettyErrorln(
                     \\<r> Upgraded.
                     \\
-                    \\<b><green>Welcome to bun's latest canary build!<r>
+                    \\<b><green>Welcome to Bun's latest canary build!<r>
                     \\
                     \\Report any bugs:
                     \\
@@ -821,7 +829,7 @@ pub const UpgradeCommand = struct {
                 Output.prettyErrorln(
                     \\<r> Upgraded.
                     \\
-                    \\<b><green>Welcome to bun v{s}!<r>
+                    \\<b><green>Welcome to Bun v{s}!<r>
                     \\
                     \\Report any bugs:
                     \\

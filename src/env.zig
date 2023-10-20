@@ -56,6 +56,15 @@ pub const OperatingSystem = enum {
     windows,
     // wAsM is nOt aN oPeRaTiNg SyStEm
     wasm,
+
+    pub fn displayString(self: OperatingSystem) []const u8 {
+        return switch (self) {
+            .mac => "macOS",
+            .linux => "Linux",
+            .windows => "Windows",
+            .wasm => "WASM",
+        };
+    }
 };
 
 pub const os: OperatingSystem = if (isMac)

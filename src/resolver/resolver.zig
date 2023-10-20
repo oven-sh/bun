@@ -2298,7 +2298,7 @@ pub const Resolver = struct {
     ) !?*TSConfigJSON {
         // Since tsconfig.json is cached permanently, in our DirEntries cache
         // we must use the global allocator
-        const entry = try r.caches.fs.readFileWithAllocator(
+        var entry = try r.caches.fs.readFileWithAllocator(
             bun.fs_allocator,
             r.fs,
             file,
@@ -2306,7 +2306,7 @@ pub const Resolver = struct {
             false,
             null,
         );
-        _ = bun.sys.close(entry.fd);
+        defer _ = entry.closeFD();
 
         // The file name needs to be persistent because it can have errors
         // and if those errors need to print the filename

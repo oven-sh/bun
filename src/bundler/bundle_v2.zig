@@ -94,7 +94,7 @@ const Router = @import("../router.zig");
 const isPackagePath = _resolver.isPackagePath;
 const Lock = @import("../lock.zig").Lock;
 const NodeFallbackModules = @import("../node_fallbacks.zig");
-const CacheEntry = @import("../cache.zig").FsCacheEntry;
+const CacheEntry = @import("../cache.zig").Fs.Entry;
 const Analytics = @import("../analytics/analytics_thread.zig");
 const URL = @import("../url.zig").URL;
 const Report = @import("../report.zig");
@@ -2558,7 +2558,7 @@ pub const ParseTask = struct {
 
         const will_close_file_descriptor = task.contents_or_fd == .fd and entry.fd > 2 and this.ctx.bun_watcher == null;
         if (will_close_file_descriptor) {
-            _ = bun.sys.close(entry.fd);
+            _ = entry.closeFD();
         }
 
         if (!will_close_file_descriptor and entry.fd > 2) task.contents_or_fd = .{

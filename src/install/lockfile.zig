@@ -2749,7 +2749,7 @@ pub const Package = extern struct {
                         .name = name.value,
                         .name_hash = name.hash,
                         .behavior = if (comptime is_peer)
-                            group.behavior.setOptional(package_version.optional_peer_dependencies_len >= i)
+                            group.behavior.setOptional(i < package_version.non_optional_peer_dependencies_start)
                         else
                             group.behavior,
                         .version = Dependency.parse(

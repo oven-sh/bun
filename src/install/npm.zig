@@ -451,7 +451,7 @@ pub const PackageVersion = extern struct {
     optional_dependencies: ExternalStringMap = ExternalStringMap{},
 
     /// `"peerDependencies"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#peerdependencies)
-    /// if `optional_peer_dependencies_len` is > 0, then instead of alphabetical, the first N items are optional
+    /// if `non_optional_peer_dependencies_start` is > 0, then instead of alphabetical, the first N items are optional
     peer_dependencies: ExternalStringMap = ExternalStringMap{},
 
     /// `"devDependencies"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#devdependencies)
@@ -466,8 +466,8 @@ pub const PackageVersion = extern struct {
     engines: ExternalStringMap = ExternalStringMap{},
 
     /// `"peerDependenciesMeta"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#peerdependenciesmeta)
-    /// if `optional_peer_dependencies_len` is > 0, then instead of alphabetical, the first N items of `peer_dependencies` are optional
-    optional_peer_dependencies_len: u32 = 0,
+    /// if `non_optional_peer_dependencies_start` is > 0, then instead of alphabetical, the first N items of `peer_dependencies` are optional
+    non_optional_peer_dependencies_start: u32 = 0,
 
     man_dir: ExternalString = ExternalString{},
 
@@ -1336,7 +1336,7 @@ pub const PackageManifest = struct {
                         }
                     }
 
-                    var peer_dependency_len: usize = 0;
+                    var non_optional_peer_dependency_offset: usize = 0;
 
                     inline for (dependency_groups) |pair| {
                         if (prop.value.?.asProperty(comptime pair.prop)) |versioned_deps| {
@@ -1386,17 +1386,17 @@ pub const PackageManifest = struct {
                                             // For optional peer dependencies, we store a length instead of a whole separate array
                                             // To make that work, we have to move optional peer dependencies to the front of the array
                                             //
-                                            if (peer_dependency_len != i) {
+                                            if (non_optional_peer_dependency_offset != i) {
                                                 const current_name = this_names[i];
-                                                this_names[i] = this_names[peer_dependency_len];
-                                                this_names[peer_dependency_len] = current_name;
+                                                this_names[i] = this_names[non_optional_peer_dependency_offset];
+                                                this_names[non_optional_peer_dependency_offset] = current_name;
 
                                                 const current_version = this_versions[i];
-                                                this_versions[i] = this_versions[peer_dependency_len];
-                                                this_versions[peer_dependency_len] = current_version;
-
-                                                peer_dependency_len += 1;
+                                                this_versions[i] = this_versions[non_optional_peer_dependency_offset];
+                                                this_versions[non_optional_peer_dependency_offset] = current_version;
                                             }
+
+                                            non_optional_peer_dependency_offset += 1;
                                         }
 
                                         if (optional_peer_dep_names.items.len == 0) {
@@ -1421,7 +1421,7 @@ pub const PackageManifest = struct {
                                 var version_list = ExternalStringList.init(version_extern_strings, this_versions);
 
                                 if (comptime is_peer) {
-                                    package_version.optional_peer_dependencies_len = @as(u32, @truncate(peer_dependency_len));
+                                    package_version.non_optional_peer_dependencies_start = @as(u32, @truncate(non_optional_peer_dependency_offset));
                                 }
 
                                 if (count > 0 and

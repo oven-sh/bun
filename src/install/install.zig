@@ -243,6 +243,19 @@ const NetworkTask = struct {
         header_builder.count("npm-auth-type", "legacy");
     }
 
+    // "peerDependencies": {
+    //   "@ianvs/prettier-plugin-sort-imports": "*",
+    //   "prettier-plugin-twig-melody": "*"
+    // },
+    // "peerDependenciesMeta": {
+    //   "@ianvs/prettier-plugin-sort-imports": {
+    //     "optional": true
+    //   },
+    // Example case ^
+    // `@ianvs/prettier-plugin-sort-imports` is peer and also optional but was not marked optional because
+    // the offset would be 0 and the current loop index is also 0.
+    const invalidate_manifest_cache_because_optional_peer_dependencies_were_not_marked_as_optional_if_the_optional_peer_dependency_offset_was_equal_to_the_current_index = 1697871350;
+
     pub fn forManifest(
         this: *NetworkTask,
         name: string,
@@ -291,8 +304,10 @@ const NetworkTask = struct {
         var last_modified: string = "";
         var etag: string = "";
         if (loaded_manifest) |manifest| {
-            last_modified = manifest.pkg.last_modified.slice(manifest.string_buf);
-            etag = manifest.pkg.etag.slice(manifest.string_buf);
+            if (manifest.pkg.public_max_age > invalidate_manifest_cache_because_optional_peer_dependencies_had_an_off_by_one_error_if_it_was_there_was_only_one_so_they_wouldnt_appear_as_optional) {
+                last_modified = manifest.pkg.last_modified.slice(manifest.string_buf);
+                etag = manifest.pkg.etag.slice(manifest.string_buf);
+            }
         }
 
         var header_builder = HeaderBuilder{};

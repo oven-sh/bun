@@ -487,14 +487,6 @@ pub const Arguments = struct {
         else
             null;
 
-        // if (args.option("--origin")) |origin| {
-        //     opts.origin = origin;
-        // }
-
-        // if (args.option("--port")) |port_str| {
-        //     opts.port = std.fmt.parseInt(u16, port_str, 10) catch return error.InvalidPort;
-        // }
-
         opts.serve = false; // TODO
         opts.main_fields = args.options("--main-fields");
         // we never actually supported inject.
@@ -502,8 +494,6 @@ pub const Arguments = struct {
         opts.extension_order = args.options("--extension-order");
 
         ctx.passthrough = args.remaining();
-
-        // opts.no_summary = args.flag("--no-summary");
 
         if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .TestCommand) {
             const preloads = args.options("--preload");
@@ -585,10 +575,6 @@ pub const Arguments = struct {
         if (opts.port != null and opts.origin == null) {
             opts.origin = try std.fmt.allocPrint(allocator, "http://localhost:{d}/", .{opts.port.?});
         }
-
-        // these we're only used in bun dev
-        // ctx.debug.dump_environment_variables = args.flag("--dump-environment-variables");
-        // ctx.debug.dump_limits = args.flag("--dump-limits");
 
         var output_dir: ?string = null;
         var output_file: ?string = null;

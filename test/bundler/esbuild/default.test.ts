@@ -1245,7 +1245,7 @@ describe("bundler", () => {
     },
     target: "browser",
     run: {
-      stdout: "[Function]",
+      stdout: "[Function: fs]",
     },
   });
   itBundled("default/RequireFSNode", {

@@ -1300,7 +1300,7 @@ class ClientRequest extends OutgoingMessage {
         verbose: !!$debug,
         signal: this[kAbortController].signal,
         proxy: proxy,
-        ssl_props: {
+        tls: {
           ca: this.#ca,
           passphrase: this.#passphrase,
           pfx: this.#pfx,

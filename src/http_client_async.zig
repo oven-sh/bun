@@ -1744,24 +1744,24 @@ pub const CustomTLSProps = struct {
         native_array[0] = c_str;
         return native_array;
     }
-    pub fn setCa(this: *CustomTLSProps, in: ?[]const u8) void {
-        if (in) |arg| {
-            this.ca = CustomTLSProps.create(arg);
+    pub fn setCa(this: *CustomTLSProps, in: []const u8) void {
+        if (in.len > 0) {
+            this.ca = CustomTLSProps.create(in);
         }
     }
-    pub fn setCert(this: *CustomTLSProps, in: ?[]const u8) void {
-        if (in) |arg| {
-            this.cert = CustomTLSProps.create(arg);
+    pub fn setCert(this: *CustomTLSProps, in: []const u8) void {
+        if (in.len > 0) {
+            this.cert = CustomTLSProps.create(in);
         }
     }
-    pub fn setKey(this: *CustomTLSProps, in: ?[]const u8) void {
-        if (in) |arg| {
-            this.key = CustomTLSProps.create(arg);
+    pub fn setKey(this: *CustomTLSProps, in: []const u8) void {
+        if (in.len > 0) {
+            this.key = CustomTLSProps.create(in);
         }
     }
-    pub fn setPassphrase(this: *CustomTLSProps, in: ?[]const u8) void {
-        if (in) |arg| {
-            this.passphrase = bun.default_allocator.dupeZ(u8, arg) catch unreachable;
+    pub fn setPassphrase(this: *CustomTLSProps, in: []const u8) void {
+        if (in.len > 0) {
+            this.passphrase = bun.default_allocator.dupeZ(u8, in) catch unreachable;
         }
     }
 

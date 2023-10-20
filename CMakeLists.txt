@@ -868,7 +868,6 @@ else()
 
     # include_directories(C:/Users/windo/Build/WebKit/WebKitBuild/WTF/DerivedSources)
     # include_directories(C:/Users/windo/Build/WebKit/WebKitBuild/WTF/Headers)
-    file(COPY C:/Users/windo/Code/WebKit/WebKitBuild/cmakeconfig.h DESTINATION ${BUN_SRC}/bun.js/bindings)
 
     target_include_directories(${bun} PUBLIC C:/Users/windo/Code/WebKit/WebKitLibraries/win/include)
     target_link_directories(${bun} PUBLIC C:/Users/windo/Code/WebKit/WebKitLibraries/win/lib64)

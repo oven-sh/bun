@@ -216,7 +216,7 @@ pub const Fs = struct {
 
         return Entry{
             .contents = file.contents,
-            .fd = if (FeatureFlags.store_file_descriptors and !will_close) file_handle.handle else 0,
+            .fd = if (FeatureFlags.store_file_descriptors and !will_close) file_handle.handle else bun.invalid_fd,
         };
     }
 };

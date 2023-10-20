@@ -610,6 +610,7 @@ pub fn close(fd: bun.FileDescriptor) ?Syscall.Error {
 pub fn closeAllowingStdoutAndStderr(fd: bun.FileDescriptor) ?Syscall.Error {
     log("close({d})", .{fd});
     std.debug.assert(fd != bun.invalid_fd);
+
     if (comptime std.meta.trait.isSignedInt(@TypeOf(fd)))
         std.debug.assert(fd > -1);
 
@@ -629,6 +630,8 @@ pub fn closeAllowingStdoutAndStderr(fd: bun.FileDescriptor) ?Syscall.Error {
     }
 
     if (comptime Environment.isWindows) {
+        std.debug.assert(fd != 0);
+
         if (kernel32.CloseHandle(bun.fdcast(fd)) == 0) {
             return Syscall.Error{ .errno = @intFromEnum(os.E.BADF), .syscall = .close };
         }

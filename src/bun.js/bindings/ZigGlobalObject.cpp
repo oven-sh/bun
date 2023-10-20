@@ -101,6 +101,7 @@
 #include <JavaScriptCore/LazyClassStructure.h>
 #include <JavaScriptCore/LazyClassStructureInlines.h>
 #include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/GetterSetter.h>
 #include "napi.h"
 #include "JSSQLStatement.h"
 #include "ModuleLoader.h"

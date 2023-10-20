@@ -15,8 +15,11 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/RegExpObject.h>
+#include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSPromise.h>
 #include "BunClientData.h"
+
+#include "isBuiltinModule.h"
 
 #include <JavaScriptCore/RegularExpression.h>
 

@@ -299,7 +299,7 @@ set(BUN_OBJECT_LUT_SOURCES
     bun.js/bindings/BunObject.cpp
     bun.js/bindings/ZigGlobalObject.lut.txt
     bun.js/bindings/JSBuffer.cpp
-    bun.js/bindings/Process.cpp
+    bun.js/bindings/BunProcess.cpp
     bun.js/bindings/ProcessBindingConstants.cpp
     bun.js/bindings/ProcessBindingNatives.cpp
 )
@@ -317,6 +317,10 @@ macro(GENERATE_HASH_LUT _input _output _display_name)
     WEBKIT_ADD_SOURCE_DEPENDENCIES(${_input} ${_output})
 endmacro()
 foreach(_file ${BUN_OBJECT_LUT_SOURCES})
+    if(NOT EXISTS "${BUN_SRC}/${_file}")
+        message(FATAL_ERROR "Could not find ${_file} needed for LUT generation")
+    endif()
+    
     get_filename_component(_name ${_file} NAME_WE)
 
     # workaround for ZigGlobalObject

@@ -822,49 +822,30 @@ pub const PackageManifest = struct {
         }
 
         {
+            // This list is sorted at serialization time.
             const releases = this.pkg.releases.keys.get(this.versions);
-
-            var best_match_version: ?Semver.Version = null;
-            var best_match_package_index: usize = 0;
             var i = releases.len;
-            // For now, this is the dumb way
+
             while (i > 0) : (i -= 1) {
                 const version = releases[i - 1];
 
-                // If we find one that matches, save it, but keep looping because we might find a newer match.
-                // The versions from the registry are not in any particular order.
-                if (group.satisfies(version) and (best_match_version == null or Semver.Version.order(version, best_match_version.?, this.string_buf, this.string_buf) == .gt)) {
-                    best_match_version = version;
-                    best_match_package_index = i - 1;
+                if (group.satisfies(version)) {
+                    return .{ .version = version, .package = &this.pkg.releases.values.get(this.package_versions)[i - 1] };
                 }
-            }
-
-            if (best_match_version != null) {
-                const packages = this.pkg.releases.values.get(this.package_versions);
-                return .{ .version = best_match_version.?, .package = &packages[best_match_package_index] };
             }
         }
 
         if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
-            var best_match_version: ?Semver.Version = null;
-            var best_match_package_index: usize = 0;
-
             const prereleases = this.pkg.prereleases.keys.get(this.versions);
             var i = prereleases.len;
             while (i > 0) : (i -= 1) {
                 const version = prereleases[i - 1];
 
-                // If we find one that matches, save it, but keep looping because we might find a newer match.
-                // The versions from the registry are not in any particular order.
-                if (group.satisfies(version) and (best_match_version == null or Semver.Version.order(version, best_match_version.?, this.string_buf, this.string_buf) == .gt)) {
-                    best_match_version = version;
-                    best_match_package_index = i - 1;
+                // This list is sorted at serialization time.
+                if (group.satisfies(version)) {
+                    const packages = this.pkg.prereleases.values.get(this.package_versions);
+                    return .{ .version = version, .package = &packages[i - 1] };
                 }
-            }
-
-            if (best_match_version != null) {
-                const packages = this.pkg.prereleases.values.get(this.package_versions);
-                return .{ .version = best_match_version.?, .package = &packages[best_match_package_index] };
             }
         }
 
@@ -1637,7 +1618,7 @@ pub const PackageManifest = struct {
                     all_versioned_packages: []const PackageVersion,
 
                     pub fn isLessThan(this: @This(), left: Int, right: Int) bool {
-                        return this.all_versions[left].order(this.all_versions[right], this.string_bytes, this.string_bytes) == .gt;
+                        return this.all_versions[left].order(this.all_versions[right], this.string_bytes, this.string_bytes) == .lt;
                     }
                 };
 
@@ -1672,12 +1653,9 @@ pub const PackageManifest = struct {
                     };
                     std.sort.block(Int, indices, sorter, ExternVersionSorter.isLessThan);
 
-                    for (indices) |i| {
-                        const pkg = cloned_packages[i];
-                        const version = cloned_versions[i];
-
-                        versioned_packages_[i] = pkg;
-                        semver_versions_[i] = version;
+                    for (indices, versioned_packages_, semver_versions_) |i, *pkg, *version| {
+                        pkg.* = cloned_packages[i];
+                        version.* = cloned_versions[i];
                     }
 
                     if (comptime Environment.allow_assert) {
@@ -1686,7 +1664,10 @@ pub const PackageManifest = struct {
                             // When reading the versions, we iterate through the
                             // list backwards to choose the highest matching
                             // version
-                            std.debug.assert(cloned_versions[1].order(cloned_versions[0], string_buf, string_buf) == .gt);
+                            const first = semver_versions_[0];
+                            const second = semver_versions_[1];
+                            const order = second.order(first, string_buf, string_buf);
+                            std.debug.assert(order == .gt);
                         }
                     }
                 }

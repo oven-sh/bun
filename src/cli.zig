@@ -869,9 +869,9 @@ pub const HelpCommand = struct {
 
     // the spacing between commands here is intentional
     pub const cli_helptext_fmt =
-        \\Usage:<r> <b>bun \<command\> <cyan>[...flags]<r> [...args]<r>
+        \\<b>Usage:<r> <b>bun \<command\> <cyan>[...flags]<r> <b>[...args]<r>
         \\
-        \\Commands:<r>
+        \\<b>Commands:<r>
         \\  <b><magenta>run<r>       <d>./my-script.ts<r>       Execute a file with Bun
         \\            <d>lint<r>                 Run a package.json script
         \\  <b><magenta>test<r>                           Run unit tests with Bun
@@ -917,7 +917,7 @@ pub const HelpCommand = struct {
 
         switch (reason) {
             .explicit => Output.pretty(
-                "<r><b><magenta>Bun<r>: a fast JavaScript runtime, package manager, bundler, and test runner. <d>(" ++ Global.package_json_version ++ ")<r>\n\n" ++ cli_helptext_fmt,
+                "<r><b><magenta>Bun<r> is a fast JavaScript runtime, package manager, bundler, and test runner. <d>(" ++ Global.package_json_version ++ ")<r>\n\n" ++ cli_helptext_fmt,
                 args,
             ),
             .invalid_command => Output.prettyError(

@@ -1029,7 +1029,7 @@ pub const Fetch = struct {
                                 var scheduled_response_buffer = this.scheduled_response_buffer.list;
 
                                 const chunk = scheduled_response_buffer.items;
-                                if (this.response_clones) |response_clones| {
+                                if (response.response_clones) |response_clones| {
                                     for (response_clones.items) |other_request| {
                                         var other_body = &other_request.body;
                                         if (other_body.value == .Locked) {

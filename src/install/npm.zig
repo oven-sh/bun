@@ -1618,7 +1618,14 @@ pub const PackageManifest = struct {
         // So instead of having a hardcoded limit of how many packages we can sort, we ask
         //    > "How many bytes do we need to store the indices?"
         // We decide what size of integer to use based on that.
-        const how_many_bytes_to_store_indices = std.math.divCeil(usize, std.math.log2_int_ceil(usize, max_versions_count), 8) catch 0;
+        const how_many_bytes_to_store_indices = switch (max_versions_count) {
+            // log2(0) == Infinity
+            0 => 0,
+            // log2(1) == 0
+            1 => 1,
+
+            else => std.math.divCeil(usize, std.math.log2_int_ceil(usize, max_versions_count), 8) catch 0,
+        };
 
         switch (how_many_bytes_to_store_indices) {
             inline 1...8 => |int_bytes| {
@@ -1630,7 +1637,7 @@ pub const PackageManifest = struct {
                     all_versioned_packages: []const PackageVersion,
 
                     pub fn isLessThan(this: @This(), left: Int, right: Int) bool {
-                        return this.all_versions[left].order(this.all_versions[right], this.string_bytes, this.string_bytes) == .lt;
+                        return this.all_versions[left].order(this.all_versions[right], this.string_bytes, this.string_bytes) == .gt;
                     }
                 };
 
@@ -1671,6 +1678,16 @@ pub const PackageManifest = struct {
 
                         versioned_packages_[i] = pkg;
                         semver_versions_[i] = version;
+                    }
+
+                    if (comptime Environment.allow_assert) {
+                        if (cloned_versions.len > 1) {
+                            // Sanity check:
+                            // When reading the versions, we iterate through the
+                            // list backwards to choose the highest matching
+                            // version
+                            std.debug.assert(cloned_versions[1].order(cloned_versions[0], string_buf, string_buf) == .gt);
+                        }
                     }
                 }
             },

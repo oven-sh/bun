@@ -304,7 +304,7 @@ const NetworkTask = struct {
         var last_modified: string = "";
         var etag: string = "";
         if (loaded_manifest) |manifest| {
-            if (manifest.pkg.public_max_age > invalidate_manifest_cache_because_optional_peer_dependencies_had_an_off_by_one_error_if_it_was_there_was_only_one_so_they_wouldnt_appear_as_optional) {
+            if (manifest.pkg.public_max_age > invalidate_manifest_cache_because_optional_peer_dependencies_were_not_marked_as_optional_if_the_optional_peer_dependency_offset_was_equal_to_the_current_index) {
                 last_modified = manifest.pkg.last_modified.slice(manifest.string_buf);
                 etag = manifest.pkg.etag.slice(manifest.string_buf);
             }

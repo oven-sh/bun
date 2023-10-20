@@ -5412,12 +5412,6 @@ pub const PackageManager = struct {
     pub fn init(ctx: Command.Context, comptime subcommand: Subcommand) !*PackageManager {
         const cli = try CommandLineArguments.parse(ctx.allocator, subcommand);
 
-        if (comptime subcommand == .install) {
-            if (cli.positionals.len > 1) {
-                return error.SwitchToBunAdd;
-            }
-        }
-
         var _ctx = ctx;
         return initWithCLI(&_ctx, cli, subcommand);
     }
@@ -5467,6 +5461,19 @@ pub const PackageManager = struct {
                             break;
                         }
                     };
+                }
+
+                if (comptime subcommand == .install) {
+                    if (cli.positionals.len > 1) {
+                        // this is `bun add <package>`.
+                        //
+                        // create the package json instead of return error. this works around
+                        // a zig bug where continuing control flow through a catch seems to
+                        // cause a segfault the second time `PackageManager.init` is called after
+                        // switching to the add command.
+                        try attemptToCreatePackageJSON();
+                        return try initWithCLI(ctx, cli, subcommand);
+                    }
                 }
                 return error.MissingPackageJSON;
             };
@@ -6848,13 +6855,18 @@ pub const PackageManager = struct {
     var package_json_cwd: string = "";
 
     pub inline fn install(ctx: Command.Context) !void {
-        var manager = init(ctx, .install) catch |err| {
-            if (err == error.SwitchToBunAdd) {
-                return add(ctx);
-            }
+        var manager = try init(ctx, .install);
 
-            return err;
-        };
+        // switch to `bun add <package>`
+        if (manager.options.positionals.len > 1) {
+            if (manager.options.shouldPrintCommandName()) {
+                Output.prettyErrorln("<r><b>bun add <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
+                Output.flush();
+            }
+            return try switch (manager.options.log_level) {
+                inline else => |log_level| manager.updatePackageJSONAndInstallWithManager(ctx, .add, log_level),
+            };
+        }
 
         if (manager.options.shouldPrintCommandName()) {
             Output.prettyErrorln("<r><b>bun install <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});

@@ -1,4 +1,5 @@
 const std = @import("std");
+pub const build_options = @import("build_options");
 
 const panicky = @import("./panic_handler.zig");
 const MainPanicHandler = panicky.NewPanicHandler(std.builtin.default_panic);
@@ -38,15 +39,10 @@ pub fn main() void {
 
     Output.Source.set(&output_source);
     defer Output.flush();
-    if (comptime Environment.isX64) {
-        if (comptime Environment.enableSIMD) {
-            bun_warn_avx_missing(@import("./cli/upgrade_command.zig").Version.Bun__githubBaselineURL.ptr);
-        }
+    if (comptime Environment.isX64 and comptime Environment.enableSIMD) {
+        bun_warn_avx_missing(@import("./cli/upgrade_command.zig").Version.Bun__githubBaselineURL.ptr);
     }
 
     bun.CLI.Cli.start(bun.default_allocator, stdout, stderr, MainPanicHandler);
 }
 
-pub const build_options = @import("build_options");
-
-comptime {}

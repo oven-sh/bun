@@ -102,7 +102,7 @@ set(ERROR_LIMIT 100 CACHE STRING "Maximum number of errors to show when compilin
 
 set(ARCH x86_64)
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|arm")
-    set(ARCH arm64)
+    set(ARCH aarch64)
 endif()
 
 if(NOT CPU_TARGET)
@@ -118,6 +118,12 @@ if(NOT CPU_TARGET)
     endif()
 endif()
 message(STATUS "Building for CPU Target: ${CPU_TARGET}")
+
+set(ZIG_TARGET "native")
+if(WIN32)
+    set(ZIG_TARGET "${ARCH}-windows-msvc")
+endif()
+
 
 if(USE_CONFIGURE_DEPENDS)
     set(CONFIGURE_DEPENDS "CONFIGURE_DEPENDS")
@@ -446,7 +452,7 @@ add_custom_command(
     COMMAND "${ZIG_COMPILER}" "build" "obj"
         "-Doptimize=${ZIG_OPTIMIZE}"
         "-Doutput-dir=${BUN_WORKDIR}/CMakeFiles"
-        "-Dcpu=${CPU_TARGET}"
+        "-Dcpu=${ZIG_CPU}"
         "-Dgenerated-code=${BUN_WORKDIR}/codegen"
         "-freference-trace=12"
     DEPENDS
@@ -516,7 +522,6 @@ add_compile_definitions(
     "BUILDING_JSCONLY__"
     "ASSERT_ENABLED=$<IF:$<CONFIG:ASSERT_ENABLED>,1,0>"
     "BUN_DYNAMIC_JS_LOAD_PATH=\"${BUN_WORKDIR}/js\""
-    "HAVE_TIMINGSAFE_BCMP=1"
 )
 if(NOT ASSERT_ENABLED)
     add_compile_definitions("NDEBUG=1")
@@ -539,7 +544,7 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/bun-webkit/include
 
     # ${WEBKIT_INCLUDE_DIR}
-    C:/Users/windo/Code/WebKit/Source/WTF
+    C:/Users/windo/Code/WebKit/bun-webkit-x64/include
     # ${WEBKIT_DIR}/ICU
     # ${WEBKIT_DIR}/bmalloc
     # ${WEBKIT_DIR}/
@@ -594,8 +599,8 @@ else() # MSVC
         "/wd4068"
     )
     string(APPEND CMAKE_CXX_FLAGS " /EHsc /GR-")
-    string(APPEND CMAKE_C_FLAGS " /EHsc /GR- /MP ${SUPPRESS_WARNING_NUMBERS} /experimental:c11atomics /std:c17")
-    string(APPEND CMAKE_CXX_FLAGS " /Zc:__cplusplus /Zc:inline /bigobj /MP ${SUPPRESS_WARNING_NUMBERS}")
+    string(APPEND CMAKE_C_FLAGS " /EHsc /GR- ${SUPPRESS_WARNING_NUMBERS} /experimental:c11atomics /std:c17")
+    string(APPEND CMAKE_CXX_FLAGS " /Zc:__cplusplus /Zc:inline /bigobj ${SUPPRESS_WARNING_NUMBERS}")
 endif()
 
 if(APPLE)

@@ -154,7 +154,10 @@ using SourceOrigin = JSC::SourceOrigin;
 using JSObject = JSC::JSObject;
 using JSNonFinalObject = JSC::JSNonFinalObject;
 namespace JSCastingHelpers = JSC::JSCastingHelpers;
+
+#if !OS(WINDOWS)
 #include <dlfcn.h>
+#endif
 
 #include "IDLTypes.h"
 
@@ -222,7 +225,7 @@ constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 
 #ifdef __APPLE__
 #include <sys/sysctl.h>
-#else
+#elif defined(__linux__)
 // for sysconf
 #include <unistd.h>
 #endif

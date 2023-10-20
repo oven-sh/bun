@@ -721,6 +721,13 @@ pub const Version = extern struct {
         return lhs.major == rhs.major and lhs.minor == rhs.minor and lhs.patch == rhs.patch and rhs.tag.eql(lhs.tag);
     }
 
+    pub fn gt(lhs: Version, rhs: Version) bool {
+        if (lhs.major < rhs.major) return false;
+        if (lhs.minor < rhs.minor) return false;
+        if (lhs.patch < rhs.patch) return false;
+        return true;
+    }
+
     pub const HashContext = struct {
         pub fn hash(_: @This(), lhs: Version) u32 {
             return @as(u32, @truncate(lhs.hash()));

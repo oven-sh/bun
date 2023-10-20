@@ -6672,6 +6672,7 @@ it("should handle installing packages inside workspaces with difference versions
       " + package3@workspace:packages/package3",
       " + package4@workspace:packages/package4",
       " + package5@workspace:packages/package5",
+      " + bar@0.0.2",
       "",
       " 6 packages installed",
     ]);
@@ -6725,6 +6726,7 @@ it("should handle installing packages inside workspaces with difference versions
       " + package3@workspace:packages/package3",
       " + package4@workspace:packages/package4",
       " + package5@workspace:packages/package5",
+      " + bar@0.0.2",
       "",
       " 6 packages installed",
     ]);
@@ -6778,6 +6780,7 @@ it("should handle installing packages inside workspaces with difference versions
       " + package3@workspace:packages/package3",
       " + package4@workspace:packages/package4",
       " + package5@workspace:packages/package5",
+      " + bar@0.0.2",
       "",
       " 6 packages installed",
     ]);
@@ -6832,6 +6835,7 @@ it("should handle installing packages inside workspaces with difference versions
       " + package3@workspace:packages/package3",
       " + package4@workspace:packages/package4",
       " + package5@workspace:packages/package5",
+      " + bar@0.0.2",
       "",
       " 6 packages installed",
     ]);

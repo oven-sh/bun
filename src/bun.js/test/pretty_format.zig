@@ -752,16 +752,14 @@ pub const JestPrettyFormat = struct {
                             .ctx = this.writer,
                             .failed = false,
                         };
+                        var name_str = ZigString.init("");
 
-                        var name_str = value.getName(globalThis);
-                        defer name_str.deref();
-                        if (!name_str.isEmpty() and !name_str.eqlComptime("Object")) {
+                        value.getNameProperty(globalThis, &name_str);
+                        if (name_str.len > 0 and !strings.eqlComptime(name_str.slice(), "Object")) {
                             writer.print("{} ", .{name_str});
                         } else {
-                            name_str.deref();
-                            name_str = value.getPrototype(globalThis).getName(globalThis);
-
-                            if (!name_str.isEmpty() and !name_str.eqlComptime("Object")) {
+                            value.getPrototype(globalThis).getNameProperty(globalThis, &name_str);
+                            if (name_str.len > 0 and !strings.eqlComptime(name_str.slice(), "Object")) {
                                 writer.print("{} ", .{name_str});
                             }
                         }
@@ -773,7 +771,7 @@ pub const JestPrettyFormat = struct {
                     if (this.formatter.indent == 0) this.writer.writeAll("\n") catch {};
                     var classname = ZigString.Empty;
                     value.getClassName(globalThis, &classname);
-                    if (!classname.eqlComptime("Object")) {
+                    if (!strings.eqlComptime(classname.slice(), "Object")) {
                         this.writer.print("{} ", .{classname}) catch {};
                     }
 
@@ -1131,10 +1129,10 @@ pub const JestPrettyFormat = struct {
                     }
                 },
                 .Function => {
-                    var printable = value.getName(this.globalThis);
-                    defer printable.deref();
+                    var printable = ZigString.init(&name_buf);
+                    value.getNameProperty(this.globalThis, &printable);
 
-                    if (printable.isEmpty()) {
+                    if (printable.len == 0) {
                         writer.print(comptime Output.prettyFmt("<cyan>[Function]<r>", enable_ansi_colors), .{});
                     } else {
                         writer.print(comptime Output.prettyFmt("<cyan>[Function: {}]<r>", enable_ansi_colors), .{printable});

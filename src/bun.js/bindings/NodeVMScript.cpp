@@ -502,6 +502,7 @@ public:
     template<typename CellType, SubspaceAccess>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(NodeVMScriptPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)

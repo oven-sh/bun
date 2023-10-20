@@ -450,11 +450,11 @@ endif()
 add_custom_command(
     OUTPUT "${BUN_ZIG_OBJ}"
     COMMAND "${ZIG_COMPILER}" "build" "obj"
-        "-Doptimize=${ZIG_OPTIMIZE}"
         "-Doutput-dir=${BUN_WORKDIR}/CMakeFiles"
-        "-Dcpu=${ZIG_CPU}"
         "-Dgenerated-code=${BUN_WORKDIR}/codegen"
-        "-freference-trace=12"
+        "-Doptimize=${ZIG_OPTIMIZE}"
+        "-Dcpu=${CPU_TARGET}"
+        "-Dtarget=${ZIG_TARGET}"
     DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/build.zig"
         "${ZIG_FILES}"

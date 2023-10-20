@@ -21,9 +21,9 @@ pub fn main() void {
     const Output = bun.Output;
     const Environment = bun.Environment;
 
-    if (comptime Environment.isRelease and Environment.isPosix)
+    if (Environment.isRelease and Environment.isPosix)
         CrashReporter.start() catch unreachable;
-    if (comptime Environment.isWindows) {
+    if (Environment.isWindows) {
         environ = @ptrCast(std.os.environ.ptr);
         _environ = @ptrCast(std.os.environ.ptr);
         bun.win32.STDOUT_FD = bun.toFD(std.io.getStdOut().handle);
@@ -39,7 +39,7 @@ pub fn main() void {
 
     Output.Source.set(&output_source);
     defer Output.flush();
-    if (comptime Environment.isX64 and comptime Environment.enableSIMD) {
+    if (Environment.isX64 and Environment.enableSIMD) {
         bun_warn_avx_missing(@import("./cli/upgrade_command.zig").Version.Bun__githubBaselineURL.ptr);
     }
 

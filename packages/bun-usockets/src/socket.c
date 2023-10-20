@@ -204,21 +204,22 @@ struct us_socket_t *us_socket_attach(int ssl, LIBUS_SOCKET_DESCRIPTOR client_fd,
 }
 
 struct us_socket_t *us_socket_pair(struct us_socket_context_t *ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR* fds) {
-#ifdef LIBUS_USE_LIBUV
+#if defined(LIBUS_USE_LIBUV) || defined(WIN32)
     return 0;
-#endif 
+#else
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) {
         return 0;
     }
 
     return us_socket_from_fd(ctx, socket_ext_size, fds[0]);
+#endif
 }
 
 
 struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd) {
-#ifdef LIBUS_USE_LIBUV
+#if defined(LIBUS_USE_LIBUV) || defined(WIN32)
     return 0;
-#endif
+#else
     struct us_poll_t *p1 = us_create_poll(ctx->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
     us_poll_init(p1, fd, POLL_TYPE_SOCKET);
     us_poll_start(p1, ctx->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
@@ -239,6 +240,7 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socke
     }
 
     return s;
+#endif
 }
 
 

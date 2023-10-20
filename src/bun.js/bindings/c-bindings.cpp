@@ -1,8 +1,6 @@
 // when we don't want to use @cInclude, we can just stick wrapper functions here
 #include "root.h"
-#include <sys/resource.h>
 #include <cstdint>
-#include "root.h"
 
 #if !OS(WINDOWS)
 #include <sys/resource.h>
@@ -10,14 +8,13 @@
 #include <sys/stat.h>
 #include <sys/signal.h>
 #include <unistd.h>
+#include <cstring>
+#include <cpuid.h>
 #else
 #include <uv.h>
 #endif // !OS(WINDOWS)
 
-#if CPU(X86_64)
-#include <cstring>
-#include <cpuid.h>
-
+#if CPU(X86_64) && !OS(WINDOWS)
 extern "C" void bun_warn_avx_missing(const char* url)
 {
     __builtin_cpu_init();

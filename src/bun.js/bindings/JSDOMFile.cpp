@@ -97,6 +97,7 @@ public:
     {
         auto scope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
         throwTypeError(lexicalGlobalObject, scope, "Class constructor File cannot be invoked without 'new"_s);
+        return {};
     }
 };
 

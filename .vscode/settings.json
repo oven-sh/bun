@@ -240,7 +240,9 @@
     "xutility": "cpp",
     "string.h": "c",
     "zutil.h": "c",
-    "gzguts.h": "c"
+    "gzguts.h": "c",
+    "stdatomic.h": "c",
+    "root_certs.h": "c"
   },
   "C_Cpp.errorSquiggles": "enabled",
   "eslint.workingDirectories": ["packages/bun-types"],

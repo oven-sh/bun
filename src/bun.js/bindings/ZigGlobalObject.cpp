@@ -448,7 +448,11 @@ static String computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObje
     // We need to sourcemap it if it's a GlobalObject.
     if (globalObject == lexicalGlobalObject) {
         size_t framesCount = stackTrace.size();
+#if OS(WINDOWS) // MSVC workaround
+        ZigStackFrame* remappedFrames = new ZigStackFrame[framesCount];
+#else
         ZigStackFrame remappedFrames[framesCount];
+#endif
         for (int i = 0; i < framesCount; i++) {
             memset(remappedFrames + i, 0, sizeof(ZigStackFrame));
             remappedFrames[i].source_url = Bun::toString(lexicalGlobalObject, stackTrace.at(i).sourceURL());
@@ -476,6 +480,9 @@ static String computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObje
                 callSite->setLineNumber(lineNumber);
             }
         }
+#if OS(WINDOWS) // MSVC workaround
+        delete remappedFrames;
+#endif
     }
 
     globalObject->formatStackTrace(vm, lexicalGlobalObject, errorObject, callSites, prepareStackTrace);
@@ -3540,12 +3547,12 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleStdout, (JSGlobalObject * globalObject, Encod
     auto global = jsCast<Zig::GlobalObject*>(globalObject);
 
     // instead of calling the constructor builtin, go through the process.stdout getter to ensure it's only created once.
-    auto stdout = global->processObject()->get(globalObject, Identifier::fromString(vm, "stdout"_s));
-    if (!stdout)
+    auto stdoutValue = global->processObject()->get(globalObject, Identifier::fromString(vm, "stdout"_s));
+    if (!stdoutValue)
         return JSValue::encode({});
 
-    console->putDirect(vm, property, stdout, PropertyAttribute::DontEnum | 0);
-    return JSValue::encode(stdout);
+    console->putDirect(vm, property, stdoutValue, PropertyAttribute::DontEnum | 0);
+    return JSValue::encode(stdoutValue);
 }
 
 // `console._stderr` is equal to `process.stderr`
@@ -3556,12 +3563,12 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleStderr, (JSGlobalObject * globalObject, Encod
     auto global = jsCast<Zig::GlobalObject*>(globalObject);
 
     // instead of calling the constructor builtin, go through the process.stdout getter to ensure it's only created once.
-    auto stdout = global->processObject()->get(globalObject, Identifier::fromString(vm, "stderr"_s));
-    if (!stdout)
+    auto stderrValue = global->processObject()->get(globalObject, Identifier::fromString(vm, "stderr"_s));
+    if (!stderrValue)
         return JSValue::encode({});
 
-    console->putDirect(vm, property, stdout, PropertyAttribute::DontEnum | 0);
-    return JSValue::encode(stdout);
+    console->putDirect(vm, property, stderrValue, PropertyAttribute::DontEnum | 0);
+    return JSValue::encode(stderrValue);
 }
 
 JSC_DEFINE_CUSTOM_SETTER(EventSource_setter,

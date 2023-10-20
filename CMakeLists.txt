@@ -163,7 +163,6 @@ endif()
 # --- Dependencies ---
 
 if(NOT WIN32)
-    message(STATUS "not window")
     # WebKit
     if(NOT WEBKIT_DIR)
         # TODO: allow this to point to the actual webkit cmake file to allow easier rebuilds
@@ -454,6 +453,12 @@ add_custom_command(
     USES_TERMINAL
 )
 
+set(BUN_EXTRA_SOURCES "")
+if(WIN32)
+    set(BUN_EXTRA_SOURCES "${BUN_SRC}/bun.js/bindings/windows/musl-memmem.c")
+    include_directories("${BUN_SRC}/bun.js/bindings/windows")
+endif()
+
 # -- The Buntime™️ ---
 add_executable(
     ${bun}
@@ -465,6 +470,7 @@ add_executable(
     "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.cpp"
     "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp"
     "${BUN_ZIG_OBJ}"
+    "${BUN_EXTRA_SOURCES}"
 )
 set_target_properties(${bun} PROPERTIES
     CXX_STANDARD 20
@@ -828,8 +834,8 @@ if(NOT MSVC)
     target_link_libraries(${bun} PRIVATE "${WEBKIT_DIR}/lib/libJavaScriptCore.a")
     target_link_libraries(${bun} PRIVATE "${WEBKIT_DIR}/lib/libbmalloc.a")
 else()    
-    target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/lib/WTF.lib")
-    target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/lib/JavaScriptCore.lib")
+    target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/WTF.lib")
+    target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/JavaScriptCore.lib")
 
     if (WIN32)
         string (APPEND CMAKE_CXX_FLAGS 
@@ -849,11 +855,16 @@ else()
     # include_directories(C:/Users/windo/Build/WebKit/WebKitBuild/WTF/Headers)
     file(COPY C:/Users/windo/Code/WebKit/WebKitBuild/cmakeconfig.h DESTINATION ${BUN_SRC}/bun.js/bindings)
 
-    include_directories(C:/Users/windo/Code/WebKit/WebKitLibraries/win/include)
-    link_directories(C:/Users/windo/Code/WebKit/WebKitLibraries/win/lib64)
-    target_link_directories(${bun} PUBLIC ${ICU_LIBRARY})
+    target_include_directories(${bun} PUBLIC C:/Users/windo/Code/WebKit/WebKitLibraries/win/include)
+    target_link_directories(${bun} PUBLIC C:/Users/windo/Code/WebKit/WebKitLibraries/win/lib64)
+    target_link_directories(${bun} PUBLIC C:/Users/windo/Code/lib64)
     
-    
+    # icudt.lib
+    # icuin.lib
+    # icuio.lib
+    # icutest.lib
+    # icutu.lib
+    # icuuc.lib
     target_link_libraries(${bun} PUBLIC icuuc icudt icutu icuio icuin icutest)
     target_link_libraries(${bun} PUBLIC winmm ws2_32 bcrypt ntdll kernel32 shell32 shlwapi advapi32 vcruntime ucrt legacy_stdio_definitions)
 endif()

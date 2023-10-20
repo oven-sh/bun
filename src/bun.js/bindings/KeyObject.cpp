@@ -145,7 +145,7 @@ AsymmetricKeyValueWithDER KeyObject__ParsePublicKeyPEM(const char* key_pem,
     size_t key_pem_len)
 {
     auto bp = BIOPtr(BIO_new_mem_buf(const_cast<char*>(key_pem), key_pem_len));
-    auto result = (AsymmetricKeyValueWithDER) { .key = nullptr, .der_data = nullptr, .der_len = 0 };
+    auto result = AsymmetricKeyValueWithDER { .key = nullptr, .der_data = nullptr, .der_len = 0 };
 
     if (!bp) {
         ERR_clear_error();
@@ -2188,7 +2188,9 @@ JSC::EncodedJSValue KeyObject__generateKeySync(JSC::JSGlobalObject* lexicalGloba
             throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Invalid length"_s));
             return JSValue::encode(JSC::jsUndefined());
         }
-        return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(result.releaseNonNull())));
+        // TODO(@paperdave 2023-10-19): i removed WTFMove from result.releaseNonNull() as per MSVC compiler error.
+        // We need to evaluate if that is the proper fix here.
+        return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, (result.releaseNonNull())));
     } else if (type_str == "aes"_s) {
         Zig::GlobalObject* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
         auto* structure = zigGlobalObject->JSCryptoKeyStructure();
@@ -2207,7 +2209,9 @@ JSC::EncodedJSValue KeyObject__generateKeySync(JSC::JSGlobalObject* lexicalGloba
             throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Invalid length"_s));
             return JSValue::encode(JSC::jsUndefined());
         }
-        return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(result.releaseNonNull())));
+        // TODO(@paperdave 2023-10-19): i removed WTFMove from result.releaseNonNull() as per MSVC compiler error.
+        // We need to evaluate if that is the proper fix here.
+        return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, (result.releaseNonNull())));
     } else {
         throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "algorithm should be 'aes' or 'hmac'"_s));
         return JSValue::encode(JSC::jsUndefined());
@@ -2279,23 +2283,23 @@ static AsymmetricKeyValue GetInternalAsymmetricKey(WebCore::CryptoKey& key)
     case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:
     case CryptoAlgorithmIdentifier::RSA_OAEP:
     case CryptoAlgorithmIdentifier::RSA_PSS:
-        return (AsymmetricKeyValue) { .key = downcast<WebCore::CryptoKeyRSA>(key).platformKey(), .owned = false };
+        return AsymmetricKeyValue { .key = downcast<WebCore::CryptoKeyRSA>(key).platformKey(), .owned = false };
     case CryptoAlgorithmIdentifier::ECDSA:
     case CryptoAlgorithmIdentifier::ECDH:
-        return (AsymmetricKeyValue) { .key = downcast<WebCore::CryptoKeyEC>(key).platformKey(), .owned = false };
+        return AsymmetricKeyValue { .key = downcast<WebCore::CryptoKeyEC>(key).platformKey(), .owned = false };
     case CryptoAlgorithmIdentifier::Ed25519: {
         const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(key);
         auto keyData = okpKey.exportKey();
         if (okpKey.type() == CryptoKeyType::Private) {
             auto* evp_key = EVP_PKEY_new_raw_private_key(okpKey.namedCurve() == CryptoKeyOKP::NamedCurve::X25519 ? EVP_PKEY_X25519 : EVP_PKEY_ED25519, nullptr, keyData.data(), keyData.size());
-            return (AsymmetricKeyValue) { .key = evp_key, .owned = true };
+            return AsymmetricKeyValue { .key = evp_key, .owned = true };
         } else {
             auto* evp_key = EVP_PKEY_new_raw_public_key(okpKey.namedCurve() == CryptoKeyOKP::NamedCurve::X25519 ? EVP_PKEY_X25519 : EVP_PKEY_ED25519, nullptr, keyData.data(), keyData.size());
-            return (AsymmetricKeyValue) { .key = evp_key, .owned = true };
+            return AsymmetricKeyValue { .key = evp_key, .owned = true };
         }
     }
     default:
-        return (AsymmetricKeyValue) { .key = NULL, .owned = false };
+        return AsymmetricKeyValue { .key = NULL, .owned = false };
     }
 }
 

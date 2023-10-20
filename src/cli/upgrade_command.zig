@@ -441,14 +441,16 @@ pub const UpgradeCommand = struct {
             progress.end();
             refresher.refresh();
 
-            if (version.name() != null and version.isCurrent()) {
-                Output.prettyErrorln(
-                    "<r><green>Congrats!<r> You're already on the latest version of bun <d>(which is v{s})<r>",
-                    .{
-                        version.name().?,
-                    },
-                );
-                Global.exit(0);
+            if (!Environment.is_canary) {
+                if (version.name() != null and version.isCurrent()) {
+                    Output.prettyErrorln(
+                        "<r><green>Congrats!<r> You're already on the latest version of bun <d>(which is v{s})<r>",
+                        .{
+                            version.name().?,
+                        },
+                    );
+                    Global.exit(0);
+                }
             }
 
             if (version.name() == null) {
@@ -459,7 +461,11 @@ pub const UpgradeCommand = struct {
                 Global.exit(1);
             }
 
-            Output.prettyErrorln("<r><b>bun <cyan>v{s}<r> is out<r>! You're on <blue>{s}<r>\n", .{ version.name().?, Global.package_json_version });
+            if (!Environment.is_canary) {
+                Output.prettyErrorln("<r><b>bun <cyan>v{s}<r> is out<r>! You're on <blue>{s}<r>\n", .{ version.name().?, Global.package_json_version });
+            } else {
+                Output.prettyErrorln("<r><b>Downgrading from bun <blue>{s}-canary<r> to bun <cyan>v{s}<r><r>\n", .{ Global.package_json_version, version.name().? });
+            }
             Output.flush();
         } else {
             version = Version{
@@ -744,7 +750,10 @@ pub const UpgradeCommand = struct {
                     if (target_hash == source_hash) {
                         save_dir_.deleteTree(version_name) catch {};
                         Output.prettyErrorln(
-                            "<r><green>Congrats!<r> You're already on the latest <b>canary<r><green> build of bun",
+                            \\<r><green>Congrats!<r> You're already on the latest <b>canary<r><green> build of bun
+                            \\
+                            \\To downgrade to the latest stable release, run <b><cyan>bun upgrade --stable<r>
+                        ,
                             .{},
                         );
                         Global.exit(0);

@@ -83,6 +83,7 @@ fn addInternalPackages(b: *Build, step: *CompileStep, _: std.mem.Allocator, _: [
 const BunBuildOptions = struct {
     canary: bool = false,
     sha: [:0]const u8 = "",
+    version: []const u8 = "",
     baseline: bool = false,
     bindgen: bool = false,
     sizegen: bool = false,
@@ -124,6 +125,11 @@ const BunBuildOptions = struct {
     pub fn step(this: BunBuildOptions, b: anytype) *std.build.OptionsStep {
         var opts = b.addOptions();
         opts.addOption(@TypeOf(this.canary), "is_canary", this.canary);
+        opts.addOption(
+            std.SemanticVersion,
+            "version",
+            std.SemanticVersion.parse(this.version) catch @panic(b.fmt("Invalid version: {s}", .{this.version})),
+        );
         opts.addOption(@TypeOf(this.sha), "sha", this.sha);
         opts.addOption(@TypeOf(this.baseline), "baseline", this.baseline);
         opts.addOption(@TypeOf(this.bindgen), "bindgen", this.bindgen);
@@ -199,11 +205,7 @@ pub fn build_(b: *Build) !void {
     // what target to build for. Here we do not override the defaults, which
     // means any target is allowed, and the default is native. Other options
     // for restricting supported target set are available.
-    var target = b.standardTargetOptions(.{
-        .default_target = .{
-            // .os_tag = .windows,
-        },
-    });
+    var target = b.standardTargetOptions(.{});
     // Standard release options allow the person running `zig build` to select
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     optimize = b.standardOptimizeOption(.{});
@@ -316,9 +318,12 @@ pub fn build_(b: *Build) !void {
             }
         }
 
-        const is_canary = (b.env_map.get("BUN_CANARY") orelse "0")[0] == '1';
+        const is_canary =
+            b.option(bool, "canary", "Treat this as a canary build") orelse
+            ((b.env_map.get("BUN_CANARY") orelse "0")[0] == '1');
         break :brk .{
             .canary = is_canary,
+            .version = b.option([]const u8, "version", "Value of `Bun.version`") orelse "0.0.0",
             .sha = git_sha,
             .baseline = is_baseline,
             .bindgen = false,

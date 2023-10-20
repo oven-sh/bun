@@ -383,7 +383,7 @@ pub const InitCommand = struct {
                 defer file.close();
                 file.writer().print(README, .{
                     .name = fields.name,
-                    .bunVersion = Global.version.fmt(""),
+                    .bunVersion = Environment.version_string,
                     .entryPoint = fields.entry_point,
                 }) catch break :brk;
                 Output.prettyln(" + <r><d>{s}<r>", .{filename});

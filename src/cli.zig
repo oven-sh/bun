@@ -869,31 +869,29 @@ pub const HelpCommand = struct {
 
     // the spacing between commands here is intentional
     pub const cli_helptext_fmt =
-        \\<b>Usage:<r> bun \<command\> <cyan>[...flags]<r> [...args]<r>
+        \\Usage:<r> <b>bun \<command\> <cyan>[...flags]<r> [...args]<r>
         \\
-        \\<b>Commands:<r>
+        \\Commands:<r>
         \\  <b><magenta>run<r>       <d>./my-script.ts<r>       Execute a file with Bun
         \\            <d>lint<r>                 Run a package.json script
+        \\  <b><magenta>test<r>                           Run unit tests with Bun
         \\  <b><magenta>x<r>         <d>{s:<16}<r>     Execute a package binary (CLI), installing if needed <d>(bunx)<r>
         \\  <b><magenta>repl<r>                           Start a REPL session with Bun
-        \\
-        \\  <b><yellow>test<r>                           Run unit tests with Bun
-        \\
-        \\  <b><cyan>init<r>                           Start an empty Bun project from a blank template
-        \\  <b><cyan>create<r>    <d>{s:<16}<r>     Create a new project from a template <d>(bun c)<r>
         \\
         \\  <b><blue>install<r>                        Install dependencies for a package.json <d>(bun i)<r>
         \\  <b><blue>add<r>       <d>{s:<16}<r>     Add a dependency to package.json <d>(bun a)<r>
         \\  <b><blue>remove<r>    <d>{s:<16}<r>     Remove a dependency from package.json <d>(bun rm)<r>
         \\  <b><blue>update<r>    <d>{s:<16}<r>     Update outdated dependencies
-        \\  <b><blue>link<r>                           Link an npm package globally
-        \\  <b><blue>unlink<r>                         Globally unlink an npm package
+        \\  <b><blue>link<r>      <d>[\<package\>]<r>          Register or link a local npm package
+        \\  <b><blue>unlink<r>                         Unregister a local npm package
         \\  <b><blue>pm <d>\<subcommand\><r>                Additional package management utilities
         \\
-        \\  <b><green>build<r>     <d>./a.ts ./b.jsx<r>       Bundle TypeScript & JavaScript into a single file
+        \\  <b><yellow>build<r>     <d>./a.ts ./b.jsx<r>       Bundle TypeScript & JavaScript into a single file
         \\
-        \\  <b>upgrade<r>                        Upgrade to latest version of Bun.
-        \\  <d>\<command\><r> <b>--help<r>               Print help text for command.
+        \\  <b><cyan>init<r>                           Start an empty Bun project from a blank template
+        \\  <b><cyan>create<r>    <d>{s:<16}<r>     Create a new project from a template <d>(bun c)<r>
+        \\  <b><cyan>upgrade<r>                        Upgrade to latest version of Bun.
+        \\  <d>\<command\><r> <b><cyan>--help<r>               Print help text for command.
         \\
         \\Learn more about Bun:            <magenta>https://bun.sh/docs<r>
         \\Join our Discord community:      <blue>https://bun.sh/discord<r>

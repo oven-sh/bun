@@ -5445,6 +5445,7 @@ pub const PackageManager = struct {
         // We will walk up from the cwd, trying to find the nearest package.json file.
         const package_json_file = brk: {
             var this_cwd = original_cwd;
+            var created_package_json = false;
             const child_json = child: {
                 while (true) {
                     const this_cwd_without_trailing_slash = strings.withoutTrailingSlash(this_cwd);
@@ -5453,7 +5454,10 @@ pub const PackageManager = struct {
                     buf2[this_cwd_without_trailing_slash.len..buf2.len][0.."/package.json".len].* = "/package.json".*;
                     buf2[this_cwd_without_trailing_slash.len + "/package.json".len] = 0;
 
-                    break :child std.fs.cwd().openFileZ(buf2[0 .. this_cwd_without_trailing_slash.len + "/package.json".len :0].ptr, .{ .mode = .read_write }) catch {
+                    break :child std.fs.cwd().openFileZ(
+                        buf2[0 .. this_cwd_without_trailing_slash.len + "/package.json".len :0].ptr,
+                        .{ .mode = .read_write },
+                    ) catch {
                         if (std.fs.path.dirname(this_cwd)) |parent| {
                             this_cwd = parent;
                             continue;
@@ -5472,6 +5476,7 @@ pub const PackageManager = struct {
                         // cause a segfault the second time `PackageManager.init` is called after
                         // switching to the add command.
                         this_cwd = original_cwd;
+                        created_package_json = true;
                         break :child try attemptToCreatePackageJSONAndOpen();
                     }
                 }
@@ -5481,59 +5486,64 @@ pub const PackageManager = struct {
             const child_cwd = this_cwd;
             // Check if this is a workspace; if so, use root package
             var found = false;
-            while (std.fs.path.dirname(this_cwd)) |parent| : (this_cwd = parent) {
-                const parent_without_trailing_slash = strings.withoutTrailingSlash(parent);
-                var buf2: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-                @memcpy(buf2[0..parent_without_trailing_slash.len], parent_without_trailing_slash);
-                buf2[parent_without_trailing_slash.len..buf2.len][0.."/package.json".len].* = "/package.json".*;
-                buf2[parent_without_trailing_slash.len + "/package.json".len] = 0;
+            if (!created_package_json) {
+                while (std.fs.path.dirname(this_cwd)) |parent| : (this_cwd = parent) {
+                    const parent_without_trailing_slash = strings.withoutTrailingSlash(parent);
+                    var buf2: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+                    @memcpy(buf2[0..parent_without_trailing_slash.len], parent_without_trailing_slash);
+                    buf2[parent_without_trailing_slash.len..buf2.len][0.."/package.json".len].* = "/package.json".*;
+                    buf2[parent_without_trailing_slash.len + "/package.json".len] = 0;
 
-                const json_file = std.fs.cwd().openFileZ(buf2[0 .. parent_without_trailing_slash.len + "/package.json".len :0].ptr, .{ .mode = .read_write }) catch {
-                    continue;
-                };
-                defer if (!found) json_file.close();
-                const json_stat_size = try json_file.getEndPos();
-                const json_buf = try ctx.allocator.alloc(u8, json_stat_size + 64);
-                defer ctx.allocator.free(json_buf);
-                const json_len = try json_file.preadAll(json_buf, 0);
-                const json_path = try bun.getFdPath(json_file.handle, &package_json_cwd_buf);
-                const json_source = logger.Source.initPathString(json_path, json_buf[0..json_len]);
-                initializeStore();
-                const json = try json_parser.ParseJSONUTF8(&json_source, ctx.log, ctx.allocator);
-                if (json.asProperty("workspaces")) |prop| {
-                    const json_array = switch (prop.expr.data) {
-                        .e_array => |arr| arr,
-                        .e_object => |obj| if (obj.get("packages")) |packages| switch (packages.data) {
-                            .e_array => |arr| arr,
-                            else => break,
-                        } else break,
-                        else => break,
+                    const json_file = std.fs.cwd().openFileZ(
+                        buf2[0 .. parent_without_trailing_slash.len + "/package.json".len :0].ptr,
+                        .{ .mode = .read_write },
+                    ) catch {
+                        continue;
                     };
-                    var log = logger.Log.init(ctx.allocator);
-                    defer log.deinit();
-                    const workspace_packages_count = Package.processWorkspaceNamesArray(
-                        &workspace_names,
-                        ctx.allocator,
-                        &log,
-                        json_array,
-                        &json_source,
-                        prop.loc,
-                        null,
-                    ) catch break;
-                    _ = workspace_packages_count;
-                    for (workspace_names.keys()) |path| {
-                        if (strings.eql(child_cwd, path)) {
-                            fs.top_level_dir = parent;
-                            if (comptime subcommand == .install) {
-                                found = true;
-                                child_json.close();
-                                break :brk json_file;
-                            } else {
-                                break :brk child_json;
+                    defer if (!found) json_file.close();
+                    const json_stat_size = try json_file.getEndPos();
+                    const json_buf = try ctx.allocator.alloc(u8, json_stat_size + 64);
+                    defer ctx.allocator.free(json_buf);
+                    const json_len = try json_file.preadAll(json_buf, 0);
+                    const json_path = try bun.getFdPath(json_file.handle, &package_json_cwd_buf);
+                    const json_source = logger.Source.initPathString(json_path, json_buf[0..json_len]);
+                    initializeStore();
+                    const json = try json_parser.ParseJSONUTF8(&json_source, ctx.log, ctx.allocator);
+                    if (json.asProperty("workspaces")) |prop| {
+                        const json_array = switch (prop.expr.data) {
+                            .e_array => |arr| arr,
+                            .e_object => |obj| if (obj.get("packages")) |packages| switch (packages.data) {
+                                .e_array => |arr| arr,
+                                else => break,
+                            } else break,
+                            else => break,
+                        };
+                        var log = logger.Log.init(ctx.allocator);
+                        defer log.deinit();
+                        const workspace_packages_count = Package.processWorkspaceNamesArray(
+                            &workspace_names,
+                            ctx.allocator,
+                            &log,
+                            json_array,
+                            &json_source,
+                            prop.loc,
+                            null,
+                        ) catch break;
+                        _ = workspace_packages_count;
+                        for (workspace_names.keys()) |path| {
+                            if (strings.eql(child_cwd, path)) {
+                                fs.top_level_dir = parent;
+                                if (comptime subcommand == .install) {
+                                    found = true;
+                                    child_json.close();
+                                    break :brk json_file;
+                                } else {
+                                    break :brk child_json;
+                                }
                             }
                         }
+                        break;
                     }
-                    break;
                 }
             }
 

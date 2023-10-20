@@ -1719,6 +1719,7 @@ pub const Fetch = struct {
         var key: []const u8 = "";
         var cert: []const u8 = "";
 
+        const tls_prop_slice = [_]*[]const u8{ &passphrase, &ca, &key, &cert };
         var url_proxy_buffer: []const u8 = undefined;
         var is_file_url = false;
         var reject_unauthorized = script_ctx.bundler.env.getTLSRejectUnauthorized();
@@ -1874,6 +1875,10 @@ pub const Fetch = struct {
                             if (!tls.isEmptyOrUndefinedOrNull() and tls.isObject()) {
                                 if (tls.get(ctx, "pfx")) |pfx_opt| {
                                     if (pfx_opt.isString() or pfx_opt.isBuffer(ctx.ptr())) {
+                                        if (hostname) |host| {
+                                            allocator.free(host);
+                                            hostname = null;
+                                        }
                                         const err = JSC.createError(globalThis, "Pfx is not yet supported", .{});
                                         return JSPromise.rejectedPromiseValue(globalThis, err);
                                     }
@@ -1948,9 +1953,13 @@ pub const Fetch = struct {
                                 var href = JSC.URL.hrefFromJS(proxy_arg, globalThis);
                                 if (href.tag == .Dead) {
                                     const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "fetch() proxy URL is invalid", .{}, ctx);
-                                    // clean hostname if any
-                                    if (hostname) |host| {
-                                        allocator.free(host);
+                                    // clean hostname and tls props if any
+                                    for (tls_prop_slice) |ptr| {
+                                        if (ptr.*.len > 0)
+                                            bun.default_allocator.free(ptr.*);
+                                    }
+                                    if (hostname) |hn| {
+                                        bun.default_allocator.free(hn);
                                         hostname = null;
                                     }
                                     allocator.free(url_proxy_buffer);
@@ -1992,9 +2001,13 @@ pub const Fetch = struct {
         } else if (bun.String.tryFromJS(first_arg, globalThis)) |str| {
             if (str.isEmpty()) {
                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, ctx);
-                // clean hostname if any
-                if (hostname) |host| {
-                    allocator.free(host);
+                // clean hostname and tls props if any
+                for (tls_prop_slice) |ptr| {
+                    if (ptr.*.len > 0)
+                        bun.default_allocator.free(ptr.*);
+                }
+                if (hostname) |hn| {
+                    bun.default_allocator.free(hn);
                     hostname = null;
                 }
                 return JSPromise.rejectedPromiseValue(globalThis, err);
@@ -2014,9 +2027,13 @@ pub const Fetch = struct {
             }
 
             url = ZigURL.fromString(allocator, str) catch {
-                // clean hostname if any
-                if (hostname) |host| {
-                    allocator.free(host);
+                // clean hostname and tls props if any
+                for (tls_prop_slice) |ptr| {
+                    if (ptr.*.len > 0)
+                        bun.default_allocator.free(ptr.*);
+                }
+                if (hostname) |hn| {
+                    bun.default_allocator.free(hn);
                     hostname = null;
                 }
                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "fetch() URL is invalid", .{}, ctx);
@@ -2121,6 +2138,14 @@ pub const Fetch = struct {
                         if (options.get(ctx, "tls")) |tls| {
                             if (tls.get(ctx, "pfx")) |pfx_opt| {
                                 if (pfx_opt.isString() or pfx_opt.isBuffer(ctx.ptr())) {
+                                    for (tls_prop_slice) |ptr| {
+                                        if (ptr.*.len > 0)
+                                            bun.default_allocator.free(ptr.*);
+                                    }
+                                    if (hostname) |hn| {
+                                        bun.default_allocator.free(hn);
+                                        hostname = null;
+                                    }
                                     const err = JSC.createError(globalThis, "Pfx is not yet supported", .{});
                                     return JSPromise.rejectedPromiseValue(globalThis, err);
                                 }
@@ -2202,6 +2227,11 @@ pub const Fetch = struct {
                                     if (hostname) |host| {
                                         allocator.free(host);
                                         hostname = null;
+                                    }
+
+                                    for (tls_prop_slice) |ptr| {
+                                        if (ptr.*.len > 0)
+                                            bun.default_allocator.free(ptr.*);
                                     }
                                     allocator.free(url_proxy_buffer);
                                     free_memory_reporter = true;

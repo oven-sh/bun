@@ -1739,6 +1739,7 @@ pub const CustomTLSProps = struct {
     passphrase: ?[*c]const u8 = null,
 
     fn create(in: []const u8) [][*c]const u8 {
+        defer bun.default_allocator.free(in);
         const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
         var c_str = bun.default_allocator.dupeZ(u8, in) catch unreachable;
         native_array[0] = c_str;
@@ -1762,6 +1763,7 @@ pub const CustomTLSProps = struct {
     pub fn setPassphrase(this: *CustomTLSProps, in: []const u8) void {
         if (in.len > 0) {
             this.passphrase = bun.default_allocator.dupeZ(u8, in) catch unreachable;
+            bun.default_allocator.free(in);
         }
     }
 

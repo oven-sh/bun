@@ -14,6 +14,7 @@ const String = Semver.String;
 const std = @import("std");
 const string = @import("../string_types.zig").string;
 const strings = @import("../string_immutable.zig");
+const PackageManager = @import("./install.zig").PackageManager;
 const Dependency = @This();
 
 const URI = union(Tag) {
@@ -700,7 +701,11 @@ pub fn parseWithOptionalTag(
         alias,
         alias_hash,
         dep,
-        tag orelse Version.Tag.infer(dep),
+        tag orelse brk: {
+            const t = Version.Tag.infer(dep);
+            if (t == .github) break :brk if (PackageManager.instance.options.use_github_api) .github else .git;
+            break :brk t;
+        },
         sliced,
         log,
     );

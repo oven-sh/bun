@@ -156,6 +156,26 @@ pub const Repository = extern struct {
             return final_path_buf[0 .. url.len + "https://".len];
         }
 
+        {
+            var i: usize = 0;
+            while (i < url.len) {
+                switch (url[i]) {
+                    '/' => {
+                        if (i < url.len - 1) {
+                            // username/repo-name
+                            final_path_buf[0.."https://github.com/".len].* = "https://github.com/".*;
+                            bun.copy(u8, final_path_buf["https://github.com/".len..], url);
+                            return final_path_buf[0 .. url.len + "https://github.com/".len];
+                        }
+                    },
+                    '@', ':', '+' => return null,
+                    else => {},
+                }
+
+                i += 1;
+            }
+        }
+
         return null;
     }
 

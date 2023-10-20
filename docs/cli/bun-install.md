@@ -62,6 +62,9 @@ dev = true
 # Install peerDependencies (default: false)
 peer = false
 
+# Whether to use the github REST api (unauthenticated)
+github.api = true
+
 # When using `bun install -g`, install packages here
 globalDir = "~/.bun/install/global"
 

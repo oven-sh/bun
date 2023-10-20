@@ -172,6 +172,9 @@ frozenLockfile = false
 
 # equivalent to `--dry-run` flag
 dryRun = false
+
+# whether to use the github REST api (unauthenticated)
+github.api = true
 ```
 
 ## CI/CD

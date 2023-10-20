@@ -1481,18 +1481,30 @@ class ClientRequest extends OutgoingMessage {
     }
 
     this.#joinDuplicateHeaders = _joinDuplicateHeaders;
-    console.log(options)
-    if(options.pfx)
-      this.#pfx = options.pfx;
+    if (options.pfx) this.#pfx = options.pfx;
 
-    if(options.ca)
+    if (options.ca) {
+      if (!isValidTLSArray(options.ca))
+        throw new TypeError(
+          "ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+        );
       this.#ca = options.ca;
-    if(options.cert)
+    }
+    if (options.cert) {
+      if (!isValidTLSArray(options.cert))
+        throw new TypeError(
+          "cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+        );
       this.#cert = options.cert;
-    if(options.key)
+    }
+    if (options.key) {
+      if (!isValidTLSArray(options.key))
+        throw new TypeError(
+          "passphrase argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+        );
       this.#key = options.key;
-    if(options.passphrase)
-      this.#passphrase = options.passphrase;
+    }
+    if (options.passphrase) this.#passphrase = options.passphrase;
 
     this.#path = options.path || "/";
     if (cb) {

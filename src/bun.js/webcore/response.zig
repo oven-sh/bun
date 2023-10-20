@@ -1504,12 +1504,10 @@ pub const Fetch = struct {
             fetch_tasklet.http.?.client.disable_decompression = fetch_options.disable_decompression;
             fetch_tasklet.http.?.client.reject_unauthorized = fetch_options.reject_unauthorized;
 
-            fetch_tasklet.http.?.client.pfx = fetch_options.pfx;
-            fetch_tasklet.http.?.client.passphrase = fetch_options.passphrase;
-            fetch_tasklet.http.?.client.ca = fetch_options.ca;
-            fetch_tasklet.http.?.client.cert = fetch_options.cert;
-            fetch_tasklet.http.?.client.key = fetch_options.key;
-
+            fetch_tasklet.http.?.client.custom_tls_props.setPassphrase(fetch_options.passphrase);
+            fetch_tasklet.http.?.client.custom_tls_props.setKey(fetch_options.key);
+            fetch_tasklet.http.?.client.custom_tls_props.setCert(fetch_options.cert);
+            fetch_tasklet.http.?.client.custom_tls_props.setCa(fetch_options.ca);
 
             // we wanna to return after headers are received
             fetch_tasklet.signal_store.header_progress.store(true, .Monotonic);
@@ -1559,7 +1557,6 @@ pub const Fetch = struct {
             hostname: ?[]u8 = null,
             memory_reporter: *JSC.MemoryReportingAllocator,
             check_server_identity: JSC.Strong = .{},
-            pfx: ?[]const u8 = null,
             ca: ?[]const u8 = null,
             key: ?[]const u8 = null,
             cert: ?[]const u8 = null,
@@ -1719,7 +1716,6 @@ pub const Fetch = struct {
         var hostname: ?[]u8 = null;
 
         var passphrase: ?[]const u8 = null;
-        var pfx: ?[]const u8 = null;
         var ca: ?[]const u8 = null;
         var key: ?[]const u8 = null;
         var cert: ?[]const u8 = null;
@@ -1878,13 +1874,18 @@ pub const Fetch = struct {
                         if (options.get(ctx, "ssl_props")) |ssl_opts| {
                             if (!ssl_opts.isEmptyOrUndefinedOrNull() and ssl_opts.isObject()) {
                                 if (ssl_opts.get(ctx, "pfx")) |pfx_opt| {
-                                    if (pfx_opt.isString())
-                                        pfx = pfx_opt.toSlice(ctx.ptr(), allocator).slice();
-                                    if (pfx_opt.isBuffer(ctx.ptr())) {
-                                        if (JSC.Node.StringOrBuffer.fromJS(globalThis, allocator, pfx_opt, exception)) |sb| {
-                                            pfx = sb.slice();
-                                        }
+                                    if (pfx_opt.isString() or pfx_opt.isBuffer(ctx.ptr())) {
+                                        const err = JSC.createError(globalThis, "Pfx is not yet supported", .{});
+                                        return JSPromise.rejectedPromiseValue(globalThis, err);
                                     }
+                                    // TODO(Liz3); Actually implement this
+                                    // if (pfx_opt.isString())
+                                    //     pfx = pfx_opt.toSlice(ctx.ptr(), allocator).slice();
+                                    // if (pfx_opt.isBuffer(ctx.ptr())) {
+                                    //     if (JSC.Node.StringOrBuffer.fromJS(globalThis, allocator, pfx_opt, exception)) |sb| {
+                                    //         pfx = sb.slice();
+                                    //     }
+                                    // }
                                 }
                                 if (ssl_opts.get(ctx, "ca")) |ca_opt| {
                                     if (ca_opt.isString())
@@ -2119,13 +2120,19 @@ pub const Fetch = struct {
                         if (options.get(ctx, "ssl_props")) |ssl_opts| {
                             if (!ssl_opts.isEmptyOrUndefinedOrNull() and ssl_opts.isObject()) {
                                 if (ssl_opts.get(ctx, "pfx")) |pfx_opt| {
-                                    if (pfx_opt.isString())
-                                        pfx = pfx_opt.toSlice(ctx.ptr(), allocator).slice();
-                                    if (pfx_opt.isBuffer(ctx.ptr())) {
-                                        if (JSC.Node.StringOrBuffer.fromJS(globalThis, allocator, pfx_opt, exception)) |sb| {
-                                            pfx = sb.slice();
-                                        }
+                                    if (pfx_opt.isString() or pfx_opt.isBuffer(ctx.ptr())) {
+                                        const err = JSC.createError(globalThis, "Pfx is not yet supported", .{});
+                                        return JSPromise.rejectedPromiseValue(globalThis, err);
                                     }
+
+                                    // TODO(Liz3); Actually implement this
+                                    // if (pfx_opt.isString())
+                                    //     pfx = pfx_opt.toSlice(ctx.ptr(), allocator).slice();
+                                    // if (pfx_opt.isBuffer(ctx.ptr())) {
+                                    //     if (JSC.Node.StringOrBuffer.fromJS(globalThis, allocator, pfx_opt, exception)) |sb| {
+                                    //         pfx = sb.slice();
+                                    //     }
+                                    // }
                                 }
                                 if (ssl_opts.get(ctx, "ca")) |ca_opt| {
                                     if (ca_opt.isString())
@@ -2413,10 +2420,7 @@ pub const Fetch = struct {
                 }
             }
         }
-        {
-            Output.print("{any} {any} {any}\n", .{ passphrase, pfx, ca });
-            Output.flush();
-        }
+
         // Only create this after we have validated all the input.
         // or else we will leak it
         var promise = JSPromise.Strong.init(globalThis);
@@ -2446,7 +2450,6 @@ pub const Fetch = struct {
                 .signal = signal,
                 .passphrase = passphrase,
                 .ca = ca,
-                .pfx = pfx,
                 .key = key,
                 .cert = cert,
                 .globalThis = globalThis,

@@ -367,32 +367,26 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 .request_cert = 1,
                 .reject_unauthorized = 0,
             };
-            if (client.passphrase) |passphrase| {
-                opts.passphrase = bun.default_allocator.dupeZ(u8, passphrase) catch unreachable;
+            if (client.custom_tls_props.passphrase) |passphrase| {
+                opts.passphrase = passphrase;
             }
-            if(client.ca) |ca| {
-                const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
-                var c_str = bun.default_allocator.dupeZ(u8, ca) catch unreachable;
-                native_array[0] = c_str;
-                opts.ca = native_array.ptr;
+            if (client.custom_tls_props.ca) |ca| {
+                opts.ca = ca.ptr;
                 opts.ca_count = 1;
             }
-            if(client.cert)|cert| {
-               const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
-               var c_str = bun.default_allocator.dupeZ(u8, cert) catch unreachable;
-               native_array[0] = c_str;
-               opts.cert = native_array.ptr;
-               opts.cert_count = 1; 
-           }
-            if(client.key)|key| {
-               const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
-               var c_str = bun.default_allocator.dupeZ(u8, key) catch unreachable;
-               native_array[0] = c_str;
-               opts.key = native_array.ptr;
-               opts.key_count = 1; 
-           }
-                this.us_socket_context = uws.us_create_bun_socket_context(ssl_int, http_thread.loop, @sizeOf(usize), opts).?;
-        
+            if (client.custom_tls_props.cert) |cert| {
+                opts.cert = cert.ptr;
+                opts.cert_count = 1;
+            }
+            if (client.custom_tls_props.key) |key| {
+                opts.key = key.ptr;
+                opts.key_count = 1;
+            }
+            var socket = uws.us_create_bun_socket_context(ssl_int, http_thread.loop, @sizeOf(usize), opts);
+            if (socket == null) {
+                return error.FailedToOpenSocket;
+            }
+            this.us_socket_context = socket.?;
             this.sslCtx().setup();
 
             HTTPSocket.configure(
@@ -401,7 +395,6 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 anyopaque,
                 Handler,
             );
-            
         }
 
         pub fn init(this: *@This()) !void {
@@ -685,10 +678,6 @@ fn NewHTTPContext(comptime ssl: bool) type {
             else
                 hostname_;
 
-            if (comptime ssl) {
-                Output.print("the passphrase is {any}\n", .{client.passphrase});
-                Output.flush();
-            }
             client.connected_url = if (client.http_proxy) |proxy| proxy else client.url;
             client.connected_url.hostname = hostname;
 
@@ -791,10 +780,12 @@ pub const HTTPThread = struct {
 
     pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewHTTPContext(is_ssl).HTTPSocket {
         if (comptime is_ssl) {
-            const needs_own_context = client.passphrase != null or client.pfx != null or client.ca != null or client.cert != null or client.key != null;
+            const args = &client.custom_tls_props;
+            const needs_own_context = args.passphrase != null or args.ca != null or args.cert != null or args.key != null;
             if (needs_own_context) {
                 var custom_context = try bun.default_allocator.create(NewHTTPContext(is_ssl));
-                custom_context.initWithClientConfig(client) catch @panic("Failed to init custom context");
+                client.custom_context = custom_context;
+                try custom_context.initWithClientConfig(client);
                 // TODO where to track the context for deallocation
                 return try custom_context.connect(client, client.url.hostname, client.url.getPortAuto());
             }
@@ -1565,12 +1556,7 @@ disable_keepalive: bool = false,
 disable_decompression: bool = false,
 state: InternalState = .{},
 
-pfx: ?[]const u8 = null,
-ca: ?[]const u8 = null,
-cert: ?[]const u8 = null,
-key: ?[]const u8 = null,
-passphrase: ?[]const u8 = null,
-
+custom_tls_props: CustomTLSProps = .{},
 result_callback: HTTPClientResult.Callback = undefined,
 
 /// Some HTTP servers (such as npm) report Last-Modified times but ignore If-Modified-Since.
@@ -1587,6 +1573,7 @@ signals: Signals = .{},
 async_http_id: u32 = 0,
 hostname: ?[]u8 = null,
 reject_unauthorized: bool = true,
+custom_context: ?*NewHTTPContext(true) = null,
 
 pub fn init(
     allocator: std.mem.Allocator,
@@ -1620,6 +1607,13 @@ pub fn deinit(this: *HTTPClient) void {
     if (this.proxy_tunnel) |tunnel| {
         tunnel.deinit();
         this.proxy_tunnel = null;
+    }
+
+    this.custom_tls_props.deinit();
+
+    if (this.custom_context) |custom_context| {
+        bun.default_allocator.destroy(custom_context);
+        this.custom_context = null;
     }
 }
 
@@ -1739,6 +1733,70 @@ pub const HTTPChannelContext = struct {
     }
 };
 
+pub const CustomTLSProps = struct {
+    ca: ?[][*c]const u8 = null,
+    cert: ?[][*c]const u8 = null,
+    key: ?[][*c]const u8 = null,
+    passphrase: ?[*c]const u8 = null,
+
+    fn create(in: []const u8) [][*c]const u8 {
+        const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
+        var c_str = bun.default_allocator.dupeZ(u8, in) catch unreachable;
+        native_array[0] = c_str;
+        return native_array;
+    }
+    pub fn setCa(this: *CustomTLSProps, in: ?[]const u8) void {
+        if (in) |arg| {
+            this.ca = CustomTLSProps.create(arg);
+        }
+    }
+    pub fn setCert(this: *CustomTLSProps, in: ?[]const u8) void {
+        if (in) |arg| {
+            this.cert = CustomTLSProps.create(arg);
+        }
+    }
+    pub fn setKey(this: *CustomTLSProps, in: ?[]const u8) void {
+        if (in) |arg| {
+            this.key = CustomTLSProps.create(arg);
+        }
+    }
+    pub fn setPassphrase(this: *CustomTLSProps, in: ?[]const u8) void {
+        if (in) |arg| {
+            this.passphrase = bun.default_allocator.dupeZ(u8, arg) catch unreachable;
+        }
+    }
+
+    pub fn deinit(this: *CustomTLSProps) void {
+        if (this.ca) |entry| {
+            const slice = std.mem.span(entry[0]);
+            if (slice.len > 0) {
+                bun.default_allocator.free(slice);
+            }
+            bun.default_allocator.free(entry);
+        }
+        if (this.cert) |entry| {
+            const slice = std.mem.span(entry[0]);
+            if (slice.len > 0) {
+                bun.default_allocator.free(slice);
+            }
+            bun.default_allocator.free(entry);
+        }
+        if (this.key) |entry| {
+            const slice = std.mem.span(entry[0]);
+            if (slice.len > 0) {
+                bun.default_allocator.free(slice);
+            }
+            bun.default_allocator.free(entry);
+        }
+        if (this.passphrase) |entry| {
+            const slice = std.mem.span(entry);
+            if (slice.len > 0) {
+                bun.default_allocator.free(slice);
+            }
+        }
+    }
+};
+
 pub const AsyncHTTP = struct {
     request: ?picohttp.Request = null,
     response: ?picohttp.Response = null,
@@ -1753,7 +1811,6 @@ pub const AsyncHTTP = struct {
     http_proxy: ?URL = null,
     real: ?*AsyncHTTP = null,
     next: ?*AsyncHTTP = null,
-
 
     task: ThreadPool.Task = ThreadPool.Task{ .callback = &startAsyncHTTP },
     result_callback: HTTPClientResult.Callback = undefined,

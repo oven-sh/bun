@@ -5471,8 +5471,8 @@ pub const PackageManager = struct {
                         // a zig bug where continuing control flow through a catch seems to
                         // cause a segfault the second time `PackageManager.init` is called after
                         // switching to the add command.
-                        try attemptToCreatePackageJSON();
-                        return try initWithCLI(ctx, cli, subcommand);
+                        this_cwd = original_cwd;
+                        break :child try attemptToCreatePackageJSONAndOpen();
                     }
                 }
                 return error.MissingPackageJSON;
@@ -5769,13 +5769,20 @@ pub const PackageManager = struct {
         return manager;
     }
 
-    fn attemptToCreatePackageJSON() !void {
+    fn attemptToCreatePackageJSONAndOpen() !std.fs.File {
         const package_json_file = std.fs.cwd().createFileZ("package.json", .{ .read = true }) catch |err| {
             Output.prettyErrorln("<r><red>error:<r> {s} create package.json", .{@errorName(err)});
             Global.crash();
         };
-        defer package_json_file.close();
+
         try package_json_file.pwriteAll("{\"dependencies\": {}}", 0);
+
+        return package_json_file;
+    }
+
+    fn attemptToCreatePackageJSON() !void {
+        var file = try attemptToCreatePackageJSONAndOpen();
+        file.close();
     }
 
     pub inline fn update(ctx: Command.Context) !void {

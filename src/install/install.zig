@@ -243,6 +243,19 @@ const NetworkTask = struct {
         header_builder.count("npm-auth-type", "legacy");
     }
 
+    // "peerDependencies": {
+    //   "@ianvs/prettier-plugin-sort-imports": "*",
+    //   "prettier-plugin-twig-melody": "*"
+    // },
+    // "peerDependenciesMeta": {
+    //   "@ianvs/prettier-plugin-sort-imports": {
+    //     "optional": true
+    //   },
+    // Example case ^
+    // `@ianvs/prettier-plugin-sort-imports` is peer and also optional but was not marked optional because
+    // the offset would be 0 and the current loop index is also 0.
+    const invalidate_manifest_cache_because_optional_peer_dependencies_were_not_marked_as_optional_if_the_optional_peer_dependency_offset_was_equal_to_the_current_index = 1697871350;
+
     pub fn forManifest(
         this: *NetworkTask,
         name: string,
@@ -291,8 +304,10 @@ const NetworkTask = struct {
         var last_modified: string = "";
         var etag: string = "";
         if (loaded_manifest) |manifest| {
-            last_modified = manifest.pkg.last_modified.slice(manifest.string_buf);
-            etag = manifest.pkg.etag.slice(manifest.string_buf);
+            if (manifest.pkg.public_max_age > invalidate_manifest_cache_because_optional_peer_dependencies_were_not_marked_as_optional_if_the_optional_peer_dependency_offset_was_equal_to_the_current_index) {
+                last_modified = manifest.pkg.last_modified.slice(manifest.string_buf);
+                etag = manifest.pkg.etag.slice(manifest.string_buf);
+            }
         }
 
         var header_builder = HeaderBuilder{};
@@ -3262,7 +3277,7 @@ pub const PackageManager = struct {
                                     this.enqueueNetworkTask(network_task);
                                 }
                             } else {
-                                if (this.options.do.install_peer_dependencies) {
+                                if (this.options.do.install_peer_dependencies and !dependency.behavior.isOptionalPeer()) {
                                     try this.peer_dependencies.append(this.allocator, id);
                                 }
                             }
@@ -3772,18 +3787,16 @@ pub const PackageManager = struct {
     fn processPeerDependencyList(
         this: *PackageManager,
     ) !void {
-        if (this.peer_dependencies.items.len > 0) {
-            for (this.peer_dependencies.items) |peer_dependency_id| {
-                try this.processDependencyListItem(.{ .dependency = peer_dependency_id }, null, true);
-                const dependency = this.lockfile.buffers.dependencies.items[peer_dependency_id];
-                const resolution = this.lockfile.buffers.resolutions.items[peer_dependency_id];
-                try this.enqueueDependencyWithMain(
-                    peer_dependency_id,
-                    &dependency,
-                    resolution,
-                    true,
-                );
-            }
+        while (this.peer_dependencies.popOrNull()) |peer_dependency_id| {
+            try this.processDependencyListItem(.{ .dependency = peer_dependency_id }, null, true);
+            const dependency = this.lockfile.buffers.dependencies.items[peer_dependency_id];
+            const resolution = this.lockfile.buffers.resolutions.items[peer_dependency_id];
+            try this.enqueueDependencyWithMain(
+                peer_dependency_id,
+                &dependency,
+                resolution,
+                true,
+            );
         }
     }
 
@@ -8125,11 +8138,11 @@ pub const PackageManager = struct {
             }
 
             if (manager.options.do.install_peer_dependencies) {
-                try manager.processPeerDependencyList();
+                while (manager.pending_tasks > 0 or manager.peer_dependencies.items.len > 0) {
+                    try manager.processPeerDependencyList();
 
-                manager.drainDependencyList();
+                    manager.drainDependencyList();
 
-                while (manager.pending_tasks > 0) {
                     try manager.runTasks(
                         *PackageManager,
                         manager,

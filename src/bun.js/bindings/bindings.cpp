@@ -3902,14 +3902,28 @@ void JSC__JSValue__getNameProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* a
     arg2->len = 0;
 }
 
-extern "C" void JSC__JSValue__getName(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, BunString* arg2)
+extern "C" void JSC__JSValue__getName(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, BunString* arg2)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     if (!value.isObject()) {
         *arg2 = BunStringEmpty;
         return;
     }
-    *arg2 = Bun::toStringRef(JSC::getCalculatedDisplayName(arg1->vm(), value.getObject()));
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
+    JSObject* object = value.getObject();
+    auto displayName = JSC::getCalculatedDisplayName(vm, object);
+    if (displayName.isEmpty()) {
+        if (auto toStringTagValue = object->getIfPropertyExists(globalObject, vm.propertyNames->toStringTagSymbol)) {
+            if (toStringTagValue.isString()) {
+                displayName = toStringTagValue.toWTFString(globalObject);
+            }
+        }
+    }
+    if (scope.exception())
+        scope.clearException();
+
+    *arg2 = Bun::toStringRef(displayName);
 }
 
 JSC__JSValue JSC__JSValue__toError_(JSC__JSValue JSValue0)

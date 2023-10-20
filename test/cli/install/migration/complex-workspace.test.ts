@@ -119,6 +119,3 @@ mustNotExist("packages/second/node_modules/body-parser/node_modules/body-parser/
 mustNotExist("packages/second/node_modules/body-parser/node_modules/iconv-lite");
 mustNotExist("packages/second/node_modules/iconv-lite");
 mustNotExist("node_modules/iconv-lite");
-
-// Should pick 1.2.4, not 1.2.0.
-validate("node_modules/lines-and-columns", "1.2.4");

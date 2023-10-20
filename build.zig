@@ -184,7 +184,7 @@ pub fn build_(b: *Build) !void {
     if (!std.mem.eql(u8, @import("builtin").zig_version_string, required_zig_version)) {
         const colors = std.io.getStdErr().supportsAnsiEscapeCodes();
         std.debug.print(
-            "{s}WARNING:\nBun requires zig version '{s}', but found '{s}', build may fail...\nMake sure you installed the right version as per https://bun.sh/docs/project/development#install-zig\n{s}You can update to the right version using 'zigup {s}'\n\n",
+            "{s}WARNING:\nBun requires Zig version '{s}', but found '{s}', build may fail...\nMake sure you installed the right version as per https://bun.sh/docs/project/contributing#install-zig\n{s}You can update to the right version using 'zigup {s}'\n\n",
             .{
                 if (colors) "\x1b[1;33m" else "",
                 required_zig_version,

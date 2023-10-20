@@ -401,7 +401,7 @@ add_custom_command(
     OUTPUT "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp"
            "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.h"
     COMMAND ${BUN_EXECUTABLE} "${BUN_SRC}/codegen/bundle-functions.ts" "${BUN_WORKDIR}"
-    DEPENDS ${BUN_TS_FUNCTIONS}
+    DEPENDS ${BUN_TS_FUNCTIONS} "${BUN_SRC}/codegen/bundle-functions.ts"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Bundling JS builtin functions"
 )

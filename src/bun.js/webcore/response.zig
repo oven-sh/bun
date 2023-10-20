@@ -1411,7 +1411,6 @@ pub const Fetch = struct {
             promise: JSC.JSPromise.Strong,
             fetch_options: FetchOptions,
         ) !*FetchTasklet {
-            log("running get\n", .{});
             var jsc_vm = globalThis.bunVM();
             var fetch_tasklet = try allocator.create(FetchTasklet);
 

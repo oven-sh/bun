@@ -786,7 +786,6 @@ pub const HTTPThread = struct {
                 var custom_context = try bun.default_allocator.create(NewHTTPContext(is_ssl));
                 client.custom_context = custom_context;
                 try custom_context.initWithClientConfig(client);
-                // TODO where to track the context for deallocation
                 return try custom_context.connect(client, client.url.hostname, client.url.getPortAuto());
             }
         }

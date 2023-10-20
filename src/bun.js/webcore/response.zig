@@ -1029,26 +1029,28 @@ pub const Fetch = struct {
                                 var scheduled_response_buffer = this.scheduled_response_buffer.list;
 
                                 const chunk = scheduled_response_buffer.items;
-                                for (response.response_clones.?.items) |other_request| {
-                                    var other_body = &other_request.body;
-                                    if (other_body.value == .Locked) {
-                                        if (other_body.value.Locked.readable) |other_readable| {
-                                            other_readable.ptr.Bytes.size_hint = this.getSizeHint();
+                                if (this.response_clones) |response_clones| {
+                                    for (response_clones.items) |other_request| {
+                                        var other_body = &other_request.body;
+                                        if (other_body.value == .Locked) {
+                                            if (other_body.value.Locked.readable) |other_readable| {
+                                                other_readable.ptr.Bytes.size_hint = this.getSizeHint();
 
-                                            if (this.result.has_more) {
-                                                other_readable.ptr.Bytes.onData(
-                                                    .{
-                                                        .temporary = bun.ByteList.initConst(chunk),
-                                                    },
-                                                    bun.default_allocator,
-                                                );
-                                            } else {
-                                                other_readable.ptr.Bytes.onData(
-                                                    .{
-                                                        .temporary_and_done = bun.ByteList.initConst(chunk),
-                                                    },
-                                                    bun.default_allocator,
-                                                );
+                                                if (this.result.has_more) {
+                                                    other_readable.ptr.Bytes.onData(
+                                                        .{
+                                                            .temporary = bun.ByteList.initConst(chunk),
+                                                        },
+                                                        bun.default_allocator,
+                                                    );
+                                                } else {
+                                                    other_readable.ptr.Bytes.onData(
+                                                        .{
+                                                            .temporary_and_done = bun.ByteList.initConst(chunk),
+                                                        },
+                                                        bun.default_allocator,
+                                                    );
+                                                }
                                             }
                                         }
                                     }

@@ -48,16 +48,6 @@ If you're using TypeScript, you may see a type error on the `Bun` global. To fix
 $ bun add -d bun-types
 ```
 
-Then add the following line to your `compilerOptions` in `tsconfig.json`.
-
-```json-diff#tsconfig.json
-{
-  "compilerOptions": {
-+   "types": ["bun-types"]
-  }
-}
-```
-
 Run the file from your shell.
 
 ```bash

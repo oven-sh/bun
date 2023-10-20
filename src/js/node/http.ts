@@ -1209,6 +1209,11 @@ class ClientRequest extends OutgoingMessage {
   #protocol;
   #method;
   #port;
+  #pfx = null;
+  #ca = null;
+  #key = null;
+  #cert = null;
+  #passphrase = null;
   #useDefaultPort;
   #joinDuplicateHeaders;
   #maxHeaderSize;
@@ -1295,7 +1300,13 @@ class ClientRequest extends OutgoingMessage {
         verbose: !!$debug,
         signal: this[kAbortController].signal,
         proxy: proxy,
-
+        ssl_props: {
+          ca: this.#ca,
+          passphrase: this.#passphrase,
+          pfx: this.#pfx,
+          key: this.#key,
+          cert: this.#cert,
+        },
         // Timeouts are handled via this.setTimeout.
         timeout: false,
         // Disable auto gzip/deflate
@@ -1470,6 +1481,18 @@ class ClientRequest extends OutgoingMessage {
     }
 
     this.#joinDuplicateHeaders = _joinDuplicateHeaders;
+    console.log(options)
+    if(options.pfx)
+      this.#pfx = options.pfx;
+
+    if(options.ca)
+      this.#ca = options.ca;
+    if(options.cert)
+      this.#cert = options.cert;
+    if(options.key)
+      this.#key = options.key;
+    if(options.passphrase)
+      this.#passphrase = options.passphrase;
 
     this.#path = options.path || "/";
     if (cb) {

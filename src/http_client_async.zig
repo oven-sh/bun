@@ -359,6 +359,51 @@ fn NewHTTPContext(comptime ssl: bool) type {
             return @as(*BoringSSL.SSL_CTX, @ptrCast(this.us_socket_context.getNativeHandle(true)));
         }
 
+        pub fn initWithClientConfig(this: *@This(), client: *HTTPClient) !void {
+            if (!comptime ssl) {
+                unreachable;
+            }
+            var opts: uws.us_bun_socket_context_options_t = .{
+                .request_cert = 1,
+                .reject_unauthorized = 0,
+            };
+            if (client.passphrase) |passphrase| {
+                opts.passphrase = bun.default_allocator.dupeZ(u8, passphrase) catch unreachable;
+            }
+            if(client.ca) |ca| {
+                const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
+                var c_str = bun.default_allocator.dupeZ(u8, ca) catch unreachable;
+                native_array[0] = c_str;
+                opts.ca = native_array.ptr;
+                opts.ca_count = 1;
+            }
+            if(client.cert)|cert| {
+               const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
+               var c_str = bun.default_allocator.dupeZ(u8, cert) catch unreachable;
+               native_array[0] = c_str;
+               opts.cert = native_array.ptr;
+               opts.cert_count = 1; 
+           }
+            if(client.key)|key| {
+               const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
+               var c_str = bun.default_allocator.dupeZ(u8, key) catch unreachable;
+               native_array[0] = c_str;
+               opts.key = native_array.ptr;
+               opts.key_count = 1; 
+           }
+                this.us_socket_context = uws.us_create_bun_socket_context(ssl_int, http_thread.loop, @sizeOf(usize), opts).?;
+        
+            this.sslCtx().setup();
+
+            HTTPSocket.configure(
+                this.us_socket_context,
+                false,
+                anyopaque,
+                Handler,
+            );
+            
+        }
+
         pub fn init(this: *@This()) !void {
             if (comptime ssl) {
                 var opts: uws.us_bun_socket_context_options_t = .{
@@ -640,6 +685,10 @@ fn NewHTTPContext(comptime ssl: bool) type {
             else
                 hostname_;
 
+            if (comptime ssl) {
+                Output.print("the passphrase is {any}\n", .{client.passphrase});
+                Output.flush();
+            }
             client.connected_url = if (client.http_proxy) |proxy| proxy else client.url;
             client.connected_url.hostname = hostname;
 
@@ -741,6 +790,15 @@ pub const HTTPThread = struct {
     }
 
     pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewHTTPContext(is_ssl).HTTPSocket {
+        if (comptime is_ssl) {
+            const needs_own_context = client.passphrase != null or client.pfx != null or client.ca != null or client.cert != null or client.key != null;
+            if (needs_own_context) {
+                var custom_context = try bun.default_allocator.create(NewHTTPContext(is_ssl));
+                custom_context.initWithClientConfig(client) catch @panic("Failed to init custom context");
+                // TODO where to track the context for deallocation
+                return try custom_context.connect(client, client.url.hostname, client.url.getPortAuto());
+            }
+        }
         if (client.http_proxy) |url| {
             return try this.context(is_ssl).connect(client, url.hostname, url.getPortAuto());
         }
@@ -1507,6 +1565,12 @@ disable_keepalive: bool = false,
 disable_decompression: bool = false,
 state: InternalState = .{},
 
+pfx: ?[]const u8 = null,
+ca: ?[]const u8 = null,
+cert: ?[]const u8 = null,
+key: ?[]const u8 = null,
+passphrase: ?[]const u8 = null,
+
 result_callback: HTTPClientResult.Callback = undefined,
 
 /// Some HTTP servers (such as npm) report Last-Modified times but ignore If-Modified-Since.
@@ -1689,6 +1753,7 @@ pub const AsyncHTTP = struct {
     http_proxy: ?URL = null,
     real: ?*AsyncHTTP = null,
     next: ?*AsyncHTTP = null,
+
 
     task: ThreadPool.Task = ThreadPool.Task{ .callback = &startAsyncHTTP },
     result_callback: HTTPClientResult.Callback = undefined,

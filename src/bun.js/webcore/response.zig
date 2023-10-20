@@ -1411,6 +1411,7 @@ pub const Fetch = struct {
             promise: JSC.JSPromise.Strong,
             fetch_options: FetchOptions,
         ) !*FetchTasklet {
+            log("running get\n", .{});
             var jsc_vm = globalThis.bunVM();
             var fetch_tasklet = try allocator.create(FetchTasklet);
 
@@ -1503,6 +1504,13 @@ pub const Fetch = struct {
             fetch_tasklet.http.?.client.disable_decompression = fetch_options.disable_decompression;
             fetch_tasklet.http.?.client.reject_unauthorized = fetch_options.reject_unauthorized;
 
+            fetch_tasklet.http.?.client.pfx = fetch_options.pfx;
+            fetch_tasklet.http.?.client.passphrase = fetch_options.passphrase;
+            fetch_tasklet.http.?.client.ca = fetch_options.ca;
+            fetch_tasklet.http.?.client.cert = fetch_options.cert;
+            fetch_tasklet.http.?.client.key = fetch_options.key;
+
+
             // we wanna to return after headers are received
             fetch_tasklet.signal_store.header_progress.store(true, .Monotonic);
 
@@ -1551,6 +1559,11 @@ pub const Fetch = struct {
             hostname: ?[]u8 = null,
             memory_reporter: *JSC.MemoryReportingAllocator,
             check_server_identity: JSC.Strong = .{},
+            pfx: ?[]const u8 = null,
+            ca: ?[]const u8 = null,
+            key: ?[]const u8 = null,
+            cert: ?[]const u8 = null,
+            passphrase: ?[]const u8 = null,
         };
 
         pub fn queue(
@@ -1705,6 +1718,12 @@ pub const Fetch = struct {
         // Custom Hostname
         var hostname: ?[]u8 = null;
 
+        var passphrase: ?[]const u8 = null;
+        var pfx: ?[]const u8 = null;
+        var ca: ?[]const u8 = null;
+        var key: ?[]const u8 = null;
+        var cert: ?[]const u8 = null;
+
         var url_proxy_buffer: []const u8 = undefined;
         var is_file_url = false;
         var reject_unauthorized = script_ctx.bundler.env.getTLSRejectUnauthorized();
@@ -1853,6 +1872,54 @@ pub const Fetch = struct {
                                 disable_decompression = !decompress.asBoolean();
                             } else if (decompress.isNumber()) {
                                 disable_decompression = decompress.to(i32) == 0;
+                            }
+                        }
+
+                        if (options.get(ctx, "ssl_props")) |ssl_opts| {
+                            if (!ssl_opts.isEmptyOrUndefinedOrNull() and ssl_opts.isObject()) {
+                                if (ssl_opts.get(ctx, "pfx")) |pfx_opt| {
+                                    if (pfx_opt.isString())
+                                        pfx = pfx_opt.toSlice(ctx.ptr(), allocator).slice();
+                                    if (pfx_opt.isBuffer(ctx.ptr())) {
+                                        if (JSC.Node.StringOrBuffer.fromJS(globalThis, allocator, pfx_opt, exception)) |sb| {
+                                            pfx = sb.slice();
+                                        }
+                                    }
+                                }
+                                if (ssl_opts.get(ctx, "ca")) |ca_opt| {
+                                    if (ca_opt.isString())
+                                        ca = ca_opt.toSlice(ctx.ptr(), allocator).slice();
+
+                                    if (ca_opt.isBuffer(ctx.ptr())) {
+                                        if (JSC.Node.StringOrBuffer.fromJS(globalThis, allocator, ca_opt, exception)) |sb| {
+                                            ca = sb.slice();
+                                        }
+                                    }
+                                }
+                                if (ssl_opts.get(ctx, "cert")) |cert_opt| {
+                                    if (cert_opt.isString())
+                                        cert = cert_opt.toSlice(ctx.ptr(), allocator).slice();
+
+                                    if (cert_opt.isBuffer(ctx.ptr())) {
+                                        if (JSC.Node.StringOrBuffer.fromJS(globalThis, allocator, cert_opt, exception)) |sb| {
+                                            cert = sb.slice();
+                                        }
+                                    }
+                                }
+                                if (ssl_opts.get(ctx, "key")) |key_opt| {
+                                    if (key_opt.isString())
+                                        key = key_opt.toSlice(ctx.ptr(), allocator).slice();
+
+                                    if (key_opt.isBuffer(ctx.ptr())) {
+                                        if (JSC.Node.StringOrBuffer.fromJS(globalThis, allocator, key_opt, exception)) |sb| {
+                                            key = sb.slice();
+                                        }
+                                    }
+                                }
+                                if (ssl_opts.get(ctx, "passphrase")) |passphrase_opt| {
+                                    if (passphrase_opt.isString())
+                                        passphrase = passphrase_opt.toSlice(ctx.ptr(), allocator).slice();
+                                }
                             }
                         }
 
@@ -2049,6 +2116,53 @@ pub const Fetch = struct {
                             }
                         }
 
+                        if (options.get(ctx, "ssl_props")) |ssl_opts| {
+                            if (!ssl_opts.isEmptyOrUndefinedOrNull() and ssl_opts.isObject()) {
+                                if (ssl_opts.get(ctx, "pfx")) |pfx_opt| {
+                                    if (pfx_opt.isString())
+                                        pfx = pfx_opt.toSlice(ctx.ptr(), allocator).slice();
+                                    if (pfx_opt.isBuffer(ctx.ptr())) {
+                                        if (JSC.Node.StringOrBuffer.fromJS(globalThis, allocator, pfx_opt, exception)) |sb| {
+                                            pfx = sb.slice();
+                                        }
+                                    }
+                                }
+                                if (ssl_opts.get(ctx, "ca")) |ca_opt| {
+                                    if (ca_opt.isString())
+                                        ca = ca_opt.toSlice(ctx.ptr(), allocator).slice();
+
+                                    if (ca_opt.isBuffer(ctx.ptr())) {
+                                        if (JSC.Node.StringOrBuffer.fromJS(globalThis, allocator, ca_opt, exception)) |sb| {
+                                            ca = sb.slice();
+                                        }
+                                    }
+                                }
+                                if (ssl_opts.get(ctx, "cert")) |cert_opt| {
+                                    if (cert_opt.isString())
+                                        cert = cert_opt.toSlice(ctx.ptr(), allocator).slice();
+
+                                    if (cert_opt.isBuffer(ctx.ptr())) {
+                                        if (JSC.Node.StringOrBuffer.fromJS(globalThis, allocator, cert_opt, exception)) |sb| {
+                                            cert = sb.slice();
+                                        }
+                                    }
+                                }
+                                if (ssl_opts.get(ctx, "key")) |key_opt| {
+                                    if (key_opt.isString())
+                                        key = key_opt.toSlice(ctx.ptr(), allocator).slice();
+
+                                    if (key_opt.isBuffer(ctx.ptr())) {
+                                        if (JSC.Node.StringOrBuffer.fromJS(globalThis, allocator, key_opt, exception)) |sb| {
+                                            key = sb.slice();
+                                        }
+                                    }
+                                }
+                                if (ssl_opts.get(ctx, "passphrase")) |passphrase_opt| {
+                                    if (passphrase_opt.isString())
+                                        passphrase = passphrase_opt.toSlice(ctx.ptr(), allocator).slice();
+                                }
+                            }
+                        }
                         if (options.get(ctx, "tls")) |tls| {
                             if (!tls.isEmptyOrUndefinedOrNull() and tls.isObject()) {
                                 if (tls.get(ctx, "rejectUnauthorized")) |reject| {
@@ -2299,7 +2413,10 @@ pub const Fetch = struct {
                 }
             }
         }
-
+        {
+            Output.print("{any} {any} {any}\n", .{ passphrase, pfx, ca });
+            Output.flush();
+        }
         // Only create this after we have validated all the input.
         // or else we will leak it
         var promise = JSPromise.Strong.init(globalThis);
@@ -2327,6 +2444,11 @@ pub const Fetch = struct {
                 .proxy = proxy,
                 .url_proxy_buffer = url_proxy_buffer,
                 .signal = signal,
+                .passphrase = passphrase,
+                .ca = ca,
+                .pfx = pfx,
+                .key = key,
+                .cert = cert,
                 .globalThis = globalThis,
                 .hostname = hostname,
                 .memory_reporter = memory_reporter,

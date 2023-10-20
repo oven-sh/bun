@@ -1022,6 +1022,10 @@ pub const Behavior = packed struct(u8) {
         return this.optional and !this.isPeer();
     }
 
+    pub inline fn isOptionalPeer(this: Behavior) bool {
+        return this.optional and this.isPeer();
+    }
+
     pub inline fn isDev(this: Behavior) bool {
         return this.dev;
     }

@@ -3262,7 +3262,7 @@ pub const PackageManager = struct {
                                     this.enqueueNetworkTask(network_task);
                                 }
                             } else {
-                                if (this.options.do.install_peer_dependencies) {
+                                if (this.options.do.install_peer_dependencies and !dependency.behavior.isOptionalPeer()) {
                                     try this.peer_dependencies.append(this.allocator, id);
                                 }
                             }

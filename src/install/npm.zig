@@ -1618,7 +1618,8 @@ pub const PackageManifest = struct {
         // So instead of having a hardcoded limit of how many packages we can sort, we ask
         //    > "How many bytes do we need to store the indices?"
         // We decide what size of integer to use based on that.
-        const how_many_bytes_to_store_indices = std.math.divCeil(usize, 8 * std.math.log2_int_ceil(usize, max_versions_count), 8) catch 0;
+        const how_many_bytes_to_store_indices = std.math.divCeil(usize, std.math.log2_int_ceil(usize, max_versions_count), 8) catch 0;
+
         switch (how_many_bytes_to_store_indices) {
             inline 1...8 => |int_bytes| {
                 const Int = std.meta.Int(.unsigned, int_bytes * 8);

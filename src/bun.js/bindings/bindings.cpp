@@ -3913,6 +3913,8 @@ extern "C" void JSC__JSValue__getName(JSC__JSValue JSValue0, JSC__JSGlobalObject
     auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
     JSObject* object = value.getObject();
     auto displayName = JSC::getCalculatedDisplayName(vm, object);
+
+    // JSC doesn't include @@toStringTag in calculated display name
     if (displayName.isEmpty()) {
         if (auto toStringTagValue = object->getIfPropertyExists(globalObject, vm.propertyNames->toStringTagSymbol)) {
             if (toStringTagValue.isString()) {

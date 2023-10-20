@@ -1425,12 +1425,12 @@ pub const ModuleLoader = struct {
                 //
                 var should_close_input_file_fd = fd == null;
 
-                var input_file_fd: StoredFileDescriptorType = 0;
+                var input_file_fd: StoredFileDescriptorType = bun.invalid_fd;
                 var parse_options = Bundler.ParseOptions{
                     .allocator = allocator,
                     .path = path,
                     .loader = loader,
-                    .dirname_fd = 0,
+                    .dirname_fd = bun.invalid_fd,
                     .file_descriptor = fd,
                     .file_fd_ptr = &input_file_fd,
                     .file_hash = hash,
@@ -1444,9 +1444,9 @@ pub const ModuleLoader = struct {
                     .set_breakpoint_on_first_line = is_main and jsc_vm.debugger != null and jsc_vm.debugger.?.set_breakpoint_on_first_line and setBreakPointOnFirstLine(),
                 };
                 defer {
-                    if (should_close_input_file_fd and input_file_fd != 0) {
+                    if (should_close_input_file_fd and input_file_fd != bun.invalid_fd) {
                         _ = bun.sys.close(input_file_fd);
-                        input_file_fd = 0;
+                        input_file_fd = bun.invalid_fd;
                     }
                 }
 

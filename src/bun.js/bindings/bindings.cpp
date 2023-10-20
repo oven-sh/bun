@@ -676,8 +676,8 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 if ((url2 == nullptr) != (url1 == nullptr)) {
                     return false;
                 }
-            } 
-            
+            }
+
             if (url2 && url1) {
                 // toEqual or toStrictEqual should return false when the URLs' href is not equal
                 // But you could have added additional properties onto the
@@ -3900,6 +3900,16 @@ void JSC__JSValue__getNameProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* a
     }
 
     arg2->len = 0;
+}
+
+extern "C" void JSC__JSValue__getName(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, BunString* arg2)
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    if (!value.isObject()) {
+        *arg2 = BunStringEmpty;
+        return;
+    }
+    *arg2 = Bun::toStringRef(JSC::getCalculatedDisplayName(arg1->vm(), value.getObject()));
 }
 
 JSC__JSValue JSC__JSValue__toError_(JSC__JSValue JSValue0)

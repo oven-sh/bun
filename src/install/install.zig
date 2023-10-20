@@ -5221,6 +5221,19 @@ pub const PackageManager = struct {
                                         }
                                     }
                                     break;
+                                } else {
+                                    if (request.version.tag == .github or request.version.tag == .git) {
+                                        for (query.expr.data.e_object.properties.slice()) |item| {
+                                            if (item.value) |v| {
+                                                const url = request.version.literal.slice(request.version_buf);
+                                                if (v.data == .e_string and v.data.e_string.eql(string, url)) {
+                                                    request.e_string = v.data.e_string;
+                                                    remaining -= 1;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }

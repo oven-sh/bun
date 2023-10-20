@@ -98,6 +98,8 @@ option(USE_CUSTOM_LIBUV "Use Bun's recommended version of libuv (Windows only)" 
 option(USE_BASELINE_BUILD "Build Bun for baseline (older) CPUs" OFF)
 option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
 
+option(CANARY "Make `bun --revision` report a canary release" OFF)
+
 set(ERROR_LIMIT 100 CACHE STRING "Maximum number of errors to show when compiling C++ code")
 
 set(ARCH x86_64)
@@ -449,9 +451,12 @@ endif()
 
 add_custom_command(
     OUTPUT "${BUN_ZIG_OBJ}"
-    COMMAND "${ZIG_COMPILER}" "build" "obj"
+    COMMAND
+    "${ZIG_COMPILER}" "build" "obj"
         "-Doutput-dir=${BUN_WORKDIR}/CMakeFiles"
         "-Dgenerated-code=${BUN_WORKDIR}/codegen"
+        "-Dversion=${Bun_VERSION}"
+        "-Dcanary=$<IF:$<BOOL:${CANARY}>,true,false>"
         "-Doptimize=${ZIG_OPTIMIZE}"
         "-Dcpu=${CPU_TARGET}"
         "-Dtarget=${ZIG_TARGET}"

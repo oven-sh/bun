@@ -1,6 +1,13 @@
 cmake_minimum_required(VERSION 3.22)
+
 cmake_policy(SET CMP0091 NEW)
+cmake_policy(SET CMP0067 NEW) 
+
 set(CMAKE_COLOR_DIAGNOSTICS ON)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_C_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_C_STANDARD_REQUIRED ON)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Building in ${BUN_WORKDIR}")
@@ -58,10 +65,6 @@ else()
     set(STRIP "strip")
 endif()
 
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_C_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_C_STANDARD_REQUIRED ON)
 project(Bun VERSION "1.0.7")
 
 set(DEFAULT_ON_UNLESS_WINDOWS ON)
@@ -93,6 +96,7 @@ option(USE_CUSTOM_LOLHTML "Use Bun's recommended version of lolhtml" ON)
 option(USE_CUSTOM_TINYCC "Use Bun's recommended version of tinycc" ON)
 option(USE_CUSTOM_LIBUV "Use Bun's recommended version of libuv (Windows only)" OFF)
 option(USE_BASELINE_BUILD "Build Bun for baseline (older) CPUs" OFF)
+option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
 
 set(ERROR_LIMIT 100 CACHE STRING "Maximum number of errors to show when compiling C++ code")
 
@@ -151,6 +155,12 @@ find_program(PRETTIER prettier DOC "Path to prettier" PATHS ./node_modules/.bin 
 
 # Esbuild (TODO: switch these to "bun build")
 find_program(ESBUILD esbuild DOC "Path to esbuild" PATHS ./node_modules/.bin ENV PATH)
+
+# Ruby (only needed for unified sources)
+if(USE_UNIFIED_SOURCES)
+    # ruby 'WebKit/Source/WTF/Scripts/generate-unified-source-bundles.rb' source_list.txt --source-tree-path . --derived-sources-path build/unified-sources
+    find_program(RUBY ruby DOC "Path to ruby")
+endif()
 
 # CCache
 find_program(CCACHE_PROGRAM ccache)
@@ -506,6 +516,7 @@ add_compile_definitions(
     "BUILDING_JSCONLY__"
     "ASSERT_ENABLED=$<IF:$<CONFIG:ASSERT_ENABLED>,1,0>"
     "BUN_DYNAMIC_JS_LOAD_PATH=\"${BUN_WORKDIR}/js\""
+    "HAVE_TIMINGSAFE_BCMP=1"
 )
 if(NOT ASSERT_ENABLED)
     add_compile_definitions("NDEBUG=1")
@@ -547,6 +558,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_compile_definitions("BUN_DEBUG=1")
     
 elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
+    # TODO, flags. -femit-llvm, lto, etc
     #if (MSVC)
         #target_compile_options(${bun} PUBLIC /O2)
     ##else()
@@ -573,6 +585,7 @@ if(NOT MSVC)
         # -fno-omit-frame-pointer
         # -fno-semantic-interposition
     )
+    string(APPEND CMAKE_CXX_FLAGS " -std=c++2a ")
 else() # MSVC
     string(APPEND SUPPRESS_WARNING_NUMBERS
         # JSC deletes operator delete to prevent accidental use
@@ -602,9 +615,6 @@ if(APPLE)
 endif()
 
 if(UNIX AND NOT APPLE)
-    target_compile_options(${bun} PUBLIC
-        -std=c++2a
-    )
     target_link_options(${bun} PUBLIC
         "-static-libstdc++"
         "-static-libgcc"

@@ -173,7 +173,7 @@ for (const [name, bundle, outputs] of [
         .replace(/import.meta.require\((.*?)\)/g, (expr, specifier) => {
           try {
             const str = JSON.parse(specifier);
-            return globalThis.requireTransformer(str, file.path);
+            return requireTransformer(str, file.path);
           } catch {
             throw new Error(
               `Builtin Bundler: import.meta.require() must be called with a string literal. Found ${specifier}. (in ${file.path}))`,

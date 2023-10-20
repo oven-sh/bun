@@ -278,7 +278,7 @@ const JSC::ImplementationVisibility s_${name}ImplementationVisibility = JSC::Imp
 const int s_${name}Length = ${fn.source.length};
 static const JSC::Intrinsic s_${name}Intrinsic = JSC::NoIntrinsic;
 static const char s_${name}Bytes[${count}] = ${code};
-extern const char* s_${name} = s_${name}Bytes;
+static const char* s_${name} = s_${name}Bytes;
 `;
   }
   bundledCPP += `#define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \\

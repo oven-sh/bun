@@ -9,7 +9,6 @@
 #include <sys/signal.h>
 #include <unistd.h>
 #include <cstring>
-#include <cpuid.h>
 #else
 #include <uv.h>
 #endif // !OS(WINDOWS)

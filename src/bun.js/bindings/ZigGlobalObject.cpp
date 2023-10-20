@@ -4,70 +4,74 @@
 #include "helpers.h"
 #include "BunClientData.h"
 
-#include <JavaScriptCore/AggregateError.h>
-#include <JavaScriptCore/InternalFieldTuple.h>
-#include <JavaScriptCore/BytecodeIndex.h>
-#include <JavaScriptCore/CallFrameInlines.h>
-#include <JavaScriptCore/ClassInfo.h>
-#include <JavaScriptCore/CodeBlock.h>
-#include <JavaScriptCore/Completion.h>
-#include <JavaScriptCore/Error.h>
-#include <JavaScriptCore/ErrorInstance.h>
-#include <JavaScriptCore/Exception.h>
-#include <JavaScriptCore/ExceptionScope.h>
-#include <JavaScriptCore/FunctionConstructor.h>
-#include <JavaScriptCore/HashMapImpl.h>
-#include <JavaScriptCore/HashMapImplInlines.h>
-#include <JavaScriptCore/Heap.h>
-#include <JavaScriptCore/Identifier.h>
-#include <JavaScriptCore/InitializeThreading.h>
-#include <JavaScriptCore/IteratorOperations.h>
-#include <JavaScriptCore/JSArray.h>
+#include "JavaScriptCore/AggregateError.h"
+#include "JavaScriptCore/InternalFieldTuple.h"
+#include "JavaScriptCore/BytecodeIndex.h"
+#include "JavaScriptCore/CallFrameInlines.h"
+#include "JavaScriptCore/ClassInfo.h"
+#include "JavaScriptCore/CodeBlock.h"
+#include "JavaScriptCore/Completion.h"
+#include "JavaScriptCore/Error.h"
+#include "JavaScriptCore/ErrorInstance.h"
+#include "JavaScriptCore/Exception.h"
+#include "JavaScriptCore/ExceptionScope.h"
+#include "JavaScriptCore/FunctionConstructor.h"
+#include "JavaScriptCore/HashMapImpl.h"
+#include "JavaScriptCore/HashMapImplInlines.h"
+#include "JavaScriptCore/Heap.h"
+#include "JavaScriptCore/Identifier.h"
+#include "JavaScriptCore/InitializeThreading.h"
+#include "JavaScriptCore/IteratorOperations.h"
+#include "JavaScriptCore/JSArray.h"
+#include "JavaScriptCore/JSGlobalProxyInlines.h"
 
-#include <JavaScriptCore/JSCallbackConstructor.h>
-#include <JavaScriptCore/JSCallbackObject.h>
-#include <JavaScriptCore/JSCast.h>
-#include <JavaScriptCore/JSClassRef.h>
-#include <JavaScriptCore/JSMicrotask.h>
+#include "JavaScriptCore/JSCallbackConstructor.h"
+#include "JavaScriptCore/JSCallbackObject.h"
+#include "JavaScriptCore/JSCast.h"
+#include "JavaScriptCore/JSClassRef.h"
+#include "JavaScriptCore/JSMicrotask.h"
 #include "ZigConsoleClient.h"
-// #include <JavaScriptCore/JSContextInternal.h>
-#include <JavaScriptCore/CatchScope.h>
-#include <JavaScriptCore/DeferredWorkTimer.h>
-#include <JavaScriptCore/JSInternalPromise.h>
-#include <JavaScriptCore/JSLock.h>
-#include <JavaScriptCore/JSMap.h>
-#include <JavaScriptCore/JSModuleLoader.h>
-#include <JavaScriptCore/JSModuleNamespaceObject.h>
-#include <JavaScriptCore/JSModuleRecord.h>
-#include <JavaScriptCore/JSNativeStdFunction.h>
-#include <JavaScriptCore/JSObject.h>
-#include <JavaScriptCore/JSPromise.h>
-#include <JavaScriptCore/JSSet.h>
-#include <JavaScriptCore/JSSourceCode.h>
-#include <JavaScriptCore/JSString.h>
-#include <JavaScriptCore/JSWeakMap.h>
-#include <JavaScriptCore/ObjectConstructor.h>
-#include <JavaScriptCore/OptionsList.h>
-#include <JavaScriptCore/ParserError.h>
-#include <JavaScriptCore/ScriptExecutable.h>
-#include <JavaScriptCore/SourceOrigin.h>
-#include <JavaScriptCore/StackFrame.h>
-#include <JavaScriptCore/StackVisitor.h>
-#include <JavaScriptCore/VM.h>
-#include <JavaScriptCore/WasmFaultSignalHandler.h>
-#include <wtf/Gigacage.h>
-#include <wtf/URL.h>
-#include <wtf/text/ExternalStringImpl.h>
-#include <wtf/text/StringCommon.h>
-#include <wtf/text/StringImpl.h>
-#include <wtf/text/StringView.h>
-#include <wtf/text/WTFString.h>
+// #include "JavaScriptCore/JSContextInternal.h"
+#include "JavaScriptCore/CatchScope.h"
+#include "JavaScriptCore/DeferredWorkTimer.h"
+#include "JavaScriptCore/JSInternalPromise.h"
+#include "JavaScriptCore/JSLock.h"
+#include "JavaScriptCore/JSMap.h"
+#include "JavaScriptCore/JSModuleLoader.h"
+#include "JavaScriptCore/JSModuleNamespaceObject.h"
+#include "JavaScriptCore/JSModuleNamespaceObjectInlines.h"
+#include "JavaScriptCore/JSModuleRecord.h"
+#include "JavaScriptCore/JSNativeStdFunction.h"
+#include "JavaScriptCore/JSObject.h"
+#include "JavaScriptCore/JSPromise.h"
+#include "JavaScriptCore/JSSet.h"
+#include "JavaScriptCore/JSSourceCode.h"
+#include "JavaScriptCore/JSString.h"
+#include "JavaScriptCore/JSValueInternal.h"
+#include "JavaScriptCore/JSVirtualMachineInternal.h"
+#include "JavaScriptCore/JSWeakMap.h"
+#include "JavaScriptCore/ObjectConstructor.h"
+#include "JavaScriptCore/OptionsList.h"
+#include "JavaScriptCore/ParserError.h"
+#include "JavaScriptCore/ScriptExecutable.h"
+#include "JavaScriptCore/SourceOrigin.h"
+#include "JavaScriptCore/StackFrame.h"
+#include "JavaScriptCore/StackVisitor.h"
+#include "JavaScriptCore/VM.h"
+#include "JavaScriptCore/WasmFaultSignalHandler.h"
+#include "wtf/Gigacage.h"
+#include "wtf/URL.h"
+#include "wtf/text/ExternalStringImpl.h"
+#include "wtf/text/StringCommon.h"
+#include "wtf/text/StringImpl.h"
+#include "wtf/text/StringView.h"
+#include "wtf/text/WTFString.h"
 
-#include <wtf/text/Base64.h>
-// #include <JavaScriptCore/CachedType.h>
-#include <JavaScriptCore/JSCallbackObject.h>
-#include <JavaScriptCore/JSClassRef.h>
-#include <JavaScriptCore/CallData.h>
+#include "wtf/text/Base64.h"
+// #include "JavaScriptCore/CachedType.h"
+#include "JavaScriptCore/JSCallbackObject.h"
+#include "JavaScriptCore/JSClassRef.h"
+#include "JavaScriptCore/CallData.h"
 #include "GCDefferalContext.h"
 
 #include "BunClientData.h"
@@ -97,11 +101,11 @@
 #include "JSBuffer.h"
 #include "JSBufferList.h"
 #include "JSFFIFunction.h"
-#include <JavaScriptCore/InternalFunction.h>
-#include <JavaScriptCore/LazyClassStructure.h>
-#include <JavaScriptCore/LazyClassStructureInlines.h>
-#include <JavaScriptCore/FunctionPrototype.h>
-#include <JavaScriptCore/GetterSetter.h>
+#include "JavaScriptCore/InternalFunction.h"
+#include "JavaScriptCore/LazyClassStructure.h"
+#include "JavaScriptCore/LazyClassStructureInlines.h"
+#include "JavaScriptCore/FunctionPrototype.h"
+#include "JavaScriptCore/GetterSetter.h"
 #include "napi.h"
 #include "JSSQLStatement.h"
 #include "ModuleLoader.h"
@@ -111,7 +115,7 @@
 #include "NodeTTYModule.h"
 
 #include "ZigGeneratedClasses.h"
-#include <JavaScriptCore/DateInstance.h>
+#include "JavaScriptCore/DateInstance.h"
 
 #include "BunPlugin.h"
 #include "JSEnvironmentVariableMap.h"
@@ -127,7 +131,7 @@
 #include "ProcessBindingConstants.h"
 
 #if ENABLE(REMOTE_INSPECTOR)
-#include <JavaScriptCore/RemoteInspectorServer.h>
+#include "JavaScriptCore/RemoteInspectorServer.h"
 #endif
 
 #include "BunObject.h"
@@ -150,6 +154,7 @@ using SourceOrigin = JSC::SourceOrigin;
 using JSObject = JSC::JSObject;
 using JSNonFinalObject = JSC::JSNonFinalObject;
 namespace JSCastingHelpers = JSC::JSCastingHelpers;
+#include <dlfcn.h>
 
 #include "IDLTypes.h"
 
@@ -168,7 +173,7 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 #include "JSWritableStream.h"
 #include "JSWritableStreamDefaultController.h"
 #include "JSWritableStreamDefaultWriter.h"
-#include <JavaScriptCore/BuiltinNames.h>
+#include "JavaScriptCore/BuiltinNames.h"
 #include "JSTextEncoder.h"
 #include "StructuredClone.h"
 #include "JSWebSocket.h"
@@ -217,13 +222,9 @@ constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 
 #ifdef __APPLE__
 #include <sys/sysctl.h>
-#elif defined(__linux__)
+#else
 // for sysconf
 #include <unistd.h>
-#endif
-
-#if !OS(WINDOWS)
-#include <dlfcn.h>
 #endif
 
 // #include <iostream>

@@ -1818,14 +1818,16 @@ pub const ZigConsoleClient = struct {
                             .ctx = this.writer,
                             .failed = false,
                         };
-                        var name_str = ZigString.init("");
 
-                        value.getNameProperty(globalThis, &name_str);
-                        if (name_str.len > 0 and !strings.eqlComptime(name_str.slice(), "Object")) {
+                        var name_str = value.getName(globalThis);
+                        defer name_str.deref();
+                        if (!name_str.isEmpty() and !name_str.eqlComptime("Object")) {
                             writer.print("{} ", .{name_str});
                         } else {
-                            value.getPrototype(globalThis).getNameProperty(globalThis, &name_str);
-                            if (name_str.len > 0 and !strings.eqlComptime(name_str.slice(), "Object")) {
+                            name_str.deref();
+                            name_str = value.getPrototype(globalThis).getName(globalThis);
+
+                            if (!name_str.isEmpty() and !name_str.eqlComptime("Object")) {
                                 writer.print("{} ", .{name_str});
                             }
                         }
@@ -2184,10 +2186,10 @@ pub const ZigConsoleClient = struct {
                     }
                 },
                 .Function => {
-                    var printable = ZigString.init(&name_buf);
-                    value.getNameProperty(this.globalThis, &printable);
+                    var printable = value.getName(this.globalThis);
+                    defer printable.deref();
 
-                    if (printable.len == 0) {
+                    if (printable.isEmpty()) {
                         writer.print(comptime Output.prettyFmt("<cyan>[Function]<r>", enable_ansi_colors), .{});
                     } else {
                         writer.print(comptime Output.prettyFmt("<cyan>[Function: {}]<r>", enable_ansi_colors), .{printable});
@@ -2890,8 +2892,8 @@ pub const ZigConsoleClient = struct {
                         }
 
                         var display_name = value.getName(this.globalThis);
-                        if (display_name.len == 0) {
-                            display_name = ZigString.init("Object");
+                        if (display_name.isEmpty()) {
+                            display_name = String.static("Object");
                         }
                         writer.print(comptime Output.prettyFmt("<r><cyan>[{} ...]<r>", enable_ansi_colors), .{
                             display_name,

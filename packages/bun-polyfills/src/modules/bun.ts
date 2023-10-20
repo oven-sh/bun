@@ -17,6 +17,7 @@ import {
 import { ArrayBufferSink as ArrayBufferSinkPolyfill } from './bun/arraybuffersink.js';
 import { FileBlob, NodeJSStreamFileBlob } from './bun/fileblob.js';
 import { listen as listenPolyfill } from './bun/tcp_listen.js';
+import { connect as connectPolyfill } from './bun/tcp_connect.js';
 import TranspilerImpl from './bun/transpiler.js';
 import { mmap as mmapper } from './bun/mmap.js';
 import { SyncWorker } from '../utils/sync.mjs';
@@ -42,7 +43,7 @@ export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satis
 
 //? These are automatically updated on build by tools/updateversions.ts, do not edit manually.
 export const version = '1.0.4' satisfies typeof Bun.version;
-export const revision = '2329ab8c5b00dcf55fc4d1c3947e9d7f1937bbbf' satisfies typeof Bun.revision;
+export const revision = '39a8aa82078825bf02f3fbd197ab20c49e836a75' satisfies typeof Bun.revision;
 
 export const gc = (globalThis.gc ? (() => (globalThis.gc!(), process.memoryUsage().heapUsed)) : (() => {
     const err = new Error('[bun-polyfills] Garbage collection polyfills are only available when Node.js is ran with the --expose-gc flag.');
@@ -81,6 +82,7 @@ export const unsafe = {
 export const Transpiler = TranspilerImpl satisfies typeof Bun.Transpiler;
 
 export const listen = listenPolyfill satisfies typeof Bun.listen;
+export const connect = connectPolyfill satisfies typeof Bun.connect;
 
 export const SHA1 = SHA1Polyfill satisfies typeof Bun.SHA1;
 export const MD5 = MD5Polyfill satisfies typeof Bun.MD5;

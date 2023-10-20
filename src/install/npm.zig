@@ -823,15 +823,25 @@ pub const PackageManifest = struct {
 
         {
             const releases = this.pkg.releases.keys.get(this.versions);
+
+            var best_match_version: ?Semver.Version = null;
+            var best_match_package_index: usize = 0;
             var i = releases.len;
             // For now, this is the dumb way
             while (i > 0) : (i -= 1) {
                 const version = releases[i - 1];
-                const packages = this.pkg.releases.values.get(this.package_versions);
 
-                if (group.satisfies(version)) {
-                    return .{ .version = version, .package = &packages[i - 1] };
+                // If we find one that matches, save it, but keep looping because we might find a newer match.
+                // The versions from the registry are not in any particular order.
+                if (group.satisfies(version) and (best_match_version == null or Semver.Version.order(version, best_match_version.?, "", "") == .gt)) {
+                    best_match_version = version;
+                    best_match_package_index = i - 1;
                 }
+            }
+
+            if (best_match_version != null) {
+                const packages = this.pkg.releases.values.get(this.package_versions);
+                return .{ .version = best_match_version.?, .package = &packages[best_match_package_index] };
             }
         }
 

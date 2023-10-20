@@ -3787,18 +3787,16 @@ pub const PackageManager = struct {
     fn processPeerDependencyList(
         this: *PackageManager,
     ) !void {
-        if (this.peer_dependencies.items.len > 0) {
-            for (this.peer_dependencies.items) |peer_dependency_id| {
-                try this.processDependencyListItem(.{ .dependency = peer_dependency_id }, null, true);
-                const dependency = this.lockfile.buffers.dependencies.items[peer_dependency_id];
-                const resolution = this.lockfile.buffers.resolutions.items[peer_dependency_id];
-                try this.enqueueDependencyWithMain(
-                    peer_dependency_id,
-                    &dependency,
-                    resolution,
-                    true,
-                );
-            }
+        while (this.peer_dependencies.popOrNull()) |peer_dependency_id| {
+            try this.processDependencyListItem(.{ .dependency = peer_dependency_id }, null, true);
+            const dependency = this.lockfile.buffers.dependencies.items[peer_dependency_id];
+            const resolution = this.lockfile.buffers.resolutions.items[peer_dependency_id];
+            try this.enqueueDependencyWithMain(
+                peer_dependency_id,
+                &dependency,
+                resolution,
+                true,
+            );
         }
     }
 
@@ -8127,11 +8125,11 @@ pub const PackageManager = struct {
             }
 
             if (manager.options.do.install_peer_dependencies) {
-                try manager.processPeerDependencyList();
+                while (manager.pending_tasks > 0 or manager.peer_dependencies.items.len > 0) {
+                    try manager.processPeerDependencyList();
 
-                manager.drainDependencyList();
+                    manager.drainDependencyList();
 
-                while (manager.pending_tasks > 0) {
                     try manager.runTasks(
                         *PackageManager,
                         manager,

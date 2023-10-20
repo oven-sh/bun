@@ -182,6 +182,7 @@ if(NOT WIN32)
             message(FATAL_ERROR "WebKit directory ${WEBKIT_DIR} does not contain all the required files for Bun.")
         endif()
     endif()
+    set(WEBKIT_INCLUDE_DIR "${WEBKIT_DIR}/include")
     message(STATUS "Found WebKit: ${WEBKIT_DIR}")
 
     # C++ Assertions
@@ -204,12 +205,14 @@ if(NOT WIN32)
     endif()
 else()
     # TODO: Real checking
-    set(WEBKIT_DIR "C:\\Users\\windo\\Code\\WebKit\\bun-webkit-x64")
+    set(WEBKIT_DIR "C:/Users/windo/Code/WebKit/bun-webkit-x64")
+    set(WEBKIT_INCLUDE_DIR "C:/Users/windo/Code/WebKit/bun-webkit-x64/include")
+    set(WEBKIT_LIB_DIR "C:/Users/windo/Code/WebKit/WebKitBuild/lib64")
+
     set(ASSERT_ENABLED "0")
     message(STATUS "Hardcoded WebKit: ${WEBKIT_DIR}")
 endif()
 
-set(WEBKIT_INCLUDE_DIR "${WEBKIT_DIR}/include")
 
 # --- CMake Macros ---
 
@@ -498,8 +501,6 @@ if(NOT ASSERT_ENABLED)
     add_compile_definitions("NDEBUG=1")
 endif()
 
-message(STATUS "${WEBKIT_INCLUDE_DIR}")
-
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/packages/
     ${CMAKE_CURRENT_SOURCE_DIR}/packages/bun-usockets
@@ -513,14 +514,18 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/napi
     ${CMAKE_CURRENT_SOURCE_DIR}/src/deps
     ${CMAKE_CURRENT_SOURCE_DIR}/src/deps/picohttpparser
-    ${WEBKIT_INCLUDE_DIR}
-    ${WEBKIT_DIR}/WTF/Headers
-    ${WEBKIT_DIR}/ICU/Headers
-    ${WEBKIT_DIR}/bmalloc/Headers
-    ${WEBKIT_DIR}/
-    ${WEBKIT_DIR}/JavaScriptCore/PrivateHeaders
-    ${WEBKIT_DIR}/bmalloc/PrivateHeaders
-    ${WEBKIT_DIR}/WTF/PrivateHeaders
+
+    ${CMAKE_CURRENT_SOURCE_DIR}/bun-webkit/include
+
+    # ${WEBKIT_INCLUDE_DIR}
+    C:/Users/windo/Code/WebKit/Source/WTF
+    # ${WEBKIT_DIR}/ICU
+    # ${WEBKIT_DIR}/bmalloc
+    # ${WEBKIT_DIR}/
+    # ${WEBKIT_DIR}/JavaScriptCore/PrivateHeaders
+    # ${WEBKIT_DIR}/bmalloc/PrivateHeaders
+    # ${WEBKIT_DIR}/WTF/PrivateHeaders
+
     "${BUN_WORKDIR}/codegen"
 )
 
@@ -818,10 +823,9 @@ if(NOT MSVC)
     target_link_libraries(${bun} PRIVATE "${WEBKIT_DIR}/lib/libWTF.a")
     target_link_libraries(${bun} PRIVATE "${WEBKIT_DIR}/lib/libJavaScriptCore.a")
     target_link_libraries(${bun} PRIVATE "${WEBKIT_DIR}/lib/libbmalloc.a")
-else()
-
-    target_link_libraries(${bun} PRIVATE "${WEBKIT_DIR}/lib/WTF.lib")
-    target_link_libraries(${bun} PRIVATE "${WEBKIT_DIR}/lib/JavaScriptCore.lib")
+else()    
+    target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/lib/WTF.lib")
+    target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/lib/JavaScriptCore.lib")
 
     if (WIN32)
         string (APPEND CMAKE_CXX_FLAGS 

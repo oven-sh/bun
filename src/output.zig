@@ -123,6 +123,13 @@ pub const Source = struct {
         if (bun.getenvZ("TERM")) |term| {
             return !strings.eqlComptime(term, "dumb");
         }
+        if (Environment.isWindows) {
+            // https://github.com/chalk/supports-color/blob/d4f413efaf8da045c5ab440ed418ef02dbb28bf1/index.js#L100C11-L112
+            // Windows 10 build 10586 is the first Windows release that supports 256 colors.
+            // Windows 10 build 14931 is the first release that supports 16m/TrueColor.
+            // Every other version supports 16 colors.
+            return true;
+        }
         return false;
     }
 

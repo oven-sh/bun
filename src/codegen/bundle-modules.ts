@@ -125,11 +125,11 @@ const config = ({ platform, debug }: { platform: string; debug?: boolean }) =>
       "process.platform": JSON.stringify(platform),
     },
   } satisfies BuildConfig);
-const bundled_dev = await Bun.build(config({ platform: process.platform, debug: true }));
+const bundle = await Bun.build(config({ platform: process.platform, debug: true }));
 const bundled_linux = await Bun.build(config({ platform: "linux" }));
 const bundled_darwin = await Bun.build(config({ platform: "darwin" }));
 const bundled_win32 = await Bun.build(config({ platform: "win32" }));
-for (const bundled of [bundled_dev, bundled_linux, bundled_darwin, bundled_win32]) {
+for (const bundled of [bundle, bundled_linux, bundled_darwin, bundled_win32]) {
   if (!bundled.success) {
     console.error(bundled.logs);
     process.exit(1);
@@ -138,67 +138,53 @@ for (const bundled of [bundled_dev, bundled_linux, bundled_darwin, bundled_win32
 
 mark("Bundle modules");
 
-const bundledOutputs = {
-  host: new Map(),
-  linux: new Map(),
-  darwin: new Map(),
-  win32: new Map(),
-};
+const outputs = new Map();
 
-for (const [name, bundle, outputs] of [
-  ["modules_dev", bundled_dev, bundledOutputs.host],
-  ["modules_linux", bundled_linux, bundledOutputs.linux],
-  ["modules_darwin", bundled_darwin, bundledOutputs.darwin],
-  ["modules_win32", bundled_win32, bundledOutputs.win32],
-] as const) {
-  for (const file of bundle.outputs) {
-    const output = await file.text();
-    let captured = `(function (){${output.replace("// @bun\n", "").trim()}})`;
-    let usesDebug = output.includes("$debug_log");
-    let usesAssert = output.includes("$assert");
-    captured =
-      captured
-        .replace(
-          `var __require = (id) => {
+for (const file of bundle.outputs) {
+  const output = await file.text();
+  let captured = `(function (){${output.replace("// @bun\n", "").trim()}})`;
+  let usesDebug = output.includes("$debug_log");
+  let usesAssert = output.includes("$assert");
+  captured =
+    captured
+      .replace(
+        `var __require = (id) => {
   return import.meta.require(id);
 };`,
-          "",
-        )
-        .replace(/var\s*__require\s*=\s*\(?id\)?\s*=>\s*{\s*return\s*import.meta.require\(id\)\s*};?/, "")
-        .replace(/var __require=\(?id\)?=>import.meta.require\(id\);?/, "")
-        .replace(/\$\$EXPORT\$\$\((.*)\).\$\$EXPORT_END\$\$;/, "return $1")
-        .replace(/]\s*,\s*__(debug|assert)_end__\)/g, ")")
-        .replace(/]\s*,\s*__debug_end__\)/g, ")")
-        // .replace(/__intrinsic__lazy\(/g, "globalThis[globalThis.Symbol.for('Bun.lazy')](")
-        .replace(/import.meta.require\((.*?)\)/g, (expr, specifier) => {
-          try {
-            const str = JSON.parse(specifier);
-            return requireTransformer(str, file.path);
-          } catch {
-            throw new Error(
-              `Builtin Bundler: import.meta.require() must be called with a string literal. Found ${specifier}. (in ${file.path}))`,
-            );
-          }
-        })
-        .replace(/__intrinsic__/g, "@") + "\n";
-    captured = captured.replace(
-      /function\s*\(.*?\)\s*{/,
-      '$&"use strict";' +
-        (usesDebug
-          ? createLogClientJS(
-              file.path.replace(".js", ""),
-              idToPublicSpecifierOrEnumName(file.path).replace(/^node:|^bun:/, ""),
-            )
-          : "") +
-        (usesAssert ? createAssertClientJS(idToPublicSpecifierOrEnumName(file.path).replace(/^node:|^bun:/, "")) : ""),
-    );
-    if (name === "modules_dev") {
-      const outputPath = path.join(JS_DIR, file.path);
-      fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-      fs.writeFileSync(outputPath, captured);
-    }
-    outputs.set(file.path.replace(".js", ""), captured);
-  }
+        "",
+      )
+      .replace(/var\s*__require\s*=\s*\(?id\)?\s*=>\s*{\s*return\s*import.meta.require\(id\)\s*};?/, "")
+      .replace(/var __require=\(?id\)?=>import.meta.require\(id\);?/, "")
+      .replace(/\$\$EXPORT\$\$\((.*)\).\$\$EXPORT_END\$\$;/, "return $1")
+      .replace(/]\s*,\s*__(debug|assert)_end__\)/g, ")")
+      .replace(/]\s*,\s*__debug_end__\)/g, ")")
+      // .replace(/__intrinsic__lazy\(/g, "globalThis[globalThis.Symbol.for('Bun.lazy')](")
+      .replace(/import.meta.require\((.*?)\)/g, (expr, specifier) => {
+        try {
+          const str = JSON.parse(specifier);
+          return requireTransformer(str, file.path);
+        } catch {
+          throw new Error(
+            `Builtin Bundler: import.meta.require() must be called with a string literal. Found ${specifier}. (in ${file.path}))`,
+          );
+        }
+      })
+      .replace(/__intrinsic__/g, "@") + "\n";
+  captured = captured.replace(
+    /function\s*\(.*?\)\s*{/,
+    '$&"use strict";' +
+      (usesDebug
+        ? createLogClientJS(
+            file.path.replace(".js", ""),
+            idToPublicSpecifierOrEnumName(file.path).replace(/^node:|^bun:/, ""),
+          )
+        : "") +
+      (usesAssert ? createAssertClientJS(idToPublicSpecifierOrEnumName(file.path).replace(/^node:|^bun:/, "")) : ""),
+  );
+  const outputPath = path.join(JS_DIR, file.path);
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  fs.writeFileSync(outputPath, captured);
+  outputs.set(file.path.replace(".js", ""), captured);
 }
 
 mark("Postprocesss modules");
@@ -285,40 +271,15 @@ writeIfNotChanged(
 
 namespace Bun {
 namespace InternalModuleRegistryConstants {
-
-#if OS(DARWIN)
   ${moduleList
     .map(
       (id, n) =>
         `//
-${declareASCIILiteral(`${idToEnumName(id)}Code`, bundledOutputs.darwin.get(id.slice(0, -3)))}
+${declareASCIILiteral(`${idToEnumName(id)}Code`, outputs.host.get(id.slice(0, -3)))}
 //
 `,
     )
     .join("\n")}
-#elif OS(WINDOWS)
-  ${moduleList
-    .map(
-      (id, n) =>
-        `//
-${declareASCIILiteral(`${idToEnumName(id)}Code`, bundledOutputs.win32.get(id.slice(0, -3)))}
-//
-`,
-    )
-    .join("\n")}
-#else
-  // Not 100% accurate, but basically inlining linux on non-windows non-mac platforms.
-  ${moduleList
-    .map(
-      (id, n) =>
-        `//
-${declareASCIILiteral(`${idToEnumName(id)}Code`, bundledOutputs.linux.get(id.slice(0, -3)))}
-//
-`,
-    )
-    .join("\n")}
-#endif
-
 }
 }`,
 );

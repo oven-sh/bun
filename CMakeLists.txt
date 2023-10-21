@@ -172,6 +172,7 @@ option(USE_CUSTOM_TINYCC "Use Bun's recommended version of tinycc" ON)
 option(USE_CUSTOM_LIBUV "Use Bun's recommended version of libuv (Windows only)" OFF)
 option(USE_BASELINE_BUILD "Build Bun for baseline (older) CPUs" OFF)
 option(USE_DEBUG_JSC "Enable assertions and use a debug build of JavaScriptCore" OFF)
+# TODO(@paperdave 2023-10-20): Unified sources cause ambiguity errors in the code, so we cannot use it yet.
 option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
 
 option(CANARY "Make `bun --revision` report a canary release" OFF)
@@ -401,6 +402,8 @@ file(GLOB USOCKETS_FILES ${CONFIGURE_DEPENDS}
     "${USOCKETS_SRC}/crypto/*.cpp"
 )
 
+set(BUN_ALL_SOURCES ${BUN_CPP} ${USOCKETS_FILES})
+
 # --- Classes Generator ---
 file(GLOB BUN_CLASSES_TS ${CONFIGURE_DEPENDS}
     "${BUN_SRC}/bun.js/*.classes.ts"
@@ -424,6 +427,7 @@ add_custom_command(
     VERBATIM
     COMMENT "Generating *.classes.ts bindings"
 )
+list(APPEND BUN_ALL_SOURCES "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.cpp")
 
 # --- JSSink Generator ---
 add_custom_command(
@@ -435,6 +439,7 @@ add_custom_command(
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Generating JSSink"
 )
+list(APPEND BUN_ALL_SOURCES "${BUN_WORKDIR}/codegen/JSSink.cpp")
 
 # --- .lut.h Generator ---
 set(BUN_OBJECT_LUT_SOURCES
@@ -532,6 +537,7 @@ add_custom_command(
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Bundling JS builtin functions"
 )
+list(APPEND BUN_ALL_SOURCES "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp")
 
 # --- Peechy API ---
 add_custom_command(
@@ -599,24 +605,36 @@ add_custom_command(
     USES_TERMINAL
 )
 
-set(BUN_EXTRA_SOURCES "")
 if(WIN32)
-    set(BUN_EXTRA_SOURCES "${BUN_SRC}/bun.js/bindings/windows/musl-memmem.c")
+    list(APPEND BUN_ALL_SOURCES "${BUN_SRC}/bun.js/bindings/windows/musl-memmem.c")
     include_directories("${BUN_SRC}/bun.js/bindings/windows")
+endif()
+
+if(USE_UNIFIED_SOURCES)
+    string (REPLACE ";" "\n" _contents "${BUN_ALL_SOURCES}")
+    file(WRITE "${BUN_WORKDIR}/source_list.txt" "${_contents}")
+
+    execute_process(COMMAND ${RUBY} ${BUN_SRC}/codegen/generate-unified-source-bundles.rb
+        --derived-sources-path ${BUN_WORKDIR}/unified-sources --source-tree-path ${CMAKE_CURRENT_SOURCE_DIR}
+        ${BUN_WORKDIR}/source_list.txt
+        RESULT_VARIABLE _resultTmp
+        OUTPUT_VARIABLE BUN_UNIFIED_SOURCES)
+    
+    if (${_resultTmp})
+        message(FATAL_ERROR "generate-unified-source-bundles.rb exited with non-zero status, exiting")
+    endif()
+
+    unset(_resultTmp)
+else()
+    set(BUN_UNIFIED_SOURCES ${BUN_ALL_SOURCES})
 endif()
 
 # -- The Buntime™️ ---
 add_executable(
     ${bun}
     
-    ${BUN_CPP}
-    ${USOCKETS_FILES}
+    ${BUN_UNIFIED_SOURCES}
     ${BUN_ZIG_OBJ}
-    "${BUN_WORKDIR}/codegen/JSSink.cpp"
-    "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.cpp"
-    "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp"
-    "${BUN_ZIG_OBJ}"
-    "${BUN_EXTRA_SOURCES}"
 )
 set_target_properties(${bun} PROPERTIES
     CXX_STANDARD 20
@@ -684,7 +702,7 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
     if (MSVC)
         target_compile_options(${bun} PUBLIC /O2)
     else()
-       target_compile_options(${bun} PUBLIC -O3 -flto=full -fno-omit-frame-pointer -fno-rtti -fno-exceptions -femit-llvm)
+       target_compile_options(${bun} PUBLIC -O3 -flto=full -fno-omit-frame-pointer -fno-rtti -fno-exceptions -emit-llvm)
     endif()
 endif()
 
@@ -829,7 +847,8 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32)
     add_custom_command(
         TARGET ${bun}
         POST_BUILD
-        COMMAND ${STRIP} -s -x -S -o ${BUN_WORKDIR}/bun ${BUN_WORKDIR}/${bun}
+        # TODO: Does this break NAPI? we may need to pass --keep-symbol to strip
+        COMMAND ${STRIP} --strip-all --discard-all -S --strip-debug --preserve-dates -o ${BUN_WORKDIR}/bun ${BUN_WORKDIR}/${bun}
         COMMENT "Stripping Symbols"
     )
 endif()

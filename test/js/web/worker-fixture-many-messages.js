@@ -1,5 +1,5 @@
 addEventListener("message", function fn({ data }) {
-  // console.log("worker", data);
+  console.log("worker", data);
 
   if (data === "initial message") {
     postMessage({ i: 0 });

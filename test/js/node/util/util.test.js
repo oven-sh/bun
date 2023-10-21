@@ -325,4 +325,11 @@ describe("util", () => {
       "wow({ obj: \u001B[33mtrue\u001B[39m })",
     );
   });
+
+  describe("Promisify", () => {
+    it("should return 3 using promise", async () => {
+      const fn = util.promisify((a, b, callback) => callback(null, a + b));
+      expect(await fn(1, 2)).toBe(3);
+    });
+  })
 });

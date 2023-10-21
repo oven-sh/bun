@@ -18,7 +18,6 @@ describe("Script", () => {
   describe("runInContext()", () => {
     testRunInContext(
       (code, context, options) => {
-        // @ts-expect-error
         const script = new Script(code, options);
         return script.runInContext(context);
       },
@@ -28,7 +27,6 @@ describe("Script", () => {
   describe("runInNewContext()", () => {
     testRunInContext(
       (code, context, options) => {
-        // @ts-expect-error
         const script = new Script(code, options);
         return script.runInNewContext(context);
       },
@@ -37,7 +35,6 @@ describe("Script", () => {
   });
   describe("runInThisContext()", () => {
     testRunInContext((code, context, options) => {
-      // @ts-expect-error
       const script = new Script(code, options);
       return script.runInThisContext(context);
     });

@@ -183,6 +183,21 @@ describe("EventEmitter", () => {
       emitter.on("wow", () => done());
       setTimeout(() => emitter.emit("wow"), 1);
     });
+
+    test("emit multiple values", () => {
+      const emitter = new EventEmitter();
+
+      const receivedVals: number[] = [];
+      emitter.on("multiple-vals", (val1, val2, val3) => {
+        receivedVals[0] = val1;
+        receivedVals[1] = val2;
+        receivedVals[2] = val3;
+      });
+
+      emitter.emit("multiple-vals", 1, 2, 3);
+
+      expect(receivedVals).toEqual([1, 2, 3]);
+    });
   });
 
   test("addListener return type", () => {
@@ -278,6 +293,60 @@ describe("EventEmitter", () => {
     expect(order).toEqual([3, 2, 1, 4, 1, 4]);
   });
 
+  test("prependListener in callback", () => {
+    const myEmitter = new EventEmitter();
+    const order: number[] = [];
+
+    myEmitter.on("foo", () => {
+      order.push(1);
+    });
+
+    myEmitter.once("foo", () => {
+      myEmitter.prependListener("foo", () => {
+        order.push(2);
+      });
+    });
+
+    myEmitter.on("foo", () => {
+      order.push(3);
+    });
+
+    myEmitter.emit("foo");
+
+    expect(order).toEqual([1, 3]);
+
+    myEmitter.emit("foo");
+
+    expect(order).toEqual([1, 3, 2, 1, 3]);
+  });
+
+  test("addListener in callback", () => {
+    const myEmitter = new EventEmitter();
+    const order: number[] = [];
+
+    myEmitter.on("foo", () => {
+      order.push(1);
+    });
+
+    myEmitter.once("foo", () => {
+      myEmitter.addListener("foo", () => {
+        order.push(2);
+      });
+    });
+
+    myEmitter.on("foo", () => {
+      order.push(3);
+    });
+
+    myEmitter.emit("foo");
+
+    expect(order).toEqual([1, 3]);
+
+    myEmitter.emit("foo");
+
+    expect(order).toEqual([1, 3, 1, 3, 2]);
+  });
+
   test("listeners", () => {
     const myEmitter = new EventEmitter();
     const fn = () => {};
@@ -288,18 +357,26 @@ describe("EventEmitter", () => {
     expect(myEmitter.listeners("foo")).toEqual([fn, fn2]);
     myEmitter.off("foo", fn2);
     expect(myEmitter.listeners("foo")).toEqual([fn]);
+    const fn3 = () => {};
+    myEmitter.once("foo", fn3);
+    expect(myEmitter.listeners("foo")).toEqual([fn, fn3]);
   });
 
   test("rawListeners", () => {
     const myEmitter = new EventEmitter();
     const fn = () => {};
     myEmitter.on("foo", fn);
-    expect(myEmitter.listeners("foo")).toEqual([fn]);
+    expect(myEmitter.rawListeners("foo")).toEqual([fn]);
     const fn2 = () => {};
     myEmitter.on("foo", fn2);
-    expect(myEmitter.listeners("foo")).toEqual([fn, fn2]);
+    expect(myEmitter.rawListeners("foo")).toEqual([fn, fn2]);
     myEmitter.off("foo", fn2);
-    expect(myEmitter.listeners("foo")).toEqual([fn]);
+    expect(myEmitter.rawListeners("foo")).toEqual([fn]);
+    const fn3 = () => {};
+    myEmitter.once("foo", fn3);
+    const rawListeners: (Function & { listener?: Function })[] = myEmitter.rawListeners("foo");
+    // rawListeners() returns onceWrappers as well
+    expect([rawListeners[0], rawListeners[1].listener]).toEqual([fn, fn3]);
   });
 
   test("eventNames", () => {

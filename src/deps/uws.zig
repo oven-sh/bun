@@ -306,6 +306,64 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             );
         }
 
+        /// Get the local address of a socket in binary format.
+        ///
+        /// # Arguments
+        /// - `buf`: A buffer to store the binary address data.
+        ///
+        /// # Returns
+        /// This function returns a slice of the buffer on success, or null on failure.
+        pub fn localAddressBinary(this: ThisSocket, buf: []u8) ?[]const u8 {
+            var length: i32 = @intCast(buf.len);
+            us_socket_local_address(
+                comptime ssl_int,
+                this.socket,
+                buf.ptr,
+                &length,
+            );
+
+            if (length <= 0) {
+                return null;
+            }
+            return buf[0..@intCast(length)];
+        }
+
+        /// Get the local address of a socket in text format.
+        ///
+        /// # Arguments
+        /// - `buf`: A buffer to store the text address data.
+        /// - `is_ipv6`: A pointer to a boolean representing whether the address is IPv6.
+        ///
+        /// # Returns
+        /// This function returns a slice of the buffer on success, or null on failure.
+        pub fn localAddressText(this: ThisSocket, buf: []u8, is_ipv6: *bool) ?[]const u8 {
+            const addr_v4_len = @sizeOf(std.meta.FieldType(std.os.sockaddr.in, .addr));
+            const addr_v6_len = @sizeOf(std.meta.FieldType(std.os.sockaddr.in6, .addr));
+
+            var sa_buf: [addr_v6_len + 1]u8 = undefined;
+            const binary = this.localAddressBinary(&sa_buf);
+            if (binary == null) {
+                return null;
+            }
+            const addr_len: usize = binary.?.len;
+            sa_buf[addr_len] = 0;
+
+            var ret: ?[*:0]const u8 = null;
+            if (addr_len == addr_v4_len) {
+                ret = bun.c_ares.ares_inet_ntop(std.os.AF.INET, &sa_buf, buf.ptr, @as(u32, @intCast(buf.len)));
+                is_ipv6.* = false;
+            } else if (addr_len == addr_v6_len) {
+                ret = bun.c_ares.ares_inet_ntop(std.os.AF.INET6, &sa_buf, buf.ptr, @as(u32, @intCast(buf.len)));
+                is_ipv6.* = true;
+            }
+
+            if (ret) |_| {
+                const length: usize = @intCast(bun.len(bun.cast([*:0]u8, buf)));
+                return buf[0..length];
+            }
+            return null;
+        }
+
         pub fn connect(
             host: []const u8,
             port: i32,
@@ -1138,6 +1196,7 @@ extern fn us_socket_open(ssl: i32, s: ?*Socket, is_client: i32, ip: [*c]const u8
 
 extern fn us_socket_local_port(ssl: i32, s: ?*Socket) i32;
 extern fn us_socket_remote_address(ssl: i32, s: ?*Socket, buf: [*c]u8, length: [*c]i32) void;
+extern fn us_socket_local_address(ssl: i32, s: ?*Socket, buf: [*c]u8, length: [*c]i32) void;
 pub const uws_app_s = opaque {};
 pub const uws_req_s = opaque {};
 pub const uws_header_iterator_s = opaque {};

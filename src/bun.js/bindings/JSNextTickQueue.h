@@ -10,7 +10,6 @@ using namespace JSC;
 
 class JSNextTickQueue : public JSC::JSInternalFieldObjectImpl<3> {
 public:
-    static constexpr unsigned numberOfInternalFields = 3;
     using Base = JSC::JSInternalFieldObjectImpl<3>;
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);

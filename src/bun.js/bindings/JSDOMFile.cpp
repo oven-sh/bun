@@ -17,7 +17,7 @@ class JSDOMFile : public JSC::InternalFunction {
 
 public:
     JSDOMFile(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure, nullptr, construct)
+        : Base(vm, structure, call, construct)
     {
     }
 
@@ -43,7 +43,8 @@ public:
     static JSDOMFile* create(JSC::VM& vm, JSGlobalObject* globalObject)
     {
         auto* zigGlobal = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-        auto* object = new (NotNull, JSC::allocateCell<JSDOMFile>(vm)) JSDOMFile(vm, createStructure(vm, globalObject, zigGlobal->functionPrototype()));
+        auto structure = createStructure(vm, globalObject, zigGlobal->functionPrototype());
+        auto* object = new (NotNull, JSC::allocateCell<JSDOMFile>(vm)) JSDOMFile(vm, structure);
         object->finishCreation(vm);
 
         // This is not quite right. But we'll fix it if someone files an issue about it.
@@ -90,6 +91,12 @@ public:
 
         return JSValue::encode(
             WebCore::JSBlob::create(vm, globalObject, structure, ptr));
+    }
+
+    static EncodedJSValue call(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
+    {
+        auto scope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
+        throwTypeError(lexicalGlobalObject, scope, "Class constructor File cannot be invoked without 'new"_s);
     }
 };
 

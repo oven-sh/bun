@@ -161,7 +161,6 @@ WebSocket::WebSocket(ScriptExecutionContext& context)
 {
     m_state = CONNECTING;
     m_hasPendingActivity.store(true);
-    ref();
 }
 
 WebSocket::~WebSocket()
@@ -650,7 +649,7 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
 
 ExceptionOr<void> WebSocket::terminate()
 {
-    LOG(Network, "WebSocket %p terminate()", this);
+    // LOG(Network, "WebSocket %p terminate()", this);
 
     if (m_state == CLOSING || m_state == CLOSED)
         return {};
@@ -692,7 +691,7 @@ ExceptionOr<void> WebSocket::terminate()
 ExceptionOr<void> WebSocket::ping()
 {
     auto message = WTF::String::number(WTF::jsCurrentTime());
-    LOG(Network, "WebSocket %p ping() Sending Timestamp '%s'", this, message.data());
+    // LOG(Network, "WebSocket %p ping() Sending Timestamp '%s'", this, message.data());
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
 
@@ -711,7 +710,7 @@ ExceptionOr<void> WebSocket::ping()
 
 ExceptionOr<void> WebSocket::ping(const String& message)
 {
-    LOG(Network, "WebSocket %p ping() Sending String '%s'", this, message.utf8().data());
+    // LOG(Network, "WebSocket %p ping() Sending String '%s'", this, message.utf8().data());
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
 
@@ -731,7 +730,7 @@ ExceptionOr<void> WebSocket::ping(const String& message)
 
 ExceptionOr<void> WebSocket::ping(ArrayBuffer& binaryData)
 {
-    LOG(Network, "WebSocket %p ping() Sending ArrayBuffer %p", this, &binaryData);
+    // LOG(Network, "WebSocket %p ping() Sending ArrayBuffer %p", this, &binaryData);
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
 
@@ -751,7 +750,7 @@ ExceptionOr<void> WebSocket::ping(ArrayBuffer& binaryData)
 
 ExceptionOr<void> WebSocket::ping(ArrayBufferView& arrayBufferView)
 {
-    LOG(Network, "WebSocket %p ping() Sending ArrayBufferView %p", this, &arrayBufferView);
+    // LOG(Network, "WebSocket %p ping() Sending ArrayBufferView %p", this, &arrayBufferView);
 
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
@@ -774,7 +773,7 @@ ExceptionOr<void> WebSocket::ping(ArrayBufferView& arrayBufferView)
 ExceptionOr<void> WebSocket::pong()
 {
     auto message = WTF::String::number(WTF::jsCurrentTime());
-    LOG(Network, "WebSocket %p pong() Sending Timestamp '%s'", this, message.data());
+    // LOG(Network, "WebSocket %p pong() Sending Timestamp '%s'", this, message.data());
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
 
@@ -793,7 +792,7 @@ ExceptionOr<void> WebSocket::pong()
 
 ExceptionOr<void> WebSocket::pong(const String& message)
 {
-    LOG(Network, "WebSocket %p pong() Sending String '%s'", this, message.utf8().data());
+    // LOG(Network, "WebSocket %p pong() Sending String '%s'", this, message.utf8().data());
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
 
@@ -813,7 +812,7 @@ ExceptionOr<void> WebSocket::pong(const String& message)
 
 ExceptionOr<void> WebSocket::pong(ArrayBuffer& binaryData)
 {
-    LOG(Network, "WebSocket %p pong() Sending ArrayBuffer %p", this, &binaryData);
+    // LOG(Network, "WebSocket %p pong() Sending ArrayBuffer %p", this, &binaryData);
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
 
@@ -833,7 +832,7 @@ ExceptionOr<void> WebSocket::pong(ArrayBuffer& binaryData)
 
 ExceptionOr<void> WebSocket::pong(ArrayBufferView& arrayBufferView)
 {
-    LOG(Network, "WebSocket %p pong() Sending ArrayBufferView %p", this, &arrayBufferView);
+    // LOG(Network, "WebSocket %p pong() Sending ArrayBufferView %p", this, &arrayBufferView);
 
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
@@ -1431,7 +1430,7 @@ extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, int32_t
 {
     webSocket->didFailWithErrorCode(errorCode);
 }
-extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t errorCode, const BunString *reason)
+extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t errorCode, const BunString* reason)
 {
     WTF::String wtf_reason = Bun::toWTFString(*reason);
     webSocket->didClose(0, errorCode, WTFMove(wtf_reason));

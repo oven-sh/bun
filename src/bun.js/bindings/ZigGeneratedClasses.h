@@ -510,6 +510,7 @@ public:
     template<typename Visitor> void visitAdditionalChildren(Visitor&);
     DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
+    mutable JSC::WriteBarrier<JSC::Unknown> m_address;
     mutable JSC::WriteBarrier<JSC::Unknown> m_hostname;
     mutable JSC::WriteBarrier<JSC::Unknown> m_id;
 };
@@ -567,6 +568,7 @@ public:
     template<typename Visitor> void visitAdditionalChildren(Visitor&);
     DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
+    mutable JSC::WriteBarrier<JSC::Unknown> m_address;
     mutable JSC::WriteBarrier<JSC::Unknown> m_hostname;
     mutable JSC::WriteBarrier<JSC::Unknown> m_id;
 };
@@ -1472,6 +1474,7 @@ public:
     template<typename Visitor> void visitAdditionalChildren(Visitor&);
     DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
+    mutable JSC::WriteBarrier<JSC::Unknown> m_address;
     mutable JSC::WriteBarrier<JSC::Unknown> m_hostname;
     mutable JSC::WriteBarrier<JSC::Unknown> m_id;
 };
@@ -1529,6 +1532,7 @@ public:
     template<typename Visitor> void visitAdditionalChildren(Visitor&);
     DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
+    mutable JSC::WriteBarrier<JSC::Unknown> m_address;
     mutable JSC::WriteBarrier<JSC::Unknown> m_hostname;
     mutable JSC::WriteBarrier<JSC::Unknown> m_id;
 };

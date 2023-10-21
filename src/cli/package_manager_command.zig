@@ -286,7 +286,7 @@ pub const PackageManagerCommand = struct {
             \\  bun pm <b>cache rm<r>     clear the cache
             \\  bun pm <b>migrate<r>      migrate another package manager's lockfile without installing anything
             \\
-            \\Learn more about these at <magenta>https://bun.sh/docs/install/utilities<r>
+            \\Learn more about these at <magenta>https://bun.sh/docs/cli/pm<r>
             \\
         , .{});
 

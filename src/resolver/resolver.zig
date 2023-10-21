@@ -1751,6 +1751,7 @@ pub const Resolver = struct {
                             dependency_version = Dependency.parse(
                                 r.allocator,
                                 Semver.String.init(esm.name, esm.name),
+                                null,
                                 esm.version,
                                 &sliced_string,
                                 r.log,

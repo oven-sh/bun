@@ -1644,20 +1644,31 @@ extern const JSC::ConstructAbility s_processObjectInternalsInitializeNextTickQue
 extern const JSC::ConstructorKind s_processObjectInternalsInitializeNextTickQueueCodeConstructorKind;
 extern const JSC::ImplementationVisibility s_processObjectInternalsInitializeNextTickQueueCodeImplementationVisibility;
 
+// mainModule
+#define WEBCORE_BUILTIN_PROCESSOBJECTINTERNALS_MAINMODULE 1
+extern const char* const s_processObjectInternalsMainModuleCode;
+extern const int s_processObjectInternalsMainModuleCodeLength;
+extern const JSC::ConstructAbility s_processObjectInternalsMainModuleCodeConstructAbility;
+extern const JSC::ConstructorKind s_processObjectInternalsMainModuleCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_processObjectInternalsMainModuleCodeImplementationVisibility;
+
 #define WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_DATA(macro) \
     macro(getStdinStream, processObjectInternalsGetStdinStream, 1) \
     macro(getStdioWriteStream, processObjectInternalsGetStdioWriteStream, 1) \
     macro(initializeNextTickQueue, processObjectInternalsInitializeNextTickQueue, 4) \
+    macro(mainModule, processObjectInternalsMainModule, 0) \
 
 #define WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_CODE(macro) \
     macro(processObjectInternalsGetStdinStreamCode, getStdinStream, ASCIILiteral(), s_processObjectInternalsGetStdinStreamCodeLength) \
     macro(processObjectInternalsGetStdioWriteStreamCode, getStdioWriteStream, ASCIILiteral(), s_processObjectInternalsGetStdioWriteStreamCodeLength) \
     macro(processObjectInternalsInitializeNextTickQueueCode, initializeNextTickQueue, ASCIILiteral(), s_processObjectInternalsInitializeNextTickQueueCodeLength) \
+    macro(processObjectInternalsMainModuleCode, mainModule, "get mainModule"_s, s_processObjectInternalsMainModuleCodeLength) \
 
 #define WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_FUNCTION_NAME(macro) \
     macro(getStdinStream) \
     macro(getStdioWriteStream) \
     macro(initializeNextTickQueue) \
+    macro(mainModule) \
 
 #define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
     JSC::FunctionExecutable* codeName##Generator(JSC::VM&);

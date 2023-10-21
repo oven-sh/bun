@@ -21,6 +21,7 @@ const ObjectPool = @import("../pool.zig").ObjectPool;
 const WebsocketHeader = @import("./websocket.zig").WebsocketHeader;
 const WebsocketDataFrame = @import("./websocket.zig").WebsocketDataFrame;
 const Opcode = @import("./websocket.zig").Opcode;
+const ZigURL = @import("../url.zig").URL;
 
 const log = Output.scoped(.WebSocketClient, false);
 
@@ -54,7 +55,9 @@ const NonUTF8Headers = struct {
 fn buildRequestBody(
     vm: *JSC.VirtualMachine,
     pathname: *const JSC.ZigString,
+    is_https: bool,
     host: *const JSC.ZigString,
+    port: u16,
     client_protocol: *const JSC.ZigString,
     client_protocol_hash: *u64,
     extra_headers: NonUTF8Headers,
@@ -86,22 +89,25 @@ fn buildRequestBody(
         host_.deinit();
     }
 
+    const host_fmt = ZigURL.HostFormatter{
+        .is_https = is_https,
+        .host = host_.slice(),
+        .port = port,
+    };
     const headers_ = static_headers[0 .. 1 + @as(usize, @intFromBool(client_protocol.len > 0))];
     const pico_headers = PicoHTTP.Headers{ .headers = headers_ };
 
     return try std.fmt.allocPrint(
         allocator,
         "GET {s} HTTP/1.1\r\n" ++
-            "Host: {s}\r\n" ++
-            "Pragma: no-cache\r\n" ++
-            "Cache-Control: no-cache\r\n" ++
+            "Host: {any}\r\n" ++
             "Connection: Upgrade\r\n" ++
             "Upgrade: websocket\r\n" ++
             "Sec-WebSocket-Version: 13\r\n" ++
             "{s}" ++
             "{s}" ++
             "\r\n",
-        .{ pathname_.slice(), host_.slice(), pico_headers, extra_headers },
+        .{ pathname_.slice(), host_fmt, pico_headers, extra_headers },
     );
 }
 
@@ -242,7 +248,9 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             var body = buildRequestBody(
                 global.bunVM(),
                 pathname,
+                ssl,
                 host,
+                port,
                 client_protocol,
                 &client_protocol_hash,
                 NonUTF8Headers.init(header_names, header_values, header_count),

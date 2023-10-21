@@ -140,7 +140,7 @@ var access = function access(...args) {
       throw err;
     }
     try {
-      fs.exists.apply(fs, [path]).then(
+      fs.exists.$apply(fs, [path]).then(
         existed => callback(existed),
         _ => callback(false),
       );
@@ -421,7 +421,7 @@ function unwatchFile(filename, listener) {
 function callbackify(fsFunction, args) {
   const callback = args[args.length - 1];
   try {
-    var result = fsFunction.apply(fs, args.slice(0, args.length - 1));
+    var result = fsFunction.$apply(fs, args.slice(0, args.length - 1));
     result.then(
       (...args) => callback(null, ...args),
       err => callback(err),
@@ -889,7 +889,7 @@ var WriteStreamClass = (WriteStream = function WriteStream(path, options = defau
     tempThis.fd = fs.openSync(path, flags, mode);
   }
 
-  NativeWritable.call(this, tempThis.fd, {
+  NativeWritable.$call(this, tempThis.fd, {
     ...options,
     decodeStrings: false,
     autoDestroy,
@@ -993,7 +993,7 @@ WriteStreamPrototype[writeStreamPathFastPathCallSymbol] = function WriteStreamPa
     },
     err => {
       readStream[kIoDone] = this[kIoDone] = true;
-      WriteStream_errorOrDestroy.call(this, err);
+      WriteStream_errorOrDestroy.$call(this, err);
       readStream.emit("error", err);
     },
   );
@@ -1009,7 +1009,7 @@ WriteStreamPrototype.disableBunFastPath = function disableBunFastPath() {
 
 function WriteStream_handleWrite(er, bytes) {
   if (er) {
-    return WriteStream_errorOrDestroy.call(this, er);
+    return WriteStream_errorOrDestroy.$call(this, er);
   }
 
   this.bytesWritten += bytes;
@@ -1041,11 +1041,11 @@ WriteStreamPrototype._destroy = function _destroy(err, cb) {
   }
 
   if (this[kIoDone]) {
-    this.once(kIoDone, () => WriteStream_internalClose.call(this, err, cb));
+    this.once(kIoDone, () => WriteStream_internalClose.$call(this, err, cb));
     return;
   }
 
-  WriteStream_internalClose.call(this, err, cb);
+  WriteStream_internalClose.$call(this, err, cb);
 };
 
 WriteStreamPrototype.close = function close(cb) {
@@ -1080,7 +1080,7 @@ WriteStreamPrototype.write = function write(chunk, encoding, cb) {
   const callback = native
     ? (err, bytes) => {
         this[kIoDone] = false;
-        WriteStream_handleWrite.call(this, err, bytes);
+        WriteStream_handleWrite.$call(this, err, bytes);
         this.emit(kIoDone);
         if (cb) !err ? cb() : cb(err);
       }
@@ -1089,7 +1089,7 @@ WriteStreamPrototype.write = function write(chunk, encoding, cb) {
   if (this._write) {
     return this._write(chunk, encoding, callback);
   } else {
-    return NativeWritable.prototype.write.call(this, chunk, encoding, callback, native);
+    return NativeWritable.prototype.write.$call(this, chunk, encoding, callback, native);
   }
 };
 
@@ -1099,7 +1099,7 @@ WriteStreamPrototype._writev = undefined;
 
 WriteStreamPrototype.end = function end(chunk, encoding, cb) {
   var native = this.pos === undefined;
-  return NativeWritable.prototype.end.call(this, chunk, encoding, cb, native);
+  return NativeWritable.prototype.end.$call(this, chunk, encoding, cb, native);
 };
 
 WriteStreamPrototype._destroy = function _destroy(err, cb) {

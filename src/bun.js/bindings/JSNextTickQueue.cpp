@@ -18,7 +18,7 @@ namespace Bun {
 
 using namespace JSC;
 
-const JSC::ClassInfo JSNextTickQueue::s_info = { "JSNextTickQueue"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNextTickQueue) };
+const JSC::ClassInfo JSNextTickQueue::s_info = { "NextTickQueue"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNextTickQueue) };
 
 template<typename, JSC::SubspaceAccess mode>
 JSC::GCClient::IsoSubspace* JSNextTickQueue::subspaceFor(JSC::VM& vm)
@@ -34,11 +34,12 @@ JSC::GCClient::IsoSubspace* JSNextTickQueue::subspaceFor(JSC::VM& vm)
 JSNextTickQueue* JSNextTickQueue::create(VM& vm, Structure* structure)
 {
     JSNextTickQueue* mod = new (NotNull, allocateCell<JSNextTickQueue>(vm)) JSNextTickQueue(vm, structure);
+    mod->finishCreation(vm);
     return mod;
 }
 Structure* JSNextTickQueue::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(CellType, StructureFlags), info());
+    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
 }
 
 JSNextTickQueue::JSNextTickQueue(VM& vm, Structure* structure)
@@ -65,7 +66,6 @@ JSNextTickQueue* JSNextTickQueue::create(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
     auto* obj = create(vm, createStructure(vm, globalObject, jsNull()));
-    obj->finishCreation(vm);
     return obj;
 }
 

@@ -173,7 +173,7 @@ static JSC::JSObject* createPath(JSGlobalObject* globalThis, bool isWindows)
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
             "relative"_s, Path_functionRelative, ImplementationVisibility::Public),
         0);
-    path->putDirect(vm, clientData->builtinNames().resolvePublicName(),
+    path->putDirect(vm, vm.propertyNames->resolve,
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
             "resolve"_s, Path_functionResolve, ImplementationVisibility::Public),
         0);

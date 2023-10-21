@@ -45,6 +45,7 @@ describe("bun:test", () => {
   test("expect()", () => {
     expect(1).toBe(1);
     expect(1).not.toBe(2);
+    // @ts-expect-error
     expect({ a: 1 }).toEqual({ a: 1, b: undefined });
     expect({ a: 1 }).toStrictEqual({ a: 1 });
     expect(new Set()).toHaveProperty("size");

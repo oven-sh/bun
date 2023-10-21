@@ -109,9 +109,10 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventEmitterDOMConstructor:
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
 
-    if (JSValue maxListeners = castedThis->getIfPropertyExists(lexicalGlobalObject, JSC::Identifier::fromString(vm, "defaultMaxListeners"_s))) {
-        if (maxListeners.isUInt32())
-            object->setMaxListeners(maxListeners.toUInt32(lexicalGlobalObject));
+    JSValue maxListeners = castedThis->getIfPropertyExists(lexicalGlobalObject, JSC::Identifier::fromString(vm, "defaultMaxListeners"_s));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (maxListeners && maxListeners.isUInt32()) {
+        object->setMaxListeners(maxListeners.toUInt32(lexicalGlobalObject));
     }
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
     auto jsValue = toJSNewlyCreated<IDLInterface<EventEmitter>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTFMove(object));

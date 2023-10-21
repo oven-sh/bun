@@ -460,6 +460,7 @@ pub const String = extern struct {
 
     pub fn createExternal(bytes: []const u8, isLatin1: bool, ctx: ?*anyopaque, callback: ?*const fn (*anyopaque, *anyopaque, u32) callconv(.C) void) String {
         JSC.markBinding(@src());
+        std.debug.assert(bytes.len > 0);
         return BunString__createExternal(bytes.ptr, bytes.len, isLatin1, ctx, callback);
     }
 

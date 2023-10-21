@@ -486,6 +486,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSMockFunctionPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -623,7 +624,6 @@ extern "C" EncodedJSValue JSMock__jsSpyOn(JSC::JSGlobalObject* lexicalGlobalObje
 
             mock->copyNameAndLength(vm, globalObject, value);
 
-            attributes |= PropertyAttribute::Function;
             object->putDirect(vm, propertyKey, mock, attributes);
             RETURN_IF_EXCEPTION(scope, {});
 
@@ -1320,7 +1320,7 @@ MockWithImplementationCleanupData* MockWithImplementationCleanupData::create(VM&
 }
 Structure* MockWithImplementationCleanupData::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(CellType, StructureFlags), info());
+    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
 }
 
 MockWithImplementationCleanupData::MockWithImplementationCleanupData(VM& vm, Structure* structure)

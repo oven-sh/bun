@@ -50,6 +50,7 @@ const InternalBlob = JSC.WebCore.InternalBlob;
 const BodyMixin = JSC.WebCore.BodyMixin;
 const Body = JSC.WebCore.Body;
 const Blob = JSC.WebCore.Blob;
+const Response = JSC.WebCore.Response;
 
 const body_value_pool_size: u16 = 256;
 pub const BodyValueRef = bun.HiveRef(Body.Value, body_value_pool_size);
@@ -542,12 +543,12 @@ pub const Request = struct {
 
                 if (value.as(JSC.WebCore.Response)) |response| {
                     if (!fields.contains(.method)) {
-                        req.method = response.body.init.method;
+                        req.method = response.init.method;
                         fields.insert(.method);
                     }
 
                     if (!fields.contains(.headers)) {
-                        if (response.body.init.headers) |headers| {
+                        if (response.init.headers) |headers| {
                             req.headers = headers.cloneThis(globalThis);
                             fields.insert(.headers);
                         }
@@ -623,7 +624,7 @@ pub const Request = struct {
             }
 
             if (!fields.contains(.method) or !fields.contains(.headers)) {
-                if (Body.Init.init(globalThis.allocator(), globalThis, value) catch null) |init| {
+                if (Response.Init.init(globalThis.allocator(), globalThis, value) catch null) |init| {
                     if (!explicit_check or (explicit_check and value.fastGet(globalThis, .method) != null)) {
                         if (!fields.contains(.method)) {
                             req.method = init.method;

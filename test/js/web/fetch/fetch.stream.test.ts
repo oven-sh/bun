@@ -213,7 +213,12 @@ describe("fetch() with streaming", () => {
           .listen(0);
 
         const address = server.address() as AddressInfo;
-        const url = `http://${address.address}:${address.port}`;
+        let url;
+        if (address.family == "IPv4") {
+          url = `http://${address.address}:${address.port}`;
+        } else {
+          url = `http://[${address.address}]:${address.port}`;
+        }
         async function getRequestLen(url: string) {
           const response = await fetch(url);
           const hasBody = response.body;

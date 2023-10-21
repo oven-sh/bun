@@ -48,6 +48,16 @@ void us_socket_remote_address(int ssl, struct us_socket_t *s, char *buf, int *le
     }
 }
 
+void us_socket_local_address(int ssl, struct us_socket_t *s, char *buf, int *length) {
+    struct bsd_addr_t addr;
+    if (bsd_local_addr(us_poll_fd(&s->p), &addr) || *length < bsd_addr_get_ip_length(&addr)) {
+        *length = 0;
+    } else {
+        *length = bsd_addr_get_ip_length(&addr);
+        memcpy(buf, bsd_addr_get_ip(&addr), *length);
+    }
+}
+
 struct us_socket_context_t *us_socket_context(int ssl, struct us_socket_t *s) {
     return s->context;
 }

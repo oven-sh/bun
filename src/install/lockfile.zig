@@ -641,6 +641,7 @@ fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequ
                             dep.version = Dependency.parse(
                                 old.allocator,
                                 dep.name,
+                                dep.name_hash,
                                 sliced.slice,
                                 &sliced,
                                 null,
@@ -2178,6 +2179,7 @@ pub const OverrideMap = struct {
             .version = Dependency.parse(
                 lockfile.allocator,
                 name,
+                name_hash,
                 literalSliced.slice,
                 &literalSliced,
                 log,
@@ -2747,12 +2749,13 @@ pub const Package = extern struct {
                         .name = name.value,
                         .name_hash = name.hash,
                         .behavior = if (comptime is_peer)
-                            group.behavior.setOptional(package_version.optional_peer_dependencies_len > i)
+                            group.behavior.setOptional(i < package_version.non_optional_peer_dependencies_start)
                         else
                             group.behavior,
                         .version = Dependency.parse(
                             allocator,
                             name.value,
+                            name.hash,
                             sliced.slice,
                             &sliced,
                             log,
@@ -3040,6 +3043,7 @@ pub const Package = extern struct {
         var dependency_version = Dependency.parseWithOptionalTag(
             allocator,
             external_alias.value,
+            external_alias.hash,
             sliced.slice,
             tag,
             &sliced,
@@ -3109,6 +3113,7 @@ pub const Package = extern struct {
                     if (Dependency.parseWithTag(
                         allocator,
                         external_alias.value,
+                        external_alias.hash,
                         path.slice,
                         .workspace,
                         &path,
@@ -3735,6 +3740,28 @@ pub const Package = extern struct {
         var workspace_names = WorkspaceMap.init(allocator);
         defer workspace_names.deinit();
 
+        var optional_peer_dependencies = std.ArrayHashMap(PackageNameHash, void, ArrayIdentityContext.U64, false).init(allocator);
+        defer optional_peer_dependencies.deinit();
+
+        if (json.asProperty("peerDependenciesMeta")) |peer_dependencies_meta| {
+            if (peer_dependencies_meta.expr.data == .e_object) {
+                const props = peer_dependencies_meta.expr.data.e_object.properties.slice();
+                try optional_peer_dependencies.ensureUnusedCapacity(props.len);
+                for (props) |prop| {
+                    if (prop.value.?.asProperty("optional")) |optional| {
+                        if (optional.expr.data != .e_boolean or !optional.expr.data.e_boolean.value) {
+                            continue;
+                        }
+
+                        optional_peer_dependencies.putAssumeCapacity(
+                            String.Builder.stringHash(prop.key.?.asString(allocator) orelse unreachable),
+                            {},
+                        );
+                    }
+                }
+            }
+        }
+
         inline for (dependency_groups) |group| {
             if (json.asProperty(group.prop)) |dependencies_q| brk: {
                 switch (dependencies_q.expr.data) {
@@ -4026,7 +4053,12 @@ pub const Package = extern struct {
                         path,
                         logger.Loc.Empty,
                         logger.Loc.Empty,
-                    )) |dep| {
+                    )) |_dep| {
+                        var dep = _dep;
+                        if (group.behavior.isPeer() and optional_peer_dependencies.contains(external_name.hash)) {
+                            dep.behavior = dep.behavior.setOptional(true);
+                        }
+
                         package_dependencies[total_dependencies_count] = dep;
                         total_dependencies_count += 1;
 
@@ -4063,7 +4095,12 @@ pub const Package = extern struct {
                                     version,
                                     key.loc,
                                     value.loc,
-                                )) |dep| {
+                                )) |_dep| {
+                                    var dep = _dep;
+                                    if (group.behavior.isPeer() and optional_peer_dependencies.contains(external_name.hash)) {
+                                        dep.behavior = dep.behavior.setOptional(true);
+                                    }
+
                                     package_dependencies[total_dependencies_count] = dep;
                                     total_dependencies_count += 1;
                                 }

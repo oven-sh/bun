@@ -977,11 +977,17 @@ describe("expect()", () => {
     for (let [first, second] of equals) {
       expect(first).toEqual(second);
       expect(second).toEqual(first);
+
+      expect(first).toStrictEqual(second);
+      expect(second).toStrictEqual(first);
     }
 
     for (let [first, second] of not) {
       expect(first).not.toEqual(second);
       expect(second).not.toEqual(first);
+
+      expect(first).not.toStrictEqual(second);
+      expect(second).not.toStrictEqual(first);
     }
 
     expect(Object.fromEntries(Object.entries(new URL("https://example.com")))).not.toStrictEqual(

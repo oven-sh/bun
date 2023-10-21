@@ -213,7 +213,7 @@ Whether to install peer dependencies. Default `true`.
 
 ```toml
 [install]
-peer = false
+peer = true
 ```
 
 ### `install.production`

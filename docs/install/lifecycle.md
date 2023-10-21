@@ -37,8 +37,8 @@ Once added to `trustedDependencies`, install/re-install the package. Bun will re
 
 ## `--ignore-scripts`
 
-To disable lifecycle scripts for all packages, use the `--no-scripts` flag.
+To disable lifecycle scripts for all packages, use the `--ignore-scripts` flag.
 
 ```bash
-$ bun install --no-scripts
+$ bun install --ignore-scripts
 ```

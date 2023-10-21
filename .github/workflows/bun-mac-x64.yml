@@ -15,6 +15,7 @@ on:
     paths:
       - "src/**/*"
       - "test/**/*"
+      - "packages/bun-usockets/src/**/*"
       - "build.zig"
       - "Makefile"
       - "Dockerfile"
@@ -23,6 +24,7 @@ on:
     paths:
       - "src/**/*"
       - "test/**/*"
+      - "packages/bun-usockets/src/**/*"
       - "build.zig"
       - "Makefile"
       - "Dockerfile"
@@ -117,7 +119,7 @@ jobs:
           #   obj: bun-obj-darwin-x64-baseline
           #   runner: macos-12
           #   artifact: bun-obj-darwin-x64-baseline
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-1/bun-webkit-macos-amd64-lto.tar.gz"
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-2/bun-webkit-macos-amd64-lto.tar.gz"
           #   dependencies: true
           #   compile_obj: false
           - cpu: haswell
@@ -126,7 +128,7 @@ jobs:
             obj: bun-obj-darwin-x64
             runner: macos-12
             artifact: bun-obj-darwin-x64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-1/bun-webkit-macos-amd64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-2/bun-webkit-macos-amd64-lto.tar.gz"
             dependencies: true
             compile_obj: false
           # - cpu: nehalem
@@ -135,7 +137,7 @@ jobs:
           #   obj: bun-obj-darwin-x64-baseline
           #   runner: macos-12
           #   artifact: bun-obj-darwin-x64-baseline
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-1/bun-webkit-macos-amd64-lto.tar.gz"
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-2/bun-webkit-macos-amd64-lto.tar.gz"
           #   dependencies: false
           #   compile_obj: true
           - cpu: haswell
@@ -144,7 +146,7 @@ jobs:
             obj: bun-obj-darwin-x64
             runner: macos-12
             artifact: bun-obj-darwin-x64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-1/bun-webkit-macos-amd64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-2/bun-webkit-macos-amd64-lto.tar.gz"
             dependencies: false
             compile_obj: true
           # - cpu: native
@@ -152,7 +154,7 @@ jobs:
           #   tag: bun-darwin-aarch64
           #   obj: bun-obj-darwin-aarch64
           #   artifact: bun-obj-darwin-aarch64
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-1/bun-webkit-macos-arm64-lto.tar.gz"
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-2/bun-webkit-macos-arm64-lto.tar.gz"
           #   runner: macos-arm64
           #   dependencies: true
           #   compile_obj: true
@@ -261,7 +263,7 @@ jobs:
           #   package: bun-darwin-x64
           #   runner: macos-12
           #   artifact: bun-obj-darwin-x64-baseline
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-1/bun-webkit-macos-amd64-lto.tar.gz"
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-2/bun-webkit-macos-amd64-lto.tar.gz"
           - cpu: haswell
             arch: x86_64
             tag: bun-darwin-x64
@@ -269,14 +271,14 @@ jobs:
             package: bun-darwin-x64
             runner: macos-12
             artifact: bun-obj-darwin-x64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-1/bun-webkit-macos-amd64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-2/bun-webkit-macos-amd64-lto.tar.gz"
           # - cpu: native
           #   arch: aarch64
           #   tag: bun-darwin-aarch64
           #   obj: bun-obj-darwin-aarch64
           #   package: bun-darwin-aarch64
           #   artifact: bun-obj-darwin-aarch64
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-1/bun-webkit-macos-arm64-lto.tar.gz"
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-2/bun-webkit-macos-arm64-lto.tar.gz"
           #   runner: macos-arm64
     steps:
       - uses: actions/checkout@v3

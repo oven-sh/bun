@@ -1843,17 +1843,17 @@ pub const Example = struct {
 
         if (env_loader.map.get("GITHUB_ACCESS_TOKEN")) |access_token| {
             if (access_token.len > 0) {
-                headers_buf = try std.fmt.allocPrint(ctx.allocator, "Access-TokenBearer {s}", .{access_token});
+                headers_buf = try std.fmt.allocPrint(ctx.allocator, "AuthorizationBearer {s}", .{access_token});
                 try header_entries.append(
                     ctx.allocator,
                     Headers.Kv{
                         .name = Api.StringPointer{
                             .offset = 0,
-                            .length = @as(u32, @intCast("Access-Token".len)),
+                            .length = @as(u32, @intCast("Authorization".len)),
                         },
                         .value = Api.StringPointer{
-                            .offset = @as(u32, @intCast("Access-Token".len)),
-                            .length = @as(u32, @intCast(headers_buf.len - "Access-Token".len)),
+                            .offset = @as(u32, @intCast("Authorization".len)),
+                            .length = @as(u32, @intCast(headers_buf.len - "Authorization".len)),
                         },
                     },
                 );

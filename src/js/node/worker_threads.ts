@@ -224,6 +224,10 @@ class Worker extends EventEmitter {
     this.#worker.addEventListener("open", this.#onOpen.bind(this));
   }
 
+  get threadId() {
+    return this.#worker.threadId;
+  }
+
   ref() {
     this.#worker.ref();
   }
@@ -261,7 +265,7 @@ class Worker extends EventEmitter {
   }
 
   terminate() {
-    var onExitPromise = this.#onExitPromise;
+    const onExitPromise = this.#onExitPromise;
     if (onExitPromise) {
       return $isPromise(onExitPromise) ? onExitPromise : Promise.resolve(onExitPromise);
     }

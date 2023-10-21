@@ -410,7 +410,7 @@ function urlFormat(obj) {
     obj = urlParse(obj);
   }
   if (!(obj instanceof Url)) {
-    return Url.prototype.format.call(obj);
+    return Url.prototype.format.$call(obj);
   }
   return obj.format();
 }

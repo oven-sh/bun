@@ -359,6 +359,7 @@ describe("bundler", () => {
     },
     entryPoints: ["/a.js", "/b.js", "/c.js"],
     splitting: true,
+    target: "bun",
     runtimeFiles: {
       "/test.js": /* js */ `
         import './out/c.js';
@@ -372,9 +373,9 @@ describe("bundler", () => {
       `,
     },
     run: [
-      { file: "/out/a.js", stdout: "side effects! [Function]\nsetValue 123" },
-      { file: "/out/b.js", stdout: "side effects! [Function]\nb" },
-      { file: "/test.js", stdout: "side effects! [Function]\nsetValue 123\nobserver 123\nb" },
+      { file: "/out/a.js", stdout: "side effects! [Function: getValue]\nsetValue 123" },
+      { file: "/out/b.js", stdout: "side effects! [Function: getValue]\nb" },
+      { file: "/test.js", stdout: "side effects! [Function: getValue]\nsetValue 123\nobserver 123\nb" },
     ],
   });
   itBundled("splitting/CrossChunkAssignmentDependenciesRecursive", {
@@ -513,8 +514,8 @@ describe("bundler", () => {
     splitting: true,
     minifyIdentifiers: true,
     run: [
-      { file: "/out/a.js", stdout: "[Function]" },
-      { file: "/out/b.js", stdout: "[Function]" },
+      { file: "/out/a.js", stdout: "[Function: f]" },
+      { file: "/out/b.js", stdout: "[Function: f]" },
     ],
   });
   itBundled("splitting/HybridESMAndCJSESBuildIssue617", {

@@ -75,7 +75,7 @@ object->putDirectBuiltinFunction(
   // ReadableStream.ts, `function readableStreamToJSON()`
   // This returns a FunctionExecutable* (extends JSCell*, but not JSFunction*).
   readableStreamReadableStreamToJSONCodeGenerator(vm),
-  JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0
+  JSC::PropertyAttribute::DontDelete | 0
 );
 ```
 

@@ -746,7 +746,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
 namespace Zig {
 DEFINE_NATIVE_MODULE(BunJSC)
 {
-    INIT_NATIVE_MODULE(33);
+    INIT_NATIVE_MODULE(34);
 
     putNativeFn(Identifier::fromString(vm, "callerSourceOrigin"_s), functionCallerSourceOrigin);
     putNativeFn(Identifier::fromString(vm, "jscDescribe"_s), functionDescribe);

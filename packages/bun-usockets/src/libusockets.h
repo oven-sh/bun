@@ -382,6 +382,7 @@ int us_socket_local_port(int ssl, struct us_socket_t *s);
 
 /* Copy remote (IP) address of socket, or fail with zero length. */
 void us_socket_remote_address(int ssl, struct us_socket_t *s, char *buf, int *length);
+void us_socket_local_address(int ssl, struct us_socket_t *s, char *buf, int *length);
 
 /* Bun extras */
 struct us_socket_t *us_socket_pair(struct us_socket_context_t *ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR* fds);

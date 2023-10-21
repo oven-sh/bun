@@ -118,6 +118,7 @@ pub fn WorkTask(comptime Context: type, comptime async_io: bool) type {
         }
 
         pub fn runFromThreadPool(task: *TaskType) void {
+            JSC.markBinding(@src());
             var this = @fieldParentPtr(This, "task", task);
             Context.run(this.ctx, this);
         }
@@ -405,7 +406,7 @@ pub const Task = TaggedPointerUnion(.{
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
-    task: Task = undefined,
+    task: if (JSC.is_bindgen) void else Task = undefined,
     next: ?*ConcurrentTask = null,
     auto_delete: bool = false,
 
@@ -426,14 +427,19 @@ pub const ConcurrentTask = struct {
     }
 
     pub fn createFrom(task: anytype) *ConcurrentTask {
+        JSC.markBinding(@src());
         return create(Task.init(task));
     }
 
     pub fn fromCallback(ptr: anytype, comptime callback: anytype) *ConcurrentTask {
+        JSC.markBinding(@src());
+
         return create(ManagedTask.New(std.meta.Child(@TypeOf(ptr)), callback).init(ptr));
     }
 
     pub fn from(this: *ConcurrentTask, of: anytype, auto_deinit: AutoDeinit) *ConcurrentTask {
+        JSC.markBinding(@src());
+
         this.* = .{
             .task = Task.init(of),
             .next = null,
@@ -601,7 +607,7 @@ comptime {
 
 pub const DeferredRepeatingTask = *const (fn (*anyopaque) bool);
 pub const EventLoop = struct {
-    tasks: Queue = undefined,
+    tasks: if (JSC.is_bindgen) void else Queue = undefined,
     concurrent_tasks: ConcurrentTask.Queue = ConcurrentTask.Queue{},
     global: *JSGlobalObject = undefined,
     virtual_machine: *JSC.VirtualMachine = undefined,
@@ -925,6 +931,7 @@ pub const EventLoop = struct {
     }
 
     pub fn tickConcurrentWithCount(this: *EventLoop) usize {
+        JSC.markBinding(@src());
         var concurrent = this.concurrent_tasks.popBatch();
         const count = concurrent.count;
         if (count == 0)
@@ -1067,6 +1074,8 @@ pub const EventLoop = struct {
     }
 
     pub fn tick(this: *EventLoop) void {
+        JSC.markBinding(@src());
+
         var ctx = this.virtual_machine;
         this.tickConcurrent();
 
@@ -1136,6 +1145,7 @@ pub const EventLoop = struct {
     }
 
     pub fn enqueueTask(this: *EventLoop, task: Task) void {
+        JSC.markBinding(@src());
         this.tasks.writeItem(task) catch unreachable;
     }
 

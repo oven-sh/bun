@@ -1034,7 +1034,8 @@ export function createTextStream(highWaterMark) {
       if (byteLength > 0) {
         hasBuffer = true;
         if (rope.length > 0) {
-          $arrayPush(array, rope, chunk);
+          $arrayPush(array, rope);
+          $arrayPush(array, chunk);
           rope = "";
         } else {
           $arrayPush(array, chunk);

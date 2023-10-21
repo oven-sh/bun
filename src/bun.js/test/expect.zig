@@ -3348,7 +3348,7 @@ pub const Expect = struct {
             globalObject.throw(Output.prettyFmt(fmt, false), .{calls.toFmt(globalObject, &formatter)});
             return .zero;
         } else {
-            const signature = comptime getSignature("toHaveBeenCalled", "", true);
+            const signature = comptime getSignature("toHaveBeenCalled", "", false);
             const fmt = signature ++ "\n\nExpected <green>{any}<r>\n";
             if (Output.enable_ansi_colors) {
                 globalObject.throw(Output.prettyFmt(fmt, true), .{calls.toFmt(globalObject, &formatter)});
@@ -3403,7 +3403,7 @@ pub const Expect = struct {
             globalObject.throw(Output.prettyFmt(fmt, false), .{calls.toFmt(globalObject, &formatter)});
             return .zero;
         } else {
-            const signature = comptime getSignature("toHaveBeenCalledTimes", "<green>expected<r>", true);
+            const signature = comptime getSignature("toHaveBeenCalledTimes", "<green>expected<r>", false);
             const fmt = signature ++ "\n\nExpected <green>{any}<r>\n";
             if (Output.enable_ansi_colors) {
                 globalObject.throw(Output.prettyFmt(fmt, true), .{calls.toFmt(globalObject, &formatter)});

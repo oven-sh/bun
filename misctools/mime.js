@@ -15,8 +15,8 @@ for (let key of Object.keys(json).sort()) {
 }
 
 const withExtensions = [
-  ...new Set([
-    ...Object.keys(json)
+  ...new Set(
+    Object.keys(json)
       .filter(key => {
         return !!json[key]?.extensions?.length;
       })
@@ -26,7 +26,7 @@ const withExtensions = [
         });
       })
       .sort(),
-  ]),
+  ),
 ];
 
 all += "\n";

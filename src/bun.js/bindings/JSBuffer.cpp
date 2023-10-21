@@ -742,10 +742,16 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JS
         byteLength += typedArray->length();
     }
 
-    if (callFrame->argumentCount() > 1) {
-        auto byteLengthValue = callFrame->uncheckedArgument(1);
-        byteLength = std::min(byteLength, byteLengthValue.toTypedArrayIndex(lexicalGlobalObject, "totalLength must be a valid number"_s));
+    JSValue totalLengthValue = callFrame->argument(1);
+    if (!totalLengthValue.isUndefined()) {
+        if (UNLIKELY(!totalLengthValue.isNumber())) {
+            throwTypeError(lexicalGlobalObject, throwScope, "totalLength must be a valid number"_s);
+            return JSValue::encode(jsUndefined());
+        }
+
+        auto totalLength = totalLengthValue.toTypedArrayIndex(lexicalGlobalObject, "totalLength must be a valid number"_s);
         RETURN_IF_EXCEPTION(throwScope, {});
+        byteLength = totalLength;
     }
 
     if (byteLength == 0) {
@@ -819,6 +825,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBufferPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -1825,8 +1832,8 @@ static const HashTableValue JSBufferPrototypeTableValues[]
           { "lastIndexOf"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_lastIndexOf, 3 } },
           { "latin1Slice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeLatin1SliceCodeGenerator, 2 } },
           { "latin1Write"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeLatin1WriteCodeGenerator, 1 } },
-          { "offset"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeOffsetCodeGenerator, 0 } },
-          { "parent"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeParentCodeGenerator, 0 } },
+          { "offset"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinAccessorType, jsBufferPrototypeOffsetCodeGenerator, 0 } },
+          { "parent"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinAccessorType, jsBufferPrototypeParentCodeGenerator, 0 } },
           { "readBigInt64"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeReadBigInt64LECodeGenerator, 1 } },
           { "readBigInt64BE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeReadBigInt64BECodeGenerator, 1 } },
           { "readBigInt64LE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeReadBigInt64LECodeGenerator, 1 } },
@@ -1934,8 +1941,7 @@ const ClassInfo JSBufferPrototype::s_info = {
     // We must use the same naming convention to match Node
     // Some packages (like MongoDB's official Node.js client) rely on this behavior.
     "Uint8Array"_s,
-
-    nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(JSBufferPrototype)
+    &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBufferPrototype)
 };
 
 static const JSC::DOMJIT::Signature DOMJITSignaturejsBufferConstructorAlloc(jsBufferConstructorAllocWithoutTypeChecks,
@@ -1968,7 +1974,7 @@ static const JSC::DOMJIT::Signature DOMJITSignaturejsBufferConstructorAllocUnsaf
 */
 #include "JSBuffer.lut.h"
 
-const ClassInfo JSBufferConstructor::s_info = { "Buffer"_s, nullptr, &jsBufferConstructorTable, nullptr, CREATE_METHOD_TABLE(JSBufferConstructor) };
+const ClassInfo JSBufferConstructor::s_info = { "Buffer"_s, &Base::s_info, &jsBufferConstructorTable, nullptr, CREATE_METHOD_TABLE(JSBufferConstructor) };
 
 void JSBufferConstructor::finishCreation(VM& vm, JSGlobalObject* globalObject, JSC::JSObject* prototype)
 {

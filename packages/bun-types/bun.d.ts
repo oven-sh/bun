@@ -1871,6 +1871,15 @@ declare module "bun" {
     port?: string | number;
 
     /**
+     * If the `SO_REUSEPORT` flag should be set.
+     *
+     * This allows multiple processes to bind to the same port, which is useful for load balancing.
+     *
+     * @default false
+     */
+    reusePort?: boolean;
+
+    /**
      * What hostname should the server listen on?
      *
      * @default

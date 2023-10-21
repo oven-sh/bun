@@ -3,7 +3,7 @@
 #include "JavaScriptCore/JSCJSValueInlines.h"
 #include "helpers.h"
 #include "simdutf.h"
-#include "wtf/text/ExternalStringImpl.h"
+#include "wtf/Seconds.h"
 #include "GCDefferalContext.h"
 #include <JavaScriptCore/JSONObject.h>
 #include <wtf/text/AtomString.h>

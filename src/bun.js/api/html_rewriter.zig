@@ -384,10 +384,10 @@ pub const HTMLRewriter = struct {
 
             result.* = Response{
                 .allocator = bun.default_allocator,
+                .init = .{
+                    .status_code = 200,
+                },
                 .body = .{
-                    .init = .{
-                        .status_code = 200,
-                    },
                     .value = .{
                         .Locked = .{
                             .global = global,
@@ -397,16 +397,16 @@ pub const HTMLRewriter = struct {
                 },
             };
 
-            result.body.init.method = original.body.init.method;
-            result.body.init.status_code = original.body.init.status_code;
+            result.init.method = original.init.method;
+            result.init.status_code = original.init.status_code;
+            result.init.status_text = original.init.status_text.clone();
 
             // https://github.com/oven-sh/bun/issues/3334
-            if (original.body.init.headers) |headers| {
-                result.body.init.headers = headers.cloneThis(global);
+            if (original.init.headers) |headers| {
+                result.init.headers = headers.cloneThis(global);
             }
 
             result.url = original.url.clone();
-            result.status_text = original.status_text.clone();
             var value = original.getBodyValue();
             sink.bodyValueBufferer = JSC.WebCore.BodyValueBufferer.init(sink, onFinishedBuffering, sink.global, bun.default_allocator);
             sink.bodyValueBufferer.?.run(value) catch |buffering_error| {
@@ -606,10 +606,10 @@ pub const HTMLRewriter = struct {
 
     //         result.* = Response{
     //             .allocator = bun.default_allocator,
+    //             .init = .{
+    //                 .status_code = 200,
+    //             },
     //             .body = .{
-    //                 .init = .{
-    //                     .status_code = 200,
-    //                 },
     //                 .value = .{
     //                     .Locked = .{
     //                         .global = global,
@@ -619,9 +619,9 @@ pub const HTMLRewriter = struct {
     //             },
     //         };
 
-    //         result.body.init.headers = original.body.init.headers;
-    //         result.body.init.method = original.body.init.method;
-    //         result.body.init.status_code = original.body.init.status_code;
+    //         result.init.headers = original.init.headers;
+    //         result.init.method = original.init.method;
+    //         result.init.status_code = original.init.status_code;
 
     //         result.url = bun.default_allocator.dupe(u8, original.url) catch unreachable;
     //         result.status_text = bun.default_allocator.dupe(u8, original.status_text) catch unreachable;

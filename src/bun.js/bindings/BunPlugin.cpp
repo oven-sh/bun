@@ -11,6 +11,7 @@
 #include "JavaScriptCore/JSObjectInlines.h"
 #include "wtf/text/WTFString.h"
 #include "JavaScriptCore/JSCInlines.h"
+#include "JavaScriptCore/StrongInlines.h"
 
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/SubspaceInlines.h"

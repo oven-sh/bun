@@ -126,7 +126,7 @@ test("worker with event listeners doesnt close event loop", done => {
   });
 });
 
-test("worker with event listeners doesnt close event loop 2", done => {
+test("worker with event listeners doesn't close event loop 2", done => {
   const x = Bun.spawn({
     cmd: [bunExe(), path.join(import.meta.dir, "many-messages-event-loop.mjs"), "worker-fixture-many-messages2.js"],
     env: bunEnv,

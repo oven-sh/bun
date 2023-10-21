@@ -32,6 +32,7 @@ const ZlibPool = @import("./http/zlib.zig");
 const BoringSSL = bun.BoringSSL;
 const X509 = @import("./bun.js/api/bun/x509.zig");
 const c_ares = @import("./deps/c_ares.zig");
+const SSLConfig = @import("./bun.js/api/server.zig").ServerConfig.SSLConfig;
 
 const URLBufferPool = ObjectPool([8192]u8, null, false, 10);
 const uws = bun.uws;
@@ -363,25 +364,10 @@ fn NewHTTPContext(comptime ssl: bool) type {
             if (!comptime ssl) {
                 unreachable;
             }
-            var opts: uws.us_bun_socket_context_options_t = .{
-                .request_cert = 1,
-                .reject_unauthorized = 0,
-            };
-            if (client.custom_tls_props.passphrase) |passphrase| {
-                opts.passphrase = passphrase;
-            }
-            if (client.custom_tls_props.ca) |ca| {
-                opts.ca = ca.ptr;
-                opts.ca_count = 1;
-            }
-            if (client.custom_tls_props.cert) |cert| {
-                opts.cert = cert.ptr;
-                opts.cert_count = 1;
-            }
-            if (client.custom_tls_props.key) |key| {
-                opts.key = key.ptr;
-                opts.key_count = 1;
-            }
+
+            var opts = client.tls_props.?.asUSockets();
+            opts.request_cert = 1;
+            opts.reject_unauthorized = 1;
             var socket = uws.us_create_bun_socket_context(ssl_int, http_thread.loop, @sizeOf(usize), opts);
             if (socket == null) {
                 return error.FailedToOpenSocket;
@@ -780,8 +766,7 @@ pub const HTTPThread = struct {
 
     pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewHTTPContext(is_ssl).HTTPSocket {
         if (comptime is_ssl) {
-            const args = &client.custom_tls_props;
-            const needs_own_context = args.passphrase != null or args.ca != null or args.cert != null or args.key != null;
+            const needs_own_context = client.tls_props != null;
             if (needs_own_context) {
                 var custom_context = try bun.default_allocator.create(NewHTTPContext(is_ssl));
                 client.custom_context = custom_context;
@@ -1555,7 +1540,7 @@ disable_keepalive: bool = false,
 disable_decompression: bool = false,
 state: InternalState = .{},
 
-custom_tls_props: CustomTLSProps = .{},
+tls_props: ?SSLConfig = null,
 result_callback: HTTPClientResult.Callback = undefined,
 
 /// Some HTTP servers (such as npm) report Last-Modified times but ignore If-Modified-Since.
@@ -1608,7 +1593,9 @@ pub fn deinit(this: *HTTPClient) void {
         this.proxy_tunnel = null;
     }
 
-    this.custom_tls_props.deinit();
+    if (this.tls_props) |*tls_props| {
+        tls_props.deinit();
+    }
 
     if (this.custom_context) |custom_context| {
         bun.default_allocator.destroy(custom_context);
@@ -1729,72 +1716,6 @@ pub const HTTPChannelContext = struct {
     pub fn callback(data: HTTPCallbackPair) void {
         var this: *HTTPChannelContext = @fieldParentPtr(HTTPChannelContext, "http", data.@"0");
         this.channel.writeItem(data) catch unreachable;
-    }
-};
-
-pub const CustomTLSProps = struct {
-    ca: ?[][*c]const u8 = null,
-    cert: ?[][*c]const u8 = null,
-    key: ?[][*c]const u8 = null,
-    passphrase: ?[*c]const u8 = null,
-
-    fn create(in: []const u8) [][*c]const u8 {
-        defer bun.default_allocator.free(in);
-        const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
-        var c_str = bun.default_allocator.dupeZ(u8, in) catch unreachable;
-        native_array[0] = c_str;
-        return native_array;
-    }
-    pub fn setCa(this: *CustomTLSProps, in: []const u8) void {
-        if (in.len > 0) {
-            this.ca = CustomTLSProps.create(in);
-        }
-    }
-    pub fn setCert(this: *CustomTLSProps, in: []const u8) void {
-        if (in.len > 0) {
-            this.cert = CustomTLSProps.create(in);
-        }
-    }
-    pub fn setKey(this: *CustomTLSProps, in: []const u8) void {
-        if (in.len > 0) {
-            this.key = CustomTLSProps.create(in);
-        }
-    }
-    pub fn setPassphrase(this: *CustomTLSProps, in: []const u8) void {
-        if (in.len > 0) {
-            this.passphrase = bun.default_allocator.dupeZ(u8, in) catch unreachable;
-            bun.default_allocator.free(in);
-        }
-    }
-
-    pub fn deinit(this: *CustomTLSProps) void {
-        if (this.ca) |entry| {
-            const slice = std.mem.span(entry[0]);
-            if (slice.len > 0) {
-                bun.default_allocator.free(slice);
-            }
-            bun.default_allocator.free(entry);
-        }
-        if (this.cert) |entry| {
-            const slice = std.mem.span(entry[0]);
-            if (slice.len > 0) {
-                bun.default_allocator.free(slice);
-            }
-            bun.default_allocator.free(entry);
-        }
-        if (this.key) |entry| {
-            const slice = std.mem.span(entry[0]);
-            if (slice.len > 0) {
-                bun.default_allocator.free(slice);
-            }
-            bun.default_allocator.free(entry);
-        }
-        if (this.passphrase) |entry| {
-            const slice = std.mem.span(entry);
-            if (slice.len > 0) {
-                bun.default_allocator.free(slice);
-            }
-        }
     }
 };
 

@@ -38,6 +38,8 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const NullableAllocator = @import("../../nullable_allocator.zig").NullableAllocator;
 const DataURL = @import("../../resolver/data_url.zig").DataURL;
 
+const SSLConfig = @import("../api/server.zig").ServerConfig.SSLConfig;
+
 const VirtualMachine = JSC.VirtualMachine;
 const Task = JSC.Task;
 const JSPrinter = bun.js_printer;
@@ -1503,10 +1505,7 @@ pub const Fetch = struct {
             fetch_tasklet.http.?.client.disable_decompression = fetch_options.disable_decompression;
             fetch_tasklet.http.?.client.reject_unauthorized = fetch_options.reject_unauthorized;
 
-            fetch_tasklet.http.?.client.custom_tls_props.setPassphrase(fetch_options.passphrase);
-            fetch_tasklet.http.?.client.custom_tls_props.setKey(fetch_options.key);
-            fetch_tasklet.http.?.client.custom_tls_props.setCert(fetch_options.cert);
-            fetch_tasklet.http.?.client.custom_tls_props.setCa(fetch_options.ca);
+            fetch_tasklet.http.?.client.tls_props = fetch_options.ssl_config;
 
             // we wanna to return after headers are received
             fetch_tasklet.signal_store.header_progress.store(true, .Monotonic);
@@ -1556,10 +1555,7 @@ pub const Fetch = struct {
             hostname: ?[]u8 = null,
             memory_reporter: *JSC.MemoryReportingAllocator,
             check_server_identity: JSC.Strong = .{},
-            ca: []const u8 = "",
-            key: []const u8 = "",
-            cert: []const u8 = "",
-            passphrase: []const u8 = "",
+            ssl_config: ?SSLConfig = null,
         };
 
         pub fn queue(
@@ -1714,12 +1710,8 @@ pub const Fetch = struct {
         // Custom Hostname
         var hostname: ?[]u8 = null;
 
-        var passphrase: []const u8 = "";
-        var ca: []const u8 = "";
-        var key: []const u8 = "";
-        var cert: []const u8 = "";
+        var ssl_config: ?SSLConfig = null;
 
-        const tls_prop_slice = [_]*[]const u8{ &passphrase, &ca, &key, &cert };
         var url_proxy_buffer: []const u8 = undefined;
         var is_file_url = false;
         var reject_unauthorized = script_ctx.bundler.env.getTLSRejectUnauthorized();
@@ -1873,65 +1865,8 @@ pub const Fetch = struct {
 
                         if (options.get(ctx, "tls")) |tls| {
                             if (!tls.isEmptyOrUndefinedOrNull() and tls.isObject()) {
-                                if (tls.get(ctx, "pfx")) |pfx_opt| {
-                                    if (pfx_opt.isString() or pfx_opt.isBuffer(ctx.ptr())) {
-                                        if (hostname) |host| {
-                                            allocator.free(host);
-                                            hostname = null;
-                                        }
-                                        const err = JSC.createError(globalThis, "Pfx is not yet supported", .{});
-                                        return JSPromise.rejectedPromiseValue(globalThis, err);
-                                    }
-                                    // TODO(Liz3); Actually implement this
-                                    // if (pfx_opt.isString())
-                                    //     pfx = pfx_opt.toSlice(ctx.ptr(), allocator).slice();
-                                    // if (pfx_opt.isBuffer(ctx.ptr())) {
-                                    //     if (JSC.Node.StringOrBuffer.fromJS(globalThis, allocator, pfx_opt, exception)) |sb| {
-                                    //         pfx = sb.slice();
-                                    //     }
-                                    // }
-                                }
-                                if (tls.get(ctx, "ca")) |ca_opt| {
-                                    if (ca_opt.isString()) {
-                                        const str = ca_opt.getZigString(globalThis);
-                                        ca = str.toOwnedSliceZ(allocator) catch @panic("OOM");
-                                    }
-
-                                    if (ca_opt.isBuffer(ctx.ptr())) {
-                                        if (JSC.Node.StringOrBuffer.fromJS(globalThis, allocator, ca_opt, exception)) |sb| {
-                                            ca = sb.slice();
-                                        }
-                                    }
-                                }
-                                if (tls.get(ctx, "cert")) |cert_opt| {
-                                    if (cert_opt.isString()) {
-                                        const str = cert_opt.getZigString(globalThis);
-                                        cert = str.toOwnedSliceZ(allocator) catch @panic("OOM");
-                                    }
-
-                                    if (cert_opt.isBuffer(ctx.ptr())) {
-                                        if (JSC.Node.StringOrBuffer.fromJS(globalThis, allocator, cert_opt, exception)) |sb| {
-                                            cert = sb.slice();
-                                        }
-                                    }
-                                }
-                                if (tls.get(ctx, "key")) |key_opt| {
-                                    if (key_opt.isString()) {
-                                        const str = key_opt.getZigString(globalThis);
-                                        key = str.toOwnedSliceZ(allocator) catch @panic("OOM");
-                                    }
-
-                                    if (key_opt.isBuffer(ctx.ptr())) {
-                                        if (JSC.Node.StringOrBuffer.fromJS(globalThis, allocator, key_opt, exception)) |sb| {
-                                            key = sb.slice();
-                                        }
-                                    }
-                                }
-                                if (tls.get(ctx, "passphrase")) |passphrase_opt| {
-                                    if (passphrase_opt.isString()) {
-                                        const str = passphrase_opt.getZigString(globalThis);
-                                        passphrase = str.toOwnedSliceZ(allocator) catch @panic("OOM");
-                                    }
+                                if (SSLConfig.inJS(globalThis, tls, exception)) |config| {
+                                    ssl_config = config;
                                 }
                                 if (tls.get(ctx, "rejectUnauthorized")) |reject| {
                                     if (reject.isBoolean()) {
@@ -1954,9 +1889,8 @@ pub const Fetch = struct {
                                 if (href.tag == .Dead) {
                                     const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "fetch() proxy URL is invalid", .{}, ctx);
                                     // clean hostname and tls props if any
-                                    for (tls_prop_slice) |ptr| {
-                                        if (ptr.*.len > 0)
-                                            bun.default_allocator.free(ptr.*);
+                                    if (ssl_config) |*conf| {
+                                        conf.deinit();
                                     }
                                     if (hostname) |hn| {
                                         bun.default_allocator.free(hn);
@@ -2002,9 +1936,8 @@ pub const Fetch = struct {
             if (str.isEmpty()) {
                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, ctx);
                 // clean hostname and tls props if any
-                for (tls_prop_slice) |ptr| {
-                    if (ptr.*.len > 0)
-                        bun.default_allocator.free(ptr.*);
+                if (ssl_config) |*conf| {
+                    conf.deinit();
                 }
                 if (hostname) |hn| {
                     bun.default_allocator.free(hn);
@@ -2028,9 +1961,8 @@ pub const Fetch = struct {
 
             url = ZigURL.fromString(allocator, str) catch {
                 // clean hostname and tls props if any
-                for (tls_prop_slice) |ptr| {
-                    if (ptr.*.len > 0)
-                        bun.default_allocator.free(ptr.*);
+                if (ssl_config) |*conf| {
+                    conf.deinit();
                 }
                 if (hostname) |hn| {
                     bun.default_allocator.free(hn);
@@ -2136,70 +2068,12 @@ pub const Fetch = struct {
                         }
 
                         if (options.get(ctx, "tls")) |tls| {
-                            if (tls.get(ctx, "pfx")) |pfx_opt| {
-                                if (pfx_opt.isString() or pfx_opt.isBuffer(ctx.ptr())) {
-                                    for (tls_prop_slice) |ptr| {
-                                        if (ptr.*.len > 0)
-                                            bun.default_allocator.free(ptr.*);
-                                    }
-                                    if (hostname) |hn| {
-                                        bun.default_allocator.free(hn);
-                                        hostname = null;
-                                    }
-                                    const err = JSC.createError(globalThis, "Pfx is not yet supported", .{});
-                                    return JSPromise.rejectedPromiseValue(globalThis, err);
-                                }
-
-                                // TODO(Liz3); Actually implement this
-                                // if (pfx_opt.isString())
-                                //     pfx = pfx_opt.toSlice(ctx.ptr(), allocator).slice();
-                                // if (pfx_opt.isBuffer(ctx.ptr())) {
-                                //     if (JSC.Node.StringOrBuffer.fromJS(globalThis, allocator, pfx_opt, exception)) |sb| {
-                                //         pfx = sb.slice();
-                                //     }
-                                // }
+                            if (ssl_config) |*conf| {
+                                conf.deinit();
+                                ssl_config = null;
                             }
-                            if (tls.get(ctx, "ca")) |ca_opt| {
-                                if (ca_opt.isString()) {
-                                    const as_str = ca_opt.getZigString(globalThis);
-                                    ca = as_str.toOwnedSliceZ(allocator) catch @panic("OOM");
-                                }
-
-                                if (ca_opt.isBuffer(ctx.ptr())) {
-                                    if (JSC.Node.StringOrBuffer.fromJS(globalThis, allocator, ca_opt, exception)) |sb| {
-                                        ca = sb.slice();
-                                    }
-                                }
-                            }
-                            if (tls.get(ctx, "cert")) |cert_opt| {
-                                if (cert_opt.isString()) {
-                                    const as_str = cert_opt.getZigString(globalThis);
-                                    cert = as_str.toOwnedSliceZ(allocator) catch @panic("OOM");
-                                }
-
-                                if (cert_opt.isBuffer(ctx.ptr())) {
-                                    if (JSC.Node.StringOrBuffer.fromJS(globalThis, allocator, cert_opt, exception)) |sb| {
-                                        cert = sb.slice();
-                                    }
-                                }
-                            }
-                            if (tls.get(ctx, "key")) |key_opt| {
-                                if (key_opt.isString()) {
-                                    const as_str = key_opt.getZigString(globalThis);
-                                    key = as_str.toOwnedSliceZ(allocator) catch @panic("OOM");
-                                }
-
-                                if (key_opt.isBuffer(ctx.ptr())) {
-                                    if (JSC.Node.StringOrBuffer.fromJS(globalThis, allocator, key_opt, exception)) |sb| {
-                                        key = sb.slice();
-                                    }
-                                }
-                            }
-                            if (tls.get(ctx, "passphrase")) |passphrase_opt| {
-                                if (passphrase_opt.isString()) {
-                                    const as_str = passphrase_opt.getZigString(globalThis);
-                                    passphrase = as_str.toOwnedSliceZ(allocator) catch @panic("OOM");
-                                }
+                            if (SSLConfig.inJS(globalThis, tls, exception)) |config| {
+                                ssl_config = config;
                             }
                             if (!tls.isEmptyOrUndefinedOrNull() and tls.isObject()) {
                                 if (tls.get(ctx, "rejectUnauthorized")) |reject| {
@@ -2229,9 +2103,8 @@ pub const Fetch = struct {
                                         hostname = null;
                                     }
 
-                                    for (tls_prop_slice) |ptr| {
-                                        if (ptr.*.len > 0)
-                                            bun.default_allocator.free(ptr.*);
+                                    if (ssl_config) |*conf| {
+                                        conf.deinit();
                                     }
                                     allocator.free(url_proxy_buffer);
                                     free_memory_reporter = true;
@@ -2483,11 +2356,8 @@ pub const Fetch = struct {
                 .proxy = proxy,
                 .url_proxy_buffer = url_proxy_buffer,
                 .signal = signal,
-                .passphrase = passphrase,
-                .ca = ca,
-                .key = key,
-                .cert = cert,
                 .globalThis = globalThis,
+                .ssl_config = ssl_config,
                 .hostname = hostname,
                 .memory_reporter = memory_reporter,
                 .check_server_identity = if (check_server_identity.isEmptyOrUndefinedOrNull()) .{} else JSC.Strong.create(check_server_identity, globalThis),

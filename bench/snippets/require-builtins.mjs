@@ -12,7 +12,7 @@ const builtin = ${JSON.stringify(builtin)};
 const now = require("perf_hooks").performance.now();
 require(builtin);
 const end = require("perf_hooks").performance.now();
-console.log("require(" + builtin + "):", (end - now).toFixed(2) + " ms");
+process.stdout.write(JSON.stringify({builtin, time: end - now}) + "\\n");
   `,
   );
   const result = spawnSync(typeof Bun !== "undefined" ? "bun" : "node", [path], {

@@ -253,13 +253,17 @@ if(NOT WEBKIT_DIR)
         message(FATAL_ERROR "Windows does not have prebuilt webkit yet. Please run release-windows.ps1 and pass the path to the built webkit with -DWEBKIT_DIR")
     endif()
     set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "")
-    set(ASSERT_ENABLED "0")
     if(USE_DEBUG_JSC)
         set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "-debug")
         set(ASSERT_ENABLED "1")
+        message(STATUS "WebKit assertions: ON")
     elseif(NOT DEBUG)
         set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "-lto")
         set(ASSERT_ENABLED "0")
+        message(STATUS "WebKit assertions: OFF")
+    else()
+        set(ASSERT_ENABLED "0")
+        message(STATUS "WebKit assertions: OFF")
     endif()
     if (WIN32)
         set(BUN_WEBKIT_PACKAGE_PLATFORM "win32")
@@ -313,6 +317,10 @@ else()
         #   -DPTHREAD_JIT_PERMISSIONS_API=1
         #   -DUSE_PTHREAD_JIT_PERMISSIONS_API=ON
         #   -DENABLE_REMOTE_INSPECTOR=ON
+
+        # and then we have to copy some headers around and maybe specify more than one include path
+
+
         message(FATAL_ERROR "TODO: Setting WEBKIT_DIR to the WebKit repository to enable automatic builds. For now you need to run the release script, and point to the packaged directory.")
     else()
         if(NOT EXISTS "${WEBKIT_DIR}/lib/${libWTF}.${STATIC_LIB_EXT}" OR NOT EXISTS "${WEBKIT_DIR}/lib/${libJavaScriptCore}.${STATIC_LIB_EXT}")
@@ -327,13 +335,8 @@ else()
 
         message(STATUS "Using specified WebKit directory: ${WEBKIT_DIR}")
 
-        if(EXISTS "${WEBKIT_DIR}/is-debug-build.txt")
-            set(ASSERT_ENABLED "1")
-            message(STATUS "WebKit assertions: ON")
-        else()
-            set(ASSERT_ENABLED "0")
-            message(STATUS "WebKit assertions: OFF")
-        endif()
+        set(ASSERT_ENABLED "0")
+        message(STATUS "WebKit assertions: OFF")
     endif()
 endif()
 
@@ -661,14 +664,12 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
         target_compile_options(${bun} PUBLIC -g3 -O1)
     endif()
     add_compile_definitions("BUN_DEBUG=1")
-    
 elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
-    # TODO, flags. -femit-llvm, lto, etc
-    #if (MSVC)
-        #target_compile_options(${bun} PUBLIC /O2)
-    ##else()
-      #  target_compile_options(${bun} PUBLIC -O3)
-   # endif()
+    if (MSVC)
+        target_compile_options(${bun} PUBLIC /O2)
+    else()
+       target_compile_options(${bun} PUBLIC -O3 -flto=full -fno-omit-frame-pointer -fno-rtti -fno-exceptions -femit-llvm)
+    endif()
 endif()
 
 if(NOT MSVC)
@@ -687,10 +688,8 @@ if(NOT MSVC)
         -fno-rtti
         -ferror-limit=${ERROR_LIMIT}
         -fPIC
-        # -fno-omit-frame-pointer
-        # -fno-semantic-interposition
+        -fno-omit-frame-pointer
     )
-    string(APPEND CMAKE_CXX_FLAGS " -std=c++2a ")
 else() # MSVC
     string(APPEND SUPPRESS_WARNING_NUMBERS
         # JSC deletes operator delete to prevent accidental use
@@ -710,9 +709,11 @@ if(APPLE)
         set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0")
     endif()
     
-    target_link_options(${bun} PUBLIC "-dead_strip")
-    target_link_options(${bun} PUBLIC "-dead_strip_dylibs")
-    target_link_options(${bun} PUBLIC "-exported_symbols_list" "${BUN_SRC}/symbols.txt")
+    target_link_options(${bun} PUBLIC
+        "-dead_strip"
+        "-dead_strip_dylibs"
+        "-exported_symbols_list" "${BUN_SRC}/symbols.txt"
+    )
     set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${BUN_SRC}/symbols.txt")
 
     target_link_options(${bun} PUBLIC "-fno-keep-static-consts")
@@ -720,6 +721,7 @@ if(APPLE)
 endif()
 
 if(UNIX AND NOT APPLE)
+    string(APPEND CMAKE_CXX_FLAGS " -std=c++2a ")
     target_link_options(${bun} PUBLIC
         "-static-libstdc++"
         "-static-libgcc"

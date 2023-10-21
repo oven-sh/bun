@@ -316,14 +316,19 @@ describe("util", () => {
     });
   });
 
-  it("format", () => {
-    expect(util.format("%s:%s", "foo")).toBe("foo:%s");
+  describe("Format", () => {
+    it("format", () => {
+      expect(util.format("%s:%s", "foo")).toBe("foo:%s");
+    });
   });
-  it("formatWithOptions", () => {
-    expect(util.formatWithOptions({ colors: true }, "%s:%s", "foo")).toBe("foo:%s");
-    expect(util.formatWithOptions({ colors: true }, "wow(%o)", { obj: true })).toBe(
-      "wow({ obj: \u001B[33mtrue\u001B[39m })",
-    );
+
+  describe("FormatWithOptions", () => {
+    it("formatWithOptions", () => {
+      expect(util.formatWithOptions({ colors: true }, "%s:%s", "foo")).toBe("foo:%s");
+      expect(util.formatWithOptions({ colors: true }, "wow(%o)", { obj: true })).toBe(
+        "wow({ obj: \u001B[33mtrue\u001B[39m })",
+      );
+    });
   });
 
   describe("Promisify", () => {

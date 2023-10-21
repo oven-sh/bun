@@ -2973,7 +2973,7 @@ var require_authCipher = __commonJS({
         ghash.update(Buffer2.alloc(8, 0));
       var ivBits = len * 8,
         tail = Buffer2.alloc(8);
-      tail.writeUIntBE(ivBits, 0, 8), ghash.update(tail), (self2._finID = ghash.state);
+      tail.writeUIntBE(ivBits, 2, 6), ghash.update(tail), (self2._finID = ghash.state);
       var out = Buffer2.from(self2._finID);
       return incr32(out), out;
     }

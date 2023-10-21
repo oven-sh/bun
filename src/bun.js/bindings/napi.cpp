@@ -666,8 +666,8 @@ extern "C" napi_status napi_wrap(napi_env env,
 
     auto clientData = WebCore::clientData(vm);
 
-    auto* ref = new NapiRef(globalObject, 1);
-    ref->strongRef.set(globalObject->vm(), value.getObject());
+    auto* ref = new NapiRef(globalObject, 0);
+    ref->weakValueRef.setObject(value.getObject(), weakValueHandleOwner(), ref);
 
     if (finalize_cb) {
         ref->finalizer.finalize_cb = finalize_cb;

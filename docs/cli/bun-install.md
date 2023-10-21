@@ -59,8 +59,8 @@ optional = true
 # Install local devDependencies (default: true)
 dev = true
 
-# Install peerDependencies (default: false)
-peer = false
+# Install peerDependencies (default: true)
+peer = true
 
 # When using `bun install -g`, install packages here
 globalDir = "~/.bun/install/global"
@@ -170,7 +170,7 @@ bun stores normalized `cpu` and `os` values from npm in the lockfile, along with
 
 ## Peer dependencies?
 
-Peer dependencies are handled similarly to yarn. `bun install` does not automatically install peer dependencies and will try to choose an existing dependency.
+Peer dependencies are handled similarly to yarn. `bun install` will automatically install peer dependencies. If the dependency is marked optional in `peerDependenciesMeta`, an existing dependency will be chosen if possible.
 
 ## Lockfile
 

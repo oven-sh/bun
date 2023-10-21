@@ -246,5 +246,6 @@
   },
   "C_Cpp.errorSquiggles": "enabled",
   "eslint.workingDirectories": ["packages/bun-types"],
-  "typescript.tsdk": "node_modules/typescript/lib"
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "zig.initialSetupDone": true
 }

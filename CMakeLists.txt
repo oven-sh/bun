@@ -240,9 +240,13 @@ endif()
 #
 # On Unix, this will pull from NPM the single package that is needed and use that
 if(WIN32)
-    set(WEBKIT_LIB_BASENAME "lib64")
+    set(STATIC_LIB_EXT "lib")
+    set(libJavaScriptCore "JavaScriptCore")
+    set(libWTF "WTF")
 else()
-    set(WEBKIT_LIB_BASENAME "lib")
+    set(STATIC_LIB_EXT "a")
+    set(libJavaScriptCore "libJavaScriptCore")
+    set(libWTF "libWTF")
 endif()
 if(NOT WEBKIT_DIR)
     if(WIN32)
@@ -280,7 +284,7 @@ if(NOT WEBKIT_DIR)
         message(FATAL_ERROR "Prebuilt WebKit package ${BUN_WEBKIT_PACKAGE_NAME} failed to install")
     endif()
     set(WEBKIT_INCLUDE_DIR "${BUN_WORKDIR}/node_modules/${BUN_WEBKIT_PACKAGE_NAME}/include")
-    set(WEBKIT_LIB_DIR "${BUN_WORKDIR}/node_modules/${BUN_WEBKIT_PACKAGE_NAME}/${WEBKIT_LIB_BASENAME}")
+    set(WEBKIT_LIB_DIR "${BUN_WORKDIR}/node_modules/${BUN_WEBKIT_PACKAGE_NAME}/lib")
 else()
     # Setting WEBKIT_DIR means you either have a path to the WebKit repo, or you have a path to packaged webkit
     # Non-packaged webkit has CMakeLists.txt
@@ -309,9 +313,9 @@ else()
         #   -DPTHREAD_JIT_PERMISSIONS_API=1
         #   -DUSE_PTHREAD_JIT_PERMISSIONS_API=ON
         #   -DENABLE_REMOTE_INSPECTOR=ON
-        message(FATAL_ERROR "TODO: Setting WEBKIT_DIR to the WebKit repository")
+        message(FATAL_ERROR "TODO: Setting WEBKIT_DIR to the WebKit repository to enable automatic builds. For now you need to run the release script, and point to the packaged directory.")
     else()
-        if(NOT EXISTS "${WEBKIT_DIR}/${WEBKIT_LIB_BASENAME}/libWTF.a" OR NOT EXISTS "${WEBKIT_DIR}/${WEBKIT_LIB_BASENAME}/libJavaScriptCore.a" OR NOT EXISTS "${WEBKIT_DIR}/${WEBKIT_LIB_BASENAME}/libbmalloc.a")
+        if(NOT EXISTS "${WEBKIT_DIR}/lib/${libWTF}.${STATIC_LIB_EXT}" OR NOT EXISTS "${WEBKIT_DIR}/lib/${libJavaScriptCore}.${STATIC_LIB_EXT}")
             if(WEBKIT_DIR MATCHES "src/bun.js/WebKit$")
                 message(FATAL_ERROR "WebKit directory ${WEBKIT_DIR} does not contain all the required files for Bun. Did you forget to init submodules?")
             endif()
@@ -319,7 +323,7 @@ else()
         endif()
 
         set(WEBKIT_INCLUDE_DIR "${WEBKIT_DIR}/include")
-        set(WEBKIT_LIB_DIR "${WEBKIT_DIR}/${WEBKIT_LIB_BASENAME}")
+        set(WEBKIT_LIB_DIR "${WEBKIT_DIR}/lib")
 
         message(STATUS "Using specified WebKit directory: ${WEBKIT_DIR}")
 

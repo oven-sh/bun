@@ -1595,6 +1595,7 @@ pub fn deinit(this: *HTTPClient) void {
 
     if (this.tls_props) |*tls_props| {
         tls_props.deinit();
+        this.tls_props = null;
     }
 
     if (this.custom_context) |custom_context| {

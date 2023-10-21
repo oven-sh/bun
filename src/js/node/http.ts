@@ -1290,6 +1290,16 @@ class ClientRequest extends OutgoingMessage {
     } else {
       url = `${this.#protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}${this.#path}`;
     }
+    const tls =
+      this.#protocol === "https:"
+        ? {
+            ca: this.#ca,
+            passphrase: this.#passphrase,
+            pfx: this.#pfx,
+            key: this.#key,
+            cert: this.#cert,
+          }
+        : undefined;
     try {
       //@ts-ignore
       this.#fetchRequest = fetch(url, {
@@ -1300,13 +1310,7 @@ class ClientRequest extends OutgoingMessage {
         verbose: !!$debug,
         signal: this[kAbortController].signal,
         proxy: proxy,
-        tls: {
-          ca: this.#ca,
-          passphrase: this.#passphrase,
-          pfx: this.#pfx,
-          key: this.#key,
-          cert: this.#cert,
-        },
+        tls,
         // Timeouts are handled via this.setTimeout.
         timeout: false,
         // Disable auto gzip/deflate

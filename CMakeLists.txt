@@ -46,16 +46,28 @@ endif()
 set(LLVM_VERSION 16)
 macro(BUN_FIND_LLVM)
     find_program(
-        _LLVM_CLANG_PATH
+        _LLVM_CLANGXX_PATH
         NAMES clang++-${LLVM_VERSION} clang-${LLVM_VERSION} clang++ clang
         PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
         DOC "Path to LLVM ${LLVM_VERSION}'s clang++ binary. Please pass -DLLVM_PREFIX with the path to LLVM"
     )
-    if(NOT _LLVM_CLANG_PATH)
-        message(FATAL_ERROR "Could not find LLVM ${LLVM_VERSION}, search paths: ${PLATFORM_LLVM_SEARCH_PATHS}")
+    if(NOT _LLVM_CLANGXX_PATH)
+        message(FATAL_ERROR "Could not find clang++ ${LLVM_VERSION}, search paths: ${PLATFORM_LLVM_SEARCH_PATHS}")
     endif()
-    set(CMAKE_CXX_COMPILER ${_LLVM_CLANG_PATH})
-    set(CMAKE_C_COMPILER ${_LLVM_CLANG_PATH})
+
+    find_program(
+        _LLVM_CLANG_PATH
+        NAMES clang-${LLVM_VERSION} clang
+        PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
+        DOC "Path to LLVM ${LLVM_VERSION}'s clang++ binary. Please pass -DLLVM_PREFIX with the path to LLVM"
+    )
+    if(NOT _LLVM_CLANG_PATH)
+        message(FATAL_ERROR "Could not find clang ${LLVM_VERSION}, search paths: ${PLATFORM_LLVM_SEARCH_PATHS}")
+    endif()
+
+    set(CMAKE_CXX_COMPILER "${_LLVM_CLANGXX_PATH}")
+    set(CMAKE_C_COMPILER "${_LLVM_CLANG_PATH}")
+
     find_program(
         STRIP
         NAMES llvm-strip
@@ -94,8 +106,11 @@ if(UNIX)
             set(PLATFORM_LLVM_SEARCH_PATHS /opt/homebrew/opt/llvm@${LLVM_VERSION}/bin /opt/homebrew/bin ${PLATFORM_LLVM_SEARCH_PATHS})
         endif()
     endif()
-    if(CMAKE_CXX_COMPILER)
+    if(CMAKE_C_COMPILER)
         set(_LLVM_CLANG_PATH "${CMAKE_CXX_COMPILER}")
+    endif()
+    if(CMAKE_CXX_COMPILER)
+        set(_LLVM_CLANGXX_PATH "${CMAKE_CXX_COMPILER}")
     endif()
     BUN_FIND_LLVM()
 else()
@@ -123,6 +138,7 @@ if(UNIX)
     endif()
 endif()
 
+message(STATUS "C Compiler: ${CMAKE_C_COMPILER_ID} ${CMAKE_C_COMPILER_VERSION} at ${CMAKE_C_COMPILER}")
 message(STATUS "C++ Compiler: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} at ${CMAKE_CXX_COMPILER}")
 # --- End LLVM ---
 
@@ -673,6 +689,10 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
 endif()
 
 if(NOT MSVC)
+    target_compile_options(${bun} PUBLIC
+        $<$<COMPILE_LANGUAGE:CXX>:-x c++>
+    )
+
     if(NOT CI)
         target_compile_options(${bun} PRIVATE -fdiagnostics-color=always)
     endif()
@@ -721,8 +741,11 @@ if(APPLE)
 endif()
 
 if(UNIX AND NOT APPLE)
-    string(APPEND CMAKE_CXX_FLAGS " -std=c++2a ")
+    target_compile_options(${bun} PUBLIC
+        "-std=c++2a"
+    )
     target_link_options(${bun} PUBLIC
+        "-std=c++2a"
         "-static-libstdc++"
         "-static-libgcc"
         "-fuse-ld=lld"

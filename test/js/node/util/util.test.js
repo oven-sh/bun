@@ -332,4 +332,17 @@ describe("util", () => {
       expect(await fn(1, 2)).toBe(3);
     });
   })
+
+  describe("Callbackify", () => {
+    it("should return 3 using callback", (done) => {
+      const asyncFn = async (a, b) => a + b;
+      const fn = util.callbackify(asyncFn);
+
+      fn(1, 2, (err, res) => {
+        expect(err).toBe(null);
+        expect(res).toBe(3);
+        done()
+      });
+    });
+  })
 });

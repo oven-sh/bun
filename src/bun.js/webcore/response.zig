@@ -981,7 +981,17 @@ pub const Fetch = struct {
                             const promise = promise_.asAnyPromise().?;
                             promise.reject(globalThis, err);
                         }
+                        if (response.response_clones) |response_clones| {
+                            for (response_clones.items) |other_response| {
+                                var other_body = other_response.body;
+                                if (other_body.value.Locked.promise) |promise_| {
+                                    const promise = promise_.asAnyPromise().?;
+                                    promise.reject(globalThis, err);
+                                }
 
+                                other_response.body.value.toErrorInstance(err, globalThis);
+                            }
+                        }
                         response.body.value.toErrorInstance(err, globalThis);
                     }
                 }
@@ -1014,7 +1024,12 @@ pub const Fetch = struct {
                             bun.default_allocator,
                         );
                     }
-                    return;
+                    if (this.response.get()) |response_js| {
+                        if (response_js.as(Response)) |response| {
+                            if (response.response_clones == null)
+                                return;
+                        }
+                    }
                 }
             }
 
@@ -1093,9 +1108,6 @@ pub const Fetch = struct {
                             this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
                             var list = scheduled_response_buffer.toManaged(bun.default_allocator);
                             const has_copies = response.response_clones != null and response.response_clones.?.items.len > 0;
-                            if (!has_copies) {
-                                defer list.deinit();
-                            }
                             // done resolve body
                             var old = body.value;
                             var body_value = Body.Value{
@@ -1121,6 +1133,9 @@ pub const Fetch = struct {
                                         other_old.resolve(&other_body.value, this.global_this);
                                     }
                                 }
+                            }
+                            if (has_copies) {
+                                defer list.deinit();
                             }
 
                             this.scheduled_response_buffer = .{

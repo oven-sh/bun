@@ -1280,7 +1280,7 @@ describe("bundler", () => {
       `,
     },
     run: {
-      stdout: "[Function] undefined undefined",
+      stdout: "[Function: fs] undefined undefined",
     },
     target: "browser",
   });

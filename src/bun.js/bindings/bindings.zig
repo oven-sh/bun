@@ -4131,9 +4131,10 @@ pub const JSValue = enum(JSValueReprInt) {
         cppFn("getNameProperty", .{ this, global, ret });
     }
 
-    pub fn getName(this: JSValue, global: *JSGlobalObject) ZigString {
-        var ret = ZigString.init("");
-        getNameProperty(this, global, &ret);
+    extern fn JSC__JSValue__getName(JSC.JSValue, *JSC.JSGlobalObject, *bun.String) void;
+    pub fn getName(this: JSValue, global: *JSGlobalObject) bun.String {
+        var ret = bun.String.empty;
+        JSC__JSValue__getName(this, global, &ret);
         return ret;
     }
 

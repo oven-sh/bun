@@ -21,6 +21,95 @@ afterAll(dummyAfterAll);
 beforeEach(dummyBeforeEach);
 afterEach(dummyAfterEach);
 
+describe("chooses", () => {
+  async function runTest(latest: string, range: string, chosen = "0.0.5") {
+    const exeName: string = {
+      "0.0.5": "baz-exec",
+      "0.0.3": "baz-run",
+    }[chosen]!;
+    if (!exeName) throw new Error("exeName not found");
+
+    const urls: string[] = [];
+    setHandler(
+      dummyRegistry(urls, {
+        "0.0.5": {
+          bin: {
+            "baz-exec": "index.js",
+          },
+        },
+
+        "0.0.3": {
+          bin: {
+            "baz-run": "index.js",
+          },
+        },
+        latest,
+      }),
+    );
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          baz: range,
+        },
+      }),
+    );
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(stderr).toBeDefined();
+    const err = await new Response(stderr).text();
+    expect(err).toContain("Saved lockfile");
+    expect(stdout).toBeDefined();
+    const out = await new Response(stdout).text();
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      ` + baz@${chosen}`,
+      "",
+      " 1 package installed",
+    ]);
+    expect(await exited).toBe(0);
+    expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-${chosen}.tgz`]);
+    expect(requested).toBe(2);
+    expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "baz"]);
+    expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual([exeName]);
+    expect(await readlink(join(package_dir, "node_modules", ".bin", exeName))).toBe(join("..", "baz", "index.js"));
+    expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
+    expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
+      name: "baz",
+      version: chosen,
+      bin: {
+        [exeName]: "index.js",
+      },
+    } as any);
+    await access(join(package_dir, "bun.lockb"));
+  }
+
+  describe("highest matching version", () => {
+    for (let latest of ["999.999.999", "0.0.4", "0.0.2"]) {
+      for (let range of ["0.0.x", "~0.0.4", "~0.0.2"]) {
+        it("when latest is " + latest + " and range is " + range, async () => {
+          await runTest(latest, range);
+        });
+      }
+    }
+  });
+
+  describe('"latest" tag', () => {
+    for (let latest of ["0.0.5", "0.0.3"]) {
+      it(latest, async () => {
+        await runTest(latest, "~0.0.3", latest);
+      });
+    }
+  });
+});
+
 it("should report connection errors", async () => {
   function end(socket: Socket) {
     socket.end();
@@ -6672,6 +6761,7 @@ it("should handle installing packages inside workspaces with difference versions
       " + package3@workspace:packages/package3",
       " + package4@workspace:packages/package4",
       " + package5@workspace:packages/package5",
+      " + bar@0.0.2",
       "",
       " 6 packages installed",
     ]);
@@ -6725,6 +6815,7 @@ it("should handle installing packages inside workspaces with difference versions
       " + package3@workspace:packages/package3",
       " + package4@workspace:packages/package4",
       " + package5@workspace:packages/package5",
+      " + bar@0.0.2",
       "",
       " 6 packages installed",
     ]);
@@ -6778,6 +6869,7 @@ it("should handle installing packages inside workspaces with difference versions
       " + package3@workspace:packages/package3",
       " + package4@workspace:packages/package4",
       " + package5@workspace:packages/package5",
+      " + bar@0.0.2",
       "",
       " 6 packages installed",
     ]);
@@ -6832,6 +6924,7 @@ it("should handle installing packages inside workspaces with difference versions
       " + package3@workspace:packages/package3",
       " + package4@workspace:packages/package4",
       " + package5@workspace:packages/package5",
+      " + bar@0.0.2",
       "",
       " 6 packages installed",
     ]);

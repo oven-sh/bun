@@ -27,7 +27,7 @@ afterEach(async () => {
   await dummyAfterEach();
 });
 
-it("should link workspace package", async () => {
+it("should link and unlink workspace package", async () => {
   await writeFile(
     join(link_dir, "package.json"),
     JSON.stringify({
@@ -114,6 +114,82 @@ it("should link workspace package", async () => {
     name: "moo",
     version: "0.0.1",
   });
+
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "unlink"],
+    cwd: join(link_dir, "packages", "moo"),
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  }));
+
+  expect(stderr).toBeDefined();
+  err = await new Response(stderr).text();
+  expect(err.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun unlink", ""]);
+  expect(stdout).toBeDefined();
+  expect(await new Response(stdout).text()).toContain(`success: unlinked package "moo"`);
+  expect(await exited).toBe(0);
+
+  // link the workspace root package to a workspace package
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "link"],
+    cwd: link_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  }));
+
+  expect(stderr).toBeDefined();
+  err = await new Response(stderr).text();
+  expect(err.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun link", ""]);
+  expect(stdout).toBeDefined();
+  expect(await new Response(stdout).text()).toContain(`Success! Registered "foo"`);
+  expect(await exited).toBe(0);
+
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "link", "foo"],
+    cwd: join(link_dir, "packages", "boba"),
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  }));
+
+  expect(stderr).toBeDefined();
+  err = await new Response(stderr).text();
+  expect(err.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun link", ""]);
+  expect(stdout).toBeDefined();
+  expect((await new Response(stdout).text()).replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    ` installed foo@link:foo`,
+    "",
+    "",
+    " 1 package installed",
+  ]);
+  expect(await file(join(link_dir, "packages", "boba", "node_modules", "foo", "package.json")).json()).toEqual({
+    name: "foo",
+    version: "1.0.0",
+    workspaces: ["packages/*"],
+  });
+  expect(await exited).toBe(0);
+
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "unlink"],
+    cwd: link_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  }));
+
+  expect(stderr).toBeDefined();
+  err = await new Response(stderr).text();
+  expect(err.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun unlink", ""]);
+  expect(stdout).toBeDefined();
+  expect(await new Response(stdout).text()).toContain(`success: unlinked package "foo"`);
+  expect(await exited).toBe(0);
 });
 
 it("should link package", async () => {

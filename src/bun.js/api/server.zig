@@ -347,6 +347,7 @@ pub const ServerConfig = struct {
                         return null;
                     }
                     any = true;
+                    result.requires_custom_request_ctx = true;
                 }
             }
 
@@ -531,6 +532,7 @@ pub const ServerConfig = struct {
                         if (sliced.len > 0) {
                             native_array[0] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
                             any = true;
+                            result.requires_custom_request_ctx = true;
                             result.cert = native_array;
                             result.cert_count = 1;
                         } else {
@@ -598,8 +600,8 @@ pub const ServerConfig = struct {
                                 if (content.data.len > 0) {
                                     native_array[valid_count] = content.data.ptr;
                                     valid_count += 1;
-                                    result.requires_custom_request_ctx = true;
                                     any = true;
+                                    result.requires_custom_request_ctx = true;
                                 } else {
                                     // mark and free all CA's
                                     result.cert = native_array;
@@ -701,8 +703,8 @@ pub const ServerConfig = struct {
 
                 if (obj.get(global, "lowMemoryMode")) |low_memory_mode| {
                     result.low_memory_mode = low_memory_mode.toBoolean();
-                    result.requires_custom_request_ctx = true;
                     any = true;
+                    result.requires_custom_request_ctx = true;
                 }
             }
 

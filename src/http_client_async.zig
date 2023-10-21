@@ -367,7 +367,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
             var opts = client.tls_props.?.asUSockets();
             opts.request_cert = 1;
-            opts.reject_unauthorized = 1;
+            opts.reject_unauthorized = 0;
             var socket = uws.us_create_bun_socket_context(ssl_int, http_thread.loop, @sizeOf(usize), opts);
             if (socket == null) {
                 return error.FailedToOpenSocket;
@@ -766,7 +766,7 @@ pub const HTTPThread = struct {
 
     pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewHTTPContext(is_ssl).HTTPSocket {
         if (comptime is_ssl) {
-            const needs_own_context = client.tls_props != null;
+            const needs_own_context = client.tls_props != null and client.tls_props.?.requires_custom_request_ctx;
             if (needs_own_context) {
                 var custom_context = try bun.default_allocator.create(NewHTTPContext(is_ssl));
                 client.custom_context = custom_context;

@@ -1868,13 +1868,7 @@ pub const Fetch = struct {
                                 if (SSLConfig.inJS(globalThis, tls, exception)) |config| {
                                     ssl_config = config;
                                 }
-                                if (tls.get(ctx, "rejectUnauthorized")) |reject| {
-                                    if (reject.isBoolean()) {
-                                        reject_unauthorized = reject.asBoolean();
-                                    } else if (reject.isNumber()) {
-                                        reject_unauthorized = reject.to(i32) != 0;
-                                    }
-                                }
+
                                 if (tls.get(ctx, "checkServerIdentity")) |checkServerIdentity| {
                                     if (checkServerIdentity.isCell() and checkServerIdentity.isCallable(globalThis.vm())) {
                                         check_server_identity = checkServerIdentity;
@@ -2068,22 +2062,14 @@ pub const Fetch = struct {
                         }
 
                         if (options.get(ctx, "tls")) |tls| {
-                            if (ssl_config) |*conf| {
-                                conf.deinit();
-                                ssl_config = null;
-                            }
-                            if (SSLConfig.inJS(globalThis, tls, exception)) |config| {
-                                ssl_config = config;
-                            }
                             if (!tls.isEmptyOrUndefinedOrNull() and tls.isObject()) {
-                                if (tls.get(ctx, "rejectUnauthorized")) |reject| {
-                                    if (reject.isBoolean()) {
-                                        reject_unauthorized = reject.asBoolean();
-                                    } else if (reject.isNumber()) {
-                                        reject_unauthorized = reject.to(i32) != 0;
-                                    }
+                                if (ssl_config) |*conf| {
+                                    conf.deinit();
+                                    ssl_config = null;
                                 }
-
+                                if (SSLConfig.inJS(globalThis, tls, exception)) |config| {
+                                    ssl_config = config;
+                                }
                                 if (tls.get(ctx, "checkServerIdentity")) |checkServerIdentity| {
                                     if (checkServerIdentity.isCell() and checkServerIdentity.isCallable(globalThis.vm())) {
                                         check_server_identity = checkServerIdentity;

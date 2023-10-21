@@ -1213,7 +1213,11 @@ class ClientRequest extends OutgoingMessage {
   #ca = null;
   #key = null;
   #cert = null;
+  #ciphers = null;
   #passphrase = null;
+  #secureOptions = null;
+  #servername = null;
+  #rejectUnauthorized;
   #useDefaultPort;
   #joinDuplicateHeaders;
   #maxHeaderSize;
@@ -1298,6 +1302,10 @@ class ClientRequest extends OutgoingMessage {
             pfx: this.#pfx,
             key: this.#key,
             cert: this.#cert,
+            ciphers: this.#ciphers,
+            secureOptions: this.#secureOptions,
+            rejectUnauthorized: this.#rejectUnauthorized,
+            serverName: this.#servername,
           }
         : undefined;
     try {
@@ -1485,8 +1493,10 @@ class ClientRequest extends OutgoingMessage {
     }
 
     this.#joinDuplicateHeaders = _joinDuplicateHeaders;
-    if (options.pfx) this.#pfx = options.pfx;
-
+    if (options.pfx) {
+      throw new Error("pfx is not supported");
+    }
+    this.#rejectUnauthorized = options.rejectUnauthorized;
     if (options.ca) {
       if (!isValidTLSArray(options.ca))
         throw new TypeError(
@@ -1504,12 +1514,27 @@ class ClientRequest extends OutgoingMessage {
     if (options.key) {
       if (!isValidTLSArray(options.key))
         throw new TypeError(
-          "passphrase argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+          "key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
         );
       this.#key = options.key;
     }
-    if (options.passphrase) this.#passphrase = options.passphrase;
+    if (options.passphrase) {
+      if (typeof options.passphrase !== "string") throw new TypeError("passphrase argument must be a string");
+      this.#passphrase = options.passphrase;
+    }
+    if (options.ciphers) {
+      if (typeof options.ciphers !== "string") throw new TypeError("ciphers argument must be a string");
+      this.#ciphers = options.ciphers;
+    }
+    if (options.servername) {
+      if (typeof options.servername !== "string") throw new TypeError("servername argument must be a string");
+      this.#servername = options.servername;
+    }
 
+    if (options.secureOptions) {
+      if (typeof options.secureOptions !== "number") throw new TypeError("secureOptions argument must be a string");
+      this.#secureOptions = options.secureOptions;
+    }
     this.#path = options.path || "/";
     if (cb) {
       this.once("response", cb);

@@ -3,14 +3,11 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW) 
 
-set(CMAKE_COLOR_DIAGNOSTICS ON)
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_C_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_C_STANDARD_REQUIRED ON)
+set(Bun_VERSION "1.0.7")
+set(WEBKIT_TAG 1a49a1f94bf42ab4f8c6b11d7bbbb21e491d2d62)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
-message(STATUS "Building in ${BUN_WORKDIR}")
+message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
 
 # --- Build Type ---
 # This is done at the start simply so this is the first message printed
@@ -36,36 +33,98 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
 endif()
 
 # --- LLVM ---
-# This has to be done before `project` in order to override the default compiler
-if(UNIX)
-    set(LLVM_VERSION 17)
-
-    find_path(
-        LLVM_PREFIX
-        NAMES bin/clang++-${LLVM_VERSION} bin/clang-${LLVM_VERSION} bin/clang++ bin/clang
-        PATHS ENV PATH /usr /usr/local /opt/homebrew/opt/llvm@${LLVM_VERSION} /opt/homebrew
-        DOC "Path to LLVM binary directory"
+# This detection is a little overkill, but it ensures that the set LLVM_VERSION matches under
+# any case possible. Sorry for the complexity...
+#
+# Bun and WebKit must be compiled with the same compiler, so we do as much as we can to ensure that
+# the compiler used for the prebuilt WebKit, LLVM 16, is the one that we detect in this process. 
+#
+# It has to be done before project() is called, so that CMake doesnt pick a compiler for us, but even then
+# we do some extra work afterwards to double-check, and we will rerun BUN_FIND_LLVM if the compiler did not match.
+#
+# If the user passes -DLLVM_PREFIX, most of this logic is skipped, but we still warn if invalid.
+set(LLVM_VERSION 16)
+macro(BUN_FIND_LLVM)
+    find_program(
+        _LLVM_CLANG_PATH
+        NAMES clang++-${LLVM_VERSION} clang-${LLVM_VERSION} clang++ clang
+        PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
+        DOC "Path to LLVM ${LLVM_VERSION}'s clang++ binary. Please pass -DLLVM_PREFIX with the path to LLVM"
     )
-    if(LLVM_PREFIX MATCHES "/$")
-        string(REGEX REPLACE "/$" "" LLVM_PREFIX "${LLVM_PREFIX}")
+    if(NOT _LLVM_CLANG_PATH)
+        message(FATAL_ERROR "Could not find LLVM ${LLVM_VERSION}, search paths: ${PLATFORM_LLVM_SEARCH_PATHS}")
     endif()
+    set(CMAKE_CXX_COMPILER ${_LLVM_CLANG_PATH})
+    set(CMAKE_C_COMPILER ${_LLVM_CLANG_PATH})
+    find_program(
+        STRIP
+        NAMES llvm-strip
+        PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
+        DOC "Path to LLVM ${LLVM_VERSION}'s llvm-strip binary"
+    )
+    find_program(
+        DSYMUTIL
+        NAMES dsymutil
+        PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
+        DOC "Path to LLVM ${LLVM_VERSION}'s dsymutil binary"
+    )
+    find_program(
+        AR
+        NAMES llvm-ar
+        PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
+        DOC "Path to LLVM ${LLVM_VERSION}'s llvm-ar binary"
+    )
+    find_program(
+        RANLIB
+        NAMES llvm-ranlib
+        PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
+        DOC "Path to LLVM ${LLVM_VERSION}'s llvm-ar binary"
+    )
 
-    if (NOT EXISTS "${LLVM_PREFIX}/bin/clang")
-        message(FATAL_ERROR "Could not find LLVM ${LLVM_VERSION} installed on your system.")
+    execute_process(COMMAND ${CMAKE_CXX_COMPILER} --version OUTPUT_VARIABLE _tmp)
+    string(REGEX MATCH "version ([0-9]+)\\.([0-9]+)\\.([0-9]+)" CMAKE_CXX_COMPILER_VERSION "${_tmp}")
+    set(CMAKE_CXX_COMPILER_VERSION "${CMAKE_MATCH_1}.${CMAKE_MATCH_2}.${CMAKE_MATCH_3}")
+endmacro()
+if(UNIX)
+    if(LLVM_PREFIX)
+        set(PLATFORM_LLVM_SEARCH_PATHS ${LLVM_PREFIX}/bin)
+    else()
+        set(PLATFORM_LLVM_SEARCH_PATHS /usr/lib/llvm-${LLVM_VERSION}/bin /lib/llvm-${LLVM_VERSION}/bin /usr/bin /usr/local/bin)
+        if(APPLE)
+            set(PLATFORM_LLVM_SEARCH_PATHS /opt/homebrew/opt/llvm@${LLVM_VERSION}/bin /opt/homebrew/bin ${PLATFORM_LLVM_SEARCH_PATHS})
+        endif()
     endif()
-
-    set(CMAKE_CXX_COMPILER "${LLVM_PREFIX}/bin/clang++" CACHE STRING "CMAKE_CXX_COMPILER" FORCE)
-    set(CMAKE_C_COMPILER "${LLVM_PREFIX}/bin/clang" CACHE STRING "CMAKE_C_COMPILER" FORCE)
-    set(CMAKE_CXX_COMPILER_ID "Clang" CACHE STRING "CMAKE_CXX_COMPILER_ID" FORCE)
-    set(STRIP "${LLVM_PREFIX}/bin/llvm-strip")
-    set(DSYMUTIL "${LLVM_PREFIX}/bin/dsymutil")
-
-    message(STATUS "Found LLVM ${LLVM_VERSION}: ${LLVM_PREFIX}")
+    if(CMAKE_CXX_COMPILER)
+        set(_LLVM_CLANG_PATH "${CMAKE_CXX_COMPILER}")
+    endif()
+    BUN_FIND_LLVM()
 else()
-    set(STRIP "strip")
+    # On windows it is expected to use MSVC, and until we get a better build configuration, it is a free-for-all
 endif()
 
-project(Bun VERSION "1.0.7")
+set(CMAKE_COLOR_DIAGNOSTICS ON)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_C_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+
+project(Bun VERSION "${Bun_VERSION}")
+
+# More effort to prevent using the wrong C++ compiler
+if(UNIX)
+    if((NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang") OR (NOT CMAKE_CXX_COMPILER_VERSION MATCHES "^${LLVM_VERSION}\."))
+        # Attempt to auto-correct the compiler
+        message(STATUS "Compiler mismatch, attempting to auto-correct")
+        unset(_LLVM_CLANG_PATH)
+        BUN_FIND_LLVM()
+        if((NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang") OR (NOT CMAKE_CXX_COMPILER_VERSION MATCHES "^${LLVM_VERSION}\."))
+            message(WARNING "Expected LLVM ${LLVM_VERSION} as the C++ compiler, build may fail or break at runtime.")
+        endif()
+    endif()
+endif()
+
+message(STATUS "C++ Compiler: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} at ${CMAKE_CXX_COMPILER}")
+# --- End LLVM ---
 
 set(DEFAULT_ON_UNLESS_WINDOWS ON)
 set(REQUIRED_IF_NOT_WINDOWS "REQUIRED")
@@ -96,6 +155,7 @@ option(USE_CUSTOM_LOLHTML "Use Bun's recommended version of lolhtml" ON)
 option(USE_CUSTOM_TINYCC "Use Bun's recommended version of tinycc" ON)
 option(USE_CUSTOM_LIBUV "Use Bun's recommended version of libuv (Windows only)" OFF)
 option(USE_BASELINE_BUILD "Build Bun for baseline (older) CPUs" OFF)
+option(USE_DEBUG_JSC "Enable assertions and use a debug build of JavaScriptCore" OFF)
 option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
 
 option(CANARY "Make `bun --revision` report a canary release" OFF)
@@ -126,12 +186,8 @@ if(WIN32)
     set(ZIG_TARGET "${ARCH}-windows-msvc")
 endif()
 
-
-if(USE_CONFIGURE_DEPENDS)
-    set(CONFIGURE_DEPENDS "CONFIGURE_DEPENDS")
-else()
-    set(CONFIGURE_DEPENDS "")
-endif()
+# set(CONFIGURE_DEPENDS "")
+set(CONFIGURE_DEPENDS "CONFIGURE_DEPENDS")
 
 # --- CLI Paths ---
 
@@ -178,58 +234,104 @@ if(CCACHE_PROGRAM)
     message(STATUS "Using ccache: ${CCACHE_PROGRAM}")
 endif()
 
-# --- Dependencies ---
-
-if(NOT WIN32)
-    # WebKit
-    if(NOT WEBKIT_DIR)
-        # TODO: allow this to point to the actual webkit cmake file to allow easier rebuilds
-        find_path(
-            WEBKIT_DIR
-            NAMES lib/libJavaScriptCore.a
-            PATHS
-            ${CMAKE_CURRENT_SOURCE_DIR}/bun-webkit
-            DOC "Path to WebKit build directory"
-        )
-        # ensure libWTF.a, libJavaScriptCore.a, and libbmalloc.a exist
-        if(NOT WEBKIT_DIR)
-            message(FATAL_ERROR "Could not find WebKit build directory. Please set WEBKIT_DIR to the directory containing lib/libJavaScriptCore.a. Did you forget to run `bun install` beforehand.")
-        endif()
-        if (NOT EXISTS "${WEBKIT_DIR}/lib/libWTF.a" OR NOT EXISTS "${WEBKIT_DIR}/lib/libJavaScriptCore.a" OR NOT EXISTS "${WEBKIT_DIR}/lib/libbmalloc.a")
-            message(FATAL_ERROR "WebKit directory ${WEBKIT_DIR} does not contain all the required files for Bun.")
-        endif()
-    endif()
-    set(WEBKIT_INCLUDE_DIR "${WEBKIT_DIR}/include")
-    message(STATUS "Found WebKit: ${WEBKIT_DIR}")
-
-    # C++ Assertions
-    # It is very important that the value of ASSERT_ENABLED is the same for both Bun and WebKit,
-    # If this is not the case, everything will crash as the sizes and offsets of things will be different
-    if(NOT DEFINED ASSERT_ENABLED)
-        if(WEBKIT_DIR MATCHES "/bun-webkit$|WebKitBuild/Release$")
-            set(ASSERT_ENABLED "0")
-        elseif(WEBKIT_DIR MATCHES "/WebKitBuild/Debug$")
-            set(ASSERT_ENABLED "1")
-        else()
-            message(WARNING "Could not guess default value for ASSERT_ENABLED.")
-            set(ASSERT_ENABLED "0")
-        endif()
-    endif()
-    if(ASSERT_ENABLED)
-        message(STATUS "C++ Assertions: ON")
-    else()
-        message(STATUS "C++ Assertions: OFF")
-    endif()
+# --- WebKit ---
+# WebKit is either prebuilt and distributed via NPM, or you can pass WEBKIT_DIR to use a local build.
+# We cannot include their CMake build files (TODO: explain why, for now ask @paperdave why)
+#
+# On Unix, this will pull from NPM the single package that is needed and use that
+if(WIN32)
+    set(WEBKIT_LIB_BASENAME "lib64")
 else()
-    # TODO: Real checking
-    set(WEBKIT_DIR "C:/Users/windo/Code/WebKit/bun-webkit-x64")
-    set(WEBKIT_INCLUDE_DIR "C:/Users/windo/Code/WebKit/bun-webkit-x64/include")
-    set(WEBKIT_LIB_DIR "C:/Users/windo/Code/WebKit/WebKitBuild/lib64")
-
-    set(ASSERT_ENABLED "0")
-    message(STATUS "Hardcoded WebKit: ${WEBKIT_DIR}")
+    set(WEBKIT_LIB_BASENAME "lib")
 endif()
+if(NOT WEBKIT_DIR)
+    if(WIN32)
+        message(FATAL_ERROR "Windows does not have prebuilt webkit yet. Please run release-windows.ps1 and pass the path to the built webkit with -DWEBKIT_DIR")
+    endif()
+    set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "")
+    set(ASSERT_ENABLED "0")
+    if(USE_DEBUG_JSC)
+        set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "-debug")
+        set(ASSERT_ENABLED "1")
+    elseif(NOT DEBUG)
+        set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "-lto")
+        set(ASSERT_ENABLED "0")
+    endif()
+    if (WIN32)
+        set(BUN_WEBKIT_PACKAGE_PLATFORM "win32")
+    elseif(APPLE)
+        set(BUN_WEBKIT_PACKAGE_PLATFORM "macos")
+    else()
+        set(BUN_WEBKIT_PACKAGE_PLATFORM "linux")
+    endif()
+    if(ARCH STREQUAL "x86_64")
+        set(BUN_WEBKIT_PACKAGE_ARCH "amd64")
+    elseif(ARCH MATCHES "aarch64|arm64|arm")
+        set(BUN_WEBKIT_PACKAGE_ARCH "arm64")
+    endif()
+    set(BUN_WEBKIT_PACKAGE_NAME "bun-webkit-${BUN_WEBKIT_PACKAGE_PLATFORM}-${BUN_WEBKIT_PACKAGE_ARCH}${BUN_WEBKIT_PACKAGE_NAME_SUFFIX}")
+    write_file("${BUN_WORKDIR}/package.json" "{\"name\":\"bun\",\"dependencies\":{\"${BUN_WEBKIT_PACKAGE_NAME}\":\"0.0.1-${WEBKIT_TAG}\" } }")
+    message(STATUS "Using Pre-built WebKit: ${BUN_WEBKIT_PACKAGE_NAME}")
+    execute_process(
+        COMMAND ${BUN_EXECUTABLE} "install" "${BUN_WEBKIT_PACKAGE_NAME}@0.0.1-${WEBKIT_TAG}" "--exact" "--no-save"
+        WORKING_DIRECTORY ${BUN_WORKDIR}
+    )
+    if(NOT EXISTS "${BUN_WORKDIR}/node_modules/${BUN_WEBKIT_PACKAGE_NAME}")
+        message(FATAL_ERROR "Prebuilt WebKit package ${BUN_WEBKIT_PACKAGE_NAME} failed to install")
+    endif()
+    set(WEBKIT_INCLUDE_DIR "${BUN_WORKDIR}/node_modules/${BUN_WEBKIT_PACKAGE_NAME}/include")
+    set(WEBKIT_LIB_DIR "${BUN_WORKDIR}/node_modules/${BUN_WEBKIT_PACKAGE_NAME}/${WEBKIT_LIB_BASENAME}")
+else()
+    # Setting WEBKIT_DIR means you either have a path to the WebKit repo, or you have a path to packaged webkit
+    # Non-packaged webkit has CMakeLists.txt
+    if(EXISTS "${WEBKIT_DIR}/CMakeLists.txt")
+        # Since we may be doing a Debug build of Bun but with a Release build of JSC, we can't
+        # include their CMakeLists directly here, but rather we need to run `cmake` as a dependency
+        # of our build. It'll still have decent caching which is what really matters.
 
+        # cmake WEBKIT_DIR -B WEBKIT_DIR/WebKitBuild/WEBKIT_BUILD_TYPE
+        #   -DPORT=JSCOnly
+        #   -DENABLE_STATIC_JSC=ON
+        #   -DENABLE_SINGLE_THREADED_VM_ENTRY_SCOPE=ON
+        #   -DCMAKE_BUILD_TYPE=Debug 
+        #   -DENABLE_BUN_SKIP_FAILING_ASSERTIONS=ON
+        #   -DUSE_THIN_ARCHIVES=OFF
+        #   -DENABLE_FTL_JIT=ON
+        #   -DCMAKE_C_COMPILER=(which clang-16)
+        #   -DDCMAKE_CXX_COMPILER=(which clang++-16)
+        #   -DDUSE_BUN_JSC_ADDITIONS=1
+        #   -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld"
+        #   -DCMAKE_AR=$(which llvm-ar)
+        #   -DCMAKE_RANLIB=$(which llvm-ranlib)
+        #   -DALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS=ON
+        #   -G Ninja
+        #   -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+        #   -DPTHREAD_JIT_PERMISSIONS_API=1
+        #   -DUSE_PTHREAD_JIT_PERMISSIONS_API=ON
+        #   -DENABLE_REMOTE_INSPECTOR=ON
+        message(FATAL_ERROR "TODO: Setting WEBKIT_DIR to the WebKit repository")
+    else()
+        if(NOT EXISTS "${WEBKIT_DIR}/${WEBKIT_LIB_BASENAME}/libWTF.a" OR NOT EXISTS "${WEBKIT_DIR}/${WEBKIT_LIB_BASENAME}/libJavaScriptCore.a" OR NOT EXISTS "${WEBKIT_DIR}/${WEBKIT_LIB_BASENAME}/libbmalloc.a")
+            if(WEBKIT_DIR MATCHES "src/bun.js/WebKit$")
+                message(FATAL_ERROR "WebKit directory ${WEBKIT_DIR} does not contain all the required files for Bun. Did you forget to init submodules?")
+            endif()
+            message(FATAL_ERROR "WebKit directory ${WEBKIT_DIR} does not contain all the required files for Bun. Expected a path to the oven-sh/WebKit repository, or a path to a folder containing `include` and `lib`.")
+        endif()
+
+        set(WEBKIT_INCLUDE_DIR "${WEBKIT_DIR}/include")
+        set(WEBKIT_LIB_DIR "${WEBKIT_DIR}/${WEBKIT_LIB_BASENAME}")
+
+        message(STATUS "Using specified WebKit directory: ${WEBKIT_DIR}")
+
+        if(EXISTS "${WEBKIT_DIR}/is-debug-build.txt")
+            set(ASSERT_ENABLED "1")
+            message(STATUS "WebKit assertions: ON")
+        else()
+            set(ASSERT_ENABLED "0")
+            message(STATUS "WebKit assertions: OFF")
+        endif()
+    endif()
+endif()
 
 # --- CMake Macros ---
 
@@ -545,18 +647,7 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/napi
     ${CMAKE_CURRENT_SOURCE_DIR}/src/deps
     ${CMAKE_CURRENT_SOURCE_DIR}/src/deps/picohttpparser
-
-    ${CMAKE_CURRENT_SOURCE_DIR}/bun-webkit/include
-
-    # ${WEBKIT_INCLUDE_DIR}
-    C:/Users/windo/Code/WebKit/bun-webkit-x64/include
-    # ${WEBKIT_DIR}/ICU
-    # ${WEBKIT_DIR}/bmalloc
-    # ${WEBKIT_DIR}/
-    # ${WEBKIT_DIR}/JavaScriptCore/PrivateHeaders
-    # ${WEBKIT_DIR}/bmalloc/PrivateHeaders
-    # ${WEBKIT_DIR}/WTF/PrivateHeaders
-
+    ${WEBKIT_INCLUDE_DIR}
     "${BUN_WORKDIR}/codegen"
 )
 
@@ -660,9 +751,9 @@ if(UNIX AND NOT APPLE)
     target_link_libraries(${bun} PRIVATE "c")
     target_link_libraries(${bun} PRIVATE "libatomic.a")
 
-    target_link_libraries(${bun} PRIVATE "${WEBKIT_DIR}/lib/libicudata.a")
-    target_link_libraries(${bun} PRIVATE "${WEBKIT_DIR}/lib/libicui18n.a")
-    target_link_libraries(${bun} PRIVATE "${WEBKIT_DIR}/lib/libicuuc.a")
+    target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicudata.a")
+    target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicui18n.a")
+    target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicuuc.a")
 
     set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${BUN_SRC}/linker.lds")
     set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${BUN_SRC}/symbols.dyn")
@@ -850,9 +941,9 @@ else()
 endif()
 
 if(NOT MSVC)
-    target_link_libraries(${bun} PRIVATE "${WEBKIT_DIR}/lib/libWTF.a")
-    target_link_libraries(${bun} PRIVATE "${WEBKIT_DIR}/lib/libJavaScriptCore.a")
-    target_link_libraries(${bun} PRIVATE "${WEBKIT_DIR}/lib/libbmalloc.a")
+    target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libWTF.a")
+    target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libJavaScriptCore.a")
+    target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libbmalloc.a")
 else()    
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/WTF.lib")
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/JavaScriptCore.lib")
@@ -877,13 +968,7 @@ else()
     target_include_directories(${bun} PUBLIC C:/Users/windo/Code/WebKit/WebKitLibraries/win/include)
     target_link_directories(${bun} PUBLIC C:/Users/windo/Code/WebKit/WebKitLibraries/win/lib64)
     target_link_directories(${bun} PUBLIC C:/Users/windo/Code/lib64)
-    
-    # icudt.lib
-    # icuin.lib
-    # icuio.lib
-    # icutest.lib
-    # icutu.lib
-    # icuuc.lib
+
     target_link_libraries(${bun} PUBLIC icuuc icudt icutu icuio icuin icutest)
     target_link_libraries(${bun} PUBLIC winmm ws2_32 bcrypt ntdll kernel32 shell32 shlwapi advapi32 vcruntime ucrt legacy_stdio_definitions)
 endif()

@@ -2,7 +2,6 @@
   "name": "bun",
   "dependencies": {
     "@vscode/debugadapter": "^1.61.0",
-    "bun-webkit": "0.0.1-1a49a1f94bf42ab4f8c6b11d7bbbb21e491d2d62",
     "esbuild": "^0.17.15",
     "eslint": "^8.20.0",
     "eslint-config-prettier": "^8.5.0",

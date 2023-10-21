@@ -275,7 +275,7 @@ namespace InternalModuleRegistryConstants {
     .map(
       (id, n) =>
         `//
-${declareASCIILiteral(`${idToEnumName(id)}Code`, outputs.host.get(id.slice(0, -3)))}
+${declareASCIILiteral(`${idToEnumName(id)}Code`, outputs.get(id.slice(0, -3)))}
 //
 `,
     )

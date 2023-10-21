@@ -46,28 +46,16 @@ endif()
 set(LLVM_VERSION 16)
 macro(BUN_FIND_LLVM)
     find_program(
-        _LLVM_CLANGXX_PATH
+        _LLVM_CLANG_PATH
         NAMES clang++-${LLVM_VERSION} clang-${LLVM_VERSION} clang++ clang
         PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
         DOC "Path to LLVM ${LLVM_VERSION}'s clang++ binary. Please pass -DLLVM_PREFIX with the path to LLVM"
     )
-    if(NOT _LLVM_CLANGXX_PATH)
-        message(FATAL_ERROR "Could not find clang++ ${LLVM_VERSION}, search paths: ${PLATFORM_LLVM_SEARCH_PATHS}")
-    endif()
-
-    find_program(
-        _LLVM_CLANG_PATH
-        NAMES clang-${LLVM_VERSION} clang
-        PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
-        DOC "Path to LLVM ${LLVM_VERSION}'s clang++ binary. Please pass -DLLVM_PREFIX with the path to LLVM"
-    )
     if(NOT _LLVM_CLANG_PATH)
-        message(FATAL_ERROR "Could not find clang ${LLVM_VERSION}, search paths: ${PLATFORM_LLVM_SEARCH_PATHS}")
+        message(FATAL_ERROR "Could not find LLVM ${LLVM_VERSION}, search paths: ${PLATFORM_LLVM_SEARCH_PATHS}")
     endif()
-
-    set(CMAKE_CXX_COMPILER "${_LLVM_CLANGXX_PATH}")
-    set(CMAKE_C_COMPILER "${_LLVM_CLANG_PATH}")
-
+    set(CMAKE_CXX_COMPILER ${_LLVM_CLANG_PATH})
+    set(CMAKE_C_COMPILER ${_LLVM_CLANG_PATH})
     find_program(
         STRIP
         NAMES llvm-strip
@@ -106,11 +94,8 @@ if(UNIX)
             set(PLATFORM_LLVM_SEARCH_PATHS /opt/homebrew/opt/llvm@${LLVM_VERSION}/bin /opt/homebrew/bin ${PLATFORM_LLVM_SEARCH_PATHS})
         endif()
     endif()
-    if(CMAKE_C_COMPILER)
-        set(_LLVM_CLANG_PATH "${CMAKE_CXX_COMPILER}")
-    endif()
     if(CMAKE_CXX_COMPILER)
-        set(_LLVM_CLANGXX_PATH "${CMAKE_CXX_COMPILER}")
+        set(_LLVM_CLANG_PATH "${CMAKE_CXX_COMPILER}")
     endif()
     BUN_FIND_LLVM()
 else()
@@ -138,7 +123,6 @@ if(UNIX)
     endif()
 endif()
 
-message(STATUS "C Compiler: ${CMAKE_C_COMPILER_ID} ${CMAKE_C_COMPILER_VERSION} at ${CMAKE_C_COMPILER}")
 message(STATUS "C++ Compiler: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} at ${CMAKE_CXX_COMPILER}")
 # --- End LLVM ---
 
@@ -172,7 +156,6 @@ option(USE_CUSTOM_TINYCC "Use Bun's recommended version of tinycc" ON)
 option(USE_CUSTOM_LIBUV "Use Bun's recommended version of libuv (Windows only)" OFF)
 option(USE_BASELINE_BUILD "Build Bun for baseline (older) CPUs" OFF)
 option(USE_DEBUG_JSC "Enable assertions and use a debug build of JavaScriptCore" OFF)
-# TODO(@paperdave 2023-10-20): Unified sources cause ambiguity errors in the code, so we cannot use it yet.
 option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
 
 option(CANARY "Make `bun --revision` report a canary release" OFF)
@@ -270,17 +253,13 @@ if(NOT WEBKIT_DIR)
         message(FATAL_ERROR "Windows does not have prebuilt webkit yet. Please run release-windows.ps1 and pass the path to the built webkit with -DWEBKIT_DIR")
     endif()
     set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "")
+    set(ASSERT_ENABLED "0")
     if(USE_DEBUG_JSC)
         set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "-debug")
         set(ASSERT_ENABLED "1")
-        message(STATUS "WebKit assertions: ON")
     elseif(NOT DEBUG)
         set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "-lto")
         set(ASSERT_ENABLED "0")
-        message(STATUS "WebKit assertions: OFF")
-    else()
-        set(ASSERT_ENABLED "0")
-        message(STATUS "WebKit assertions: OFF")
     endif()
     if (WIN32)
         set(BUN_WEBKIT_PACKAGE_PLATFORM "win32")
@@ -295,17 +274,21 @@ if(NOT WEBKIT_DIR)
         set(BUN_WEBKIT_PACKAGE_ARCH "arm64")
     endif()
     set(BUN_WEBKIT_PACKAGE_NAME "bun-webkit-${BUN_WEBKIT_PACKAGE_PLATFORM}-${BUN_WEBKIT_PACKAGE_ARCH}${BUN_WEBKIT_PACKAGE_NAME_SUFFIX}")
-    write_file("${BUN_WORKDIR}/package.json" "{\"name\":\"bun\",\"dependencies\":{\"${BUN_WEBKIT_PACKAGE_NAME}\":\"0.0.1-${WEBKIT_TAG}\" } }")
+
     message(STATUS "Using Pre-built WebKit: ${BUN_WEBKIT_PACKAGE_NAME}")
     execute_process(
-        COMMAND ${BUN_EXECUTABLE} "install" "${BUN_WEBKIT_PACKAGE_NAME}@0.0.1-${WEBKIT_TAG}" "--exact" "--no-save"
+        COMMAND ${BUN_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/codegen/download-webkit.ts"
+            "--outdir=${BUN_WORKDIR}/bun-webkit"
+            "--tag=${WEBKIT_TAG}"
+            "--package=${BUN_WEBKIT_PACKAGE_NAME}"
         WORKING_DIRECTORY ${BUN_WORKDIR}
     )
-    if(NOT EXISTS "${BUN_WORKDIR}/node_modules/${BUN_WEBKIT_PACKAGE_NAME}")
+    if(NOT EXISTS "${BUN_WORKDIR}/bun-webkit")
         message(FATAL_ERROR "Prebuilt WebKit package ${BUN_WEBKIT_PACKAGE_NAME} failed to install")
     endif()
-    set(WEBKIT_INCLUDE_DIR "${BUN_WORKDIR}/node_modules/${BUN_WEBKIT_PACKAGE_NAME}/include")
-    set(WEBKIT_LIB_DIR "${BUN_WORKDIR}/node_modules/${BUN_WEBKIT_PACKAGE_NAME}/lib")
+    set(WEBKIT_INCLUDE_DIR "${BUN_WORKDIR}/bun-webkit/include")
+    set(WEBKIT_LIB_DIR "${BUN_WORKDIR}/bun-webkit/lib")
 else()
     # Setting WEBKIT_DIR means you either have a path to the WebKit repo, or you have a path to packaged webkit
     # Non-packaged webkit has CMakeLists.txt
@@ -334,10 +317,6 @@ else()
         #   -DPTHREAD_JIT_PERMISSIONS_API=1
         #   -DUSE_PTHREAD_JIT_PERMISSIONS_API=ON
         #   -DENABLE_REMOTE_INSPECTOR=ON
-
-        # and then we have to copy some headers around and maybe specify more than one include path
-
-
         message(FATAL_ERROR "TODO: Setting WEBKIT_DIR to the WebKit repository to enable automatic builds. For now you need to run the release script, and point to the packaged directory.")
     else()
         if(NOT EXISTS "${WEBKIT_DIR}/lib/${libWTF}.${STATIC_LIB_EXT}" OR NOT EXISTS "${WEBKIT_DIR}/lib/${libJavaScriptCore}.${STATIC_LIB_EXT}")
@@ -402,8 +381,6 @@ file(GLOB USOCKETS_FILES ${CONFIGURE_DEPENDS}
     "${USOCKETS_SRC}/crypto/*.cpp"
 )
 
-set(BUN_ALL_SOURCES ${BUN_CPP} ${USOCKETS_FILES})
-
 # --- Classes Generator ---
 file(GLOB BUN_CLASSES_TS ${CONFIGURE_DEPENDS}
     "${BUN_SRC}/bun.js/*.classes.ts"
@@ -427,7 +404,6 @@ add_custom_command(
     VERBATIM
     COMMENT "Generating *.classes.ts bindings"
 )
-list(APPEND BUN_ALL_SOURCES "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.cpp")
 
 # --- JSSink Generator ---
 add_custom_command(
@@ -439,7 +415,6 @@ add_custom_command(
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Generating JSSink"
 )
-list(APPEND BUN_ALL_SOURCES "${BUN_WORKDIR}/codegen/JSSink.cpp")
 
 # --- .lut.h Generator ---
 set(BUN_OBJECT_LUT_SOURCES
@@ -537,7 +512,6 @@ add_custom_command(
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Bundling JS builtin functions"
 )
-list(APPEND BUN_ALL_SOURCES "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp")
 
 # --- Peechy API ---
 add_custom_command(
@@ -605,36 +579,24 @@ add_custom_command(
     USES_TERMINAL
 )
 
+set(BUN_EXTRA_SOURCES "")
 if(WIN32)
-    list(APPEND BUN_ALL_SOURCES "${BUN_SRC}/bun.js/bindings/windows/musl-memmem.c")
+    set(BUN_EXTRA_SOURCES "${BUN_SRC}/bun.js/bindings/windows/musl-memmem.c")
     include_directories("${BUN_SRC}/bun.js/bindings/windows")
-endif()
-
-if(USE_UNIFIED_SOURCES)
-    string (REPLACE ";" "\n" _contents "${BUN_ALL_SOURCES}")
-    file(WRITE "${BUN_WORKDIR}/source_list.txt" "${_contents}")
-
-    execute_process(COMMAND ${RUBY} ${BUN_SRC}/codegen/generate-unified-source-bundles.rb
-        --derived-sources-path ${BUN_WORKDIR}/unified-sources --source-tree-path ${CMAKE_CURRENT_SOURCE_DIR}
-        ${BUN_WORKDIR}/source_list.txt
-        RESULT_VARIABLE _resultTmp
-        OUTPUT_VARIABLE BUN_UNIFIED_SOURCES)
-    
-    if (${_resultTmp})
-        message(FATAL_ERROR "generate-unified-source-bundles.rb exited with non-zero status, exiting")
-    endif()
-
-    unset(_resultTmp)
-else()
-    set(BUN_UNIFIED_SOURCES ${BUN_ALL_SOURCES})
 endif()
 
 # -- The Buntime™️ ---
 add_executable(
     ${bun}
     
-    ${BUN_UNIFIED_SOURCES}
+    ${BUN_CPP}
+    ${USOCKETS_FILES}
     ${BUN_ZIG_OBJ}
+    "${BUN_WORKDIR}/codegen/JSSink.cpp"
+    "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.cpp"
+    "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp"
+    "${BUN_ZIG_OBJ}"
+    "${BUN_EXTRA_SOURCES}"
 )
 set_target_properties(${bun} PROPERTIES
     CXX_STANDARD 20
@@ -702,15 +664,11 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
     if (MSVC)
         target_compile_options(${bun} PUBLIC /O2)
     else()
-       target_compile_options(${bun} PUBLIC -O3 -flto=full -fno-omit-frame-pointer -fno-rtti -fno-exceptions -emit-llvm)
+       target_compile_options(${bun} PUBLIC -O3 -flto=full -emit-llvm)
     endif()
 endif()
 
 if(NOT MSVC)
-    target_compile_options(${bun} PUBLIC
-        $<$<COMPILE_LANGUAGE:CXX>:-x c++>
-    )
-
     if(NOT CI)
         target_compile_options(${bun} PRIVATE -fdiagnostics-color=always)
     endif()
@@ -728,6 +686,7 @@ if(NOT MSVC)
         -fPIC
         -fno-omit-frame-pointer
     )
+    string(APPEND CMAKE_CXX_FLAGS " -std=c++2a ")
 else() # MSVC
     string(APPEND SUPPRESS_WARNING_NUMBERS
         # JSC deletes operator delete to prevent accidental use
@@ -747,11 +706,9 @@ if(APPLE)
         set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0")
     endif()
     
-    target_link_options(${bun} PUBLIC
-        "-dead_strip"
-        "-dead_strip_dylibs"
-        "-exported_symbols_list" "${BUN_SRC}/symbols.txt"
-    )
+    target_link_options(${bun} PUBLIC "-dead_strip")
+    target_link_options(${bun} PUBLIC "-dead_strip_dylibs")
+    target_link_options(${bun} PUBLIC "-exported_symbols_list" "${BUN_SRC}/symbols.txt")
     set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${BUN_SRC}/symbols.txt")
 
     target_link_options(${bun} PUBLIC "-fno-keep-static-consts")
@@ -759,11 +716,7 @@ if(APPLE)
 endif()
 
 if(UNIX AND NOT APPLE)
-    target_compile_options(${bun} PUBLIC
-        "-std=c++2a"
-    )
     target_link_options(${bun} PUBLIC
-        "-std=c++2a"
         "-static-libstdc++"
         "-static-libgcc"
         "-fuse-ld=lld"
@@ -847,8 +800,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32)
     add_custom_command(
         TARGET ${bun}
         POST_BUILD
-        # TODO: Does this break NAPI? we may need to pass --keep-symbol to strip
-        COMMAND ${STRIP} --strip-all --discard-all -S --strip-debug --preserve-dates -o ${BUN_WORKDIR}/bun ${BUN_WORKDIR}/${bun}
+        COMMAND ${STRIP} -s -x -S -o ${BUN_WORKDIR}/bun ${BUN_WORKDIR}/${bun}
         COMMENT "Stripping Symbols"
     )
 endif()

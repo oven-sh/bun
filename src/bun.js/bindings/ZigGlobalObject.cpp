@@ -2512,7 +2512,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotask, (JSGlobalObject * globalObj
     auto& vm = globalObject->vm();
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
-    auto job = callframe->argument(0);
+    JSValue job = callframe->argument(0);
+    JSValue setAsyncContext = callframe->argument(1);
+    JSValue arg1 = callframe->argument(2);
+    JSValue arg2 = callframe->argument(3);
+
     if (UNLIKELY(!job || job.isUndefinedOrNull())) {
         return JSValue::encode(jsUndefined());
     }
@@ -2529,26 +2533,22 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotask, (JSGlobalObject * globalObj
 
     JSValue restoreAsyncContext = {};
     InternalFieldTuple* asyncContextData = nullptr;
-    auto setAsyncContext = callframe->argument(1);
-    if (!setAsyncContext.isUndefined()) {
+
+    if (setAsyncContext && !setAsyncContext.isUndefined()) {
         asyncContextData = globalObject->m_asyncContextData.get();
         restoreAsyncContext = asyncContextData->getInternalField(0);
         asyncContextData->putInternalField(vm, 0, setAsyncContext);
     }
 
     size_t argCount = callframe->argumentCount();
-    switch (argCount) {
-    case 3: {
-        arguments.append(callframe->uncheckedArgument(2));
-        break;
-    }
-    case 4: {
-        arguments.append(callframe->uncheckedArgument(2));
-        arguments.append(callframe->uncheckedArgument(3));
-        break;
-    }
-    default:
-        break;
+
+    if (argCount > 2) {
+        if (arg1) {
+            arguments.append(arg1);
+            if (arg2) {
+                arguments.append(arg2);
+            }
+        }
     }
 
     JSC::call(globalObject, job, callData, jsUndefined(), arguments, exceptionPtr);

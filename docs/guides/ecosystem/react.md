@@ -4,7 +4,7 @@ name: Use React and JSX
 
 React just works with Bun. Bun supports `.jsx` and `.tsx` files out of the box.
 
-Remember that JSX is just a special syntax for including HTML-like syntax in JavaScript files. React uses JSX syntax, as well as alternatives like [Preact](https://preactjs.com/) and [Solid](https://www.solidjs.com/). Bun's internal transpiler converts JSX syntax into vanilla JavaScript before execution.
+Remember that JSX is just a special syntax for including HTML-like syntax in JavaScript files. React uses JSX syntax, as do alternatives like [Preact](https://preactjs.com/) and [Solid](https://www.solidjs.com/). Bun's internal transpiler converts JSX syntax into vanilla JavaScript before execution.
 
 ---
 

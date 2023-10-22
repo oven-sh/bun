@@ -87,3 +87,11 @@ const m = new Map([
 console.log(m.keys());
 console.log(m.values());
 console.log(new Map().keys(), new Map().values());
+
+class F {
+  foo = 1;
+  bar() { return foo; }
+};
+
+const f = new F();
+console.log(f);

@@ -75,7 +75,7 @@ String 123 should be 2nd word, 456 == 456 and percent s %s == What okay
     }
   }
 }
-SetIterator { 
+SetIterator {
   1,
   "123",
   {
@@ -84,7 +84,7 @@ SetIterator {
     nr: 3453
   },
 }
-SetIterator { 
+SetIterator {
   1,
   "123",
   {
@@ -94,11 +94,11 @@ SetIterator {
   },
 }
 SetIterator { } SetIterator { }
-MapIterator { 
+MapIterator {
   "key",
   "key_2",
 }
-MapIterator { 
+MapIterator {
   {
     a: [],
     str: "123123132",
@@ -109,3 +109,6 @@ MapIterator {
   },
 }
 MapIterator { } MapIterator { }
+{
+  foo: 1
+}

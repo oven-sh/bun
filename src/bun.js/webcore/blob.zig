@@ -478,6 +478,25 @@ pub const Blob = struct {
         return this.store == null;
     }
 
+    export fn File__dupeFromJSBlob(value: JSC.JSValue, fileName: *bun.String) ?*Blob {
+        var this = Blob.fromJS(value) orelse return null;
+        var new = bun.default_allocator.create(Blob) catch unreachable;
+        new.* = this.dupeWithContentType(true);
+        new.allocator = bun.default_allocator;
+        new.is_jsdom_file = true;
+        new.fileName = fileName.clone().byteSlice();
+        return new;
+    }
+
+    export fn File__dupeFromBlob(this: *Blob, fileName: *bun.String) *Blob {
+        var new = bun.default_allocator.create(Blob) catch unreachable;
+        new.* = this.dupeWithContentType(true);
+        new.allocator = bun.default_allocator;
+        new.is_jsdom_file = true;
+        new.fileName = fileName.clone().byteSlice();
+        return new;
+    }
+
     export fn Blob__dupeFromJS(value: JSC.JSValue) ?*Blob {
         var this = Blob.fromJS(value) orelse return null;
         return Blob__dupe(this);
@@ -525,6 +544,8 @@ pub const Blob = struct {
         _ = Blob__setAsFile;
         _ = Blob__getFileNameString;
         _ = Blob__setFileNameString;
+        _ = File__dupeFromBlob;
+        _ = File__dupeFromJSBlob;
     }
 
     pub fn writeFormatForSize(size: usize, writer: anytype, comptime enable_ansi_colors: bool) !void {
@@ -1154,14 +1175,7 @@ pub const Blob = struct {
         return JSC.JSPromise.resolvedPromiseValue(globalThis, JSC.JSValue.jsNumber(written));
     }
 
-    // TODO: Remove this
-    pub export fn JSDOMFile__hasInstance(_: JSC.JSValue, _: *JSC.JSGlobalObject, value: JSC.JSValue) callconv(.C) bool {
-        JSC.markBinding(@src());
-        var blob = value.as(Blob) orelse return false;
-        return blob.is_jsdom_file;
-    }
-
-    pub export fn JSDOMFile__construct(
+    pub export fn File__construct(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) ?*Blob {

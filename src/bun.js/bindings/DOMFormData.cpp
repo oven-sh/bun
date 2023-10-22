@@ -73,7 +73,7 @@ extern "C" void DOMFormData__forEach(DOMFormData* form, void* context, void (*ca
         if (auto value = std::get_if<String>(&item.data)) {
             auto value_ = toZigString(*value);
             callback(context, &name, &value_, nullptr, 0);
-        } else if (auto value = std::get_if<RefPtr<Blob>>(&item.data)) {
+        } else if (auto value = std::get_if<RefPtr<File>>(&item.data)) {
             auto filename = toZigString(value->get()->fileName());
             callback(context, &name, value->get()->impl(), &filename, 1);
         }
@@ -104,9 +104,15 @@ void DOMFormData::append(const String& name, const String& value)
 
 void DOMFormData::append(const String& name, RefPtr<Blob> blob, const String& filename)
 {
-    blob->setFileName(replaceUnpairedSurrogatesWithReplacementCharacter(String(filename)));
-    m_items.append({ replaceUnpairedSurrogatesWithReplacementCharacter(String(name)), blob });
+    auto filenameStr = Bun::toString(filename);
+    auto file = File::fromBlob(blob->impl(), &filenameStr);
+    m_items.append({ replaceUnpairedSurrogatesWithReplacementCharacter(String(name)), file });
 }
+void DOMFormData::append(const String& name, RefPtr<File> file, const String& filename)
+{
+    m_items.append({ replaceUnpairedSurrogatesWithReplacementCharacter(String(name)), file });
+}
+
 void DOMFormData::remove(const String& name)
 {
     m_items.removeAllMatching([&name](const auto& item) {
@@ -153,8 +159,15 @@ void DOMFormData::set(const String& name, const String& value)
 
 void DOMFormData::set(const String& name, RefPtr<Blob> blob, const String& filename)
 {
-    blob->setFileName(filename);
-    set(name, { name, blob });
+    auto filenameStr = Bun::toString(filename);
+    auto file = File::fromBlob(blob->impl(), &filenameStr);
+    set(name, { name, file });
+}
+
+void DOMFormData::set(const String& name, RefPtr<File> file, const String& filename)
+{
+    file->setFileName(filename);
+    set(name, { name, file });
 }
 
 void DOMFormData::set(const String& name, Item&& item)

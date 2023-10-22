@@ -414,7 +414,6 @@ public:
     LazyProperty<JSGlobalObject, JSObject> m_processEnvObject;
 
     JSObject* cryptoObject() { return m_cryptoObject.getInitializedOnMainThread(this); }
-    JSObject* JSDOMFileConstructor() { return m_JSDOMFileConstructor.getInitializedOnMainThread(this); }
 
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 
@@ -501,7 +500,6 @@ public:
     LazyProperty<JSGlobalObject, JSObject> m_processBindingConstants;
     LazyProperty<JSGlobalObject, Structure> m_importMetaObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_asyncBoundFunctionStructure;
-    LazyProperty<JSGlobalObject, JSC::JSObject> m_JSDOMFileConstructor;
 
     LazyProperty<JSGlobalObject, JSObject> m_bunObject;
     LazyProperty<JSGlobalObject, JSObject> m_cryptoObject;

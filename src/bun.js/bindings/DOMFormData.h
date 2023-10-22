@@ -35,6 +35,7 @@
 #include <wtf/RefCounted.h>
 #include <wtf/text/WTFString.h>
 #include "blob.h"
+#include "file.h"
 namespace WebCore {
 
 template<typename> class ExceptionOr;
@@ -43,7 +44,7 @@ class HTMLFormElement;
 
 class DOMFormData : public RefCounted<DOMFormData>, public ContextDestructionObserver {
 public:
-    using FormDataEntryValue = std::variant<String, RefPtr<Blob>>;
+    using FormDataEntryValue = std::variant<String, RefPtr<File>>;
 
     struct Item {
         String name;
@@ -59,12 +60,14 @@ public:
 
     void append(const String& name, const String& value);
     void append(const String& name, RefPtr<Blob>, const String& filename = {});
+    void append(const String& name, RefPtr<File>, const String& filename = {});
     void remove(const String& name);
     std::optional<FormDataEntryValue> get(const String& name);
     Vector<FormDataEntryValue> getAll(const String& name);
     bool has(const String& name);
     void set(const String& name, const String& value);
     void set(const String& name, RefPtr<Blob>, const String& filename = {});
+    void set(const String& name, RefPtr<File>, const String& filename = {});
     Ref<DOMFormData> clone() const;
 
     size_t count() const { return m_items.size(); }

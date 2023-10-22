@@ -21,20 +21,20 @@
   setInterval                     functionSetInterval                                  Function 1
   setTimeout                      functionSetTimeout                                   Function 1
   structuredClone                 functionStructuredClone                              Function 2
-  
+
   global                          GlobalObject_getGlobalThis                           PropertyCallback
   EventSource                     getEventSourceConstructor                            PropertyCallback
-  
+
   $_BunCommonJSModule_$           BunCommonJSModule_getter                             CustomAccessor|DontDelete|ReadOnly
 
   Bun                             GlobalObject::m_bunObject                            CellProperty|DontDelete|ReadOnly
-  File                            GlobalObject::m_JSDOMFileConstructor                 CellProperty
   crypto                          GlobalObject::m_cryptoObject                         CellProperty
   navigator                       GlobalObject::m_navigatorObject                      CellProperty
   performance                     GlobalObject::m_performanceObject                    CellProperty
   process                         GlobalObject::m_processObject                        CellProperty
 
   Blob                            GlobalObject::m_JSBlob                               ClassStructure
+  File                            GlobalObject::m_JSFile                               ClassStructure
   Buffer                          GlobalObject::m_JSBufferClassStructure               ClassStructure
   BuildError                      GlobalObject::m_JSBuildMessage                       ClassStructure
   BuildMessage                    GlobalObject::m_JSBuildMessage                       ClassStructure

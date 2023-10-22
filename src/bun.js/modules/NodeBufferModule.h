@@ -152,8 +152,8 @@ DEFINE_NATIVE_MODULE(NodeBuffer) {
   JSValue blobValue = globalObject->JSBlobConstructor();
   put(blobIdent, blobValue);
 
-  put(JSC::Identifier::fromString(vm, "File"_s),
-      globalObject->JSDOMFileConstructor());
+  /*put(JSC::Identifier::fromString(vm, "File"_s),
+      globalObject->JSDOMFileConstructor());*/
 
   put(JSC::Identifier::fromString(vm, "INSPECT_MAX_BYTES"_s),
       JSC::jsNumber(50));

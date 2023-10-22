@@ -9,8 +9,6 @@ namespace WebCore {
 extern "C" void* Blob__dupeFromJS(JSC::EncodedJSValue impl);
 extern "C" void* Blob__dupe(void* impl);
 extern "C" void Blob__destroy(void* impl);
-extern "C" BunString Blob__getFileNameString(void* impl);
-extern "C" void Blob__setFileNameString(void* impl, BunString* filename);
 
 class Blob : public RefCounted<Blob> {
 public:
@@ -40,17 +38,6 @@ public:
     ~Blob()
     {
         Blob__destroy(m_impl);
-    }
-
-    String fileName()
-    {
-        return Bun::toWTFString(Blob__getFileNameString(m_impl));
-    }
-
-    void setFileName(String fileName)
-    {
-        BunString filename = Bun::toString(fileName);
-        Blob__setFileNameString(m_impl, &filename);
     }
     void* m_impl;
 

@@ -406,28 +406,6 @@ pub const JSBlob = struct {
         return Blob__fromJS(value);
     }
 
-    extern fn BlobPrototype__nameSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
-
-    extern fn BlobPrototype__nameGetCachedValue(JSC.JSValue) JSC.JSValue;
-
-    /// `Blob.name` setter
-    /// This value will be visited by the garbage collector.
-    pub fn nameSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
-        JSC.markBinding(@src());
-        BlobPrototype__nameSetCachedValue(thisValue, globalObject, value);
-    }
-
-    /// `Blob.name` getter
-    /// This value will be visited by the garbage collector.
-    pub fn nameGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
-        JSC.markBinding(@src());
-        const result = BlobPrototype__nameGetCachedValue(thisValue);
-        if (result == .zero)
-            return null;
-
-        return result;
-    }
-
     /// Get the Blob constructor value.
     /// This loads lazily from the global object.
     pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
@@ -495,12 +473,6 @@ pub const JSBlob = struct {
             @compileLog("Expected Blob.getFormData to be a callback but received " ++ @typeName(@TypeOf(Blob.getFormData)));
         if (@TypeOf(Blob.getJSON) != CallbackType)
             @compileLog("Expected Blob.getJSON to be a callback but received " ++ @typeName(@TypeOf(Blob.getJSON)));
-        if (@TypeOf(Blob.getLastModified) != GetterType)
-            @compileLog("Expected Blob.getLastModified to be a getter");
-
-        if (@TypeOf(Blob.getName) != GetterType)
-            @compileLog("Expected Blob.getName to be a getter");
-
         if (@TypeOf(Blob.getSize) != GetterType)
             @compileLog("Expected Blob.getSize to be a getter");
 
@@ -523,8 +495,6 @@ pub const JSBlob = struct {
             @export(Blob.getExists, .{ .name = "BlobPrototype__getExists" });
             @export(Blob.getFormData, .{ .name = "BlobPrototype__getFormData" });
             @export(Blob.getJSON, .{ .name = "BlobPrototype__getJSON" });
-            @export(Blob.getLastModified, .{ .name = "BlobPrototype__getLastModified" });
-            @export(Blob.getName, .{ .name = "BlobPrototype__getName" });
             @export(Blob.getSize, .{ .name = "BlobPrototype__getSize" });
             @export(Blob.getSlice, .{ .name = "BlobPrototype__getSlice" });
             @export(Blob.getStream, .{ .name = "BlobPrototype__getStream" });
@@ -2923,6 +2893,151 @@ pub const JSFSWatcher = struct {
             @export(FSWatcher.finalize, .{ .name = "FSWatcherClass__finalize" });
             @export(FSWatcher.hasPendingActivity, .{ .name = "FSWatcher__hasPendingActivity" });
             @export(FSWatcher.hasRef, .{ .name = "FSWatcherPrototype__hasRef" });
+        }
+    }
+};
+pub const JSFile = struct {
+    const File = Classes.Blob;
+    const GetterType = fn (*File, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*File, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*File, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*File, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*File, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*File {
+        JSC.markBinding(@src());
+        return File__fromJS(value);
+    }
+
+    extern fn FilePrototype__nameSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn FilePrototype__nameGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `File.name` setter
+    /// This value will be visited by the garbage collector.
+    pub fn nameSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        FilePrototype__nameSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `File.name` getter
+    /// This value will be visited by the garbage collector.
+    pub fn nameGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = FilePrototype__nameGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Get the File constructor value.
+    /// This loads lazily from the global object.
+    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        return File__getConstructor(globalObject);
+    }
+
+    /// Create a new instance of File
+    pub fn toJS(this: *File, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = File__create(globalObject, this);
+            std.debug.assert(value__.as(File).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return File__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of File.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*File) bool {
+        JSC.markBinding(@src());
+        return File__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *File, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(File__dangerouslySetPtr(value, null));
+    }
+
+    extern fn File__fromJS(JSC.JSValue) ?*File;
+    extern fn File__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn File__create(globalObject: *JSC.JSGlobalObject, ptr: ?*File) JSC.JSValue;
+
+    extern fn File__dangerouslySetPtr(JSC.JSValue, ?*File) bool;
+
+    comptime {
+        if (@TypeOf(File.estimatedSize) != (fn (*File) callconv(.C) usize)) {
+            @compileLog("File.estimatedSize is not a size function");
+        }
+
+        if (@TypeOf(File.onStructuredCloneSerialize) != (fn (*File, globalThis: *JSC.JSGlobalObject, ctx: *anyopaque, writeBytes: *const fn (*anyopaque, ptr: [*]const u8, len: u32) callconv(.C) void) callconv(.C) void)) {
+            @compileLog("File.onStructuredCloneSerialize is not a structured clone serialize function");
+        }
+
+        if (@TypeOf(File.onStructuredCloneDeserialize) != (fn (globalThis: *JSC.JSGlobalObject, ptr: [*]u8, end: [*]u8) callconv(.C) JSC.JSValue)) {
+            @compileLog("File.onStructuredCloneDeserialize is not a structured clone deserialize function");
+        }
+
+        if (@TypeOf(File.File__construct) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*File)) {
+            @compileLog("Blob.File__construct is not a constructor");
+        }
+
+        if (@TypeOf(File.finalize) != (fn (*File) callconv(.C) void)) {
+            @compileLog("File.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(File.getArrayBuffer) != CallbackType)
+            @compileLog("Expected File.getArrayBuffer to be a callback but received " ++ @typeName(@TypeOf(File.getArrayBuffer)));
+        if (@TypeOf(File.getExists) != CallbackType)
+            @compileLog("Expected File.getExists to be a callback but received " ++ @typeName(@TypeOf(File.getExists)));
+        if (@TypeOf(File.getFormData) != CallbackType)
+            @compileLog("Expected File.getFormData to be a callback but received " ++ @typeName(@TypeOf(File.getFormData)));
+        if (@TypeOf(File.getJSON) != CallbackType)
+            @compileLog("Expected File.getJSON to be a callback but received " ++ @typeName(@TypeOf(File.getJSON)));
+        if (@TypeOf(File.getSize) != GetterType)
+            @compileLog("Expected File.getSize to be a getter");
+
+        if (@TypeOf(File.getSlice) != CallbackType)
+            @compileLog("Expected File.getSlice to be a callback but received " ++ @typeName(@TypeOf(File.getSlice)));
+        if (@TypeOf(File.getStream) != CallbackType)
+            @compileLog("Expected File.getStream to be a callback but received " ++ @typeName(@TypeOf(File.getStream)));
+        if (@TypeOf(File.getText) != CallbackType)
+            @compileLog("Expected File.getText to be a callback but received " ++ @typeName(@TypeOf(File.getText)));
+        if (@TypeOf(File.getType) != GetterType)
+            @compileLog("Expected File.getType to be a getter");
+
+        if (@TypeOf(File.getWriter) != CallbackType)
+            @compileLog("Expected File.getWriter to be a callback but received " ++ @typeName(@TypeOf(File.getWriter)));
+        if (@TypeOf(File.getLastModified) != GetterType)
+            @compileLog("Expected File.getLastModified to be a getter");
+
+        if (@TypeOf(File.getName) != GetterType)
+            @compileLog("Expected File.getName to be a getter");
+
+        if (!JSC.is_bindgen) {
+            @export(File.estimatedSize, .{ .name = "File__estimatedSize" });
+            @export(File.File__construct, .{ .name = "FileClass__construct" });
+            @export(File.finalize, .{ .name = "FileClass__finalize" });
+            @export(File.getArrayBuffer, .{ .name = "FilePrototype__getArrayBuffer" });
+            @export(File.getExists, .{ .name = "FilePrototype__getExists" });
+            @export(File.getFormData, .{ .name = "FilePrototype__getFormData" });
+            @export(File.getJSON, .{ .name = "FilePrototype__getJSON" });
+            @export(File.getLastModified, .{ .name = "FilePrototype__getLastModified" });
+            @export(File.getName, .{ .name = "FilePrototype__getName" });
+            @export(File.getSize, .{ .name = "FilePrototype__getSize" });
+            @export(File.getSlice, .{ .name = "FilePrototype__getSlice" });
+            @export(File.getStream, .{ .name = "FilePrototype__getStream" });
+            @export(File.getText, .{ .name = "FilePrototype__getText" });
+            @export(File.getType, .{ .name = "FilePrototype__getType" });
+            @export(File.getWriter, .{ .name = "FilePrototype__getWriter" });
+            @export(File.onStructuredCloneDeserialize, .{ .name = "File__onStructuredCloneDeserialize" });
+            @export(File.onStructuredCloneSerialize, .{ .name = "File__onStructuredCloneSerialize" });
         }
     }
 };
@@ -7092,6 +7207,7 @@ comptime {
     _ = JSExpectStringMatching;
     _ = JSFFI;
     _ = JSFSWatcher;
+    _ = JSFile;
     _ = JSFileSystemRouter;
     _ = JSHTMLRewriter;
     _ = JSHTTPSServer;

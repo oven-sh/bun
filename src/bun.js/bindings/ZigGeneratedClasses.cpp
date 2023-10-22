@@ -17393,6 +17393,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSPostgresSQLConnectionPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -17850,6 +17851,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSPostgresSQLQueryPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -17911,6 +17913,9 @@ extern "C" void PostgresSQLQueryClass__finalize(void*);
 extern "C" EncodedJSValue PostgresSQLQueryPrototype__doCancel(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(PostgresSQLQueryPrototype__cancelCallback);
 
+extern "C" EncodedJSValue PostgresSQLQueryPrototype__doDone(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(PostgresSQLQueryPrototype__doneCallback);
+
 extern "C" EncodedJSValue PostgresSQLQueryPrototype__doRun(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(PostgresSQLQueryPrototype__runCallback);
 
@@ -17918,6 +17923,7 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSPostgresSQLQueryPrototype, JSPostgresSQLQu
 
 static const HashTableValue JSPostgresSQLQueryPrototypeTableValues[] = {
     { "cancel"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, PostgresSQLQueryPrototype__cancelCallback, 0 } },
+    { "done"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, PostgresSQLQueryPrototype__doneCallback, 0 } },
     { "run"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, PostgresSQLQueryPrototype__runCallback, 2 } }
 };
 
@@ -17961,6 +17967,34 @@ JSC_DEFINE_HOST_FUNCTION(PostgresSQLQueryPrototype__cancelCallback, (JSGlobalObj
 #endif
 
     return PostgresSQLQueryPrototype__doCancel(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(PostgresSQLQueryPrototype__doneCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSPostgresSQLQuery* thisObject = jsDynamicCast<JSPostgresSQLQuery*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof PostgresSQLQuery"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return PostgresSQLQueryPrototype__doDone(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 JSC_DEFINE_HOST_FUNCTION(PostgresSQLQueryPrototype__runCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

@@ -1577,8 +1577,9 @@ pub const PostgresSQLQuery = struct {
     query: bun.String = bun.String.empty,
     cursor_name: bun.String = bun.String.empty,
     thisValue: JSC.JSValue = .undefined,
-    target: JSC.JSValue = .undefined,
+    target: JSC.Strong = JSC.Strong.init(),
     status: Status = Status.pending,
+    is_done: bool = false,
     ref_count: u32 = 1,
 
     pub usingnamespace JSC.Codegen.JSPostgresSQLQuery;
@@ -1591,7 +1592,7 @@ pub const PostgresSQLQuery = struct {
     };
 
     pub fn hasPendingActivity(this: *@This()) callconv(.C) bool {
-        return this.status == .running;
+        return !this.is_done or this.status == .running;
     }
 
     pub fn deinit(this: *@This()) void {
@@ -1600,6 +1601,7 @@ pub const PostgresSQLQuery = struct {
         }
         this.query.deref();
         this.cursor_name.deref();
+        this.target.deinit();
 
         bun.default_allocator.destroy(this);
     }
@@ -1607,7 +1609,6 @@ pub const PostgresSQLQuery = struct {
     pub fn finalize(this: *@This()) callconv(.C) void {
         debug("PostgresSQLQuery finalize", .{});
         this.thisValue = .zero;
-        this.target = .zero;
         this.deref();
     }
 
@@ -1626,23 +1627,26 @@ pub const PostgresSQLQuery = struct {
     }
 
     pub fn onNoData(this: *@This(), globalObject: *JSC.JSGlobalObject) void {
+        this.status = .success;
+        defer this.deref();
+
         const thisValue = this.thisValue;
-        const targetValue = this.target;
-        if (thisValue == .zero) {
-            this.deref();
+        const targetValue = this.target.trySwap() orelse JSC.JSValue.zero;
+        if (thisValue == .zero or targetValue == .zero) {
             return;
         }
 
-        defer this.deref();
         var vm = JSC.VirtualMachine.get();
         const function = vm.rareData().postgresql_context.onQueryResolveFn.get().?;
         globalObject.queueMicrotask(function, &[_]JSC.JSValue{targetValue});
     }
     pub fn onError(this: *@This(), err: protocol.ErrorResponse, globalObject: *JSC.JSGlobalObject) void {
+        this.status = .fail;
+        defer this.deref();
+
         const thisValue = this.thisValue;
-        const targetValue = this.target;
-        if (thisValue == .zero) {
-            this.deref();
+        const targetValue = this.target.trySwap() orelse JSC.JSValue.zero;
+        if (thisValue == .zero or targetValue == .zero) {
             return;
         }
         var b = bun.StringBuilder{};
@@ -1662,7 +1666,7 @@ pub const PostgresSQLQuery = struct {
             _ = b.append("\n");
         }
         const instance = globalObject.createSyntaxErrorInstance("Postgres error occurred\n{s}", .{b.allocatedSlice()[0..b.len]});
-        this.status = .fail;
+
         b.deinit(bun.default_allocator);
 
         defer this.deref();
@@ -1673,20 +1677,17 @@ pub const PostgresSQLQuery = struct {
     }
 
     pub fn onSuccess(this: *@This(), _: []const u8, globalObject: *JSC.JSGlobalObject) void {
-        const thisValue = this.thisValue;
-        const targetValue = this.target;
-        targetValue.ensureStillAlive();
+        this.status = .success;
+        defer this.deref();
 
-        if (thisValue == .zero) {
-            this.deref();
+        const thisValue = this.thisValue;
+        const targetValue = this.target.trySwap() orelse JSC.JSValue.zero;
+        if (thisValue == .zero or targetValue == .zero) {
             return;
         }
 
         const pending_value = PostgresSQLQuery.pendingValueGetCached(thisValue) orelse JSC.JSValue.undefined;
         pending_value.ensureStillAlive();
-
-        this.status = .success;
-        defer this.deref();
 
         var vm = JSC.VirtualMachine.get();
         const function = vm.rareData().postgresql_context.onQueryResolveFn.get().?;
@@ -1731,7 +1732,6 @@ pub const PostgresSQLQuery = struct {
         ptr.* = .{
             .query = query.toBunString(globalThis),
             .thisValue = this_value,
-            .target = query,
         };
         ptr.query.ref();
 
@@ -1750,6 +1750,12 @@ pub const PostgresSQLQuery = struct {
         }
     }
 
+    pub fn doDone(this: *@This(), globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        _ = globalObject;
+        this.is_done = true;
+        return .undefined;
+    }
+
     pub fn doRun(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         var arguments_ = callframe.arguments(2);
         const arguments = arguments_.slice();
@@ -1763,7 +1769,7 @@ pub const PostgresSQLQuery = struct {
             globalObject.throwInvalidArgumentType("run", "query", "Query");
             return .zero;
         }
-        this.target = query;
+        this.target.set(globalObject, query);
         const binding_value = PostgresSQLQuery.bindingGetCached(callframe.this()) orelse .zero;
         var query_str = this.query.toUTF8(bun.default_allocator);
         defer query_str.deinit();
@@ -2260,6 +2266,23 @@ pub const PostgresSQLConnection = struct {
             const reader = protocol.StackReader.init(data, &consumed, &offset);
             PostgresRequest.onData(this, protocol.StackReader, reader) catch |err| {
                 if (err == error.ShortRead) {
+                    if (comptime bun.Environment.allow_assert) {
+                        if (@errorReturnTrace()) |trace| {
+                            debug("Received short read: last_message_start: {d}, head: {d}, len: {d}\n{}", .{
+                                offset,
+                                consumed,
+                                data.len,
+                                trace,
+                            });
+                        } else {
+                            debug("Received short read: last_message_start: {d}, head: {d}, len: {d}", .{
+                                offset,
+                                consumed,
+                                data.len,
+                            });
+                        }
+                    }
+
                     this.read_buffer.head = 0;
                     this.last_message_start = 0;
                     this.read_buffer.byte_list.len = 0;
@@ -2277,6 +2300,7 @@ pub const PostgresSQLConnection = struct {
         }
 
         {
+            this.read_buffer.head = this.last_message_start;
             this.read_buffer.write(bun.default_allocator, data) catch @panic("failed to write to read buffer");
             PostgresRequest.onData(this, Reader, this.bufferedReader()) catch |err| {
                 if (err != error.ShortRead) {
@@ -2286,10 +2310,31 @@ pub const PostgresSQLConnection = struct {
                         }
                     }
                     this.fail("Failed to read data", err);
+                    return;
                 }
+
+                if (comptime bun.Environment.allow_assert) {
+                    if (@errorReturnTrace()) |trace| {
+                        debug("Received short read: last_message_start: {d}, head: {d}, len: {d}\n{}", .{
+                            this.last_message_start,
+                            this.read_buffer.head,
+                            this.read_buffer.byte_list.len,
+                            trace,
+                        });
+                    } else {
+                        debug("Received short read: last_message_start: {d}, head: {d}, len: {d}", .{
+                            this.last_message_start,
+                            this.read_buffer.head,
+                            this.read_buffer.byte_list.len,
+                        });
+                    }
+                }
+
                 return;
             };
+
             this.last_message_start = 0;
+            this.read_buffer.head = 0;
         }
     }
 
@@ -2552,10 +2597,10 @@ pub const PostgresSQLConnection = struct {
             return this.connection.read_buffer.remaining();
         }
         pub fn skip(this: Reader, count: usize) void {
-            this.connection.read_buffer.head = @min(this.connection.read_buffer.head + @as(u32, @truncate(count)), this.connection.read_buffer.len());
+            this.connection.read_buffer.head = @min(this.connection.read_buffer.head + @as(u32, @truncate(count)), this.connection.read_buffer.byte_list.len);
         }
         pub fn ensureCapacity(this: Reader, count: usize) bool {
-            return this.connection.read_buffer.head + count <= this.connection.read_buffer.len();
+            return @as(usize, this.connection.read_buffer.head) + count <= @as(usize, this.connection.read_buffer.byte_list.len);
         }
         pub fn read(this: Reader, count: usize) anyerror!Data {
             var remaining = this.connection.read_buffer.remaining();

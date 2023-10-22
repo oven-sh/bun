@@ -54,6 +54,10 @@ export default [
         fn: "doCancel",
         length: 0,
       },
+      done: {
+        fn: "doDone",
+        length: 0,
+      },
     },
     values: ["pendingValue", "binding"],
     estimatedSize: true,

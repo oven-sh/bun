@@ -4628,11 +4628,14 @@ pub const JSPostgresSQLQuery = struct {
 
         if (@TypeOf(PostgresSQLQuery.doCancel) != CallbackType)
             @compileLog("Expected PostgresSQLQuery.doCancel to be a callback but received " ++ @typeName(@TypeOf(PostgresSQLQuery.doCancel)));
+        if (@TypeOf(PostgresSQLQuery.doDone) != CallbackType)
+            @compileLog("Expected PostgresSQLQuery.doDone to be a callback but received " ++ @typeName(@TypeOf(PostgresSQLQuery.doDone)));
         if (@TypeOf(PostgresSQLQuery.doRun) != CallbackType)
             @compileLog("Expected PostgresSQLQuery.doRun to be a callback but received " ++ @typeName(@TypeOf(PostgresSQLQuery.doRun)));
         if (!JSC.is_bindgen) {
             @export(PostgresSQLQuery.constructor, .{ .name = "PostgresSQLQueryClass__construct" });
             @export(PostgresSQLQuery.doCancel, .{ .name = "PostgresSQLQueryPrototype__doCancel" });
+            @export(PostgresSQLQuery.doDone, .{ .name = "PostgresSQLQueryPrototype__doDone" });
             @export(PostgresSQLQuery.doRun, .{ .name = "PostgresSQLQueryPrototype__doRun" });
             @export(PostgresSQLQuery.estimatedSize, .{ .name = "PostgresSQLQuery__estimatedSize" });
             @export(PostgresSQLQuery.finalize, .{ .name = "PostgresSQLQueryClass__finalize" });

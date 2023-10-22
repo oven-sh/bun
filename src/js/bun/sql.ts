@@ -71,12 +71,15 @@ class Query extends PublicPromise {
 
   resolve(x) {
     this[_queryStatus] &= ~queryStatus_active;
+    this[_handle].done();
     return this[_resolve](x);
   }
 
   reject(x) {
     this[_queryStatus] &= ~queryStatus_active;
     this[_queryStatus] |= queryStatus_error;
+    this[_handle].done();
+
     return this[_reject](x);
   }
 
@@ -127,14 +130,14 @@ class Query extends PublicPromise {
 Object.defineProperty(Query, Symbol.species, { value: PublicPromise });
 Object.defineProperty(Query, Symbol.toStringTag, { value: "Query" });
 init(
-  (query, result) => {
+  function (query, result) {
     try {
       query.resolve(result);
     } catch (e) {
       console.log(e);
     }
   },
-  (query, reject) => {
+  function (query, reject) {
     try {
       query.reject(reject);
     } catch (e) {

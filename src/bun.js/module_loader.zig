@@ -995,6 +995,8 @@ pub const ModuleLoader = struct {
             }
             log.deinit();
 
+            debug("fulfill: {any}", .{specifier});
+
             Bun__onFulfillAsyncModule(
                 promise,
                 &errorable,

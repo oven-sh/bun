@@ -90,8 +90,10 @@ console.log(new Map().keys(), new Map().values());
 
 class F {
   foo = 1;
-  bar() { return foo; }
-};
+  bar() {
+    return foo;
+  }
+}
 
 const f = new F();
 console.log(f);

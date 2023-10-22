@@ -636,6 +636,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                     const version = Dependency.parse(
                         this.allocator,
                         dep_name,
+                        name_hash,
                         sliced.slice,
                         &sliced,
                         log,

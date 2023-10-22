@@ -1314,7 +1314,38 @@ pub const Blob = struct {
             return .undefined;
         };
 
-        const blob = Blob.findOrCreateFileFromPath(path, globalObject);
+        var blob = Blob.findOrCreateFileFromPath(path, globalObject);
+
+        if (arguments.len >= 2) {
+            const opts = arguments[1];
+
+            if (opts.isObject()) {
+                if (opts.getTruthy(globalObject, "type")) |file_type| {
+                    inner: {
+                        if (file_type.isString()) {
+                            var allocator = bun.default_allocator;
+                            var str = file_type.toSlice(globalObject, bun.default_allocator);
+                            defer str.deinit();
+                            const slice = str.slice();
+                            if (!strings.isAllASCII(slice)) {
+                                break :inner;
+                            }
+                            blob.content_type_was_set = true;
+                            if (vm.mimeType(str.slice())) |entry| {
+                                blob.content_type = entry.value;
+                                break :inner;
+                            }
+                            var content_type_buf = allocator.alloc(u8, slice.len) catch unreachable;
+                            blob.content_type = strings.copyLowercase(slice, content_type_buf);
+                            blob.content_type_allocated = true;
+                        }
+                    }
+                }
+                if (opts.getTruthy(globalObject, "lastModified")) |last_modified| {
+                    blob.last_modified = last_modified.coerce(f64, globalObject);
+                }
+            }
+        }
 
         var ptr = bun.default_allocator.create(Blob) catch unreachable;
         ptr.* = blob;

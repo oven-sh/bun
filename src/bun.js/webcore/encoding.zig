@@ -765,7 +765,7 @@ pub const Encoder = struct {
     export fn Bun__encoding__writeLatin1(input: [*]const u8, len: usize, to: [*]u8, to_len: usize, encoding: u8) usize {
         return switch (@as(JSC.Node.Encoding, @enumFromInt(encoding))) {
             .utf8 => writeU8(input, len, to, to_len, .utf8),
-            .latin1 => writeU8(input, len, to, to_len, .ascii),
+            .latin1 => writeU8(input, len, to, to_len, .latin1),
             .ascii => writeU8(input, len, to, to_len, .ascii),
             .ucs2 => writeU8(input, len, to, to_len, .utf16le),
             .utf16le => writeU8(input, len, to, to_len, .utf16le),
@@ -967,13 +967,13 @@ pub const Encoder = struct {
         // if (comptime encoding.isBinaryToText()) {}
 
         switch (comptime encoding) {
-            .buffer => {
+            .buffer, .latin1 => {
                 const written = @min(len, to_len);
                 @memcpy(to_ptr[0..written], input[0..written]);
 
                 return written;
             },
-            .latin1, .ascii => {
+            .ascii => {
                 const written = @min(len, to_len);
 
                 var to = to_ptr[0..written];

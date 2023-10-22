@@ -51,8 +51,7 @@ extern "C" void FFI__ptr__put(JSC::JSGlobalObject* globalObject, JSC::EncodedJSV
     thisObject->putDirect(
         globalObject->vm(),
         Identifier::fromString(globalObject->vm(), "ptr"_s),
-        function,
-        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | 0);
+        function);
 }
 
 extern "C" JSC_DECLARE_HOST_FUNCTION(Reader__u8__slowpathWrapper);
@@ -92,8 +91,7 @@ extern "C" void Reader__u8__put(JSC::JSGlobalObject* globalObject, JSC::EncodedJ
     thisObject->putDirect(
         globalObject->vm(),
         Identifier::fromString(globalObject->vm(), "u8"_s),
-        function,
-        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | 0);
+        function);
 }
 
 extern "C" JSC_DECLARE_HOST_FUNCTION(Reader__u16__slowpathWrapper);
@@ -133,8 +131,7 @@ extern "C" void Reader__u16__put(JSC::JSGlobalObject* globalObject, JSC::Encoded
     thisObject->putDirect(
         globalObject->vm(),
         Identifier::fromString(globalObject->vm(), "u16"_s),
-        function,
-        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | 0);
+        function);
 }
 
 extern "C" JSC_DECLARE_HOST_FUNCTION(Reader__u32__slowpathWrapper);
@@ -174,8 +171,7 @@ extern "C" void Reader__u32__put(JSC::JSGlobalObject* globalObject, JSC::Encoded
     thisObject->putDirect(
         globalObject->vm(),
         Identifier::fromString(globalObject->vm(), "u32"_s),
-        function,
-        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | 0);
+        function);
 }
 
 extern "C" JSC_DECLARE_HOST_FUNCTION(Reader__ptr__slowpathWrapper);
@@ -215,8 +211,7 @@ extern "C" void Reader__ptr__put(JSC::JSGlobalObject* globalObject, JSC::Encoded
     thisObject->putDirect(
         globalObject->vm(),
         Identifier::fromString(globalObject->vm(), "ptr"_s),
-        function,
-        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | 0);
+        function);
 }
 
 extern "C" JSC_DECLARE_HOST_FUNCTION(Reader__i8__slowpathWrapper);
@@ -256,8 +251,7 @@ extern "C" void Reader__i8__put(JSC::JSGlobalObject* globalObject, JSC::EncodedJ
     thisObject->putDirect(
         globalObject->vm(),
         Identifier::fromString(globalObject->vm(), "i8"_s),
-        function,
-        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | 0);
+        function);
 }
 
 extern "C" JSC_DECLARE_HOST_FUNCTION(Reader__i16__slowpathWrapper);
@@ -297,8 +291,7 @@ extern "C" void Reader__i16__put(JSC::JSGlobalObject* globalObject, JSC::Encoded
     thisObject->putDirect(
         globalObject->vm(),
         Identifier::fromString(globalObject->vm(), "i16"_s),
-        function,
-        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | 0);
+        function);
 }
 
 extern "C" JSC_DECLARE_HOST_FUNCTION(Reader__i32__slowpathWrapper);
@@ -338,8 +331,7 @@ extern "C" void Reader__i32__put(JSC::JSGlobalObject* globalObject, JSC::Encoded
     thisObject->putDirect(
         globalObject->vm(),
         Identifier::fromString(globalObject->vm(), "i32"_s),
-        function,
-        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | 0);
+        function);
 }
 
 extern "C" JSC_DECLARE_HOST_FUNCTION(Reader__i64__slowpathWrapper);
@@ -379,8 +371,7 @@ extern "C" void Reader__i64__put(JSC::JSGlobalObject* globalObject, JSC::Encoded
     thisObject->putDirect(
         globalObject->vm(),
         Identifier::fromString(globalObject->vm(), "i64"_s),
-        function,
-        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | 0);
+        function);
 }
 
 extern "C" JSC_DECLARE_HOST_FUNCTION(Reader__u64__slowpathWrapper);
@@ -420,8 +411,7 @@ extern "C" void Reader__u64__put(JSC::JSGlobalObject* globalObject, JSC::Encoded
     thisObject->putDirect(
         globalObject->vm(),
         Identifier::fromString(globalObject->vm(), "u64"_s),
-        function,
-        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | 0);
+        function);
 }
 
 extern "C" JSC_DECLARE_HOST_FUNCTION(Reader__intptr__slowpathWrapper);
@@ -461,8 +451,7 @@ extern "C" void Reader__intptr__put(JSC::JSGlobalObject* globalObject, JSC::Enco
     thisObject->putDirect(
         globalObject->vm(),
         Identifier::fromString(globalObject->vm(), "intptr"_s),
-        function,
-        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | 0);
+        function);
 }
 
 extern "C" JSC_DECLARE_HOST_FUNCTION(Reader__f32__slowpathWrapper);
@@ -502,8 +491,7 @@ extern "C" void Reader__f32__put(JSC::JSGlobalObject* globalObject, JSC::Encoded
     thisObject->putDirect(
         globalObject->vm(),
         Identifier::fromString(globalObject->vm(), "f32"_s),
-        function,
-        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | 0);
+        function);
 }
 
 extern "C" JSC_DECLARE_HOST_FUNCTION(Reader__f64__slowpathWrapper);
@@ -543,8 +531,7 @@ extern "C" void Reader__f64__put(JSC::JSGlobalObject* globalObject, JSC::Encoded
     thisObject->putDirect(
         globalObject->vm(),
         Identifier::fromString(globalObject->vm(), "f64"_s),
-        function,
-        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | 0);
+        function);
 }
 
 /* -- END DOMCall DEFINITIONS-- */

@@ -1,4 +1,4 @@
-const required_zig_version = "0.12.0-dev.888+130227491";
+const required_zig_version = "0.12.0-dev.899+027aabf49";
 
 const std = @import("std");
 const pathRel = std.fs.path.relative;

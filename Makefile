@@ -1960,5 +1960,5 @@ setup: vendor-dev identifier-cache clean-bindings
 
 .PHONY: help
 help: ## to print this help
-	@echo "For detailed build instructions, see https://bun.sh/docs/project/development"
+	@echo "For detailed build instructions, see https://bun.sh/docs/project/contributing"
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {gsub("\\\\n",sprintf("\n%22c",""), $$2);printf "\033[36m%-20s\033[0m \t\t%s\n", $$1, $$2}' $(MAKEFILE_LIST)

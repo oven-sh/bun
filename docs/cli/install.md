@@ -9,7 +9,7 @@ The `bun` CLI contains a Node.js-compatible package manager designed to be a dra
 {% /callout %}
 
 {% details summary="For Linux users" %}
-The minimum Linux Kernel version is 5.1. If you're on Linux kernel 5.1 - 5.5, `bun install` should still work, but HTTP requests will be slow due to a lack of support for io_uring's `connect()` operation.
+The recommended minimum Linux Kernel version is 5.6. If you're on Linux kernel 5.1 - 5.5, `bun install` will work, but HTTP requests will be slow due to a lack of support for io_uring's `connect()` operation.
 
 If you're using Ubuntu 20.04, here's how to install a [newer kernel](https://wiki.ubuntu.com/Kernel/LTSEnablementStack):
 
@@ -31,7 +31,7 @@ $ bun install
 
 Running `bun install` will:
 
-- **Install** all `dependencies`, `devDependencies`, and `optionalDependencies`. Bun does not install `peerDependencies` by default.
+- **Install** all `dependencies`, `devDependencies`, and `optionalDependencies`. Bun will install `peerDependencies` by default.
 - **Run** your project's `{pre|post}install` and `{pre|post}prepare` scripts at the appropriate time. For security reasons Bun _does not execute_ lifecycle scripts of installed dependencies.
 - **Write** a `bun.lockb` lockfile to the project root.
 
@@ -162,7 +162,7 @@ optional = true
 dev = true
 
 # whether to install peerDependencies
-peer = false
+peer = true
 
 # equivalent to `--production` flag
 production = false

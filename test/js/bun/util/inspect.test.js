@@ -55,21 +55,21 @@ it("Blob inspect", () => {
   expect(Bun.inspect(new Response(new Blob()))).toBe(`Response (0 KB) {
   ok: true,
   url: "",
-  headers: Headers {},
+  status: 200,
   statusText: "",
+  headers: Headers {},
   redirected: false,
   bodyUsed: false,
-  status: 200,
   [Blob detached]
 }`);
   expect(Bun.inspect(new Response("Hello"))).toBe(`Response (5 bytes) {
   ok: true,
   url: "",
-  headers: Headers {},
+  status: 200,
   statusText: "",
+  headers: Headers {},
   redirected: false,
   bodyUsed: false,
-  status: 200,
   Blob (5 bytes)
 }`);
 });
@@ -361,4 +361,47 @@ it("new Date(..)", () => {
 
 it("Bun.inspect.custom exists", () => {
   expect(Bun.inspect.custom).toBe(util.inspect.custom);
+});
+
+describe("Functions with names", () => {
+  const closures = [
+    () => function f() {},
+    () => {
+      var f = function () {};
+      return f;
+    },
+    () => {
+      const f = function () {};
+      // workaround transpiler inlining losing the display name
+      // TODO: preserve the name on functions being inlined
+      f.length;
+      return f;
+    },
+    () => {
+      let f = function () {};
+      // workaround transpiler inlining losing the display name
+      // TODO: preserve the name on functions being inlined
+      f.length;
+      return f;
+    },
+    () => {
+      var f = function f() {};
+      return f;
+    },
+    () => {
+      var foo = function f() {};
+      return foo;
+    },
+    () => {
+      function f() {}
+      var foo = f;
+      return foo;
+    },
+  ];
+
+  for (let closure of closures) {
+    it(JSON.stringify(closure.toString()), () => {
+      expect(Bun.inspect(closure())).toBe("[Function: f]");
+    });
+  }
 });

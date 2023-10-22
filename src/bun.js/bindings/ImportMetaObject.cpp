@@ -266,7 +266,7 @@ extern "C" EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlobalOb
         if (LIKELY(global)) {
             auto overrideHandler = global->m_nodeModuleOverriddenResolveFilename.get();
             if (UNLIKELY(overrideHandler)) {
-                ASSERT(overrideHandler.isCallable(globalObject));
+                ASSERT(overrideHandler->isCallable());
                 MarkedArgumentBuffer args;
                 args.append(moduleName);
                 args.append(from);
@@ -434,6 +434,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(ImportMetaObjectPrototype, Base);
         return &vm.plainObjectSpace();
     }
 
@@ -447,11 +448,13 @@ public:
         reifyStaticProperties(vm, ImportMetaObject::info(), ImportMetaObjectPrototypeValues, *this);
         JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 
-        this->putDirect(
-            vm,
+        auto mainGetter = JSFunction::create(vm, importMetaObjectMainCodeGenerator(vm), globalObject);
+
+        this->putDirectAccessor(
+            this->globalObject(),
             builtinNames.mainPublicName(),
-            GetterSetter::create(vm, globalObject, JSFunction::create(vm, importMetaObjectMainCodeGenerator(vm), globalObject), nullptr),
-            JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin | 0);
+            GetterSetter::create(vm, globalObject, mainGetter, mainGetter),
+            JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | 0);
     }
 
     ImportMetaObjectPrototype(JSC::VM& vm, JSC::Structure* structure)
@@ -463,7 +466,7 @@ public:
 const ClassInfo ImportMetaObjectPrototype::s_info = {
     "ImportMeta"_s,
 
-    Base::info(), nullptr, nullptr, CREATE_METHOD_TABLE(ImportMetaObjectPrototype)
+    &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ImportMetaObjectPrototype)
 };
 
 JSC::Structure* ImportMetaObject::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)

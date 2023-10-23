@@ -17,7 +17,310 @@ afterEach(() => {
   server?.stop?.(true);
 });
 
-describe("cloning", () => {
+describe("request body cloning", () => {
+  it("default json", async done => {
+    const data = {
+      message: "Hello world",
+    };
+    await startServer(async request => {
+      try {
+        const received = await request.json();
+        expect(received).toEqual(data);
+        done();
+        return new Response(JSON.stringify({}), {
+          headers: {
+            "Content-type": "application/json",
+          },
+        });
+      } catch (err) {
+        done(err);
+      }
+    });
+    await requestServer({
+      method: "POST",
+      body: JSON.stringify(data),
+      headers: {
+        "Content-type": "application/json",
+      },
+    });
+  });
+  it("default text", async done => {
+    const data = "Well Hello friends";
+    await startServer(async request => {
+      try {
+        const received = await request.text();
+        expect(received).toEqual(data);
+        done();
+        return new Response(JSON.stringify({}), {
+          headers: {
+            "Content-type": "application/json",
+          },
+        });
+      } catch (err) {
+        done(err);
+      }
+    });
+    await requestServer({
+      method: "POST",
+      body: data,
+      headers: {
+        "Content-type": "text/plain",
+      },
+    });
+  });
+  it("default Buffer", async done => {
+    const data = Buffer.from("Well Hello friends");
+    await startServer(async request => {
+      try {
+        const received = await request.arrayBuffer();
+        expect(received).toEqual(data.buffer.slice());
+        done();
+        return new Response(JSON.stringify({}), {
+          headers: {
+            "Content-type": "application/json",
+          },
+        });
+      } catch (err) {
+        done(err);
+      }
+    });
+    await requestServer({
+      method: "POST",
+      body: data,
+      headers: {
+        "Content-type": "application/octet-stream",
+      },
+    });
+  });
+
+  it("can clone all default types", async done => {
+    const data = JSON.stringify({ message: "Hello world" });
+    await startServer(async request => {
+      try {
+        const text_clone = request.clone();
+        const arrayBuffer = text_clone.clone();
+        const [array_buf, text, json] = await Promise.all([
+          arrayBuffer.arrayBuffer(),
+          text_clone.text(),
+          request.json(),
+        ]);
+        expect(array_buf).toEqual(Buffer.from(data).buffer.slice());
+        expect(text).toEqual(data);
+        expect(json).toEqual(JSON.parse(data));
+        done();
+        return new Response(JSON.stringify({}), {
+          headers: {
+            "Content-type": "application/json",
+          },
+        });
+      } catch (err) {
+        done(err);
+      }
+    });
+    await requestServer({
+      method: "POST",
+      body: data,
+      headers: {
+        "Content-type": "application/json",
+      },
+    });
+  });
+  it("cant clone consumed body", async done => {
+    const data = {
+      message: "Hello world",
+    };
+    await startServer(async request => {
+      try {
+        const received = await request.json();
+        expect(() => {
+          request.clone();
+        }).toThrow();
+        done();
+        return new Response(JSON.stringify({}), {
+          headers: {
+            "Content-type": "application/json",
+          },
+        });
+      } catch (err) {
+        done(err);
+      }
+    });
+    await requestServer({
+      method: "POST",
+      body: JSON.stringify(data),
+      headers: {
+        "Content-type": "application/json",
+      },
+    });
+  });
+  it("cant clone created reader", async done => {
+    const data = {
+      message: "Hello world",
+    };
+    await startServer(async request => {
+      try {
+        request.body.getReader();
+        expect(() => {
+          request.clone();
+        }).toThrow();
+        done();
+        return new Response(JSON.stringify({}), {
+          headers: {
+            "Content-type": "application/json",
+          },
+        });
+      } catch (err) {
+        done(err);
+      }
+    });
+    await requestServer({
+      method: "POST",
+      body: JSON.stringify(data),
+      headers: {
+        "Content-type": "application/json",
+      },
+    });
+  });
+  const merge = (a, b) => {
+    const n = new Uint8Array(a.length + b.length);
+    n.set(a, 0);
+    n.set(b, a.length);
+    return n;
+  };
+
+  const readerToArray = async reader => {
+    let a = null;
+    let input = null;
+    while (input === null || !input.done) {
+      input = await reader.read();
+      if (!a) {
+        a = input.value;
+      } else {
+        if (input.value) a = merge(a, input.value);
+      }
+    }
+    return a;
+  };
+
+  it("can use reader with clone", async done => {
+    const data = {
+      message: "Hello from bun using a reader",
+    };
+    await startServer(async request => {
+      try {
+        const clone = request.clone();
+
+        const reader = request.body.getReader();
+        const content = await readerToArray(reader);
+        const parsed = JSON.parse(Buffer.from(content).toString());
+        expect(parsed).toEqual(data);
+        expect(await clone.json()).toEqual(data);
+        done();
+        return new Response(JSON.stringify({}), {
+          headers: {
+            "Content-type": "application/json",
+          },
+        });
+      } catch (err) {
+        done(err);
+      }
+    });
+    await requestServer({
+      method: "POST",
+      body: JSON.stringify(data),
+      headers: {
+        "Content-type": "application/json",
+      },
+    });
+  });
+  it("can use multiple readers", async done => {
+    const data = {
+      message: "Hello from bun using a reader",
+    };
+    await startServer(async request => {
+      try {
+        const clone = request.clone();
+        const clone2 = clone.clone();
+        const reader = request.body.getReader();
+        const reader2 = clone.body.getReader();
+        const reader3 = clone2.body.getReader();
+        const contents = await Promise.all([readerToArray(reader), readerToArray(reader2), readerToArray(reader3)]);
+        for (const entry of contents) {
+          expect(JSON.parse(Buffer.from(entry))).toEqual(data);
+        }
+        done();
+        return new Response(JSON.stringify({}), {
+          headers: {
+            "Content-type": "application/json",
+          },
+        });
+      } catch (err) {
+        done(err);
+      }
+    });
+    await requestServer({
+      method: "POST",
+      body: JSON.stringify(data),
+      headers: {
+        "Content-type": "application/json",
+      },
+    });
+  });
+  it("can handle big requests", async done => {
+    const data = "this is a very very very very long request".repeat(100000);
+    const b = Buffer.from(data);
+    const dataArray = new Uint8Array(b);
+        const readerToArray = async (a, reader) => {
+      let input = null;
+      while (input === null || !input.done) {
+        input = await reader.read();
+        if (!a) {
+          a = input.value;
+        } else {
+          if (input.value) a = merge(a, input.value);
+        }
+      }
+      return a;
+    };
+    await startServer(async request => {
+      try {
+        const clone1 = request.clone();
+        const clone2 = request.clone();
+        const clone3 = request.clone();
+        const readers = [request, clone1, clone2].map(e => e.body.getReader());
+        const initialData = await Promise.all(readers.map(e => e.read()));
+
+        for (const id of initialData) {
+          expect(id.done).toBe(false);
+          expect(id.value).toBeDefined();
+          expect(id.value.length).not.toEqual(dataArray.length);
+        }
+        const final = await readerToArray(initialData[0].value, readers[0]);
+        expect((await readers[0].read()).done).toBe(true);
+        const arrayBuffer = await clone3.arrayBuffer();
+        expect(final).toBeDefined();
+        expect(final).toEqual(dataArray);
+        expect(arrayBuffer).toEqual(b.buffer.slice());
+        done();
+        return new Response(JSON.stringify({}), {
+          headers: {
+            "Content-type": "application/json",
+          },
+        });
+      } catch (err) {
+        done(err);
+      }
+    });
+    await requestServer({
+      method: "POST",
+      body: dataArray,
+      headers: {
+        "Content-type": "application/octet-stream",
+      },
+    });
+  });
+});
+describe("response body cloning", () => {
   it("can clone json", async () => {
     const data = {
       message: "Hello world",

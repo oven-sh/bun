@@ -903,6 +903,10 @@ pub const Body = struct {
             //     return this.*;
             // }
 
+            if (this.* == .Error) {
+                return Value{ .Error = this.Error };
+            }
+
             if (this.* == .Locked) {
                 return Value{ .Locked = this.Locked.clone() };
             }

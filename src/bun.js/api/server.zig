@@ -1685,10 +1685,19 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
             }
 
+            if (this.request_clones) |clones| {
+                for (clones.items) |item| {
+                    if (item.body.value == .Locked) {
+                        return false;
+                    }
+                }
+            }
+
             return true;
         }
 
         pub fn onAbort(this: *RequestContext, resp: *App.Response) void {
+            ctxLog("onAbort", .{});
             std.debug.assert(this.resp == resp);
             std.debug.assert(!this.flags.aborted);
             // mark request as aborted
@@ -1748,6 +1757,23 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     }
                 }
 
+                if (this.request_clones) |clones| {
+                    for (clones.items) |item| {
+                        var body = item.body;
+                        if (body.value == .Locked) {
+                            // the promise is pending
+                            if (body.value.Locked.action != .none or body.value.Locked.promise != null) {
+                                this.pending_promises_for_abort += 1;
+                            } else if (body.value.Locked.readable != null) {
+                                body.value.Locked.readable.?.abort(this.server.globalThis);
+                                body.value.Locked.readable = null;
+                                any_js_calls = true;
+                            }
+                            body.value.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
+                        }
+                    }
+                }
+
                 if (this.response_ptr) |response| {
                     if (response.body.value == .Locked) {
                         if (response.body.value.Locked.readable) |*readable| {
@@ -1784,11 +1810,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.flags.has_finalized = true;
             }
 
-            if (this.request_clones) |clones| {
-                clones.deinit();
-                this.request_clones = null;
-            }
-
             if (!this.response_jsvalue.isEmpty()) {
                 ctxLog("finalizeWithoutDeinit: response_jsvalue != .zero", .{});
                 if (this.flags.response_protected) {
@@ -1817,6 +1838,20 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 if (body.value == .Locked and body.value.Locked.action != .none and body.value.Locked.promise != null) {
                     body.value.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
                 }
+            }
+
+            if (this.request_clones) |clones| {
+                ctxLog("finalizeWithoutDeinit: freeing clones {any}", .{clones.items.len});
+                for (clones.items) |item| {
+                    var body = item.body;
+                    if (body.value == .Locked and body.value.Locked.action != .none and body.value.Locked.promise != null) {
+                        body.value.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
+                    }
+                    item.maybeUnprotect();
+                    item.derefContext();
+                }
+                clones.deinit();
+                this.request_clones = null;
             }
 
             if (this.promise) |promise| {
@@ -3187,126 +3222,145 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 // We have to ignore those chunks unless it's the last one
                 return;
             }
-
-            // This is the start of a task, so it's a good time to drain
-            if (this.request_body != null) {
-                var body = this.request_body.?;
-
-                if (this.request_clones) |request_clones| {
-                    for (request_clones.items) |other_request| {
-                        var other_body = other_request.body;
-                        if (other_body.value != .Locked) continue;
-                        if (other_body.value.Locked.readable) |other_readable| {
-                            if (other_readable.ptr == .Bytes) {
-                                if (!last) {
-                                    other_readable.ptr.Bytes.onData(
-                                        .{
-                                            .temporary = bun.ByteList.initConst(chunk),
-                                        },
-                                        bun.default_allocator,
-                                    );
-                                } else {
-                                    other_readable.ptr.Bytes.onData(
-                                        .{
-                                            .temporary_and_done = bun.ByteList.initConst(chunk),
-                                        },
-                                        bun.default_allocator,
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-                if (body.value == .Locked) {
-                    if (body.value.Locked.readable) |readable| {
-                        if (readable.ptr == .Bytes) {
-                            std.debug.assert(this.request_body_buf.items.len == 0);
-                            var vm = this.server.vm;
-                            defer vm.drainMicrotasks();
-
+            var all_clones_handled = false;
+            var vm = this.server.vm;
+            if (this.request_clones) |request_clones| {
+                ctxLog("clones length is {any}", .{request_clones.items.len});
+                var readable_count: usize = 0;
+                for (request_clones.items) |other_request| {
+                    var other_body = other_request.body;
+                    if (other_body.value != .Locked) continue;
+                    if (other_body.value.Locked.readable) |other_readable| {
+                        if (other_readable.ptr == .Bytes) {
                             if (!last) {
-                                readable.ptr.Bytes.onData(
+                                other_readable.ptr.Bytes.onData(
                                     .{
                                         .temporary = bun.ByteList.initConst(chunk),
                                     },
                                     bun.default_allocator,
                                 );
                             } else {
-                                readable.ptr.Bytes.onData(
+                                other_readable.ptr.Bytes.onData(
                                     .{
                                         .temporary_and_done = bun.ByteList.initConst(chunk),
                                     },
                                     bun.default_allocator,
                                 );
+                                other_request.maybeUnprotect();
                             }
+                            readable_count += 1;
+                        }
+                    }
+                }
+                all_clones_handled = request_clones.items.len == 0 or readable_count == request_clones.items.len;
+            } else {
+                // we have no clones
+                all_clones_handled = true;
+            }
+            if (this.request_body != null and this.request_body.?.value == .Locked) {
+                var body = this.request_body.?;
 
+                if (body.value.Locked.readable) |readable| {
+                    if (readable.ptr == .Bytes) {
+                        if (all_clones_handled) {
+                            std.debug.assert(this.request_body_buf.items.len == 0);
+                        }
+
+                        if (!last) {
+                            readable.ptr.Bytes.onData(
+                                .{
+                                    .temporary = bun.ByteList.initConst(chunk),
+                                },
+                                bun.default_allocator,
+                            );
+                        } else {
+                            readable.ptr.Bytes.onData(
+                                .{
+                                    .temporary_and_done = bun.ByteList.initConst(chunk),
+                                },
+                                bun.default_allocator,
+                            );
+                        }
+                        // only if we have a pending body(promise) to we need to continue here
+                        if (all_clones_handled) {
+                            vm.drainMicrotasks();
                             return;
                         }
                     }
                 }
-
-                if (last) {
-                    var bytes = this.request_body_buf;
-
-                    var old = body.value;
-
-                    const total = bytes.items.len + chunk.len;
-                    getter: {
-                        // if (total <= JSC.WebCore.InlineBlob.available_bytes) {
-                        //     if (total == 0) {
-                        //         body.value = .{ .Empty = {} };
-                        //         break :getter;
-                        //     }
-
-                        //     body.value = .{ .InlineBlob = JSC.WebCore.InlineBlob.concat(bytes.items, chunk) };
-                        //     this.request_body_buf.clearAndFree(this.allocator);
-                        // } else {
-                        bytes.ensureTotalCapacityPrecise(this.allocator, total) catch |err| {
-                            this.request_body_buf.clearAndFree(this.allocator);
-                            body.value.toError(err, this.server.globalThis);
-                            break :getter;
-                        };
-
-                        const prev_len = bytes.items.len;
-                        bytes.items.len = total;
-                        var slice = bytes.items[prev_len..];
-                        @memcpy(slice[0..chunk.len], chunk);
-                        body.value = .{
-                            .InternalBlob = .{
-                                .bytes = bytes.toManaged(this.allocator),
-                            },
-                        };
-                        // }
-                    }
-                    this.request_body_buf = .{};
-
-                    if (old == .Locked) {
-                        var vm = this.server.vm;
-                        defer vm.drainMicrotasks();
-                        defer old.resolve(&body.value, this.server.globalThis);
-                        if (this.request_clones) |request_clones| {
-                            for (request_clones.items) |other_request| {
-                                var other_body = other_request.body;
-                                var other_old = other_body.value;
-                                if (other_old == .Locked) {
-                                    other_body.value = .{ .InternalBlob = .{ .bytes = body.value.InternalBlob.bytes.clone() catch unreachable } };
-                                    defer other_old.resolve(&other_body.value, this.server.globalThis);
-                                }
-                            }
-                        }
-                    }
-                    return;
-                }
-
-                if (this.request_body_buf.capacity == 0) {
-                    this.request_body_buf.ensureTotalCapacityPrecise(this.allocator, @min(this.request_body_content_len, max_request_body_preallocate_length)) catch @panic("Out of memory while allocating request body buffer");
-                }
-                this.request_body_buf.appendSlice(this.allocator, chunk) catch @panic("Out of memory while allocating request body");
+            } else if (all_clones_handled) {
+                vm.drainMicrotasks();
+                // theres no body to be given data so we break here, no need to continue
+                return;
             }
+            if (last) {
+                var bytes = this.request_body_buf;
+                var old_locked = false;
+                // avoid copying the body unless we have to
+                var has_allocated = true;
+                var body_value: JSC.WebCore.Body.Value = JSC.WebCore.Body.Value.Null;
+
+                const total = bytes.items.len + chunk.len;
+                getter: {
+                    bytes.ensureTotalCapacityPrecise(this.allocator, total) catch |err| {
+                        this.request_body_buf.clearAndFree(this.allocator);
+                        body_value.toError(err, this.server.globalThis);
+                        break :getter;
+                    };
+
+                    const prev_len = bytes.items.len;
+                    bytes.items.len = total;
+                    var slice = bytes.items[prev_len..];
+                    @memcpy(slice[0..chunk.len], chunk);
+                    body_value = .{
+                        .InternalBlob = .{
+                            .bytes = bytes.toManaged(this.allocator),
+                        },
+                    };
+                }
+                this.request_body_buf = .{};
+
+                if (this.request_body != null) {
+                    var body = this.request_body.?;
+                    if (body.value == .Locked and body.value.Locked.readable == null) {
+                        var old = body.value;
+                        old_locked = true;
+                        // if we are the only body we take the body as is and avoid a clone but we also take ownership
+                        // so we we need to cancel the deiniting by this functuon
+                        has_allocated = this.request_clones != null and this.request_clones.?.items.len > 0;
+                        body.value = if (has_allocated) body_value.clone(this.server.globalThis) else body_value;
+                        old.resolve(&body.value, this.server.globalThis);
+                    }
+                }
+
+                if (this.request_clones) |request_clones| {
+                    for (request_clones.items) |other_request| {
+                        var other_body = other_request.body;
+                        var other_old = other_body.value;
+                        if (other_old == .Locked and other_body.value.Locked.readable == null) {
+                            old_locked = true;
+                            other_body.value = body_value.clone(this.server.globalThis);
+                            other_old.resolve(&other_body.value, this.server.globalThis);
+                        }
+                        other_request.maybeUnprotect();
+                    }
+                }
+                if (has_allocated)
+                    body_value.deinit();
+                if (old_locked) {
+                    vm.drainMicrotasks();
+                }
+                return;
+            }
+
+            if (this.request_body_buf.capacity == 0) {
+                this.request_body_buf.ensureTotalCapacityPrecise(this.allocator, @min(this.request_body_content_len, max_request_body_preallocate_length)) catch @panic("Out of memory while allocating request body buffer");
+            }
+            this.request_body_buf.appendSlice(this.allocator, chunk) catch @panic("Out of memory while allocating request body");
         }
 
         pub fn onStartStreamingRequestBody(this: *RequestContext) JSC.WebCore.DrainResult {
-            ctxLog("onStartStreamingRequestBody", .{});
+            ctxLog("onStartStreamingRequestBody {any} {any}", .{ this.request_body_buf.items.len, this.request_body_content_len });
             if (this.flags.aborted) {
                 return JSC.WebCore.DrainResult{
                     .aborted = {},

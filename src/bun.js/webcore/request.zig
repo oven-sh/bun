@@ -72,6 +72,8 @@ pub const Request = struct {
     request_context: JSC.API.AnyRequestContext = JSC.API.AnyRequestContext.Null,
     https: bool = false,
     upgrader: ?*anyopaque = null,
+    js_ref: ?JSC.JSValue = null,
+    has_parent_ref: bool = false,
 
     // We must report a consistent value for this
     reported_estimated_size: ?u63 = null,
@@ -269,6 +271,7 @@ pub const Request = struct {
             headers.deref();
             this.headers = null;
         }
+        this.maybeUnprotect();
         this.request_context.deleteRequestClone(this);
         this.url.deref();
         this.url = bun.String.empty;
@@ -716,13 +719,32 @@ pub const Request = struct {
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        if (this.body.value == .Used or (this.body.value == .Locked and this.body.value.Locked.promise != null)) {
-            const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "Response.clone: body already used", .{}, globalThis);
+        if (this.body.value == .Used or (this.body.value == .Locked and (this.body.value.Locked.promise != null or this.body.value.Locked.readable != null))) {
+            const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "Request.clone: body already used", .{}, globalThis);
             globalThis.throwValue(err);
             return .zero;
         }
         var cloned = this.clone(getAllocator(globalThis), globalThis);
-        return cloned.toJS(globalThis);
+        var js_value = cloned.toJS(globalThis);
+        if (cloned.has_parent_ref) {
+            cloned.js_ref = js_value;
+            js_value.protect();
+        }
+        return js_value;
+    }
+
+    pub fn maybeUnprotect(this: *Request) void {
+        if (this.js_ref) |ref| {
+            ref.unprotect();
+            this.js_ref = null;
+        }
+    }
+
+    pub fn derefContext(this: *Request) void {
+        if (this.has_parent_ref) {
+            this.request_context = JSC.API.AnyRequestContext.Null;
+            this.has_parent_ref = false;
+        }
     }
 
     pub fn getHeaders(
@@ -793,6 +815,7 @@ pub const Request = struct {
             req.signal = signal.ref();
         }
         if (body.value == .Locked) {
+            req.has_parent_ref = true;
             this.request_context.pushRequestClone(req);
         }
     }

@@ -414,7 +414,6 @@ pub const H2FrameParser = struct {
         isWaitingMoreHeaders: bool = false,
         padding: ?u8 = 0,
         rstCode: u32 = 0,
-        sentHeaders: JSC.JSValue = .zero,
         streamDependency: u32 = 0,
         exclusive: bool = false,
         weight: u16 = 36,
@@ -426,14 +425,16 @@ pub const H2FrameParser = struct {
         decoder: lshpack.lshpack_dec = undefined,
         encoder: lshpack.lshpack_enc = undefined,
         signal: ?*JSC.WebCore.AbortSignal = null,
+        client: *H2FrameParser,
 
-        pub fn init(streamIdentifier: u32, initialWindowSize: u32, headerTableSize: u32) Stream {
+        pub fn init(streamIdentifier: u32, initialWindowSize: u32, headerTableSize: u32, client: *H2FrameParser) Stream {
             var stream = Stream{
                 .id = streamIdentifier,
                 .state = .OPEN,
                 .windowSize = initialWindowSize,
                 .usedWindowSize = 0,
                 .weight = 36,
+                .client = client,
             };
 
             if (lshpack.lshpack_enc_init(&stream.encoder) != 0) {
@@ -442,7 +443,6 @@ pub const H2FrameParser = struct {
             lshpack.lshpack_dec_init(&stream.decoder);
             lshpack.lshpack_enc_set_max_capacity(&stream.encoder, headerTableSize);
             lshpack.lshpack_dec_set_max_capacity(&stream.decoder, headerTableSize);
-
             return stream;
         }
 
@@ -468,8 +468,10 @@ pub const H2FrameParser = struct {
         pub fn abortListener(this: *Stream, reason: JSValue) void {
             log("abortListener", .{});
             reason.ensureStillAlive();
-            _ = this;
-            //TODO: send RST_STREAM
+            if (this.canReceiveData() or this.canSendData()) {
+                this.state = .CLOSED;
+                this.client.endStream(this, .CANCEL);
+            }
         }
 
         const HeaderValue = struct {
@@ -513,7 +515,7 @@ pub const H2FrameParser = struct {
             }
 
             var start = @intFromPtr(dst_buffer.ptr);
-            log("encode xhdr name {} {} val {} {}", .{xhdr.name_offset, xhdr.name_len, xhdr.val_offset, xhdr.val_len});
+            log("encode xhdr name {} {} val {} {}", .{ xhdr.name_offset, xhdr.name_len, xhdr.val_offset, xhdr.val_len });
             const ptr = lshpack.lshpack_enc_encode(&this.encoder, dst_buffer.ptr, @ptrFromInt(start + dst_buffer.len), &xhdr);
             const end = @intFromPtr(ptr) - start;
             if (end > 0) {
@@ -529,8 +531,6 @@ pub const H2FrameParser = struct {
                 this.signal = null;
                 signal.detach(this);
             }
-            this.sentHeaders.unprotect();
-            this.sentHeaders = .zero;
         }
     };
 
@@ -684,7 +684,7 @@ pub const H2FrameParser = struct {
     }
 
     pub fn sendWindowUpdate(this: *H2FrameParser, streamIdentifier: u32, windowSize: UInt31WithReserved) void {
-        log("sendWindowUpdate stream {} size {}", .{streamIdentifier, windowSize.uint31});
+        log("sendWindowUpdate stream {} size {}", .{ streamIdentifier, windowSize.uint31 });
         var buffer: [FrameHeader.byteSize + 4]u8 = undefined;
         @memset(&buffer, 0);
         var stream = std.io.fixedBufferStream(&buffer);
@@ -1066,6 +1066,11 @@ pub const H2FrameParser = struct {
                     this.dispatch(.onStreamEnd, JSC.JSValue.jsNumber(frame.streamIdentifier));
                 }
             }
+
+            if (stream.endAfterHeaders) {
+                this.endStream(stream, ErrorCode.NO_ERROR);
+            }
+
             this.readBuffer.reset();
             return content.end;
         }
@@ -1089,7 +1094,7 @@ pub const H2FrameParser = struct {
         } else {
             if (frame.flags & 0x1 != 0) {
                 // we received an ACK
-                log("invalid settings frame ACK", .{});
+                log("settings frame ACK", .{});
                 this.remoteSettings = this.localSettings;
                 this.dispatch(.onLocalSettings, this.localSettings.toJS(this.handlers.globalObject));
             }
@@ -1134,7 +1139,7 @@ pub const H2FrameParser = struct {
         // new stream open
         const settings = this.remoteSettings orelse this.localSettings;
         var entry = this.streams.getOrPut(streamIdentifier) catch @panic("OOM");
-        entry.value_ptr.* = Stream.init(streamIdentifier, settings.initialWindowSize, settings.headerTableSize);
+        entry.value_ptr.* = Stream.init(streamIdentifier, settings.initialWindowSize, settings.headerTableSize, this);
 
         this.dispatch(.onStreamStart, JSC.JSValue.jsNumber(streamIdentifier));
         return entry.value_ptr;
@@ -1266,99 +1271,98 @@ pub const H2FrameParser = struct {
     }
 
     pub fn loadSettingsFromJSValue(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, options: JSC.JSValue) bool {
-
-        if(options.isEmptyOrUndefinedOrNull() or !options.isObject()) {
+        if (options.isEmptyOrUndefinedOrNull() or !options.isObject()) {
             globalObject.throw("Expected settings to be a object", .{});
             return false;
         }
 
-        if(options.get(globalObject, "headerTableSize")) |headerTableSize| {
-            if(headerTableSize.isNumber()) {
-              const headerTableSizeValue =  headerTableSize.toInt32();
-              if(headerTableSizeValue > MAX_HEADER_TABLE_SIZE or headerTableSizeValue < 0) {
-                globalObject.throw("Expected headerTableSize to be a number between 0 and 2^32-1", .{});
-                return false;
-              } 
-              this.localSettings.headerTableSize = @intCast(headerTableSizeValue);
-            } else if(!headerTableSize.isEmptyOrUndefinedOrNull()) {
+        if (options.get(globalObject, "headerTableSize")) |headerTableSize| {
+            if (headerTableSize.isNumber()) {
+                const headerTableSizeValue = headerTableSize.toInt32();
+                if (headerTableSizeValue > MAX_HEADER_TABLE_SIZE or headerTableSizeValue < 0) {
+                    globalObject.throw("Expected headerTableSize to be a number between 0 and 2^32-1", .{});
+                    return false;
+                }
+                this.localSettings.headerTableSize = @intCast(headerTableSizeValue);
+            } else if (!headerTableSize.isEmptyOrUndefinedOrNull()) {
                 globalObject.throw("Expected headerTableSize to be a number", .{});
                 return false;
             }
         }
 
-        if(options.get(globalObject, "enablePush")) |enablePush| {
-            if(enablePush.isBoolean()) {
-              this.localSettings.enablePush = if(enablePush.asBoolean()) 1 else 0;
-            } else if(!enablePush.isEmptyOrUndefinedOrNull()) {
+        if (options.get(globalObject, "enablePush")) |enablePush| {
+            if (enablePush.isBoolean()) {
+                this.localSettings.enablePush = if (enablePush.asBoolean()) 1 else 0;
+            } else if (!enablePush.isEmptyOrUndefinedOrNull()) {
                 globalObject.throw("Expected enablePush to be a boolean", .{});
                 return false;
             }
         }
-        
-        if(options.get(globalObject, "initialWindowSize")) |initialWindowSize| {
-            if(initialWindowSize.isNumber()) {
-              const initialWindowSizeValue = initialWindowSize.toInt32();
-               if(initialWindowSizeValue > MAX_HEADER_TABLE_SIZE or initialWindowSizeValue < 0) {
-                globalObject.throw("Expected initialWindowSize to be a number between 0 and 2^32-1", .{});
-                return false;
-              } 
-            } else if(!initialWindowSize.isEmptyOrUndefinedOrNull()) {
+
+        if (options.get(globalObject, "initialWindowSize")) |initialWindowSize| {
+            if (initialWindowSize.isNumber()) {
+                const initialWindowSizeValue = initialWindowSize.toInt32();
+                if (initialWindowSizeValue > MAX_HEADER_TABLE_SIZE or initialWindowSizeValue < 0) {
+                    globalObject.throw("Expected initialWindowSize to be a number between 0 and 2^32-1", .{});
+                    return false;
+                }
+            } else if (!initialWindowSize.isEmptyOrUndefinedOrNull()) {
                 globalObject.throw("Expected initialWindowSize to be a number", .{});
                 return false;
             }
         }
 
-        if(options.get(globalObject, "maxFrameSize")) |maxFrameSize| {
-            if(maxFrameSize.isNumber()) {
-              const maxFrameSizeValue = maxFrameSize.toInt32();
-              if(maxFrameSizeValue > MAX_FRAME_SIZE or maxFrameSizeValue < 16384) {
-                globalObject.throw("Expected maxFrameSize to be a number between 16,384 and 2^24-1", .{});
-                return false;
-              } 
-              this.localSettings.maxFrameSize = @intCast(maxFrameSizeValue);
-            } else if(!maxFrameSize.isEmptyOrUndefinedOrNull()) {
+        if (options.get(globalObject, "maxFrameSize")) |maxFrameSize| {
+            if (maxFrameSize.isNumber()) {
+                const maxFrameSizeValue = maxFrameSize.toInt32();
+                if (maxFrameSizeValue > MAX_FRAME_SIZE or maxFrameSizeValue < 16384) {
+                    globalObject.throw("Expected maxFrameSize to be a number between 16,384 and 2^24-1", .{});
+                    return false;
+                }
+                this.localSettings.maxFrameSize = @intCast(maxFrameSizeValue);
+            } else if (!maxFrameSize.isEmptyOrUndefinedOrNull()) {
                 globalObject.throw("Expected maxFrameSize to be a number", .{});
                 return false;
             }
         }
 
-        if(options.get(globalObject, "maxConcurrentStreams")) |maxConcurrentStreams| {
-            if(maxConcurrentStreams.isNumber()) {
-              const maxConcurrentStreamsValue = maxConcurrentStreams.toInt32();
-              if(maxConcurrentStreamsValue > MAX_HEADER_TABLE_SIZE or maxConcurrentStreamsValue < 0) {
-                globalObject.throw("Expected maxConcurrentStreams to be a number between 0 and 2^32-1", .{});
-                return false;
-              } 
-              this.localSettings.maxConcurrentStreams = @intCast(maxConcurrentStreamsValue);
-            } else if(!maxConcurrentStreams.isEmptyOrUndefinedOrNull()) {
+        if (options.get(globalObject, "maxConcurrentStreams")) |maxConcurrentStreams| {
+            if (maxConcurrentStreams.isNumber()) {
+                const maxConcurrentStreamsValue = maxConcurrentStreams.toInt32();
+                if (maxConcurrentStreamsValue > MAX_HEADER_TABLE_SIZE or maxConcurrentStreamsValue < 0) {
+                    globalObject.throw("Expected maxConcurrentStreams to be a number between 0 and 2^32-1", .{});
+                    return false;
+                }
+                this.localSettings.maxConcurrentStreams = @intCast(maxConcurrentStreamsValue);
+            } else if (!maxConcurrentStreams.isEmptyOrUndefinedOrNull()) {
                 globalObject.throw("Expected maxConcurrentStreams to be a number", .{});
                 return false;
             }
         }
-        
-        if(options.get(globalObject, "maxHeaderListSize")) |maxHeaderListSize| {
-            if(maxHeaderListSize.isNumber()) {
-              const maxHeaderListSizeValue = maxHeaderListSize.toInt32();
-              if(maxHeaderListSizeValue > MAX_HEADER_TABLE_SIZE or maxHeaderListSizeValue < 0) {
-                globalObject.throw("Expected maxHeaderListSize to be a number between 0 and 2^32-1", .{});
-                return false;
-              } 
-              this.localSettings.maxHeaderListSize = @intCast(maxHeaderListSizeValue);
-            } else if(!maxHeaderListSize.isEmptyOrUndefinedOrNull()) {
+
+        if (options.get(globalObject, "maxHeaderListSize")) |maxHeaderListSize| {
+            if (maxHeaderListSize.isNumber()) {
+                const maxHeaderListSizeValue = maxHeaderListSize.toInt32();
+                if (maxHeaderListSizeValue > MAX_HEADER_TABLE_SIZE or maxHeaderListSizeValue < 0) {
+                    globalObject.throw("Expected maxHeaderListSize to be a number between 0 and 2^32-1", .{});
+                    return false;
+                }
+                this.localSettings.maxHeaderListSize = @intCast(maxHeaderListSizeValue);
+            } else if (!maxHeaderListSize.isEmptyOrUndefinedOrNull()) {
                 globalObject.throw("Expected maxHeaderListSize to be a number", .{});
                 return false;
             }
         }
 
-          if(options.get(globalObject, "maxHeaderSize")) |maxHeaderSize| {
-            if(maxHeaderSize.isNumber()) {
-              const maxHeaderSizeValue = maxHeaderSize.toInt32();
-              if(maxHeaderSizeValue > MAX_HEADER_TABLE_SIZE or maxHeaderSizeValue < 0) {
-                globalObject.throw("Expected maxHeaderSize to be a number between 0 and 2^32-1", .{});
-                return false;
-              } 
-              this.localSettings.maxHeaderListSize = @intCast(maxHeaderSizeValue);
-            } else if(!maxHeaderSize.isEmptyOrUndefinedOrNull()) {
+        if (options.get(globalObject, "maxHeaderSize")) |maxHeaderSize| {
+            if (maxHeaderSize.isNumber()) {
+                const maxHeaderSizeValue = maxHeaderSize.toInt32();
+                if (maxHeaderSizeValue > MAX_HEADER_TABLE_SIZE or maxHeaderSizeValue < 0) {
+                    globalObject.throw("Expected maxHeaderSize to be a number between 0 and 2^32-1", .{});
+                    return false;
+                }
+                this.localSettings.maxHeaderListSize = @intCast(maxHeaderSizeValue);
+            } else if (!maxHeaderSize.isEmptyOrUndefinedOrNull()) {
                 globalObject.throw("Expected maxHeaderSize to be a number", .{});
                 return false;
             }
@@ -1376,14 +1380,12 @@ pub const H2FrameParser = struct {
 
         const options = args_list.ptr[0];
 
-        if(this.loadSettingsFromJSValue(globalObject, options)) {     
+        if (this.loadSettingsFromJSValue(globalObject, options)) {
             this.setSettings(this.localSettings);
             return JSC.JSValue.jsUndefined();
         }
 
         return .zero;
-
-        
     }
 
     pub fn getCurrentState(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
@@ -1394,13 +1396,11 @@ pub const H2FrameParser = struct {
         result.put(globalObject, JSC.ZigString.static("nextStreamID"), JSC.JSValue.jsNumber(this.getNextStreamID()));
         result.put(globalObject, JSC.ZigString.static("lastProcStreamID"), JSC.JSValue.jsNumber(this.lastStreamID));
 
-
         var settings = this.remoteSettings orelse this.localSettings;
         result.put(globalObject, JSC.ZigString.static("remoteWindowSize"), JSC.JSValue.jsNumber(settings.initialWindowSize));
         result.put(globalObject, JSC.ZigString.static("localWindowSize"), JSC.JSValue.jsNumber(this.localSettings.initialWindowSize));
         result.put(globalObject, JSC.ZigString.static("deflateDynamicTableSize"), JSC.JSValue.jsNumber(settings.headerTableSize));
         result.put(globalObject, JSC.ZigString.static("inflateDynamicTableSize"), JSC.JSValue.jsNumber(settings.headerTableSize));
-
 
         // TODO: make this  real?
         result.put(globalObject, JSC.ZigString.static("outboundQueueSize"), JSC.JSValue.jsNumber(0));
@@ -1426,36 +1426,36 @@ pub const H2FrameParser = struct {
         }
 
         var lastStreamID = this.lastStreamID;
-        if(args_list.len >= 2) {
+        if (args_list.len >= 2) {
             const last_stream_arg = args_list.ptr[1];
-            if(!last_stream_arg.isEmptyOrUndefinedOrNull()) {
+            if (!last_stream_arg.isEmptyOrUndefinedOrNull()) {
                 if (!last_stream_arg.isNumber()) {
                     globalObject.throw("Expected lastStreamId to be a number", .{});
                     return .zero;
-                }   
+                }
                 const id = last_stream_arg.toInt32();
-                if(id < 0 and id > MAX_STREAM_ID) {
-                   globalObject.throw("Expected lastStreamId to be a number between 1 and 2147483647", .{});
-                   return .zero;
+                if (id < 0 and id > MAX_STREAM_ID) {
+                    globalObject.throw("Expected lastStreamId to be a number between 1 and 2147483647", .{});
+                    return .zero;
                 }
                 lastStreamID = @intCast(id);
             }
-            if(args_list.len >= 3) {
+            if (args_list.len >= 3) {
                 const opaque_data_arg = args_list.ptr[2];
-                if(!opaque_data_arg.isEmptyOrUndefinedOrNull()) {
+                if (!opaque_data_arg.isEmptyOrUndefinedOrNull()) {
                     if (opaque_data_arg.asArrayBuffer(globalObject)) |array_buffer| {
                         var slice = array_buffer.slice();
                         this.sendGoAway(0, @enumFromInt(errorCode), slice, lastStreamID);
                         globalObject.throw("Expected lastStreamId to be a number", .{});
                         return .zero;
-                    }   
+                    }
                     const id = last_stream_arg.toInt32();
-                    if(id < 0 and id > MAX_STREAM_ID) {
-                       globalObject.throw("Expected lastStreamId to be a number between 1 and 2147483647", .{});
-                       return .zero;
+                    if (id < 0 and id > MAX_STREAM_ID) {
+                        globalObject.throw("Expected lastStreamId to be a number between 1 and 2147483647", .{});
+                        return .zero;
                     }
                 }
-            } 
+            }
         }
 
         this.sendGoAway(0, @enumFromInt(errorCode), "", lastStreamID);
@@ -1474,13 +1474,13 @@ pub const H2FrameParser = struct {
             var slice = array_buffer.slice();
             this.sendPing(false, slice);
             return JSC.JSValue.jsUndefined();
-        } 
+        }
 
         globalObject.throw("Expected payload to be a Buffer", .{});
         return .zero;
     }
 
-    pub fn rstStream(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn getEndAfterHeaders(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(1);
         if (args_list.len < 1) {
@@ -1489,26 +1489,297 @@ pub const H2FrameParser = struct {
         }
         const stream_arg = args_list.ptr[0];
 
-        const stream_id = stream_arg.toInt32();
-        if (stream_id <= 0) {
+        if (!stream_arg.isNumber()) {
             globalObject.throw("Invalid stream id", .{});
             return .zero;
         }
 
-        var stream = this.streams.get(@intCast(stream_id)) orelse {
+        const stream_id = stream_arg.toU32();
+        if (stream_id == 0) {
+            globalObject.throw("Invalid stream id", .{});
+            return .zero;
+        }
+
+        var stream = this.streams.get(stream_id) orelse {
             globalObject.throw("Invalid stream id", .{});
             return .zero;
         };
 
-        if(stream.canSendData() and stream.canReceiveData()) {
+        return JSC.JSValue.jsBoolean(stream.endAfterHeaders);
+    }
+
+    pub fn setEndAfterHeaders(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        JSC.markBinding(@src());
+        const args_list = callframe.arguments(2);
+        if (args_list.len < 2) {
+            globalObject.throw("Expected stream and endAfterHeaders arguments", .{});
+            return .zero;
+        }
+        const stream_arg = args_list.ptr[0];
+        const end_arg = args_list.ptr[1];
+
+        if (!stream_arg.isNumber()) {
+            globalObject.throw("Invalid stream id", .{});
+            return .zero;
+        }
+
+        const stream_id = stream_arg.toU32();
+        if (stream_id == 0 or stream_id > MAX_STREAM_ID) {
+            globalObject.throw("Invalid stream id", .{});
+            return .zero;
+        }
+
+        var stream = this.streams.get(stream_id) orelse {
+            globalObject.throw("Invalid stream id", .{});
+            return .zero;
+        };
+
+        if (!stream.canSendData() and !stream.canReceiveData()) {
             return JSC.JSValue.jsBoolean(false);
         }
 
-        this.endStream(&stream, ErrorCode.NO_ERROR);
+        stream.endAfterHeaders = end_arg.toBoolean();
+        return JSC.JSValue.jsBoolean(true);
+    }
+
+    pub fn isStreamAborted(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        JSC.markBinding(@src());
+        const args_list = callframe.arguments(1);
+        if (args_list.len < 1) {
+            globalObject.throw("Expected stream argument", .{});
+            return .zero;
+        }
+        const stream_arg = args_list.ptr[0];
+
+        if (!stream_arg.isNumber()) {
+            globalObject.throw("Invalid stream id", .{});
+            return .zero;
+        }
+
+        const stream_id = stream_arg.toU32();
+        if (stream_id == 0) {
+            globalObject.throw("Invalid stream id", .{});
+            return .zero;
+        }
+
+        var stream = this.streams.get(stream_id) orelse {
+            globalObject.throw("Invalid stream id", .{});
+            return .zero;
+        };
+
+        if (stream.signal) |_signal| {
+            return JSC.JSValue.jsBoolean(_signal.aborted());
+        }
+        return JSC.JSValue.jsBoolean(true);
+    }
+    pub fn getStreamState(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        JSC.markBinding(@src());
+        const args_list = callframe.arguments(1);
+        if (args_list.len < 1) {
+            globalObject.throw("Expected stream argument", .{});
+            return .zero;
+        }
+        const stream_arg = args_list.ptr[0];
+
+        if (!stream_arg.isNumber()) {
+            globalObject.throw("Invalid stream id", .{});
+            return .zero;
+        }
+
+        const stream_id = stream_arg.toU32();
+        if (stream_id == 0) {
+            globalObject.throw("Invalid stream id", .{});
+            return .zero;
+        }
+
+        var stream = this.streams.get(stream_id) orelse {
+            globalObject.throw("Invalid stream id", .{});
+            return .zero;
+        };
+        var state = JSC.JSValue.createEmptyObject(globalObject, 6);
+
+        state.put(globalObject, JSC.ZigString.static("localWindowSize"), JSC.JSValue.jsNumber(stream.windowSize));
+        state.put(globalObject, JSC.ZigString.static("state"), JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
+        state.put(globalObject, JSC.ZigString.static("localClose"), JSC.JSValue.jsNumber(@as(i32, if (stream.canSendData()) 1 else 0)));
+        state.put(globalObject, JSC.ZigString.static("remoteClose"), JSC.JSValue.jsNumber(@as(i32, if (stream.canReceiveData()) 1 else 0)));
+        // TODO: sumDependencyWeight
+        state.put(globalObject, JSC.ZigString.static("sumDependencyWeight"), JSC.JSValue.jsNumber(0));
+        state.put(globalObject, JSC.ZigString.static("weight"), JSC.JSValue.jsNumber(stream.weight));
+
+        return state;
+    }
+
+    pub fn setStreamPriority(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        JSC.markBinding(@src());
+        const args_list = callframe.arguments(2);
+        if (args_list.len < 2) {
+            globalObject.throw("Expected stream and options arguments", .{});
+            return .zero;
+        }
+        const stream_arg = args_list.ptr[0];
+        const options = args_list.ptr[1];
+
+        if (!stream_arg.isNumber()) {
+            globalObject.throw("Invalid stream id", .{});
+            return .zero;
+        }
+
+        const stream_id = stream_arg.toU32();
+        if (stream_id == 0) {
+            globalObject.throw("Invalid stream id", .{});
+            return .zero;
+        }
+
+        var stream = this.streams.get(stream_id) orelse {
+            globalObject.throw("Invalid stream id", .{});
+            return .zero;
+        };
+
+        if (!stream.canSendData() and !stream.canReceiveData()) {
+            return JSC.JSValue.jsBoolean(false);
+        }
+
+        if (!options.isObject()) {
+            globalObject.throw("Invalid priority", .{});
+            return .zero;
+        }
+        var weight = stream.weight;
+        var exclusive = stream.exclusive;
+        var parent_id = stream.streamDependency;
+        var silent = false;
+        if (options.get(globalObject, "weight")) |js_weight| {
+            if (js_weight.isNumber()) {
+                const weight_u32 = js_weight.toU32();
+                if (weight_u32 > 255) {
+                    globalObject.throw("Invalid weight", .{});
+                    return .zero;
+                }
+                weight = @intCast(weight_u32);
+            }
+        }
+
+        if (options.get(globalObject, "parent")) |js_parent| {
+            if (js_parent.isNumber()) {
+                parent_id = js_parent.toU32();
+                if (parent_id == 0 or parent_id > MAX_STREAM_ID) {
+                    globalObject.throw("Invalid stream id", .{});
+                    return .zero;
+                }
+            }
+        }
+
+        if (options.get(globalObject, "exclusive")) |js_exclusive| {
+            exclusive = js_exclusive.toBoolean();
+        }
+
+        if (options.get(globalObject, "silent")) |js_silent| {
+            silent = js_silent.toBoolean();
+        }
+
+        stream.streamDependency = parent_id;
+        stream.exclusive = exclusive;
+        stream.weight = @intCast(weight);
+
+        if (!silent) {
+            var stream_identifier: UInt31WithReserved = .{
+                .reserved = stream.exclusive,
+                .uint31 = @truncate(stream.streamDependency),
+            };
+
+            var priority: StreamPriority = .{
+                .streamIdentifier = stream_identifier.toUInt32(),
+                .weight = @truncate(stream.weight),
+            };
+            var frame: FrameHeader = .{
+                .type = @intFromEnum(FrameType.HTTP_FRAME_PRIORITY),
+                .flags = 0,
+                .streamIdentifier = stream.id,
+                .length = @intCast(StreamPriority.byteSize),
+            };
+
+            var writer = this.toWriter();
+            frame.write(@TypeOf(writer), writer);
+            priority.write(@TypeOf(writer), writer);
+        }
+        return JSC.JSValue.jsBoolean(true);
+    }
+    pub fn rstStream(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        JSC.markBinding(@src());
+        const args_list = callframe.arguments(2);
+        if (args_list.len < 2) {
+            globalObject.throw("Expected stream and code arguments", .{});
+            return .zero;
+        }
+        const stream_arg = args_list.ptr[0];
+        const error_arg = args_list.ptr[1];
+
+        if (!stream_arg.isNumber()) {
+            globalObject.throw("Invalid stream id", .{});
+            return .zero;
+        }
+
+        const stream_id = stream_arg.toU32();
+        if (stream_id == 0 or stream_id > MAX_STREAM_ID) {
+            globalObject.throw("Invalid stream id", .{});
+            return .zero;
+        }
+
+        var stream = this.streams.get(stream_id) orelse {
+            globalObject.throw("Invalid stream id", .{});
+            return .zero;
+        };
+
+        if (!stream.canSendData() and !stream.canReceiveData()) {
+            return JSC.JSValue.jsBoolean(false);
+        }
+
+        if (!error_arg.isNumber()) {
+            globalObject.throw("Invalid ErrorCode", .{});
+            return .zero;
+        }
+        const error_code = error_arg.toU32();
+        if (error_code > 13) {
+            globalObject.throw("Invalid ErrorCode", .{});
+            return .zero;
+        }
+
+        this.endStream(&stream, @enumFromInt(error_code));
 
         return JSC.JSValue.jsBoolean(true);
     }
-    
+    fn sendData(this: *H2FrameParser, stream_id: u32, payload: []const u8, close: bool) void {
+        const writer = this.toWriter();
+        if (payload.len == 0) {
+            // empty payload we still need to send a frame
+            var dataHeader: FrameHeader = .{
+                .type = @intFromEnum(FrameType.HTTP_FRAME_DATA),
+                .flags = if (close) @intFromEnum(DataFrameFlags.END_STREAM) else 0,
+                .streamIdentifier = @intCast(stream_id),
+                .length = 0,
+            };
+            dataHeader.write(@TypeOf(writer), writer);
+        } else {
+            // max frame size will always be at least 16384
+            const max_size = 16384 - FrameHeader.byteSize - 1;
+
+            var offset: usize = 0;
+
+            while (offset < payload.len) {
+                const size = @min(payload.len - offset, max_size);
+                const slice = payload[offset..size];
+                offset += size;
+                var dataHeader: FrameHeader = .{
+                    .type = @intFromEnum(FrameType.HTTP_FRAME_DATA),
+                    .flags = if (offset >= payload.len and close) @intFromEnum(DataFrameFlags.END_STREAM) else 0,
+                    .streamIdentifier = @intCast(stream_id),
+                    .length = size,
+                };
+                dataHeader.write(@TypeOf(writer), writer);
+                this.write(slice);
+            }
+        }
+    }
+
     pub fn writeStream(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(3);
@@ -1526,8 +1797,8 @@ pub const H2FrameParser = struct {
             return .zero;
         }
 
-        const stream_id = stream_arg.toInt32();
-        if (stream_id <= 0) {
+        const stream_id = stream_arg.toU32();
+        if (stream_id == 0 or stream_id > MAX_STREAM_ID) {
             globalObject.throw("Invalid stream id", .{});
             return .zero;
         }
@@ -1542,38 +1813,19 @@ pub const H2FrameParser = struct {
         }
 
         // TODO: check padding strategy here
-       
+
         if (data_arg.asArrayBuffer(globalObject)) |array_buffer| {
             var payload = array_buffer.slice();
             log("writeStream as buffer", .{});
 
-            // max frame size will always be at least 16384
-            const max_size = 16384 - FrameHeader.byteSize - 1;
-
-            var offset: usize = 0;
-
-            const writer = this.toWriter();
-            while(offset < payload.len) {
-                const size = @min(payload.len - offset, max_size);
-                const slice = payload[offset .. size];
-                offset += size;    
-                var dataHeader: FrameHeader = .{
-                    .type = @intFromEnum(FrameType.HTTP_FRAME_DATA),
-                    .flags = if(offset >= payload.len and close) @intFromEnum(DataFrameFlags.END_STREAM) else 0,
-                    .streamIdentifier = @intCast(stream_id),
-                    .length = size,
-                };
-                dataHeader.write(@TypeOf(writer), writer);
-                this.write(slice);    
-            }
-            
-
+            this.sendData(stream_id, payload, close);
         } else if (bun.String.tryFromJS(data_arg, globalObject)) |bun_str| {
-            _ = bun_str;
-            // var zig_str = bun_str.toUTF8(bun.default_allocator);
-            // defer zig_str.deinit();
-            // var slice = zig_str.slice();
+            var zig_str = bun_str.toUTF8(bun.default_allocator);
+            defer zig_str.deinit();
+            var payload = zig_str.slice();
             log("writeStream as string", .{});
+
+            this.sendData(stream_id, payload, close);
         } else {
             globalObject.throw("Expected data to be an ArrayBuffer or a string", .{});
             return .zero;
@@ -1591,7 +1843,7 @@ pub const H2FrameParser = struct {
         } else {
             stream_id += 2;
         }
-        
+
         return stream_id;
     }
 
@@ -1681,7 +1933,6 @@ pub const H2FrameParser = struct {
             };
         }
         headers_arg.protect();
-        stream.sentHeaders = headers_arg;
         var flags: u8 = @intFromEnum(HeadersFrameFlags.END_HEADERS);
         var exclusive: bool = false;
         var has_priority: bool = false;
@@ -1705,7 +1956,6 @@ pub const H2FrameParser = struct {
                     if (end_stream_js.asBoolean()) {
                         end_stream = true;
                         flags |= @intFromEnum(HeadersFrameFlags.END_STREAM);
-                        stream.endAfterHeaders = true;
                     }
                 }
             }
@@ -1864,7 +2114,7 @@ pub const H2FrameParser = struct {
             return null;
         };
         var handler_js = JSC.JSValue.zero;
-        if(options.get(globalObject, "handlers")) |handlers_| {
+        if (options.get(globalObject, "handlers")) |handlers_| {
             handler_js = handlers_;
         }
         const handlers = Handlers.fromJS(globalObject, handler_js, &exception) orelse {
@@ -1872,7 +2122,6 @@ pub const H2FrameParser = struct {
             return null;
         };
 
-        
         const allocator = getAllocator(globalObject);
         var this = allocator.create(H2FrameParser) catch unreachable;
 
@@ -1888,9 +2137,9 @@ pub const H2FrameParser = struct {
             },
             .streams = bun.U32HashMap(Stream).init(bun.default_allocator),
         };
-        if(options.get(globalObject, "settings")) |settings_js| {
-            if(!settings_js.isEmptyOrUndefinedOrNull()) {
-                if(!this.loadSettingsFromJSValue(globalObject, settings_js)) {
+        if (options.get(globalObject, "settings")) |settings_js| {
+            if (!settings_js.isEmptyOrUndefinedOrNull()) {
+                if (!this.loadSettingsFromJSValue(globalObject, settings_js)) {
                     this.deinit();
                     return null;
                 }

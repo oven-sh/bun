@@ -29,7 +29,7 @@ export default [
         fn: "read",
         length: 1,
       },
-      detach: { 
+      detach: {
         fn: "detach",
         length: 0,
       },
@@ -40,6 +40,26 @@ export default [
       writeStream: {
         fn: "writeStream",
         length: 3,
+      },
+      setStreamPriority: {
+        fn: "setStreamPriority",
+        length: 2,
+      },
+      setEndAfterHeaders: {
+        fn: "setEndAfterHeaders",
+        length: 2,
+      },
+      getEndAfterHeaders: {
+        fn: "getEndAfterHeaders",
+        length: 1,
+      },
+      isStreamAborted: {
+        fn: "isStreamAborted",
+        length: 1,
+      },
+      getStreamState: {
+        fn: "getStreamState",
+        length: 1,
       },
     },
     finalize: true,

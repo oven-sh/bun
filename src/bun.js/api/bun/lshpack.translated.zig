@@ -209,7 +209,7 @@ pub fn lsxpack_header_get_name(hdr: *lsxpack_header_t) []const u8 {
     return "";
 }
 pub fn lsxpack_header_get_value(hdr: *lsxpack_header_t) []const u8 {
-    if (hdr.val_len != 0) return hdr.buf[@as(usize, @intCast(hdr.val_offset)) ..@as(usize, @intCast(hdr.val_offset)) + hdr.val_len];
+    if (hdr.val_len != 0) return hdr.buf[@as(usize, @intCast(hdr.val_offset)) .. @as(usize, @intCast(hdr.val_offset)) + hdr.val_len];
     return "";
 }
 pub fn lsxpack_header_get_dec_size(arg_hdr: ?*const lsxpack_header_t) callconv(.C) usize {

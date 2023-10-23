@@ -742,10 +742,16 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JS
         byteLength += typedArray->length();
     }
 
-    if (callFrame->argumentCount() > 1) {
-        auto byteLengthValue = callFrame->uncheckedArgument(1);
-        byteLength = std::min(byteLength, byteLengthValue.toTypedArrayIndex(lexicalGlobalObject, "totalLength must be a valid number"_s));
+    JSValue totalLengthValue = callFrame->argument(1);
+    if (!totalLengthValue.isUndefined()) {
+        if (UNLIKELY(!totalLengthValue.isNumber())) {
+            throwTypeError(lexicalGlobalObject, throwScope, "totalLength must be a valid number"_s);
+            return JSValue::encode(jsUndefined());
+        }
+
+        auto totalLength = totalLengthValue.toTypedArrayIndex(lexicalGlobalObject, "totalLength must be a valid number"_s);
         RETURN_IF_EXCEPTION(throwScope, {});
+        byteLength = totalLength;
     }
 
     if (byteLength == 0) {

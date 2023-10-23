@@ -1,5 +1,4 @@
-import wt from "worker_threads";
-import {
+import wt, {
   getEnvironmentData,
   isMainThread,
   markAsUntransferable,
@@ -16,6 +15,7 @@ import {
   MessagePort,
   Worker,
 } from "worker_threads";
+
 test("all worker_threads module properties are present", () => {
   expect(wt).toHaveProperty("getEnvironmentData");
   expect(wt).toHaveProperty("isMainThread");
@@ -113,6 +113,15 @@ test("all worker_threads worker instance properties are present", () => {
   expect(worker.rawListeners).toBeFunction();
   expect(worker.listenerCount).toBeFunction();
   expect(worker.eventNames).toBeFunction();
+});
+
+test("threadId module and worker property is consistent", () => {
+  const worker = new Worker(new URL("./worker-threadid.js", import.meta.url).href);
+  worker.on("message", (message: { threadId: number} ) => {
+    expect(message.threadId).toBe(worker.threadId);
+  })
+  expect(threadId).toBe(0);
+  expect(worker.threadId).toBe(1);
 });
 
 test("receiveMessageOnPort works across threads", () => {

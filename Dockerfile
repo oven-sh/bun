@@ -71,22 +71,20 @@ RUN apt-get update -y \
     && mv ${HOME}/.cargo/bin/* /usr/bin/ \
     && npm install -g bun esbuild
 
-COPY . .
-# COPY package.json package.json
-# COPY Makefile Makefile
-# COPY CMakeLists.txt CMakeLists.txt
-# COPY src/ src/ 
-# COPY packages/bun-usockets/ packages/bun-usockets/
-# COPY packages/bun-uws/ packages/bun-uws/
-# COPY .scripts/ .scripts/
-# COPY *.zig ./
-
 ARG CXX="clang++-${CLANG_VERSION}"
 ARG CC="clang-${CLANG_VERSION}"
 ARG LD="lld-${CLANG_VERSION}"
 ARG AR="/usr/bin/llvm-ar-${CLANG_VERSION}"
 
-RUN bun install \
-    && bash .scripts/postinstall.sh \
-    && make vendor-without-npm \
-    && bun run build
+COPY package.json package.json
+COPY Makefile Makefile
+COPY CMakeLists.txt CMakeLists.txt
+COPY src/ src/ 
+COPY packages/bun-usockets/ packages/bun-usockets/
+COPY packages/bun-uws/ packages/bun-uws/
+COPY .scripts/ .scripts/
+COPY .build/ .build/
+COPY *.zig ./
+
+RUN ./.build/base64.bash
+

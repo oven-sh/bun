@@ -11,7 +11,11 @@ CCACHE_CC_FLAG=${CCACHE_CC_FLAG:-}
 CFLAGS=${CFLAGS:-}
 mkdir -p $BUN_DEPS_OUT_DIR
 
-cp $BUN_DEPS_DIR/base64
+cd $BUN_DEPS_DIR/base64
+
+echo "1: $(which make)"
+echo "2: $(which cmake)"
+
 make clean
 cmake $CMAKE_FLAGS .
 make

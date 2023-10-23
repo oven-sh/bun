@@ -124,6 +124,12 @@ public:
         getLoopData()->corkedSocketIsSSL = SSL;
     }
 
+    void uncorkWithoutSending() {
+        if (isCorked()) {
+            getLoopData()->corkedSocket = nullptr;
+        }
+    }
+
     /* Cork this socket. Only one socket may ever be corked per-loop at any given time */
     void cork() {
         /* Extra check for invalid corking of others */

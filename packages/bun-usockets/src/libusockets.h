@@ -345,6 +345,9 @@ void *us_socket_get_native_handle(int ssl, struct us_socket_t *s);
  * Set hint msg_more if you have more immediate data to write. */
 int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length, int msg_more);
 
+/* Special path for non-SSL sockets. Used to send header and payload in one go. Works like us_socket_write. */
+int us_socket_write2(int ssl, struct us_socket_t *s, const char *header, int header_length, const char *payload, int payload_length);
+
 /* Set a low precision, high performance timer on a socket. A socket can only have one single active timer
  * at any given point in time. Will remove any such pre set timer */
 void us_socket_timeout(int ssl, struct us_socket_t *s, unsigned int seconds);

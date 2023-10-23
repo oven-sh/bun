@@ -2160,12 +2160,16 @@ pub fn copyLatin1IntoUTF8StopOnNonASCII(buf_: []u8, comptime Type: type, latin1_
             }
         }
 
-        if (latin1.len > 0 and buf.len >= 2) {
-            if (comptime stop) return .{ .written = std.math.maxInt(u32), .read = std.math.maxInt(u32) };
+        if (latin1.len > 0) {
+            if (buf.len >= 2) {
+                if (comptime stop) return .{ .written = std.math.maxInt(u32), .read = std.math.maxInt(u32) };
 
-            buf[0..2].* = latin1ToCodepointBytesAssumeNotASCII(latin1[0]);
-            latin1 = latin1[1..];
-            buf = buf[2..];
+                buf[0..2].* = latin1ToCodepointBytesAssumeNotASCII(latin1[0]);
+                latin1 = latin1[1..];
+                buf = buf[2..];
+            } else {
+                break;
+            }
         }
     }
 

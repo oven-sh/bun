@@ -97,6 +97,7 @@
 
 #include "AsyncContextFrame.h"
 #include "JavaScriptCore/InternalFieldTuple.h"
+#include "JavaScriptCore/JSDateMath.h"
 
 template<typename UWSResponse>
 static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
@@ -4716,9 +4717,10 @@ CPP_DECL double JSC__JSValue__getUnixTimestamp(JSC__JSValue timeValue)
     return date->internalNumber();
 }
 
-extern "C" double WTF__parseDateFromNullTerminatedCharacters(const char* nullTerminatedChars)
+extern "C" double Bun__parseDate(JSC::JSGlobalObject* globalObject, BunString* str)
 {
-    return WTF::parseDateFromNullTerminatedCharacters(nullTerminatedChars);
+    auto& vm = globalObject->vm();
+    return vm.dateCache.parseDate(globalObject, vm, Bun::toWTFString(*str));
 }
 
 extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNullTerminatedString(JSC::JSGlobalObject* globalObject, const char* nullTerminatedChars)

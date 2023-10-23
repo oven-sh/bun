@@ -162,7 +162,17 @@ function createConnection({ hostname, port, username, password, tls, query, data
 
 function normalizeStrings(strings) {
   if ($isJSArray(strings)) {
-    return strings.join("?");
+    const count = strings.length;
+    if (count === 0) {
+      return "";
+    }
+
+    var out = strings[0];
+    for (var i = 1; i < count; i++) {
+      out += "$" + i;
+      out += strings[i];
+    }
+    return out;
   }
 
   return strings + "";

@@ -19,7 +19,7 @@ typedef union DataCellValue {
     uint8_t null_value;
     WTF::StringImpl* string;
     double number;
-    int32_t integer;
+    uint32_t integer;
     int64_t bigint;
     bool boolean;
     double date;
@@ -30,17 +30,19 @@ typedef union DataCellValue {
 enum class DataCellTag : uint8_t {
     Null = 0,
     String = 1,
-    Integer = 2,
-    Bigint = 3,
-    Boolean = 4,
-    Date = 5,
-    Bytea = 6,
-    Json = 7,
+    Double = 2,
+    Integer = 3,
+    Bigint = 4,
+    Boolean = 5,
+    Date = 6,
+    Bytea = 7,
+    Json = 8,
 };
 
 typedef struct DataCell {
     DataCellTag tag;
     DataCellValue value;
+    bool freeValue;
 } DataCell;
 
 static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, unsigned count, JSC::JSGlobalObject* globalObject)
@@ -56,9 +58,11 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, unsigned co
             break;
         case DataCellTag::String: {
             object->putDirectOffset(vm, i, jsString(vm, WTF::String(cell.value.string)));
-            cell.value.string->deref();
             break;
         }
+        case DataCellTag::Double:
+            object->putDirectOffset(vm, i, jsDoubleNumber(cell.value.number));
+            break;
         case DataCellTag::Integer:
             object->putDirectOffset(vm, i, jsNumber(cell.value.integer));
             break;
@@ -82,8 +86,6 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, unsigned co
         case DataCellTag::Json: {
             auto str = WTF::String(cell.value.string);
             JSC::JSValue json = JSC::JSONParse(globalObject, str);
-            cell.value.string->deref();
-
             object->putDirectOffset(vm, i, json);
             break;
         }
@@ -155,13 +157,6 @@ extern "C" EncodedJSValue JSC__createEmptyObjectWithStructure(JSC::JSGlobalObjec
     vm.writeBarrier(object);
 
     return JSValue::encode(object);
-}
-
-extern "C" void JSC__runInDeferralContext(JSC::VM* vm, void* ptr, void (*callback)(void*))
-{
-    GCDeferralContext context(*vm);
-    JSC::DisallowGC disallowGC;
-    callback(ptr);
 }
 
 extern "C" void JSC__putDirectOffset(JSC::VM* vm, JSC::EncodedJSValue object, unsigned int offset, JSC::EncodedJSValue value)

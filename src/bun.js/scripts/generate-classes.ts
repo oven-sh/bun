@@ -336,7 +336,7 @@ function generatePrototype(typeName, obj) {
     this->putDirect(vm, vm.propertyNames->${symbol}Symbol, JSFunction::create(vm, globalObject, 1, String("${symbol}"_s), ${protoSymbolName(
       typeName,
       symbol,
-    )}Callback, ImplementationVisibility::Public), PropertyAttribute::Function | PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);`;
+    )}Callback, ImplementationVisibility::Public), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);`;
   }
 
   return `
@@ -421,6 +421,7 @@ function generatePrototypeHeader(typename) {
         template<typename CellType, JSC::SubspaceAccess>
         static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
         {
+            STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(${proto}, Base);
             return &vm.plainObjectSpace();
         }
         static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -556,7 +557,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
     ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr);
   ${
     obj.estimatedSize
-      ? `vm.heap.reportExtraMemoryAllocated(${symbolName(obj.name, "estimatedSize")}(instance->wrapped()));`
+      ? `vm.heap.reportExtraMemoryAllocated(instance, ${symbolName(obj.name, "estimatedSize")}(instance->wrapped()));`
       : ""
   }
 
@@ -1209,7 +1210,11 @@ extern "C" EncodedJSValue ${typeName}__create(Zig::GlobalObject* globalObject, v
   auto &vm = globalObject->vm();
   JSC::Structure* structure = globalObject->${className(typeName)}Structure();
   ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr);
-  ${obj.estimatedSize ? `vm.heap.reportExtraMemoryAllocated(${symbolName(obj.name, "estimatedSize")}(ptr));` : ""}
+  ${
+    obj.estimatedSize
+      ? `vm.heap.reportExtraMemoryAllocated(instance, ${symbolName(obj.name, "estimatedSize")}(ptr));`
+      : ""
+  }
   return JSValue::encode(instance);
 }
 

@@ -10,9 +10,9 @@ ARG ARCH=x86_64
 ARG BUILD_MACHINE_ARCH=x86_64
 ARG TRIPLET=${ARCH}-linux-gnu
 ARG BUILDARCH=amd64
-ARG WEBKIT_TAG=2023-sept15
+ARG WEBKIT_TAG=2023-oct3-2
 ARG ZIG_TAG=jul1
-ARG ZIG_VERSION="0.12.0-dev.163+6780a6bbf"
+ARG ZIG_VERSION="0.12.0-dev.899+027aabf49"
 ARG WEBKIT_BASENAME="bun-webkit-linux-$BUILDARCH"
 
 ARG ZIG_FOLDERNAME=zig-linux-${BUILD_MACHINE_ARCH}-${ZIG_VERSION}
@@ -286,6 +286,7 @@ COPY packages/bun-uws ${BUN_DIR}/packages/bun-uws
 COPY packages/bun-usockets ${BUN_DIR}/packages/bun-usockets
 COPY src/deps/zlib ${BUN_DIR}/src/deps/zlib
 COPY src/deps/boringssl/include ${BUN_DIR}/src/deps/boringssl/include
+COPY src/deps/c-ares/include ${BUN_DIR}/src/deps/c-ares/include
 COPY src/deps/libuwsockets.cpp ${BUN_DIR}/src/deps/libuwsockets.cpp
 COPY src/deps/_libusockets.h ${BUN_DIR}/src/deps/_libusockets.h
 

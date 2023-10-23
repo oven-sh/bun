@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { spawnSync } from "bun";
 import { bunEnv, bunExe } from "harness";
 
-test("reportError", () => {
+test.skipIf(Bun.version.endsWith("debug"))("reportError", () => {
   const cwd = import.meta.dir;
   const { stderr } = spawnSync({
     cmd: [bunExe(), new URL("./reportError.ts", import.meta.url).pathname],

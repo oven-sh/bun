@@ -10,7 +10,40 @@ var Buffer = globalThis.Buffer;
 const EMPTY_BUFFER = Buffer.alloc(0);
 const { isAnyArrayBuffer, isArrayBufferView } = require("node:util/types");
 
+function exportIfKeyObject(key) {
+  if (key instanceof KeyObject) {
+    key = key.export();
+  } else if (key instanceof CryptoKey) {
+    key = KeyObject.from(key).export();
+  }
+  return key;
+}
+function getKeyFrom(key, type) {
+  if (key instanceof KeyObject) {
+    key = key.export();
+  } else if (key instanceof CryptoKey) {
+    key = KeyObject.from(key).export();
+  } else if (!Buffer.isBuffer(key) && typeof key === "object") {
+    if ((typeof key.format === "string" || typeof key.passphrase === "string") && typeof key.key !== "undefined") {
+      key = type === "public" ? _createPublicKey(key).export() : _createPrivateKey(key).export();
+    }
+  } else if (typeof key === "string" && type === "public") {
+    // make public key from non encrypted private PEM
+    key.indexOf("PRIVATE KEY-----") !== -1 && (key = _createPublicKey(key).export());
+  }
+  return key;
+}
 function getArrayBufferOrView(buffer, name, encoding) {
+  if (buffer instanceof KeyObject) {
+    if (buffer.type !== "secret") {
+      const error = new TypeError(
+        `ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${key.type}, expected secret`,
+      );
+      error.code = "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE";
+      throw error;
+    }
+    buffer = buffer.export();
+  }
   if (isAnyArrayBuffer(buffer)) return buffer;
   if (typeof buffer === "string") {
     if (encoding === "buffer") encoding = "utf8";
@@ -135,7 +168,7 @@ var require_hash_base = __commonJS({
         throw new TypeError(prefix + " must be a string or a buffer");
     }
     function HashBase(blockSize) {
-      StreamModule.Transform.call(this),
+      StreamModule.Transform.$call(this),
         (this._block = Buffer2.allocUnsafe(blockSize)),
         (this._blockSize = blockSize),
         (this._blockOffset = 0),
@@ -202,7 +235,7 @@ var require_md5 = __commonJS({
       Buffer2 = require_safe_buffer().Buffer,
       ARRAY16 = new Array(16);
     function MD5() {
-      HashBase.call(this, 64),
+      HashBase.$call(this, 64),
         (this._a = 1732584193),
         (this._b = 4023233417),
         (this._c = 2562383102),
@@ -350,7 +383,7 @@ var require_ripemd160 = __commonJS({
       hl = [0, 1518500249, 1859775393, 2400959708, 2840853838],
       hr = [1352829926, 1548603684, 1836072691, 2053994217, 0];
     function RIPEMD160() {
-      HashBase.call(this, 64),
+      HashBase.$call(this, 64),
         (this._a = 1732584193),
         (this._b = 4023233417),
         (this._c = 2562383102),
@@ -508,7 +541,7 @@ var require_sha = __commonJS({
       K = [1518500249, 1859775393, -1894007588, -899497514],
       W = new Array(80);
     function Sha() {
-      this.init(), (this._w = W), Hash.call(this, 64, 56);
+      this.init(), (this._w = W), Hash.$call(this, 64, 56);
     }
     inherits(Sha, Hash);
     Sha.prototype.init = function () {
@@ -573,7 +606,7 @@ var require_sha1 = __commonJS({
       K = [1518500249, 1859775393, -1894007588, -899497514],
       W = new Array(80);
     function Sha1() {
-      this.init(), (this._w = W), Hash.call(this, 64, 56);
+      this.init(), (this._w = W), Hash.$call(this, 64, 56);
     }
     inherits(Sha1, Hash);
     Sha1.prototype.init = function () {
@@ -650,7 +683,7 @@ var require_sha256 = __commonJS({
       ],
       W = new Array(64);
     function Sha256() {
-      this.init(), (this._w = W), Hash.call(this, 64, 56);
+      this.init(), (this._w = W), Hash.$call(this, 64, 56);
     }
     inherits(Sha256, Hash);
     Sha256.prototype.init = function () {
@@ -742,7 +775,7 @@ var require_sha224 = __commonJS({
       Buffer2 = require_safe_buffer().Buffer,
       W = new Array(64);
     function Sha224() {
-      this.init(), (this._w = W), Hash.call(this, 64, 56);
+      this.init(), (this._w = W), Hash.$call(this, 64, 56);
     }
     inherits(Sha224, Sha256);
     Sha224.prototype.init = function () {
@@ -803,7 +836,7 @@ var require_sha512 = __commonJS({
       ],
       W = new Array(160);
     function Sha512() {
-      this.init(), (this._w = W), Hash.call(this, 128, 112);
+      this.init(), (this._w = W), Hash.$call(this, 128, 112);
     }
     inherits(Sha512, Hash);
     Sha512.prototype.init = function () {
@@ -985,7 +1018,7 @@ var require_sha384 = __commonJS({
       Buffer2 = require_safe_buffer().Buffer,
       W = new Array(160);
     function Sha384() {
-      this.init(), (this._w = W), Hash.call(this, 128, 112);
+      this.init(), (this._w = W), Hash.$call(this, 128, 112);
     }
     inherits(Sha384, SHA512);
     Sha384.prototype.init = function () {
@@ -1052,15 +1085,17 @@ var require_cipher_base = __commonJS({
     var Buffer2 = require_safe_buffer().Buffer,
       inherits = require_inherits_browser();
     function CipherBase(hashMode) {
-      StreamModule.Transform.call(this),
+      StreamModule.Transform.$call(this),
         (this.hashMode = typeof hashMode == "string"),
         this.hashMode ? (this[hashMode] = this._finalOrDigest) : (this.final = this._finalOrDigest),
         this._final && ((this.__final = this._final), (this._final = null)),
         (this._decoder = null),
         (this._encoding = null);
+      this._finalized = !1;
     }
     inherits(CipherBase, StreamModule.Transform);
     CipherBase.prototype.update = function (data, inputEnc, outputEnc) {
+      if (outputEnc === "buffer") outputEnc = undefined;
       typeof data == "string" && (data = Buffer2.from(data, inputEnc));
       var outData = this._update(data);
       return this.hashMode ? this : (outputEnc && (outData = this._toString(outData, outputEnc)), outData);
@@ -1095,6 +1130,13 @@ var require_cipher_base = __commonJS({
       done(err);
     };
     CipherBase.prototype._finalOrDigest = function (outputEnc) {
+      if (outputEnc === "buffer") outputEnc = undefined;
+      if (this._finalized) {
+        if (!this._encoding) return Buffer2.alloc(0);
+        return "";
+      }
+
+      this._finalized = !0;
       var outData = this.__final() || Buffer2.alloc(0);
       return outputEnc && (outData = this._toString(outData, outputEnc, !0)), outData;
     };
@@ -1247,7 +1289,7 @@ var require_browser2 = __commonJS({
       Object.defineProperty(LazyHash.prototype, method, {
         get() {
           Object.setPrototypeOf(this, lazyHashFullInitProto);
-          StreamModule.Transform.call(this, this._options);
+          StreamModule.Transform.$call(this, this._options);
           return this[method];
         },
         enumerable: false,
@@ -1274,7 +1316,9 @@ var require_legacy = __commonJS({
       ZEROS = Buffer2.alloc(128),
       blocksize = 64;
     function Hmac(alg, key) {
-      Base.call(this, "digest"),
+      key = exportIfKeyObject(key);
+
+      Base.$call(this, "digest"),
         typeof key == "string" && (key = Buffer2.from(key)),
         (this._alg = alg),
         (this._key = key),
@@ -1327,7 +1371,9 @@ var require_browser3 = __commonJS({
     var sha = require_sha2();
     var ZEROS = Buffer2.alloc(128);
     function Hmac(alg, key) {
-      Base.call(this, "digest"), typeof key == "string" && (key = Buffer2.from(key));
+      key = exportIfKeyObject(key);
+
+      Base.$call(this, "digest"), typeof key == "string" && (key = Buffer2.from(key));
       var blocksize = alg === "sha512" || alg === "sha384" ? 128 : 64;
       if (((this._alg = alg), (this._key = key), key.length > blocksize)) {
         var hash = alg === "rmd160" ? new RIPEMD160() : sha(alg);
@@ -1350,9 +1396,11 @@ var require_browser3 = __commonJS({
     Hmac.prototype._final = function () {
       var h = this._hash.digest(),
         hash = this._alg === "rmd160" ? new RIPEMD160() : sha(this._alg);
+
       return hash.update(this._opad).update(h).digest();
     };
     module.exports = function (alg, key) {
+      key = exportIfKeyObject(key);
       return (
         (alg = alg.toLowerCase()),
         alg === "rmd160" || alg === "ripemd160"
@@ -1419,23 +1467,28 @@ var require_algorithms = __commonJS({
         hash: "sha1",
         id: "",
       },
+      sha1: {
+        sign: "ecdsa/rsa",
+        hash: "sha1",
+        id: "",
+      },
       sha256: {
-        sign: "ecdsa",
+        sign: "ecdsa/rsa",
         hash: "sha256",
         id: "",
       },
       sha224: {
-        sign: "ecdsa",
+        sign: "ecdsa/rsa",
         hash: "sha224",
         id: "",
       },
       sha384: {
-        sign: "ecdsa",
+        sign: "ecdsa/rsa",
         hash: "sha384",
         id: "",
       },
       sha512: {
-        sign: "ecdsa",
+        sign: "ecdsa/rsa",
         hash: "sha512",
         id: "",
       },
@@ -1593,6 +1646,7 @@ var require_sync_browser = __commonJS({
         ripemd160: 20,
       };
     function Hmac(alg, key, saltLen) {
+      key = exportIfKeyObject(key);
       var hash = getDigest(alg),
         blocksize = alg === "sha512" || alg === "sha384" ? 128 : 64;
       key.length > blocksize
@@ -2007,7 +2061,7 @@ var require_des = __commonJS({
       (this.tmp = new Array(2)), (this.keys = null);
     }
     function DES(options) {
-      Cipher.call(this, options);
+      Cipher.$call(this, options);
       var state = new DESState();
       (this._desState = state), this.deriveKeys(state, options.key);
     }
@@ -2089,7 +2143,7 @@ var require_cbc = __commonJS({
     }
     function instantiate(Base) {
       function CBC(options) {
-        Base.call(this, options), this._cbcInit();
+        Base.$call(this, options), this._cbcInit();
       }
       inherits(CBC, Base);
       for (var keys = Object.keys(proto), i = 0; i < keys.length; i++) {
@@ -2114,10 +2168,10 @@ var require_cbc = __commonJS({
         iv = state.iv;
       if (this.type === "encrypt") {
         for (var i = 0; i < this.blockSize; i++) iv[i] ^= inp[inOff + i];
-        superProto._update.call(this, iv, 0, out, outOff);
+        superProto._update.$call(this, iv, 0, out, outOff);
         for (var i = 0; i < this.blockSize; i++) iv[i] = out[outOff + i];
       } else {
-        superProto._update.call(this, inp, inOff, out, outOff);
+        superProto._update.$call(this, inp, inOff, out, outOff);
         for (var i = 0; i < this.blockSize; i++) out[outOff + i] ^= iv[i];
         for (var i = 0; i < this.blockSize; i++) iv[i] = inp[inOff + i];
       }
@@ -2151,7 +2205,7 @@ var require_ede = __commonJS({
           ]);
     }
     function EDE(options) {
-      Cipher.call(this, options);
+      Cipher.$call(this, options);
       var state = new EDEState(this.type, this.options.key);
       this._edeState = state;
     }
@@ -2203,7 +2257,7 @@ var require_browserify_des = __commonJS({
     module.exports = DES;
     inherits(DES, CipherBase);
     function DES(opts) {
-      CipherBase.call(this);
+      CipherBase.$call(this);
       var modeName = opts.mode.toLowerCase(),
         mode = modes[modeName],
         type;
@@ -2628,6 +2682,11 @@ var require_aes = __commonJS({
   "node_modules/browserify-aes/aes.js"(exports, module) {
     var Buffer2 = require_safe_buffer().Buffer;
     function asUInt32Array(buf) {
+      if (buf instanceof KeyObject) {
+        buf = buf.export();
+      } else if (buf instanceof CryptoKey) {
+        buf = KeyObject.from(buf).export();
+      }
       Buffer2.isBuffer(buf) || (buf = Buffer2.from(buf));
       for (var len = (buf.length / 4) | 0, out = new Array(len), i = 0; i < len; i++) out[i] = buf.readUInt32BE(i * 4);
       return out;
@@ -2914,12 +2973,12 @@ var require_authCipher = __commonJS({
         ghash.update(Buffer2.alloc(8, 0));
       var ivBits = len * 8,
         tail = Buffer2.alloc(8);
-      tail.writeUIntBE(ivBits, 0, 8), ghash.update(tail), (self2._finID = ghash.state);
+      tail.writeUIntBE(ivBits, 2, 6), ghash.update(tail), (self2._finID = ghash.state);
       var out = Buffer2.from(self2._finID);
       return incr32(out), out;
     }
     function StreamCipher(mode, key, iv, decrypt) {
-      Transform.call(this);
+      Transform.$call(this);
       var h = Buffer2.alloc(4, 0);
       this._cipher = new aes.AES(key);
       var ck = this._cipher.encryptBlock(h);
@@ -2977,7 +3036,7 @@ var require_streamCipher = __commonJS({
       Transform = require_cipher_base(),
       inherits = require_inherits_browser();
     function StreamCipher(mode, key, iv, decrypt) {
-      Transform.call(this),
+      Transform.$call(this),
         (this._cipher = new aes.AES(key)),
         (this._prev = Buffer2.from(iv)),
         (this._cache = Buffer2.allocUnsafe(0)),
@@ -3043,7 +3102,7 @@ var require_encrypter = __commonJS({
       ebtk = require_evp_bytestokey(),
       inherits = require_inherits_browser();
     function Cipher(mode, key, iv) {
-      Transform.call(this),
+      Transform.$call(this),
         (this._cache = new Splitter()),
         (this._cipher = new aes.AES(key)),
         (this._prev = Buffer2.from(iv)),
@@ -3133,7 +3192,7 @@ var require_decrypter = __commonJS({
       ebtk = require_evp_bytestokey(),
       inherits = require_inherits_browser();
     function Decipher(mode, key, iv) {
-      Transform.call(this),
+      Transform.$call(this),
         (this._cache = new Splitter()),
         (this._last = void 0),
         (this._cipher = new aes.AES(key)),
@@ -5072,7 +5131,7 @@ var require_bn = __commonJS({
           return num.imul(this.k);
         });
       function K256() {
-        MPrime.call(this, "k256", "ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff fffffffe fffffc2f");
+        MPrime.$call(this, "k256", "ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff fffffffe fffffc2f");
       }
       inherits(K256, MPrime),
         (K256.prototype.split = function (input, output) {
@@ -5102,15 +5161,15 @@ var require_bn = __commonJS({
           );
         });
       function P224() {
-        MPrime.call(this, "p224", "ffffffff ffffffff ffffffff ffffffff 00000000 00000000 00000001");
+        MPrime.$call(this, "p224", "ffffffff ffffffff ffffffff ffffffff 00000000 00000000 00000001");
       }
       inherits(P224, MPrime);
       function P192() {
-        MPrime.call(this, "p192", "ffffffff ffffffff ffffffff fffffffe ffffffff ffffffff");
+        MPrime.$call(this, "p192", "ffffffff ffffffff ffffffff fffffffe ffffffff ffffffff");
       }
       inherits(P192, MPrime);
       function P25519() {
-        MPrime.call(this, "25519", "7fffffffffffffff ffffffffffffffff ffffffffffffffff ffffffffffffffed");
+        MPrime.$call(this, "25519", "7fffffffffffffff ffffffffffffffff ffffffffffffffff ffffffffffffffed");
       }
       inherits(P25519, MPrime),
         (P25519.prototype.imulK = function (num) {
@@ -5256,7 +5315,7 @@ var require_bn = __commonJS({
           return new Mont(num);
         });
       function Mont(m) {
-        Red.call(this, m),
+        Red.$call(this, m),
           (this.shift = this.m.bitLength()),
           this.shift % 26 !== 0 && (this.shift += 26 - (this.shift % 26)),
           (this.r = new BN(1).iushln(this.shift)),
@@ -5849,11 +5908,16 @@ var require_utils3 = __commonJS({
     function cachedProperty(obj, name, computer) {
       var key = "_" + name;
       obj.prototype[name] = function () {
-        return this[key] !== void 0 ? this[key] : (this[key] = computer.call(this));
+        return this[key] !== void 0 ? this[key] : (this[key] = computer.$call(this));
       };
     }
     utils.cachedProperty = cachedProperty;
     function parseBytes(bytes) {
+      if (bytes instanceof KeyObject) {
+        bytes = bytes.export();
+      } else if (bytes instanceof CryptoKey) {
+        bytes = KeyObject.from(bytes).export();
+      }
       return typeof bytes == "string" ? utils.toArray(bytes, "hex") : bytes;
     }
     utils.parseBytes = parseBytes;
@@ -6104,7 +6168,7 @@ var require_short = __commonJS({
       Base = require_base(),
       assert = utils.assert;
     function ShortCurve(conf) {
-      Base.call(this, "short", conf),
+      Base.$call(this, "short", conf),
         (this.a = new BN(conf.a, 16).toRed(this.red)),
         (this.b = new BN(conf.b, 16).toRed(this.red)),
         (this.tinv = this.two.redInvm()),
@@ -6247,7 +6311,7 @@ var require_short = __commonJS({
       return res;
     };
     function Point(curve, x, y, isRed) {
-      Base.BasePoint.call(this, curve, "affine"),
+      Base.BasePoint.$call(this, curve, "affine"),
         x === null && y === null
           ? ((this.x = null), (this.y = null), (this.inf = !0))
           : ((this.x = new BN(x, 16)),
@@ -6425,7 +6489,7 @@ var require_short = __commonJS({
       return res;
     };
     function JPoint(curve, x, y, z) {
-      Base.BasePoint.call(this, curve, "jacobian"),
+      Base.BasePoint.$call(this, curve, "jacobian"),
         x === null && y === null && z === null
           ? ((this.x = this.curve.one), (this.y = this.curve.one), (this.z = new BN(0)))
           : ((this.x = new BN(x, 16)), (this.y = new BN(y, 16)), (this.z = new BN(z, 16))),
@@ -6688,7 +6752,7 @@ var require_mont = __commonJS({
       Base = require_base(),
       utils = require_utils3();
     function MontCurve(conf) {
-      Base.call(this, "mont", conf),
+      Base.$call(this, "mont", conf),
         (this.a = new BN(conf.a, 16).toRed(this.red)),
         (this.b = new BN(conf.b, 16).toRed(this.red)),
         (this.i4 = new BN(4).toRed(this.red).redInvm()),
@@ -6705,7 +6769,7 @@ var require_mont = __commonJS({
       return y.redSqr().cmp(rhs) === 0;
     };
     function Point(curve, x, z) {
-      Base.BasePoint.call(this, curve, "projective"),
+      Base.BasePoint.$call(this, curve, "projective"),
         x === null && z === null
           ? ((this.x = this.curve.one), (this.z = this.curve.zero))
           : ((this.x = new BN(x, 16)),
@@ -6804,7 +6868,7 @@ var require_edwards = __commonJS({
       (this.twisted = (conf.a | 0) !== 1),
         (this.mOneA = this.twisted && (conf.a | 0) === -1),
         (this.extended = this.mOneA),
-        Base.call(this, "edwards", conf),
+        Base.$call(this, "edwards", conf),
         (this.a = new BN(conf.a, 16).umod(this.red.m)),
         (this.a = this.a.toRed(this.red)),
         (this.c = new BN(conf.c, 16).toRed(this.red)),
@@ -6860,7 +6924,7 @@ var require_edwards = __commonJS({
       return lhs.cmp(rhs) === 0;
     };
     function Point(curve, x, y, z, t) {
-      Base.BasePoint.call(this, curve, "projective"),
+      Base.BasePoint.$call(this, curve, "projective"),
         x === null && y === null && z === null
           ? ((this.x = this.curve.zero),
             (this.y = this.curve.one),
@@ -7398,7 +7462,7 @@ var require__ = __commonJS({
       sha1_K = [1518500249, 1859775393, 2400959708, 3395469782];
     function SHA1() {
       if (!(this instanceof SHA1)) return new SHA1();
-      BlockHash.call(this),
+      BlockHash.$call(this),
         (this.h = [1732584193, 4023233417, 2562383102, 271733878, 3285377520]),
         (this.W = new Array(80));
     }
@@ -7463,7 +7527,7 @@ var require__2 = __commonJS({
       ];
     function SHA256() {
       if (!(this instanceof SHA256)) return new SHA256();
-      BlockHash.call(this),
+      BlockHash.$call(this),
         (this.h = [1779033703, 3144134277, 1013904242, 2773480762, 1359893119, 2600822924, 528734635, 1541459225]),
         (this.k = sha256_K),
         (this.W = new Array(64));
@@ -7513,7 +7577,7 @@ var require__3 = __commonJS({
       SHA256 = require__2();
     function SHA224() {
       if (!(this instanceof SHA224)) return new SHA224();
-      SHA256.call(this),
+      SHA256.$call(this),
         (this.h = [3238371032, 914150663, 812702999, 4144912697, 4290775857, 1750603025, 1694076839, 3204075428]);
     }
     utils.inherits(SHA224, SHA256);
@@ -7569,7 +7633,7 @@ var require__4 = __commonJS({
       ];
     function SHA512() {
       if (!(this instanceof SHA512)) return new SHA512();
-      BlockHash.call(this),
+      BlockHash.$call(this),
         (this.h = [
           1779033703, 4089235720, 3144134277, 2227873595, 1013904242, 4271175723, 2773480762, 1595750129, 1359893119,
           2917565137, 2600822924, 725511199, 528734635, 4215389547, 1541459225, 327033209,
@@ -7749,7 +7813,7 @@ var require__5 = __commonJS({
       SHA512 = require__4();
     function SHA384() {
       if (!(this instanceof SHA384)) return new SHA384();
-      SHA512.call(this),
+      SHA512.$call(this),
         (this.h = [
           3418070365, 3238371032, 1654270250, 914150663, 2438529370, 812702999, 355462360, 4144912697, 1731405415,
           4290775857, 2394180231, 1750603025, 3675008525, 1694076839, 1203062813, 3204075428,
@@ -7792,7 +7856,7 @@ var require_ripemd = __commonJS({
       BlockHash = common.BlockHash;
     function RIPEMD160() {
       if (!(this instanceof RIPEMD160)) return new RIPEMD160();
-      BlockHash.call(this),
+      BlockHash.$call(this),
         (this.h = [1732584193, 4023233417, 2562383102, 271733878, 3285377520]),
         (this.endian = "little");
     }
@@ -7888,6 +7952,8 @@ var require_hmac = __commonJS({
     var utils = require_utils4(),
       assert = require_minimalistic_assert();
     function Hmac(hash, key, enc) {
+      key = exportIfKeyObject(key);
+
       if (!(this instanceof Hmac)) return new Hmac(hash, key, enc);
       (this.Hash = hash),
         (this.blockSize = hash.blockSize / 8),
@@ -9132,7 +9198,7 @@ var require_ec = __commonJS({
     function EC(options) {
       if (!(this instanceof EC)) return new EC(options);
       typeof options == "string" &&
-        (assert(Object.prototype.hasOwnProperty.call(curves, options), "Unknown curve " + options),
+        (assert(Object.prototype.hasOwnProperty.$call(curves, options), "Unknown curve " + options),
         (options = curves[options])),
         options instanceof curves.PresetCurve && (options = { curve: options }),
         (this.curve = options.curve.curve),
@@ -9633,7 +9699,7 @@ var require_buffer = __commonJS({
       Reporter = require_reporter().Reporter,
       Buffer2 = require_safer().Buffer;
     function DecoderBuffer(base, options) {
-      if ((Reporter.call(this, options), !Buffer2.isBuffer(base))) {
+      if ((Reporter.$call(this, options), !Buffer2.isBuffer(base))) {
         this.error("Input not Buffer");
         return;
       }
@@ -9659,7 +9725,7 @@ var require_buffer = __commonJS({
     DecoderBuffer.prototype.save = function () {
       return {
         offset: this.offset,
-        reporter: Reporter.prototype.save.call(this),
+        reporter: Reporter.prototype.save.$call(this),
       };
     };
     DecoderBuffer.prototype.restore = function (save) {
@@ -9668,7 +9734,7 @@ var require_buffer = __commonJS({
         (res.offset = save.offset),
         (res.length = this.offset),
         (this.offset = save.offset),
-        Reporter.prototype.restore.call(this, save.reporter),
+        Reporter.prototype.restore.$call(this, save.reporter),
         res
       );
     };
@@ -9858,14 +9924,14 @@ var require_node = __commonJS({
       methods.forEach(function (method) {
         this[method] = function () {
           let clone = new this.constructor(this);
-          return state.children.push(clone), clone[method].apply(clone, arguments);
+          return state.children.push(clone), clone[method].$apply(clone, arguments);
         };
       }, this);
     };
     Node.prototype._init = function (body) {
       let state = this._baseState;
       assert(state.parent === null),
-        body.call(this),
+        body.$call(this),
         (state.children = state.children.filter(function (child) {
           return child._baseState.parent === this;
         }, this)),
@@ -9910,7 +9976,7 @@ var require_node = __commonJS({
     tags.forEach(function (tag) {
       Node.prototype[tag] = function () {
         let state = this._baseState,
-          args = Array.prototype.slice.call(arguments);
+          args = Array.prototype.slice.$call(arguments);
         return assert(state.tag === null), (state.tag = tag), this._useArgs(args), this;
       };
     });
@@ -9937,7 +10003,7 @@ var require_node = __commonJS({
     };
     Node.prototype.obj = function () {
       let state = this._baseState,
-        args = Array.prototype.slice.call(arguments);
+        args = Array.prototype.slice.$call(arguments);
       return (state.obj = !0), args.length !== 0 && this._useArgs(args), this;
     };
     Node.prototype.key = function (newKey) {
@@ -10264,7 +10330,7 @@ var require_der2 = __commonJS({
       return this.tree._encode(data, reporter).join();
     };
     function DERNode(parent) {
-      Node.call(this, "der", parent);
+      Node.$call(this, "der", parent);
     }
     inherits(DERNode, Node);
     DERNode.prototype._encodeComposite = function (tag, primitive, cls, content) {
@@ -10431,12 +10497,12 @@ var require_pem = __commonJS({
     var inherits = require_inherits_browser(),
       DEREncoder = require_der2();
     function PEMEncoder(entity) {
-      DEREncoder.call(this, entity), (this.enc = "pem");
+      DEREncoder.$call(this, entity), (this.enc = "pem");
     }
     inherits(PEMEncoder, DEREncoder);
     module.exports = PEMEncoder;
     PEMEncoder.prototype.encode = function (data, options) {
-      let p = DEREncoder.prototype.encode.call(this, data).toString("base64"),
+      let p = DEREncoder.prototype.encode.$call(this, data).toString("base64"),
         out = ["-----BEGIN " + options.label + "-----"];
       for (let i = 0; i < p.length; i += 64) out.push(p.slice(i, i + 64));
       return (
@@ -10483,7 +10549,7 @@ var require_der3 = __commonJS({
       );
     };
     function DERNode(parent) {
-      Node.call(this, "der", parent);
+      Node.$call(this, "der", parent);
     }
     inherits(DERNode, Node);
     DERNode.prototype._peekTag = function (buffer, tag, any) {
@@ -10671,7 +10737,7 @@ var require_pem2 = __commonJS({
       Buffer2 = require_safer().Buffer,
       DERDecoder = require_der3();
     function PEMDecoder(entity) {
-      DERDecoder.call(this, entity), (this.enc = "pem");
+      DERDecoder.$call(this, entity), (this.enc = "pem");
     }
     inherits(PEMDecoder, DERDecoder);
     module.exports = PEMDecoder;
@@ -10697,7 +10763,7 @@ var require_pem2 = __commonJS({
       let base64 = lines.slice(start + 1, end).join("");
       base64.replace(/[^a-z0-9+/=]+/gi, "");
       let input = Buffer2.from(base64, "base64");
-      return DERDecoder.prototype.decode.call(this, input, options);
+      return DERDecoder.prototype.decode.$call(this, input, options);
     };
   },
 });
@@ -10735,7 +10801,7 @@ var require_api = __commonJS({
       return (
         inherits(Generated, Base),
         (Generated.prototype._initNamed = function (entity, name2) {
-          Base.call(this, entity, name2);
+          Base.$call(this, entity, name2);
         }),
         new Generated(this)
       );
@@ -11042,8 +11108,67 @@ var require_parse_asn1 = __commonJS({
     module.exports = parseKeys;
     function parseKeys(buffer) {
       var password;
-      typeof buffer == "object" && !Buffer2.isBuffer(buffer) && ((password = buffer.passphrase), (buffer = buffer.key)),
-        typeof buffer == "string" && (buffer = Buffer2.from(buffer));
+      if (buffer instanceof KeyObject) {
+        buffer = buffer.export();
+      } else if (buffer instanceof CryptoKey) {
+        buffer = KeyObject.from(buffer).export();
+      } else {
+        if (typeof buffer == "object" && !Buffer2.isBuffer(buffer)) {
+          password = buffer.passphrase;
+          buffer = buffer.key;
+
+          if (buffer instanceof KeyObject) {
+            var options;
+            switch (buffer.type) {
+              case "secret":
+                options = {
+                  format: "buffer",
+                };
+                break;
+              case "public":
+                options = {
+                  format: "pem",
+                  type: "spki",
+                  passphrase: password,
+                };
+                break;
+              case "private":
+                options = {
+                  format: "pem",
+                  type: "pkcs8",
+                  passphrase: password,
+                };
+                break;
+            }
+            buffer = buffer.export(options);
+          } else if (buffer instanceof CryptoKey) {
+            var options;
+            switch (buffer.type) {
+              case "secret":
+                options = {
+                  format: "buffer",
+                };
+                break;
+              case "public":
+                options = {
+                  format: "pem",
+                  type: "spki",
+                  passphrase: password,
+                };
+                break;
+              case "private":
+                options = {
+                  format: "pem",
+                  type: "pkcs8",
+                  passphrase: password,
+                };
+                break;
+            }
+            buffer = KeyObject.from(buffer).export(options);
+          }
+        }
+      }
+      typeof buffer == "string" && (buffer = Buffer2.from(buffer));
       var stripped = fixProc(buffer, password),
         type = stripped.tag,
         data = stripped.data,
@@ -11165,7 +11290,8 @@ var require_sign = __commonJS({
       parseKeys = require_parse_asn1(),
       curves = require_curves2();
     function sign(hash, key, hashType, signType, tag) {
-      var priv = parseKeys(key);
+      var priv = parseKeys(getKeyFrom(key, "private"));
+
       if (priv.curve) {
         if (signType !== "ecdsa" && signType !== "ecdsa/rsa") throw new Error("wrong private key type");
         return ecSign(hash, priv);
@@ -11291,7 +11417,7 @@ var require_verify = __commonJS({
       parseKeys = require_parse_asn1(),
       curves = require_curves2();
     function verify(sig, hash, key, signType, tag) {
-      var pub = parseKeys(key);
+      var pub = parseKeys(getKeyFrom(key, "public"));
       if (pub.type === "ec") {
         if (signType !== "ecdsa" && signType !== "ecdsa/rsa") throw new Error("wrong public key type");
         return ecVerify(sig, hash, pub);
@@ -11362,7 +11488,10 @@ var require_browser8 = __commonJS({
       (algorithms[key].id = Buffer2.from(algorithms[key].id, "hex")), (algorithms[key.toLowerCase()] = algorithms[key]);
     });
     function Sign(algorithm) {
-      StreamModule.Writable.call(this);
+      if (typeof algorithm === "string") {
+        algorithm = algorithm.toLowerCase();
+      }
+      StreamModule.Writable.$call(this);
       var data = algorithms[algorithm];
       if (!data) throw new Error("Unknown message digest");
       (this._hashType = data.hash),
@@ -11384,7 +11513,10 @@ var require_browser8 = __commonJS({
       return enc ? sig.toString(enc) : sig;
     };
     function Verify(algorithm) {
-      StreamModule.Writable.call(this);
+      StreamModule.Writable.$call(this);
+      if (typeof algorithm === "string") {
+        algorithm = algorithm.toLowerCase();
+      }
       var data = algorithms[algorithm];
       if (!data) throw new Error("Unknown message digest");
       (this._hash = createHash(data.hash)), (this._tag = data.id), (this._signType = data.sign);
@@ -11682,13 +11814,19 @@ var require_privateDecrypt = __commonJS({
 // node_modules/public-encrypt/browser.js
 var require_browser10 = __commonJS({
   "node_modules/public-encrypt/browser.js"(exports) {
-    exports.publicEncrypt = require_publicEncrypt();
-    exports.privateDecrypt = require_privateDecrypt();
+    var publicEncrypt = require_publicEncrypt();
+    exports.publicEncrypt = function (key, buf, options) {
+      return publicEncrypt(getKeyFrom(key, "public"), buf, options);
+    };
+    var privateDecrypt = require_privateDecrypt();
+    exports.privateDecrypt = function (key, buf, options) {
+      return privateDecrypt(getKeyFrom(key, "private"), buf, options);
+    };
     exports.privateEncrypt = function (key, buf) {
-      return exports.publicEncrypt(key, buf, !0);
+      return publicEncrypt(getKeyFrom(key, "private"), buf, !0);
     };
     exports.publicDecrypt = function (key, buf) {
-      return exports.privateDecrypt(key, buf, !0);
+      return privateDecrypt(getKeyFrom(key, "public"), buf, !0);
     };
   },
 });
@@ -11888,6 +12026,299 @@ const harcoded_curves = [
 function getCurves() {
   return harcoded_curves;
 }
+const {
+  symmetricKeySize,
+  asymmetricKeyDetails,
+  asymmetricKeyType,
+  equals,
+  exports,
+  createSecretKey,
+  createPublicKey,
+  createPrivateKey,
+  generateKeySync,
+  generateKeyPairSync,
+} = $lazy("internal/crypto");
+
+const kCryptoKey = Symbol.for("::bunKeyObjectCryptoKey::");
+class KeyObject {
+  [kCryptoKey];
+  constructor(key) {
+    // TODO: check why this is fails
+    // if(!(key instanceof CryptoKey)) {
+    //   throw new TypeError("The \"key\" argument must be an instance of CryptoKey.");
+    // }
+    if (typeof key !== "object") {
+      throw new TypeError('The "key" argument must be an instance of CryptoKey.');
+    }
+    this[kCryptoKey] = key;
+  }
+  toString() {
+    return "[object KeyObject]";
+  }
+
+  static from(key) {
+    if (key instanceof KeyObject) {
+      key = key[kCryptoKey];
+    }
+    return new KeyObject(key);
+  }
+
+  get asymmetricKeyDetails() {
+    return asymmetricKeyDetails(this[kCryptoKey]);
+  }
+
+  get symmetricKeySize() {
+    return symmetricKeySize(this[kCryptoKey]);
+  }
+
+  get asymmetricKeyType() {
+    return asymmetricKeyType(this[kCryptoKey]);
+  }
+
+  ["export"](options) {
+    switch (arguments.length) {
+      case 0:
+        switch (this.type) {
+          case "secret":
+            options = {
+              format: "buffer",
+            };
+            break;
+          case "public":
+            options = {
+              format: "pem",
+              type: "spki",
+            };
+            break;
+          case "private":
+            options = {
+              format: "pem",
+              type: "pkcs8",
+            };
+            break;
+        }
+        break;
+      case 1:
+        if (typeof options === "object" && !options.format) {
+          switch (this.type) {
+            case "secret":
+              options.format = "buffer";
+              break;
+            default:
+              options.format = "pem";
+              break;
+          }
+        }
+    }
+    return exports(this[kCryptoKey], options);
+  }
+
+  equals(otherKey) {
+    if (!(otherKey instanceof KeyObject)) {
+      throw new TypeError("otherKey must be a KeyObject");
+    }
+    return equals(this[kCryptoKey], otherKey[kCryptoKey]);
+  }
+
+  get type() {
+    return this[kCryptoKey].type;
+  }
+}
+
+crypto_exports.generateKeySync = function (algorithm, options) {
+  return KeyObject.from(generateKeySync(algorithm, options?.length));
+};
+
+crypto_exports.generateKey = function (algorithm, options, callback) {
+  try {
+    const key = KeyObject.from(generateKeySync(algorithm, options?.length));
+    typeof callback === "function" && callback(null, KeyObject.from(key));
+  } catch (err) {
+    typeof callback === "function" && callback(err);
+  }
+};
+
+function _generateKeyPairSync(algorithm, options) {
+  const result = generateKeyPairSync(algorithm, options);
+  if (result) {
+    const publicKeyEncoding = options?.publicKeyEncoding;
+    const privateKeyEncoding = options?.privateKeyEncoding;
+    result.publicKey = publicKeyEncoding
+      ? KeyObject.from(result.publicKey).export(publicKeyEncoding)
+      : KeyObject.from(result.publicKey);
+    result.privateKey = privateKeyEncoding
+      ? KeyObject.from(result.privateKey).export(privateKeyEncoding)
+      : KeyObject.from(result.privateKey);
+  }
+  return result;
+}
+crypto_exports.generateKeyPairSync = _generateKeyPairSync;
+
+crypto_exports.generateKeyPair = function (algorithm, options, callback) {
+  try {
+    const result = _generateKeyPairSync(algorithm, options);
+    typeof callback === "function" && callback(null, result.publicKey, result.privateKey);
+  } catch (err) {
+    typeof callback === "function" && callback(err);
+  }
+};
+
+crypto_exports.createSecretKey = function (key, encoding) {
+  if (key instanceof KeyObject || key instanceof CryptoKey) {
+    if (key.type !== "secret") {
+      const error = new TypeError(
+        `ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${key.type}, expected secret`,
+      );
+      error.code = "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE";
+      throw error;
+    }
+    return KeyObject.from(key);
+  }
+
+  const buffer = getArrayBufferOrView(key, encoding || "utf8");
+  return KeyObject.from(createSecretKey(buffer));
+};
+
+function _createPrivateKey(key) {
+  if (typeof key === "string") {
+    key = Buffer.from(key, "utf8");
+    return KeyObject.from(createPrivateKey({ key, format: "pem" }));
+  } else if (isAnyArrayBuffer(key) || isArrayBufferView(key)) {
+    return KeyObject.from(createPrivateKey({ key, format: "pem" }));
+  } else if (typeof key === "object") {
+    if (key instanceof KeyObject || key instanceof CryptoKey) {
+      const error = new TypeError(`ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${key.type}`);
+      error.code = "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE";
+      throw error;
+    } else {
+      let actual_key = key.key;
+      if (typeof actual_key === "string") {
+        actual_key = Buffer.from(actual_key, key.encoding || "utf8");
+        key.key = actual_key;
+      } else if (actual_key instanceof KeyObject || actual_key instanceof CryptoKey) {
+        const error = new TypeError(`ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${key.type}`);
+        error.code = "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE";
+        throw error;
+      }
+      if (!isAnyArrayBuffer(actual_key) && !isArrayBufferView(actual_key) && typeof actual_key !== "object") {
+        var error = new TypeError(
+          `ERR_INVALID_ARG_TYPE: The "key" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, DataView or object. Received ` +
+            actual_key,
+        );
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      if (!key.format) {
+        key.format = "pem";
+      }
+      return KeyObject.from(createPrivateKey(key));
+    }
+  } else {
+    var error = new TypeError(
+      `ERR_INVALID_ARG_TYPE: The "key" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, DataView or object. Received ` +
+        key,
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+}
+crypto_exports.createPrivateKey = _createPrivateKey;
+
+function _createPublicKey(key) {
+  if (typeof key === "string") {
+    key = Buffer.from(key, "utf8");
+    return KeyObject.from(createPublicKey({ key, format: "pem" }));
+  } else if (isAnyArrayBuffer(key) || isArrayBufferView(key)) {
+    return KeyObject.from(createPublicKey({ key, format: "pem" }));
+  } else if (typeof key === "object") {
+    if (key instanceof KeyObject || key instanceof CryptoKey) {
+      if (key.type === "private") {
+        return KeyObject.from(createPublicKey({ key: key[kCryptoKey] || key, format: "" }));
+      }
+      const error = new TypeError(
+        `ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${key.type}, expected private`,
+      );
+      error.code = "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE";
+      throw error;
+    } else {
+      // must be an encrypted private key (this option is not documented at all)
+      if (key.passphrase) {
+        //TODO: handle encrypted keys in one native call
+        let actual_key = key.key;
+        if (typeof actual_key === "string") {
+          actual_key = Buffer.from(actual_key, key.encoding || "utf8");
+        }
+        return KeyObject.from(
+          createPublicKey({
+            key: createPrivateKey({ key: actual_key, format: key.format, passphrase: key.passphrase }),
+            format: "",
+          }),
+        );
+      }
+      let actual_key = key.key;
+      if (typeof actual_key === "string") {
+        actual_key = Buffer.from(actual_key, key.encoding || "utf8");
+        key.key = actual_key;
+      } else if (actual_key instanceof KeyObject || actual_key instanceof CryptoKey) {
+        if (actual_key.type === "private") {
+          return KeyObject.from(createPublicKey({ key: actual_key[kCryptoKey] || actual_key, format: "" }));
+        }
+        const error = new TypeError(
+          `ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${actual_key.type}, expected private`,
+        );
+        error.code = "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE";
+        throw error;
+      }
+      if (!isAnyArrayBuffer(actual_key) && !isArrayBufferView(actual_key) && typeof actual_key !== "object") {
+        var error = new TypeError(
+          `ERR_INVALID_ARG_TYPE: The "key" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, DataView or object. Received ` +
+            key,
+        );
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      if (!key.format) {
+        key.format = "pem";
+      }
+      return KeyObject.from(createPublicKey(key));
+    }
+  } else {
+    var error = new TypeError(
+      `ERR_INVALID_ARG_TYPE: The "key" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, DataView or object. Received ` +
+        key,
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+}
+crypto_exports.createPublicKey = _createPublicKey;
+crypto_exports.KeyObject = KeyObject;
+const _createSign = crypto_exports.createSign;
+crypto_exports.sign = function (algorithm, data, key, encoding, callback) {
+  if (typeof callback === "function") {
+    try {
+      const result = _createSign(algorithm).update(data, encoding).sign(key, encoding);
+      callback(null, result);
+    } catch (err) {
+      callback(err);
+    }
+  } else {
+    return _createSign(algorithm).update(data, encoding).sign(key, encoding);
+  }
+};
+const _createVerify = crypto_exports.createVerify;
+crypto_exports.verify = function (algorithm, data, key, signature, callback) {
+  if (typeof callback === "function") {
+    try {
+      const result = _createVerify(algorithm).update(data).verify(key, signature);
+      callback(null, result);
+    } catch (err) {
+      callback(err);
+    }
+  } else {
+    return _createVerify(algorithm).update(data).verify(key, signature);
+  }
+};
 
 var webcrypto = crypto;
 __export(crypto_exports, {

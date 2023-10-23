@@ -64,6 +64,12 @@ static EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObject, 
         JSC::JSValue moduleName = callFrame->argument(0);
 
         auto doIt = [&](const WTF::String& fromStr) -> JSC::EncodedJSValue {
+            if (auto* virtualModules = jsCast<Zig::GlobalObject*>(globalObject)->onLoadPlugins.virtualModules) {
+                if (virtualModules->contains(fromStr)) {
+                    return JSC::JSValue::encode(jsString(vm, fromStr));
+                }
+            }
+
             BunString from = Bun::toString(fromStr);
             auto result = Bun__resolveSyncWithSource(globalObject, JSC::JSValue::encode(moduleName), &from, false);
 
@@ -160,6 +166,14 @@ extern "C" EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObject* g
     JSC__JSValue from;
     bool isESM = true;
 
+    if (auto* virtualModules = jsCast<Zig::GlobalObject*>(globalObject)->onLoadPlugins.virtualModules) {
+        if (moduleName.isString()) {
+            if (virtualModules->contains(moduleName.toWTFString(globalObject))) {
+                return JSC::JSValue::encode(moduleName);
+            }
+        }
+    }
+
     if (callFrame->argumentCount() > 1) {
 
         if (callFrame->argumentCount() > 2) {
@@ -226,6 +240,7 @@ extern "C" EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlobalOb
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto* global = jsDynamicCast<Zig::GlobalObject*>(globalObject);
 
     JSC::JSValue moduleName = callFrame->argument(0);
     JSValue from = callFrame->argument(1);
@@ -239,12 +254,19 @@ extern "C" EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlobalOb
 
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::JSValue {}));
 
+    if (auto* virtualModules = global->onLoadPlugins.virtualModules) {
+        if (moduleName.isString()) {
+            if (virtualModules->contains(moduleName.toWTFString(globalObject))) {
+                return JSC::JSValue::encode(moduleName);
+            }
+        }
+    }
+
     if (!isESM) {
-        auto* global = jsDynamicCast<Zig::GlobalObject*>(globalObject);
         if (LIKELY(global)) {
             auto overrideHandler = global->m_nodeModuleOverriddenResolveFilename.get();
             if (UNLIKELY(overrideHandler)) {
-                ASSERT(overrideHandler.isCallable(globalObject));
+                ASSERT(overrideHandler->isCallable());
                 MarkedArgumentBuffer args;
                 args.append(moduleName);
                 args.append(from);
@@ -288,6 +310,14 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
         }
 
         JSC__JSValue from;
+
+        if (auto* virtualModules = jsCast<Zig::GlobalObject*>(globalObject)->onLoadPlugins.virtualModules) {
+            if (moduleName.isString()) {
+                if (virtualModules->contains(moduleName.toWTFString(globalObject))) {
+                    return JSC::JSValue::encode(moduleName);
+                }
+            }
+        }
 
         if (callFrame->argumentCount() > 1 && callFrame->argument(1).isString()) {
             from = JSC::JSValue::encode(callFrame->argument(1));
@@ -404,6 +434,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(ImportMetaObjectPrototype, Base);
         return &vm.plainObjectSpace();
     }
 
@@ -417,11 +448,13 @@ public:
         reifyStaticProperties(vm, ImportMetaObject::info(), ImportMetaObjectPrototypeValues, *this);
         JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 
-        this->putDirect(
-            vm,
+        auto mainGetter = JSFunction::create(vm, importMetaObjectMainCodeGenerator(vm), globalObject);
+
+        this->putDirectAccessor(
+            this->globalObject(),
             builtinNames.mainPublicName(),
-            GetterSetter::create(vm, globalObject, JSFunction::create(vm, importMetaObjectMainCodeGenerator(vm), globalObject), nullptr),
-            JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin | 0);
+            GetterSetter::create(vm, globalObject, mainGetter, mainGetter),
+            JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | 0);
     }
 
     ImportMetaObjectPrototype(JSC::VM& vm, JSC::Structure* structure)
@@ -433,7 +466,7 @@ public:
 const ClassInfo ImportMetaObjectPrototype::s_info = {
     "ImportMeta"_s,
 
-    Base::info(), nullptr, nullptr, CREATE_METHOD_TABLE(ImportMetaObjectPrototype)
+    &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ImportMetaObjectPrototype)
 };
 
 JSC::Structure* ImportMetaObject::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)

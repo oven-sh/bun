@@ -712,7 +712,9 @@ test("decorators with different property key types", () => {
   function d1(x) {
     return function (target, propertyKey) {
       expect(propertyKey).toBeDefined();
-      expect(propertyKey).toBe(x);
+
+      // If Reflect.decorate is defined, propertyKey will be stringified
+      expect(String(propertyKey)).toBe(String(x));
     };
   }
   function foo(x, y, z) {
@@ -727,7 +729,7 @@ test("decorators with different property key types", () => {
       "string" = 30;
       @d1("string method")
       "string method"() {}
-      @d1(12e3)
+      @d1(12000)
       12e3 = "number key";
       @d1(12e3 + 1)
       [12e3 + 1]() {}
@@ -1001,13 +1003,11 @@ test("export default class works (anonymous name)", () => {
 
 test("decorator and declare", () => {
   let counter = 0;
-  function d1(t) {
-    t();
+  function d1() {
+    counter++;
   }
   class A {
-    @d1(() => {
-      counter++;
-    })
+    @d1
     declare a: number;
 
     m() {

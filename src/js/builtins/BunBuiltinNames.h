@@ -69,8 +69,10 @@ using namespace JSC;
     macro(createCommonJSModule) \
     macro(createEmptyReadableStream) \
     macro(createFIFO) \
+    macro(createInternalModuleById) \
     macro(createNativeReadableStream) \
     macro(createReadableStream) \
+    macro(createUsedReadableStream) \
     macro(createUninitializedArrayBuffer) \
     macro(createWritableStreamFromInternal) \
     macro(cwd) \
@@ -119,6 +121,7 @@ using namespace JSC;
     macro(inFlightCloseRequest) \
     macro(inFlightWriteRequest) \
     macro(initializeWith) \
+    macro(internalModuleRegistry) \
     macro(internalRequire) \
     macro(internalStream) \
     macro(internalWritable) \
@@ -137,7 +140,6 @@ using namespace JSC;
     macro(makeDOMException) \
     macro(makeGetterTypeError) \
     macro(makeThisTypeError) \
-    macro(map) \
     macro(method) \
     macro(nextTick) \
     macro(normalize) \
@@ -145,6 +147,7 @@ using namespace JSC;
     macro(once) \
     macro(options) \
     macro(origin) \
+    macro(overridableRequire) \
     macro(ownerReadableStream) \
     macro(parse) \
     macro(password) \
@@ -185,11 +188,10 @@ using namespace JSC;
     macro(require) \
     macro(requireESM) \
     macro(requireMap) \
+    macro(requireNativeModule) \
     macro(resolve) \
     macro(resolveSync) \
     macro(resume) \
-    macro(search) \
-    macro(searchParams) \
     macro(self) \
     macro(sep) \
     macro(setBody) \
@@ -205,6 +207,7 @@ using namespace JSC;
     macro(startedPromise) \
     macro(state) \
     macro(status) \
+    macro(statusText) \
     macro(storedError) \
     macro(strategy) \
     macro(strategyHWM) \
@@ -238,9 +241,6 @@ using namespace JSC;
     macro(writer) \
     macro(writing) \
     macro(written) \
-    macro(createInternalModuleById) \
-    macro(internalModuleRegistry) \
-    macro(requireNativeModule) \
 
 class BunBuiltinNames {
 public:

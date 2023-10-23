@@ -84,7 +84,7 @@ export function hideFromStackTrace(block: CallableFunction) {
   });
 }
 
-export function tempDirWithFiles(basename: string, files: Record<string, string | Record<string, string>>) {
+export function tempDirWithFiles(basename: string, files: Record<string, string | Record<string, string>>): string {
   var fs = require("fs");
   var path = require("path");
   var { tmpdir } = require("os");

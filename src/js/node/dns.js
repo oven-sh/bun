@@ -1,5 +1,5 @@
 // Hardcoded module "node:dns"
-// only resolve4, resolve, lookup, resolve6 and resolveSrv are implemented.
+// only resolve4, resolve, lookup, resolve6, resolveSrv, and reverse are implemented.
 const dns = Bun.dns;
 
 function getServers() {
@@ -17,6 +17,16 @@ function lookup(domain, options, callback) {
 
   if (typeof options == "number") {
     options = { family: options };
+  }
+
+  if (domain !== domain || (typeof domain !== "number" && !domain)) {
+    console.warn(
+      `DeprecationWarning: The provided hostname "${String(
+        domain,
+      )}" is not a valid hostname, and is supported in the dns module solely for compatibility.`,
+    );
+    callback(null, null, 4);
+    return;
   }
 
   dns.lookup(domain, options).then(

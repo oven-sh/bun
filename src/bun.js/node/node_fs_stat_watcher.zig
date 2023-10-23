@@ -97,7 +97,7 @@ pub const StatWatcherScheduler = struct {
                 prev = next;
             } else {
                 if (this.head.load(.Monotonic) == null) {
-                    this.timer.?.deinit();
+                    this.timer.?.deinit(false);
                     this.timer = null;
                     // The scheduler is not deinit here, but it will get reused.
                 }

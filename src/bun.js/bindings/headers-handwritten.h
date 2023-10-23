@@ -17,10 +17,6 @@ typedef union BunStringImpl {
     void* wtf;
 } BunStringImpl;
 
-typedef struct BunString {
-    BunStringTag tag;
-    BunStringImpl impl;
-} BunString;
 #else
 typedef union BunStringImpl {
     ZigString zig;
@@ -34,13 +30,15 @@ enum class BunStringTag : uint8_t {
     StaticZigString = 3,
     Empty = 4,
 };
+#endif
 
 typedef struct BunString {
     BunStringTag tag;
     BunStringImpl impl;
-} BunString;
 
-#endif
+    inline void ref();
+    inline void deref();
+} BunString;
 
 typedef struct ZigErrorType {
     ZigErrorCode code;
@@ -241,6 +239,7 @@ extern "C" void BunString__toWTFString(BunString*);
 namespace Bun {
 JSC::JSValue toJS(JSC::JSGlobalObject*, BunString);
 BunString toString(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
+BunString toString(const char* bytes, size_t length);
 WTF::String toWTFString(const BunString& bunString);
 BunString toString(WTF::String& wtfString);
 BunString toString(const WTF::String& wtfString);
@@ -348,3 +347,16 @@ class ScriptArguments;
 using ScriptArguments = Inspector::ScriptArguments;
 
 #endif
+
+ALWAYS_INLINE void BunString::ref()
+{
+    if (this->tag == BunStringTag::WTFStringImpl) {
+        this->impl.wtf->ref();
+    }
+}
+ALWAYS_INLINE void BunString::deref()
+{
+    if (this->tag == BunStringTag::WTFStringImpl) {
+        this->impl.wtf->deref();
+    }
+}

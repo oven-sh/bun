@@ -1,0 +1,17 @@
+{
+  "name": "root",
+  "version": "0.0.0",
+  "dependencies": {
+    "bar": "https://github.com/oven-sh/bun/raw/f7e4eb83694aa007a492ef66c28ffbe6a2dae791/test/cli/install/bar-0.0.2.tgz",
+    "bun-types": "file:bun-types",
+    "hello": "file:hello-0.3.2.tgz",
+    "install-test": "bitbucket:dylan-conway/public-install-test",
+    "install-test1": "git+ssh://git@github.com/dylan-conway/install-test.git#596234dab30564f37adae1e5c4d7123bcffce537",
+    "lines-and-columns": "^1.1.6",
+    "public-install-test": "gitlab:dylan-conway/public-install-test",
+    "svelte": "4.1.2"
+  },
+  "workspaces": [
+    "packages/*"
+  ]
+}

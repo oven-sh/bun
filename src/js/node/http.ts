@@ -12,7 +12,7 @@ const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
  *  field-vchar    = VCHAR / obs-text
  */
 function checkInvalidHeaderChar(val: string) {
-  return RegExpPrototypeExec.call(headerCharRegex, val) !== null;
+  return RegExpPrototypeExec.$call(headerCharRegex, val) !== null;
 }
 
 const validateHeaderName = (name, label) => {
@@ -125,21 +125,18 @@ function validateFunction(callable: any, field: string) {
 
 type FakeSocket = InstanceType<typeof FakeSocket>;
 var FakeSocket = class Socket extends Duplex {
-  [kInternalSocketData]: any;
+  [kInternalSocketData]!: [import("bun").Server, OutgoingMessage, Request];
   bytesRead = 0;
   bytesWritten = 0;
   connecting = false;
-  remoteAddress: string | null = null;
-  remotePort;
   timeout = 0;
   isServer = false;
 
+  #address;
   address() {
-    return {
-      address: this.localAddress,
-      family: this.localFamily,
-      port: this.localPort,
-    };
+    // Call server.requestIP() without doing any propety getter twice.
+    var internalData;
+    return (this.#address ??= (internalData = this[kInternalSocketData])?.[0]?.requestIP(internalData[2]) ?? {});
   }
 
   get bufferSize() {
@@ -183,8 +180,31 @@ var FakeSocket = class Socket extends Duplex {
 
   ref() {}
 
+  get remoteAddress() {
+    return this.address()?.address;
+  }
+
+  set remoteAddress(val) {
+    // initialize the object so that other properties wouldn't be lost
+    this.address().address = val;
+  }
+
+  get remotePort() {
+    return this.address()?.port;
+  }
+
+  set remotePort(val) {
+    // initialize the object so that other properties wouldn't be lost
+    this.address().port = val;
+  }
+
   get remoteFamily() {
-    return "IPv4";
+    return this.address()?.family;
+  }
+
+  set remoteFamily(val) {
+    // initialize the object so that other properties wouldn't be lost
+    this.address().family = val;
   }
 
   resetAndDestroy() {}
@@ -427,13 +447,7 @@ class Server extends EventEmitter {
 
   address() {
     if (!this.#server) return null;
-
-    const address = this.#server.hostname;
-    return {
-      address,
-      family: isIPv6(address) ? "IPv6" : "IPv4",
-      port: this.#server.port,
-    };
+    return this.#server.address;
   }
 
   listen(port, host, backlog, onListen) {
@@ -511,14 +525,14 @@ class Server extends EventEmitter {
           const http_req = new RequestClass(req);
           const http_res = new ResponseClass({ reply, req: http_req });
 
+          http_req.socket[kInternalSocketData] = [_server, http_res, req];
+
           http_req.once("error", err => reject(err));
           http_res.once("error", err => reject(err));
 
           const upgrade = req.headers.get("upgrade");
           if (upgrade) {
-            const socket = http_req.socket;
-            socket[kInternalSocketData] = [_server, http_res, req];
-            server.emit("upgrade", http_req, socket, kEmptyBuffer);
+            server.emit("upgrade", http_req, http_req.socket, kEmptyBuffer);
           } else {
             server.emit("request", http_req, http_res);
           }
@@ -598,13 +612,11 @@ class IncomingMessage extends Readable {
 
     this.#bodyStream = undefined;
     const socket = new FakeSocket();
-    socket.remoteAddress = url.hostname;
-    socket.remotePort = url.port;
     if (url.protocol === "https:") socket.encrypted = true;
     this.#fakeSocket = socket;
 
     this.url = url.pathname + url.search;
-    this.#nodeReq = this.req = nodeReq;
+    this.req = nodeReq;
     assignHeaders(this, req);
   }
 
@@ -619,7 +631,6 @@ class IncomingMessage extends Readable {
   #req;
   url;
   #type;
-  #nodeReq;
 
   _construct(callback) {
     // TODO: streaming
@@ -645,7 +656,7 @@ class IncomingMessage extends Readable {
       if (this.#aborted) return;
       if (done) {
         this.push(null);
-        this.destroy();
+        process.nextTick(destroyBodyStreamNT, this);
         break;
       }
       for (var v of value) {
@@ -1385,7 +1396,7 @@ class ClientRequest extends OutgoingMessage {
 
     if (options.path) {
       const path = String(options.path);
-      if (RegExpPrototypeExec.call(INVALID_PATH_REGEX, path) !== null) {
+      if (RegExpPrototypeExec.$call(INVALID_PATH_REGEX, path) !== null) {
         $debug('Path contains unescaped characters: "%s"', path);
         throw new Error("Path contains unescaped characters");
         // throw new ERR_UNESCAPED_CHARACTERS("Request path");
@@ -1432,7 +1443,7 @@ class ClientRequest extends OutgoingMessage {
         // throw new ERR_INVALID_HTTP_TOKEN("Method", method);
         throw new Error("ERR_INVALID_HTTP_TOKEN: Method");
       }
-      method = this.#method = StringPrototypeToUpperCase.call(method);
+      method = this.#method = StringPrototypeToUpperCase.$call(method);
     } else {
       method = this.#method = "GET";
     }
@@ -1509,7 +1520,7 @@ class ClientRequest extends OutgoingMessage {
       //   // For the Host header, ensure that IPv6 addresses are enclosed
       //   // in square brackets, as defined by URI formatting
       //   // https://tools.ietf.org/html/rfc3986#section-3.2.2
-      //   const posColon = StringPrototypeIndexOf.call(hostHeader, ":");
+      //   const posColon = StringPrototypeIndexOf.$call(hostHeader, ":");
       //   if (
       //     posColon !== -1 &&
       //     StringPrototypeIncludes(hostHeader, ":", posColon + 1) &&
@@ -1608,8 +1619,8 @@ function urlToHttpOptions(url) {
   return {
     protocol,
     hostname:
-      typeof hostname === "string" && StringPrototypeStartsWith.call(hostname, "[")
-        ? StringPrototypeSlice.call(hostname, 1, -1)
+      typeof hostname === "string" && StringPrototypeStartsWith.$call(hostname, "[")
+        ? StringPrototypeSlice.$call(hostname, 1, -1)
         : hostname,
     hash,
     search,
@@ -1640,7 +1651,7 @@ const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
  * See https://tools.ietf.org/html/rfc7230#section-3.2.6
  */
 function checkIsHttpToken(val) {
-  return RegExpPrototypeExec.call(tokenRegExp, val) !== null;
+  return RegExpPrototypeExec.$call(tokenRegExp, val) !== null;
 }
 
 // Copyright Joyent, Inc. and other Node contributors.

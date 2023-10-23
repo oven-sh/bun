@@ -66,6 +66,9 @@ const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const bunSocketInternal = Symbol.for("::bunnetsocketinternal::");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 
+function closeNT(self) {
+  self.emit("close");
+}
 function endNT(socket, callback, err) {
   socket.end();
   callback(err);
@@ -79,17 +82,15 @@ const Socket = (function (InternalSocket) {
     enumerable: false,
   });
 
-  return Object.defineProperty(
-    function Socket(options) {
-      return new InternalSocket(options);
+  function Socket(options) {
+    return new InternalSocket(options);
+  }
+  Socket.prototype = InternalSocket.prototype;
+  return Object.defineProperty(Socket, Symbol.hasInstance, {
+    value(instance) {
+      return instance instanceof InternalSocket;
     },
-    Symbol.hasInstance,
-    {
-      value(instance) {
-        return instance instanceof InternalSocket;
-      },
-    },
-  );
+  });
 })(
   class Socket extends Duplex {
     static #Handlers = {
@@ -322,7 +323,7 @@ const Socket = (function (InternalSocket) {
       this._parent = this;
       this._parentWrap = this;
       this.#pendingRead = undefined;
-      this.#upgraded = false;
+      this.#upgraded = null;
       if (socket instanceof Socket) {
         this.#socket = socket;
       }
@@ -355,6 +356,14 @@ const Socket = (function (InternalSocket) {
         this.emit("connect", this);
       }
       Socket.#Drain(socket);
+    }
+
+    #closeRawConnection() {
+      const connection = this.#upgraded;
+      connection[bunSocketInternal] = null;
+      connection.unref();
+      connection.destroy();
+      process.nextTick(closeNT, connection);
     }
 
     connect(port, host, connectListener) {
@@ -417,7 +426,7 @@ const Socket = (function (InternalSocket) {
       var tls = undefined;
 
       if (typeof bunTLS === "function") {
-        tls = bunTLS.call(this, port, host, true);
+        tls = bunTLS.$call(this, port, host, true);
         // Client always request Cert
         this._requestCert = true;
         this._rejectUnauthorized = rejectUnauthorized;
@@ -457,7 +466,7 @@ const Socket = (function (InternalSocket) {
 
           if (socket) {
             this.connecting = true;
-            this.#upgraded = true;
+            this.#upgraded = connection;
             const result = socket.upgradeTLS({
               data: this,
               tls,
@@ -468,6 +477,7 @@ const Socket = (function (InternalSocket) {
               // replace socket
               connection[bunSocketInternal] = raw;
               raw.timeout(raw.timeout);
+              this.once("end", this.#closeRawConnection);
               raw.connecting = false;
               this[bunSocketInternal] = tls;
             } else {
@@ -481,7 +491,7 @@ const Socket = (function (InternalSocket) {
               if (!socket) return;
 
               this.connecting = true;
-              this.#upgraded = true;
+              this.#upgraded = connection;
               const result = socket.upgradeTLS({
                 data: this,
                 tls,
@@ -493,6 +503,7 @@ const Socket = (function (InternalSocket) {
                 // replace socket
                 connection[bunSocketInternal] = raw;
                 raw.timeout(raw.timeout);
+                this.once("end", this.#closeRawConnection);
                 raw.connecting = false;
                 this[bunSocketInternal] = tls;
               } else {
@@ -539,6 +550,7 @@ const Socket = (function (InternalSocket) {
     _final(callback) {
       this[bunSocketInternal]?.end();
       callback();
+      process.nextTick(closeNT, this);
     }
 
     get localAddress() {
@@ -561,8 +573,10 @@ const Socket = (function (InternalSocket) {
       const queue = this.#readQueue;
       let chunk;
       while ((chunk = queue.peek())) {
-        if (!this.push(chunk)) return;
+        const can_continue = !this.push(chunk);
+        // always remove from queue push will queue it internally if needed
         queue.shift();
+        if (!can_continue) break;
       }
     }
 
@@ -824,7 +838,7 @@ class Server extends EventEmitter {
       const options = this[bunSocketServerOptions];
 
       if (typeof bunTLS === "function") {
-        [tls, TLSSocketClass] = bunTLS.call(this, port, hostname, false);
+        [tls, TLSSocketClass] = bunTLS.$call(this, port, hostname, false);
         options.servername = tls.serverName;
         options.InternalSocketClass = TLSSocketClass;
       } else {

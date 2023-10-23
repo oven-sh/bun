@@ -48,6 +48,16 @@ void us_socket_remote_address(int ssl, struct us_socket_t *s, char *buf, int *le
     }
 }
 
+void us_socket_local_address(int ssl, struct us_socket_t *s, char *buf, int *length) {
+    struct bsd_addr_t addr;
+    if (bsd_local_addr(us_poll_fd(&s->p), &addr) || *length < bsd_addr_get_ip_length(&addr)) {
+        *length = 0;
+    } else {
+        *length = bsd_addr_get_ip_length(&addr);
+        memcpy(buf, bsd_addr_get_ip(&addr), *length);
+    }
+}
+
 struct us_socket_context_t *us_socket_context(int ssl, struct us_socket_t *s) {
     return s->context;
 }
@@ -151,6 +161,20 @@ struct us_socket_t *us_socket_pair(struct us_socket_context_t *ctx, int socket_e
     return us_socket_from_fd(ctx, socket_ext_size, fds[0]);
 }
 
+/* This is not available for SSL sockets as it makes no sense. */
+int us_socket_write2(int ssl, struct us_socket_t *s, const char *header, int header_length, const char *payload, int payload_length) {
+
+    if (us_socket_is_closed(ssl, s) || us_socket_is_shut_down(ssl, s)) {
+        return 0;
+    }
+
+    int written = bsd_write2(us_poll_fd(&s->p), header, header_length, payload, payload_length);
+    if (written != header_length + payload_length) {
+        us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    }
+
+    return written < 0 ? 0 : written;
+}
 
 struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd) {
 #ifdef LIBUS_USE_LIBUV
@@ -279,4 +303,26 @@ int us_socket_raw_write(int ssl, struct us_socket_t *s, const char *data, int le
 #endif
  // non-TLS is always raw
  return us_socket_write(ssl, s, data, length, msg_more);
+}
+
+unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, const char **dest, int *port, int *is_ipv6)
+{
+    // This function is manual inlining + modification of
+    //      us_socket_remote_address
+    //      AsyncSocket::getRemoteAddress
+    // To get { ip, port, is_ipv6 } for Bun.serve().requestIP()
+    struct bsd_addr_t addr;
+    if (bsd_remote_addr(us_poll_fd(&s->p), &addr)) {
+        return 0;
+    }
+
+    int length = bsd_addr_get_ip_length(&addr);
+    if (!length) {
+        return 0;
+    }
+
+    memcpy(buf, bsd_addr_get_ip(&addr), length);
+    *port = bsd_addr_get_port(&addr);
+
+    return length;
 }

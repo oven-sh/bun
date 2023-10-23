@@ -200,10 +200,6 @@ static uint32_t getPropertyAttributes(napi_property_descriptor prop)
     //     result |= JSC::PropertyAttribute::ReadOnly;
     // }
 
-    if (prop.method) {
-        result |= JSC::PropertyAttribute::Function;
-    }
-
     return result;
 }
 
@@ -257,7 +253,7 @@ static void defineNapiProperty(Zig::GlobalObject* globalObject, JSC::JSObject* t
         value = JSC::JSValue(function);
         // }
 
-        to->putDirect(vm, propertyName, value, getPropertyAttributes(property) | JSC::PropertyAttribute::Function);
+        to->putDirect(vm, propertyName, value, getPropertyAttributes(property));
         return;
     }
 
@@ -670,8 +666,8 @@ extern "C" napi_status napi_wrap(napi_env env,
 
     auto clientData = WebCore::clientData(vm);
 
-    auto* ref = new NapiRef(globalObject, 1);
-    ref->strongRef.set(globalObject->vm(), value.getObject());
+    auto* ref = new NapiRef(globalObject, 0);
+    ref->weakValueRef.setObject(value.getObject(), weakValueHandleOwner(), ref);
 
     if (finalize_cb) {
         ref->finalizer.finalize_cb = finalize_cb;

@@ -178,6 +178,8 @@ public:
     JSC::JSValue JSBufferPrototype() { return m_JSBufferClassStructure.prototypeInitializedOnMainThread(this); }
     JSC::Structure* JSBufferSubclassStructure() { return m_JSBufferSubclassStructure.getInitializedOnMainThread(this); }
 
+    JSC::Structure* JSCryptoKeyStructure() { return m_JSCryptoKey.getInitializedOnMainThread(this); }
+
     JSC::Structure* ArrayBufferSinkStructure() { return m_JSArrayBufferSinkClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* ArrayBufferSink() { return m_JSArrayBufferSinkClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue ArrayBufferSinkPrototype() { return m_JSArrayBufferSinkClassStructure.prototypeInitializedOnMainThread(this); }
@@ -245,6 +247,7 @@ public:
     Structure* AsyncContextFrameStructure() { return m_asyncBoundFunctionStructure.getInitializedOnMainThread(this); }
 
     Structure* commonJSFunctionArgumentsStructure() { return m_commonJSFunctionArgumentsStructure.getInitializedOnMainThread(this); }
+    Structure* JSSocketAddressStructure() { return m_JSSocketAddressStructure.getInitializedOnMainThread(this); }
 
     JSWeakMap* vmModuleContextMap() { return m_vmModuleContextMap.getInitializedOnMainThread(this); }
 
@@ -381,9 +384,8 @@ public:
         return false;
     }
 
-    BunPlugin::OnLoad onLoadPlugins[BunPluginTargetMax + 1] {};
-    BunPlugin::OnResolve onResolvePlugins[BunPluginTargetMax + 1] {};
-    BunPluginTarget defaultBunPluginTarget = BunPluginTargetBun;
+    BunPlugin::OnLoad onLoadPlugins {};
+    BunPlugin::OnResolve onResolvePlugins {};
 
     // This increases the cache hit rate for JSC::VM's SourceProvider cache
     // It also avoids an extra allocation for the SourceProvider
@@ -419,6 +421,7 @@ public:
 
 private:
     void addBuiltinGlobals(JSC::VM&);
+
     void finishCreation(JSC::VM&);
     friend void WebCore::JSBuiltinInternalFunctions::initialize(Zig::GlobalObject&);
     WebCore::JSBuiltinInternalFunctions m_builtinInternalFunctions;
@@ -493,6 +496,7 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_cachedGlobalProxyStructure;
     LazyProperty<JSGlobalObject, Structure> m_commonJSModuleObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_commonJSFunctionArgumentsStructure;
+    LazyProperty<JSGlobalObject, Structure> m_JSSocketAddressStructure;
     LazyProperty<JSGlobalObject, Structure> m_memoryFootprintStructure;
     LazyProperty<JSGlobalObject, JSObject> m_requireFunctionUnbound;
     LazyProperty<JSGlobalObject, JSObject> m_requireResolveFunctionUnbound;
@@ -500,6 +504,7 @@ public:
     LazyProperty<JSGlobalObject, JSObject> m_processBindingConstants;
     LazyProperty<JSGlobalObject, Structure> m_importMetaObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_asyncBoundFunctionStructure;
+    LazyProperty<JSGlobalObject, Structure> m_JSCryptoKey;
 
     LazyProperty<JSGlobalObject, JSObject> m_bunObject;
     LazyProperty<JSGlobalObject, JSObject> m_cryptoObject;
@@ -511,7 +516,7 @@ private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     void* m_bunVM;
 
-    WebCore::SubtleCrypto* crypto = nullptr;
+    WebCore::SubtleCrypto* m_subtleCrypto = nullptr;
 
     WTF::Vector<JSC::Strong<JSC::JSPromise>> m_aboutToBeNotifiedRejectedPromises;
     WTF::Vector<JSC::Strong<JSC::JSFunction>> m_ffiFunctions;

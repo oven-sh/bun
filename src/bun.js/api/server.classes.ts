@@ -24,6 +24,10 @@ function generate(name) {
         fn: "doStop",
         length: 1,
       },
+      requestIP: {
+        fn: "doRequestIP",
+        length: 1,
+      },
       port: {
         getter: "getPort",
       },
@@ -39,6 +43,10 @@ function generate(name) {
       },
       hostname: {
         getter: "getHostname",
+        cache: true,
+      },
+      address: {
+        getter: "getAddress",
         cache: true,
       },
       protocol: {

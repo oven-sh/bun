@@ -45,7 +45,7 @@ namespace Bun {
 
 using namespace JSC;
 
-#define REPORTED_NODE_VERSION "18.15.0"
+#define REPORTED_NODE_VERSION "20.8.0"
 #define processObjectBindingCodeGenerator processObjectInternalsBindingCodeGenerator
 #define processObjectMainModuleCodeGenerator moduleMainCodeGenerator
 
@@ -620,7 +620,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                             continue;
 
                         JSGlobalObject* lexicalGlobalObject = context->jsGlobalObject();
-                        Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+                        Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
                         Process* process = jsCast<Process*>(globalObject->processObject());
 
@@ -679,7 +679,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, 
 
 JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -749,8 +749,8 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessExitCode, (JSC::JSGlobalObject * lexicalGloba
 
     int exitCodeInt = exitCode.toInt32(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, false);
-    if (exitCodeInt < 0 || exitCodeInt > 127) {
-        throwRangeError(lexicalGlobalObject, throwScope, "exitCode must be between 0 and 127"_s);
+    if (exitCodeInt < 0 || exitCodeInt > 255) {
+        throwRangeError(lexicalGlobalObject, throwScope, "exitCode must be between 0 and 255"_s);
         return false;
     }
 
@@ -810,12 +810,12 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
     object->putDirect(vm, JSC::Identifier::fromString(vm, "usockets"_s),
         JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_usockets))), 0);
 
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "v8"_s), JSValue(JSC::jsString(vm, makeString("10.8.168.20-node.8"_s))), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "uv"_s), JSValue(JSC::jsString(vm, makeString("1.44.2"_s))), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "napi"_s), JSValue(JSC::jsString(vm, makeString("8"_s))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "v8"_s), JSValue(JSC::jsString(vm, makeString("11.3.244.8-node.15"_s))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "uv"_s), JSValue(JSC::jsString(vm, makeString("1.46.0"_s))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "napi"_s), JSValue(JSC::jsString(vm, makeString("9"_s))), 0);
 
     object->putDirect(vm, JSC::Identifier::fromString(vm, "modules"_s),
-        JSC::JSValue(JSC::jsString(vm, makeAtomString("108"))));
+        JSC::JSValue(JSC::jsString(vm, makeAtomString("115"))));
 
     return object;
 }
@@ -1168,7 +1168,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
 {
     auto& vm = jsGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
+    auto globalObject = jsCast<Zig::GlobalObject*>(jsGlobalObject);
     auto process = jsCast<Process*>(globalObject->processObject());
     auto moduleName = callFrame->argument(0).toWTFString(globalObject);
 
@@ -1624,7 +1624,7 @@ static JSValue constructMemoryUsage(VM& vm, JSObject* processObject)
     JSC::JSFunction* rss = JSC::JSFunction::create(vm, globalObject, 0,
         String("rss"_s), Process_functionMemoryUsageRSS, ImplementationVisibility::Public);
 
-    memoryUsage->putDirect(vm, JSC::Identifier::fromString(vm, "rss"_s), rss, JSC::PropertyAttribute::Function | 0);
+    memoryUsage->putDirect(vm, JSC::Identifier::fromString(vm, "rss"_s), rss, 0);
     return memoryUsage;
 }
 
@@ -1647,14 +1647,14 @@ static JSValue constructProcessNextTickFn(VM& vm, JSObject* processObject)
     Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     JSValue nextTickQueueObject;
     if (!globalObject->m_nextTickQueue) {
-        Bun::JSNextTickQueue* queue = Bun::JSNextTickQueue::create(globalObject);
-        globalObject->m_nextTickQueue.set(vm, globalObject, queue);
-        nextTickQueueObject = queue;
+        nextTickQueueObject = Bun::JSNextTickQueue::create(globalObject);
+        globalObject->m_nextTickQueue.set(vm, globalObject, nextTickQueueObject);
     } else {
         nextTickQueueObject = jsCast<Bun::JSNextTickQueue*>(globalObject->m_nextTickQueue.get());
     }
 
     JSC::JSFunction* initializer = JSC::JSFunction::create(vm, processObjectInternalsInitializeNextTickQueueCodeGenerator(vm), lexicalGlobalObject);
+
     JSC::MarkedArgumentBuffer args;
     args.append(processObject);
     args.append(nextTickQueueObject);
@@ -1835,7 +1835,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
         return JSValue::encode(jsUndefined());
     }
 
-    return JSValue::encode(jsUndefined());
+    return JSValue::encode(jsBoolean(true));
 }
 
 extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSValue value)

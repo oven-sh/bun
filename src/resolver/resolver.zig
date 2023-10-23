@@ -1139,41 +1139,6 @@ pub const Resolver = struct {
             return .{ .not_found = {} };
         }
 
-        if (strings.hasPrefixComptime(import_path, "file:///")) {
-            const path = import_path[7..];
-
-            if (r.opts.external.abs_paths.count() > 0 and r.opts.external.abs_paths.contains(path)) {
-                // If the string literal in the source text is an absolute path and has
-                // been marked as an external module, mark it as *not* an absolute path.
-                // That way we preserve the literal text in the output and don't generate
-                // a relative path from the output directory to that path.
-                if (r.debug_logs) |*debug| {
-                    debug.addNoteFmt("The path \"{s}\" is marked as external by the user", .{path});
-                }
-
-                return .{
-                    .success = Result{
-                        .path_pair = .{ .primary = Path.init(import_path) },
-                        .is_external = true,
-                    },
-                };
-            }
-
-            if (r.loadAsFile(path, r.extension_order)) |file| {
-                return .{
-                    .success = Result{
-                        .dirname_fd = file.dirname_fd,
-                        .path_pair = .{ .primary = Path.init(file.path) },
-                        .diff_case = file.diff_case,
-                        .file_fd = file.file_fd,
-                        .jsx = r.opts.jsx,
-                    },
-                };
-            }
-
-            return .{ .not_found = {} };
-        }
-
         // Check both relative and package paths for CSS URL tokens, with relative
         // paths taking precedence over package paths to match Webpack behavior.
         const is_package_path = isPackagePath(import_path);
@@ -1714,7 +1679,7 @@ pub const Resolver = struct {
                 // check the global cache directory for a package.json file.
                 var manager = r.getPackageManager();
                 var dependency_version = Dependency.Version{};
-                var dependency_behavior = @as(Dependency.Behavior, @enumFromInt(Dependency.Behavior.normal));
+                var dependency_behavior = Dependency.Behavior.normal;
                 var string_buf = esm.version;
 
                 // const initial_pending_tasks = manager.pending_tasks;
@@ -1786,6 +1751,7 @@ pub const Resolver = struct {
                             dependency_version = Dependency.parse(
                                 r.allocator,
                                 Semver.String.init(esm.name, esm.name),
+                                null,
                                 esm.version,
                                 &sliced_string,
                                 r.log,

@@ -43,6 +43,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSAttributeIteratorPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -150,7 +151,7 @@ void JSAttributeIteratorPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObje
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSAttributeIterator::info(), JSAttributeIteratorPrototypeTableValues, *this);
-    this->putDirect(vm, vm.propertyNames->iteratorSymbol, JSFunction::create(vm, globalObject, 1, String("iterator"_s), AttributeIteratorPrototype__iteratorCallback, ImplementationVisibility::Public), PropertyAttribute::Function | PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
+    this->putDirect(vm, vm.propertyNames->iteratorSymbol, JSFunction::create(vm, globalObject, 1, String("iterator"_s), AttributeIteratorPrototype__iteratorCallback, ImplementationVisibility::Public), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -245,6 +246,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBigIntStatsPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -1301,6 +1303,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBlobPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -1726,7 +1729,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSBlobConstructor::construct(JSC::J
     }
 
     JSBlob* instance = JSBlob::create(vm, globalObject, structure, ptr);
-    vm.heap.reportExtraMemoryAllocated(Blob__estimatedSize(instance->wrapped()));
+    vm.heap.reportExtraMemoryAllocated(instance, Blob__estimatedSize(instance->wrapped()));
 
     return JSValue::encode(instance);
 }
@@ -1820,7 +1823,7 @@ extern "C" EncodedJSValue Blob__create(Zig::GlobalObject* globalObject, void* pt
     auto& vm = globalObject->vm();
     JSC::Structure* structure = globalObject->JSBlobStructure();
     JSBlob* instance = JSBlob::create(vm, globalObject, structure, ptr);
-    vm.heap.reportExtraMemoryAllocated(Blob__estimatedSize(ptr));
+    vm.heap.reportExtraMemoryAllocated(instance, Blob__estimatedSize(ptr));
     return JSValue::encode(instance);
 }
 
@@ -1871,6 +1874,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBuildArtifactPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -2418,6 +2422,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBuildMessagePrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -2699,7 +2704,7 @@ void JSBuildMessagePrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* g
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSBuildMessage::info(), JSBuildMessagePrototypeTableValues, *this);
-    this->putDirect(vm, vm.propertyNames->toPrimitiveSymbol, JSFunction::create(vm, globalObject, 1, String("toPrimitive"_s), BuildMessagePrototype__toPrimitiveCallback, ImplementationVisibility::Public), PropertyAttribute::Function | PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
+    this->putDirect(vm, vm.propertyNames->toPrimitiveSymbol, JSFunction::create(vm, globalObject, 1, String("toPrimitive"_s), BuildMessagePrototype__toPrimitiveCallback, ImplementationVisibility::Public), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
     this->putDirect(vm, vm.propertyNames->name, jsString(vm, String("BuildMessage"_s)), PropertyAttribute::ReadOnly | 0);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
@@ -2897,6 +2902,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSCommentPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -3209,6 +3215,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSCryptoPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -3662,6 +3669,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSCryptoHasherPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -4093,6 +4101,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDebugHTTPSServerPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -4113,6 +4122,9 @@ extern "C" void* DebugHTTPSServerClass__construct(JSC::JSGlobalObject*, JSC::Cal
 JSC_DECLARE_CUSTOM_GETTER(jsDebugHTTPSServerConstructor);
 
 extern "C" void DebugHTTPSServerClass__finalize(void*);
+
+extern "C" JSC::EncodedJSValue DebugHTTPSServerPrototype__getAddress(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(DebugHTTPSServerPrototype__addressGetterWrap);
 
 extern "C" JSC::EncodedJSValue DebugHTTPSServerPrototype__getDevelopment(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(DebugHTTPSServerPrototype__developmentGetterWrap);
@@ -4144,6 +4156,9 @@ JSC_DECLARE_HOST_FUNCTION(DebugHTTPSServerPrototype__publishCallback);
 extern "C" EncodedJSValue DebugHTTPSServerPrototype__doReload(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(DebugHTTPSServerPrototype__reloadCallback);
 
+extern "C" EncodedJSValue DebugHTTPSServerPrototype__doRequestIP(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(DebugHTTPSServerPrototype__requestIPCallback);
+
 extern "C" EncodedJSValue DebugHTTPSServerPrototype__doStop(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(DebugHTTPSServerPrototype__stopCallback);
 
@@ -4153,6 +4168,7 @@ JSC_DECLARE_HOST_FUNCTION(DebugHTTPSServerPrototype__upgradeCallback);
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDebugHTTPSServerPrototype, JSDebugHTTPSServerPrototype::Base);
 
 static const HashTableValue JSDebugHTTPSServerPrototypeTableValues[] = {
+    { "address"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPSServerPrototype__addressGetterWrap, 0 } },
     { "development"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPSServerPrototype__developmentGetterWrap, 0 } },
     { "fetch"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPSServerPrototype__fetchCallback, 1 } },
     { "hostname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPSServerPrototype__hostnameGetterWrap, 0 } },
@@ -4163,6 +4179,7 @@ static const HashTableValue JSDebugHTTPSServerPrototypeTableValues[] = {
     { "protocol"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPSServerPrototype__protocolGetterWrap, 0 } },
     { "publish"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPSServerPrototype__publishCallback, 3 } },
     { "reload"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPSServerPrototype__reloadCallback, 2 } },
+    { "requestIP"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPSServerPrototype__requestIPCallback, 1 } },
     { "stop"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPSServerPrototype__stopCallback, 1 } },
     { "upgrade"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPSServerPrototype__upgradeCallback, 1 } }
 };
@@ -4179,6 +4196,37 @@ JSC_DEFINE_CUSTOM_GETTER(jsDebugHTTPSServerConstructor, (JSGlobalObject * lexica
     if (UNLIKELY(!prototype))
         return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for DebugHTTPSServer"_s);
     return JSValue::encode(globalObject->JSDebugHTTPSServerConstructor());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(DebugHTTPSServerPrototype__addressGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSDebugHTTPSServer* thisObject = jsCast<JSDebugHTTPSServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_address.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        DebugHTTPSServerPrototype__getAddress(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_address.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void DebugHTTPSServerPrototype__addressSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSDebugHTTPSServer*>(JSValue::decode(thisValue));
+    thisObject->m_address.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue DebugHTTPSServerPrototype__addressGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSDebugHTTPSServer*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_address.get());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(DebugHTTPSServerPrototype__developmentGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -4387,6 +4435,34 @@ JSC_DEFINE_HOST_FUNCTION(DebugHTTPSServerPrototype__reloadCallback, (JSGlobalObj
     return DebugHTTPSServerPrototype__doReload(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
+JSC_DEFINE_HOST_FUNCTION(DebugHTTPSServerPrototype__requestIPCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSDebugHTTPSServer* thisObject = jsDynamicCast<JSDebugHTTPSServer*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof DebugHTTPSServer"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return DebugHTTPSServerPrototype__doRequestIP(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
 JSC_DEFINE_HOST_FUNCTION(DebugHTTPSServerPrototype__stopCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
@@ -4545,6 +4621,7 @@ void JSDebugHTTPSServer::visitAdditionalChildren(Visitor& visitor)
     JSDebugHTTPSServer* thisObject = this;
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
 
+    visitor.append(thisObject->m_address);
     visitor.append(thisObject->m_hostname);
     visitor.append(thisObject->m_id);
 }
@@ -4575,6 +4652,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDebugHTTPServerPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -4595,6 +4673,9 @@ extern "C" void* DebugHTTPServerClass__construct(JSC::JSGlobalObject*, JSC::Call
 JSC_DECLARE_CUSTOM_GETTER(jsDebugHTTPServerConstructor);
 
 extern "C" void DebugHTTPServerClass__finalize(void*);
+
+extern "C" JSC::EncodedJSValue DebugHTTPServerPrototype__getAddress(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(DebugHTTPServerPrototype__addressGetterWrap);
 
 extern "C" JSC::EncodedJSValue DebugHTTPServerPrototype__getDevelopment(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(DebugHTTPServerPrototype__developmentGetterWrap);
@@ -4626,6 +4707,9 @@ JSC_DECLARE_HOST_FUNCTION(DebugHTTPServerPrototype__publishCallback);
 extern "C" EncodedJSValue DebugHTTPServerPrototype__doReload(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(DebugHTTPServerPrototype__reloadCallback);
 
+extern "C" EncodedJSValue DebugHTTPServerPrototype__doRequestIP(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(DebugHTTPServerPrototype__requestIPCallback);
+
 extern "C" EncodedJSValue DebugHTTPServerPrototype__doStop(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(DebugHTTPServerPrototype__stopCallback);
 
@@ -4635,6 +4719,7 @@ JSC_DECLARE_HOST_FUNCTION(DebugHTTPServerPrototype__upgradeCallback);
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDebugHTTPServerPrototype, JSDebugHTTPServerPrototype::Base);
 
 static const HashTableValue JSDebugHTTPServerPrototypeTableValues[] = {
+    { "address"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPServerPrototype__addressGetterWrap, 0 } },
     { "development"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPServerPrototype__developmentGetterWrap, 0 } },
     { "fetch"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPServerPrototype__fetchCallback, 1 } },
     { "hostname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPServerPrototype__hostnameGetterWrap, 0 } },
@@ -4645,6 +4730,7 @@ static const HashTableValue JSDebugHTTPServerPrototypeTableValues[] = {
     { "protocol"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPServerPrototype__protocolGetterWrap, 0 } },
     { "publish"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPServerPrototype__publishCallback, 3 } },
     { "reload"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPServerPrototype__reloadCallback, 2 } },
+    { "requestIP"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPServerPrototype__requestIPCallback, 1 } },
     { "stop"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPServerPrototype__stopCallback, 1 } },
     { "upgrade"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPServerPrototype__upgradeCallback, 1 } }
 };
@@ -4661,6 +4747,37 @@ JSC_DEFINE_CUSTOM_GETTER(jsDebugHTTPServerConstructor, (JSGlobalObject * lexical
     if (UNLIKELY(!prototype))
         return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for DebugHTTPServer"_s);
     return JSValue::encode(globalObject->JSDebugHTTPServerConstructor());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(DebugHTTPServerPrototype__addressGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSDebugHTTPServer* thisObject = jsCast<JSDebugHTTPServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_address.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        DebugHTTPServerPrototype__getAddress(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_address.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void DebugHTTPServerPrototype__addressSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSDebugHTTPServer*>(JSValue::decode(thisValue));
+    thisObject->m_address.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue DebugHTTPServerPrototype__addressGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSDebugHTTPServer*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_address.get());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(DebugHTTPServerPrototype__developmentGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -4869,6 +4986,34 @@ JSC_DEFINE_HOST_FUNCTION(DebugHTTPServerPrototype__reloadCallback, (JSGlobalObje
     return DebugHTTPServerPrototype__doReload(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
+JSC_DEFINE_HOST_FUNCTION(DebugHTTPServerPrototype__requestIPCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSDebugHTTPServer* thisObject = jsDynamicCast<JSDebugHTTPServer*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof DebugHTTPServer"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return DebugHTTPServerPrototype__doRequestIP(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
 JSC_DEFINE_HOST_FUNCTION(DebugHTTPServerPrototype__stopCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
@@ -5027,6 +5172,7 @@ void JSDebugHTTPServer::visitAdditionalChildren(Visitor& visitor)
     JSDebugHTTPServer* thisObject = this;
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
 
+    visitor.append(thisObject->m_address);
     visitor.append(thisObject->m_hostname);
     visitor.append(thisObject->m_id);
 }
@@ -5057,6 +5203,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDirentPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -5591,6 +5738,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDocEndPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -5761,6 +5909,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDocTypePrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -6039,6 +6188,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSElementPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -6755,6 +6905,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSEndTagPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -7019,6 +7170,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSExpectPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -7204,6 +7356,9 @@ JSC_DECLARE_HOST_FUNCTION(ExpectPrototype__toEndWithCallback);
 extern "C" EncodedJSValue ExpectPrototype__toEqual(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(ExpectPrototype__toEqualCallback);
 
+extern "C" EncodedJSValue ExpectPrototype__toEqualIgnoringWhitespace(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(ExpectPrototype__toEqualIgnoringWhitespaceCallback);
+
 extern "C" EncodedJSValue ExpectPrototype__toHaveBeenCalled(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(ExpectPrototype__toHaveBeenCalledCallback);
 
@@ -7318,6 +7473,7 @@ static const HashTableValue JSExpectPrototypeTableValues[] = {
     { "toContainEqual"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toContainEqualCallback, 1 } },
     { "toEndWith"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toEndWithCallback, 1 } },
     { "toEqual"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toEqualCallback, 1 } },
+    { "toEqualIgnoringWhitespace"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toEqualIgnoringWhitespaceCallback, 1 } },
     { "toHaveBeenCalled"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toHaveBeenCalledCallback, 0 } },
     { "toHaveBeenCalledTimes"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toHaveBeenCalledTimesCallback, 1 } },
     { "toHaveBeenCalledWith"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toHaveBeenCalledWithCallback, 1 } },
@@ -8485,6 +8641,34 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toEqualCallback, (JSGlobalObject * lex
     return ExpectPrototype__toEqual(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
+JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toEqualIgnoringWhitespaceCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSExpect* thisObject = jsDynamicCast<JSExpect*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return ExpectPrototype__toEqualIgnoringWhitespace(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
 JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toHaveBeenCalledCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
@@ -9383,6 +9567,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSExpectAnyPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -9551,6 +9736,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSExpectAnythingPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -9674,6 +9860,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSExpectArrayContainingPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -9842,6 +10029,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSExpectStringContainingPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -10010,6 +10198,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSExpectStringMatchingPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -10178,6 +10367,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSFFIPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -10428,6 +10618,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSFSWatcherPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -10732,6 +10923,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSFilePrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -11208,7 +11400,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSFileConstructor::construct(JSC::J
     }
 
     JSFile* instance = JSFile::create(vm, globalObject, structure, ptr);
-    vm.heap.reportExtraMemoryAllocated(File__estimatedSize(instance->wrapped()));
+    vm.heap.reportExtraMemoryAllocated(instance, File__estimatedSize(instance->wrapped()));
 
     return JSValue::encode(instance);
 }
@@ -11302,7 +11494,7 @@ extern "C" EncodedJSValue File__create(Zig::GlobalObject* globalObject, void* pt
     auto& vm = globalObject->vm();
     JSC::Structure* structure = globalObject->JSFileStructure();
     JSFile* instance = JSFile::create(vm, globalObject, structure, ptr);
-    vm.heap.reportExtraMemoryAllocated(File__estimatedSize(ptr));
+    vm.heap.reportExtraMemoryAllocated(instance, File__estimatedSize(ptr));
     return JSValue::encode(instance);
 }
 
@@ -11355,6 +11547,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSFileSystemRouterPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -11801,6 +11994,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSHTMLRewriterPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -12139,6 +12333,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSHTTPSServerPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -12159,6 +12354,9 @@ extern "C" void* HTTPSServerClass__construct(JSC::JSGlobalObject*, JSC::CallFram
 JSC_DECLARE_CUSTOM_GETTER(jsHTTPSServerConstructor);
 
 extern "C" void HTTPSServerClass__finalize(void*);
+
+extern "C" JSC::EncodedJSValue HTTPSServerPrototype__getAddress(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(HTTPSServerPrototype__addressGetterWrap);
 
 extern "C" JSC::EncodedJSValue HTTPSServerPrototype__getDevelopment(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(HTTPSServerPrototype__developmentGetterWrap);
@@ -12190,6 +12388,9 @@ JSC_DECLARE_HOST_FUNCTION(HTTPSServerPrototype__publishCallback);
 extern "C" EncodedJSValue HTTPSServerPrototype__doReload(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(HTTPSServerPrototype__reloadCallback);
 
+extern "C" EncodedJSValue HTTPSServerPrototype__doRequestIP(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(HTTPSServerPrototype__requestIPCallback);
+
 extern "C" EncodedJSValue HTTPSServerPrototype__doStop(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(HTTPSServerPrototype__stopCallback);
 
@@ -12199,6 +12400,7 @@ JSC_DECLARE_HOST_FUNCTION(HTTPSServerPrototype__upgradeCallback);
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSHTTPSServerPrototype, JSHTTPSServerPrototype::Base);
 
 static const HashTableValue JSHTTPSServerPrototypeTableValues[] = {
+    { "address"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPSServerPrototype__addressGetterWrap, 0 } },
     { "development"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPSServerPrototype__developmentGetterWrap, 0 } },
     { "fetch"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSServerPrototype__fetchCallback, 1 } },
     { "hostname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPSServerPrototype__hostnameGetterWrap, 0 } },
@@ -12209,6 +12411,7 @@ static const HashTableValue JSHTTPSServerPrototypeTableValues[] = {
     { "protocol"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPSServerPrototype__protocolGetterWrap, 0 } },
     { "publish"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSServerPrototype__publishCallback, 3 } },
     { "reload"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSServerPrototype__reloadCallback, 2 } },
+    { "requestIP"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSServerPrototype__requestIPCallback, 1 } },
     { "stop"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSServerPrototype__stopCallback, 1 } },
     { "upgrade"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSServerPrototype__upgradeCallback, 1 } }
 };
@@ -12225,6 +12428,37 @@ JSC_DEFINE_CUSTOM_GETTER(jsHTTPSServerConstructor, (JSGlobalObject * lexicalGlob
     if (UNLIKELY(!prototype))
         return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for HTTPSServer"_s);
     return JSValue::encode(globalObject->JSHTTPSServerConstructor());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(HTTPSServerPrototype__addressGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSHTTPSServer* thisObject = jsCast<JSHTTPSServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_address.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        HTTPSServerPrototype__getAddress(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_address.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void HTTPSServerPrototype__addressSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSHTTPSServer*>(JSValue::decode(thisValue));
+    thisObject->m_address.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue HTTPSServerPrototype__addressGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSHTTPSServer*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_address.get());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(HTTPSServerPrototype__developmentGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -12433,6 +12667,34 @@ JSC_DEFINE_HOST_FUNCTION(HTTPSServerPrototype__reloadCallback, (JSGlobalObject *
     return HTTPSServerPrototype__doReload(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
+JSC_DEFINE_HOST_FUNCTION(HTTPSServerPrototype__requestIPCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSHTTPSServer* thisObject = jsDynamicCast<JSHTTPSServer*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof HTTPSServer"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return HTTPSServerPrototype__doRequestIP(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
 JSC_DEFINE_HOST_FUNCTION(HTTPSServerPrototype__stopCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
@@ -12591,6 +12853,7 @@ void JSHTTPSServer::visitAdditionalChildren(Visitor& visitor)
     JSHTTPSServer* thisObject = this;
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
 
+    visitor.append(thisObject->m_address);
     visitor.append(thisObject->m_hostname);
     visitor.append(thisObject->m_id);
 }
@@ -12621,6 +12884,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSHTTPServerPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -12641,6 +12905,9 @@ extern "C" void* HTTPServerClass__construct(JSC::JSGlobalObject*, JSC::CallFrame
 JSC_DECLARE_CUSTOM_GETTER(jsHTTPServerConstructor);
 
 extern "C" void HTTPServerClass__finalize(void*);
+
+extern "C" JSC::EncodedJSValue HTTPServerPrototype__getAddress(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(HTTPServerPrototype__addressGetterWrap);
 
 extern "C" JSC::EncodedJSValue HTTPServerPrototype__getDevelopment(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(HTTPServerPrototype__developmentGetterWrap);
@@ -12672,6 +12939,9 @@ JSC_DECLARE_HOST_FUNCTION(HTTPServerPrototype__publishCallback);
 extern "C" EncodedJSValue HTTPServerPrototype__doReload(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(HTTPServerPrototype__reloadCallback);
 
+extern "C" EncodedJSValue HTTPServerPrototype__doRequestIP(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(HTTPServerPrototype__requestIPCallback);
+
 extern "C" EncodedJSValue HTTPServerPrototype__doStop(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(HTTPServerPrototype__stopCallback);
 
@@ -12681,6 +12951,7 @@ JSC_DECLARE_HOST_FUNCTION(HTTPServerPrototype__upgradeCallback);
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSHTTPServerPrototype, JSHTTPServerPrototype::Base);
 
 static const HashTableValue JSHTTPServerPrototypeTableValues[] = {
+    { "address"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPServerPrototype__addressGetterWrap, 0 } },
     { "development"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPServerPrototype__developmentGetterWrap, 0 } },
     { "fetch"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPServerPrototype__fetchCallback, 1 } },
     { "hostname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPServerPrototype__hostnameGetterWrap, 0 } },
@@ -12691,6 +12962,7 @@ static const HashTableValue JSHTTPServerPrototypeTableValues[] = {
     { "protocol"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPServerPrototype__protocolGetterWrap, 0 } },
     { "publish"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPServerPrototype__publishCallback, 3 } },
     { "reload"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPServerPrototype__reloadCallback, 2 } },
+    { "requestIP"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPServerPrototype__requestIPCallback, 1 } },
     { "stop"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPServerPrototype__stopCallback, 1 } },
     { "upgrade"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPServerPrototype__upgradeCallback, 1 } }
 };
@@ -12707,6 +12979,37 @@ JSC_DEFINE_CUSTOM_GETTER(jsHTTPServerConstructor, (JSGlobalObject * lexicalGloba
     if (UNLIKELY(!prototype))
         return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for HTTPServer"_s);
     return JSValue::encode(globalObject->JSHTTPServerConstructor());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(HTTPServerPrototype__addressGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSHTTPServer* thisObject = jsCast<JSHTTPServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_address.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        HTTPServerPrototype__getAddress(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_address.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void HTTPServerPrototype__addressSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSHTTPServer*>(JSValue::decode(thisValue));
+    thisObject->m_address.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue HTTPServerPrototype__addressGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSHTTPServer*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_address.get());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(HTTPServerPrototype__developmentGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -12915,6 +13218,34 @@ JSC_DEFINE_HOST_FUNCTION(HTTPServerPrototype__reloadCallback, (JSGlobalObject * 
     return HTTPServerPrototype__doReload(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
+JSC_DEFINE_HOST_FUNCTION(HTTPServerPrototype__requestIPCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSHTTPServer* thisObject = jsDynamicCast<JSHTTPServer*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof HTTPServer"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return HTTPServerPrototype__doRequestIP(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
 JSC_DEFINE_HOST_FUNCTION(HTTPServerPrototype__stopCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
@@ -13073,6 +13404,7 @@ void JSHTTPServer::visitAdditionalChildren(Visitor& visitor)
     JSHTTPServer* thisObject = this;
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
 
+    visitor.append(thisObject->m_address);
     visitor.append(thisObject->m_hostname);
     visitor.append(thisObject->m_id);
 }
@@ -13103,6 +13435,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSListenerPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -13519,6 +13852,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSMD4Prototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -13849,6 +14183,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSMD5Prototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -14179,6 +14514,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSMatchedRoutePrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -14636,6 +14972,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSNodeJSFSPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -17627,6 +17964,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSRequestPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -18252,7 +18590,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSRequestConstructor::construct(JSC
     }
 
     JSRequest* instance = JSRequest::create(vm, globalObject, structure, ptr);
-    vm.heap.reportExtraMemoryAllocated(Request__estimatedSize(instance->wrapped()));
+    vm.heap.reportExtraMemoryAllocated(instance, Request__estimatedSize(instance->wrapped()));
 
     return JSValue::encode(instance);
 }
@@ -18346,7 +18684,7 @@ extern "C" EncodedJSValue Request__create(Zig::GlobalObject* globalObject, void*
     auto& vm = globalObject->vm();
     JSC::Structure* structure = globalObject->JSRequestStructure();
     JSRequest* instance = JSRequest::create(vm, globalObject, structure, ptr);
-    vm.heap.reportExtraMemoryAllocated(Request__estimatedSize(ptr));
+    vm.heap.reportExtraMemoryAllocated(instance, Request__estimatedSize(ptr));
     return JSValue::encode(instance);
 }
 
@@ -18402,6 +18740,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSResolveMessagePrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -18823,7 +19162,7 @@ void JSResolveMessagePrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject*
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSResolveMessage::info(), JSResolveMessagePrototypeTableValues, *this);
-    this->putDirect(vm, vm.propertyNames->toPrimitiveSymbol, JSFunction::create(vm, globalObject, 1, String("toPrimitive"_s), ResolveMessagePrototype__toPrimitiveCallback, ImplementationVisibility::Public), PropertyAttribute::Function | PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
+    this->putDirect(vm, vm.propertyNames->toPrimitiveSymbol, JSFunction::create(vm, globalObject, 1, String("toPrimitive"_s), ResolveMessagePrototype__toPrimitiveCallback, ImplementationVisibility::Public), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
     this->putDirect(vm, vm.propertyNames->name, jsString(vm, String("ResolveMessage"_s)), PropertyAttribute::ReadOnly | 0);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
@@ -19025,6 +19364,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSResponsePrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -19579,7 +19919,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSResponseConstructor::construct(JS
     }
 
     JSResponse* instance = JSResponse::create(vm, globalObject, structure, ptr);
-    vm.heap.reportExtraMemoryAllocated(Response__estimatedSize(instance->wrapped()));
+    vm.heap.reportExtraMemoryAllocated(instance, Response__estimatedSize(instance->wrapped()));
 
     return JSValue::encode(instance);
 }
@@ -19673,7 +20013,7 @@ extern "C" EncodedJSValue Response__create(Zig::GlobalObject* globalObject, void
     auto& vm = globalObject->vm();
     JSC::Structure* structure = globalObject->JSResponseStructure();
     JSResponse* instance = JSResponse::create(vm, globalObject, structure, ptr);
-    vm.heap.reportExtraMemoryAllocated(Response__estimatedSize(ptr));
+    vm.heap.reportExtraMemoryAllocated(instance, Response__estimatedSize(ptr));
     return JSValue::encode(instance);
 }
 
@@ -19729,6 +20069,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSSHA1Prototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -20059,6 +20400,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSSHA224Prototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -20389,6 +20731,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSSHA256Prototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -20719,6 +21062,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSSHA384Prototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -21049,6 +21393,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSSHA512Prototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -21379,6 +21724,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSSHA512_256Prototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -21709,6 +22055,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSServerWebSocketPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -22667,6 +23014,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSStatWatcherPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -22939,6 +23287,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSStatsPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -23911,6 +24260,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSSubprocessPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -24474,6 +24824,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSTCPSocketPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -25585,6 +25936,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSTLSSocketPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -26696,6 +27048,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSTextChunkPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -27062,6 +27415,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSTextDecoderPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -27147,12 +27501,16 @@ JSC_DECLARE_CUSTOM_GETTER(TextDecoderPrototype__encodingGetterWrap);
 extern "C" JSC::EncodedJSValue TextDecoderPrototype__getFatal(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(TextDecoderPrototype__fatalGetterWrap);
 
+extern "C" JSC::EncodedJSValue TextDecoderPrototype__getIgnoreBOM(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(TextDecoderPrototype__ignoreBOMGetterWrap);
+
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSTextDecoderPrototype, JSTextDecoderPrototype::Base);
 
 static const HashTableValue JSTextDecoderPrototypeTableValues[] = {
     { "decode"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, TextDecoderPrototype__decodeCallback, &DOMJITSignatureForTextDecoderPrototype__decode } },
     { "encoding"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TextDecoderPrototype__encodingGetterWrap, 0 } },
-    { "fatal"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TextDecoderPrototype__fatalGetterWrap, 0 } }
+    { "fatal"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TextDecoderPrototype__fatalGetterWrap, 0 } },
+    { "ignoreBOM"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TextDecoderPrototype__ignoreBOMGetterWrap, 0 } }
 };
 
 const ClassInfo JSTextDecoderPrototype::s_info = { "TextDecoder"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTextDecoderPrototype) };
@@ -27236,6 +27594,18 @@ JSC_DEFINE_CUSTOM_GETTER(TextDecoderPrototype__fatalGetterWrap, (JSGlobalObject 
     JSTextDecoder* thisObject = jsCast<JSTextDecoder*>(JSValue::decode(thisValue));
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
     JSC::EncodedJSValue result = TextDecoderPrototype__getFatal(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(TextDecoderPrototype__ignoreBOMGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSTextDecoder* thisObject = jsCast<JSTextDecoder*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = TextDecoderPrototype__getIgnoreBOM(thisObject->wrapped(), globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, result);
 }
@@ -27438,6 +27808,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSTimeoutPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -27652,7 +28023,7 @@ void JSTimeoutPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* global
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSTimeout::info(), JSTimeoutPrototypeTableValues, *this);
-    this->putDirect(vm, vm.propertyNames->toPrimitiveSymbol, JSFunction::create(vm, globalObject, 1, String("toPrimitive"_s), TimeoutPrototype__toPrimitiveCallback, ImplementationVisibility::Public), PropertyAttribute::Function | PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
+    this->putDirect(vm, vm.propertyNames->toPrimitiveSymbol, JSFunction::create(vm, globalObject, 1, String("toPrimitive"_s), TimeoutPrototype__toPrimitiveCallback, ImplementationVisibility::Public), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -27780,6 +28151,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSTranspilerPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)

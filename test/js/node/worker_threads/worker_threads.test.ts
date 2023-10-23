@@ -116,12 +116,13 @@ test("all worker_threads worker instance properties are present", () => {
 });
 
 test("threadId module and worker property is consistent", () => {
-  const worker = new Worker(new URL("./worker-threadid.js", import.meta.url).href);
-  worker.on("message", (message: { threadId: number} ) => {
-    expect(message.threadId).toBe(worker.threadId);
-  })
+  const worker = new Worker(new URL("./worker-thread-id.js", import.meta.url).href);
   expect(threadId).toBe(0);
-  expect(worker.threadId).toBe(1);
+  expect(worker.threadId).toBe(2);
+  worker.on("message", (message: { threadId: number }) => {
+    expect(message.threadId).toBe(worker.threadId);
+  });
+  worker.postMessage({});
 });
 
 test("receiveMessageOnPort works across threads", () => {

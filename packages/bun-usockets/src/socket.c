@@ -161,6 +161,20 @@ struct us_socket_t *us_socket_pair(struct us_socket_context_t *ctx, int socket_e
     return us_socket_from_fd(ctx, socket_ext_size, fds[0]);
 }
 
+/* This is not available for SSL sockets as it makes no sense. */
+int us_socket_write2(int ssl, struct us_socket_t *s, const char *header, int header_length, const char *payload, int payload_length) {
+
+    if (us_socket_is_closed(ssl, s) || us_socket_is_shut_down(ssl, s)) {
+        return 0;
+    }
+
+    int written = bsd_write2(us_poll_fd(&s->p), header, header_length, payload, payload_length);
+    if (written != header_length + payload_length) {
+        us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    }
+
+    return written < 0 ? 0 : written;
+}
 
 struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd) {
 #ifdef LIBUS_USE_LIBUV

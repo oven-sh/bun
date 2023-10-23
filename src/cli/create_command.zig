@@ -1575,7 +1575,7 @@ pub const CreateCommand = struct {
             }
         }
     }
-    pub fn extractInfo(ctx: Command.Context) !struct {example_tag: Example.Tag, template: []const u8}  {
+    pub fn extractInfo(ctx: Command.Context) !struct { example_tag: Example.Tag, template: []const u8 } {
         var example_tag = Example.Tag.unknown;
         var filesystem = try fs.FileSystem.init(null);
 

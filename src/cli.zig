@@ -1557,7 +1557,7 @@ pub const Command = struct {
                     try BunxCommand.exec(ctx, bunx_args);
                     return;
                 }
-                
+
                 try CreateCommand.exec(ctx, example_tag, template);
                 return;
             },

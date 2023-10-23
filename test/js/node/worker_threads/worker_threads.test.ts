@@ -119,17 +119,23 @@ test("all worker_threads worker instance properties are present", async () => {
 test("threadId module and worker property is consistent", async () => {
   const worker1 = new Worker(new URL("./worker-thread-id.js", import.meta.url).href);
   expect(threadId).toBe(0);
-  expect(worker1.threadId).toBe(1);
-  worker1.on("message", (message: { threadId: number }) => {
-    expect(message.threadId).toBe(worker1.threadId);
+  expect(worker1.threadId).toBe(2);
+  const worker1ThreadId = await new Promise<number>(resolve => {
+    worker1.on("message", (message: { threadId: number }) => {
+      resolve(message.threadId);
+    });
+    worker1.postMessage({});
   });
-  worker1.postMessage({});
+  expect(worker1ThreadId).toBe(worker1.threadId);
   const worker2 = new Worker(new URL("./worker-thread-id.js", import.meta.url).href);
-  expect(worker2.threadId).toBe(2);
-  worker2.on("message", (message: { threadId: number }) => {
-    expect(message.threadId).toBe(worker2.threadId);
+  expect(worker2.threadId).toBe(3);
+  const worker2ThreadId = await new Promise<number>(resolve => {
+    worker2.on("message", (message: { threadId: number }) => {
+      resolve(message.threadId);
+    });
+    worker2.postMessage({});
   });
-  worker2.postMessage({});
+  expect(worker2ThreadId).toBe(worker2.threadId);
   await worker1.terminate();
   await worker2.terminate();
 });

@@ -513,6 +513,7 @@ pub const H2FrameParser = struct {
             }
 
             var start = @intFromPtr(dst_buffer.ptr);
+            log("encode xhdr name {} {} val {} {}", .{xhdr.name_offset, xhdr.name_len, xhdr.val_offset, xhdr.val_len});
             const ptr = lshpack.lshpack_enc_encode(&this.encoder, dst_buffer.ptr, @ptrFromInt(start + dst_buffer.len), &xhdr);
             const end = @intFromPtr(ptr) - start;
             if (end > 0) {
@@ -683,6 +684,7 @@ pub const H2FrameParser = struct {
     }
 
     pub fn sendWindowUpdate(this: *H2FrameParser, streamIdentifier: u32, windowSize: UInt31WithReserved) void {
+        log("sendWindowUpdate stream {} size {}", .{streamIdentifier, windowSize.uint31});
         var buffer: [FrameHeader.byteSize + 4]u8 = undefined;
         @memset(&buffer, 0);
         var stream = std.io.fixedBufferStream(&buffer);
@@ -1080,12 +1082,14 @@ pub const H2FrameParser = struct {
         const settingByteSize = SettingsPayloadUnit.byteSize;
         if (frame.length > 0) {
             if (frame.flags & 0x1 != 0 or frame.length % settingByteSize != 0) {
+                log("invalid settings frame size", .{});
                 this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "Invalid settings frame size", this.lastStreamID);
                 return data.len;
             }
         } else {
             if (frame.flags & 0x1 != 0) {
                 // we received an ACK
+                log("invalid settings frame ACK", .{});
                 this.remoteSettings = this.localSettings;
                 this.dispatch(.onLocalSettings, this.localSettings.toJS(this.handlers.globalObject));
             }
@@ -1475,66 +1479,108 @@ pub const H2FrameParser = struct {
         globalObject.throw("Expected payload to be a Buffer", .{});
         return .zero;
     }
-    // pub fn writeStream(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
-    //     JSC.markBinding(@src());
-    //     const args_list = callframe.arguments(2);
-    //     if (args_list.len < 2) {
-    //         globalObject.throw("Expected stream and data arguments", .{});
-    //         return .zero;
-    //     }
-    //     var close_stream = false;
-    //     if(args_list > 2) {
-    //         const close_arg = args_list.ptr[2];
-    //         if (!close_arg.jsType().isBoolean()) {
-    //             globalObject.throw("Expected close to be a boolean", .{});
-    //             return .zero;
-    //         }
-    //         close_stream = close_arg.asBoolean();
-    //     }
 
-    //     const stream_arg = args_list.ptr[0];
-    //     const data_arg = args_list.ptr[1];
+    pub fn rstStream(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        JSC.markBinding(@src());
+        const args_list = callframe.arguments(1);
+        if (args_list.len < 1) {
+            globalObject.throw("Expected stream argument", .{});
+            return .zero;
+        }
+        const stream_arg = args_list.ptr[0];
 
-    //     if (!stream_arg.isNumber()) {
-    //         globalObject.throw("Expected stream to be a number", .{});
-    //         return .zero;
-    //     }
+        const stream_id = stream_arg.toInt32();
+        if (stream_id <= 0) {
+            globalObject.throw("Invalid stream id", .{});
+            return .zero;
+        }
 
-    //     const stream_id = stream_arg.asNumber().asUInt32(globalObject);
-    //     if (stream_id == 0) {
-    //         globalObject.throw("Invalid stream id", .{});
-    //         return .zero;
-    //     }
+        var stream = this.streams.get(@intCast(stream_id)) orelse {
+            globalObject.throw("Invalid stream id", .{});
+            return .zero;
+        };
 
-    //     const stream = this.streams.get(stream_id) orelse {
-    //         globalObject.throw("Invalid stream id", .{});
-    //         return .zero;
-    //     };
+        if(stream.canSendData() and stream.canReceiveData()) {
+            return JSC.JSValue.jsBoolean(false);
+        }
 
-    //     if (stream.state == .CLOSED) {
-    //         globalObject.throw("Stream is closed", .{});
-    //         return .zero;
-    //     }
+        this.endStream(&stream, ErrorCode.NO_ERROR);
 
-    //     if (stream.state == .HALF_CLOSED_LOCAL or stream.state == .HALF_CLOSED_REMOTE) {
-    //         globalObject.throw("Stream is half closed", .{});
-    //         return .zero;
-    //     }
+        return JSC.JSValue.jsBoolean(true);
+    }
+    
+    pub fn writeStream(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        JSC.markBinding(@src());
+        const args_list = callframe.arguments(3);
+        if (args_list.len < 3) {
+            globalObject.throw("Expected stream, data and endStream arguments", .{});
+            return .zero;
+        }
 
-    //     if (data_arg.asArrayBuffer(globalObject)) |array_buffer| {
-    //         var slice = array_buffer.slice();
-    //     } else if (bun.String.tryFromJS(data_arg, globalObject)) |bun_str| {
-    //         var zig_str = bun_str.toUTF8(bun.default_allocator);
-    //         defer zig_str.deinit();
-    //         var slice = zig_str.slice();
+        const stream_arg = args_list.ptr[0];
+        const data_arg = args_list.ptr[1];
+        const close_arg = args_list.ptr[2];
 
-    //     } else {
-    //         globalObject.throw("Expected data to be an ArrayBuffer or a string", .{});
-    //         return .zero;
-    //     }
+        if (!stream_arg.isNumber()) {
+            globalObject.throw("Expected stream to be a number", .{});
+            return .zero;
+        }
 
-    //     return JSC.JSValue.jsBoolean(true);
-    // }
+        const stream_id = stream_arg.toInt32();
+        if (stream_id <= 0) {
+            globalObject.throw("Invalid stream id", .{});
+            return .zero;
+        }
+        const close = close_arg.toBoolean();
+
+        var stream = this.streams.get(@intCast(stream_id)) orelse {
+            globalObject.throw("Invalid stream id", .{});
+            return .zero;
+        };
+        if (stream.canSendData()) {
+            return JSC.JSValue.jsBoolean(false);
+        }
+
+        // TODO: check padding strategy here
+       
+        if (data_arg.asArrayBuffer(globalObject)) |array_buffer| {
+            var payload = array_buffer.slice();
+            log("writeStream as buffer", .{});
+
+            // max frame size will always be at least 16384
+            const max_size = 16384 - FrameHeader.byteSize - 1;
+
+            var offset: usize = 0;
+
+            const writer = this.toWriter();
+            while(offset < payload.len) {
+                const size = @min(payload.len - offset, max_size);
+                const slice = payload[offset .. size];
+                offset += size;    
+                var dataHeader: FrameHeader = .{
+                    .type = @intFromEnum(FrameType.HTTP_FRAME_DATA),
+                    .flags = if(offset >= payload.len and close) @intFromEnum(DataFrameFlags.END_STREAM) else 0,
+                    .streamIdentifier = @intCast(stream_id),
+                    .length = size,
+                };
+                dataHeader.write(@TypeOf(writer), writer);
+                this.write(slice);    
+            }
+            
+
+        } else if (bun.String.tryFromJS(data_arg, globalObject)) |bun_str| {
+            _ = bun_str;
+            // var zig_str = bun_str.toUTF8(bun.default_allocator);
+            // defer zig_str.deinit();
+            // var slice = zig_str.slice();
+            log("writeStream as string", .{});
+        } else {
+            globalObject.throw("Expected data to be an ArrayBuffer or a string", .{});
+            return .zero;
+        }
+
+        return JSC.JSValue.jsBoolean(true);
+    }
 
     fn getNextStreamID(this: *H2FrameParser) u32 {
         var stream_id: u32 = this.lastStreamID;
@@ -1625,6 +1671,7 @@ pub const H2FrameParser = struct {
             const value_slice = value.toSlice(globalObject, bun.default_allocator);
             defer value_slice.deinit();
 
+            log("encode header {s} {s}", .{ name_slice.slice(), value_slice.slice() });
             encoded_size += stream.encode(&header_buffer, buffer[encoded_size..], name_slice.slice(), value_slice.slice(), never_index) catch {
                 stream.state = .CLOSED;
                 stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);

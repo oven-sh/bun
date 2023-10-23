@@ -339,6 +339,7 @@ void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& 
       thisObject->m_JSFFI.visit(visitor);
       thisObject->m_JSFSWatcher.visit(visitor);
       thisObject->m_JSFileSystemRouter.visit(visitor);
+      thisObject->m_JSH2FrameParser.visit(visitor);
       thisObject->m_JSHTMLRewriter.visit(visitor);
       thisObject->m_JSHTTPSServer.visit(visitor);
       thisObject->m_JSHTTPServer.visit(visitor);

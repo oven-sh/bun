@@ -29,9 +29,17 @@ export default [
         fn: "read",
         length: 1,
       },
-      detach: {
+      detach: { 
         fn: "detach",
         length: 0,
+      },
+      rstStream: {
+        fn: "rstStream",
+        length: 1,
+      },
+      writeStream: {
+        fn: "writeStream",
+        length: 3,
       },
     },
     finalize: true,

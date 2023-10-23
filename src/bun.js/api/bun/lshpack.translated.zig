@@ -60,10 +60,10 @@ pub const __int8_t = i8;
 pub const __uint8_t = u8;
 pub const __int16_t = c_short;
 pub const __uint16_t = c_ushort;
-pub const __int32_t = c_int;
-pub const __uint32_t = c_uint;
-pub const __int64_t = c_long;
-pub const __uint64_t = c_ulong;
+pub const __int32_t = i32;
+pub const __uint32_t = u32;
+pub const __int64_t = i64;
+pub const __uint64_t = u64;
 pub const __int_least8_t = __int8_t;
 pub const __uint_least8_t = __uint8_t;
 pub const __int_least16_t = __int16_t;
@@ -136,6 +136,7 @@ pub const uint_fast64_t = c_ulong;
 pub const intmax_t = __intmax_t;
 pub const uintmax_t = __uintmax_t;
 pub const lsxpack_strlen_t = u16;
+pub const lsxpack_offset_t = i32;
 pub const LSXPACK_HPACK_VAL_MATCHED: c_int = 1;
 pub const LSXPACK_QPACK_IDX: c_int = 2;
 pub const LSXPACK_APP_IDX: c_int = 4;
@@ -159,11 +160,11 @@ pub const struct_lsxpack_header = extern struct {
     /// hash value for name + value
     nameval_hash: __uint32_t = 0,
     /// the offset for name in the buffer
-    name_offset: lsxpack_strlen_t = 0,
+    name_offset: lsxpack_offset_t = 0,
+    /// the offset for value in the buffer
+    val_offset: lsxpack_offset_t = 0,
     /// the length of name
     name_len: lsxpack_strlen_t = 0,
-    /// the offset for value in the buffer
-    val_offset: lsxpack_strlen_t = 0,
     /// the length of value
     val_len: lsxpack_strlen_t = 0,
     /// mainly for cookie value chain
@@ -186,8 +187,8 @@ pub const lsxpack_header_t = struct_lsxpack_header;
 pub fn lsxpack_header_set_offset2(arg_hdr: *lsxpack_header_t, arg_buf: [*c]u8, arg_name_offset: usize, arg_name_len: usize, arg_val_offset: usize, arg_val_len: usize) callconv(.C) void {
     arg_hdr.* = .{};
     arg_hdr.buf = arg_buf;
-    arg_hdr.name_offset = @truncate(arg_name_offset);
-    arg_hdr.val_offset = @truncate(arg_val_offset);
+    arg_hdr.name_offset = @intCast(arg_name_offset);
+    arg_hdr.val_offset = @intCast(arg_val_offset);
     arg_hdr.name_len = @truncate(arg_name_len);
     arg_hdr.val_len = @truncate(arg_val_len);
 }
@@ -195,7 +196,7 @@ pub fn lsxpack_header_set_offset2(arg_hdr: *lsxpack_header_t, arg_buf: [*c]u8, a
 pub fn lsxpack_header_prepare_decode(arg_hdr: *lsxpack_header_t, arg_out: [*c]u8, arg_offset: usize, arg_len: usize) callconv(.C) void {
     arg_hdr.* = .{};
     arg_hdr.buf = arg_out;
-    arg_hdr.name_offset = @truncate(arg_offset);
+    arg_hdr.name_offset = @intCast(arg_offset);
     if (arg_len > LSXPACK_MAX_STRLEN) {
         arg_hdr.val_len = LSXPACK_MAX_STRLEN;
     } else {
@@ -204,11 +205,11 @@ pub fn lsxpack_header_prepare_decode(arg_hdr: *lsxpack_header_t, arg_out: [*c]u8
 }
 
 pub fn lsxpack_header_get_name(hdr: *lsxpack_header_t) []const u8 {
-    if (hdr.name_len != 0) return hdr.buf[hdr.name_offset .. hdr.name_offset + hdr.name_len];
+    if (hdr.name_len != 0) return hdr.buf[@as(usize, @intCast(hdr.name_offset)) .. @as(usize, @intCast(hdr.name_offset)) + hdr.name_len];
     return "";
 }
 pub fn lsxpack_header_get_value(hdr: *lsxpack_header_t) []const u8 {
-    if (hdr.val_len != 0) return hdr.buf[hdr.val_offset .. hdr.val_offset + hdr.val_len];
+    if (hdr.val_len != 0) return hdr.buf[@as(usize, @intCast(hdr.val_offset)) ..@as(usize, @intCast(hdr.val_offset)) + hdr.val_len];
     return "";
 }
 pub fn lsxpack_header_get_dec_size(arg_hdr: ?*const lsxpack_header_t) callconv(.C) usize {

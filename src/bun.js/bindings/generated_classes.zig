@@ -3151,6 +3151,8 @@ pub const JSH2FrameParser = struct {
 
         if (@TypeOf(H2FrameParser.detach) != CallbackType)
             @compileLog("Expected H2FrameParser.detach to be a callback but received " ++ @typeName(@TypeOf(H2FrameParser.detach)));
+        if (@TypeOf(H2FrameParser.getCurrentState) != CallbackType)
+            @compileLog("Expected H2FrameParser.getCurrentState to be a callback but received " ++ @typeName(@TypeOf(H2FrameParser.getCurrentState)));
         if (@TypeOf(H2FrameParser.goaway) != CallbackType)
             @compileLog("Expected H2FrameParser.goaway to be a callback but received " ++ @typeName(@TypeOf(H2FrameParser.goaway)));
         if (@TypeOf(H2FrameParser.ping) != CallbackType)
@@ -3159,17 +3161,24 @@ pub const JSH2FrameParser = struct {
             @compileLog("Expected H2FrameParser.read to be a callback but received " ++ @typeName(@TypeOf(H2FrameParser.read)));
         if (@TypeOf(H2FrameParser.request) != CallbackType)
             @compileLog("Expected H2FrameParser.request to be a callback but received " ++ @typeName(@TypeOf(H2FrameParser.request)));
+        if (@TypeOf(H2FrameParser.rstStream) != CallbackType)
+            @compileLog("Expected H2FrameParser.rstStream to be a callback but received " ++ @typeName(@TypeOf(H2FrameParser.rstStream)));
         if (@TypeOf(H2FrameParser.updateSettings) != CallbackType)
             @compileLog("Expected H2FrameParser.updateSettings to be a callback but received " ++ @typeName(@TypeOf(H2FrameParser.updateSettings)));
+        if (@TypeOf(H2FrameParser.writeStream) != CallbackType)
+            @compileLog("Expected H2FrameParser.writeStream to be a callback but received " ++ @typeName(@TypeOf(H2FrameParser.writeStream)));
         if (!JSC.is_bindgen) {
             @export(H2FrameParser.constructor, .{ .name = "H2FrameParserClass__construct" });
             @export(H2FrameParser.detach, .{ .name = "H2FrameParserPrototype__detach" });
             @export(H2FrameParser.finalize, .{ .name = "H2FrameParserClass__finalize" });
+            @export(H2FrameParser.getCurrentState, .{ .name = "H2FrameParserPrototype__getCurrentState" });
             @export(H2FrameParser.goaway, .{ .name = "H2FrameParserPrototype__goaway" });
             @export(H2FrameParser.ping, .{ .name = "H2FrameParserPrototype__ping" });
             @export(H2FrameParser.read, .{ .name = "H2FrameParserPrototype__read" });
             @export(H2FrameParser.request, .{ .name = "H2FrameParserPrototype__request" });
+            @export(H2FrameParser.rstStream, .{ .name = "H2FrameParserPrototype__rstStream" });
             @export(H2FrameParser.updateSettings, .{ .name = "H2FrameParserPrototype__updateSettings" });
+            @export(H2FrameParser.writeStream, .{ .name = "H2FrameParserPrototype__writeStream" });
         }
     }
 };

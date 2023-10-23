@@ -257,7 +257,7 @@ const constants = {
 
 const NoPayloadMethods = new Set([
   constants.HTTP2_METHOD_DELETE,
-  constants.HTTP2_METHOD_DELETE,
+  constants.HTTP2_METHOD_GET,
   constants.HTTP2_METHOD_HEAD,
 ]);
 
@@ -366,6 +366,7 @@ function assertSingleValueHeader(name: string) {
 }
 
 const bunHTTP2Write = Symbol.for("::bunhttp2write::");
+const bunHTTP2RST = Symbol.for("::bunhttp2rst::");
 const bunHTTP2StreamResponded = Symbol.for("::bunhttp2hasResponded::");
 const bunHTTP2StreamReadQueue = Symbol.for("::bunhttp2ReadQueue::");
 
@@ -388,6 +389,7 @@ function reduceToCompatibleHeaders(obj: any, currentValue: any) {
 class ClientHttp2Stream extends Duplex {
   #id: number;
   #session: ClientHttp2Session | null = null;
+  #endStream: boolean = false;
   [bunHTTP2StreamReadQueue]: Array<Buffer> = $createFIFO();
   [bunHTTP2StreamResponded]: boolean = false;
   constructor(streamId, session) {
@@ -405,12 +407,14 @@ class ClientHttp2Stream extends Duplex {
   }
   
   _destroy(err, callback) {
-    //TODO: SEND RST_STREAM
+    const session = this.#session;
+    if(session) {
+      session[bunHTTP2RST](this.#id);
+    }
     callback(err);
   }
 
   _final(callback) {
-    //TODO: SEND RST_STREAM 
     callback();
   }
 
@@ -418,16 +422,24 @@ class ClientHttp2Stream extends Duplex {
     const queue = this[bunHTTP2StreamReadQueue];
     let chunk;
     while ((chunk = queue.peek())) {
-      if (!this.push(chunk)) return;
+      if (!this.push(chunk)) {
+        queue.shift();  
+        return;
+      }
       queue.shift();
     }
+  }
+
+  end(chunk, encoding, callback) {
+    this.#endStream = true;
+    return super.end(chunk, encoding, callback);
   }
 
   _write(chunk, encoding, callback) {
     if (typeof chunk == "string" && encoding !== "ascii") chunk = Buffer.from(chunk, encoding);
     const session = this.#session;
     if(session) {
-      session[bunHTTP2Write](this.#id, chunk);
+      session[bunHTTP2Write](this.#id, chunk, this.#endStream);
       if(typeof callback == "function") {
         callback();
       }
@@ -588,8 +600,7 @@ class ClientHttp2Session  extends Http2Session{
   #onError(error: Error){
     this.#parser?.detach();
     this.#parser = null;
-    this.emit("error", error);
-  }
+    this.emit("error", error);  }
   #onTimeout(){
     this.#parser?.detach();
     this.#parser = null;
@@ -709,18 +720,7 @@ class ClientHttp2Session  extends Http2Session{
 
   destroy(error: Error, code: number) {
     if(!this.#socket) return;
-    // sent RST code ERR_HTTP2_STREAM_CANCEL to each stream here
-    // E('ERR_HTTP2_STREAM_CANCEL', function(error) {
-    //   let msg = 'The pending stream has been canceled';
-    //   if (error) {
-    //     this.cause = error;
-    //     if (typeof error.message === 'string')
-    //       msg += ` (caused by: ${error.message})`;
-    //   }
-    //   return msg;
-    // }, Error);
     this.goaway(code || constants.NGHTTP2_INTERNAL_ERROR, 0, Buffer.alloc(0));
-    // TODO: we can force end here but i think the best would be to wait for the goaway to be sent
     this.#parser?.detach();
     this.#socket?.end();
     this.#parser = null;
@@ -731,6 +731,7 @@ class ClientHttp2Session  extends Http2Session{
         stream.emit("error", error);
       }
       stream.emit("close");
+      stream.end();
     }
 
     if(error){
@@ -744,6 +745,7 @@ class ClientHttp2Session  extends Http2Session{
     if(!(headers instanceof Object)) {
       throw new Error("ERROR_HTTP2: Invalid headers");
     }
+    options = options || {};
     const flat_headers: Array<NativeHttp2HeaderValue> = [];
     let has_scheme = false;
     let has_authority = false;
@@ -827,13 +829,13 @@ class ClientHttp2Session  extends Http2Session{
     if(!has_authority) {
       flat_headers.push({ name: ":authority", value: url.hostname });
     }
+
     if(!method) {
       method = "GET";
       flat_headers.push({ name: ":method", value: method });
     }
 
     if(NoPayloadMethods.has(method.toUpperCase())) {
-      options = options || {};
       options.endStream = true;
     }
 
@@ -853,8 +855,13 @@ class ClientHttp2Session  extends Http2Session{
     }
     return new ClientHttp2Session(url);
   }
-  [bunHTTP2Write](streamId: number, chunk: Buffer) {
-    this.#parser?.writeStream(streamId, chunk);
+  
+  [bunHTTP2Write](streamId: number, chunk: Buffer, endStream: boolean) {
+    this.#parser?.writeStream(streamId, chunk, endStream);
+  }
+
+  [bunHTTP2RST](streamId: number) {
+    this.#parser?.rstStream(streamId);
   }
 }
 

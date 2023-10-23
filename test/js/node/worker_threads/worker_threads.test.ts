@@ -60,7 +60,7 @@ test("all worker_threads module properties are present", () => {
   }).toThrow("not yet implemented");
 });
 
-test("all worker_threads worker instance properties are present", () => {
+test("all worker_threads worker instance properties are present", async () => {
   const worker = new Worker(new URL("./worker.js", import.meta.url).href);
   expect(worker).toHaveProperty("threadId");
   expect(worker).toHaveProperty("ref");
@@ -113,19 +113,28 @@ test("all worker_threads worker instance properties are present", () => {
   expect(worker.rawListeners).toBeFunction();
   expect(worker.listenerCount).toBeFunction();
   expect(worker.eventNames).toBeFunction();
+  await worker.terminate();
 });
 
-test("threadId module and worker property is consistent", () => {
-  const worker = new Worker(new URL("./worker-thread-id.js", import.meta.url).href);
+test("threadId module and worker property is consistent", async () => {
+  const worker1 = new Worker(new URL("./worker-thread-id.js", import.meta.url).href);
   expect(threadId).toBe(0);
-  expect(worker.threadId).toBe(2);
-  worker.on("message", (message: { threadId: number }) => {
-    expect(message.threadId).toBe(worker.threadId);
+  expect(worker1.threadId).toBe(1);
+  worker1.on("message", (message: { threadId: number }) => {
+    expect(message.threadId).toBe(worker1.threadId);
   });
-  worker.postMessage({});
+  worker1.postMessage({});
+  const worker2 = new Worker(new URL("./worker-thread-id.js", import.meta.url).href);
+  expect(worker2.threadId).toBe(2);
+  worker2.on("message", (message: { threadId: number }) => {
+    expect(message.threadId).toBe(worker2.threadId);
+  });
+  worker2.postMessage({});
+  await worker1.terminate();
+  await worker2.terminate();
 });
 
-test("receiveMessageOnPort works across threads", () => {
+test("receiveMessageOnPort works across threads", async () => {
   const { port1, port2 } = new MessageChannel();
   const worker = new Worker(new URL("./worker.js", import.meta.url).href, {
     workerData: port2,
@@ -139,6 +148,7 @@ test("receiveMessageOnPort works across threads", () => {
   const message = receiveMessageOnPort(port1);
   expect(message).toBeDefined();
   expect(message!.message).toBe("done!");
+  await worker.terminate();
 });
 
 test("receiveMessageOnPort works with FIFO", () => {

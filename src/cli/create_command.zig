@@ -1609,7 +1609,6 @@ pub const CreateCommand = struct {
                 }
 
                 outer: {
-                    // HERE
                     var parts = [_]string{ filesystem.top_level_dir, BUN_CREATE_DIR, positional };
                     var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
                     home_dir_buf[outdir_path.len] = 0;

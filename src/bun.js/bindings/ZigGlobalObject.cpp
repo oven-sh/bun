@@ -2206,7 +2206,8 @@ static inline EncodedJSValue functionPerformanceNowBody(JSGlobalObject* globalOb
     return JSValue::encode(jsDoubleNumber(result));
 }
 
-static inline EncodedJSValue functionPerformanceGetEntriesByNameBody(JSGlobalObject* globalObject) {
+static inline EncodedJSValue functionPerformanceGetEntriesByNameBody(JSGlobalObject* globalObject)
+{
     auto& vm = globalObject->vm();
     auto* global = reinterpret_cast<GlobalObject*>(globalObject);
     auto* array = JSC::constructEmptyArray(globalObject, nullptr);
@@ -2295,7 +2296,6 @@ JSC_DEFINE_HOST_FUNCTION(functionPerformanceNow, (JSGlobalObject * globalObject,
 {
     return functionPerformanceNowBody(globalObject);
 }
-
 
 JSC_DEFINE_HOST_FUNCTION(functionPerformanceGetEntriesByName, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -3149,6 +3149,24 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(map);
         });
 
+    m_esmRegistryMap.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSMap>::Initializer& init) {
+            auto* global = init.owner;
+            auto& vm = init.vm;
+            JSMap* registry = nullptr;
+            if (auto loaderValue = global->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "Loader"_s))) {
+                if (auto registryValue = loaderValue.getObject()->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "registry"_s))) {
+                    registry = jsCast<JSC::JSMap*>(registryValue);
+                }
+            }
+
+            if (!registry) {
+                registry = JSC::JSMap::create(init.vm, init.owner->mapStructure());
+            }
+
+            init.set(registry);
+        });
+
     m_encodeIntoObjectStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
             auto& vm = init.vm;
@@ -3886,6 +3904,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_utilInspectStylizeNoColorFunction.visit(visitor);
     thisObject->m_lazyReadableStreamPrototypeMap.visit(visitor);
     thisObject->m_requireMap.visit(visitor);
+    thisObject->m_esmRegistryMap.visit(visitor);
     thisObject->m_encodeIntoObjectStructure.visit(visitor);
     thisObject->m_JSArrayBufferControllerPrototype.visit(visitor);
     thisObject->m_JSFileSinkControllerPrototype.visit(visitor);
@@ -3928,6 +3947,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->mockModule.mockResultStructure.visit(visitor);
     thisObject->mockModule.mockImplementationStructure.visit(visitor);
     thisObject->mockModule.mockObjectStructure.visit(visitor);
+    thisObject->mockModule.mockModuleStructure.visit(visitor);
     thisObject->mockModule.activeSpySetStructure.visit(visitor);
     thisObject->mockModule.mockWithImplementationCleanupDataStructure.visit(visitor);
     thisObject->mockModule.withImplementationCleanupFunction.visit(visitor);

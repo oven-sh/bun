@@ -72,6 +72,8 @@ public:
         VirtualModuleMap* virtualModules = nullptr;
         JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path);
 
+        void addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mock);
+
         ~OnLoad()
         {
             if (virtualModules) {
@@ -97,5 +99,6 @@ class GlobalObject;
 } // namespace Zig
 
 namespace Bun {
-JSC::JSValue runVirtualModule(Zig::GlobalObject*, BunString* specifier);
+JSC::JSValue runVirtualModule(Zig::GlobalObject*, BunString* specifier, bool& wasModuleMock);
+JSC::Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 }

@@ -161,7 +161,7 @@ pub const Scripts = struct {
 
     pub fn spawnAllPackageScripts(
         this: *Scripts,
-        ctx: *PackageManager,
+        manager: *PackageManager,
         comptime log_level: PackageManager.Options.LogLevel,
         comptime hook: []const u8,
     ) !void {
@@ -169,14 +169,14 @@ pub const Scripts = struct {
 
         const items = @field(this, hook).items;
         if (items.len > 0) {
-            ctx.pending_tasks = @truncate(items.len);
+            manager.pending_tasks = @truncate(items.len);
 
             for (items) |entry| {
-                try RunCommand.spawnPackageScript(ctx, entry.script, hook, entry.package_name, entry.cwd, &.{}, log_level == .silent);
+                try RunCommand.spawnPackageScript(manager, entry.script, hook, entry.package_name, entry.cwd, &.{}, log_level == .silent);
             }
 
-            while (ctx.pending_tasks > 0) {
-                ctx.uws_event_loop.tick(null);
+            while (manager.pending_tasks > 0) {
+                manager.uws_event_loop.tick(null);
             }
         }
     }

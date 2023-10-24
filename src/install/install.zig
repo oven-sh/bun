@@ -8364,7 +8364,7 @@ pub const PackageManager = struct {
             );
 
             // 1. preinstall
-            try manager.lockfile.scripts.run(manager.allocator, manager.env, log_level, "preinstall");
+            try manager.lockfile.scripts.spawnAllPackageScripts(manager, log_level, "preinstall");
         }
 
         if (needs_new_lockfile) {

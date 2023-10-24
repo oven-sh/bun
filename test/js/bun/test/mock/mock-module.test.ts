@@ -7,8 +7,16 @@
 // - Write test for export {foo} from "./foo"
 // - Write test for import {foo} from "./foo"; export {foo}
 
-import { mock, test, expect } from "bun:test";
+import { mock, test, expect, spyOn, Mock } from "bun:test";
 import { fn, iCallFn, variable } from "./mock-module-fixture";
+import * as spyFixture from "./spymodule-fixture";
+
+test("spyOn", () => {
+  spyOn(spyFixture, "iSpy");
+  expect(spyFixture.iSpy).not.toHaveBeenCalled();
+  spyFixture.iSpy(123);
+  expect(spyFixture.iSpy).toHaveBeenCalled();
+});
 
 test("mocking a local file", async () => {
   expect(fn()).toEqual(42);

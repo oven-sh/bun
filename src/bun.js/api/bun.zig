@@ -3693,6 +3693,31 @@ pub const Timer = struct {
         );
     }
 
+    pub fn setImmediate(
+        globalThis: *JSGlobalObject,
+        callback: JSValue,
+        arguments: JSValue,
+    ) callconv(.C) JSValue {
+        JSC.markBinding(@src());
+        const id = globalThis.bunVM().timer.last_id;
+        globalThis.bunVM().timer.last_id +%= 1;
+
+        const interval: i32 = 0;
+
+        const wrappedCallback = callback.withAsyncContextIfNeeded(globalThis);
+
+        Timer.set(id, globalThis, wrappedCallback, interval, arguments, false) catch
+            return JSValue.jsUndefined();
+
+        return TimerObject.init(globalThis, id, .setTimeout, interval, wrappedCallback, arguments);
+    }
+
+    comptime {
+        if (!JSC.is_bindgen) {
+            @export(setImmediate, .{ .name = "Bun__Timer__setImmediate" });
+        }
+    }
+
     pub fn setTimeout(
         globalThis: *JSGlobalObject,
         callback: JSValue,
@@ -3705,7 +3730,8 @@ pub const Timer = struct {
 
         const interval: i32 = @max(
             countdown.coerce(i32, globalThis),
-            0,
+            // It must be 1 at minimum or setTimeout(cb, 0) will seemingly hang
+            1,
         );
 
         const wrappedCallback = callback.withAsyncContextIfNeeded(globalThis);

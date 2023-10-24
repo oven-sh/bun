@@ -81,10 +81,10 @@ it("setTimeout(() => {}, 0)", async () => {
   var ranFirst = -1;
   setTimeout(() => {
     if (ranFirst === -1) ranFirst = 1;
-  }, 1);
-  setTimeout(() => {
-    if (ranFirst === -1) ranFirst = 0;
   }, 0);
+  setImmediate(() => {
+    if (ranFirst === -1) ranFirst = 0;
+  });
 
   await new Promise((resolve, reject) => {
     setTimeout(() => {

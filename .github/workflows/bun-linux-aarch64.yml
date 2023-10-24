@@ -16,6 +16,7 @@ on:
     paths:
       - "src/**/*"
       - "test/**/*"
+      - "packages/bun-usockets/src/**/*"
       - "build.zig"
       - "Makefile"
       - "Dockerfile"

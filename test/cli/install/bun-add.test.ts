@@ -1125,7 +1125,7 @@ it("should not save git urls twice", async () => {
     }),
   );
   const { exited: exited1 } = spawn({
-    cmd: [bunExe(), "add", "https://github.com/liz3/bun-ui.git"],
+    cmd: [bunExe(), "add", "https://github.com/liz3/empty-bun-repo"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -1137,11 +1137,11 @@ it("should not save git urls twice", async () => {
 
   const package_json_content = await file(join(package_dir, "package.json")).json();
   expect(package_json_content.dependencies).toEqual({
-    "bun-ui": "https://github.com/liz3/bun-ui.git",
+    "test-repo": "https://github.com/liz3/empty-bun-repo",
   });
 
   const { exited: exited2 } = spawn({
-    cmd: [bunExe(), "add", "https://github.com/liz3/bun-ui.git"],
+    cmd: [bunExe(), "add", "https://github.com/liz3/empty-bun-repo"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -1153,7 +1153,7 @@ it("should not save git urls twice", async () => {
 
   const package_json_content2 = await file(join(package_dir, "package.json")).json();
   expect(package_json_content2.dependencies).toEqual({
-    "bun-ui": "https://github.com/liz3/bun-ui.git",
+    "test-repo": "https://github.com/liz3/empty-bun-repo",
   });
 }, 20000);
 

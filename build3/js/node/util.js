@@ -1,0 +1,250 @@
+(function (){"use strict";// build3/tmp/node/util.ts
+var isBuffer = function(value) {
+  return @Buffer.isBuffer(value);
+};
+var isFunction = function(value) {
+  return typeof value === "function";
+};
+var deprecate = function(fn, msg, code) {
+  if (process.noDeprecation === true) {
+    return fn;
+  }
+  var warned = false;
+  function deprecated() {
+    if (!warned) {
+      if (process.throwDeprecation) {
+        var err = new Error(msg);
+        if (code)
+          err.code = code;
+        throw err;
+      } else if (process.traceDeprecation) {
+        console.trace(msg);
+      } else {
+        console.error(msg);
+      }
+      warned = true;
+    }
+    return fn.@apply(this, arguments);
+  }
+  return deprecated;
+};
+var debuglog = function(set) {
+  set = set.toUpperCase();
+  if (!debugs[set]) {
+    if (debugEnvRegex.test(set)) {
+      var pid = process.pid;
+      debugs[set] = function() {
+        var msg = format.@apply(cjs_exports, arguments);
+        console.error("%s %d: %s", set, pid, msg);
+      };
+    } else {
+      debugs[set] = function() {
+      };
+    }
+  }
+  return debugs[set];
+};
+var isBoolean = function(arg) {
+  return typeof arg === "boolean";
+};
+var isNull = function(arg) {
+  return arg === null;
+};
+var isNullOrUndefined = function(arg) {
+  return arg == null;
+};
+var isNumber = function(arg) {
+  return typeof arg === "number";
+};
+var isString = function(arg) {
+  return typeof arg === "string";
+};
+var isSymbol = function(arg) {
+  return typeof arg === "symbol";
+};
+var isUndefined = function(arg) {
+  return arg === undefined;
+};
+var isObject = function(arg) {
+  return typeof arg === "object" && arg !== null;
+};
+var isPrimitive = function(arg) {
+  return arg === null || typeof arg === "boolean" || typeof arg === "number" || typeof arg === "string" || typeof arg === "symbol" || typeof arg === "undefined";
+};
+var pad = function(n) {
+  return n < 10 ? "0" + n.toString(10) : n.toString(10);
+};
+var timestamp = function() {
+  var d = new Date;
+  var time = [pad(d.getHours()), pad(d.getMinutes()), pad(d.getSeconds())].join(":");
+  return [d.getDate(), months[d.getMonth()], time].join(" ");
+};
+var callbackifyOnRejected = function(reason, cb) {
+  if (!reason) {
+    var newReason = new Error("Promise was rejected with a falsy value");
+    newReason.reason = reason;
+    newReason.code = "ERR_FALSY_VALUE_REJECTION";
+    reason = newReason;
+  }
+  return cb(reason);
+};
+var callbackify = function(original) {
+  if (typeof original !== "function") {
+    @throwTypeError('The "original" argument must be of type Function');
+  }
+  function callbackified() {
+    var args = @Array.prototype.slice.@call(arguments);
+    var maybeCb = args.pop();
+    if (typeof maybeCb !== "function") {
+      @throwTypeError("The last argument must be of type Function");
+    }
+    var self = this;
+    var cb = function() {
+      return maybeCb.@apply(self, arguments);
+    };
+    original.@apply(this, args).then(function(ret) {
+      process.nextTick(cb, null, ret);
+    }, function(rej) {
+      process.nextTick(callbackifyOnRejected, rej, cb);
+    });
+  }
+  Object.setPrototypeOf(callbackified, Object.getPrototypeOf(original));
+  Object.defineProperties(callbackified, getOwnPropertyDescriptors(original));
+  return callbackified;
+};
+var $;
+var types = @requireNativeModule("util/types");
+var utl = @getInternalField(@internalModuleRegistry, 7) || @createInternalModuleById(7);
+var cjs_exports = {};
+var deepEquals = Bun.deepEquals;
+var isDeepStrictEqual = (a, b) => deepEquals(a, b, true);
+var getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
+var inspect = utl.inspect;
+var formatWithOptions = utl.formatWithOptions;
+var format = utl.format;
+var stripVTControlCharacters = utl.stripVTControlCharacters;
+var debugs = {};
+var debugEnvRegex = /^$/;
+if (process.env.NODE_DEBUG) {
+  debugEnv = process.env.NODE_DEBUG;
+  debugEnv = debugEnv.replace(/[|\\{}()[\]^$+?.]/g, "\\$&").replace(/\*/g, ".*").replace(/,/g, "$|^").toUpperCase();
+  debugEnvRegex = new @RegExp("^" + debugEnv + "$", "i");
+}
+var debugEnv;
+var isRegExp = types.isRegExp;
+var isDate = types.isDate;
+var isError = types.isNativeError;
+var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+var log = function log2() {
+  console.log("%s - %s", timestamp(), format.@apply(cjs_exports, arguments));
+};
+var inherits = function inherits2(ctor, superCtor) {
+  ctor.super_ = superCtor;
+  ctor.prototype = Object.create(superCtor.prototype, {
+    constructor: {
+      value: ctor,
+      enumerable: false,
+      writable: true,
+      configurable: true
+    }
+  });
+};
+var _extend = function(origin, add) {
+  if (!add || !isObject(add))
+    return origin;
+  var keys = Object.keys(add);
+  var i = keys.length;
+  while (i--) {
+    origin[keys[i]] = add[keys[i]];
+  }
+  return origin;
+};
+var kCustomPromisifiedSymbol = Symbol.for("util.promisify.custom");
+var promisify = function promisify2(original) {
+  if (typeof original !== "function")
+    @throwTypeError('The "original" argument must be of type Function');
+  if (kCustomPromisifiedSymbol && original[kCustomPromisifiedSymbol]) {
+    var fn = original[kCustomPromisifiedSymbol];
+    if (typeof fn !== "function") {
+      @throwTypeError('The "util.promisify.custom" argument must be of type Function');
+    }
+    Object.defineProperty(fn, kCustomPromisifiedSymbol, {
+      value: fn,
+      enumerable: false,
+      writable: false,
+      configurable: true
+    });
+    return fn;
+  }
+  function fn() {
+    var promiseResolve, promiseReject;
+    var promise = new @Promise(function(resolve, reject) {
+      promiseResolve = resolve;
+      promiseReject = reject;
+    });
+    var args = [];
+    for (var i = 0;i < arguments.length; i++) {
+      args.push(arguments[i]);
+    }
+    args.push(function(err, value) {
+      if (err) {
+        promiseReject(err);
+      } else {
+        promiseResolve(value);
+      }
+    });
+    try {
+      original.@apply(this, args);
+    } catch (err) {
+      promiseReject(err);
+    }
+    return promise;
+  }
+  Object.setPrototypeOf(fn, Object.getPrototypeOf(original));
+  if (kCustomPromisifiedSymbol)
+    Object.defineProperty(fn, kCustomPromisifiedSymbol, {
+      value: fn,
+      enumerable: false,
+      writable: false,
+      configurable: true
+    });
+  return Object.defineProperties(fn, getOwnPropertyDescriptors(original));
+};
+promisify.custom = kCustomPromisifiedSymbol;
+var toUSVString = (input) => {
+  return (input + "").toWellFormed();
+};
+$ = Object.assign(cjs_exports, {
+  format,
+  formatWithOptions,
+  stripVTControlCharacters,
+  deprecate,
+  debuglog,
+  _extend,
+  inspect,
+  types,
+  isArray: @isArray,
+  isBoolean,
+  isNull,
+  isNullOrUndefined,
+  isNumber,
+  isString,
+  isSymbol,
+  isUndefined,
+  isRegExp,
+  isObject,
+  isDate,
+  isFunction,
+  isError,
+  isPrimitive,
+  isBuffer,
+  log,
+  inherits,
+  toUSVString,
+  promisify,
+  callbackify,
+  isDeepStrictEqual,
+  TextDecoder,
+  TextEncoder
+});
+return $})

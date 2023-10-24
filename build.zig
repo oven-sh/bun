@@ -244,15 +244,17 @@ pub fn build_(b: *Build) !void {
 
     var triplet = triplet_buf[0 .. osname.len + cpuArchName.len + 1];
 
-    if (b.option([]const u8, "output-dir", "target to install to") orelse b.env_map.get("OUTPUT_DIR")) |output_dir_| {
-        output_dir = try pathRel(b.allocator, b.install_prefix, output_dir_);
+    const outfile_maybe = b.option([]const u8, "output-file", "target to install to");
+
+    if (outfile_maybe) |outfile| {
+        output_dir = try pathRel(b.allocator, b.install_prefix, std.fs.path.dirname(outfile) orelse "");
     } else {
         const output_dir_base = try std.fmt.bufPrint(&output_dir_buf, "{s}{s}", .{ bin_label, triplet });
         output_dir = try pathRel(b.allocator, b.install_prefix, output_dir_base);
     }
 
     is_debug_build = optimize == OptimizeMode.Debug;
-    const bun_executable_name = if (optimize == std.builtin.OptimizeMode.Debug) "bun-debug" else "bun";
+    const bun_executable_name = if (outfile_maybe) |outfile| std.fs.path.basename(outfile[0 .. outfile.len - std.fs.path.extension(outfile).len]) else if (is_debug_build) "bun-debug" else "bun";
     const root_src = if (target.getOsTag() == std.Target.Os.Tag.freestanding)
         "root_wasm.zig"
     else

@@ -46,16 +46,26 @@ endif()
 set(LLVM_VERSION 16)
 macro(BUN_FIND_LLVM)
     find_program(
-        _LLVM_CLANG_PATH
-        NAMES clang++-${LLVM_VERSION} clang-${LLVM_VERSION} clang++ clang
+        _LLVM_CXX_PATH
+        NAMES clang++-${LLVM_VERSION} clang++
         PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
         DOC "Path to LLVM ${LLVM_VERSION}'s clang++ binary. Please pass -DLLVM_PREFIX with the path to LLVM"
     )
-    if(NOT _LLVM_CLANG_PATH)
+    if(NOT _LLVM_CXX_PATH)
         message(FATAL_ERROR "Could not find LLVM ${LLVM_VERSION}, search paths: ${PLATFORM_LLVM_SEARCH_PATHS}")
     endif()
-    set(CMAKE_CXX_COMPILER ${_LLVM_CLANG_PATH})
-    set(CMAKE_C_COMPILER ${_LLVM_CLANG_PATH})
+    set(CMAKE_CXX_COMPILER "${_LLVM_CXX_PATH}")
+    find_program(
+        _LLVM_C_PATH
+        NAMES clang-${LLVM_VERSION} clang
+        PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
+        DOC "Path to LLVM ${LLVM_VERSION}'s clang binary. Please pass -DLLVM_PREFIX with the path to LLVM"
+    )
+    if(NOT _LLVM_C_PATH)
+        message(FATAL_ERROR "Could not find LLVM ${LLVM_VERSION}, search paths: ${PLATFORM_LLVM_SEARCH_PATHS}")
+    endif()
+    set(CMAKE_C_COMPILER "${_LLVM_C_PATH}")
+
     find_program(
         STRIP
         NAMES llvm-strip
@@ -95,7 +105,10 @@ if(UNIX)
         endif()
     endif()
     if(CMAKE_CXX_COMPILER)
-        set(_LLVM_CLANG_PATH "${CMAKE_CXX_COMPILER}")
+        set(_LLVM_CXX_PATH "${CMAKE_CXX_COMPILER}")
+    endif()
+    if(CMAKE_C_COMPILER)
+        set(_LLVM_C_PATH "${CMAKE_C_COMPILER}")
     endif()
     BUN_FIND_LLVM()
 else()
@@ -115,7 +128,7 @@ if(UNIX)
     if((NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang") OR (NOT CMAKE_CXX_COMPILER_VERSION MATCHES "^${LLVM_VERSION}\."))
         # Attempt to auto-correct the compiler
         message(STATUS "Compiler mismatch, attempting to auto-correct")
-        unset(_LLVM_CLANG_PATH)
+        unset(_LLVM_CXX_PATH)
         BUN_FIND_LLVM()
         if((NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang") OR (NOT CMAKE_CXX_COMPILER_VERSION MATCHES "^${LLVM_VERSION}\."))
             message(WARNING "Expected LLVM ${LLVM_VERSION} as the C++ compiler, build may fail or break at runtime.")
@@ -181,9 +194,11 @@ if(NOT CPU_TARGET)
 endif()
 message(STATUS "Building for CPU Target: ${CPU_TARGET}")
 
-set(ZIG_TARGET "native")
-if(WIN32)
-    set(ZIG_TARGET "${ARCH}-windows-msvc")
+if(NOT ZIG_TARGET)
+    set(ZIG_TARGET "native")
+    if(WIN32)
+        set(ZIG_TARGET "${ARCH}-windows-msvc")
+    endif()
 endif()
 
 # set(CONFIGURE_DEPENDS "")
@@ -289,6 +304,8 @@ if(NOT WEBKIT_DIR)
     endif()
     set(WEBKIT_INCLUDE_DIR "${BUN_WORKDIR}/bun-webkit/include")
     set(WEBKIT_LIB_DIR "${BUN_WORKDIR}/bun-webkit/lib")
+elseif(WEBKIT_DIR STREQUAL "omit")
+    message(STATUS "Not using WebKit. This is only valid if you are only trying to build Zig code")
 else()
     # Setting WEBKIT_DIR means you either have a path to the WebKit repo, or you have a path to packaged webkit
     # Non-packaged webkit has CMakeLists.txt
@@ -360,6 +377,8 @@ set(BUN_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 set(BUN_DEPS_DIR "${BUN_SRC}/deps")
 set(BUN_CODEGEN_SRC "${BUN_SRC}/codegen")
 
+set(BUN_RAW_SOURCES, "")
+
 file(GLOB BUN_CPP ${CONFIGURE_DEPENDS}
     "${BUN_SRC}/deps/*.cpp"
     "${BUN_SRC}/io/*.cpp"
@@ -371,6 +390,7 @@ file(GLOB BUN_CPP ${CONFIGURE_DEPENDS}
     "${BUN_SRC}/bun.js/bindings/webcrypto/*/*.cpp"
     "${BUN_SRC}/deps/picohttpparser/picohttpparser.c"
 )
+list(APPEND BUN_RAW_SOURCES ${BUN_CPP})
 
 set(USOCKETS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/packages/bun-usockets/src")
 file(GLOB USOCKETS_FILES ${CONFIGURE_DEPENDS}
@@ -380,6 +400,7 @@ file(GLOB USOCKETS_FILES ${CONFIGURE_DEPENDS}
     "${USOCKETS_SRC}/crypto/*.c"
     "${USOCKETS_SRC}/crypto/*.cpp"
 )
+list(APPEND BUN_RAW_SOURCES ${USOCKETS_FILES})
 
 # --- Classes Generator ---
 file(GLOB BUN_CLASSES_TS ${CONFIGURE_DEPENDS}
@@ -404,6 +425,7 @@ add_custom_command(
     VERBATIM
     COMMENT "Generating *.classes.ts bindings"
 )
+list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.cpp")
 
 # --- JSSink Generator ---
 add_custom_command(
@@ -415,6 +437,7 @@ add_custom_command(
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Generating JSSink"
 )
+list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/JSSink.cpp")
 
 # --- .lut.h Generator ---
 set(BUN_OBJECT_LUT_SOURCES
@@ -512,6 +535,7 @@ add_custom_command(
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Bundling JS builtin functions"
 )
+list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp")
 
 # --- Peechy API ---
 add_custom_command(
@@ -548,56 +572,64 @@ file(GLOB ZIG_FILES
     "${BUN_SRC}/**/**/**/*.zig"
 )
 
-if(DEBUG)
-    set(BUN_ZIG_OBJ "${BUN_WORKDIR}/CMakeFiles/bun-debug.o")
-else()
-    set(BUN_ZIG_OBJ "${BUN_WORKDIR}/CMakeFiles/bun.o")
+if(NOT BUN_ZIG_OBJ)
+    set(BUN_ZIG_OBJ "${BUN_WORKDIR}/CMakeFiles/bun-zig.o")
+endif()
+get_filename_component(BUN_ZIG_OBJ "${BUN_ZIG_OBJ}" REALPATH BASE_DIR "${CMAKE_BINARY_DIR}")
+
+set(USES_TERMINAL_NOT_IN_CI "")
+if(NOT CI)
+    set(USES_TERMINAL_NOT_IN_CI "USES_TERMINAL")
 endif()
 
-add_custom_command(
-    OUTPUT "${BUN_ZIG_OBJ}"
-    COMMAND
-    "${ZIG_COMPILER}" "build" "obj"
-        "-Doutput-dir=${BUN_WORKDIR}/CMakeFiles"
-        "-Dgenerated-code=${BUN_WORKDIR}/codegen"
-        "-Dversion=${Bun_VERSION}"
-        "-Dcanary=$<IF:$<BOOL:${CANARY}>,true,false>"
-        "-Doptimize=${ZIG_OPTIMIZE}"
-        "-Dcpu=${CPU_TARGET}"
-        "-Dtarget=${ZIG_TARGET}"
-    DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/build.zig"
-        "${ZIG_FILES}"
-        "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.zig"
-        "${BUN_WORKDIR}/codegen/ResolvedSourceTag.zig"
-        "${BUN_IDENTIFIER_CACHE_OUT}"
-        "${BUN_SRC}/api/schema.zig"
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMENT "Building zig code"
-    VERBATIM
-    # This is here to show Zig's progress indicator
-    USES_TERMINAL
-)
+if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
+    add_custom_command(
+        OUTPUT "${BUN_ZIG_OBJ}"
+        COMMAND
+        "${ZIG_COMPILER}" "build" "obj"
+            "-Doutput-file=${BUN_ZIG_OBJ}"
+            "-Dgenerated-code=${BUN_WORKDIR}/codegen"
+            "-Dversion=${Bun_VERSION}"
+            "-Dcanary=$<IF:$<BOOL:${CANARY}>,true,false>"
+            "-Doptimize=${ZIG_OPTIMIZE}"
+            "-Dcpu=${CPU_TARGET}"
+            "-Dtarget=${ZIG_TARGET}"
+        DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/build.zig"
+            "${ZIG_FILES}"
+            "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.zig"
+            "${BUN_WORKDIR}/codegen/ResolvedSourceTag.zig"
+            "${BUN_IDENTIFIER_CACHE_OUT}"
+            "${BUN_SRC}/api/schema.zig"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMENT "Building zig code"
+        VERBATIM
+        # This is here to show Zig's progress indicator
+        ${USES_TERMINAL_NOT_IN_CI}
+    )
+endif()
 
-set(BUN_EXTRA_SOURCES "")
 if(WIN32)
-    set(BUN_EXTRA_SOURCES "${BUN_SRC}/bun.js/bindings/windows/musl-memmem.c")
+    list(APPEND BUN_RAW_SOURCES "${BUN_SRC}/bun.js/bindings/windows/musl-memmem.c")
     include_directories("${BUN_SRC}/bun.js/bindings/windows")
 endif()
 
+if (NOT BUN_CPP_ARCHIVE)
+    # TODO: unified sources
+    set(BUN_SOURCES ${BUN_RAW_SOURCES})
+else()
+    # used by ci
+    set(BUN_SOURCES "")
+    link_libraries(${BUN_CPP_ARCHIVE})
+endif()
+
 # -- The Buntime™️ ---
-add_executable(
-    ${bun}
-    
-    ${BUN_CPP}
-    ${USOCKETS_FILES}
-    ${BUN_ZIG_OBJ}
-    "${BUN_WORKDIR}/codegen/JSSink.cpp"
-    "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.cpp"
-    "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp"
-    "${BUN_ZIG_OBJ}"
-    "${BUN_EXTRA_SOURCES}"
-)
+if(NOT BUN_CPP_ONLY)
+    add_executable(${bun} "${BUN_SOURCES}" "${BUN_ZIG_OBJ}")
+else()
+    add_executable(${bun} "${BUN_SOURCES}")
+endif()
+
 set_target_properties(${bun} PROPERTIES
     CXX_STANDARD 20
     CXX_STANDARD_REQUIRED YES
@@ -607,6 +639,22 @@ set_target_properties(${bun} PROPERTIES
     C_STANDARD_REQUIRED YES
     VISIBILITY_INLINES_HIDDEN YES
 )
+
+if(NOT BUN_CPP_ARCHIVE)
+    string(REPLACE ";" ".o\n  " BUN_OBJECT_LIST "${BUN_SOURCES}.o")
+    string(REPLACE "${BUN_WORKDIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
+    string(REPLACE "${CMAKE_CURRENT_SOURCE_DIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
+
+    write_file("${BUN_WORKDIR}/compile-cpp-only.sh"
+        "#!/usr/bin/env bash\n"
+        "OBJ_LIST=(\n  ${BUN_OBJECT_LIST}\n)\n"
+        "ninja \${OBJ_LIST[@]}\n"
+        "llvm-ar rcvs bun-cpp-objects.a \${OBJ_LIST[@]}\n"
+        "echo '-> bun-cpp-objects.a'\n"
+    )
+else()
+    set_target_properties(${bun} PROPERTIES LINKER_LANGUAGE CXX)
+endif()
 
 # Set /subsystem:console on bun for windows
 if(WIN32)
@@ -685,6 +733,9 @@ if(NOT MSVC)
         -ferror-limit=${ERROR_LIMIT}
         -fPIC
         -fno-omit-frame-pointer
+    )
+    target_link_options(${bun} PUBLIC
+        -fuse-ld=lld
     )
     string(APPEND CMAKE_CXX_FLAGS " -std=c++2a ")
 else() # MSVC
@@ -770,6 +821,7 @@ if(WIN32)
     set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
 endif()
 
+# --- ICU ---
 if(APPLE)
     # TODO: a much better check can be done to find this path
     find_path(

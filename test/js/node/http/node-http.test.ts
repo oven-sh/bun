@@ -10,6 +10,8 @@ import {
   validateHeaderValue,
   ServerResponse,
 } from "node:http";
+
+import https from "node:https";
 import { createServer as createHttpsServer } from "node:https";
 import { createTest } from "node-harness";
 import url from "node:url";
@@ -1078,4 +1080,39 @@ describe("server.address should be valid IP", () => {
       }
     });
   });
+});
+
+it("should not accept untrusted certificates", async () => {
+  const server = https.createServer(
+    {
+      key: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "openssl.key")),
+      cert: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "openssl.crt")),
+      passphrase: "123123123",
+    },
+    (req, res) => {
+      res.write("Hello from https server");
+      res.end();
+    },
+  );
+  server.listen(0, "127.0.0.1");
+  const address = server.address();
+
+  try {
+    let url_address = address.address;
+    if (address.family === "IPv6") {
+      url_address = `[${url_address}]`;
+    }
+    const res = await fetch(`https://${url_address}:${address.port}`, {
+      tls: {
+        rejectUnauthorized: true,
+      },
+    });
+    await res.text();
+    expect(true).toBe("unreacheable");
+  } catch (err) {
+    expect(err.code).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+    expect(err.message).toBe("unable to verify the first certificate");
+  }
+
+  server.close();
 });

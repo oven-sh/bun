@@ -1,3 +1,5 @@
+import { isIP } from "node:net";
+
 // Hardcoded module "node:http"
 const EventEmitter = require("node:events");
 const { isTypedArray } = require("node:util/types");
@@ -446,8 +448,21 @@ class Server extends EventEmitter {
   }
 
   address() {
-    if (!this.#server) return null;
-    return this.#server.address;
+    const address = this.#server?.address;
+    const port = this.#server?.port;
+    const family = isIP(address);
+    if (family) {
+      return {
+        address,
+        family: family === 4 ? "IPv4" : "IPv6",
+        port,
+      };
+    }
+
+    return {
+      address,
+      port,
+    };
   }
 
   listen(port, host, backlog, onListen) {

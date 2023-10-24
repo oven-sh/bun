@@ -454,13 +454,15 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
                 const active = ActiveSocket.from(bun.cast(**anyopaque, ptr).*);
                 if (active.get(HTTPClient)) |client| {
+                    if (handshake_error.error_no != 0 and (client.reject_unauthorized or !authorized)) {
+                        client.closeAndFail(BoringSSL.getCertErrorFromNo(handshake_error.error_no), comptime ssl, socket);
+                        return;
+                    }
+                    // no handshake_error at this point
                     if (authorized) {
-                        // we only call onCertError if error is not 0
-                        if (handshake_error.error_no != 0) {
-                            // if onCertError returns false, we dont call open this means that the connection was rejected
-                            if (!client.onCertError(comptime ssl, socket, handshake_error)) {
-                                return;
-                            }
+                        // if checkServerIdentity returns false, we dont call open this means that the connection was rejected
+                        if (!client.checkServerIdentity(comptime ssl, socket, handshake_error)) {
+                            return;
                         }
                         return client.firstCall(comptime ssl, socket);
                     } else {
@@ -890,14 +892,14 @@ fn ip2String(ip: *BoringSSL.ASN1_OCTET_STRING, outIP: *[INET6_ADDRSTRLEN + 1]u8)
     return outIP[0..size];
 }
 
-pub fn onCertError(
+pub fn checkServerIdentity(
     client: *HTTPClient,
     comptime is_ssl: bool,
     socket: NewHTTPContext(is_ssl).HTTPSocket,
     certError: HTTPCertError,
 ) bool {
     if (comptime is_ssl == false) {
-        @panic("onCertError called on non-ssl socket");
+        @panic("checkServerIdentity called on non-ssl socket");
     }
     if (client.reject_unauthorized) {
         const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(socket.getNativeHandle()));

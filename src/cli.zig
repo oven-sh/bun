@@ -162,6 +162,8 @@ pub const Arguments = struct {
         clap.parseParam("-i                                Auto-install dependencies during execution. Equivalent to --install=fallback.") catch unreachable,
         clap.parseParam("--prefer-offline                  Skip staleness checks for packages in the Bun runtime and resolve from disk") catch unreachable,
         clap.parseParam("--prefer-latest                   Use the latest matching versions of packages in the Bun runtime, always checking npm") catch unreachable,
+        clap.parseParam("-u, --origin <STR>") catch unreachable,
+        clap.parseParam("-p, --port <STR>") catch unreachable,
     };
 
     const auto_only_params = [_]ParamType{
@@ -495,6 +497,7 @@ pub const Arguments = struct {
 
         ctx.passthrough = args.remaining();
 
+        // runtime commands
         if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .TestCommand) {
             const preloads = args.options("--preload");
 
@@ -503,6 +506,14 @@ pub const Arguments = struct {
             } else if (args.flag("--watch")) {
                 ctx.debug.hot_reload = .watch;
                 bun.auto_reload_on_crash = true;
+            }
+
+            if (args.option("--origin")) |origin| {
+                opts.origin = origin;
+            }
+
+            if (args.option("--port")) |port_str| {
+                opts.port = std.fmt.parseInt(u16, port_str, 10) catch return error.InvalidPort;
             }
 
             ctx.debug.offline_mode_setting = if (args.flag("--prefer-offline"))
@@ -1074,15 +1085,18 @@ pub const Command = struct {
 
     pub fn which() Tag {
         var args_iter = ArgsIterator{ .buf = bun.argv() };
-        // first one is the executable name
 
         const argv0 = args_iter.next() orelse return .HelpCommand;
+        // first one is the executable name
+        std.debug.print("argv[0]: {s}", .{std.mem.span(bun.argv()[0])});
+        std.debug.print("argv0: {s}", .{argv0});
 
         // symlink is argv[0]
         if (strings.endsWithComptime(argv0, "bunx"))
             return .BunxCommand;
 
         if (strings.endsWithComptime(std.mem.span(bun.argv()[0]), "node")) {
+            std.debug.print("", .{});
             @import("./deps/zig-clap/clap/streaming.zig").warn_on_unrecognized_flag = false;
         }
 

@@ -986,18 +986,21 @@ pub fn checkServerIdentity(
                                             if (name.name_type == .GEN_DNS) {
                                                 const dnsName = name.d.dNSName;
                                                 var dnsNameSlice = dnsName.data[0..@as(usize, @intCast(dnsName.length))];
-                                                if (X509.isSafeAltName(dnsNameSlice, false)) {
-                                                    if (dnsNameSlice[0] == '*') {
-                                                        dnsNameSlice = dnsNameSlice[1..dnsNameSlice.len];
-                                                        if (hostname.len > dnsNameSlice.len) {
-                                                            hostname = hostname[hostname.len - dnsNameSlice.len .. hostname.len];
+                                                // ignore empty dns names (should never happen)
+                                                if (dnsNameSlice.len > 0) {
+                                                    if (X509.isSafeAltName(dnsNameSlice, false)) {
+                                                        if (dnsNameSlice[0] == '*') {
+                                                            dnsNameSlice = dnsNameSlice[1..dnsNameSlice.len];
+                                                            if (hostname.len > dnsNameSlice.len) {
+                                                                hostname = hostname[hostname.len - dnsNameSlice.len .. hostname.len];
+                                                            }
+                                                            if (strings.eql(dnsNameSlice, hostname)) {
+                                                                return true;
+                                                            }
                                                         }
                                                         if (strings.eql(dnsNameSlice, hostname)) {
                                                             return true;
                                                         }
-                                                    }
-                                                    if (strings.eql(dnsNameSlice, hostname)) {
-                                                        return true;
                                                     }
                                                 }
                                             }

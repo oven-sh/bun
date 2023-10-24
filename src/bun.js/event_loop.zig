@@ -1053,7 +1053,7 @@ pub const EventLoop = struct {
             this.immediate_tasks.write(this.next_immediate_tasks.readableSlice(0)) catch unreachable;
             this.next_immediate_tasks.head = 0;
             this.next_immediate_tasks.count = 0;
-        } else {
+        } else if (this.next_immediate_tasks.count > 0) {
             var prev_immediate = this.immediate_tasks;
             var next_immediate = this.next_immediate_tasks;
             this.immediate_tasks = next_immediate;

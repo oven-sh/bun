@@ -607,3 +607,18 @@ it("#5872", () => {
   const result = query.all({ $greeting: "sup" });
   expect(result).toEqual([]);
 });
+
+it("issue#6597", () => {
+  const db = new Database(":memory:");
+  db.run("CREATE TABLE Users (Id INTEGER PRIMARY KEY, Name VARCHAR(255));");
+  db.run("CREATE TABLE Cars (Id INTEGER PRIMARY KEY, Driver INTEGER, FOREIGN KEY (Driver) REFERENCES Users(Id))");
+  db.run('INSERT INTO Users (Id, Name) VALUES (1, "Alice");');
+  db.run("INSERT INTO Cars (Id, Driver) VALUES (1,1);");
+  const result = db.query("SELECT * FROM Cars JOIN Users ON Driver=Users.Id").get();
+  expect(result).toEqual({
+    Id: 1,
+    Driver: 1,
+    Name: "Alice",
+  });
+  db.close();
+});

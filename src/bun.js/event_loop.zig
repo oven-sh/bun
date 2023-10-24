@@ -623,6 +623,7 @@ pub const EventLoop = struct {
             this.virtual_machine.event_loop_handle.?.tick();
         }
     }
+
     extern fn JSC__JSGlobalObject__drainMicrotasks(*JSC.JSGlobalObject) void;
     fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *JSC.JSGlobalObject) void {
         JSC.markBinding(@src());
@@ -632,12 +633,6 @@ pub const EventLoop = struct {
 
     pub fn drainMicrotasks(this: *EventLoop) void {
         this.drainMicrotasksWithGlobal(this.global);
-    }
-
-    pub fn ensureAliveForOneTick(this: *EventLoop) void {
-        if (this.noop_task.scheduled) return;
-        this.enqueueTask(Task.init(&this.noop_task));
-        this.noop_task.scheduled = true;
     }
 
     pub fn registerDeferredTask(this: *EventLoop, ctx: ?*anyopaque, task: DeferredRepeatingTask) bool {
@@ -900,11 +895,8 @@ pub const EventLoop = struct {
                     var any: *Unlink = task.get(Unlink).?;
                     any.runFromJSThread();
                 },
-                else => if (Environment.allow_assert) {
-                    bun.Output.prettyln("\nUnexpected tag: {s}\n", .{@tagName(task.tag())});
-                } else {
-                    log("\nUnexpected tag: {s}\n", .{@tagName(task.tag())});
-                    unreachable;
+                else => {
+                    std.debug.panic("Unexpected event loop task: {s}\n", .{@tagName(task.tag())});
                 },
             }
 
@@ -989,12 +981,9 @@ pub const EventLoop = struct {
         }
 
         if (loop.isActive()) {
-            loop.tick();
             this.processGCTimer();
             loop.tick();
-
             ctx.onAfterEventLoop();
-            // this.afterUSocketsTick();
         }
     }
 
@@ -1020,7 +1009,6 @@ pub const EventLoop = struct {
             loop.tickWithTimeout(timeoutMs);
             this.processGCTimer();
             ctx.onAfterEventLoop();
-            // this.afterUSocketsTick();
         }
     }
 
@@ -1057,6 +1045,7 @@ pub const EventLoop = struct {
 
     fn noopForeverTimer(_: *uws.Timer) callconv(.C) void {
         // do nothing
+        std.debug.print("noopForeverTimer\n", .{});
     }
 
     pub fn autoTickActive(this: *EventLoop) void {
@@ -1074,9 +1063,7 @@ pub const EventLoop = struct {
         if (loop.isActive()) {
             loop.tick();
             this.processGCTimer();
-            loop.tick();
             ctx.onAfterEventLoop();
-            // this.afterUSocketsTick();
         }
     }
 
@@ -1092,8 +1079,8 @@ pub const EventLoop = struct {
 
         this.processGCTimer();
 
-        var global = ctx.global;
-        var global_vm = ctx.jsc;
+        const global = ctx.global;
+        const global_vm = ctx.jsc;
         while (true) {
             while (this.tickWithCount() > 0) : (this.global.handleRejectedPromises()) {
                 this.tickConcurrent();

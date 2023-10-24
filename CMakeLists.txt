@@ -99,7 +99,7 @@ if(UNIX)
     if(LLVM_PREFIX)
         set(PLATFORM_LLVM_SEARCH_PATHS ${LLVM_PREFIX}/bin)
     else()
-        set(PLATFORM_LLVM_SEARCH_PATHS /usr/lib/llvm-${LLVM_VERSION}/bin /lib/llvm-${LLVM_VERSION}/bin /usr/bin /usr/local/bin)
+        set(PLATFORM_LLVM_SEARCH_PATHS /usr/lib/llvm-${LLVM_VERSION}/bin /usr/lib/llvm${LLVM_VERSION}/bin /usr/bin /usr/local/bin)
         if(APPLE)
             set(PLATFORM_LLVM_SEARCH_PATHS /opt/homebrew/opt/llvm@${LLVM_VERSION}/bin /opt/homebrew/bin ${PLATFORM_LLVM_SEARCH_PATHS})
         endif()
@@ -508,6 +508,8 @@ file(GLOB BUN_TS_MODULES ${CONFIGURE_DEPENDS}
 )
 file(GLOB BUN_TS_FUNCTIONS ${CONFIGURE_DEPENDS} "${BUN_SRC}/js/builtins/*.ts")
 
+file(GLOB CODEGEN_FILES ${CONFIGURE_DEPENDS} "${BUN_CODEGEN_SRC}/*.ts")
+
 add_custom_command(
     OUTPUT 
            "${BUN_WORKDIR}/codegen/InternalModuleRegistryConstants.h"
@@ -518,7 +520,7 @@ add_custom_command(
            "${BUN_WORKDIR}/codegen/ResolvedSourceTag.zig"
            "${BUN_WORKDIR}/codegen/SyntheticModuleType.h"
     COMMAND ${BUN_EXECUTABLE} "${BUN_SRC}/codegen/bundle-modules.ts" "${BUN_WORKDIR}"
-    DEPENDS ${BUN_TS_MODULES}
+    DEPENDS ${BUN_TS_MODULES} ${CODEGEN_FILES}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Bundling JS modules"
 )
@@ -531,7 +533,7 @@ add_custom_command(
     OUTPUT "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp"
            "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.h"
     COMMAND ${BUN_EXECUTABLE} "${BUN_SRC}/codegen/bundle-functions.ts" "${BUN_WORKDIR}"
-    DEPENDS ${BUN_TS_FUNCTIONS} "${BUN_SRC}/codegen/bundle-functions.ts"
+    DEPENDS ${BUN_TS_FUNCTIONS} ${CODEGEN_FILES}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Bundling JS builtin functions"
 )

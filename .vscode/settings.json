@@ -10,40 +10,33 @@
   "zig.formattingProvider": "zls",
   "zig.buildOption": "build",
   "zig.buildFilePath": "${workspaceFolder}/build.zig",
+  "zig.initialSetupDone": true,
+  "editor.formatOnSave": true,
   "[zig]": {
     "editor.tabSize": 4,
     "editor.useTabStops": false,
-    "editor.defaultFormatter": "ziglang.vscode-zig",
-    "editor.formatOnSave": true
+    "editor.defaultFormatter": "ziglang.vscode-zig"
   },
   "[ts]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode",
-    "editor.formatOnSave": true
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
   "[js]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode",
-    "editor.formatOnSave": true
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
   "zig.zls.enableInlayHints": false,
-  "zig.zls.enabled": true,
   "git.ignoreSubmodules": true,
   "[jsx]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode",
-    "editor.formatOnSave": true
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
   "[tsx]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode",
-    "editor.formatOnSave": true
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
-  "[yaml]": {
-    "editor.formatOnSave": true
-  },
+  "[yaml]": {},
   "[markdown]": {
     "editor.unicodeHighlight.ambiguousCharacters": false,
     "editor.unicodeHighlight.invisibleCharacters": false,
     "diffEditor.ignoreTrimWhitespace": false,
     "editor.defaultFormatter": "esbenp.prettier-vscode",
-    "editor.formatOnSave": true,
     "editor.wordWrap": "on",
     "editor.quickSuggestions": {
       "comments": "off",
@@ -63,25 +56,18 @@
     "**/*.xcscheme": true,
     "**/*.pem": true,
     "**/*.xcodeproj": true,
-    "test/snapshots": true,
-    "test/snapshots-no-hmr": true,
     "src/bun.js/WebKit": true,
-    // "src/deps/libarchive": true,
-    // "src/deps/mimalloc": true,
-    // "src/deps/s2n-tls": true,
-    // "src/deps/boringssl": true,
-    // "src/deps/openssl": true,
-    // "src/deps/uws": true,
-    // "src/deps/zlib": true,
-    // "src/deps/lol-html": true,
-    // "src/deps/c-ares": true,
-    // "src/deps/tinycc": true,
-    // "src/deps/zstd": true,
-    "test/snippets/package-json-exports/_node_modules_copy": true,
-    "src/js/out": true,
-    "packages/bun-uws/fuzzing/seed-corpus/": true,
-    "**/*.dep": true
-    // "**/CMakeFiles": true
+    "src/deps/libarchive": true,
+    "src/deps/mimalloc": true,
+    "src/deps/s2n-tls": true,
+    "src/deps/boringssl": true,
+    "src/deps/openssl": true,
+    "src/deps/uws": true,
+    "src/deps/zlib": true,
+    "src/deps/lol-html": true,
+    "src/deps/c-ares": true,
+    "src/deps/tinycc": true,
+    "src/deps/zstd": true
   },
   "C_Cpp.files.exclude": {
     "**/.vscode": true,
@@ -190,20 +176,12 @@
     "set": "cpp",
     "__memory": "cpp",
     "memory_resource": "cpp",
-    "resource.h": "c",
-    "sysinfo.h": "c",
     "*.tcc": "cpp",
     "list": "cpp",
     "shared_mutex": "cpp",
     "cinttypes": "cpp",
     "variant": "cpp",
     "sysctl.h": "c",
-    "interface_adresses.h": "c",
-    "interface_addresses.h": "c",
-    "ctype.h": "c",
-    "ethernet.h": "c",
-    "inet.h": "c",
-    "packet.h": "c",
     "queue": "cpp",
     "compare": "cpp",
     "concepts": "cpp",
@@ -220,8 +198,6 @@
     "span": "cpp",
     "valarray": "cpp",
     "codecvt": "cpp",
-    "types.h": "c",
-    "bsd.h": "c",
     "xtr1common": "cpp",
     "stop_token": "cpp",
     "xfacet": "cpp",
@@ -237,15 +213,9 @@
     "xmemory": "cpp",
     "xstring": "cpp",
     "xtree": "cpp",
-    "xutility": "cpp",
-    "string.h": "c",
-    "zutil.h": "c",
-    "gzguts.h": "c",
-    "stdatomic.h": "c",
-    "root_certs.h": "c"
+    "xutility": "cpp"
   },
   "C_Cpp.errorSquiggles": "enabled",
   "eslint.workingDirectories": ["packages/bun-types"],
-  "typescript.tsdk": "node_modules/typescript/lib",
-  "zig.initialSetupDone": true
+  "typescript.tsdk": "node_modules/typescript/lib"
 }

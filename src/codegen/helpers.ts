@@ -23,10 +23,8 @@ export function fmtCPPString(str: string, nullTerminated: boolean = true) {
 
 export function declareASCIILiteral(name: string, value: string) {
   const [chars, count] = fmtCPPString(value);
-  return `
-static constexpr const char ${name}Bytes[${count}] = ${chars};
-static constexpr ASCIILiteral ${name} = ASCIILiteral::fromLiteralUnsafe(${name}Bytes);
-  `;
+  return `static constexpr const char ${name}Bytes[${count}] = ${chars};
+static constexpr ASCIILiteral ${name} = ASCIILiteral::fromLiteralUnsafe(${name}Bytes);`;
 }
 
 export function cap(str: string) {

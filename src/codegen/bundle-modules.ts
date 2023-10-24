@@ -11,6 +11,7 @@ import { createInternalModuleRegistry } from "./internal-module-registry-scanner
 
 const BASE = path.join(import.meta.dir, "../js");
 const CMAKE_BUILD_ROOT = process.argv[2];
+const debug = true;
 
 if (!CMAKE_BUILD_ROOT) {
   console.error("Usage: bun bundle-modules.ts <CMAKE_WORK_DIR>");
@@ -110,7 +111,7 @@ $$EXPORT$$(__intrinsic__exports).$$EXPORT_END$$;
 
 mark("Preprocess modules");
 
-const config = ({ platform, debug }: { platform: string; debug?: boolean }) =>
+const config = ({ debug }: { debug?: boolean }) =>
   ({
     entrypoints: bundledEntryPoints,
     // Whitespace and identifiers are not minified to give better error messages when an error happens in our builtins
@@ -122,14 +123,11 @@ const config = ({ platform, debug }: { platform: string; debug?: boolean }) =>
       ...define,
       IS_BUN_DEVELOPMENT: String(!!debug),
       __intrinsic__debug: debug ? "$debug_log_enabled" : "false",
-      "process.platform": JSON.stringify(platform),
     },
   } satisfies BuildConfig);
-const bundle = await Bun.build(config({ platform: process.platform, debug: true }));
-const bundled_linux = await Bun.build(config({ platform: "linux" }));
-const bundled_darwin = await Bun.build(config({ platform: "darwin" }));
-const bundled_win32 = await Bun.build(config({ platform: "win32" }));
-for (const bundled of [bundle, bundled_linux, bundled_darwin, bundled_win32]) {
+
+const bundle = await Bun.build(config({ debug }));
+for (const bundled of [bundle]) {
   if (!bundled.success) {
     console.error(bundled.logs);
     process.exit(1);
@@ -264,25 +262,32 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
 //
 // We cannot use ASCIILiteral's `_s` operator for the module source code because for long
 // strings it fails a constexpr assert. Instead, we do that assert in JS before we format the string
-writeIfNotChanged(
-  path.join(CODEGEN_DIR, "InternalModuleRegistryConstants.h"),
-  `// clang-format off
+if (!debug) {
+  writeIfNotChanged(
+    path.join(CODEGEN_DIR, "InternalModuleRegistryConstants.h"),
+    `// clang-format off
 #pragma once
 
 namespace Bun {
 namespace InternalModuleRegistryConstants {
-  ${moduleList
-    .map(
-      (id, n) =>
-        `//
-${declareASCIILiteral(`${idToEnumName(id)}Code`, outputs.get(id.slice(0, -3)))}
-//
-`,
-    )
-    .join("\n")}
+  ${moduleList.map((id, n) => declareASCIILiteral(`${idToEnumName(id)}Code`, outputs.get(id.slice(0, -3)))).join("\n")}
 }
 }`,
-);
+  );
+} else {
+  // In debug builds, we write empty strings to prevent recompilation. These are loaded from disk instead.
+  writeIfNotChanged(
+    path.join(CODEGEN_DIR, "InternalModuleRegistryConstants.h"),
+    `// clang-format off
+#pragma once
+
+namespace Bun {
+namespace InternalModuleRegistryConstants {
+  ${moduleList.map((id, n) => `${declareASCIILiteral(`${idToEnumName(id)}Code`, "")}`).join("\n")}
+}
+}`,
+  );
+}
 
 // This is a generated enum for zig code (exports.zig)
 writeIfNotChanged(

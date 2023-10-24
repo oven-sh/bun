@@ -89,7 +89,6 @@ test("sending 50 messages should just work", done => {
 
   worker.postMessage("initial message");
   worker.addEventListener("message", ({ data }) => {
-    console.log({ host: data });
     if (data.done) {
       worker.terminate();
       done();

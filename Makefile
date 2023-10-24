@@ -1911,44 +1911,17 @@ bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release
 static-hash-table:
 	bun src/js/_codegen/static-hash-tables.ts
 
-.PHONY: cpp
-cpp: ## compile src/js/builtins + all c++ code then link
-	@make clean-bindings js
-	@make static-hash-table
-	@make bindings -j$(CPU_COUNT)
-	@make link
+cpp:
+	echo makefile is deprecated - use `cmake` / `bun run build`
 
-.PHONY: cpp
-cpp-no-link:
-	@make clean-bindings js
-	@make bindings -j$(CPU_COUNT)
+zig:
+	echo makefile is deprecated - use `cmake` / `bun run build`
 
-.PHONY: zig
-zig: ## compile zig code then link
-	@make mkdir-dev dev-obj link
+dev:
+	echo makefile is deprecated - use `cmake` / `bun run build`
 
-.PHONY: zig-no-link
-zig-no-link:
-	@make mkdir-dev dev-obj
+setup:
+	echo makefile is deprecated - use `cmake` / `bun run build`
 
-.PHONY: dev
-dev: # combo of `make cpp` and `make zig`
-	@make cpp-no-link zig-no-link -j2
-	@make link
-
-.PHONY: setup
-setup: vendor-dev identifier-cache clean-bindings
-	make jsc-check dev
-	@echo ""
-	@echo "First build complete!"
-	@echo "\"bun-debug\" is available at $(DEBUG_BIN)/bun-debug"
-	@echo ""
-
-.PHONY: help
-help: ## to print this help
-	@echo "For detailed build instructions, see https://bun.sh/docs/project/contributing"
-	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {gsub("\\\\n",sprintf("\n%22c",""), $$2);printf "\033[36m%-20s\033[0m \t\t%s\n", $$1, $$2}' $(MAKEFILE_LIST)
-
-
-print_linker_flags:
-	@echo $(CLANG_FLAGS)
+help:
+	echo makefile is deprecated - use `cmake` / `bun run build`

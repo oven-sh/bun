@@ -73,7 +73,6 @@ JSValue initializeInternalModuleFromDisk(
     VM& vm,
     WTF::String moduleName,
     WTF::String fileBase,
-    WTF::String fallback,
     WTF::String urlString)
 {
     WTF::String file = makeString(BUN_DYNAMIC_JS_LOAD_PATH, "/"_s, fileBase);
@@ -81,15 +80,14 @@ JSValue initializeInternalModuleFromDisk(
         auto string = WTF::String::fromUTF8(contents.value());
         INTERNAL_MODULE_REGISTRY_GENERATE_(globalObject, vm, string, moduleName, urlString);
     } else {
-        printf("bun-debug failed to load bundled version of \"%s\" at \"%s\" (was it deleted?)\n"
-               "Please run `make js` to rebundle these builtins.\n",
+        printf("\nFATAL: bun-debug failed to load bundled version of \"%s\" at \"%s\" (was it deleted?)\n"
+               "Please re-compile Bun to continue.\n\n",
             moduleName.utf8().data(), file.utf8().data());
-        // Fallback to embedded source
-        INTERNAL_MODULE_REGISTRY_GENERATE_(globalObject, vm, fallback, moduleName, urlString);
+        CRASH();
     }
 }
 #define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, SOURCE, urlString) \
-    return initializeInternalModuleFromDisk(globalObject, vm, moduleId, filename, SOURCE, urlString)
+    return initializeInternalModuleFromDisk(globalObject, vm, moduleId, filename, urlString)
 #else
 
 #define ASSERT_INTERNAL_MODULE(result, moduleName) \

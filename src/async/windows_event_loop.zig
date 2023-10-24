@@ -74,6 +74,8 @@ pub const KeepAlive = struct {
         if (this.status != .active)
             return;
         this.status = .inactive;
+
+        // TODO: https://github.com/oven-sh/bun/pull/4410#discussion_r1317326194
         this.handle.unref();
     }
 
@@ -92,6 +94,7 @@ pub const KeepAlive = struct {
         if (this.status != .active)
             return;
         this.status = .inactive;
+        // TODO: https://github.com/oven-sh/bun/pull/4410#discussion_r1317326194
         this.handle.unref();
     }
 
@@ -109,6 +112,7 @@ pub const KeepAlive = struct {
         if (this.status != .inactive)
             return;
         this.status = .active;
+        // TODO: https://github.com/oven-sh/bun/pull/4410#discussion_r1317326194
         this.handle.init(vm.event_loop_handle.?, null);
         this.handle.ref();
     }

@@ -153,3 +153,5 @@ x64
 **/*.sln*
 **/*.dir
 **/*.pdb
+
+.webkit-cache

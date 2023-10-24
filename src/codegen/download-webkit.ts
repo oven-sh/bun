@@ -27,8 +27,10 @@ if (!PKG) {
 fs.mkdirSync(OUTDIR, { recursive: true });
 
 const url = `https://github.com/oven-sh/WebKit/releases/download/autobuild-${TAG}/${PKG}.tar.gz`;
-const PKG_NONAME = PKG.replace(/^bun-webkit-/, "");
-const tar = path.join(OUTDIR, `./${TAG}-${PKG_NONAME}.tar.gz`);
+const tar_dir = path.join(import.meta.dir, "../../.webkit-cache");
+const tar = path.join(tar_dir, `./${PKG}-${TAG}.tar.gz`);
+
+fs.mkdirSync(tar_dir, { recursive: true });
 
 try {
   if (fs.existsSync(OUTDIR + "/package.json")) {
@@ -39,10 +41,7 @@ try {
   }
 } catch {}
 
-fs.rmSync(OUTDIR + "/package.json", { force: true, recursive: true });
-fs.rmSync(OUTDIR + "/lib", { force: true, recursive: true });
-fs.rmSync(OUTDIR + "/include", { force: true, recursive: true });
-fs.rmSync(OUTDIR + "/Source", { force: true, recursive: true });
+fs.rmSync(OUTDIR, { force: true, recursive: true });
 
 if (!fs.existsSync(tar)) {
   console.log(`-- Downloading WebKit`);

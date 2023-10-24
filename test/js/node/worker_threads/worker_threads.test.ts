@@ -138,7 +138,7 @@ test("receiveMessageOnPort works across threads", async () => {
   let sharedBufferView = new Int32Array(sharedBuffer);
   let msg = { sharedBuffer };
   worker.postMessage(msg);
-  Atomics.wait(sharedBufferView, 0, 0);
+  expect(Atomics.wait(sharedBufferView, 0, 0)).toBe("ok");
   const message = receiveMessageOnPort(port1);
   expect(message).toBeDefined();
   expect(message!.message).toBe("done!");

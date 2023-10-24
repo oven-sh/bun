@@ -612,6 +612,8 @@ namespace uWS
                     break;
                 }
             }
+            if(consumedTotal == 0)
+                return {0, FULLPTR};
             return {consumedTotal, user};
         }
 

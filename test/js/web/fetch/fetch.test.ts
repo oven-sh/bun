@@ -598,6 +598,19 @@ describe("fetch", () => {
 
     server.stop();
   });
+  it("handle invalid protocol(#6583)", async () => {
+    const server = await Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response("Pass!");
+      },
+    });
+    const request = () => {
+      return fetch(`https://${server.hostname}:${server.port}/`);
+    };
+    expect(request).toThrow();
+    server.stop(true);
+  }, 2000);
 });
 
 it("simultaneous HTTPS fetch", async () => {

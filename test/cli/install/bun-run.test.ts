@@ -242,7 +242,6 @@ console.log(minify("print(6 * 7)").code);
 });
 
 it("should download dependencies to run local file", async () => {
-  console.log(run_dir);
   await writeFile(
     join(run_dir, "test.js"),
     `
@@ -255,7 +254,6 @@ for (const entry of await decompress(Buffer.from(buffer))) {
 }
   `,
   );
-  process.exit(1);
   const {
     stdout: stdout1,
     stderr: stderr1,

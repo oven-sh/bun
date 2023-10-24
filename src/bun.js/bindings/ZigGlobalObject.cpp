@@ -2206,7 +2206,8 @@ static inline EncodedJSValue functionPerformanceNowBody(JSGlobalObject* globalOb
     return JSValue::encode(jsDoubleNumber(result));
 }
 
-static inline EncodedJSValue functionPerformanceGetEntriesByNameBody(JSGlobalObject* globalObject) {
+static inline EncodedJSValue functionPerformanceGetEntriesByNameBody(JSGlobalObject* globalObject)
+{
     auto& vm = globalObject->vm();
     auto* global = reinterpret_cast<GlobalObject*>(globalObject);
     auto* array = JSC::constructEmptyArray(globalObject, nullptr);
@@ -2295,7 +2296,6 @@ JSC_DEFINE_HOST_FUNCTION(functionPerformanceNow, (JSGlobalObject * globalObject,
 {
     return functionPerformanceNowBody(globalObject);
 }
-
 
 JSC_DEFINE_HOST_FUNCTION(functionPerformanceGetEntriesByName, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -3437,8 +3437,7 @@ JSC_DEFINE_CUSTOM_GETTER(BunCommonJSModule_getter, (JSGlobalObject * globalObjec
     }
     return JSValue::encode(returnValue);
 }
-// This implementation works the same as setTimeout(myFunction, 0)
-// TODO: make it more efficient
+
 extern "C" JSC__JSValue Bun__Timer__setImmediate(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue JSValue3);
 // https://developer.mozilla.org/en-US/docs/Web/API/Window/setImmediate
 JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,

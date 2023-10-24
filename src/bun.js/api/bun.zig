@@ -3630,7 +3630,6 @@ pub const Timer = struct {
         var map = vm.timer.maps.get(kind);
 
         // setImmediate(foo)
-        // setTimeout(foo, 0)
         if (kind == .setTimeout and interval == 0) {
             var cb: CallbackJob = .{
                 .callback = JSC.Strong.create(callback, globalThis),
@@ -3651,7 +3650,7 @@ pub const Timer = struct {
             job.task = CallbackJob.Task.init(job);
             job.ref.ref(vm);
 
-            vm.enqueueTask(JSC.Task.init(&job.task));
+            vm.enqueueImmediateTask(JSC.Task.init(&job.task));
             if (vm.isInspectorEnabled()) {
                 Debugger.didScheduleAsyncCall(globalThis, .DOMTimer, Timeout.ID.asyncID(.{ .id = id, .kind = kind }), !repeat);
             }

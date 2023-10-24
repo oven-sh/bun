@@ -30,8 +30,6 @@ const SOCK = os.SOCK;
 const Arena = @import("./mimalloc_arena.zig").Arena;
 const ZlibPool = @import("./http/zlib.zig");
 const BoringSSL = bun.BoringSSL;
-const X509 = @import("./bun.js/api/bun/x509.zig");
-const c_ares = @import("./deps/c_ares.zig");
 
 const URLBufferPool = ObjectPool([8192]u8, null, false, 10);
 const uws = bun.uws;
@@ -849,49 +847,6 @@ const log = Output.scoped(.fetch, false);
 
 var temp_hostname: [8096]u8 = undefined;
 
-const INET6_ADDRSTRLEN = if (bun.Environment.isWindows) 65 else 46;
-
-/// converts IP string to canonicalized IP string
-/// return null when the IP is invalid
-fn canonicalizeIP(addr_str: []const u8, outIP: *[INET6_ADDRSTRLEN + 1]u8) ?[]const u8 {
-    if (addr_str.len >= INET6_ADDRSTRLEN) {
-        return null;
-    }
-    var ip_std_text: [INET6_ADDRSTRLEN + 1]u8 = undefined;
-    // we need a null terminated string as input
-    bun.copy(u8, outIP, addr_str);
-    outIP[addr_str.len] = 0;
-
-    var af: c_int = std.os.AF.INET;
-    // get the standard text representation of the IP
-    if (c_ares.ares_inet_pton(af, outIP, &ip_std_text) != 1) {
-        af = std.os.AF.INET6;
-        if (c_ares.ares_inet_pton(af, outIP, &ip_std_text) != 1) {
-            return null;
-        }
-    }
-    // ip_addr will contain the null-terminated string of the cannonicalized IP
-    if (c_ares.ares_inet_ntop(af, &ip_std_text, outIP, outIP.len) == null) {
-        return null;
-    }
-    // use the null-terminated size to return the string
-    const size = bun.len(bun.cast([*:0]u8, outIP));
-    return outIP[0..size];
-}
-
-/// converts ASN1_OCTET_STRING to canonicalized IP string
-/// return null when the IP is invalid
-fn ip2String(ip: *BoringSSL.ASN1_OCTET_STRING, outIP: *[INET6_ADDRSTRLEN + 1]u8) ?[]const u8 {
-    const af: c_int = if (ip.length == 4) std.os.AF.INET else std.os.AF.INET6;
-    if (c_ares.ares_inet_ntop(af, ip.data, outIP, outIP.len) == null) {
-        return null;
-    }
-
-    // use the null-terminated size to return the string
-    const size = bun.len(bun.cast([*:0]u8, outIP));
-    return outIP[0..size];
-}
-
 pub fn checkServerIdentity(
     client: *HTTPClient,
     comptime is_ssl: bool,
@@ -939,76 +894,13 @@ pub fn checkServerIdentity(
                     // we check with native code if the cert is valid
                     // fast path
 
-                    const index = BoringSSL.X509_get_ext_by_NID(x509, BoringSSL.NID_subject_alt_name, -1);
-                    if (index >= 0) {
-                        // we can check hostname
-                        if (BoringSSL.X509_get_ext(x509, index)) |ext| {
-                            const method = BoringSSL.X509V3_EXT_get(ext);
-                            if (method != BoringSSL.X509V3_EXT_get_nid(BoringSSL.NID_subject_alt_name)) {
-                                client.closeAndFail(error.ERR_TLS_CERT_ALTNAME_INVALID, is_ssl, socket);
-                                return false;
-                            }
-                            var hostname = client.hostname orelse client.url.hostname;
-                            if (client.http_proxy) |proxy| {
-                                hostname = proxy.hostname;
-                            }
+                    var hostname = client.hostname orelse client.url.hostname;
+                    if (client.http_proxy) |proxy| {
+                        hostname = proxy.hostname;
+                    }
 
-                            if (strings.isIPAddress(hostname)) {
-                                // we safely ensure buffer size with max len + 1
-                                var canonicalIPBuf: [INET6_ADDRSTRLEN + 1]u8 = undefined;
-                                var certIPBuf: [INET6_ADDRSTRLEN + 1]u8 = undefined;
-                                // we try to canonicalize the IP before comparing
-                                var host_ip = canonicalizeIP(hostname, &canonicalIPBuf) orelse hostname;
-
-                                if (BoringSSL.X509V3_EXT_d2i(ext)) |names_| {
-                                    const names: *BoringSSL.struct_stack_st_GENERAL_NAME = bun.cast(*BoringSSL.struct_stack_st_GENERAL_NAME, names_);
-                                    defer BoringSSL.sk_GENERAL_NAME_pop_free(names, BoringSSL.sk_GENERAL_NAME_free);
-                                    for (0..BoringSSL.sk_GENERAL_NAME_num(names)) |i| {
-                                        const gen = BoringSSL.sk_GENERAL_NAME_value(names, i);
-                                        if (gen) |name| {
-                                            if (name.name_type == .GEN_IPADD) {
-                                                if (ip2String(name.d.ip, &certIPBuf)) |cert_ip| {
-                                                    if (strings.eql(host_ip, cert_ip)) {
-                                                        return true;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            } else {
-                                if (BoringSSL.X509V3_EXT_d2i(ext)) |names_| {
-                                    const names: *BoringSSL.struct_stack_st_GENERAL_NAME = bun.cast(*BoringSSL.struct_stack_st_GENERAL_NAME, names_);
-                                    defer BoringSSL.sk_GENERAL_NAME_pop_free(names, BoringSSL.sk_GENERAL_NAME_free);
-                                    for (0..BoringSSL.sk_GENERAL_NAME_num(names)) |i| {
-                                        const gen = BoringSSL.sk_GENERAL_NAME_value(names, i);
-                                        if (gen) |name| {
-                                            if (name.name_type == .GEN_DNS) {
-                                                const dnsName = name.d.dNSName;
-                                                var dnsNameSlice = dnsName.data[0..@as(usize, @intCast(dnsName.length))];
-                                                // ignore empty dns names (should never happen)
-                                                if (dnsNameSlice.len > 0) {
-                                                    if (X509.isSafeAltName(dnsNameSlice, false)) {
-                                                        if (dnsNameSlice[0] == '*') {
-                                                            dnsNameSlice = dnsNameSlice[1..dnsNameSlice.len];
-                                                            if (hostname.len > dnsNameSlice.len) {
-                                                                hostname = hostname[hostname.len - dnsNameSlice.len .. hostname.len];
-                                                            }
-                                                            if (strings.eql(dnsNameSlice, hostname)) {
-                                                                return true;
-                                                            }
-                                                        }
-                                                        if (strings.eql(dnsNameSlice, hostname)) {
-                                                            return true;
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                    if (BoringSSL.checkX509ServerIdentity(x509, hostname)) {
+                        return true;
                     }
                 }
             }

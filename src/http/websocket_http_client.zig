@@ -13,7 +13,7 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
-
+const BoringSSL = bun.BoringSSL;
 const uws = @import("root").bun.uws;
 const JSC = @import("root").bun.JSC;
 const PicoHTTP = @import("root").bun.picohttp;
@@ -192,7 +192,12 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         body: std.ArrayListUnmanaged(u8) = .{},
         websocket_protocol: u64 = 0,
         hostname: [:0]const u8 = "",
+<<<<<<< HEAD
         poll_ref: Async.KeepAlive = .{},
+=======
+        poll_ref: JSC.PollRef = .{},
+        reject_unauthorized: bool = true,
+>>>>>>> e6ac1a319 (use same checks on wsclient and fetch, fix tests)
 
         pub const name = if (ssl) "WebSocketHTTPSClient" else "WebSocketHTTPClient";
 
@@ -257,15 +262,18 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 &client_protocol_hash,
                 NonUTF8Headers.init(header_names, header_values, header_count),
             ) catch return null;
+            var vm = global.bunVM();
+            var reject_unauthorized = vm.bundler.env.getTLSRejectUnauthorized();
+
             var client: HTTPClient = HTTPClient{
                 .tcp = undefined,
                 .outgoing_websocket = websocket,
                 .input_body_buf = body,
                 .websocket_protocol = client_protocol_hash,
+                .reject_unauthorized = reject_unauthorized,
             };
             var host_ = host.toSlice(bun.default_allocator);
             defer host_.deinit();
-            var vm = global.bunVM();
             const prev_start_server_on_next_tick = vm.eventLoop().start_server_on_next_tick;
             vm.eventLoop().start_server_on_next_tick = true;
             client.poll_ref.ref(vm);
@@ -347,11 +355,25 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         }
 
         pub fn handleHandshake(this: *HTTPClient, socket: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
-            _ = socket;
-            _ = ssl_error;
             log("onHandshake({d})", .{success});
-            if (success == 0) {
+
+            const authorized = if (success == 1) true else false;
+
+            if (ssl_error.error_no != 0 and (this.reject_unauthorized or !authorized)) {
                 this.fail(ErrorCode.failed_to_connect);
+                return;
+            }
+
+            if (authorized) {
+                if (this.reject_unauthorized) {
+                    const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(socket.getNativeHandle()));
+                    if (BoringSSL.SSL_get_servername(ssl_ptr, 0)) |servername| {
+                        const hostname = servername[0..bun.len(servername)];
+                        if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
+                            this.fail(ErrorCode.failed_to_connect);
+                        }
+                    }
+                }
             }
         }
 
@@ -878,6 +900,8 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
         initial_data_handler: ?*InitialDataHandler = null,
 
+        reject_unauthorized: bool = true,
+
         pub const name = if (ssl) "WebSocketClientTLS" else "WebSocketClient";
 
         pub const shim = JSC.Shimmer("Bun", name, @This());
@@ -949,15 +973,28 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
         pub fn handleHandshake(this: *WebSocket, socket: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
             JSC.markBinding(@src());
-            _ = socket;
-            _ = ssl_error;
-            JSC.markBinding(@src());
+            const authorized = if (success == 1) true else false;
+
             log("onHandshake({d})", .{success});
-            JSC.markBinding(@src());
-            if (success == 0) {
-                if (this.outgoing_websocket) |ws| {
+
+            if (this.outgoing_websocket) |ws| {
+                if (ssl_error.error_no != 0 and (this.reject_unauthorized or !authorized)) {
                     this.outgoing_websocket = null;
                     ws.didAbruptClose(ErrorCode.failed_to_connect);
+                    return;
+                }
+
+                if (authorized) {
+                    if (this.reject_unauthorized) {
+                        const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(socket.getNativeHandle()));
+                        if (BoringSSL.SSL_get_servername(ssl_ptr, 0)) |servername| {
+                            const hostname = servername[0..bun.len(servername)];
+                            if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
+                                this.outgoing_websocket = null;
+                                ws.didAbruptClose(ErrorCode.failed_to_connect);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1632,6 +1669,8 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         ) callconv(.C) ?*anyopaque {
             var tcp = @as(*uws.Socket, @ptrCast(input_socket));
             var ctx = @as(*uws.SocketContext, @ptrCast(socket_ctx));
+            var script_ctx = globalThis.bunVM();
+            var reject_unauthorized = script_ctx.bundler.env.getTLSRejectUnauthorized();
             var adopted = Socket.adopt(
                 tcp,
                 ctx,
@@ -1641,6 +1680,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     .tcp = undefined,
                     .outgoing_websocket = outgoing,
                     .globalThis = globalThis,
+                    .reject_unauthorized = reject_unauthorized,
                     .send_buffer = bun.LinearFifo(u8, .Dynamic).init(bun.default_allocator),
                     .receive_buffer = bun.LinearFifo(u8, .Dynamic).init(bun.default_allocator),
                 },

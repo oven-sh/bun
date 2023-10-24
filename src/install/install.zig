@@ -8364,7 +8364,7 @@ pub const PackageManager = struct {
             );
 
             // 1. preinstall
-            try manager.lockfile.scripts.run(manager.allocator, manager.env, log_level != .silent, "preinstall");
+            try manager.lockfile.scripts.run(manager.allocator, manager.env, log_level, "preinstall");
         }
 
         if (needs_new_lockfile) {
@@ -8476,15 +8476,15 @@ pub const PackageManager = struct {
         if (run_lifecycle_scripts and install_summary.fail == 0) {
             // 2. install
             // 3. postinstall
-            try manager.lockfile.scripts.spawnAllPackageScripts(manager, log_level, log_level != .silent, "install");
-            try manager.lockfile.scripts.spawnAllPackageScripts(manager, log_level, log_level != .silent, "postinstall");
+            try manager.lockfile.scripts.spawnAllPackageScripts(manager, log_level, "install");
+            try manager.lockfile.scripts.spawnAllPackageScripts(manager, log_level, "postinstall");
 
             // 4. preprepare
             // 5. prepare
             // 6. postprepare
-            try manager.lockfile.scripts.spawnAllPackageScripts(manager, log_level, log_level != .silent, "preprepare");
-            try manager.lockfile.scripts.spawnAllPackageScripts(manager, log_level, log_level != .silent, "prepare");
-            try manager.lockfile.scripts.spawnAllPackageScripts(manager, log_level, log_level != .silent, "postprepare");
+            try manager.lockfile.scripts.spawnAllPackageScripts(manager, log_level, "preprepare");
+            try manager.lockfile.scripts.spawnAllPackageScripts(manager, log_level, "prepare");
+            try manager.lockfile.scripts.spawnAllPackageScripts(manager, log_level, "postprepare");
         }
 
         if (comptime log_level != .silent) {

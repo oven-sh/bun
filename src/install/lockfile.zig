@@ -146,15 +146,25 @@ pub const Scripts = struct {
         return false;
     }
 
-    pub fn run(this: *Scripts, allocator: Allocator, env: *DotEnv.Loader, silent: bool, comptime hook: []const u8) !void {
+    pub fn run(
+        this: *Scripts,
+        allocator: Allocator,
+        env: *DotEnv.Loader,
+        comptime log_level: PackageManager.Options.LogLevel,
+        comptime hook: []const u8,
+    ) !void {
         for (@field(this, hook).items) |entry| {
             if (comptime Environment.allow_assert) std.debug.assert(Fs.FileSystem.instance_loaded);
-            _ = try RunCommand.runPackageScriptForeground(allocator, entry.script, hook, entry.cwd, env, &.{}, silent);
+            _ = try RunCommand.runPackageScriptForeground(allocator, entry.script, hook, entry.cwd, env, &.{}, log_level == .silent);
         }
     }
 
-    pub fn spawnAllPackageScripts(this: *Scripts, ctx: *PackageManager, comptime log_level: anytype, silent: bool, comptime hook: []const u8) !void {
-        _ = log_level;
+    pub fn spawnAllPackageScripts(
+        this: *Scripts,
+        ctx: *PackageManager,
+        comptime log_level: PackageManager.Options.LogLevel,
+        comptime hook: []const u8,
+    ) !void {
         if (comptime Environment.allow_assert) std.debug.assert(Fs.FileSystem.instance_loaded);
 
         const items = @field(this, hook).items;
@@ -162,7 +172,7 @@ pub const Scripts = struct {
             ctx.pending_tasks = @truncate(items.len);
 
             for (items) |entry| {
-                try RunCommand.spawnPackageScript(ctx, entry.script, hook, entry.package_name, entry.cwd, &.{}, silent);
+                try RunCommand.spawnPackageScript(ctx, entry.script, hook, entry.package_name, entry.cwd, &.{}, log_level == .silent);
             }
 
             while (ctx.pending_tasks > 0) {
@@ -879,6 +889,7 @@ pub fn cleanWithLogger(
     }
     new.trusted_dependencies = old_trusted_dependencies;
     new.scripts = old_scripts;
+    new.has_trusted_dependencies = old.has_trusted_dependencies;
 
     return new;
 }

@@ -26,7 +26,7 @@
       "request": "launch",
       "name": "bun test [file] (fast)",
       "program": "bun-debug",
-      "args": ["test", "${file}", "-t", "sending 50 messages should just work"],
+      "args": ["test", "${file}"],
       // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
       "cwd": "${workspaceFolder}/test",
       "env": {
@@ -123,7 +123,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "bun run [file]",
-      "program": "./Build/debug/bun.exe",
+      "program": "bun-debug",
       "args": ["run", "${file}", "${file}"],
       "cwd": "${fileDirname}",
       "env": {

@@ -1,4 +1,4 @@
-const wt= require("worker_threads");
+const wt = require("worker_threads");
 
 wt.parentPort.on("message", e => {
   let sharedBufferView = new Int32Array(e.sharedBuffer);

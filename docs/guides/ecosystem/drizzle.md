@@ -34,7 +34,9 @@ To see the database in action, add these lines to `index.ts`.
 ```ts#index.ts
 import { db } from "./db";
 import { sql } from "drizzle-orm";
-console.log(await db.get<string>(sql`select "hello world" as text;`));
+
+const query = sql`select "hello world" as text;`
+console.log(await db.get<string>(query));
 ```
 
 ---

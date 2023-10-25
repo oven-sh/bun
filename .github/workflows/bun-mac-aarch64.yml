@@ -35,7 +35,7 @@ on:
 
 jobs:
   macOS-object-files:
-    name: macOS Object
+    name: macOS Zig Object
     runs-on: med-ubuntu
     if: github.repository_owner == 'oven-sh'
     strategy:
@@ -51,6 +51,10 @@ jobs:
             arch: aarch64
             tag: bun-obj-darwin-aarch64
     steps:
+      - uses: actions/checkout@v4
+      - name: Checkout submodules
+        run: git submodule update --init --recursive --depth=1 --progress --force
+
       - uses: docker/setup-buildx-action@v2
         id: buildx
         with:

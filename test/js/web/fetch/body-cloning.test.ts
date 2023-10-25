@@ -510,40 +510,69 @@ describe("response body cloning", () => {
     expect(out).toEqual(b);
     expect(out2).toEqual(data);
   });
-  // it("can use pipeThrough", async () => {
-  //   const data = Buffer.from("Well Hello friends", "utf-8");
-  //   await startServer(async request => {
-  //     return new Response(data, {
-  //       headers: {
-  //         "Content-type": "application/octet-stream",
-  //       },
-  //     });
-  //   });
-  //   const b = data.buffer.slice();
-  //   const res = await requestServer();
-  //   // const clone = res.clone();
-  //   class Transformer {
-  //     constructor() {
-  //       this.stream = new WrappedStream();
+  it("can use pipeThrough", async () => {
+    class WrappedStream {
+      getStream() {
+        if (!this.stream) {
+          this.stream = new WritableStream({
+            write: chunk => {
+              if (this.cb) this.cb(chunk);
+            },
+            close: controller => {
+              if (this.end) this.end();
+            },
+          });
+        }
+        return this.stream;
+      }
+      setCallback(cb) {
+        this.cb = cb;
+      }
+      setOnEnd(end) {
+        this.end = end;
+      }
+    }
+    class Transformer {
+      constructor() {
+        this.stream = new WrappedStream();
 
-  //       this.readable = new ReadableStream({
-  //         start: (controller) => {
-  //           this.stream.getResult().then(res => {
-  //             controller.enqueue(res);
-  //             controller.enqueue(Buffer.from("Some-Text"));
-  //             controller.close();
-  //           });
-  //         },
-  //       });
-  //       this.writable = this.stream.getStream();
-  //     }
-  //   }
-  //   res.body.pipeThrough(new Transformer());
-  //   const out2 = await res.text();
-  //   // const [out, out2] = await Promise.all([res.arrayBuffer(), clone.text()]);
-  //   // expect(out).toEqual(b);
-  //   expect(out2).toEqual(data.toString() + "Some-Text");
-  // });
+        this.readable = new ReadableStream({
+          start: controller => {
+            controller.enqueue(Buffer.from("Pre-Text"));
+            this.stream.setCallback(chunk => {
+              controller.enqueue(chunk);
+            });
+            this.stream.setOnEnd(res => {
+              controller.enqueue(Buffer.from("Post-Text"));
+              controller.close();
+            });
+          },
+        });
+        this.writable = this.stream.getStream();
+      }
+    }
+
+    const data = Buffer.from("this is a very long stream response".repeat(20000), "utf-8");
+    await startServer(async request => {
+      return new Response(data, {
+        headers: {
+          "Content-type": "application/octet-stream",
+        },
+      });
+    });
+    const res = await requestServer();
+    const b = data.buffer.slice();
+    const clone = res.clone();
+    const secondClone = clone.clone();
+    const r = await (await clone.body).pipeThrough(new Transformer());
+    const r2 = await (await secondClone.body).pipeThrough(new Transformer());
+    const out = Buffer.from(await Bun.readableStreamToArrayBuffer(r2)).toString();
+    const out2 = Buffer.from(await Bun.readableStreamToArrayBuffer(r)).toString();
+    const text = await res.text();
+    expect(out2).toEqual("Pre-Text" + data.toString() + "Post-Text");
+    expect(out).toEqual("Pre-Text" + data.toString() + "Post-Text");
+    expect(text).toEqual(data.toString());
+  });
   it("arrayBuffer string matches", async () => {
     const data = Buffer.from("Well Hello friends 🥹☺️", "utf-8");
     await startServer(async request => {
@@ -704,6 +733,5 @@ describe("response body cloning", () => {
     expect(text.includes("<!DOCTYPE html>")).toBe(true);
     expect(text.includes("</html>")).toBe(true);
     expect(text.includes("github")).toBe(true);
-
   });
 });

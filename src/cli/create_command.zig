@@ -191,15 +191,15 @@ const CreateOptions = struct {
         clap.parseParam("--help                     Print this menu") catch unreachable,
         clap.parseParam("--force                    Overwrite existing files") catch unreachable,
         clap.parseParam("--no-install               Don't install node_modules") catch unreachable,
-        clap.parseParam("--no-git                   Don't create a Get repository") catch unreachable,
+        clap.parseParam("--no-git                   Don't create a git repository") catch unreachable,
         clap.parseParam("--verbose                  Too many logs") catch unreachable,
         clap.parseParam("--no-package-json          Disable package.json transforms") catch unreachable,
         clap.parseParam("--open                     On finish, start bun & open in-browser") catch unreachable,
         clap.parseParam("<POS>...                   ") catch unreachable,
     };
 
-    pub fn parse(ctx: Command.Context, comptime print_flags_only: bool) !CreateOptions {
-        _ = print_flags_only;
+    pub fn parse(ctx: Command.Context) !CreateOptions {
+        
         var diag = clap.Diagnostic{};
 
         var args = clap.parse(clap.Help, &params, .{ .diagnostic = &diag, .allocator = ctx.allocator }) catch |err| {
@@ -235,7 +235,7 @@ pub const CreateCommand = struct {
         Global.configureAllocator(.{ .long_running = false });
         try HTTP.HTTPThread.init();
 
-        var create_options = try CreateOptions.parse(ctx, false);
+        var create_options = try CreateOptions.parse(ctx);
         const positionals = create_options.positionals;
 
         if (positionals.len == 0) {

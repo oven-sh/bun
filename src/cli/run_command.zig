@@ -905,7 +905,6 @@ pub const RunCommand = struct {
                 var iterator = scripts.iterator();
 
                 if (scripts.count() > 0) {
-                    // did_print = true;
 
                     Output.pretty("\n\n<b>package.json scripts ({d} found):<r>", .{scripts.count()});
                     // Output.prettyln("<r><blue><b>{s}<r> scripts:<r>\n", .{display_name});
@@ -1069,8 +1068,6 @@ pub const RunCommand = struct {
 
         Global.configureAllocator(.{ .long_running = false });
 
-        var did_print = false;
-        _ = did_print;
         var ORIGINAL_PATH: string = "";
         var this_bundler: bundler.Bundler = undefined;
         var root_dir_info = try configureEnvForRun(ctx, &this_bundler, null, &ORIGINAL_PATH, log_errors, force_using_bun);
@@ -1078,35 +1075,8 @@ pub const RunCommand = struct {
         if (root_dir_info.enclosing_package_json) |package_json| {
             if (package_json.scripts) |scripts| {
                 switch (script_name_to_search.len) {
-                    0 => { // naked "bun run"
-                        // var display_name = package_json.name;
-
-                        // if (display_name.len == 0) {
-                        //     display_name = std.fs.path.basename(package_json.source.path.name.dir);
-                        // }
-
-                        // var iterator = scripts.iterator();
-
-                        // if (scripts.count() > 0) {
-                        //     did_print = true;
-
-                        //     Output.prettyln("<r><blue><b>{s}<r> scripts:<r>\n", .{display_name});
-                        //     while (iterator.next()) |entry| {
-                        //         Output.prettyln("\n", .{});
-                        //         Output.prettyln(" bun run <blue>{s}<r>\n", .{entry.key_ptr.*});
-                        //         Output.prettyln(" <d>  {s}<r>\n", .{entry.value_ptr.*});
-                        //     }
-
-                        //     Output.prettyln("\n<d>{d} scripts<r>", .{scripts.count()});
-
-                        //     Output.flush();
-
-                        //     return true;
-                        // } else {
-                        //     Output.prettyln("<r><blue><b>{s}<r> has no \"scripts\" in package.json.", .{display_name});
-                        //     Output.flush();
-                        //     return true;
-                        // }
+                    0 => {
+                        // naked "bun run"
                         RunCommand.printHelp(package_json);
                         return true;
                     },

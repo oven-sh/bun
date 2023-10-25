@@ -1824,31 +1824,6 @@ pub const Command = struct {
                 },
                 Command.Tag.RunCommand => {
                     RunCommand_.printHelp(null);
-                    // const intro_text =
-                    //     \\<b>Usage<r>: <b><green>bun run<r> <cyan>[...flags]<r> \<file or script\>
-                    // ;
-
-                    // const outro_text =
-                    //     \\<b>Examples:<r>
-                    //     \\  <d>Run a JavaScript or TypeScript file<r>
-                    //     \\  <b><green>bun run<r> <blue>./index.js<r>
-                    //     \\  <b><green>bun run<r> <blue>./index.tsx<r>
-                    //     \\
-                    //     \\  <d>Run a package.json script<r>
-                    //     \\  <b><green>bun run dev<r>
-                    //     \\  <b><green>bun run lint<r>
-                    //     \\
-                    //     \\Full documentation is available at <magenta>https://bun.sh/docs/cli/run<r>
-                    //     \\
-                    // ;
-
-                    // Output.pretty(intro_text ++ "\n\n", .{});
-                    // Output.flush();
-                    // Output.pretty("<b>Flags:<r>", .{});
-                    // Output.flush();
-                    // clap.simpleHelp(&Arguments.run_params);
-                    // Output.pretty("\n\n" ++ outro_text, .{});
-                    // Output.flush();
                 },
 
                 .InitCommand => {
@@ -1962,6 +1937,7 @@ pub const Command = struct {
                         \\otherwise it will run <b><magenta>bunx create-\<template\><r> with the given arguments.
                         \\
                         \\Learn more about creating new projects: <magenta>https://bun.sh/docs/cli/bun-create<r>
+                        \\
                     ;
 
                     Output.pretty(intro_text, .{});
@@ -1986,15 +1962,11 @@ pub const Command = struct {
                         \\  <b><green>bun upgrade --canary<r>
                         \\
                         \\Full documentation is available at <magenta>https://bun.sh/docs/installation#upgrading<r>
+                        \\
                     ;
-                    // Output.pretty("\n", .{});
                     Output.pretty(intro_text, .{});
                     Output.pretty("\n\n", .{});
                     Output.flush();
-                    // Output.pretty("\n\n<b>Flags:<r>", .{});
-                    // Output.flush();
-                    // clap.simpleHelp(&Arguments.test_only_params);
-                    // Output.pretty("\n\n", .{});
                     Output.pretty(outro_text, .{});
                     Output.flush();
                 },

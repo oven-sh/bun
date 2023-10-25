@@ -447,7 +447,7 @@ pub const UpgradeCommand = struct {
 
             if (version.name() == null) {
                 Output.prettyErrorln(
-                    "<r><red>error:<r> bun versions are currently unavailable (the latest version name didn't match the expeccted format)",
+                    "<r><red>error:<r> bun versions are currently unavailable (the latest version name didn't match the expected format)",
                     .{},
                 );
                 Global.exit(1);

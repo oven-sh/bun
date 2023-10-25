@@ -92,11 +92,12 @@ jobs:
         with:
           name: ${{ matrix.tag }}
           path: ${{runner.temp}}/release/bun-zig.o
-  macOS-cpp:
-    name: macOS C++
+
+  macOS-dependencies:
+    name: macOS Dependencies
     runs-on: ${{ matrix.runner }}
     if: github.repository_owner == 'oven-sh'
-    timeout-minutes: 90
+    timeout-minutes: 15
     strategy:
       matrix:
         include:
@@ -106,16 +107,6 @@ jobs:
             obj: bun-obj-darwin-aarch64
             artifact: bun-obj-darwin-aarch64
             runner: macos-arm64
-            dependencies: true
-            compile_obj: false
-          - cpu: native
-            arch: aarch64
-            tag: bun-darwin-aarch64
-            obj: bun-obj-darwin-aarch64
-            artifact: bun-obj-darwin-aarch64
-            runner: macos-arm64
-            dependencies: true
-            compile_obj: false
     steps:
       - uses: actions/checkout@v4
       - name: Checkout submodules
@@ -133,22 +124,7 @@ jobs:
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
           brew link --overwrite llvm@$LLVM_VERSION
 
-          curl -LO "https://github.com/oven-sh/bun/releases/download/bun-v1.0.7/bun-darwin-${{matrix.arch}}.zip"
-          unzip bun-darwin-${{matrix.arch}}.zip
-          mkdir -p ${{ runner.temp }}/.bun/bin
-          mv bun-darwin-${{matrix.arch}}/bun ${{ runner.temp }}/.bun/bin/bun
-          chmod +x ${{ runner.temp }}/.bun/bin/bun
-          echo "${{ runner.temp }}/.bun/bin" >> $GITHUB_PATH
-
-      - name: ccache
-        if: matrix.compile_obj
-        uses: hendrikmuhs/ccache-action@v1.2
-        with:
-          key: ${{ runner.os }}-ccache-${{ matrix.tag }}
-          restore-keys: ${{ runner.os }}-ccache-${{ matrix.tag }}
-
       - name: Hash submodule versions
-        if: matrix.dependencies
         run: |
           print_data() {
             git submodule | grep -v WebKit
@@ -159,7 +135,6 @@ jobs:
         id: submodule-versions
 
       - name: Cache submodule dependencies
-        if: matrix.dependencies
         id: cache-deps-restore
         uses: actions/cache/restore@v3
         with:
@@ -167,7 +142,7 @@ jobs:
           key: bun-deps-${{ matrix.tag }}-${{ steps.submodule-versions.outputs.sha }}
 
       - name: Compile submodule dependencies
-        if: matrix.dependencies && !steps.cache-deps-restore.outputs.cache-hit
+        if: !steps.cache-deps-restore.outputs.cache-hit
         env:
           CPU_TARGET: ${{ matrix.cpu }}
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
@@ -177,22 +152,52 @@ jobs:
           bash ./scripts/all-dependencies.sh
 
       - name: Cache submodule dependencies
-        if: matrix.dependencies && !steps.cache-deps-restore.outputs.cache-hit
+        if: !steps.cache-deps-restore.outputs.cache-hit
         id: cache-deps-save
         uses: actions/cache/save@v3
         with:
           path: ${{runner.temp}}/bun-deps
           key: ${{ steps.cache-deps-restore.outputs.cache-primary-key }}
 
+  macOS-cpp:
+    name: macOS C++
+    runs-on: ${{ matrix.runner }}
+    if: github.repository_owner == 'oven-sh'
+    timeout-minutes: 90
+    strategy:
+      matrix:
+        include:
+          - cpu: native
+            arch: aarch64
+            tag: bun-darwin-aarch64
+            obj: bun-obj-darwin-aarch64
+            artifact: bun-obj-darwin-aarch64
+            runner: macos-arm64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout submodules
+        run: git submodule update --init --recursive --depth=1 --progress --force
+
+      - name: Install system dependencies
+        env:
+          HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_CLEANUP: 1
+        run: |
+          brew install ccache rust llvm@$LLVM_VERSION pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config --force
+          echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
+          echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
+          echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
+          brew link --overwrite llvm@$LLVM_VERSION
+
       # TODO: replace with sccache
-      # - name: ccache
-      #   uses: hendrikmuhs/ccache-action@v1.2
-      #   with:
-      #     key: ${{ runner.os }}-ccache-${{ matrix.tag }}-link
-      #     restore-keys: ${{ runner.os }}-ccache-${{ matrix.tag }}-link
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ runner.os }}-ccache-${{ matrix.tag }}
+          restore-keys: ${{ runner.os }}-ccache-${{ matrix.tag }}
 
       - name: Compile C++
-        if: matrix.compile_obj
         env:
           CPU_TARGET: ${{ matrix.cpu }}
           SOURCE_DIR: ${{ github.workspace }}
@@ -210,7 +215,6 @@ jobs:
           bash compile-cpp-only.sh
 
       - name: Upload C++
-        if: matrix.compile_obj
         uses: actions/upload-artifact@v3
         with:
           name: ${{ matrix.tag }}-cpp
@@ -219,7 +223,7 @@ jobs:
     name: macOS Link
     runs-on: ${{ matrix.runner }}
     if: github.repository_owner == 'oven-sh'
-    needs: [macOS-cpp, macOS-zig]
+    needs: [macOS-zig, macOS-cpp, macOS-dependencies]
     timeout-minutes: 60
     permissions: write-all
     strategy:

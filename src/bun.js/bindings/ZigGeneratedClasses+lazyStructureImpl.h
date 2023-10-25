@@ -143,6 +143,12 @@ ALWAYS_INLINE void GlobalObject::initGeneratedLazyClasses() {
                  init.setStructure(WebCore::JSFileSystemRouter::createStructure(init.vm, init.global, init.prototype));
                  init.setConstructor(WebCore::JSFileSystemRouter::createConstructor(init.vm, init.global, init.prototype));
               });
+    m_JSGlob.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSGlob::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSGlob::createStructure(init.vm, init.global, init.prototype));
+                 init.setConstructor(WebCore::JSGlob::createConstructor(init.vm, init.global, init.prototype));
+              });
     m_JSHTMLRewriter.initLater(
               [](LazyClassStructure::Initializer& init) {
                  init.setPrototype(WebCore::JSHTMLRewriter::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
@@ -333,6 +339,7 @@ void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& 
       thisObject->m_JSFFI.visit(visitor);
       thisObject->m_JSFSWatcher.visit(visitor);
       thisObject->m_JSFileSystemRouter.visit(visitor);
+      thisObject->m_JSGlob.visit(visitor);
       thisObject->m_JSHTMLRewriter.visit(visitor);
       thisObject->m_JSHTTPSServer.visit(visitor);
       thisObject->m_JSHTTPServer.visit(visitor);

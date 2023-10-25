@@ -3139,6 +3139,77 @@ pub const JSFileSystemRouter = struct {
         }
     }
 };
+pub const JSGlob = struct {
+    const Glob = Classes.Glob;
+    const GetterType = fn (*Glob, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*Glob, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*Glob, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*Glob, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*Glob, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*Glob {
+        JSC.markBinding(@src());
+        return Glob__fromJS(value);
+    }
+
+    /// Get the Glob constructor value.
+    /// This loads lazily from the global object.
+    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        return Glob__getConstructor(globalObject);
+    }
+
+    /// Create a new instance of Glob
+    pub fn toJS(this: *Glob, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = Glob__create(globalObject, this);
+            std.debug.assert(value__.as(Glob).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return Glob__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of Glob.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*Glob) bool {
+        JSC.markBinding(@src());
+        return Glob__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *Glob, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(Glob__dangerouslySetPtr(value, null));
+    }
+
+    extern fn Glob__fromJS(JSC.JSValue) ?*Glob;
+    extern fn Glob__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn Glob__create(globalObject: *JSC.JSGlobalObject, ptr: ?*Glob) JSC.JSValue;
+
+    extern fn Glob__dangerouslySetPtr(JSC.JSValue, ?*Glob) bool;
+
+    comptime {
+        if (@TypeOf(Glob.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*Glob)) {
+            @compileLog("Glob.constructor is not a constructor");
+        }
+
+        if (@TypeOf(Glob.finalize) != (fn (*Glob) callconv(.C) void)) {
+            @compileLog("Glob.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(Glob.testFunc) != CallbackType)
+            @compileLog("Expected Glob.testFunc to be a callback but received " ++ @typeName(@TypeOf(Glob.testFunc)));
+        if (!JSC.is_bindgen) {
+            @export(Glob.constructor, .{ .name = "GlobClass__construct" });
+            @export(Glob.finalize, .{ .name = "GlobClass__finalize" });
+            @export(Glob.testFunc, .{ .name = "GlobPrototype__testFunc" });
+        }
+    }
+};
 pub const JSHTMLRewriter = struct {
     const HTMLRewriter = Classes.HTMLRewriter;
     const GetterType = fn (*HTMLRewriter, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
@@ -7216,6 +7287,7 @@ comptime {
     _ = JSFFI;
     _ = JSFSWatcher;
     _ = JSFileSystemRouter;
+    _ = JSGlob;
     _ = JSHTMLRewriter;
     _ = JSHTTPSServer;
     _ = JSHTTPServer;

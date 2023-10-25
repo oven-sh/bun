@@ -94,6 +94,10 @@ JSC::Structure* JSFileSystemRouterStructure() { return m_JSFileSystemRouter.getI
   JSC::JSObject* JSFileSystemRouterConstructor() { return m_JSFileSystemRouter.constructorInitializedOnMainThread(this); }
   JSC::JSValue JSFileSystemRouterPrototype() { return m_JSFileSystemRouter.prototypeInitializedOnMainThread(this); }
   JSC::LazyClassStructure m_JSFileSystemRouter;
+JSC::Structure* JSGlobStructure() { return m_JSGlob.getInitializedOnMainThread(this); }
+  JSC::JSObject* JSGlobConstructor() { return m_JSGlob.constructorInitializedOnMainThread(this); }
+  JSC::JSValue JSGlobPrototype() { return m_JSGlob.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSGlob;
 JSC::Structure* JSHTMLRewriterStructure() { return m_JSHTMLRewriter.getInitializedOnMainThread(this); }
   JSC::JSObject* JSHTMLRewriterConstructor() { return m_JSHTMLRewriter.constructorInitializedOnMainThread(this); }
   JSC::JSValue JSHTMLRewriterPrototype() { return m_JSHTMLRewriter.prototypeInitializedOnMainThread(this); }

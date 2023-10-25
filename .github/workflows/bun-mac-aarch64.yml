@@ -78,13 +78,14 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=min
           build-args: |
+            BUILDARCH=${{ runner.arch == 'X64' && 'amd64' || 'arm64' }}
+            BUILD_MACHINE_ARCH=${{ runner.arch == 'X64' && 'x86_64' || 'aarch64' }}
+
             ARCH=${{ matrix.arch }}
-            BUILDARCH=${{ matrix.arch == 'X64' && 'amd64' || 'arm64' }}
-            BUILD_MACHINE_ARCH=${{ matrix.arch == 'X64' && 'x86_64' || 'aarch64' }}
             CPU_TARGET=${{ matrix.cpu }}
-            TRIPLET=${{matrix.arch}}-macos-none
-            GIT_SHA=${{github.sha}}
-          platforms: linux/${{ matrix.arch == 'X64' && 'amd64' || 'arm64' }}
+            TRIPLET=${{ matrix.arch }}-macos-none
+            GIT_SHA=${{ github.sha }}
+          platforms: linux/${{ runner.arch == 'X64' && 'amd64' || 'arm64' }}
           target: build_release_obj
           outputs: type=local,dest=${{runner.temp}}/release
 
@@ -131,6 +132,7 @@ jobs:
             llvm-config --version
             rustc --version
           }
+          print_data
           echo "sha=$(print_data | sha1sum | cut -c 1-10)" >> $GITHUB_OUTPUT
         id: submodule-versions
 

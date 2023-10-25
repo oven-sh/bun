@@ -20,7 +20,7 @@ if (!CMAKE_BUILD_ROOT) {
 
 const SRC_DIR = path.join(import.meta.dir, "../js/builtins");
 const CODEGEN_DIR = path.join(CMAKE_BUILD_ROOT, "./codegen");
-const TMP_DIR = path.join(CMAKE_BUILD_ROOT, "./tmp");
+const TMP_DIR = path.join(CMAKE_BUILD_ROOT, "./tmp_functions");
 
 const {
   //

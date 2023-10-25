@@ -747,7 +747,7 @@ RUN bun install --frozen-lockfile \
   && make runtime_js fallback_decoder bun_error node-fallbacks \
   && mkdir -p build \
   && cd build \
-  && mkdir -p codegen tmp js \
+  && mkdir -p codegen tmp_modules tmp_functions js \
   && cmake .. \
   -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \

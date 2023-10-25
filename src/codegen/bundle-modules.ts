@@ -6,7 +6,6 @@ import { sliceSourceCode } from "./builtin-parser";
 import { cap, declareASCIILiteral, readdirRecursive, resolveSyncOrNull, writeIfNotChanged } from "./helpers";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { builtinModules } from "node:module";
-import { BuildConfig } from "bun";
 import { define } from "./replacements";
 import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
 
@@ -19,7 +18,7 @@ if (!CMAKE_BUILD_ROOT) {
   process.exit(1);
 }
 
-const TMP_DIR = path.join(CMAKE_BUILD_ROOT, "tmp");
+const TMP_DIR = path.join(CMAKE_BUILD_ROOT, "tmp_modules");
 const CODEGEN_DIR = path.join(CMAKE_BUILD_ROOT, "codegen");
 const JS_DIR = path.join(CMAKE_BUILD_ROOT, "js");
 
@@ -125,7 +124,7 @@ $$EXPORT$$(__intrinsic__exports).$$EXPORT_END$$;
     if (!fs.existsSync(path.dirname(outputPath))) {
       verbose("directory did not exist after mkdir twice:", path.dirname(outputPath));
     }
-    await Bun.sleep(10);
+    // await Bun.sleep(10);
 
     try {
       await writeFile(outputPath, fileToTranspile);

@@ -142,7 +142,7 @@ jobs:
           key: bun-deps-${{ matrix.tag }}-${{ steps.submodule-versions.outputs.sha }}
 
       - name: Compile submodule dependencies
-        if: !steps.cache-deps-restore.outputs.cache-hit
+        if: ${{ !steps.cache-deps-restore.outputs.cache-hit }}
         env:
           CPU_TARGET: ${{ matrix.cpu }}
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
@@ -152,7 +152,7 @@ jobs:
           bash ./scripts/all-dependencies.sh
 
       - name: Cache submodule dependencies
-        if: !steps.cache-deps-restore.outputs.cache-hit
+        if: ${{ !steps.cache-deps-restore.outputs.cache-hit }}
         id: cache-deps-save
         uses: actions/cache/save@v3
         with:
@@ -285,7 +285,6 @@ jobs:
 
       # This is guaranteed to be a cache hit because we *just* saved it in the last step
       - name: Downloaded cached submodule dependencies
-        id: cache-deps-restore
         uses: actions/cache/restore@v3
         with:
           path: ${{runner.temp}}/bun-deps

@@ -248,14 +248,9 @@ const Socket = (function (InternalSocket) {
 
         self[bunSocketServerConnections]++;
 
-        const bunTLS = _socket[bunTlsSymbol];
-        const isTLS = typeof bunTLS === "function";
-        // TODO: fix it
-        // if(isTLS) {
-        //   self[bunSocketServerClientMap].set(socket, _socket);
-        // }
         if (typeof connectionListener == "function") {
-          if (isTLS) {
+          const bunTLS = _socket[bunTlsSymbol];
+          if (typeof bunTLS === "function") {
             // add secureConnection event handler
             self.once("secureConnection", () => connectionListener(_socket));
           } else {
@@ -266,8 +261,6 @@ const Socket = (function (InternalSocket) {
       },
       handshake(socket, success, verifyError) {
         const { data: self } = socket;
-        self.emit("secure", self);
-
         self._securePending = false;
         self.secureConnecting = false;
         self._secureEstablished = !!success;
@@ -278,6 +271,8 @@ const Socket = (function (InternalSocket) {
             self.authorizationError = verifyError.code || verifyError.message;
             self.server.emit("tlsClientError", verifyError, self);
             if (self._rejectUnauthorized) {
+              // if we reject we still need to emit secure
+              self.emit("secure", self);
               self.destroy(verifyError);
               return;
             }
@@ -285,7 +280,10 @@ const Socket = (function (InternalSocket) {
         } else {
           self.authorized = true;
         }
-        self.server.emit("secureConnection", verifyError);
+        self.server.emit("secureConnection", self);
+        // after secureConnection event we emmit secure and secureConnect
+        self.emit("secure", self);
+        self.emit("secureConnect", verifyError);
       },
       error(socket, error) {
         Socket.#Handlers.error(socket, error);
@@ -850,10 +848,12 @@ class Server extends EventEmitter {
         [tls, TLSSocketClass] = bunTLS.$call(this, port, hostname, false);
         options.servername = tls.serverName;
         options.InternalSocketClass = TLSSocketClass;
+        if (!tls.requestCert) {
+          tls.rejectUnauthorized = false;
+        }
       } else {
         options.InternalSocketClass = SocketClass;
       }
-
       this.#server = Bun.listen(
         path
           ? {

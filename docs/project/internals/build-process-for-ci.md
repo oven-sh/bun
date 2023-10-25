@@ -10,7 +10,7 @@ Utilizing multiple GitHub Action runners allows us to do a lot of work in parall
 ## Dependencies
 
 ```sh
-BUN_DEPS_OUT_DIR="/optional/out/dir" bash ./src/scripts/all-dependencies.sh
+BUN_DEPS_OUT_DIR="/optional/out/dir" bash ./scripts/all-dependencies.sh
 ```
 
 ## Zig Object

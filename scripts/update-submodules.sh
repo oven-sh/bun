@@ -1,6 +1,6 @@
 
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
-cd ../..
+cd ..
 NAMES=$(cat .gitmodules | grep 'path = ' | awk '{print $3}')
 
 # we will exclude webkit unless you explicity clone it yourself (a huge download)

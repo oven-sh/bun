@@ -10,7 +10,7 @@ Let's get started by creating a fresh project with `bun init` and installing Dri
 
 ```sh
 $ bun init -y
-$ bun add drizzle
+$ bun add drizzle-orm
 $ bun add -D drizzle-kit
 ```
 
@@ -34,8 +34,9 @@ To see the database in action, add these lines to `index.ts`.
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 
-const query = sql`select "hello world" as text;`
-console.log(await db.get<string>(query));
+const query = sql`select "hello world" as text`;
+const result = db.get<{ text: string }>(query);
+console.log(result);
 ```
 
 ---

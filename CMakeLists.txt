@@ -663,6 +663,7 @@ if(NOT BUN_CPP_ARCHIVE)
 
     write_file("${BUN_WORKDIR}/compile-cpp-only.sh"
         "#!/usr/bin/env bash\n"
+        "set -e\n"
         "OBJ_LIST=(\n  ${BUN_OBJECT_LIST}\n)\n"
         "ninja \${OBJ_LIST[@]}\n"
         "llvm-ar rcvs bun-cpp-objects.a \${OBJ_LIST[@]}\n"

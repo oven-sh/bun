@@ -3282,3 +3282,5 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
         }
     };
 }
+
+pub export var isBunTest: bool = false;

@@ -1,6 +1,8 @@
 import { describe, it, expect } from "bun:test";
 import { unsafe, spawn, readableStreamToText } from "bun";
 import { bunExe, bunEnv, gc } from "harness";
+import { readFileSync } from "fs";
+import { join } from "path";
 
 const TEST_WEBSOCKET_HOST = process.env.TEST_WEBSOCKET_HOST || "wss://ws.postman-echo.com/raw";
 
@@ -114,6 +116,64 @@ describe("WebSocket", () => {
       {
         // just in case we change the default to true and test
         const client = WebSocket(url, { tls: { rejectUnauthorized: true } });
+        const { result, messages } = await testClient(client);
+        expect(["Hello from Bun!", "Hello from client!"]).not.toEqual(messages);
+        expect(result.code).toBe(1006);
+        expect(result.reason).toBe("Failed to connect");
+      }
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("should not accept untrusted certificates", async () => {
+    const UNTRUSTED_CERT = {
+      key: readFileSync(join(import.meta.dir, "..", "..", "node", "http", "fixtures", "openssl.key")),
+      cert: readFileSync(join(import.meta.dir, "..", "..", "node", "http", "fixtures", "openssl.crt")),
+      passphrase: "123123123",
+    };
+
+    const server = Bun.serve({
+      port: 0,
+      tls: UNTRUSTED_CERT,
+      fetch(req, server) {
+        // upgrade the request to a WebSocket
+        if (server.upgrade(req)) {
+          return; // do not return a Response
+        }
+        return new Response("Upgrade failed :(", { status: 500 });
+      },
+      websocket: {
+        message(ws, message) {
+          ws.send(message);
+          ws.close();
+        }, // a message is received
+        open(ws) {
+          // a socket is opened
+          ws.send("Hello from Bun!");
+        },
+      },
+    });
+
+    try {
+      function testClient(client) {
+        const { promise, resolve, reject } = Promise.withResolvers();
+        let messages = [];
+        client.onopen = () => {
+          client.send("Hello from client!");
+        };
+        client.onmessage = e => {
+          messages.push(e.data);
+        };
+        client.onerror = reject;
+        client.onclose = e => {
+          resolve({ result: e, messages });
+        };
+        return promise;
+      }
+      const url = `wss://localhost:${server.address.port}`;
+      {
+        const client = WebSocket(url);
         const { result, messages } = await testClient(client);
         expect(["Hello from Bun!", "Hello from client!"]).not.toEqual(messages);
         expect(result.code).toBe(1006);

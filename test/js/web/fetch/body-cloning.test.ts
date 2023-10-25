@@ -125,6 +125,70 @@ describe("request body cloning", () => {
       },
     });
   });
+
+  it("can clone slow connection", async done => {
+    const data = JSON.stringify({ message: "Hello world" });
+    let socket;
+    await startServer(async request => {
+      try {
+        const text_clone = request.clone();
+        const arrayBuffer = text_clone.clone();
+        const readerClone = arrayBuffer.clone();
+        const [array_buf, text, json, reader_out] = await Promise.all([
+          arrayBuffer.arrayBuffer(),
+          text_clone.text(),
+          request.json(),
+          Bun.readableStreamToArrayBuffer(readerClone.body),
+        ]);
+        expect(array_buf).toEqual(Buffer.from(data).buffer.slice());
+        expect(reader_out).toEqual(Buffer.from(data).buffer.slice());
+        expect(text).toEqual(data);
+        expect(json).toEqual(JSON.parse(data));
+        socket.end();
+        done();
+        return new Response(JSON.stringify({}), {
+          headers: {
+            "Content-type": "application/json",
+          },
+        });
+      } catch (err) {
+        done(err);
+      }
+    });
+    socket = await Bun.connect({
+      hostname: server.hostname,
+      port: server.port,
+
+      socket: {
+        data(socket, data) {},
+        error(socket, error) {
+          done(error);
+        },
+        connectError(socket, error) {
+          done(error);
+        },
+      },
+    });
+    socket.write(
+      [
+        "POST / HTTP/1.1",
+        "Host: localhost",
+        "User-agent: test-client",
+        "Connection: keep-alive",
+        "Content-type: application/json",
+        "Content-length: " + data.length,
+        "\r\n",
+      ].join("\r\n"),
+    );
+    await sleep(500);
+    for (const char of data.split("")) {
+      socket.write(`${char}`);
+      await sleep(150);
+    }
+    socket.write("\r\n\r\n");
+    socket.flush();
+  });
+
   it("cant clone consumed body", async done => {
     const data = {
       message: "Hello world",
@@ -270,7 +334,7 @@ describe("request body cloning", () => {
     const data = "this is a very very very very long request".repeat(100000);
     const b = Buffer.from(data);
     const dataArray = new Uint8Array(b);
-        const readerToArray = async (a, reader) => {
+    const readerToArray = async (a, reader) => {
       let input = null;
       while (input === null || !input.done) {
         input = await reader.read();
@@ -318,6 +382,28 @@ describe("request body cloning", () => {
         "Content-type": "application/octet-stream",
       },
     });
+  });
+
+  it("handles client abort signal", async done => {
+    const data = "TEST";
+    await startServer(async req => {
+      const clone = req.clone();
+      const reader = clone.body;
+      await sleep(1500);
+      const out = await Bun.readableStreamToArrayBuffer(reader);
+      expect(Buffer.from(out).toString()).toEqual(data);
+      done();
+      return new Response("HELLOO");
+    });
+
+    const controller = new AbortController();
+    const signal = controller.signal;
+
+    const res = fetch(`http://${server.hostname}:${server.port}`, { signal, body: data, method: "POST" }).catch(err => {
+      expect(err.name).toEqual("AbortError");
+    });
+    await sleep(500);
+    controller.abort();
   });
 });
 describe("response body cloning", () => {
@@ -370,6 +456,94 @@ describe("response body cloning", () => {
     expect(out).toEqual(b);
     expect(out2).toEqual(b);
   });
+  class WrappedStream {
+    constructor() {
+      this.chunks = [];
+    }
+    getStream() {
+      if (!this.stream) {
+        this.stream = new WritableStream({
+          write: chunk => {
+            this.chunks.push(chunk);
+          },
+          close: controller => {
+            const totalLength = this.chunks.reduce((acc, arr) => acc + arr.length, 0);
+
+            const result = Buffer.alloc(totalLength);
+
+            let offset = 0;
+            for (const uint8Array of this.chunks) {
+              result.set(uint8Array, offset);
+              offset += uint8Array.length;
+            }
+            if (this.promise) {
+              this.promise(result);
+              this.promise = null;
+            }
+          },
+        });
+      }
+      return this.stream;
+    }
+    getResult() {
+      return new Promise(resolve => {
+        this.promise = resolve;
+      });
+    }
+  }
+  it("can use pipe", async () => {
+    const data = Buffer.from("Well Hello friends", "utf-8");
+    await startServer(async request => {
+      return new Response(data, {
+        headers: {
+          "Content-type": "application/octet-stream",
+        },
+      });
+    });
+    const b = data.buffer.slice();
+    const res = await requestServer();
+    const clone = res.clone();
+    const stream = new WrappedStream();
+    clone.body.pipeTo(stream.getStream());
+
+    const [out, out2] = await Promise.all([res.arrayBuffer(), stream.getResult()]);
+    expect(out).toEqual(b);
+    expect(out2).toEqual(data);
+  });
+  // it("can use pipeThrough", async () => {
+  //   const data = Buffer.from("Well Hello friends", "utf-8");
+  //   await startServer(async request => {
+  //     return new Response(data, {
+  //       headers: {
+  //         "Content-type": "application/octet-stream",
+  //       },
+  //     });
+  //   });
+  //   const b = data.buffer.slice();
+  //   const res = await requestServer();
+  //   // const clone = res.clone();
+  //   class Transformer {
+  //     constructor() {
+  //       this.stream = new WrappedStream();
+
+  //       this.readable = new ReadableStream({
+  //         start: (controller) => {
+  //           this.stream.getResult().then(res => {
+  //             controller.enqueue(res);
+  //             controller.enqueue(Buffer.from("Some-Text"));
+  //             controller.close();
+  //           });
+  //         },
+  //       });
+  //       this.writable = this.stream.getStream();
+  //     }
+  //   }
+  //   res.body.pipeThrough(new Transformer());
+  //   const out2 = await res.text();
+  //   // const [out, out2] = await Promise.all([res.arrayBuffer(), clone.text()]);
+  //   // expect(out).toEqual(b);
+  //   expect(out2).toEqual(data.toString() + "Some-Text");
+  // });
   it("arrayBuffer string matches", async () => {
     const data = Buffer.from("Well Hello friends 🥹☺️", "utf-8");
     await startServer(async request => {
@@ -461,7 +635,7 @@ describe("response body cloning", () => {
   });
   it("reader only does not hold data", async () => {
     const data = "this is a very very very very long response".repeat(100000);
-    const dataArray = new Uint8Array(Buffer.from(data));
+    const dataArray = Buffer.from(data);
     await startServer(async request => {
       return new Response(data, {
         headers: {
@@ -509,38 +683,17 @@ describe("response body cloning", () => {
     const textClone = res.clone();
     const arrayBufferClone = res.clone();
     const clone2 = clone.clone();
-    const reader3 = clone2.body.getReader();
-    const reader2 = clone.body.getReader();
-    const reader1 = res.body.getReader();
-
-    const merge = (a, b) => {
-      const n = new Uint8Array(a.length + b.length);
-      n.set(a, 0);
-      n.set(b, a.length);
-      return n;
-    };
-
-    const readerToArray = async reader => {
-      let a = null;
-      let input = null;
-      while (input === null || !input.done) {
-        input = await reader.read();
-        if (!a) {
-          a = input.value;
-        } else {
-          if (input.value) a = merge(a, input.value);
-        }
-      }
-      return a;
-    };
+    const body3 = clone2.body;
+    const body2 = clone.body;
+    const body1 = res.body;
 
     const [b, c, array_buf, text] = await Promise.all([
-      readerToArray(reader2),
-      readerToArray(reader3),
+      Bun.readableStreamToArrayBuffer(body2),
+      Bun.readableStreamToArrayBuffer(body3),
       arrayBufferClone.arrayBuffer(),
       textClone.text(),
     ]);
-    const ref = await readerToArray(reader1);
+    const ref = await Bun.readableStreamToArrayBuffer(body1);
     const list = [ref, b, c];
     for (const entry of list) {
       expect(entry.length).toBe(ref.length);

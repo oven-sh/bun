@@ -272,7 +272,8 @@ pub const Request = struct {
             this.headers = null;
         }
         this.maybeUnprotect();
-        this.request_context.deleteRequestClone(this);
+        if (this.has_parent_ref)
+            this.request_context.deleteRequestClone(this);
         this.url.deref();
         this.url = bun.String.empty;
 

@@ -273,7 +273,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsWorker_threadIdGetter, (JSGlobalObject * lexicalGloba
         return JSValue::encode(jsUndefined());
 
     // Main thread starts at 1
-    // so we say it's 0
     //
     // Note that we cannot use posix thread ids here because we don't know their thread id until the thread starts
     //

@@ -1,5 +1,4 @@
-import wt from "worker_threads";
-import {
+import wt, {
   getEnvironmentData,
   isMainThread,
   markAsUntransferable,
@@ -16,6 +15,7 @@ import {
   MessagePort,
   Worker,
 } from "worker_threads";
+
 test("all worker_threads module properties are present", () => {
   expect(wt).toHaveProperty("getEnvironmentData");
   expect(wt).toHaveProperty("isMainThread");
@@ -60,7 +60,7 @@ test("all worker_threads module properties are present", () => {
   }).toThrow("not yet implemented");
 });
 
-test("all worker_threads worker instance properties are present", () => {
+test("all worker_threads worker instance properties are present", async () => {
   const worker = new Worker(new URL("./worker.js", import.meta.url).href);
   expect(worker).toHaveProperty("threadId");
   expect(worker).toHaveProperty("ref");
@@ -113,9 +113,22 @@ test("all worker_threads worker instance properties are present", () => {
   expect(worker.rawListeners).toBeFunction();
   expect(worker.listenerCount).toBeFunction();
   expect(worker.eventNames).toBeFunction();
+  await worker.terminate();
 });
 
-test("receiveMessageOnPort works across threads", () => {
+test("threadId module and worker property is consistent", async () => {
+  const worker1 = new Worker(new URL("./worker-thread-id.ts", import.meta.url).href);
+  expect(threadId).toBe(0);
+  expect(worker1.threadId).toBe(2);
+  expect(() => worker1.postMessage({ workerId: worker1.threadId })).not.toThrow();
+  const worker2 = new Worker(new URL("./worker-thread-id.ts", import.meta.url).href);
+  expect(worker2.threadId).toBe(3);
+  expect(() => worker2.postMessage({ workerId: worker2.threadId })).not.toThrow();
+  await worker1.terminate();
+  await worker2.terminate();
+});
+
+test("receiveMessageOnPort works across threads", async () => {
   const { port1, port2 } = new MessageChannel();
   const worker = new Worker(new URL("./worker.js", import.meta.url).href, {
     workerData: port2,
@@ -125,10 +138,11 @@ test("receiveMessageOnPort works across threads", () => {
   let sharedBufferView = new Int32Array(sharedBuffer);
   let msg = { sharedBuffer };
   worker.postMessage(msg);
-  Atomics.wait(sharedBufferView, 0, 0);
+  expect(Atomics.wait(sharedBufferView, 0, 0)).toBe("ok");
   const message = receiveMessageOnPort(port1);
   expect(message).toBeDefined();
   expect(message!.message).toBe("done!");
+  await worker.terminate();
 });
 
 test("receiveMessageOnPort works with FIFO", () => {

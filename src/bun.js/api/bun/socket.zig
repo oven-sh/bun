@@ -920,11 +920,7 @@ pub const Listener = struct {
 
         globalObject.bunVM().eventLoop().ensureWaker();
 
-<<<<<<< HEAD
-        var socket_context = uws.us_create_bun_socket_context(@intFromBool(ssl_enabled), uws.Loop.get(), @sizeOf(usize), ctx_opts).?;
-=======
-        const socket_context_result = uws.us_create_bun_socket_context(@intFromBool(ssl_enabled), uws.Loop.get().?, @sizeOf(usize), ctx_opts);
-        if (socket_context_result == null) {
+        const socket_context = uws.us_create_bun_socket_context(@intFromBool(ssl_enabled), uws.Loop.get().?, @sizeOf(usize), ctx_opts) orelse {
             const err = JSC.SystemError{
                 .message = bun.String.static("Failed to connect"),
                 .syscall = bun.String.static("connect"),
@@ -933,8 +929,7 @@ pub const Listener = struct {
             exception.* = err.toErrorInstance(globalObject).asObjectRef();
             return .zero;
         }
-        var socket_context = socket_context_result.?;
->>>>>>> 7e6ed8128 (more tests and more fixes)
+        
         var connection: Listener.UnixOrHost = if (port) |port_| .{
             .host = .{ .host = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice(), .port = port_ },
         } else .{
@@ -1414,7 +1409,7 @@ fn NewSocket(comptime ssl: bool) type {
             const result = callback.callWithThis(globalObject, this_value, &[_]JSValue{
                 this_value,
             });
-
+5
             if (result.toError()) |err_value| {
                 _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, err_value });
             }

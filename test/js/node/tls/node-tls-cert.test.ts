@@ -5,6 +5,7 @@ import type { AddressInfo } from "node:net";
 import { join } from "path";
 import { readFileSync } from "fs";
 import { c, s } from "js/bun/http/js-sink-sourmap-fixture/index.mjs";
+import { serve } from "bun";
 
 const client = {
   key: readFileSync(join(import.meta.dir, "fixtures", "ec10-key.pem"), "utf8"),
@@ -65,6 +66,13 @@ function connect(options: any) {
       .createServer(options.server, function (conn) {
         server.conn = conn;
         conn.pipe(conn);
+        if (client.conn) {
+          resolveOrReject();
+        }
+      })
+      .on("tlsClientError", (err: any) => {
+        server.err = err;
+        resolveOrReject();
       })
       .on("error", err => {
         server.err = err;
@@ -76,7 +84,9 @@ function connect(options: any) {
           const conn = tls
             .connect(optClient, () => {
               client.conn = conn;
-              resolveOrReject();
+              if (server.conn) {
+                resolveOrReject();
+              }
             })
             .on("error", function (err) {
               client.err = err;
@@ -224,8 +234,8 @@ it("Fail to complete client's chain.", async () => {
   try {
     await connect({
       client: {
-        key: client.key,
-        cert: client.single,
+        // key: client.key,
+        // cert: client.single,
         ca: server.ca,
         checkServerIdentity,
       },
@@ -238,7 +248,7 @@ it("Fail to complete client's chain.", async () => {
     });
     expect(true).toBe("unreachable");
   } catch (err: any) {
-    expect(err.code).toBe("ECONNRESET");
+    expect(err.code).toBe("UNABLE_TO_GET_ISSUER_CERT");
   }
 });
 

@@ -989,7 +989,7 @@ describe("node https server", async () => {
       res.end();
     });
     try {
-      await fetch(url);
+      await fetch(url, { tls: { rejectUnauthorized: false } });
     } catch (e) {
       throw e;
     } finally {

@@ -125,7 +125,7 @@ $$EXPORT$$(__intrinsic__exports).$$EXPORT_END$$;
     if (!fs.existsSync(path.dirname(outputPath))) {
       verbose("directory did not exist after mkdir twice:", path.dirname(outputPath));
     }
-    await Bun.sleep(1);
+    await Bun.sleep(10);
 
     try {
       await writeFile(outputPath, fileToTranspile);

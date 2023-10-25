@@ -1,5 +1,5 @@
 ---
-name: Use Drizzle with Bun
+name: Use Drizzle ORM with Bun
 ---
 
 Drizzle is an ORM that supports both a SQL-like "query builder" API and an ORM-like [Queries API](https://orm.drizzle.team/docs/rqb). It supports the `bun:sqlite` built-in module.

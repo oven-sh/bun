@@ -19,11 +19,11 @@ $ bun add -D drizzle-kit
 Then we'll connect to a SQLite database using the `bun:sqlite` module and create the Drizzle database instance.
 
 ```ts#db.ts
-import { drizzle, BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
+import { drizzle } from "drizzle-orm/bun-sqlite";
 import { Database } from "bun:sqlite";
 
 const sqlite = new Database("sqlite.db");
-export const db: BunSQLiteDatabase = drizzle(sqlite);
+export const db = drizzle(sqlite);
 ```
 
 ---
@@ -34,8 +34,8 @@ To see the database in action, add these lines to `index.ts`.
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 
-const query = sql`select "hello world" as text;`
-console.log(await db.get<string>(query));
+const query = sql`select "hello world" as text`;
+console.log(db.get<{ text: string }>(query));
 ```
 
 ---
@@ -97,7 +97,7 @@ import { Database } from "bun:sqlite";
 
 const sqlite = new Database("sqlite.db");
 const db: BunSQLiteDatabase = drizzle(sqlite);
-await migrate(db, { migrationsFolder: "./drizzle" });
+migrate(db, { migrationsFolder: "./drizzle" });
 ```
 
 ---

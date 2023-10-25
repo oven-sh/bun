@@ -199,7 +199,6 @@ const CreateOptions = struct {
     };
 
     pub fn parse(ctx: Command.Context) !CreateOptions {
-        
         var diag = clap.Diagnostic{};
 
         var args = clap.parse(clap.Help, &params, .{ .diagnostic = &diag, .allocator = ctx.allocator }) catch |err| {

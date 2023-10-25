@@ -905,7 +905,6 @@ pub const RunCommand = struct {
                 var iterator = scripts.iterator();
 
                 if (scripts.count() > 0) {
-
                     Output.pretty("\n\n<b>package.json scripts ({d} found):<r>", .{scripts.count()});
                     // Output.prettyln("<r><blue><b>{s}<r> scripts:<r>\n", .{display_name});
                     while (iterator.next()) |entry| {

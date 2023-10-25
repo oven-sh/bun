@@ -83,7 +83,9 @@ pub const Version = struct {
     pub const triplet = platform_label ++ "-" ++ arch_label;
     const suffix = if (Environment.baseline) "-baseline" else "";
     pub const folder_name = "bun-" ++ triplet ++ suffix;
+    pub const baseline_folder_name = "bun-" ++ triplet ++ "-baseline";
     pub const zip_filename = folder_name ++ ".zip";
+    pub const baseline_zip_filename = baseline_folder_name ++ ".zip";
 
     pub const profile_folder_name = "bun-" ++ triplet ++ suffix ++ "-profile";
     pub const profile_zip_filename = profile_folder_name ++ ".zip";
@@ -93,6 +95,11 @@ pub const Version = struct {
     pub export const Bun__githubURL: [*:0]const u8 = std.fmt.comptimePrint("https://github.com/oven-sh/bun/release/bun-v{s}/{s}", .{
         Global.package_json_version,
         zip_filename,
+    });
+
+    pub const Bun__githubBaselineURL: [:0]const u8 = std.fmt.comptimePrint("https://github.com/oven-sh/bun/release/bun-v{s}/{s}", .{
+        Global.package_json_version,
+        baseline_zip_filename,
     });
 
     pub fn isCurrent(this: Version) bool {

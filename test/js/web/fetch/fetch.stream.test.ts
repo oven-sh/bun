@@ -28,6 +28,142 @@ const smallText = Buffer.from("Hello".repeat(16));
 const empty = Buffer.alloc(0);
 
 describe("fetch() with streaming", () => {
+  it(`should be able to fail properly when reading from readable stream`, async () => {
+    let server: Server | null = null;
+    try {
+      server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          return new Response(
+            new ReadableStream({
+              async start(controller) {
+                controller.enqueue("Hello, World!");
+                await Bun.sleep(1000);
+                controller.enqueue("Hello, World!");
+                controller.close();
+              },
+            }),
+            {
+              status: 200,
+              headers: {
+                "Content-Type": "text/plain",
+              },
+            },
+          );
+        },
+      });
+
+      const server_url = `http://${server.hostname}:${server.port}`;
+      try {
+        const res = await fetch(server_url, { signal: AbortSignal.timeout(20) });
+        const reader = res.body?.getReader();
+        while (true) {
+          const { done } = await reader?.read();
+          if (done) break;
+        }
+        expect(true).toBe("unreachable");
+      } catch (err: any) {
+        if (err.name !== "TimeoutError") throw err;
+        expect(err.message).toBe("The operation timed out.");
+      }
+    } finally {
+      server?.stop();
+    }
+  });
+
+  it(`should be locked after start buffering`, async () => {
+    let server: Server | null = null;
+    try {
+      server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          return new Response(
+            new ReadableStream({
+              async start(controller) {
+                controller.enqueue("Hello, World!");
+                await Bun.sleep(10);
+                controller.enqueue("Hello, World!");
+                await Bun.sleep(10);
+                controller.enqueue("Hello, World!");
+                await Bun.sleep(10);
+                controller.enqueue("Hello, World!");
+                await Bun.sleep(10);
+                controller.close();
+              },
+            }),
+            {
+              status: 200,
+              headers: {
+                "Content-Type": "text/plain",
+              },
+            },
+          );
+        },
+      });
+
+      const server_url = `http://${server.hostname}:${server.port}`;
+      const res = await fetch(server_url);
+      try {
+        const promise = res.text(); // start buffering
+        res.body?.getReader(); // get a reader
+        const result = await promise; // should throw the right error
+        expect(result).toBe("unreachable");
+      } catch (err: any) {
+        if (err.name !== "TypeError") throw err;
+        expect(err.message).toBe("ReadableStream is locked");
+      }
+    } finally {
+      server?.stop();
+    }
+  });
+
+  it(`should be locked after start buffering when calling getReader`, async () => {
+    let server: Server | null = null;
+    try {
+      server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          return new Response(
+            new ReadableStream({
+              async start(controller) {
+                controller.enqueue("Hello, World!");
+                await Bun.sleep(10);
+                controller.enqueue("Hello, World!");
+                await Bun.sleep(10);
+                controller.enqueue("Hello, World!");
+                await Bun.sleep(10);
+                controller.enqueue("Hello, World!");
+                await Bun.sleep(10);
+                controller.close();
+              },
+            }),
+            {
+              status: 200,
+              headers: {
+                "Content-Type": "text/plain",
+              },
+            },
+          );
+        },
+      });
+
+      const server_url = `http://${server.hostname}:${server.port}`;
+      const res = await fetch(server_url);
+      try {
+        const body = res.body as ReadableStream<Uint8Array>;
+        const promise = res.text(); // start buffering
+        body.getReader(); // get a reader
+        const result = await promise; // should throw the right error
+        expect(result).toBe("unreachable");
+      } catch (err: any) {
+        if (err.name !== "TypeError") throw err;
+        expect(err.message).toBe("ReadableStream is locked");
+      }
+    } finally {
+      server?.stop();
+    }
+  });
+
   it("can deflate with and without headers #4478", async () => {
     let server: Server | null = null;
     try {
@@ -77,7 +213,12 @@ describe("fetch() with streaming", () => {
           .listen(0);
 
         const address = server.address() as AddressInfo;
-        const url = `http://${address.address}:${address.port}`;
+        let url;
+        if (address.family == "IPv4") {
+          url = `http://${address.address}:${address.port}`;
+        } else {
+          url = `http://[${address.address}]:${address.port}`;
+        }
         async function getRequestLen(url: string) {
           const response = await fetch(url);
           const hasBody = response.body;

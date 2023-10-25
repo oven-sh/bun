@@ -102,11 +102,12 @@ const LibInfo = struct {
         ) catch unreachable;
         const promise_value = request.head.promise.value();
 
+        const hints = query.options.toLibC();
         const errno = getaddrinfo_async_start_(
             &request.backend.libinfo.machport,
             name_z.ptr,
             null,
-            null,
+            if (hints != null) &hints.? else null,
             GetAddrInfoRequest.getAddrInfoAsyncCallback,
             request,
         );
@@ -860,7 +861,7 @@ pub const CAresNameInfo = struct {
             return;
         }
         var name_info = result.?;
-        const array = name_info.toJSReponse(this.globalThis.allocator(), this.globalThis);
+        const array = name_info.toJSResponse(this.globalThis.allocator(), this.globalThis);
         this.onComplete(array);
         return;
     }
@@ -1250,7 +1251,7 @@ pub const CAresReverse = struct {
             return;
         }
         var node = result.?;
-        const array = node.toJSReponse(this.globalThis.allocator(), this.globalThis, "");
+        const array = node.toJSResponse(this.globalThis.allocator(), this.globalThis, "");
         this.onComplete(array);
         return;
     }
@@ -1321,7 +1322,7 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
                 return;
             }
             var node = result.?;
-            const array = node.toJSReponse(this.globalThis.allocator(), this.globalThis, type_name);
+            const array = node.toJSResponse(this.globalThis.allocator(), this.globalThis, type_name);
             this.onComplete(array);
             return;
         }
@@ -1536,7 +1537,7 @@ pub const DNSResolver = struct {
 
         var pending: ?*CAresLookup(cares_type, lookup_name) = key.lookup.head.next;
         var prev_global = key.lookup.head.globalThis;
-        var array = addr.toJSReponse(this.vm.allocator, prev_global, lookup_name);
+        var array = addr.toJSResponse(this.vm.allocator, prev_global, lookup_name);
         defer addr.deinit();
         array.ensureStillAlive();
         key.lookup.head.onComplete(array);
@@ -1547,7 +1548,7 @@ pub const DNSResolver = struct {
         while (pending) |value| {
             var new_global = value.globalThis;
             if (prev_global != new_global) {
-                array = addr.toJSReponse(this.vm.allocator, new_global, lookup_name);
+                array = addr.toJSResponse(this.vm.allocator, new_global, lookup_name);
                 prev_global = new_global;
             }
             pending = value.next;
@@ -1666,7 +1667,7 @@ pub const DNSResolver = struct {
         //  The callback need not and should not attempt to free the memory
         //  pointed to by hostent; the ares library will free it when the
         //  callback returns.
-        var array = addr.toJSReponse(this.vm.allocator, prev_global, "");
+        var array = addr.toJSResponse(this.vm.allocator, prev_global, "");
         array.ensureStillAlive();
         key.lookup.head.onComplete(array);
         bun.default_allocator.destroy(key.lookup);
@@ -1676,7 +1677,7 @@ pub const DNSResolver = struct {
         while (pending) |value| {
             var new_global = value.globalThis;
             if (prev_global != new_global) {
-                array = addr.toJSReponse(this.vm.allocator, new_global, "");
+                array = addr.toJSResponse(this.vm.allocator, new_global, "");
                 prev_global = new_global;
             }
             pending = value.next;
@@ -1707,7 +1708,7 @@ pub const DNSResolver = struct {
         var pending: ?*CAresNameInfo = key.lookup.head.next;
         var prev_global = key.lookup.head.globalThis;
 
-        var array = name_info.toJSReponse(this.vm.allocator, prev_global);
+        var array = name_info.toJSResponse(this.vm.allocator, prev_global);
         array.ensureStillAlive();
         key.lookup.head.onComplete(array);
         bun.default_allocator.destroy(key.lookup);
@@ -1717,7 +1718,7 @@ pub const DNSResolver = struct {
         while (pending) |value| {
             var new_global = value.globalThis;
             if (prev_global != new_global) {
-                array = name_info.toJSReponse(this.vm.allocator, new_global);
+                array = name_info.toJSResponse(this.vm.allocator, new_global);
                 prev_global = new_global;
             }
             pending = value.next;
@@ -2475,7 +2476,7 @@ pub const DNSResolver = struct {
             return dns_lookup.promise.value();
         }
 
-        // var hints_buf = &[_]c_ares.AddrInfo_hints{query.toCAres()};
+        var hints_buf = &[_]c_ares.AddrInfo_hints{query.toCAres()};
         var request = GetAddrInfoRequest.init(
             cache,
             .{
@@ -2491,7 +2492,7 @@ pub const DNSResolver = struct {
         channel.getAddrInfo(
             query.name,
             query.port,
-            &.{},
+            hints_buf,
             GetAddrInfoRequest,
             request,
             GetAddrInfoRequest.onCaresComplete,

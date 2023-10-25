@@ -47,4 +47,4 @@ Note that this only allows lifecycle scripts for the specific package listed in 
 
 ---
 
-See [Docs > Package manager > Trusted dependencies](/docs/cli/install#trusted-dependencies) for complete documentation of trusted dependencies.
+See [Docs > Package manager > Trusted dependencies](/docs/install/lifecycle) for complete documentation of trusted dependencies.

@@ -244,6 +244,32 @@ pub const PackageManagerCommand = struct {
             }
 
             Global.exit(0);
+        } else if (strings.eqlComptime(subcommand, "migrate")) {
+            if (!pm.options.enable.force_save_lockfile) try_load_bun: {
+                std.fs.cwd().accessZ("bun.lockb", .{ .mode = .read_only }) catch break :try_load_bun;
+
+                Output.prettyErrorln(
+                    \\<r><red>error<r>: bun.lockb already exists
+                    \\run with --force to overwrite
+                , .{});
+                Global.exit(1);
+            }
+            const load_lockfile = @import("../install/migration.zig").detectAndLoadOtherLockfile(
+                pm.lockfile,
+                ctx.allocator,
+                pm.log,
+                pm.options.lockfile_path,
+            );
+            if (load_lockfile == .not_found) {
+                Output.prettyErrorln(
+                    \\<r><red>error<r>: could not find any other lockfile
+                , .{});
+                Global.exit(1);
+            }
+            handleLoadLockfileErrors(load_lockfile, pm);
+            const lockfile = load_lockfile.ok;
+            lockfile.saveToDisk(pm.options.lockfile_path);
+            Global.exit(0);
         }
 
         Output.prettyln(
@@ -258,8 +284,9 @@ pub const PackageManagerCommand = struct {
             \\  bun pm <b>hash-print<r>   print the hash stored in the current lockfile
             \\  bun pm <b>cache<r>        print the path to the cache folder
             \\  bun pm <b>cache rm<r>     clear the cache
+            \\  bun pm <b>migrate<r>      migrate another package manager's lockfile without installing anything
             \\
-            \\Learn more about these at <magenta>https://bun.sh/docs/install/utilities<r>
+            \\Learn more about these at <magenta>https://bun.sh/docs/cli/pm<r>
             \\
         , .{});
 

@@ -1178,8 +1178,7 @@ pub fn DOMCall(
                     \\           thisObject->putDirect(
                     \\             globalObject->vm(),
                     \\             Identifier::fromString(globalObject->vm(), "{[name]s}"_s),
-                    \\             function,
-                    \\             JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | 0
+                    \\             function
                     \\           );
                     \\}}
                 ;

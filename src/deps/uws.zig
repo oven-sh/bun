@@ -40,6 +40,20 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             return us_socket_timeout(comptime ssl_int, this.socket, seconds);
         }
 
+        pub fn setTimeout(this: ThisSocket, seconds: c_uint) void {
+            if (seconds > 240) {
+                us_socket_timeout(comptime ssl_int, this.socket, 0);
+                us_socket_long_timeout(comptime ssl_int, this.socket, seconds / 60);
+            } else {
+                us_socket_timeout(comptime ssl_int, this.socket, seconds);
+                us_socket_long_timeout(comptime ssl_int, this.socket, 0);
+            }
+        }
+
+        pub fn setTimeoutMinutes(this: ThisSocket, minutes: c_uint) void {
+            return us_socket_long_timeout(comptime ssl_int, this.socket, minutes);
+        }
+
         pub fn startTLS(this: ThisSocket, is_client: bool) void {
             _ = us_socket_open(comptime ssl_int, this.socket, @intFromBool(is_client), null, 0);
         }
@@ -126,6 +140,13 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     );
                     return socket;
                 }
+                pub fn on_long_timeout(socket: *Socket) callconv(.C) ?*Socket {
+                    Fields.onLongTimeout(
+                        getValue(socket),
+                        TLSSocket{ .socket = socket },
+                    );
+                    return socket;
+                }
                 pub fn on_connect_error(socket: *Socket, code: i32) callconv(.C) ?*Socket {
                     Fields.onConnectError(
                         getValue(socket),
@@ -155,6 +176,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 .on_connect_error = SocketHandler.on_connect_error,
                 .on_end = SocketHandler.on_end,
                 .on_handshake = SocketHandler.on_handshake,
+                .on_long_timeout = SocketHandler.on_long_timeout,
             };
 
             const socket = us_socket_wrap_with_tls(ssl_int, this.socket, options, events, socket_ext_size) orelse return null;
@@ -282,6 +304,64 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 buf,
                 length,
             );
+        }
+
+        /// Get the local address of a socket in binary format.
+        ///
+        /// # Arguments
+        /// - `buf`: A buffer to store the binary address data.
+        ///
+        /// # Returns
+        /// This function returns a slice of the buffer on success, or null on failure.
+        pub fn localAddressBinary(this: ThisSocket, buf: []u8) ?[]const u8 {
+            var length: i32 = @intCast(buf.len);
+            us_socket_local_address(
+                comptime ssl_int,
+                this.socket,
+                buf.ptr,
+                &length,
+            );
+
+            if (length <= 0) {
+                return null;
+            }
+            return buf[0..@intCast(length)];
+        }
+
+        /// Get the local address of a socket in text format.
+        ///
+        /// # Arguments
+        /// - `buf`: A buffer to store the text address data.
+        /// - `is_ipv6`: A pointer to a boolean representing whether the address is IPv6.
+        ///
+        /// # Returns
+        /// This function returns a slice of the buffer on success, or null on failure.
+        pub fn localAddressText(this: ThisSocket, buf: []u8, is_ipv6: *bool) ?[]const u8 {
+            const addr_v4_len = @sizeOf(std.meta.FieldType(std.os.sockaddr.in, .addr));
+            const addr_v6_len = @sizeOf(std.meta.FieldType(std.os.sockaddr.in6, .addr));
+
+            var sa_buf: [addr_v6_len + 1]u8 = undefined;
+            const binary = this.localAddressBinary(&sa_buf);
+            if (binary == null) {
+                return null;
+            }
+            const addr_len: usize = binary.?.len;
+            sa_buf[addr_len] = 0;
+
+            var ret: ?[*:0]const u8 = null;
+            if (addr_len == addr_v4_len) {
+                ret = bun.c_ares.ares_inet_ntop(std.os.AF.INET, &sa_buf, buf.ptr, @as(u32, @intCast(buf.len)));
+                is_ipv6.* = false;
+            } else if (addr_len == addr_v6_len) {
+                ret = bun.c_ares.ares_inet_ntop(std.os.AF.INET6, &sa_buf, buf.ptr, @as(u32, @intCast(buf.len)));
+                is_ipv6.* = true;
+            }
+
+            if (ret) |_| {
+                const length: usize = @intCast(bun.len(bun.cast([*:0]u8, buf)));
+                return buf[0..length];
+            }
+            return null;
         }
 
         pub fn connect(
@@ -578,6 +658,13 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     );
                     return socket;
                 }
+                pub fn on_long_timeout(socket: *Socket) callconv(.C) ?*Socket {
+                    Fields.onLongTimeout(
+                        getValue(socket),
+                        ThisSocket{ .socket = socket },
+                    );
+                    return socket;
+                }
                 pub fn on_connect_error(socket: *Socket, code: i32) callconv(.C) ?*Socket {
                     Fields.onConnectError(
                         getValue(socket),
@@ -614,6 +701,8 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 us_socket_context_on_end(ssl_int, ctx, SocketHandler.on_end);
             if (comptime @hasDecl(Type, "onHandshake") and @typeInfo(@TypeOf(Type.onHandshake)) != .Null)
                 us_socket_context_on_handshake(ssl_int, ctx, SocketHandler.on_handshake, null);
+            if (comptime @hasDecl(Type, "onLongTimeout") and @typeInfo(@TypeOf(Type.onLongTimeout)) != .Null)
+                us_socket_context_on_long_timeout(ssl_int, ctx, SocketHandler.on_long_timeout);
         }
 
         pub fn from(socket: *Socket) ThisSocket {
@@ -669,9 +758,9 @@ pub const Timer = opaque {
         @as(*@TypeOf(ptr), @ptrCast(@alignCast(value_ptr))).* = ptr;
     }
 
-    pub fn deinit(this: *Timer) void {
+    pub fn deinit(this: *Timer, comptime fallthrough: bool) void {
         debug("Timer.deinit()", .{});
-        us_timer_close(this);
+        us_timer_close(this, @intFromBool(fallthrough));
     }
 
     pub fn ext(this: *Timer, comptime Type: type) ?*Type {
@@ -915,7 +1004,7 @@ const uintmax_t = c_ulong;
 
 extern fn us_create_timer(loop: ?*Loop, fallthrough: i32, ext_size: c_uint) *Timer;
 extern fn us_timer_ext(timer: ?*Timer) *?*anyopaque;
-extern fn us_timer_close(timer: ?*Timer) void;
+extern fn us_timer_close(timer: ?*Timer, fallthrough: i32) void;
 extern fn us_timer_set(timer: ?*Timer, cb: ?*const fn (*Timer) callconv(.C) void, ms: i32, repeat_ms: i32) void;
 extern fn us_timer_loop(t: ?*Timer) ?*Loop;
 pub const us_socket_context_options_t = extern struct {
@@ -985,6 +1074,7 @@ extern fn us_socket_context_on_writable(ssl: i32, context: ?*SocketContext, on_w
 extern fn us_socket_context_on_handshake(ssl: i32, context: ?*SocketContext, on_handshake: *const fn (*Socket, i32, us_bun_verify_error_t, ?*anyopaque) callconv(.C) void, ?*anyopaque) void;
 
 extern fn us_socket_context_on_timeout(ssl: i32, context: ?*SocketContext, on_timeout: *const fn (*Socket) callconv(.C) ?*Socket) void;
+extern fn us_socket_context_on_long_timeout(ssl: i32, context: ?*SocketContext, on_timeout: *const fn (*Socket) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_on_connect_error(ssl: i32, context: ?*SocketContext, on_connect_error: *const fn (*Socket, i32) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_on_end(ssl: i32, context: ?*SocketContext, on_end: *const fn (*Socket) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_ext(ssl: i32, context: ?*SocketContext) ?*anyopaque;
@@ -1089,6 +1179,7 @@ pub const Poll = opaque {
 extern fn us_socket_get_native_handle(ssl: i32, s: ?*Socket) ?*anyopaque;
 
 extern fn us_socket_timeout(ssl: i32, s: ?*Socket, seconds: c_uint) void;
+extern fn us_socket_long_timeout(ssl: i32, s: ?*Socket, seconds: c_uint) void;
 extern fn us_socket_ext(ssl: i32, s: ?*Socket) ?*anyopaque;
 extern fn us_socket_context(ssl: i32, s: ?*Socket) ?*SocketContext;
 extern fn us_socket_flush(ssl: i32, s: ?*Socket) void;
@@ -1105,6 +1196,7 @@ extern fn us_socket_open(ssl: i32, s: ?*Socket, is_client: i32, ip: [*c]const u8
 
 extern fn us_socket_local_port(ssl: i32, s: ?*Socket) i32;
 extern fn us_socket_remote_address(ssl: i32, s: ?*Socket, buf: [*c]u8, length: [*c]i32) void;
+extern fn us_socket_local_address(ssl: i32, s: ?*Socket, buf: [*c]u8, length: [*c]i32) void;
 pub const uws_app_s = opaque {};
 pub const uws_req_s = opaque {};
 pub const uws_header_iterator_s = opaque {};
@@ -1403,6 +1495,12 @@ pub const ListenSocket = opaque {
 extern fn us_listen_socket_close(ssl: i32, ls: *ListenSocket) void;
 extern fn uws_app_close(ssl: i32, app: *uws_app_s) void;
 extern fn us_socket_context_close(ssl: i32, ctx: *anyopaque) void;
+
+pub const SocketAddress = struct {
+    ip: []const u8,
+    port: i32,
+    is_ipv6: bool,
+};
 
 pub fn NewApp(comptime ssl: bool) type {
     return opaque {
@@ -1767,8 +1865,8 @@ pub fn NewApp(comptime ssl: bool) type {
             pub fn writeHeaderInt(res: *Response, key: []const u8, value: u64) void {
                 uws_res_write_header_int(ssl_flag, res.downcast(), key.ptr, key.len, value);
             }
-            pub fn endWithoutBody(res: *Response, _: bool) void {
-                uws_res_end_without_body(ssl_flag, res.downcast());
+            pub fn endWithoutBody(res: *Response, close_connection: bool) void {
+                uws_res_end_without_body(ssl_flag, res.downcast(), close_connection);
             }
             pub fn write(res: *Response, data: []const u8) bool {
                 return uws_res_write(ssl_flag, res.downcast(), data.ptr, data.len);
@@ -1785,6 +1883,33 @@ pub fn NewApp(comptime ssl: bool) type {
 
             pub fn getNativeHandle(res: *Response) i32 {
                 return @as(i32, @intCast(@intFromPtr(uws_res_get_native_handle(ssl_flag, res.downcast()))));
+            }
+            pub fn getRemoteAddress(res: *Response) ?[]const u8 {
+                var buf: [*]const u8 = undefined;
+                const size = uws_res_get_remote_address(ssl_flag, res.downcast(), &buf);
+                return if (size > 0) buf[0..size] else null;
+            }
+            pub fn getRemoteAddressAsText(res: *Response) ?[]const u8 {
+                var buf: [*]const u8 = undefined;
+                const size = uws_res_get_remote_address_as_text(ssl_flag, res.downcast(), &buf);
+                return if (size > 0) buf[0..size] else null;
+            }
+            pub fn getRemoteSocketInfo(res: *Response) ?SocketAddress {
+                var address = SocketAddress{
+                    .ip = undefined,
+                    .port = undefined,
+                    .is_ipv6 = undefined,
+                };
+                // This function will fill in the slots and return len.
+                // if len is zero it will not fill in the slots so it is ub to
+                // return the struct in that case.
+                address.ip.len = uws_res_get_remote_address_info(
+                    res.downcast(),
+                    &address.ip.ptr,
+                    &address.port,
+                    &address.is_ipv6,
+                );
+                return if (address.ip.len > 0) address else null;
             }
             pub fn onWritable(
                 res: *Response,
@@ -2069,6 +2194,8 @@ pub fn NewApp(comptime ssl: bool) type {
 extern fn uws_res_end_stream(ssl: i32, res: *uws_res, close_connection: bool) void;
 extern fn uws_res_prepare_for_sendfile(ssl: i32, res: *uws_res) void;
 extern fn uws_res_get_native_handle(ssl: i32, res: *uws_res) *Socket;
+extern fn uws_res_get_remote_address(ssl: i32, res: *uws_res, dest: *[*]const u8) usize;
+extern fn uws_res_get_remote_address_as_text(ssl: i32, res: *uws_res, dest: *[*]const u8) usize;
 extern fn uws_create_app(ssl: i32, options: us_bun_socket_context_options_t) *uws_app_t;
 extern fn uws_app_destroy(ssl: i32, app: *uws_app_t) void;
 extern fn uws_app_get(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
@@ -2122,6 +2249,8 @@ extern fn uws_ws_publish_with_options(ssl: i32, ws: ?*RawWebSocket, topic: [*c]c
 extern fn uws_ws_get_buffered_amount(ssl: i32, ws: ?*RawWebSocket) c_uint;
 extern fn uws_ws_get_remote_address(ssl: i32, ws: ?*RawWebSocket, dest: *[*]u8) usize;
 extern fn uws_ws_get_remote_address_as_text(ssl: i32, ws: ?*RawWebSocket, dest: *[*]u8) usize;
+extern fn uws_res_get_remote_address_info(res: *uws_res, dest: *[*]const u8, port: *i32, is_ipv6: *bool) usize;
+
 const uws_res = opaque {};
 extern fn uws_res_uncork(ssl: i32, res: *uws_res) void;
 extern fn uws_res_end(ssl: i32, res: *uws_res, data: [*c]const u8, length: usize, close_connection: bool) void;
@@ -2139,7 +2268,7 @@ extern fn uws_res_write_continue(ssl: i32, res: *uws_res) void;
 extern fn uws_res_write_status(ssl: i32, res: *uws_res, status: [*c]const u8, length: usize) void;
 extern fn uws_res_write_header(ssl: i32, res: *uws_res, key: [*c]const u8, key_length: usize, value: [*c]const u8, value_length: usize) void;
 extern fn uws_res_write_header_int(ssl: i32, res: *uws_res, key: [*c]const u8, key_length: usize, value: u64) void;
-extern fn uws_res_end_without_body(ssl: i32, res: *uws_res) void;
+extern fn uws_res_end_without_body(ssl: i32, res: *uws_res, close_connection: bool) void;
 extern fn uws_res_write(ssl: i32, res: *uws_res, data: [*c]const u8, length: usize) bool;
 extern fn uws_res_get_write_offset(ssl: i32, res: *uws_res) uintmax_t;
 extern fn uws_res_override_write_offset(ssl: i32, res: *uws_res, uintmax_t) void;

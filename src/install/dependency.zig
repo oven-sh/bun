@@ -2,6 +2,7 @@ const bun = @import("root").bun;
 const logger = bun.logger;
 const Environment = @import("../env.zig");
 const Install = @import("./install.zig");
+const PackageManager = Install.PackageManager;
 const ExternalStringList = Install.ExternalStringList;
 const Features = Install.Features;
 const PackageNameHash = Install.PackageNameHash;
@@ -49,10 +50,10 @@ version: Dependency.Version = .{},
 /// - `peerDependencies`
 /// Technically, having the same package name specified under multiple fields is invalid
 /// But we don't want to allocate extra arrays for them. So we use a bitfield instead.
-behavior: Behavior = .uninitialized,
+behavior: Behavior = Behavior.uninitialized,
 
 /// Sorting order for dependencies is:
-/// 1. [`dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies`]
+/// 1. [ `peerDependencies`, `optionalDependencies`, `devDependencies`, `dependencies` ]
 /// 2. name ASC
 /// "name" must be ASC so that later, when we rebuild the lockfile
 /// we insert it back in reverse order without an extra sorting pass
@@ -92,6 +93,7 @@ pub fn cloneWithDifferentBuffers(this: *const Dependency, name_buf: []const u8, 
         .version = Dependency.parseWithTag(
             builder.lockfile.allocator,
             new_name,
+            String.Builder.stringHash(new_name.slice(out_slice)),
             new_literal.slice(out_slice),
             this.version.tag,
             &sliced,
@@ -144,11 +146,12 @@ pub fn toDependency(
     const name = String{
         .bytes = this[0..8].*,
     };
+    const name_hash: u64 = @bitCast(this[8..16].*);
     return Dependency{
         .name = name,
-        .name_hash = @as(u64, @bitCast(this[8..16].*)),
-        .behavior = @as(Dependency.Behavior, @enumFromInt(this[16])),
-        .version = Dependency.Version.toVersion(name, this[17..this.len].*, ctx),
+        .name_hash = name_hash,
+        .behavior = @bitCast(this[16]),
+        .version = Dependency.Version.toVersion(name, name_hash, this[17..this.len].*, ctx),
     };
 }
 
@@ -156,7 +159,7 @@ pub fn toExternal(this: Dependency) External {
     var bytes: External = undefined;
     bytes[0..this.name.bytes.len].* = this.name.bytes;
     bytes[8..16].* = @as([8]u8, @bitCast(this.name_hash));
-    bytes[16] = @intFromEnum(this.behavior);
+    bytes[16] = @bitCast(this.behavior);
     bytes[17..bytes.len].* = this.version.toExternal();
     return bytes;
 }
@@ -221,12 +224,16 @@ pub inline fn isGitHubRepoPath(dependency: string) bool {
     return hash_index != dependency.len - 1 and first_slash_index > 0 and first_slash_index != dependency.len - 1;
 }
 
-// Github allows for the following format of URL:
-// https://github.com/<org>/<repo>/tarball/<ref>
-// This is a legacy (but still supported) method of retrieving a tarball of an
-// entire source tree at some git reference. (ref = branch, tag, etc. Note: branch
-// can have arbitrary number of slashes)
+/// Github allows for the following format of URL:
+/// https://github.com/<org>/<repo>/tarball/<ref>
+/// This is a legacy (but still supported) method of retrieving a tarball of an
+/// entire source tree at some git reference. (ref = branch, tag, etc. Note: branch
+/// can have arbitrary number of slashes)
+///
+/// This also checks for a github url that ends with ".tar.gz"
 pub inline fn isGitHubTarballPath(dependency: string) bool {
+    if (isTarball(dependency)) return true;
+
     var parts = strings.split(dependency, "/");
 
     var n_parts: usize = 0;
@@ -248,7 +255,7 @@ pub inline fn isTarball(dependency: string) bool {
 }
 
 pub const Version = struct {
-    tag: Dependency.Version.Tag = .uninitialized,
+    tag: Tag = .uninitialized,
     literal: String = .{},
     value: Value = .{ .uninitialized = {} },
 
@@ -293,6 +300,7 @@ pub const Version = struct {
 
     pub fn toVersion(
         alias: String,
+        alias_hash: PackageNameHash,
         bytes: Version.External,
         ctx: Dependency.Context,
     ) Dependency.Version {
@@ -302,6 +310,7 @@ pub const Version = struct {
         return Dependency.parseWithTag(
             ctx.allocator,
             alias,
+            alias_hash,
             sliced.slice,
             tag,
             sliced,
@@ -513,12 +522,34 @@ pub const Version = struct {
                                 },
                                 else => {},
                             }
+
                             if (strings.hasPrefixComptime(url, "github.com/")) {
                                 const path = url["github.com/".len..];
                                 if (isGitHubTarballPath(path)) return .tarball;
                                 if (isGitHubRepoPath(path)) return .github;
                             }
+
+                            if (strings.indexOfChar(url, '.')) |dot| {
+                                if (Repository.Hosts.has(url[0..dot])) return .git;
+                            }
+
                             return .tarball;
+                        }
+                    }
+                },
+                's' => {
+                    if (strings.hasPrefixComptime(dependency, "ssh")) {
+                        var url = dependency["ssh".len..];
+                        if (url.len > 2) {
+                            if (url[0] == ':') {
+                                if (strings.hasPrefixComptime(url, "://")) {
+                                    url = url["://".len..];
+                                }
+                            }
+
+                            if (strings.indexOfChar(url, '.')) |dot| {
+                                if (Repository.Hosts.has(url[0..dot])) return .git;
+                            }
                         }
                     }
                 },
@@ -588,16 +619,17 @@ pub const Version = struct {
         }
     };
 
-    const NpmInfo = struct {
+    pub const NpmInfo = struct {
         name: String,
         version: Semver.Query.Group,
+        is_alias: bool = false,
 
         fn eql(this: NpmInfo, that: NpmInfo, this_buf: []const u8, that_buf: []const u8) bool {
             return this.name.eql(that.name, this_buf, that_buf) and this.version.eql(that.version);
         }
     };
 
-    const TagInfo = struct {
+    pub const TagInfo = struct {
         name: String,
         tag: String,
 
@@ -606,7 +638,7 @@ pub const Version = struct {
         }
     };
 
-    const TarballInfo = struct {
+    pub const TarballInfo = struct {
         uri: URI,
         package_name: String = .{},
 
@@ -644,16 +676,19 @@ pub fn eql(
 pub inline fn parse(
     allocator: std.mem.Allocator,
     alias: String,
+    alias_hash: ?PackageNameHash,
     dependency: string,
     sliced: *const SlicedString,
     log: ?*logger.Log,
 ) ?Version {
-    return parseWithOptionalTag(allocator, alias, dependency, null, sliced, log);
+    const dep = std.mem.trimLeft(u8, dependency, " \t\n\r");
+    return parseWithTag(allocator, alias, alias_hash, dep, Version.Tag.infer(dep), sliced, log);
 }
 
 pub fn parseWithOptionalTag(
     allocator: std.mem.Allocator,
     alias: String,
+    alias_hash: ?PackageNameHash,
     dependency: string,
     tag: ?Dependency.Version.Tag,
     sliced: *const SlicedString,
@@ -663,6 +698,7 @@ pub fn parseWithOptionalTag(
     return parseWithTag(
         allocator,
         alias,
+        alias_hash,
         dep,
         tag orelse Version.Tag.infer(dep),
         sliced,
@@ -673,6 +709,7 @@ pub fn parseWithOptionalTag(
 pub fn parseWithTag(
     allocator: std.mem.Allocator,
     alias: String,
+    alias_hash: ?PackageNameHash,
     dependency: string,
     tag: Dependency.Version.Tag,
     sliced: *const SlicedString,
@@ -683,19 +720,30 @@ pub fn parseWithTag(
     switch (tag) {
         .npm => {
             var input = dependency;
-            const name = if (strings.hasPrefixComptime(input, "npm:")) sliced.sub(brk: {
-                var str = input["npm:".len..];
-                var i: usize = @intFromBool(str.len > 0 and str[0] == '@');
 
-                while (i < str.len) : (i += 1) {
-                    if (str[i] == '@') {
-                        input = str[i + 1 ..];
-                        break :brk str[0..i];
+            var is_alias = false;
+            const name = brk: {
+                if (strings.hasPrefixComptime(input, "npm:")) {
+                    is_alias = true;
+                    var str = input["npm:".len..];
+                    var i: usize = @intFromBool(str.len > 0 and str[0] == '@');
+
+                    while (i < str.len) : (i += 1) {
+                        if (str[i] == '@') {
+                            input = str[i + 1 ..];
+                            break :brk sliced.sub(str[0..i]).value();
+                        }
                     }
+
+                    input = str[i..];
+
+                    break :brk sliced.sub(str[0..i]).value();
                 }
-                input = str[i..];
-                break :brk str[0..i];
-            }).value() else alias;
+
+                break :brk alias;
+            };
+
+            is_alias = is_alias and alias_hash != null;
 
             // Strip single leading v
             // v1.0.0 -> 1.0.0
@@ -713,16 +761,27 @@ pub fn parseWithTag(
                 return null;
             };
 
-            return .{
+            const result = Version{
                 .literal = sliced.value(),
                 .value = .{
                     .npm = .{
+                        .is_alias = is_alias,
                         .name = name,
                         .version = version,
                     },
                 },
                 .tag = .npm,
             };
+
+            if (is_alias) {
+                PackageManager.instance.known_npm_aliases.put(
+                    allocator,
+                    alias_hash.?,
+                    result,
+                ) catch unreachable;
+            }
+
+            return result;
         },
         .dist_tag => {
             var tag_to_use = sliced.value();
@@ -866,6 +925,12 @@ pub fn parseWithTag(
                     .literal = sliced.value(),
                     .value = .{ .tarball = .{ .uri = .{ .local = sliced.sub(dependency[7..]).value() } } },
                 };
+            } else if (strings.hasPrefixComptime(dependency, "file:")) {
+                return .{
+                    .tag = .tarball,
+                    .literal = sliced.value(),
+                    .value = .{ .tarball = .{ .uri = .{ .local = sliced.sub(dependency[5..]).value() } } },
+                };
             } else if (strings.contains(dependency, "://")) {
                 if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "invalid or unsupported dependency \"{s}\"", .{dependency}) catch unreachable;
                 return null;
@@ -928,78 +993,87 @@ pub fn parseWithTag(
     }
 }
 
-pub const Behavior = enum(u8) {
-    uninitialized = 0,
-    _,
+pub const Behavior = packed struct(u8) {
+    pub const uninitialized: Behavior = .{};
 
-    pub const normal: u8 = 1 << 1;
-    pub const optional: u8 = 1 << 2;
-    pub const dev: u8 = 1 << 3;
-    pub const peer: u8 = 1 << 4;
-    pub const workspace: u8 = 1 << 5;
+    // these padding fields are to have compatibility
+    // with older versions of lockfile v2
+    _unused_1: u1 = 0,
+
+    normal: bool = false,
+    optional: bool = false,
+    dev: bool = false,
+    peer: bool = false,
+    workspace: bool = false,
+
+    _unused_2: u2 = 0,
+
+    pub const normal = Behavior{ .normal = true };
+    pub const optional = Behavior{ .optional = true };
+    pub const dev = Behavior{ .dev = true };
+    pub const peer = Behavior{ .peer = true };
+    pub const workspace = Behavior{ .workspace = true };
 
     pub inline fn isNormal(this: Behavior) bool {
-        return (@intFromEnum(this) & Behavior.normal) != 0;
+        return this.normal;
     }
 
     pub inline fn isOptional(this: Behavior) bool {
-        return (@intFromEnum(this) & Behavior.optional) != 0 and !this.isPeer();
+        return this.optional and !this.isPeer();
+    }
+
+    pub inline fn isOptionalPeer(this: Behavior) bool {
+        return this.optional and this.isPeer();
     }
 
     pub inline fn isDev(this: Behavior) bool {
-        return (@intFromEnum(this) & Behavior.dev) != 0;
+        return this.dev;
     }
 
     pub inline fn isPeer(this: Behavior) bool {
-        return (@intFromEnum(this) & Behavior.peer) != 0;
+        return this.peer;
     }
 
     pub inline fn isWorkspace(this: Behavior) bool {
-        return (@intFromEnum(this) & Behavior.workspace) != 0;
+        return this.workspace;
     }
 
     pub inline fn setNormal(this: Behavior, value: bool) Behavior {
-        if (value) {
-            return @as(Behavior, @enumFromInt(@intFromEnum(this) | Behavior.normal));
-        } else {
-            return @as(Behavior, @enumFromInt(@intFromEnum(this) & ~Behavior.normal));
-        }
+        var b = this;
+        b.normal = value;
+        return b;
     }
 
     pub inline fn setOptional(this: Behavior, value: bool) Behavior {
-        if (value) {
-            return @as(Behavior, @enumFromInt(@intFromEnum(this) | Behavior.optional));
-        } else {
-            return @as(Behavior, @enumFromInt(@intFromEnum(this) & ~Behavior.optional));
-        }
+        var b = this;
+        b.optional = value;
+        return b;
     }
 
     pub inline fn setDev(this: Behavior, value: bool) Behavior {
-        if (value) {
-            return @as(Behavior, @enumFromInt(@intFromEnum(this) | Behavior.dev));
-        } else {
-            return @as(Behavior, @enumFromInt(@intFromEnum(this) & ~Behavior.dev));
-        }
+        var b = this;
+        b.dev = value;
+        return b;
     }
 
     pub inline fn setPeer(this: Behavior, value: bool) Behavior {
-        if (value) {
-            return @as(Behavior, @enumFromInt(@intFromEnum(this) | Behavior.peer));
-        } else {
-            return @as(Behavior, @enumFromInt(@intFromEnum(this) & ~Behavior.peer));
-        }
+        var b = this;
+        b.peer = value;
+        return b;
     }
 
     pub inline fn setWorkspace(this: Behavior, value: bool) Behavior {
-        if (value) {
-            return @as(Behavior, @enumFromInt(@intFromEnum(this) | Behavior.workspace));
-        } else {
-            return @as(Behavior, @enumFromInt(@intFromEnum(this) & ~Behavior.workspace));
-        }
+        var b = this;
+        b.workspace = value;
+        return b;
+    }
+
+    pub inline fn eq(lhs: Behavior, rhs: Behavior) bool {
+        return @as(u8, @bitCast(lhs)) == @as(u8, @bitCast(rhs));
     }
 
     pub inline fn cmp(lhs: Behavior, rhs: Behavior) std.math.Order {
-        if (@intFromEnum(lhs) == @intFromEnum(rhs)) {
+        if (eq(lhs, rhs)) {
             return .eq;
         }
 
@@ -1051,5 +1125,43 @@ pub const Behavior = enum(u8) {
             (features.dev_dependencies and this.isDev()) or
             (features.peer_dependencies and this.isPeer()) or
             this.isWorkspace();
+    }
+
+    pub fn format(self: Behavior, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        const fields = std.meta.fields(Behavior);
+        var num_fields: u8 = 0;
+        inline for (fields) |f| {
+            if (f.type == bool and @field(self, f.name)) {
+                num_fields += 1;
+            }
+        }
+        switch (num_fields) {
+            0 => try writer.writeAll("Behavior.uninitialized"),
+            1 => {
+                inline for (fields) |f| {
+                    if (f.type == bool and @field(self, f.name)) {
+                        try writer.writeAll("Behavior." ++ f.name);
+                        break;
+                    }
+                }
+            },
+            else => {
+                try writer.writeAll("Behavior{");
+                inline for (fields) |f| {
+                    if (f.type == bool and @field(self, f.name)) {
+                        try writer.writeAll(" " ++ f.name);
+                    }
+                }
+                try writer.writeAll(" }");
+            },
+        }
+    }
+
+    comptime {
+        std.debug.assert(@as(u8, @bitCast(Behavior.normal)) == (1 << 1));
+        std.debug.assert(@as(u8, @bitCast(Behavior.optional)) == (1 << 2));
+        std.debug.assert(@as(u8, @bitCast(Behavior.dev)) == (1 << 3));
+        std.debug.assert(@as(u8, @bitCast(Behavior.peer)) == (1 << 4));
+        std.debug.assert(@as(u8, @bitCast(Behavior.workspace)) == (1 << 5));
     }
 };

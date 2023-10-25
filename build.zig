@@ -1,3 +1,5 @@
+const required_zig_version = "0.12.0-dev.899+027aabf49";
+
 const std = @import("std");
 const pathRel = std.fs.path.relative;
 const Wyhash = @import("./src/wyhash.zig").Wyhash;
@@ -146,6 +148,20 @@ pub fn build(b: *Build) !void {
 }
 
 pub fn build_(b: *Build) !void {
+    if (!std.mem.eql(u8, @import("builtin").zig_version_string, required_zig_version)) {
+        const colors = std.io.getStdErr().supportsAnsiEscapeCodes();
+        std.debug.print(
+            "{s}WARNING:\nBun requires zig version '{s}', but found '{s}', build may fail...\nMake sure you installed the right version as per https://bun.sh/docs/project/development#install-zig\n{s}You can update to the right version using 'zigup {s}'\n\n",
+            .{
+                if (colors) "\x1b[1;33m" else "",
+                required_zig_version,
+                @import("builtin").zig_version_string,
+                if (colors) "\x1b[0m" else "",
+                required_zig_version,
+            },
+        );
+    }
+
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
     // means any target is allowed, and the default is native. Other options
@@ -217,7 +233,7 @@ pub fn build_(b: *Build) !void {
         .root_source_file = FileSource.relative(root_src),
         .target = target,
         .optimize = optimize,
-        .main_pkg_path = .{ .cwd_relative = b.pathFromRoot(".") },
+        .main_mod_path = .{ .cwd_relative = b.pathFromRoot(".") },
     });
 
     b.reference_trace = 16;
@@ -331,7 +347,7 @@ pub fn build_(b: *Build) !void {
             .root_source_file = FileSource.relative("src/bindgen.zig"),
             .target = target,
             .optimize = optimize,
-            .main_pkg_path = obj.main_pkg_path,
+            .main_mod_path = obj.main_mod_path,
         });
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, headers_step, @TypeOf(target), target);
@@ -348,7 +364,7 @@ pub fn build_(b: *Build) !void {
             .root_source_file = FileSource.relative("root_wasm.zig"),
             .target = target,
             .optimize = optimize,
-            .main_pkg_path = obj.main_pkg_path,
+            .main_mod_path = obj.main_mod_path,
         });
         defer wasm_step.dependOn(&wasm.step);
         wasm.strip = false;
@@ -367,7 +383,7 @@ pub fn build_(b: *Build) !void {
             .root_source_file = FileSource.relative("misctools/http_bench.zig"),
             .target = target,
             .optimize = optimize,
-            .main_pkg_path = obj.main_pkg_path,
+            .main_mod_path = obj.main_mod_path,
         });
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, headers_step, @TypeOf(target), target);
@@ -381,7 +397,7 @@ pub fn build_(b: *Build) !void {
             .root_source_file = FileSource.relative("misctools/machbench.zig"),
             .target = target,
             .optimize = optimize,
-            .main_pkg_path = obj.main_pkg_path,
+            .main_mod_path = obj.main_mod_path,
         });
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, headers_step, @TypeOf(target), target);
@@ -395,7 +411,7 @@ pub fn build_(b: *Build) !void {
             .root_source_file = FileSource.relative("misctools/fetch.zig"),
             .target = target,
             .optimize = optimize,
-            .main_pkg_path = obj.main_pkg_path,
+            .main_mod_path = obj.main_mod_path,
         });
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, headers_step, @TypeOf(target), target);
@@ -409,7 +425,7 @@ pub fn build_(b: *Build) !void {
             .root_source_file = FileSource.relative("src/bench/string-handling.zig"),
             .target = target,
             .optimize = optimize,
-            .main_pkg_path = obj.main_pkg_path,
+            .main_mod_path = obj.main_mod_path,
         });
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, headers_step, @TypeOf(target), target);
@@ -423,7 +439,7 @@ pub fn build_(b: *Build) !void {
             .root_source_file = FileSource.relative("src/sha.zig"),
             .target = target,
             .optimize = optimize,
-            .main_pkg_path = obj.main_pkg_path,
+            .main_mod_path = obj.main_mod_path,
         });
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, headers_step, @TypeOf(target), target);
@@ -437,7 +453,7 @@ pub fn build_(b: *Build) !void {
             .root_source_file = FileSource.relative("src/sourcemap/vlq_bench.zig"),
             .target = target,
             .optimize = optimize,
-            .main_pkg_path = obj.main_pkg_path,
+            .main_mod_path = obj.main_mod_path,
         });
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, headers_step, @TypeOf(target), target);
@@ -451,7 +467,7 @@ pub fn build_(b: *Build) !void {
             .root_source_file = FileSource.relative("misctools/tgz.zig"),
             .target = target,
             .optimize = optimize,
-            .main_pkg_path = obj.main_pkg_path,
+            .main_mod_path = obj.main_mod_path,
         });
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, headers_step, @TypeOf(target), target);
@@ -468,7 +484,7 @@ pub fn build_(b: *Build) !void {
         var headers_obj: *CompileStep = b.addTest(.{
             .root_source_file = FileSource.relative(test_file orelse "src/main.zig"),
             .target = target,
-            .main_pkg_path = obj.main_pkg_path,
+            .main_mod_path = obj.main_mod_path,
         });
         headers_obj.filter = test_filter;
         if (test_bin_) |test_bin| {

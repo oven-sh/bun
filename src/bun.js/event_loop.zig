@@ -118,6 +118,7 @@ pub fn WorkTask(comptime Context: type, comptime async_io: bool) type {
         }
 
         pub fn runFromThreadPool(task: *TaskType) void {
+            JSC.markBinding(@src());
             var this = @fieldParentPtr(This, "task", task);
             Context.run(this.ctx, this);
         }
@@ -405,7 +406,7 @@ pub const Task = TaggedPointerUnion(.{
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
-    task: Task = undefined,
+    task: if (JSC.is_bindgen) void else Task = undefined,
     next: ?*ConcurrentTask = null,
     auto_delete: bool = false,
 
@@ -426,14 +427,19 @@ pub const ConcurrentTask = struct {
     }
 
     pub fn createFrom(task: anytype) *ConcurrentTask {
+        JSC.markBinding(@src());
         return create(Task.init(task));
     }
 
     pub fn fromCallback(ptr: anytype, comptime callback: anytype) *ConcurrentTask {
+        JSC.markBinding(@src());
+
         return create(ManagedTask.New(std.meta.Child(@TypeOf(ptr)), callback).init(ptr));
     }
 
     pub fn from(this: *ConcurrentTask, of: anytype, auto_deinit: AutoDeinit) *ConcurrentTask {
+        JSC.markBinding(@src());
+
         this.* = .{
             .task = Task.init(of),
             .next = null,
@@ -601,7 +607,20 @@ comptime {
 
 pub const DeferredRepeatingTask = *const (fn (*anyopaque) bool);
 pub const EventLoop = struct {
-    tasks: Queue = undefined,
+    tasks: if (JSC.is_bindgen) void else Queue = undefined,
+
+    /// setImmediate() gets it's own two task queues
+    /// When you call `setImmediate` in JS, it queues to the start of the next tick
+    /// This is confusing, but that is how it works in Node.js.
+    ///
+    /// So we have two queues:
+    ///   - next_immediate_tasks: tasks that will run on the next tick
+    ///   - immediate_tasks: tasks that will run on the current tick
+    ///
+    /// Having two queues avoids infinite loops creating by calling `setImmediate` in a `setImmediate` callback.
+    immediate_tasks: Queue = undefined,
+    next_immediate_tasks: Queue = undefined,
+
     concurrent_tasks: ConcurrentTask.Queue = ConcurrentTask.Queue{},
     global: *JSGlobalObject = undefined,
     virtual_machine: *JSC.VirtualMachine = undefined,
@@ -664,11 +683,11 @@ pub const EventLoop = struct {
         }
     }
 
-    pub fn tickWithCount(this: *EventLoop) u32 {
+    pub fn tickQueueWithCount(this: *EventLoop, comptime queue_name: []const u8) u32 {
         var global = this.global;
         var global_vm = global.vm();
         var counter: usize = 0;
-        while (this.tasks.readItem()) |task| {
+        while (@field(this, queue_name).readItem()) |task| {
             defer counter += 1;
             switch (task.tag()) {
                 .Microtask => {
@@ -916,8 +935,16 @@ pub const EventLoop = struct {
             this.drainMicrotasksWithGlobal(global);
         }
 
-        this.tasks.head = if (this.tasks.count == 0) 0 else this.tasks.head;
+        @field(this, queue_name).head = if (@field(this, queue_name).count == 0) 0 else @field(this, queue_name).head;
         return @as(u32, @truncate(counter));
+    }
+
+    pub fn tickWithCount(this: *EventLoop) u32 {
+        return this.tickQueueWithCount("tasks");
+    }
+
+    pub fn tickImmediateTasks(this: *EventLoop) void {
+        _ = this.tickQueueWithCount("immediate_tasks");
     }
 
     pub fn tickConcurrent(this: *EventLoop) void {
@@ -925,6 +952,7 @@ pub const EventLoop = struct {
     }
 
     pub fn tickConcurrentWithCount(this: *EventLoop) usize {
+        JSC.markBinding(@src());
         var concurrent = this.concurrent_tasks.popBatch();
         const count = concurrent.count;
         if (count == 0)
@@ -987,6 +1015,8 @@ pub const EventLoop = struct {
 
             ctx.onAfterEventLoop();
             // this.afterUSocketsTick();
+        } else {
+            this.flushImmediateQueue();
         }
     }
 
@@ -1009,8 +1039,25 @@ pub const EventLoop = struct {
         if (loop.num_polls > 0 or loop.active > 0) {
             this.processGCTimer();
             loop.tickWithTimeout(timeoutMs, ctx.jsc);
+            this.flushImmediateQueue();
             ctx.onAfterEventLoop();
             // this.afterUSocketsTick();
+        } else {
+            this.flushImmediateQueue();
+        }
+    }
+
+    pub fn flushImmediateQueue(this: *EventLoop) void {
+        // If we can get away with swapping the queues, do that rather than copying the data
+        if (this.immediate_tasks.count > 0) {
+            this.immediate_tasks.write(this.next_immediate_tasks.readableSlice(0)) catch unreachable;
+            this.next_immediate_tasks.head = 0;
+            this.next_immediate_tasks.count = 0;
+        } else if (this.next_immediate_tasks.count > 0) {
+            var prev_immediate = this.immediate_tasks;
+            var next_immediate = this.next_immediate_tasks;
+            this.immediate_tasks = next_immediate;
+            this.next_immediate_tasks = prev_immediate;
         }
     }
 
@@ -1034,6 +1081,7 @@ pub const EventLoop = struct {
 
         this.processGCTimer();
         loop.tick(ctx.jsc);
+
         ctx.onAfterEventLoop();
         this.tickConcurrent();
         this.tick();
@@ -1057,8 +1105,11 @@ pub const EventLoop = struct {
         if (loop.active > 0) {
             this.processGCTimer();
             loop.tick(ctx.jsc);
+            this.flushImmediateQueue();
             ctx.onAfterEventLoop();
             // this.afterUSocketsTick();
+        } else {
+            this.flushImmediateQueue();
         }
     }
 
@@ -1067,9 +1118,11 @@ pub const EventLoop = struct {
     }
 
     pub fn tick(this: *EventLoop) void {
+        JSC.markBinding(@src());
+
         var ctx = this.virtual_machine;
         this.tickConcurrent();
-
+        this.tickImmediateTasks();
         this.processGCTimer();
 
         var global = ctx.global;
@@ -1136,7 +1189,13 @@ pub const EventLoop = struct {
     }
 
     pub fn enqueueTask(this: *EventLoop, task: Task) void {
+        JSC.markBinding(@src());
         this.tasks.writeItem(task) catch unreachable;
+    }
+
+    pub fn enqueueImmediateTask(this: *EventLoop, task: Task) void {
+        JSC.markBinding(@src());
+        this.next_immediate_tasks.writeItem(task) catch unreachable;
     }
 
     pub fn enqueueTaskWithTimeout(this: *EventLoop, task: Task, timeout: i32) void {
@@ -1148,7 +1207,7 @@ pub const EventLoop = struct {
 
     pub fn callTask(timer: *uws.Timer) callconv(.C) void {
         var task = Task.from(timer.as(*anyopaque));
-        timer.deinit();
+        defer timer.deinit(true);
 
         JSC.VirtualMachine.get().enqueueTask(task);
     }

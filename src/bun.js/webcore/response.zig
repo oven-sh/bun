@@ -63,8 +63,8 @@ pub const Response = struct {
 
     allocator: std.mem.Allocator,
     body: Body,
+    init: Init,
     url: bun.String = bun.String.empty,
-    status_text: bun.String = bun.String.empty,
     redirected: bool = false,
 
     // We must report a consistent value for this
@@ -89,7 +89,7 @@ pub const Response = struct {
         return this.reported_estimated_size orelse brk: {
             this.reported_estimated_size = @as(
                 u63,
-                @intCast(this.body.value.estimatedSize() + this.url.byteSlice().len + this.status_text.byteSlice().len + @sizeOf(Response)),
+                @intCast(this.body.value.estimatedSize() + this.url.byteSlice().len + this.init.status_text.byteSlice().len + @sizeOf(Response)),
             );
             break :brk this.reported_estimated_size.?;
         };
@@ -104,11 +104,11 @@ pub const Response = struct {
     pub fn getFetchHeaders(
         this: *Response,
     ) ?*FetchHeaders {
-        return this.body.init.headers;
+        return this.init.headers;
     }
 
     pub inline fn statusCode(this: *const Response) u16 {
-        return this.body.init.status_code;
+        return this.init.status_code;
     }
 
     pub fn redirectLocation(this: *const Response) ?[]const u8 {
@@ -116,7 +116,7 @@ pub const Response = struct {
     }
 
     pub fn header(this: *const Response, name: JSC.FetchHeaders.HTTPHeaderName) ?[]const u8 {
-        return if ((this.body.init.headers orelse return null).fastGet(name)) |str|
+        return if ((this.init.headers orelse return null).fastGet(name)) |str|
             str.slice()
         else
             null;
@@ -146,14 +146,20 @@ pub const Response = struct {
             try writer.writeAll("\n");
 
             try formatter.writeIndent(Writer, writer);
-            try writer.writeAll(comptime Output.prettyFmt("<r>headers<d>:<r> ", enable_ansi_colors));
-            formatter.printAs(.Private, Writer, writer, this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
+            try writer.writeAll(comptime Output.prettyFmt("<r>status<d>:<r> ", enable_ansi_colors));
+            formatter.printAs(.Double, Writer, writer, JSC.JSValue.jsNumber(this.init.status_code), .NumberObject, enable_ansi_colors);
             formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
             try writer.writeAll("\n");
 
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime Output.prettyFmt("<r>statusText<d>:<r> ", enable_ansi_colors));
-            try writer.print(comptime Output.prettyFmt("<r>\"<b>{}<r>\"", enable_ansi_colors), .{this.status_text});
+            try writer.print(comptime Output.prettyFmt("<r>\"<b>{}<r>\"", enable_ansi_colors), .{this.init.status_text});
+            formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
+            try writer.writeAll("\n");
+
+            try formatter.writeIndent(Writer, writer);
+            try writer.writeAll(comptime Output.prettyFmt("<r>headers<d>:<r> ", enable_ansi_colors));
+            formatter.printAs(.Private, Writer, writer, this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
             formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
             try writer.writeAll("\n");
 
@@ -162,6 +168,7 @@ pub const Response = struct {
             formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.redirected), .BooleanObject, enable_ansi_colors);
             formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
             try writer.writeAll("\n");
+
             formatter.resetLine();
             try this.body.writeFormat(Formatter, formatter, writer, enable_ansi_colors);
         }
@@ -172,7 +179,7 @@ pub const Response = struct {
     }
 
     pub fn isOK(this: *const Response) bool {
-        return this.body.init.status_code == 304 or (this.body.init.status_code >= 200 and this.body.init.status_code <= 299);
+        return this.init.status_code >= 200 and this.init.status_code <= 299;
     }
 
     pub fn getURL(
@@ -187,7 +194,7 @@ pub const Response = struct {
         this: *Response,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
-        if (this.body.init.status_code < 200) {
+        if (this.init.status_code < 200) {
             return ZigString.init("error").toValue(globalThis);
         }
 
@@ -199,7 +206,7 @@ pub const Response = struct {
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/statusText
-        return this.status_text.toJS(globalThis);
+        return this.init.status_text.toJS(globalThis);
     }
 
     pub fn getRedirected(
@@ -219,18 +226,18 @@ pub const Response = struct {
     }
 
     fn getOrCreateHeaders(this: *Response, globalThis: *JSC.JSGlobalObject) *FetchHeaders {
-        if (this.body.init.headers == null) {
-            this.body.init.headers = FetchHeaders.createEmpty();
+        if (this.init.headers == null) {
+            this.init.headers = FetchHeaders.createEmpty();
 
             if (this.body.value == .Blob) {
                 const content_type = this.body.value.Blob.content_type;
                 if (content_type.len > 0) {
-                    this.body.init.headers.?.put("content-type", content_type, globalThis);
+                    this.init.headers.?.put("content-type", content_type, globalThis);
                 }
             }
         }
 
-        return this.body.init.headers.?;
+        return this.init.headers.?;
     }
 
     pub fn getHeaders(
@@ -262,8 +269,8 @@ pub const Response = struct {
         new_response.* = Response{
             .allocator = allocator,
             .body = this.body.clone(globalThis),
+            .init = this.init.clone(globalThis),
             .url = this.url.clone(),
-            .status_text = this.status_text.clone(),
             .redirected = this.redirected,
         };
     }
@@ -279,17 +286,16 @@ pub const Response = struct {
         _: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/status
-        return JSValue.jsNumber(this.body.init.status_code);
+        return JSValue.jsNumber(this.init.status_code);
     }
 
     pub fn finalize(
         this: *Response,
     ) callconv(.C) void {
-        this.body.deinit(this.allocator);
-
         var allocator = this.allocator;
 
-        this.status_text.deref();
+        this.init.deinit(allocator);
+        this.body.deinit(allocator);
         this.url.deref();
 
         allocator.destroy(this);
@@ -348,7 +354,7 @@ pub const Response = struct {
     pub fn getContentType(
         this: *Response,
     ) ?ZigString.Slice {
-        if (this.body.init.headers) |headers| {
+        if (this.init.headers) |headers| {
             if (headers.fastGet(.ContentType)) |value| {
                 return value.toSlice(bun.default_allocator);
             }
@@ -373,10 +379,10 @@ pub const Response = struct {
 
         var response = Response{
             .body = Body{
-                .init = Body.Init{
-                    .status_code = 200,
-                },
                 .value = .{ .Empty = {} },
+            },
+            .init = Response.Init{
+                .status_code = 200,
             },
             .allocator = getAllocator(globalThis),
             .url = bun.String.empty,
@@ -409,10 +415,10 @@ pub const Response = struct {
 
         if (args.nextEat()) |init| {
             if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
-                response.body.init.status_code = @as(u16, @intCast(@min(@max(0, init.toInt32()), std.math.maxInt(u16))));
+                response.init.status_code = @as(u16, @intCast(@min(@max(0, init.toInt32()), std.math.maxInt(u16))));
             } else {
-                if (Body.Init.init(getAllocator(globalThis), globalThis, init) catch null) |_init| {
-                    response.body.init = _init;
+                if (Response.Init.init(getAllocator(globalThis), globalThis, init) catch null) |_init| {
+                    response.init = _init;
                 }
             }
         }
@@ -434,10 +440,10 @@ pub const Response = struct {
         // var response = getAllocator(globalThis).create(Response) catch unreachable;
 
         var response = Response{
+            .init = Response.Init{
+                .status_code = 302,
+            },
             .body = Body{
-                .init = Body.Init{
-                    .status_code = 302,
-                },
                 .value = .{ .Empty = {} },
             },
             .allocator = getAllocator(globalThis),
@@ -455,17 +461,17 @@ pub const Response = struct {
 
         if (args.nextEat()) |init| {
             if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
-                response.body.init.status_code = @as(u16, @intCast(@min(@max(0, init.toInt32()), std.math.maxInt(u16))));
+                response.init.status_code = @as(u16, @intCast(@min(@max(0, init.toInt32()), std.math.maxInt(u16))));
             } else {
-                if (Body.Init.init(getAllocator(globalThis), globalThis, init) catch null) |_init| {
-                    response.body.init = _init;
-                    response.body.init.status_code = 302;
+                if (Response.Init.init(getAllocator(globalThis), globalThis, init) catch null) |_init| {
+                    response.init = _init;
+                    response.init.status_code = 302;
                 }
             }
         }
 
-        response.body.init.headers = response.getOrCreateHeaders(globalThis);
-        var headers_ref = response.body.init.headers.?;
+        response.init.headers = response.getOrCreateHeaders(globalThis);
+        var headers_ref = response.init.headers.?;
         headers_ref.put("location", url_string_slice.slice(), globalThis);
         var ptr = response.allocator.create(Response) catch unreachable;
         ptr.* = response;
@@ -478,10 +484,10 @@ pub const Response = struct {
     ) callconv(.C) JSValue {
         var response = getAllocator(globalThis).create(Response) catch unreachable;
         response.* = Response{
+            .init = Response.Init{
+                .status_code = 0,
+            },
             .body = Body{
-                .init = Body.Init{
-                    .status_code = 0,
-                },
                 .value = .{ .Empty = {} },
             },
             .allocator = getAllocator(globalThis),
@@ -494,6 +500,8 @@ pub const Response = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) ?*Response {
+        var allocator = getAllocator(globalThis);
+
         const args_list = brk: {
             var args = callframe.arguments(2);
             if (args.len > 1 and args.ptr[1].isEmptyOrUndefinedOrNull()) {
@@ -503,17 +511,24 @@ pub const Response = struct {
         };
 
         const arguments = args_list.ptr[0..args_list.len];
-        const body: Body = @as(?Body, brk: {
+
+        const init: Init = @as(?Init, brk: {
             switch (arguments.len) {
                 0 => {
-                    break :brk Body.@"200"(globalThis);
+                    break :brk Init{
+                        .status_code = 200,
+                        .headers = null,
+                    };
                 },
                 1 => {
-                    break :brk Body.extract(globalThis, arguments[0]);
+                    break :brk Init{
+                        .status_code = 200,
+                        .headers = null,
+                    };
                 },
                 else => {
                     if (arguments[1].isObject()) {
-                        break :brk Body.extractWithInit(globalThis, arguments[0], arguments[1]);
+                        break :brk Init.init(allocator, globalThis, arguments[1]) catch null;
                     }
 
                     std.debug.assert(!arguments[1].isEmptyOrUndefinedOrNull());
@@ -526,20 +541,149 @@ pub const Response = struct {
             unreachable;
         }) orelse return null;
 
-        var response = getAllocator(globalThis).create(Response) catch unreachable;
+        const body: Body = brk: {
+            switch (arguments.len) {
+                0 => {
+                    break :brk Body{
+                        .value = Body.Value{ .Null = {} },
+                    };
+                },
+                else => {
+                    break :brk Body.extract(globalThis, arguments[0]);
+                },
+            }
+            unreachable;
+        } orelse return null;
+
+        var response = allocator.create(Response) catch unreachable;
 
         response.* = Response{
             .body = body,
+            .init = init,
             .allocator = getAllocator(globalThis),
         };
 
         if (response.body.value == .Blob and
-            response.body.init.headers != null and
+            response.init.headers != null and
             response.body.value.Blob.content_type.len > 0 and
-            !response.body.init.headers.?.fastHas(.ContentType))
+            !response.init.headers.?.fastHas(.ContentType))
         {
-            response.body.init.headers.?.put("content-type", response.body.value.Blob.content_type, globalThis);
+            response.init.headers.?.put("content-type", response.body.value.Blob.content_type, globalThis);
         }
+
+        return response;
+    }
+
+    pub const Init = struct {
+        headers: ?*FetchHeaders = null,
+        status_code: u16,
+        status_text: bun.String = bun.String.empty,
+        method: Method = Method.GET,
+
+        pub fn clone(this: Init, ctx: *JSGlobalObject) Init {
+            var that = this;
+            var headers = this.headers;
+            if (headers) |head| {
+                that.headers = head.cloneThis(ctx);
+            }
+            that.status_text = this.status_text.clone();
+
+            return that;
+        }
+
+        pub fn init(allocator: std.mem.Allocator, ctx: *JSGlobalObject, response_init: JSC.JSValue) !?Init {
+            var result = Init{ .status_code = 200 };
+
+            if (!response_init.isCell())
+                return null;
+
+            if (response_init.jsType() == .DOMWrapper) {
+                // fast path: it's a Request object or a Response object
+                // we can skip calling JS getters
+                if (response_init.as(Request)) |req| {
+                    if (req.headers) |headers| {
+                        if (!headers.isEmpty()) {
+                            result.headers = headers.cloneThis(ctx);
+                        }
+                    }
+
+                    result.method = req.method;
+                    return result;
+                }
+
+                if (response_init.as(Response)) |resp| {
+                    return resp.init.clone(ctx);
+                }
+            }
+
+            if (response_init.fastGet(ctx, .headers)) |headers| {
+                if (headers.as(FetchHeaders)) |orig| {
+                    if (!orig.isEmpty()) {
+                        result.headers = orig.cloneThis(ctx);
+                    }
+                } else {
+                    result.headers = FetchHeaders.createFromJS(ctx.ptr(), headers);
+                }
+            }
+
+            if (response_init.fastGet(ctx, .status)) |status_value| {
+                const number = status_value.coerceToInt64(ctx);
+                if ((200 <= number and number < 600) or number == 101) {
+                    result.status_code = @as(u16, @truncate(@as(u32, @intCast(number))));
+                } else {
+                    const err = ctx.createRangeErrorInstance("The status provided ({d}) must be 101 or in the range of [200, 599]", .{number});
+                    ctx.throwValue(err);
+                    return null;
+                }
+            }
+
+            if (response_init.fastGet(ctx, .statusText)) |status_text| {
+                result.status_text = bun.String.fromJS(status_text, ctx).dupeRef();
+            }
+
+            if (response_init.fastGet(ctx, .method)) |method_value| {
+                var method_str = method_value.toSlice(ctx, allocator);
+                defer method_str.deinit();
+                if (method_str.len > 0) {
+                    result.method = Method.which(method_str.slice()) orelse .GET;
+                }
+            }
+
+            return result;
+        }
+
+        pub fn deinit(this: *Init, _: std.mem.Allocator) void {
+            if (this.headers) |headers| {
+                this.headers = null;
+
+                headers.deref();
+            }
+
+            this.status_text.deref();
+        }
+    };
+
+    pub fn @"404"(globalThis: *JSC.JSGlobalObject) Response {
+        return emptyWithStatus(globalThis, 404);
+    }
+
+    pub fn @"200"(globalThis: *JSC.JSGlobalObject) Response {
+        return emptyWithStatus(globalThis, 200);
+    }
+
+    inline fn emptyWithStatus(globalThis: *JSC.JSGlobalObject, status: u16) Response {
+        var allocator = getAllocator(globalThis);
+        var response = allocator.create(Response) catch unreachable;
+
+        response.* = Response{
+            .body = Body{
+                .value = Body.Value{ .Null = {} },
+            },
+            .init = Init{
+                .status_code = status,
+            },
+            .allocator = getAllocator(globalThis),
+        };
 
         return response;
     }
@@ -778,27 +922,27 @@ pub const Fetch = struct {
             if (!success) {
                 const err = this.onReject();
                 err.ensureStillAlive();
+                // if we are streaming update with error
+                if (this.readable_stream_ref.get()) |readable| {
+                    readable.ptr.Bytes.onData(
+                        .{
+                            .err = .{ .JSValue = err },
+                        },
+                        bun.default_allocator,
+                    );
+                }
+                // if we are buffering resolve the promise
                 if (this.response.get()) |response_js| {
                     if (response_js.as(Response)) |response| {
                         const body = response.body;
-                        if (body.value == .Locked) {
-                            if (body.value.Locked.readable) |readable| {
-                                readable.ptr.Bytes.onData(
-                                    .{
-                                        .err = .{ .JSValue = err },
-                                    },
-                                    bun.default_allocator,
-                                );
-                                return;
-                            }
+                        if (body.value.Locked.promise) |promise_| {
+                            const promise = promise_.asAnyPromise().?;
+                            promise.reject(globalThis, err);
                         }
 
                         response.body.value.toErrorInstance(err, globalThis);
-                        return;
                     }
                 }
-
-                globalThis.throwValue(err);
                 return;
             }
 
@@ -1238,13 +1382,13 @@ pub const Fetch = struct {
             return Response{
                 .allocator = allocator,
                 .url = bun.String.createAtomIfPossible(metadata.url),
-                .status_text = bun.String.createAtomIfPossible(http_response.status),
                 .redirected = this.result.redirected,
+                .init = .{
+                    .headers = FetchHeaders.createFromPicoHeaders(http_response.headers),
+                    .status_code = @as(u16, @truncate(http_response.status_code)),
+                    .status_text = bun.String.createAtomIfPossible(http_response.status),
+                },
                 .body = .{
-                    .init = .{
-                        .headers = FetchHeaders.createFromPicoHeaders(http_response.headers),
-                        .status_code = @as(u16, @truncate(http_response.status_code)),
-                    },
                     .value = this.toBodyValue(),
                 },
             };
@@ -1488,15 +1632,15 @@ pub const Fetch = struct {
 
         response.* = Response{
             .body = Body{
-                .init = Body.Init{
-                    .status_code = 200,
-                },
                 .value = .{
                     .Blob = blob,
                 },
             },
+            .init = Response.Init{
+                .status_code = 200,
+                .status_text = bun.String.createAtom("OK"),
+            },
             .allocator = allocator,
-            .status_text = bun.String.createAtom("OK"),
             .url = data_url.url.dupeRef(),
         };
 
@@ -1708,7 +1852,7 @@ pub const Fetch = struct {
                             if (decompress.isBoolean()) {
                                 disable_decompression = !decompress.asBoolean();
                             } else if (decompress.isNumber()) {
-                                disable_keepalive = decompress.to(i32) == 0;
+                                disable_decompression = decompress.to(i32) == 0;
                             }
                         }
 
@@ -1901,7 +2045,7 @@ pub const Fetch = struct {
                             if (decompress.isBoolean()) {
                                 disable_decompression = !decompress.asBoolean();
                             } else if (decompress.isNumber()) {
-                                disable_keepalive = decompress.to(i32) == 0;
+                                disable_decompression = decompress.to(i32) == 0;
                             }
                         }
 
@@ -2009,10 +2153,10 @@ pub const Fetch = struct {
 
             response.* = Response{
                 .body = Body{
-                    .init = Body.Init{
-                        .status_code = 200,
-                    },
                     .value = .{ .Blob = bun_file },
+                },
+                .init = Response.Init{
+                    .status_code = 200,
                 },
                 .allocator = bun.default_allocator,
                 .url = file_url_string.clone(),

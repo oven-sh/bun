@@ -20,7 +20,9 @@
 #include <JavaScriptCore/WeakMapImplInlines.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/DateInstance.h>
-
+#include <JavaScriptCore/JSModuleEnvironment.h>
+#include <JavaScriptCore/JSModuleNamespaceObject.h>
+#include "BunPlugin.h"
 namespace Bun {
 
 /**
@@ -486,6 +488,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSMockFunctionPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -605,7 +608,13 @@ extern "C" EncodedJSValue JSMock__jsSpyOn(JSC::JSGlobalObject* lexicalGlobalObje
     if (!hasValue || slot.isValue()) {
         JSValue value = jsUndefined();
         if (hasValue) {
-            value = slot.getValue(globalObject, propertyKey);
+            if (UNLIKELY(slot.isTaintedByOpaqueObject())) {
+                // if it's a Proxy or JSModuleNamespaceObject
+                value = object->get(globalObject, propertyKey);
+            } else {
+                value = slot.getValue(globalObject, propertyKey);
+            }
+
             if (jsDynamicCast<JSMockFunction*>(value)) {
                 return JSValue::encode(value);
             }
@@ -623,8 +632,12 @@ extern "C" EncodedJSValue JSMock__jsSpyOn(JSC::JSGlobalObject* lexicalGlobalObje
 
             mock->copyNameAndLength(vm, globalObject, value);
 
-            attributes |= PropertyAttribute::Function;
-            object->putDirect(vm, propertyKey, mock, attributes);
+            if (JSModuleNamespaceObject* moduleNamespaceObject = jsDynamicCast<JSModuleNamespaceObject*>(object)) {
+                moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
+            } else {
+                object->putDirect(vm, propertyKey, mock, attributes);
+            }
+
             RETURN_IF_EXCEPTION(scope, {});
 
             pushImpl(mock, globalObject, JSMockImplementation::Kind::Call, value);
@@ -633,7 +646,13 @@ extern "C" EncodedJSValue JSMock__jsSpyOn(JSC::JSGlobalObject* lexicalGlobalObje
                 attributes = slot.attributes();
 
             attributes |= PropertyAttribute::Accessor;
-            object->putDirect(vm, propertyKey, JSC::GetterSetter::create(vm, globalObject, mock, mock), attributes);
+
+            if (JSModuleNamespaceObject* moduleNamespaceObject = jsDynamicCast<JSModuleNamespaceObject*>(object)) {
+                moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
+            } else {
+                object->putDirect(vm, propertyKey, JSC::GetterSetter::create(vm, globalObject, mock, mock), attributes);
+            }
+
             // mock->setName(propertyKey.publicName());
             RETURN_IF_EXCEPTION(scope, {});
 
@@ -696,6 +715,13 @@ JSMockModule JSMockModule::create(JSC::JSGlobalObject* globalObject)
         Structure* implementation = ActiveSpySet::createStructure(init.vm, init.owner, jsNull());
         init.set(implementation);
     });
+
+    mock.mockModuleStructure.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
+            Structure* implementation = createModuleMockStructure(init.vm, init.owner, jsNull());
+            init.set(implementation);
+        });
+
     mock.mockImplementationStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
             Structure* implementation = JSMockImplementation::createStructure(init.vm, init.owner, jsNull());
@@ -1320,7 +1346,7 @@ MockWithImplementationCleanupData* MockWithImplementationCleanupData::create(VM&
 }
 Structure* MockWithImplementationCleanupData::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(CellType, StructureFlags), info());
+    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
 }
 
 MockWithImplementationCleanupData::MockWithImplementationCleanupData(VM& vm, Structure* structure)

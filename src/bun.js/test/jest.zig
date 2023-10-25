@@ -459,7 +459,9 @@ pub const Jest = struct {
         const mockFn = JSC.NewFunction(globalObject, ZigString.static("fn"), 1, JSMock__jsMockFn, false);
         const spyOn = JSC.NewFunction(globalObject, ZigString.static("spyOn"), 2, JSMock__jsSpyOn, false);
         const restoreAllMocks = JSC.NewFunction(globalObject, ZigString.static("restoreAllMocks"), 2, JSMock__jsRestoreAllMocks, false);
+        const mockModuleFn = JSC.NewFunction(globalObject, ZigString.static("module"), 2, JSMock__jsModuleMock, false);
         module.put(globalObject, ZigString.static("mock"), mockFn);
+        mockFn.put(globalObject, ZigString.static("module"), mockModuleFn);
 
         const jest = JSValue.createEmptyObject(globalObject, 7);
         jest.put(globalObject, ZigString.static("fn"), mockFn);
@@ -488,6 +490,7 @@ pub const Jest = struct {
         const vi = JSValue.createEmptyObject(globalObject, 3);
         vi.put(globalObject, ZigString.static("fn"), mockFn);
         vi.put(globalObject, ZigString.static("spyOn"), spyOn);
+        vi.put(globalObject, ZigString.static("module"), mockModuleFn);
         vi.put(globalObject, ZigString.static("restoreAllMocks"), restoreAllMocks);
         module.put(globalObject, ZigString.static("vi"), vi);
 
@@ -497,6 +500,7 @@ pub const Jest = struct {
     extern fn Bun__Jest__testPreloadObject(*JSC.JSGlobalObject) JSC.JSValue;
     extern fn Bun__Jest__testModuleObject(*JSC.JSGlobalObject) JSC.JSValue;
     extern fn JSMock__jsMockFn(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
+    extern fn JSMock__jsModuleMock(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
     extern fn JSMock__jsNow(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
     extern fn JSMock__jsSetSystemTime(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
     extern fn JSMock__jsRestoreAllMocks(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
@@ -687,7 +691,7 @@ pub const TestScope = struct {
             this.func_arg[this.func_arg.len - 1] = callback_func;
         }
 
-        initial_value = this.func.call(vm.global, @as([]const JSC.JSValue, this.func_arg));
+        initial_value = callJSFunctionForTestRunner(vm, vm.global, this.func, this.func_arg);
 
         if (initial_value.isAnyError()) {
             if (!Jest.runner.?.did_pending_test_fail) {
@@ -793,14 +797,33 @@ pub const DescribeScope = struct {
     current_test_id: TestRunner.Test.ID = 0,
     value: JSValue = .zero,
     done: bool = false,
-    is_skip: bool = false,
     skip_count: u32 = 0,
     tag: Tag = .pass,
 
-    pub fn isAllSkipped(this: *const DescribeScope) bool {
-        if (this.is_skip) return true;
-        const total = this.tests.items.len;
-        return total > 0 and @as(usize, this.skip_count) >= total;
+    fn isWithinOnlyScope(this: *const DescribeScope) bool {
+        if (this.tag == .only) return true;
+        if (this.parent != null) return this.parent.?.isWithinOnlyScope();
+        return false;
+    }
+
+    fn isWithinSkipScope(this: *const DescribeScope) bool {
+        if (this.tag == .skip) return true;
+        if (this.parent != null) return this.parent.?.isWithinSkipScope();
+        return false;
+    }
+
+    fn isWithinTodoScope(this: *const DescribeScope) bool {
+        if (this.tag == .todo) return true;
+        if (this.parent != null) return this.parent.?.isWithinTodoScope();
+        return false;
+    }
+
+    pub fn shouldEvaluateScope(this: *const DescribeScope) bool {
+        if (this.tag == .skip or
+            this.tag == .todo) return false;
+        if (Jest.runner.?.only and this.tag == .only) return true;
+        if (this.parent != null) return this.parent.?.shouldEvaluateScope();
+        return true;
     }
 
     pub fn push(new: *DescribeScope) void {
@@ -918,7 +941,7 @@ pub const DescribeScope = struct {
 
             const vm = VirtualMachine.get();
             var result: JSC.JSValue = switch (cb.getLength(globalObject)) {
-                0 => cb.call(globalObject, &.{}),
+                0 => callJSFunctionForTestRunner(vm, globalObject, cb, &.{}),
                 else => brk: {
                     this.done = false;
                     const done_func = JSC.NewFunctionWithData(
@@ -929,7 +952,7 @@ pub const DescribeScope = struct {
                         false,
                         this,
                     );
-                    var result = cb.call(globalObject, &.{done_func});
+                    var result = callJSFunctionForTestRunner(vm, globalObject, cb, &.{done_func});
                     vm.waitFor(&this.done);
                     break :brk result;
                 },
@@ -981,7 +1004,8 @@ pub const DescribeScope = struct {
 
             const vm = VirtualMachine.get();
             // note: we do not support "done" callback in global hooks in the first release.
-            var result: JSC.JSValue = cb.call(globalThis, &.{});
+            var result: JSC.JSValue = callJSFunctionForTestRunner(vm, globalThis, cb, &.{});
+
             if (result.asAnyPromise()) |promise| {
                 if (promise.status(globalThis.vm()) == .Pending) {
                     result.protect();
@@ -1075,8 +1099,7 @@ pub const DescribeScope = struct {
 
         {
             JSC.markBinding(@src());
-            globalObject.clearTerminationException();
-            var result = callback.call(globalObject, args);
+            var result = callJSFunctionForTestRunner(VirtualMachine.get(), globalObject, callback, args);
 
             if (result.asAnyPromise()) |prom| {
                 globalObject.bunVM().waitForPromise(prom);
@@ -1114,7 +1137,7 @@ pub const DescribeScope = struct {
 
         var i: TestRunner.Test.ID = 0;
 
-        if (!this.isAllSkipped()) {
+        if (this.shouldEvaluateScope()) {
             if (this.runCallback(globalObject, .beforeAll)) |_| {
                 while (i < end) {
                     Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, 0, this);
@@ -1168,7 +1191,7 @@ pub const DescribeScope = struct {
             return;
         }
 
-        if (!this.isAllSkipped()) {
+        if (this.shouldEvaluateScope()) {
             // Run the afterAll callbacks, in reverse order
             // unless there were no tests for this scope
             if (this.execCallback(globalThis, .afterAll)) |err| {
@@ -1267,8 +1290,8 @@ pub const TestRunnerTask = struct {
         var test_: TestScope = this.describe.tests.items[test_id];
         describe.current_test_id = test_id;
 
-        if (test_.func == .zero or (describe.is_skip and test_.tag != .only)) {
-            var tag = if (describe.is_skip) describe.tag else test_.tag;
+        if (test_.func == .zero or !describe.shouldEvaluateScope()) {
+            var tag = if (!describe.shouldEvaluateScope()) describe.tag else test_.tag;
             switch (tag) {
                 .todo => {
                     this.processTestResult(globalThis, .{ .todo = {} }, test_, test_id, describe);
@@ -1609,8 +1632,7 @@ inline fn createScope(
             .label = label,
             .parent = parent,
             .file_id = parent.file_id,
-            .tag = if (parent.is_skip) parent.tag else tag,
-            .is_skip = is_skip or parent.is_skip,
+            .tag = tag,
         };
 
         return scope.run(globalThis, function, &.{});
@@ -1983,8 +2005,7 @@ fn eachBind(
                     .label = formattedLabel,
                     .parent = parent,
                     .file_id = parent.file_id,
-                    .tag = if (parent.is_skip) parent.tag else .pass,
-                    .is_skip = parent.is_skip,
+                    .tag = .pass,
                 };
 
                 const ret = scope.run(globalThis, function, function_args);
@@ -2029,4 +2050,13 @@ inline fn createEach(
     };
 
     return JSC.NewFunctionWithData(globalThis, name, 3, eachBind, true, each_data);
+}
+
+fn callJSFunctionForTestRunner(vm: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, function: JSC.JSValue, args: []const JSC.JSValue) JSC.JSValue {
+    globalObject.clearTerminationException();
+    const result = function.call(globalObject, args);
+    result.ensureStillAlive();
+    globalObject.vm().releaseWeakRefs();
+    vm.drainMicrotasks();
+    return result;
 }

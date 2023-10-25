@@ -1,6 +1,6 @@
-import { spawn } from "bun";
+import { hash, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
-import { bunExe, bunEnv as env } from "harness";
+import { bunEnv, bunExe, bunEnv as env } from "harness";
 import { mkdir, writeFile, exists } from "fs/promises";
 import { join } from "path";
 import {
@@ -15,6 +15,7 @@ import {
   root_url,
   setHandler,
 } from "./dummy.registry";
+import { cpSync, rmSync } from "js/node/fs/export-star-from";
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
@@ -331,4 +332,40 @@ it("should remove all cache", async () => {
   expect(await new Response(stdout2).text()).toBe("Cache directory deleted:\n  " + cache_dir + "\n");
   expect(await exited2).toBe(0);
   expect(await exists(cache_dir)).toBeFalse();
+});
+
+import { tmpdir } from "os";
+it("bun pm migrate", async () => {
+  const test_dir = join(tmpdir(), "contoso-test" + Math.random().toString(36).slice(2));
+
+  cpSync(join(import.meta.dir, "migration/contoso-test"), test_dir, { recursive: true });
+
+  const { stdout, stderr, exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), "pm", "migrate", "--force"],
+    cwd: test_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  expect(exitCode).toBe(0);
+
+  expect(stderr).toBeDefined();
+  expect(stdout).toBeDefined();
+
+  expect(stdout.toString("utf-8")).toBe("");
+  expect(stderr.toString("utf-8")).toEndWith("migrated lockfile from package-lock.json\n");
+
+  const hashExec = Bun.spawnSync({
+    cmd: [bunExe(), "pm", "hash"],
+    cwd: test_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  expect(hashExec.exitCode).toBe(0);
+  const hash = hashExec.stdout.toString("utf-8").trim();
+
+  expect(hash).toMatchSnapshot();
 });

@@ -818,6 +818,19 @@ pub fn readlink(in: [:0]const u8, buf: []u8) Maybe(usize) {
     unreachable;
 }
 
+pub fn readlinkat(fd: bun.FileDescriptor, in: [:0]const u8, buf: []u8) Maybe(usize) {
+    while (true) {
+        const rc = sys.readlinkat(fd, in, buf.ptr, buf.len);
+
+        if (Maybe(usize).errnoSys(rc, .readlink)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+        return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
+    }
+    unreachable;
+}
+
 pub fn ftruncate(fd: fd_t, size: isize) Maybe(void) {
     if (comptime Environment.isWindows) {
         if (kernel32.SetFileValidData(bun.fdcast(fd), size) == 0) {

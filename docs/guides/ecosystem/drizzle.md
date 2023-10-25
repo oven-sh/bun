@@ -20,7 +20,6 @@ Then we'll connect to a SQLite database using the `bun:sqlite` module and create
 
 ```ts#db.ts
 import { drizzle, BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
-import { sql } from "drizzle-orm";
 import { Database } from "bun:sqlite";
 
 const sqlite = new Database("sqlite.db");

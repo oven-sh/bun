@@ -1717,7 +1717,8 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
                     workerData = deserialized;
                 }
 
-                threadId = jsNumber(worker->clientIdentifier());
+                // Main thread starts at 1
+                threadId = jsNumber(worker->clientIdentifier() - 1);
             }
 
             JSArray* array = constructEmptyArray(globalObject, nullptr);

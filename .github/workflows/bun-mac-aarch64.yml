@@ -190,13 +190,14 @@ jobs:
         if: matrix.compile_obj
         env:
           CPU_TARGET: ${{ matrix.cpu }}
+          SOURCE_DIR: ${{ github.workspace }}
           OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
         run: |
           mkdir -p $OBJ_DIR
           cd $OBJ_DIR
 
-          cmake $BUN_REPO \
+          cmake -S $SOURCE_DIR -B $OBJ_DIR \
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUN_CPP_ONLY=1 \

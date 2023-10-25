@@ -691,7 +691,7 @@ pub const TestScope = struct {
             this.func_arg[this.func_arg.len - 1] = callback_func;
         }
 
-        initial_value = this.func.call(vm.global, @as([]const JSC.JSValue, this.func_arg));
+        initial_value = callJSFunctionForTestRunner(vm, vm.global, this.func, this.func_arg);
 
         if (initial_value.isAnyError()) {
             if (!Jest.runner.?.did_pending_test_fail) {
@@ -941,7 +941,7 @@ pub const DescribeScope = struct {
 
             const vm = VirtualMachine.get();
             var result: JSC.JSValue = switch (cb.getLength(globalObject)) {
-                0 => cb.call(globalObject, &.{}),
+                0 => callJSFunctionForTestRunner(vm, globalObject, cb, &.{}),
                 else => brk: {
                     this.done = false;
                     const done_func = JSC.NewFunctionWithData(
@@ -952,7 +952,7 @@ pub const DescribeScope = struct {
                         false,
                         this,
                     );
-                    var result = cb.call(globalObject, &.{done_func});
+                    var result = callJSFunctionForTestRunner(vm, globalObject, cb, &.{done_func});
                     vm.waitFor(&this.done);
                     break :brk result;
                 },
@@ -1004,7 +1004,8 @@ pub const DescribeScope = struct {
 
             const vm = VirtualMachine.get();
             // note: we do not support "done" callback in global hooks in the first release.
-            var result: JSC.JSValue = cb.call(globalThis, &.{});
+            var result: JSC.JSValue = callJSFunctionForTestRunner(vm, globalThis, cb, &.{});
+
             if (result.asAnyPromise()) |promise| {
                 if (promise.status(globalThis.vm()) == .Pending) {
                     result.protect();
@@ -1098,8 +1099,7 @@ pub const DescribeScope = struct {
 
         {
             JSC.markBinding(@src());
-            globalObject.clearTerminationException();
-            var result = callback.call(globalObject, args);
+            var result = callJSFunctionForTestRunner(VirtualMachine.get(), globalObject, callback, args);
 
             if (result.asAnyPromise()) |prom| {
                 globalObject.bunVM().waitForPromise(prom);
@@ -2050,4 +2050,13 @@ inline fn createEach(
     };
 
     return JSC.NewFunctionWithData(globalThis, name, 3, eachBind, true, each_data);
+}
+
+fn callJSFunctionForTestRunner(vm: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, function: JSC.JSValue, args: []const JSC.JSValue) JSC.JSValue {
+    globalObject.clearTerminationException();
+    const result = function.call(globalObject, args);
+    result.ensureStillAlive();
+    globalObject.vm().releaseWeakRefs();
+    vm.drainMicrotasks();
+    return result;
 }

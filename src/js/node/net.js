@@ -241,16 +241,15 @@ const Socket = (function (InternalSocket) {
           self.emit("drop", data);
           return;
         }
-        // the duplex implementation start paused, so we resume when pauseOnConnect is falsy
-        if (!pauseOnConnect) {
-          _socket.resume();
-        }
+
+        const bunTLS = _socket[bunTlsSymbol];
+        const isTLS = typeof bunTLS === "function";
 
         self[bunSocketServerConnections]++;
 
         if (typeof connectionListener == "function") {
-          const bunTLS = _socket[bunTlsSymbol];
-          if (typeof bunTLS === "function") {
+          this.pauseOnConnect = pauseOnConnect;
+          if (isTLS) {
             // add secureConnection event handler
             self.once("secureConnection", () => connectionListener(_socket));
           } else {
@@ -258,18 +257,22 @@ const Socket = (function (InternalSocket) {
           }
         }
         self.emit("connection", _socket);
+        // the duplex implementation start paused, so we resume when pauseOnConnect is falsy
+        if (!pauseOnConnect && !isTLS) {
+          _socket.resume();
+        }
       },
       handshake(socket, success, verifyError) {
         const { data: self } = socket;
         self._securePending = false;
         self.secureConnecting = false;
         self._secureEstablished = !!success;
-
+        const server = self.server;
         if (self._requestCert || self._rejectUnauthorized) {
           if (verifyError) {
             self.authorized = false;
             self.authorizationError = verifyError.code || verifyError.message;
-            self.server.emit("tlsClientError", verifyError, self);
+            server.emit("tlsClientError", verifyError, self);
             if (self._rejectUnauthorized) {
               // if we reject we still need to emit secure
               self.emit("secure", self);
@@ -284,6 +287,9 @@ const Socket = (function (InternalSocket) {
         // after secureConnection event we emmit secure and secureConnect
         self.emit("secure", self);
         self.emit("secureConnect", verifyError);
+        if (!server.pauseOnConnect) {
+          self.resume();
+        }
       },
       error(socket, error) {
         Socket.#Handlers.error(socket, error);
@@ -314,6 +320,8 @@ const Socket = (function (InternalSocket) {
     _parent;
     _parentWrap;
     #socket;
+    server;
+    pauseOnConnect = false;
     #upgraded;
 
     constructor(options) {
@@ -422,6 +430,7 @@ const Socket = (function (InternalSocket) {
       }
 
       if (!pauseOnConnect) {
+        this.pauseOnConnect = pauseOnConnect;
         this.resume();
       }
       this.connecting = true;

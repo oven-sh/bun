@@ -10,7 +10,7 @@ Let's get started by creating a fresh project with `bun init` and installing Dri
 
 ```sh
 $ bun init -y
-$ bun add drizzle
+$ bun add drizzle-orm
 $ bun add -D drizzle-kit
 ```
 

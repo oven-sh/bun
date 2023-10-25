@@ -4439,8 +4439,16 @@ pub const FFIObject = struct {
 /// Also, you can't iterate over process.env normally since it only exists at build-time otherwise
 // This is aliased to Bun.env
 pub const EnvironmentVariables = struct {
-    pub export fn Bun__getEnvNames(globalObject: *JSC.JSGlobalObject, names: [*]ZigString, max: usize) usize {
-        return getEnvNames(globalObject, names[0..max]);
+    pub export fn Bun__getEnvCount(globalObject: *JSC.JSGlobalObject, ptr: *[*][]const u8) usize {
+        const bunVM = globalObject.bunVM();
+        ptr.* = bunVM.bundler.env.map.map.keys().ptr;
+        return bunVM.bundler.env.map.map.unmanaged.entries.len;
+    }
+
+    pub export fn Bun__getEnvKey(ptr: [*][]const u8, i: usize, data_ptr: *[*]const u8) usize {
+        const item = ptr[i];
+        data_ptr.* = item.ptr;
+        return item.len;
     }
 
     pub export fn Bun__getEnvValue(globalObject: *JSC.JSGlobalObject, name: *ZigString, value: *ZigString) bool {
@@ -4478,7 +4486,8 @@ export fn Bun__reportError(globalObject: *JSGlobalObject, err: JSC.JSValue) void
 comptime {
     if (!is_bindgen) {
         _ = Bun__reportError;
-        _ = EnvironmentVariables.Bun__getEnvNames;
+        _ = EnvironmentVariables.Bun__getEnvCount;
+        _ = EnvironmentVariables.Bun__getEnvKey;
         _ = EnvironmentVariables.Bun__getEnvValue;
     }
 }

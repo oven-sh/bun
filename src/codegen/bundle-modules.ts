@@ -126,13 +126,37 @@ const config = ({ debug }: { debug?: boolean }) =>
     },
   } satisfies BuildConfig);
 
-const bundle = await Bun.build(config({ debug }));
-for (const bundled of [bundle]) {
-  if (!bundled.success) {
-    console.error(bundled.logs);
+async function attempt() {
+  const bundle = await Bun.build(config({ debug }));
+  for (const bundled of [bundle]) {
+    if (!bundled.success) {
+      if (bundled.logs[0].message.includes("ModuleNotFound")) {
+        return false;
+      }
+      console.error(bundled.logs);
+      process.exit(1);
+    }
+  }
+  return bundle;
+}
+
+async function bundleWithRetries() {
+  let max_retries = 5;
+  let bundle: any = false;
+  while (!bundle && max_retries > 0) {
+    bundle = await attempt();
+    if (bundle) return bundle;
+    max_retries--;
+    Bun.sleepSync(100);
+  }
+  if (!bundle) {
+    console.error("Failed to bundle modules");
     process.exit(1);
   }
+  return bundle;
 }
+
+const bundle = await bundleWithRetries();
 
 mark("Bundle modules");
 

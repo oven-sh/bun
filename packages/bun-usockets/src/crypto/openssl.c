@@ -688,6 +688,7 @@ SSL_CTX* create_ssl_context_from_options(struct us_socket_context_options_t opti
     return ssl_context;
 }
 
+<<<<<<< HEAD
 int us_ssl_ctx_use_privatekey_content(SSL_CTX* ctx, const char* content, int type)
 {
     int reason_code, ret = 0;
@@ -696,6 +697,147 @@ int us_ssl_ctx_use_privatekey_content(SSL_CTX* ctx, const char* content, int typ
     in = BIO_new_mem_buf(content, strlen(content));
     if (in == NULL) {
         OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);
+=======
+
+
+int us_ssl_ctx_use_privatekey_content(SSL_CTX *ctx, const char *content, int type) {
+  int reason_code, ret = 0;
+  BIO *in;
+  EVP_PKEY *pkey = NULL;
+  in = BIO_new_mem_buf(content, strlen(content));
+  if (in == NULL) {
+    OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);
+    goto end;
+  }
+  
+  if (type == SSL_FILETYPE_PEM) {
+    reason_code = ERR_R_PEM_LIB;
+    pkey = PEM_read_bio_PrivateKey(in, NULL, SSL_CTX_get_default_passwd_cb(ctx),
+                                   SSL_CTX_get_default_passwd_cb_userdata(ctx));
+  } else if (type == SSL_FILETYPE_ASN1) {
+    reason_code = ERR_R_ASN1_LIB;
+    pkey = d2i_PrivateKey_bio(in, NULL);
+  } else {
+    OPENSSL_PUT_ERROR(SSL, SSL_R_BAD_SSL_FILETYPE);
+    goto end;
+  }
+  
+  if (pkey == NULL) {
+    OPENSSL_PUT_ERROR(SSL, reason_code);
+    goto end;
+  }
+  ret = SSL_CTX_use_PrivateKey(ctx, pkey);
+  EVP_PKEY_free(pkey);
+
+end:
+  BIO_free(in);
+  return ret;
+}
+
+int add_ca_cert_to_ctx_store(SSL_CTX *ctx, const char *content, X509_STORE *store) {
+
+    X509 *x = NULL;
+    BIO *in;
+
+    ERR_clear_error();  // clear error stack for SSL_CTX_use_certificate()
+
+    in = BIO_new_mem_buf(content, strlen(content));
+    if (in == NULL) {
+        OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);
+        goto end;
+    }
+
+    int count = 0;
+
+    while(x = PEM_read_bio_X509(in, NULL, SSL_CTX_get_default_passwd_cb(ctx),
+                                SSL_CTX_get_default_passwd_cb_userdata(ctx))) {
+
+        X509_STORE_add_cert(store, x);
+
+        if(!SSL_CTX_add_client_CA(ctx, x)){  
+            X509_free(x);
+            return 0;
+        }
+        count++;
+        X509_free(x);
+    }
+
+end:
+    BIO_free(in);
+    
+    return count > 0;
+}
+
+X509 * us_ssl_ctx_get_X509_from(SSL_CTX *ctx, const char *content) {
+  X509 *x = NULL;
+  BIO *in;
+
+  ERR_clear_error();  // clear error stack for SSL_CTX_use_certificate()
+
+  in = BIO_new_mem_buf(content, strlen(content));
+  if (in == NULL) {
+    OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);
+    goto end;
+  }
+
+  x = PEM_read_bio_X509(in, NULL, SSL_CTX_get_default_passwd_cb(ctx),
+                            SSL_CTX_get_default_passwd_cb_userdata(ctx));
+  if (x == NULL) {
+    OPENSSL_PUT_ERROR(SSL, ERR_R_PEM_LIB);
+    goto end;
+  }
+
+  return x;
+
+end:
+  X509_free(x);
+  BIO_free(in);
+  return NULL;
+}
+
+int us_ssl_ctx_use_certificate_chain(SSL_CTX *ctx, const char *content) {
+  BIO *in;
+  int ret = 0;
+  X509 *x = NULL;
+
+  ERR_clear_error();  // clear error stack for SSL_CTX_use_certificate()
+
+  in = BIO_new_mem_buf(content, strlen(content));
+  if (in == NULL) {
+    OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);
+    goto end;
+  }
+
+  x = PEM_read_bio_X509_AUX(in, NULL, SSL_CTX_get_default_passwd_cb(ctx),
+                            SSL_CTX_get_default_passwd_cb_userdata(ctx));
+  if (x == NULL) {
+    OPENSSL_PUT_ERROR(SSL, ERR_R_PEM_LIB);
+    goto end;
+  }
+
+  ret = SSL_CTX_use_certificate(ctx, x);
+
+  if (ERR_peek_error() != 0) {
+    ret = 0;  // Key/certificate mismatch doesn't imply ret==0 ...
+  }
+
+  if (ret) {
+    // If we could set up our certificate, now proceed to the CA
+    // certificates.
+    X509 *ca;
+    int r;
+    uint32_t err;
+
+    SSL_CTX_clear_chain_certs(ctx);
+
+    while ((ca = PEM_read_bio_X509(in, NULL, SSL_CTX_get_default_passwd_cb(ctx),
+                                   SSL_CTX_get_default_passwd_cb_userdata(ctx))) !=
+           NULL) {
+      r = SSL_CTX_add0_chain_cert(ctx, ca);
+      if (!r) {
+        X509_free(ca);
+        ret = 0;
+>>>>>>> 7e6ed8128 (more tests and more fixes)
         goto end;
     }
 
@@ -1002,6 +1144,7 @@ SSL_CTX* create_ssl_context_from_bun_options(struct us_bun_socket_context_option
 
     } else if (options.ca && options.ca_count > 0) {
         X509_STORE* cert_store = NULL;
+<<<<<<< HEAD
 
         for (unsigned int i = 0; i < options.ca_count; i++) {
             X509* ca_cert = us_ssl_ctx_get_X509_from(ssl_context, options.ca[i]);
@@ -1010,10 +1153,15 @@ SSL_CTX* create_ssl_context_from_bun_options(struct us_bun_socket_context_option
                 return NULL;
             }
 
+=======
+        
+        for(unsigned int i = 0; i < options.ca_count; i++){
+>>>>>>> 7e6ed8128 (more tests and more fixes)
             if (cert_store == NULL) {
                 cert_store = us_get_default_ca_store();
                 SSL_CTX_set_cert_store(ssl_context, cert_store);
             }
+<<<<<<< HEAD
 
             X509_STORE_add_cert(cert_store, ca_cert);
             if (!SSL_CTX_add_client_CA(ssl_context, ca_cert)) {
@@ -1021,6 +1169,15 @@ SSL_CTX* create_ssl_context_from_bun_options(struct us_bun_socket_context_option
                 return NULL;
             }
             if (options.reject_unauthorized) {
+=======
+    
+            if (!add_ca_cert_to_ctx_store(ssl_context, options.ca[i], cert_store)){
+                free_ssl_context(ssl_context);
+                return NULL;
+            }
+
+            if(options.reject_unauthorized) {
+>>>>>>> 7e6ed8128 (more tests and more fixes)
                 SSL_CTX_set_verify(ssl_context, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, us_verify_callback);
             } else {
                 SSL_CTX_set_verify(ssl_context, SSL_VERIFY_PEER, us_verify_callback);

@@ -151,7 +151,6 @@ const Socket = (function (InternalSocket) {
           const cert = self.getPeerCertificate(true);
           verifyError = checkServerIdentity(self.servername, cert);
         }
-
         if (self._requestCert || self._rejectUnauthorized) {
           if (verifyError) {
             self.authorized = false;
@@ -429,10 +428,14 @@ const Socket = (function (InternalSocket) {
         tls = bunTLS.$call(this, port, host, true);
         // Client always request Cert
         this._requestCert = true;
-        this._rejectUnauthorized = rejectUnauthorized;
 
         if (tls) {
-          tls.rejectUnauthorized = rejectUnauthorized;
+          if (typeof rejectUnauthorized !== "undefined") {
+            this._rejectUnauthorized = rejectUnauthorized;
+            tls.rejectUnauthorized = rejectUnauthorized;
+          } else {
+            this._rejectUnauthorized = tls.rejectUnauthorized;
+          }
           tls.requestCert = true;
           tls.session = session || tls.session;
           this.servername = tls.servername;

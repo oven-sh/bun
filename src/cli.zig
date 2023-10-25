@@ -1087,9 +1087,6 @@ pub const Command = struct {
         var args_iter = ArgsIterator{ .buf = bun.argv() };
 
         const argv0 = args_iter.next() orelse return .HelpCommand;
-        // first one is the executable name
-        std.debug.print("argv[0]: {s}", .{std.mem.span(bun.argv()[0])});
-        std.debug.print("argv0: {s}", .{argv0});
 
         // symlink is argv[0]
         if (strings.endsWithComptime(argv0, "bunx"))

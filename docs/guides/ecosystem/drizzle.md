@@ -92,11 +92,11 @@ This script creates a new connection to a SQLite database that writes to `sqlite
 ```ts#migrate.ts
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 
-import { drizzle, BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
+import { drizzle } from "drizzle-orm/bun-sqlite";
 import { Database } from "bun:sqlite";
 
 const sqlite = new Database("sqlite.db");
-const db: BunSQLiteDatabase = drizzle(sqlite);
+const db = drizzle(sqlite);
 migrate(db, { migrationsFolder: "./drizzle" });
 ```
 

@@ -328,14 +328,14 @@ test(".env doesnt crash with 159 bytes", () => {
   );
 });
 
-test(".env with >768 entries", () => {
+test(".env with 50000 entries", () => {
   const dir = tempDirWithFiles("dotenv-many-entries", {
     ".env": new Array(50000)
       .fill(null)
       .map((_, i) => `TEST_VAR${i}=TEST_VAL${i}`)
       .join("\n"),
     "index.ts": /* ts */ `
-      for (let i = 0; i < 20000; i++) {
+      for (let i = 0; i < 50000; i++) {
         if(process.env['TEST_VAR' + i] !== 'TEST_VAL' + i) {
           throw new Error('TEST_VAR' + i + ' !== TEST_VAL' + i);
         }

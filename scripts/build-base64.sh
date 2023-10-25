@@ -8,7 +8,7 @@ rm -rf build
 mkdir -p build
 cd build
 
-cmake "${CMAKE_FLAGS[@]}" .. -GNinja
+cmake "${CMAKE_FLAGS[@]}" .. -GNinja -B .
 ninja
 
 cp libbase64.a $BUN_DEPS_OUT_DIR/libbase64.a

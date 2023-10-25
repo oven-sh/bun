@@ -10,6 +10,8 @@ concurrency:
 # TEST_TAG: bun-test'
 
 on:
+  push:
+    branches: [jarred/prepare-for-libuv]
   # push:
   #   branches: [main]
   #   paths:
@@ -147,17 +149,19 @@ jobs:
           chmod +x ${{ runner.temp }}/.bun/bin/bun
           echo "${{ runner.temp }}/.bun/bin" >> $GITHUB_PATH
 
-      - name: ccache
-        uses: hendrikmuhs/ccache-action@v1.2
-        with:
-          key: ${{ runner.os }}-ccache-${{ matrix.tag }}
-          restore-keys: ${{ runner.os }}-ccache-${{ matrix.tag }}
+      # - name: ccache
+      #   uses: hendrikmuhs/ccache-action@v1.2
+      #   with:
+      #     key: ${{ runner.os }}-ccache-${{ matrix.tag }}
+      #     restore-keys: ${{ runner.os }}-ccache-${{ matrix.tag }}
 
       - name: Hash submodule versions
+        if: matrix.dependencies
         run: echo "sha=$(git submodule | grep -v WebKit | sha1sum | cut -c 1-10)" >> $GITHUB_OUTPUT
         id: submodule-versions
 
       - name: Cache submodule dependencies
+        if: matrix.dependencies
         id: cache-deps-restore
         uses: actions/cache/restore@v3
         with:
@@ -171,9 +175,11 @@ jobs:
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
         run: |
           mkdir -p $BUN_DEPS_OUT_DIR
+          bash ./scripts/clean-dependencies.sh
           bash ./scripts/all-dependencies.sh
 
       - name: Cache submodule dependencies
+        if: matrix.dependencies
         id: cache-deps-save
         uses: actions/cache/save@v3
         with:

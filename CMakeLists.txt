@@ -201,8 +201,10 @@ if(NOT ZIG_TARGET)
     endif()
 endif()
 
-# set(CONFIGURE_DEPENDS "")
 set(CONFIGURE_DEPENDS "CONFIGURE_DEPENDS")
+if(NO_CONFIGURE_DEPENDS)
+    set(CONFIGURE_DEPENDS "")
+endif()
 
 # --- CLI Paths ---
 
@@ -564,6 +566,14 @@ add_custom_command(
     COMMAND "${ZIG_COMPILER}" "fmt" "${BUN_SRC}/analytics/analytics_schema.zig"
     DEPENDS "${BUN_SRC}/api/schema.peechy"
     COMMENT "Building analytics_schema.zig"
+)
+
+# --- Runtime.js ---
+add_custom_command(
+    OUTPUT "src/fallback.out.js"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    COMMAND "${ESBUILD}" "--target=esnext" "--bundle" "src/fallback.ts" "--format=iife" "--platform=browser" "--minify" "--outfile=src/fallback.out.js"
+    DEPENDS "src/fallback.ts"
 )
 
 # --- Zig Object ---

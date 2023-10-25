@@ -1,0 +1,15 @@
+name: bun-windows-x64
+
+concurrency:
+  group: bun-windows-x64-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  push:
+    branches: [jarred/prepare-for-libuv]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4

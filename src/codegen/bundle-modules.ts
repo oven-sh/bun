@@ -99,8 +99,17 @@ $$EXPORT$$(__intrinsic__exports).$$EXPORT_END$$;
       fileToTranspile = `var $;` + fileToTranspile.replaceAll("__intrinsic__exports", "$");
     }
     const outputPath = path.join(TMP_DIR, moduleList[i].slice(0, -3) + ".ts");
-    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-    fs.writeFileSync(outputPath, fileToTranspile);
+    try {
+      fs.writeFileSync(outputPath, fileToTranspile);
+    } catch {
+      fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+      try {
+        fs.writeFileSync(outputPath, fileToTranspile);
+      } catch {
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        fs.writeFileSync(outputPath, fileToTranspile);
+      }
+    }
     bundledEntryPoints.push(outputPath);
   } catch (error) {
     console.error(error);

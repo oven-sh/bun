@@ -86,7 +86,7 @@ RUN apt-get update -y \
   && arch="$(dpkg --print-architecture)" \
   && arch="$(dpkg --print-architecture)" \
   && case "${arch##*-}" in \
-  amd64) variant="x86_64";; \
+  amd64) variant="x64";; \
   arm64) variant="aarch64";; \
   *) echo "error: unsupported architecture: $arch"; exit 1 ;; \
   esac \

@@ -428,9 +428,9 @@ const Socket = (function (InternalSocket) {
           connection = socket;
         }
       }
-
+      
+      this.pauseOnConnect = pauseOnConnect;
       if (!pauseOnConnect) {
-        this.pauseOnConnect = pauseOnConnect;
         this.resume();
       }
       this.connecting = true;

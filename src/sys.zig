@@ -253,7 +253,6 @@ pub fn getErrno(rc: anytype) bun.C.E {
         return bun.C.E.UNKNOWN;
     }
 
-    if (comptime use_libc) return std.os.errno(rc);
     const Type = @TypeOf(rc);
 
     return switch (Type) {

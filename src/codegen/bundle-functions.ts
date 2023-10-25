@@ -10,7 +10,8 @@ console.log("Bundling Bun builtin functions...");
 const PARALLEL = false;
 const KEEP_TMP = true;
 
-const CMAKE_BUILD_ROOT = process.argv[2];
+const debug = process.argv[2] === "--debug=ON";
+const CMAKE_BUILD_ROOT = process.argv[3];
 
 if (!CMAKE_BUILD_ROOT) {
   console.error("Usage: bun bundle-functions.ts <CMAKE_WORK_DIR>");

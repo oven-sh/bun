@@ -525,7 +525,7 @@ add_custom_command(
            "${BUN_WORKDIR}/codegen/NativeModuleImpl.h"
            "${BUN_WORKDIR}/codegen/ResolvedSourceTag.zig"
            "${BUN_WORKDIR}/codegen/SyntheticModuleType.h"
-    COMMAND ${BUN_EXECUTABLE} "${BUN_SRC}/codegen/bundle-modules.ts" "${BUN_WORKDIR}"
+    COMMAND ${BUN_EXECUTABLE} "${BUN_SRC}/codegen/bundle-modules.ts" "--debug=${DEBUG}" "${BUN_WORKDIR}"
     DEPENDS ${BUN_TS_MODULES} ${CODEGEN_FILES}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Bundling JS modules"
@@ -538,7 +538,7 @@ WEBKIT_ADD_SOURCE_DEPENDENCIES(
 add_custom_command(
     OUTPUT "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp"
            "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.h"
-    COMMAND ${BUN_EXECUTABLE} "${BUN_SRC}/codegen/bundle-functions.ts" "${BUN_WORKDIR}"
+    COMMAND ${BUN_EXECUTABLE} "${BUN_SRC}/codegen/bundle-functions.ts" "--debug=${DEBUG}" "${BUN_WORKDIR}"
     DEPENDS ${BUN_TS_FUNCTIONS} ${CODEGEN_FILES}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Bundling JS builtin functions"

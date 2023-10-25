@@ -11,8 +11,8 @@ import { define } from "./replacements";
 import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
 
 const BASE = path.join(import.meta.dir, "../js");
-const CMAKE_BUILD_ROOT = process.argv[2];
-const debug = true;
+const debug = process.argv[2] === "--debug=ON";
+const CMAKE_BUILD_ROOT = process.argv[3];
 
 if (!CMAKE_BUILD_ROOT) {
   console.error("Usage: bun bundle-modules.ts <CMAKE_WORK_DIR>");
@@ -45,7 +45,7 @@ const {
 // work, so i have lot of debug logs that blow up the console because not sure what is going on.
 // that is also the reason for using `retry` when theoretically writing a file the first time
 // should actually write the file.
-const verbose = true ? console.log : () => {};
+const verbose = Bun.env.VERBOSE ? console.log : () => {};
 async function retry(n, fn) {
   var err;
   while (n > 0) {

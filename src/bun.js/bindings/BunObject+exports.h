@@ -43,6 +43,7 @@
     macro(generateHeapSnapshot) \
     macro(getImportedStyles) \
     macro(gunzipSync) \
+    macro(globMatch) \
     macro(gzipSync) \
     macro(indexOfLine) \
     macro(inflateSync) \

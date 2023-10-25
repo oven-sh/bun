@@ -18,6 +18,7 @@ pub const BunObject = struct {
     pub const file = WebCore.Blob.constructBunFile;
     pub const fs = Bun.fs;
     pub const gc = Bun.runGC;
+    pub const globMatch = Bun.globMatch;
     pub const generateHeapSnapshot = Bun.generateHeapSnapshot;
     pub const getImportedStyles = Bun.getImportedStyles;
     pub const getPublicPath = Bun.getPublicPathJS;
@@ -130,6 +131,7 @@ pub const BunObject = struct {
         @export(BunObject.generateHeapSnapshot, .{ .name = callbackName("generateHeapSnapshot") });
         @export(BunObject.getImportedStyles, .{ .name = callbackName("getImportedStyles") });
         @export(BunObject.gunzipSync, .{ .name = callbackName("gunzipSync") });
+        @export(BunObject.globMatch, .{ .name = callbackName("globMatch") });
         @export(BunObject.gzipSync, .{ .name = callbackName("gzipSync") });
         @export(BunObject.indexOfLine, .{ .name = callbackName("indexOfLine") });
         @export(BunObject.inflateSync, .{ .name = callbackName("inflateSync") });
@@ -234,6 +236,7 @@ const Which = @import("../../which.zig");
 const ErrorableString = JSC.ErrorableString;
 const is_bindgen = JSC.is_bindgen;
 const max_addressible_memory = std.math.maxInt(u56);
+const glob = @import("../../glob.zig");
 
 threadlocal var css_imports_list_strings: [512]ZigString = undefined;
 threadlocal var css_imports_list: [512]Api.StringPointer = undefined;
@@ -242,6 +245,46 @@ threadlocal var css_imports_buf: std.ArrayList(u8) = undefined;
 threadlocal var css_imports_buf_loaded: bool = false;
 
 threadlocal var routes_list_strings: [1024]ZigString = undefined;
+
+pub fn globMatch(
+    globalThis: *JSC.JSGlobalObject,
+    callframe: *JSC.CallFrame,
+) callconv(.C) JSC.JSValue {
+    const arguments_ = callframe.arguments(2);
+    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    defer arguments.deinit();
+    const pat_arg = arguments.nextEat() orelse {
+        globalThis.throw("globMatch: expected 2 arguments, got 0", .{});
+        return JSC.JSValue.jsUndefined();
+    };
+    const input_str_arg = arguments.nextEat() orelse {
+        globalThis.throw("globMatch: expected 2 arguments, got 1", .{});
+        return JSC.JSValue.jsUndefined();
+    };
+
+    var pat_str: ZigString.Slice = ZigString.Slice.empty;
+    var input_str: ZigString.Slice = ZigString.Slice.empty;
+    defer {
+        pat_str.deinit();
+        input_str.deinit();
+    }
+
+    if (!pat_arg.isString()) {
+        globalThis.throw("globMatch: first argument is not a string", .{});
+        return JSC.JSValue.jsUndefined();
+    }
+
+    if (!input_str_arg.isString()) {
+        globalThis.throw("globMatch: second argument is not a string", .{});
+        return JSC.JSValue.jsUndefined();
+    }
+
+    pat_str = pat_arg.toSlice(globalThis, globalThis.bunVM().allocator);
+    input_str = input_str_arg.toSlice(globalThis, globalThis.bunVM().allocator);
+
+    const matches = glob.globMatchString(pat_str.slice(), input_str.slice());
+    return JSC.JSValue.jsBoolean(matches);
+}
 
 pub fn onImportCSS(
     resolve_result: *const Resolver.Result,

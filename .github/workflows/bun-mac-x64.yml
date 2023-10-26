@@ -67,8 +67,12 @@ jobs:
         with:
           context: .
           push: false
-          cache-from: type=s3,endpoint_url=${{ secrets.CACHE_S3_ENDPOINT }},blobs_prefix=docker_blobs/,manifests_prefix=docker_manifests/,access_key_id=${{ secrets.CACHE_S3_ACCESS_KEY_ID }},secret_access_key=${{ secrets.CACHE_S3_SECRET_ACCESS_KEY }},bucket=bun,region=auto
-          cache-to: type=s3,endpoint_url=${{ secrets.CACHE_S3_ENDPOINT }},blobs_prefix=docker_blobs/,manifests_prefix=docker_manifests/,access_key_id=${{ secrets.CACHE_S3_ACCESS_KEY_ID }},secret_access_key=${{ secrets.CACHE_S3_SECRET_ACCESS_KEY }},bucket=bun,region=auto
+          # This doesnt seem to work
+          # cache-from: type=s3,endpoint_url=${{ secrets.CACHE_S3_ENDPOINT }},blobs_prefix=docker_blobs/,manifests_prefix=docker_manifests/,access_key_id=${{ secrets.CACHE_S3_ACCESS_KEY_ID }},secret_access_key=${{ secrets.CACHE_S3_SECRET_ACCESS_KEY }},bucket=bun,region=auto
+          # cache-to: type=s3,endpoint_url=${{ secrets.CACHE_S3_ENDPOINT }},blobs_prefix=docker_blobs/,manifests_prefix=docker_manifests/,access_key_id=${{ secrets.CACHE_S3_ACCESS_KEY_ID }},secret_access_key=${{ secrets.CACHE_S3_SECRET_ACCESS_KEY }},bucket=bun,region=auto
+          # This was used before, but also does not really work
+          cache-from: type=local,src=/tmp/.buildx-cache-${{matrix.tag}}
+          cache-to: type=local,dest=/tmp/.buildx-cache-${{matrix.tag}}
           build-args: |
             BUILDARCH=${{ runner.arch == 'X64' && 'amd64' || 'arm64' }}
             BUILD_MACHINE_ARCH=${{ runner.arch == 'X64' && 'x86_64' || 'aarch64' }}
@@ -76,6 +80,13 @@ jobs:
             CPU_TARGET=${{ matrix.cpu }}
             TRIPLET=${{ matrix.arch }}-macos-none
             GIT_SHA=${{ github.sha }}
+
+            SCCACHE_BUCKET=bun
+            SCCACHE_REGION=auto
+            SCCACHE_S3_USE_SSL=true
+            SCCACHE_ENDPOINT=${{ secrets.CACHE_S3_ENDPOINT }}
+            AWS_ACCESS_KEY_ID=${{ secrets.CACHE_S3_ACCESS_KEY_ID }}
+            AWS_SECRET_ACCESS_KEY=${{ secrets.CACHE_S3_SECRET_ACCESS_KEY }}
           platforms: linux/${{ runner.arch == 'X64' && 'amd64' || 'arm64' }}
           target: build_release_obj
           outputs: type=local,dest=${{runner.temp}}/release

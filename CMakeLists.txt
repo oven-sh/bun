@@ -213,9 +213,9 @@ if(NO_CONFIGURE_DEPENDS)
 endif()
 
 # --- CLI Paths ---
-set(REQUIRED_IF_NOT_BUN_CPP_ONLY "")
-if(NOT BUN_CPP_ONLY)
-    set(REQUIRED_IF_NOT_BUN_CPP_ONLY "REQUIRED")
+set(REQUIRED_IF_NOT_ONLY_CPP_OR_LINK "")
+if(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY)
+    set(REQUIRED_IF_NOT_ONLY_CPP_OR_LINK "REQUIRED")
 endif()
 
 # Zig Compiler
@@ -230,12 +230,12 @@ function(validate_zig validator_result_var item)
         set(${validator_result_var} FALSE PARENT_SCOPE)
     endif()
 endfunction()
-find_program(ZIG_COMPILER zig ${REQUIRED_IF_NOT_BUN_CPP_ONLY} DOC "Path to the Zig compiler" VALIDATOR validate_zig)
+find_program(ZIG_COMPILER zig ${REQUIRED_IF_NOT_ONLY_CPP_OR_LINK} DOC "Path to the Zig compiler" VALIDATOR validate_zig)
 message(STATUS "Found Zig Compiler: ${ZIG_COMPILER}")
 
 # Bun
 if(NOT WIN32)
-    find_program(BUN_EXECUTABLE bun ${REQUIRED_IF_NOT_BUN_CPP_ONLY} DOC "Path to an already built release of Bun")
+    find_program(BUN_EXECUTABLE bun ${REQUIRED_IF_NOT_ONLY_CPP_OR_LINK} DOC "Path to an already built release of Bun")
     message(STATUS "Found Bun: ${BUN_EXECUTABLE}")
 else()
     set(BUN_EXECUTABLE "echo")

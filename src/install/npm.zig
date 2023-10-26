@@ -837,10 +837,6 @@ pub const PackageManifest = struct {
 
         if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
             const prereleases = this.pkg.prereleases.keys.get(this.versions);
-            for (prereleases) |prerelease| {
-                _ = prerelease;
-                // std.debug.print("prerelease: {}\n", .{prerelease.fmt(this.string_buf)});
-            }
             var i = prereleases.len;
             while (i > 0) : (i -= 1) {
                 const version = prereleases[i - 1];

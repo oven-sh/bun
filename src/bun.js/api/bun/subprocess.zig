@@ -415,7 +415,7 @@ pub const Subprocess = struct {
                         const errno = std.os.linux.getErrno(rc);
 
                         // if the process was already killed don't throw
-                        if (errno != .SRCH and errno != .ENOSYS)
+                        if (errno != .SRCH and errno != .NOSYS)
                             return .{ .err = bun.sys.Error.fromCode(errno, .kill) };
                     } else {
                         break :send_signal;

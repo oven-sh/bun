@@ -154,7 +154,6 @@ jobs:
 
       - name: Upload submodule dependencies
         uses: actions/upload-artifact@v3
-        if: ${{ !steps.cache-deps-restore.outputs.cache-hit }}
         with:
           name: ${{ matrix.tag }}-deps
           path: ${{runner.temp}}/bun-deps

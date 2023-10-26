@@ -16,6 +16,8 @@ const Which = @import("../../../which.zig");
 const uws = @import("../../../deps/uws.zig");
 const IPC = @import("../../ipc.zig");
 
+const PosixSpawn = @import("./spawn.zig").PosixSpawn;
+
 pub const Subprocess = struct {
     const log = Output.scoped(.Subprocess, false);
     pub usingnamespace JSC.Codegen.JSSubprocess;
@@ -30,7 +32,7 @@ pub const Subprocess = struct {
     stdout: Readable,
     stderr: Readable,
     killed: bool = false,
-    poll_ref: ?*JSC.FilePoll = null,
+    poll: Poll = Poll{ .poll_ref = null },
 
     exit_promise: JSC.Strong = .{},
     on_exit_callback: JSC.Strong = .{},
@@ -69,19 +71,43 @@ pub const Subprocess = struct {
     has_pending_unref: bool = false,
     pub const SignalCode = bun.SignalCode;
 
+    pub const Poll = union(enum) {
+        poll_ref: ?*JSC.FilePoll,
+        wait_thread: WaitThreadPoll,
+    };
+
+    pub const WaitThreadPoll = struct {
+        ref_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
+        poll_ref: JSC.PollRef = .{},
+    };
+
     pub const IPCMode = enum {
         none,
         bun,
         // json,
     };
 
+    pub fn poll_ref(this: *Subprocess) ?*JSC.FilePoll {
+        if (this.poll == .poll_ref) {
+            return this.poll.poll_ref;
+        }
+
+        return null;
+    }
+
     pub fn hasExited(this: *const Subprocess) bool {
         return this.exit_code != null or this.waitpid_err != null or this.signal_code != null;
     }
 
-    pub fn updateHasPendingActivityFlag(this: *Subprocess) void {
+    pub fn updateHasPendingActivity(this: *Subprocess) void {
         @fence(.SeqCst);
-        this.has_pending_activity.store(this.waitpid_err == null and this.exit_code == null and this.ipc_mode == .none and this.has_pending_unref, .SeqCst);
+        this.has_pending_activity.store(
+            (this.poll == .wait_thread and this.poll.wait_thread.ref_count.load(.Monotonic) > 0) or (this.waitpid_err == null and
+                this.exit_code == null and
+                this.ipc_mode == .none and
+                this.has_pending_unref),
+            .SeqCst,
+        );
     }
 
     pub fn hasPendingActivity(this: *Subprocess) callconv(.C) bool {
@@ -89,14 +115,15 @@ pub const Subprocess = struct {
         return this.has_pending_activity.load(.Acquire);
     }
 
-    pub fn updateHasPendingActivity(this: *Subprocess) void {
-        @fence(.Release);
-        this.has_pending_activity.store(this.waitpid_err == null and this.exit_code == null and this.ipc_mode == .none and this.has_pending_unref, .Release);
-    }
-
     pub fn ref(this: *Subprocess) void {
         var vm = this.globalThis.bunVM();
-        if (this.poll_ref) |poll| poll.enableKeepingProcessAlive(vm);
+        switch (this.poll) {
+            .poll_ref => |poll| if (poll != null) poll.?.enableKeepingProcessAlive(vm),
+            .wait_thread => |*wait_thread| {
+                wait_thread.poll_ref.ref(vm);
+            },
+        }
+
         if (!this.hasCalledGetter(.stdin)) {
             this.stdin.ref();
         }
@@ -114,7 +141,12 @@ pub const Subprocess = struct {
     pub fn unref(this: *Subprocess) void {
         var vm = this.globalThis.bunVM();
 
-        if (this.poll_ref) |poll| poll.disableKeepingProcessAlive(vm);
+        switch (this.poll) {
+            .poll_ref => |poll| if (poll != null) poll.?.disableKeepingProcessAlive(vm),
+            .wait_thread => |*wait_thread| {
+                wait_thread.poll_ref.unref(vm);
+            },
+        }
         if (!this.hasCalledGetter(.stdin)) {
             this.stdin.unref();
         }
@@ -366,23 +398,31 @@ pub const Subprocess = struct {
             return .{ .result = {} };
         }
 
-        if (comptime Environment.isLinux) {
-            // should this be handled differently?
-            // this effectively shouldn't happen
-            if (this.pidfd == bun.invalid_fd) {
-                return .{ .result = {} };
+        send_signal: {
+            if (comptime Environment.isLinux) {
+                // if these are the same, it means the pidfd is invalid.
+                if (!WaiterThread.shouldUseWaiterThread()) {
+                    // should this be handled differently?
+                    // this effectively shouldn't happen
+                    if (this.pidfd == bun.invalid_fd) {
+                        return .{ .result = {} };
+                    }
+
+                    // first appeared in Linux 5.1
+                    const rc = std.os.linux.pidfd_send_signal(this.pidfd, @as(u8, @intCast(sig)), null, 0);
+
+                    if (rc != 0) {
+                        const errno = std.os.linux.getErrno(rc);
+
+                        // if the process was already killed don't throw
+                        if (errno != .SRCH and errno != .ENOSYS)
+                            return .{ .err = bun.sys.Error.fromCode(errno, .kill) };
+                    } else {
+                        break :send_signal;
+                    }
+                }
             }
 
-            // first appeared in Linux 5.1
-            const rc = std.os.linux.pidfd_send_signal(this.pidfd, @as(u8, @intCast(sig)), null, 0);
-
-            if (rc != 0) {
-                const errno = std.os.linux.getErrno(rc);
-                // if the process was already killed don't throw
-                if (errno != .SRCH)
-                    return .{ .err = bun.sys.Error.fromCode(errno, .kill) };
-            }
-        } else {
             const err = std.c.kill(this.pid, sig);
             if (err != 0) {
                 const errno = bun.C.getErrno(err);
@@ -493,10 +533,10 @@ pub const Subprocess = struct {
                 // because we don't want to block the thread waiting for the write
                 switch (bun.isWritable(this.fd)) {
                     .ready => {
-                        if (this.poll_ref) |poll_ref| {
-                            poll_ref.flags.insert(.writable);
-                            poll_ref.flags.insert(.fifo);
-                            std.debug.assert(poll_ref.flags.contains(.poll_writable));
+                        if (this.poll_ref) |poll| {
+                            poll.flags.insert(.writable);
+                            poll.flags.insert(.fifo);
+                            std.debug.assert(poll.flags.contains(.poll_writable));
                         }
                     },
                     .hup => {
@@ -1452,7 +1492,7 @@ pub const Subprocess = struct {
         };
 
         const pidfd: std.os.fd_t = brk: {
-            if (!Environment.isLinux) {
+            if (!Environment.isLinux or WaiterThread.shouldUseWaiterThread()) {
                 break :brk pid;
             }
 
@@ -1493,16 +1533,8 @@ pub const Subprocess = struct {
 
                         const error_instance = brk2: {
                             if (err == .NOSYS) {
-                                break :brk2 globalThis.createErrorInstance(
-                                    \\"pidfd_open(2)" system call is not supported by your Linux kernel
-                                    \\To fix this error, either:
-                                    \\- Upgrade your Linux kernel to a newer version (current: {})
-                                    \\- Ensure the seccomp filter allows "pidfd_open"
-                                ,
-                                    .{
-                                        kernel.fmt(""),
-                                    },
-                                );
+                                WaiterThread.setShouldUseWaiterThread();
+                                break :brk pid;
                             }
 
                             break :brk2 bun.sys.Error.fromCode(err, .open).toJSC(globalThis);
@@ -1560,22 +1592,26 @@ pub const Subprocess = struct {
         const watchfd = if (comptime Environment.isLinux) pidfd else pid;
 
         if (comptime !is_sync) {
-            var poll = JSC.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
-            subprocess.poll_ref = poll;
-            switch (subprocess.poll_ref.?.register(
-                jsc_vm.event_loop_handle.?,
-                .process,
-                true,
-            )) {
-                .result => {},
-                .err => |err| {
-                    if (err.getErrno() != .SRCH) {
-                        @panic("This shouldn't happen");
-                    }
+            if (!WaiterThread.shouldUseWaiterThread()) {
+                var poll = JSC.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
+                subprocess.poll = .{ .poll_ref = poll };
+                switch (subprocess.poll.poll_ref.?.register(
+                    jsc_vm.event_loop_handle.?,
+                    .process,
+                    true,
+                )) {
+                    .result => {},
+                    .err => |err| {
+                        if (err.getErrno() != .SRCH) {
+                            @panic("This shouldn't happen");
+                        }
 
-                    send_exit_notification = true;
-                    lazy = false;
-                },
+                        send_exit_notification = true;
+                        lazy = false;
+                    },
+                }
+            } else {
+                WaiterThread.append(subprocess);
             }
         }
 
@@ -1622,10 +1658,10 @@ pub const Subprocess = struct {
         }
         subprocess.closeIO(.stdin);
 
-        {
+        if (!WaiterThread.shouldUseWaiterThread()) {
             var poll = JSC.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
-            subprocess.poll_ref = poll;
-            switch (subprocess.poll_ref.?.register(
+            subprocess.poll = .{ .poll_ref = poll };
+            switch (subprocess.poll.poll_ref.?.register(
                 jsc_vm.event_loop_handle.?,
                 .process,
                 true,
@@ -1641,6 +1677,8 @@ pub const Subprocess = struct {
                     subprocess.onExitNotification();
                 },
             }
+        } else {
+            WaiterThread.append(subprocess);
         }
 
         while (!subprocess.hasExited()) {
@@ -1687,7 +1725,12 @@ pub const Subprocess = struct {
     }
 
     pub fn watch(this: *Subprocess) void {
-        if (this.poll_ref) |poll| {
+        if (WaiterThread.shouldUseWaiterThread()) {
+            WaiterThread.append(this);
+            return;
+        }
+
+        if (this.poll.poll_ref) |poll| {
             _ = poll.register(
                 this.globalThis.bunVM().event_loop_handle.?,
                 .process,
@@ -1706,16 +1749,21 @@ pub const Subprocess = struct {
         if (this.has_waitpid_task) {
             return;
         }
-        defer if (sync) this.updateHasPendingActivityFlag();
         this.has_waitpid_task = true;
+        this.onWaitPid(sync, this_jsvalue, PosixSpawn.waitpid(this.pid, if (sync) 0 else std.os.W.NOHANG));
+    }
+
+    pub fn onWaitPid(this: *Subprocess, sync: bool, this_jsvalue: JSC.JSValue, waitpid_result: JSC.Maybe(PosixSpawn.WaitPidResult)) void {
+        defer if (sync) this.updateHasPendingActivity();
+
         const pid = this.pid;
 
-        switch (PosixSpawn.waitpid(pid, if (sync) 0 else std.os.W.NOHANG)) {
+        switch (waitpid_result) {
             .err => |err| {
                 this.waitpid_err = err;
             },
             .result => |result| {
-                if (result.pid != 0) {
+                if (result.pid == pid) {
                     if (std.os.W.IFEXITED(result.status)) {
                         this.exit_code = @as(u8, @truncate(std.os.W.EXITSTATUS(result.status)));
                     }
@@ -1738,9 +1786,16 @@ pub const Subprocess = struct {
             var vm = this.globalThis.bunVM();
 
             // prevent duplicate notifications
-            if (this.poll_ref) |poll| {
-                this.poll_ref = null;
-                poll.deinitWithVM(vm);
+            switch (this.poll) {
+                .poll_ref => |poll_| {
+                    if (poll_) |poll| {
+                        this.poll.poll_ref = null;
+                        poll.deinitWithVM(vm);
+                    }
+                },
+                .wait_thread => {
+                    this.poll.wait_thread.poll_ref.deactivate(vm.event_loop_handle.?);
+                },
             }
 
             this.onExit(this.globalThis, this_jsvalue);
@@ -1803,6 +1858,8 @@ pub const Subprocess = struct {
         }
 
         if (this.hasExited()) {
+            this.has_pending_unref = true;
+
             const Holder = struct {
                 process: *Subprocess,
                 task: JSC.AnyTask,
@@ -1817,7 +1874,7 @@ pub const Subprocess = struct {
             };
 
             var holder = bun.default_allocator.create(Holder) catch @panic("OOM");
-            this.has_pending_unref = true;
+
             holder.* = .{
                 .process = this,
                 .task = JSC.AnyTask.New(Holder, Holder.unref).init(holder),
@@ -1832,8 +1889,6 @@ pub const Subprocess = struct {
         os.close(pipe[0]);
         if (pipe[0] != pipe[1]) os.close(pipe[1]);
     }
-
-    const PosixSpawn = @import("./spawn.zig").PosixSpawn;
 
     const Stdio = union(enum) {
         inherit: void,
@@ -2072,4 +2127,135 @@ pub const Subprocess = struct {
     }
 
     pub const IPCHandler = IPC.NewIPCHandler(Subprocess);
+
+    // Machines which do not support pidfd_open (GVisor, Linux Kernel < 5.6)
+    // use a thread to wait for the child process to exit.
+    // We use a single thread to call waitpid() in a loop.
+    pub const WaiterThread = struct {
+        concurrent_queue: Queue = .{},
+        queue: std.ArrayList(*Subprocess) = std.ArrayList(*Subprocess).init(bun.default_allocator),
+        started: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
+
+        pub fn setShouldUseWaiterThread() void {
+            should_use_waiter_thread = true;
+        }
+
+        pub fn shouldUseWaiterThread() bool {
+            return @atomicLoad(bool, &should_use_waiter_thread, .Monotonic);
+        }
+
+        pub const WaitTask = struct {
+            subprocess: *Subprocess,
+            next: ?*WaitTask = null,
+        };
+
+        var should_use_waiter_thread = false;
+
+        pub const Queue = bun.UnboundedQueue(WaitTask, .next);
+        pub var instance: WaiterThread = .{};
+        pub fn init() !void {
+            std.debug.assert(should_use_waiter_thread);
+
+            if (instance.started.fetchMax(1, .Monotonic) > 0) {
+                return;
+            }
+
+            var thread = try std.Thread.spawn(.{ .stack_size = 512 * 1024 }, loop, .{});
+            thread.detach();
+        }
+
+        pub const WaitPidResultTask = struct {
+            result: JSC.Maybe(PosixSpawn.WaitPidResult),
+            subprocess: *Subprocess,
+
+            pub fn runFromJSThread(self: *@This()) void {
+                var result = self.result;
+                var subprocess = self.subprocess;
+                _ = subprocess.poll.wait_thread.ref_count.fetchSub(1, .Monotonic);
+                bun.default_allocator.destroy(self);
+                subprocess.onWaitPid(false, subprocess.this_jsvalue, result);
+            }
+        };
+
+        pub fn append(process: *Subprocess) void {
+            if (process.poll == .wait_thread) {
+                process.poll.wait_thread.poll_ref.activate(process.globalThis.bunVM().event_loop_handle.?);
+                _ = process.poll.wait_thread.ref_count.fetchAdd(1, .Monotonic);
+            } else {
+                process.poll = .{
+                    .wait_thread = .{
+                        .poll_ref = .{},
+                        .ref_count = std.atomic.Atomic(u32).init(1),
+                    },
+                };
+                process.poll.wait_thread.poll_ref.activate(process.globalThis.bunVM().event_loop_handle.?);
+            }
+
+            var task = bun.default_allocator.create(WaitTask) catch unreachable;
+            task.* = WaitTask{
+                .subprocess = process,
+            };
+            instance.concurrent_queue.push(task);
+            process.updateHasPendingActivity();
+
+            init() catch @panic("Failed to start WaiterThread");
+        }
+
+        pub fn loop() void {
+            Output.Source.configureNamedThread("Waitpid");
+
+            var this = &instance;
+
+            while (true) {
+                {
+                    var batch = this.concurrent_queue.popBatch();
+                    var iter = batch.iterator();
+                    this.queue.ensureUnusedCapacity(batch.count) catch unreachable;
+                    while (iter.next()) |task| {
+                        this.queue.appendAssumeCapacity(task.subprocess);
+                        bun.default_allocator.destroy(task);
+                    }
+                }
+
+                var queue: []*Subprocess = this.queue.items;
+                var i: usize = 0;
+                while (queue.len > 0 and i < queue.len) {
+                    var process = queue[i];
+
+                    // this case shouldn't really happen
+                    if (process.pid == bun.invalid_fd) {
+                        _ = this.queue.orderedRemove(i);
+                        _ = process.poll.wait_thread.ref_count.fetchSub(1, .Monotonic);
+                        queue = this.queue.items;
+                        continue;
+                    }
+
+                    const result = PosixSpawn.waitpid(process.pid, std.os.W.NOHANG);
+                    if (result == .err or (result == .result and result.result.pid == process.pid)) {
+                        _ = this.queue.orderedRemove(i);
+                        queue = this.queue.items;
+
+                        var task = bun.default_allocator.create(WaitPidResultTask) catch unreachable;
+                        task.* = WaitPidResultTask{
+                            .result = result,
+                            .subprocess = process,
+                        };
+
+                        process.globalThis.bunVMConcurrently().enqueueTaskConcurrent(
+                            JSC.ConcurrentTask.create(
+                                JSC.Task.init(task),
+                            ),
+                        );
+                    }
+
+                    i += 1;
+                }
+
+                var mask = std.os.empty_sigset;
+                var signal: c_int = std.os.SIG.CHLD;
+                var rc = std.c.sigwait(&mask, &signal);
+                _ = rc;
+            }
+        }
+    };
 };

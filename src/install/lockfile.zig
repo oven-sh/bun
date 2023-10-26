@@ -1913,25 +1913,6 @@ pub const PackageIndex = struct {
             PackageID = 0,
             PackageIDMultiple = 1,
         };
-
-        const Sorter = struct {
-            buf: []const u8,
-            reoslutions: []const Resolution,
-
-            pub fn isLessThan(this: @This(), left: PackageID, right: PackageID) bool {
-                return this.reoslutions[left].order(&this.reoslutions[right], this.buf, this.buf) == .lt;
-            }
-        };
-
-        pub fn sort(this: *@This(), resolutions: []const Resolution, buf: []const u8) void {
-            if (this.* == .PackageID) return;
-            var sorter = Sorter{
-                .buf = buf,
-                .reoslutions = resolutions,
-            };
-
-            std.sort.block(PackageID, this.PackageIDMultiple.items, sorter, Sorter.isLessThan);
-        }
     };
 };
 

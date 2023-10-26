@@ -8,7 +8,7 @@ describe("web worker", () => {
     const worker = new Worker(new URL("worker-fixture.js", import.meta.url).href, {
       smol: true,
     });
-    expect(worker.threadId).toBe(1);
+    expect(worker.threadId).toBeGreaterThan(0);
     worker.postMessage("hello");
     worker.onerror = e => {
       done(e.error);

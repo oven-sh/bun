@@ -294,7 +294,13 @@ pub fn build_(b: *Build) !void {
         obj.step.dependOn(&run_step.step);
     }
 
-    b.reference_trace = 16;
+    b.reference_trace = if (b.option(u32, "reference-trace", "Set the reference trace")) |trace|
+        if (trace == 0)
+            null
+        else
+            trace
+    else
+        16;
 
     var default_build_options: BunBuildOptions = brk: {
         const is_baseline = arch.isX86() and (target.cpu_model == .baseline or

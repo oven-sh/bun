@@ -565,34 +565,34 @@ describe("expect()", () => {
     }).not.toThrow(err);
 
     const weirdThings = [
-      /watttt/g,
-      BigInt(123),
-      -42,
-      NaN,
-      Infinity,
-      -Infinity,
-      undefined,
-      null,
-      true,
-      false,
-      0,
-      1,
-      "",
-      "hello",
-      {},
-      [],
-      new Date(),
-      new Error(),
-      new RegExp("foo"),
-      new Map(),
-      new Set(),
-      Promise.resolve(),
-      Promise.reject(Symbol("123")).finally(() => {}),
-      Symbol("123"),
+      () => /watttt/g,
+      () => BigInt(123),
+      () => -42,
+      () => NaN,
+      () => Infinity,
+      () => -Infinity,
+      () => undefined,
+      () => null,
+      () => true,
+      () => false,
+      () => 0,
+      () => 1,
+      () => "",
+      () => "hello",
+      () => {},
+      () => [],
+      () => new Date(),
+      () => new Error(),
+      () => new RegExp("foo"),
+      () => new Map(),
+      () => new Set(),
+      () => Promise.resolve(),
+      () => Promise.reject(Symbol("123")),
+      () => Symbol("123"),
     ];
     for (const weirdThing of weirdThings) {
       expect(() => {
-        throw weirdThing;
+        throw weirdThing();
       }).toThrow();
     }
 

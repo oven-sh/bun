@@ -152,6 +152,12 @@ jobs:
           path: ${{runner.temp}}/bun-deps
           key: ${{ steps.cache-deps-restore.outputs.cache-primary-key }}
 
+      - name: Upload submodule dependencies
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.tag }}-deps
+          path: ${{runner.temp}}/bun-deps
+
   macOS-cpp:
     name: macOS C++
     runs-on: ${{ matrix.runner }}
@@ -229,7 +235,6 @@ jobs:
             obj: bun-obj-darwin-aarch64
             package: bun-darwin-aarch64
             artifact: bun-obj-darwin-aarch64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-3/bun-webkit-macos-arm64-lto.tar.gz"
             runner: macos-arm64
     steps:
       - uses: actions/checkout@v3
@@ -242,7 +247,7 @@ jobs:
           HOMEBREW_NO_AUTO_UPDATE: 1
           HOMEBREW_NO_INSTALL_CLEANUP: 1
         run: |
-          brew install ccache rust llvm@$LLVM_VERSION pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config --force
+          brew install ccache llvm@$LLVM_VERSION pkg-config coreutils libtool cmake libiconv openssl@1.1 ninja --force
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
@@ -277,13 +282,11 @@ jobs:
           echo "sha=$(print_data | sha1sum | cut -c 1-10)" >> $GITHUB_OUTPUT
         id: submodule-versions
 
-      # This is guaranteed to be a cache hit because we *just* saved it in the last step
-      - name: Downloaded cached submodule dependencies
-        uses: actions/cache/restore@v3
+      - name: Downloaded submodule dependencies
+        uses: actions/download-artifact@v3
         with:
+          name: ${{ matrix.tag }}-deps
           path: ${{runner.temp}}/bun-deps
-          key: bun-deps-${{ matrix.tag }}-${{ steps.submodule-versions.outputs.sha }}
-          fail-on-cache-miss: true
 
       - name: Link
         env:

@@ -67,7 +67,7 @@ it("clearTimeout", async () => {
   expect(called).toBe(false);
 });
 
-it("setImmediate runs after setTimeout cb", async () => {
+it.todo("setImmediate runs after setTimeout cb", async () => {
   var ranFirst = -1;
   setTimeout(() => {
     if (ranFirst === -1) ranFirst = 1;

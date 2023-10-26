@@ -3,8 +3,8 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW) 
 
-set(Bun_VERSION "1.0.7")
-set(WEBKIT_TAG b3eb3541118a997adc959e138155f5f4736892da)
+set(Bun_VERSION "1.0.8")
+set(WEBKIT_TAG 67c9ba93323b4a5a95bc4d1efe61166dc6e3e691)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -69,6 +69,12 @@ macro(BUN_FIND_LLVM)
     find_program(
         STRIP
         NAMES llvm-strip
+        PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
+        DOC "Path to LLVM ${LLVM_VERSION}'s llvm-strip binary"
+    )
+    find_program(
+        STRIP
+        NAMES strip
         PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
         DOC "Path to LLVM ${LLVM_VERSION}'s llvm-strip binary"
     )
@@ -146,10 +152,8 @@ message(STATUS "C++ Compiler: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERS
 # --- End LLVM ---
 
 set(DEFAULT_ON_UNLESS_WINDOWS ON)
-set(REQUIRED_IF_NOT_WINDOWS "REQUIRED")
 if(WIN32)
     set(DEFAULT_ON_UNLESS_WINDOWS OFF)
-    set(REQUIRED_IF_NOT_WINDOWS OFF)
 endif()
 set(DEFAULT_ON_UNLESS_APPLE ON)
 if(APPLE)
@@ -163,7 +167,7 @@ endif()
 
 # -- Build Flags --
 option(USE_STATIC_SQLITE "Statically link SQLite?" ${DEFAULT_ON_UNLESS_APPLE})
-option(USE_CUSTOM_ZLIB "Use Bun's recommended version of zlib" ${DEFAULT_ON_UNLESS_WINDOWS})
+option(USE_CUSTOM_ZLIB "Use Bun's recommended version of zlib" ON)
 option(USE_CUSTOM_BORINGSSL "Use Bun's recommended version of BoringSSL" ON)
 option(USE_CUSTOM_LIBARCHIVE "Use Bun's recommended version of libarchive" ON)
 option(USE_CUSTOM_MIMALLOC "Use Bun's recommended version of Mimalloc" ON)
@@ -187,13 +191,17 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|arm")
 endif()
 
 if(NOT CPU_TARGET)
-    set(CPU_TARGET "native" CACHE STRING "CPU target for the compiler" FORCE)
-    if (ARCH STREQUAL "x86_64")
-        if (NOT MSVC)
-            if (USE_BASELINE_BUILD)
-                set(CPU_TARGET "nehalem")
-            else()
-                set(CPU_TARGET "haswell")
+    if(ENV{CPU_TARGET})
+        set(CPU_TARGET $ENV{CPU_TARGET})
+    else()
+        set(CPU_TARGET "native" CACHE STRING "CPU target for the compiler" FORCE)
+        if (ARCH STREQUAL "x86_64")
+            if (NOT MSVC)
+                if (USE_BASELINE_BUILD)
+                    set(CPU_TARGET "nehalem")
+                else()
+                    set(CPU_TARGET "haswell")
+                endif()
             endif()
         endif()
     endif()
@@ -562,33 +570,33 @@ add_custom_command(
 list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp")
 
 # --- Peechy API ---
-if(NOT NO_CODEGEN)
-    add_custom_command(
-        OUTPUT "${BUN_SRC}/api/schema.js"
-            "${BUN_SRC}/api/schema.d.ts"
-            "${BUN_SRC}/api/schema.zig"
-        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/node_modules/.bin/peechy"
-            "--schema" "${BUN_SRC}/api/schema.peechy"
-            "--esm" "${BUN_SRC}/api/schema.js"
-            "--ts" "${BUN_SRC}/api/schema.d.ts"
-            "--zig" "${BUN_SRC}/api/schema.zig"
-        COMMAND "${ZIG_COMPILER}" "fmt" "src/api/schema.zig"
-        COMMAND "${PRETTIER}" "--config=.prettierrc.cjs" "--write" "src/api/schema.js" "src/api/schema.d.ts"
-        DEPENDS "${BUN_SRC}/api/schema.peechy"
-        COMMENT "Building schema"
-    )
-    add_custom_command(
-        OUTPUT "${BUN_SRC}/analytics/analytics_schema.zig"
-        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/node_modules/.bin/peechy"
-            "--schema" "${BUN_SRC}/analytics/schema.peechy"
-            "--zig" "${BUN_SRC}/analytics/analytics_schema.zig"
-        COMMAND "${ZIG_COMPILER}" "fmt" "${BUN_SRC}/analytics/analytics_schema.zig"
-        DEPENDS "${BUN_SRC}/api/schema.peechy"
-        COMMENT "Building analytics_schema.zig"
-    )
-endif()
+# if(NOT NO_CODEGEN)
+#     add_custom_command(
+#         OUTPUT "${BUN_SRC}/api/schema.js"
+#             "${BUN_SRC}/api/schema.d.ts"
+#             "${BUN_SRC}/api/schema.zig"
+#         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+#         COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/node_modules/.bin/peechy"
+#             "--schema" "${BUN_SRC}/api/schema.peechy"
+#             "--esm" "${BUN_SRC}/api/schema.js"
+#             "--ts" "${BUN_SRC}/api/schema.d.ts"
+#             "--zig" "${BUN_SRC}/api/schema.zig"
+#         COMMAND "${ZIG_COMPILER}" "fmt" "src/api/schema.zig"
+#         COMMAND "${PRETTIER}" "--config=.prettierrc.cjs" "--write" "src/api/schema.js" "src/api/schema.d.ts"
+#         DEPENDS "${BUN_SRC}/api/schema.peechy"
+#         COMMENT "Building schema"
+#     )
+#     add_custom_command(
+#         OUTPUT "${BUN_SRC}/analytics/analytics_schema.zig"
+#         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+#         COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/node_modules/.bin/peechy"
+#             "--schema" "${BUN_SRC}/analytics/schema.peechy"
+#             "--zig" "${BUN_SRC}/analytics/analytics_schema.zig"
+#         COMMAND "${ZIG_COMPILER}" "fmt" "${BUN_SRC}/analytics/analytics_schema.zig"
+#         DEPENDS "${BUN_SRC}/api/schema.peechy"
+#         COMMENT "Building analytics_schema.zig"
+#     )
+# endif()
 
 # --- Runtime.js ---
 if(NOT NO_CODEGEN)
@@ -836,7 +844,11 @@ if(UNIX AND NOT APPLE)
         "-Wl,--dynamic-list=${BUN_SRC}/symbols.dyn"
         "-Wl,--version-script=${BUN_SRC}/linker.lds"
     )
+    
     target_link_libraries(${bun} PRIVATE "c")
+    target_link_libraries(${bun} PRIVATE "pthread")
+    target_link_libraries(${bun} PRIVATE "dl")
+
     target_link_libraries(${bun} PRIVATE "libatomic.a")
 
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicudata.a")
@@ -896,9 +908,13 @@ endif()
 
 # --- Dependencies ---
 
-if(USE_CUSTOM_ZLIB AND (NOT WIN32))
-    target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libz.a")
+if(USE_CUSTOM_ZLIB)
     include_directories(${BUN_DEPS_DIR}/zlib)
+    if(WIN32)
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/zlibstatic.lib")
+    else()
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libz.a")
+    endif()
 else()
     if(WIN32)
         target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/zlib_maybethisworks.lib")

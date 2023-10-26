@@ -45,8 +45,6 @@ jobs:
             tag: bun-obj-darwin-x64
     steps:
       - uses: actions/checkout@v4
-      # - name: Checkout submodules
-      #   run: git submodule update --init --recursive --depth=1 --progress --force
 
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v2
@@ -63,7 +61,6 @@ jobs:
 
       - name: Compile Zig Object
         uses: docker/build-push-action@v3
-        if: runner.arch == 'X64'
         with:
           context: .
           push: false
@@ -165,6 +162,12 @@ jobs:
           path: ${{runner.temp}}/bun-deps
           key: ${{ steps.cache-deps-restore.outputs.cache-primary-key }}
 
+      - name: Upload submodule dependencies
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.tag }}-deps
+          path: ${{runner.temp}}/bun-deps
+
   macOS-cpp:
     name: macOS C++
     runs-on: ${{ matrix.runner }}
@@ -173,27 +176,12 @@ jobs:
     strategy:
       matrix:
         include:
-          # - cpu: nehalem
-          #   arch: x86_64
-          #   tag: bun-darwin-x64-baseline
-          #   obj: bun-obj-darwin-x64-baseline
-          #   runner: macos-12
-          #   artifact: bun-obj-darwin-x64-baseline
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-2/bun-webkit-macos-amd64-lto.tar.gz"
           - cpu: haswell
             arch: x86_64
             tag: bun-darwin-x64
             obj: bun-obj-darwin-x64
             runner: macos-12
             artifact: bun-obj-darwin-x64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-2/bun-webkit-macos-amd64-lto.tar.gz"
-          # - cpu: native
-          #   arch: aarch64
-          #   tag: bun-darwin-aarch64
-          #   obj: bun-obj-darwin-aarch64
-          #   artifact: bun-obj-darwin-aarch64
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-3/bun-webkit-macos-arm64-lto.tar.gz"
-          #   runner: macos-arm64
     steps:
       - uses: actions/checkout@v4
       - name: Checkout submodules
@@ -258,14 +246,6 @@ jobs:
     strategy:
       matrix:
         include:
-          # - cpu: nehalem
-          #   arch: x86_64
-          #   tag: bun-darwin-x64-baseline
-          #   obj: bun-obj-darwin-x64-baseline
-          #   package: bun-darwin-x64
-          #   runner: macos-12
-          #   artifact: bun-obj-darwin-x64-baseline
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-3/bun-webkit-macos-amd64-lto.tar.gz"
           - cpu: haswell
             arch: x86_64
             tag: bun-darwin-x64
@@ -273,15 +253,7 @@ jobs:
             package: bun-darwin-x64
             runner: macos-12
             artifact: bun-obj-darwin-x64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-3/bun-webkit-macos-amd64-lto.tar.gz"
-          # - cpu: native
-          #   arch: aarch64
-          #   tag: bun-darwin-aarch64
-          #   obj: bun-obj-darwin-aarch64
-          #   package: bun-darwin-aarch64
-          #   artifact: bun-obj-darwin-aarch64
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-3/bun-webkit-macos-arm64-lto.tar.gz"
-          #   runner: macos-arm64
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-4/bun-webkit-macos-amd64-lto.tar.gz"
     steps:
       - uses: actions/checkout@v3
       - name: Checkout submodules
@@ -293,7 +265,7 @@ jobs:
           HOMEBREW_NO_AUTO_UPDATE: 1
           HOMEBREW_NO_INSTALL_CLEANUP: 1
         run: |
-          brew install ccache rust llvm@$LLVM_VERSION pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config --force
+          brew install ccache llvm@$LLVM_VERSION pkg-config coreutils libtool cmake libiconv openssl@1.1 ninja --force
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
@@ -318,23 +290,11 @@ jobs:
           name: ${{ matrix.obj }}
           path: ${{ runner.temp }}/release
 
-      - name: Hash submodule versions
-        run: |
-          print_data() {
-            git submodule | grep -v WebKit
-            llvm-config --version
-            rustc --version
-          }
-          echo "sha=$(print_data | sha1sum | cut -c 1-10)" >> $GITHUB_OUTPUT
-        id: submodule-versions
-
-      # This is guaranteed to be a cache hit because we *just* saved it in the last step
-      - name: Downloaded cached submodule dependencies
-        uses: actions/cache/restore@v3
+      - name: Downloaded submodule dependencies
+        uses: actions/download-artifact@v3
         with:
+          name: ${{ matrix.tag }}-deps
           path: ${{runner.temp}}/bun-deps
-          key: bun-deps-${{ matrix.tag }}-${{ steps.submodule-versions.outputs.sha }}
-          fail-on-cache-miss: true
 
       - name: Link
         env:

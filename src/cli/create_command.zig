@@ -247,7 +247,7 @@ const CreateOptions = struct {
 const BUN_CREATE_DIR = ".bun-create";
 var home_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 pub const CreateCommand = struct {
-    pub fn exec(ctx: Command.Context, _: []const []const u8) !void {
+    pub fn exec(ctx: Command.Context, example_tag: Example.Tag, template: []const u8) !void {
         @setCold(true);
 
         Global.configureAllocator(.{ .long_running = false });
@@ -269,104 +269,6 @@ pub const CreateCommand = struct {
         };
 
         env_loader.loadProcess();
-
-        var example_tag = Example.Tag.unknown;
-
-        // var unsupported_packages = UnsupportedPackages{};
-        const template = brk: {
-            var positional = positionals[0];
-
-            if (!std.fs.path.isAbsolute(positional)) {
-                outer: {
-                    if (env_loader.map.get("BUN_CREATE_DIR")) |home_dir| {
-                        var parts = [_]string{ home_dir, positional };
-                        var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                        home_dir_buf[outdir_path.len] = 0;
-                        var outdir_path_ = home_dir_buf[0..outdir_path.len :0];
-                        std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
-                        if (create_options.verbose) {
-                            Output.prettyErrorln("reading from {s}", .{outdir_path});
-                        }
-                        example_tag = Example.Tag.local_folder;
-                        break :brk outdir_path;
-                    }
-                }
-
-                outer: {
-                    var parts = [_]string{ filesystem.top_level_dir, BUN_CREATE_DIR, positional };
-                    var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                    home_dir_buf[outdir_path.len] = 0;
-                    var outdir_path_ = home_dir_buf[0..outdir_path.len :0];
-                    std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
-                    if (create_options.verbose) {
-                        Output.prettyErrorln("reading from {s}", .{outdir_path});
-                    }
-                    example_tag = Example.Tag.local_folder;
-                    break :brk outdir_path;
-                }
-
-                outer: {
-                    if (env_loader.map.get(bun.DotEnv.home_env)) |home_dir| {
-                        var parts = [_]string{ home_dir, BUN_CREATE_DIR, positional };
-                        var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                        home_dir_buf[outdir_path.len] = 0;
-                        var outdir_path_ = home_dir_buf[0..outdir_path.len :0];
-                        std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
-                        if (create_options.verbose) {
-                            Output.prettyErrorln("reading from {s}", .{outdir_path});
-                        }
-                        example_tag = Example.Tag.local_folder;
-                        break :brk outdir_path;
-                    }
-                }
-
-                if (std.fs.path.isAbsolute(positional)) {
-                    example_tag = Example.Tag.local_folder;
-                    break :brk positional;
-                }
-
-                var repo_begin: usize = std.math.maxInt(usize);
-                // "https://github.com/foo/bar"
-                if (strings.startsWith(positional, "github.com/")) {
-                    repo_begin = "github.com/".len;
-                }
-
-                if (strings.startsWith(positional, "https://github.com/")) {
-                    repo_begin = "https://github.com/".len;
-                }
-
-                if (repo_begin == std.math.maxInt(usize) and positional[0] != '/') {
-                    if (std.mem.indexOfScalar(u8, positional, '/')) |first_slash_index| {
-                        if (std.mem.indexOfScalar(u8, positional, '/')) |last_slash_index| {
-                            if (first_slash_index == last_slash_index and
-                                positional[last_slash_index..].len > 0 and
-                                last_slash_index > 0)
-                            {
-                                repo_begin = 0;
-                            }
-                        }
-                    }
-                }
-
-                if (repo_begin != std.math.maxInt(usize)) {
-                    const remainder = positional[repo_begin..];
-                    if (std.mem.indexOfScalar(u8, remainder, '/')) |i| {
-                        if (i > 0 and remainder[i + 1 ..].len > 0) {
-                            if (std.mem.indexOfScalar(u8, remainder[i + 1 ..], '/')) |last_slash| {
-                                example_tag = Example.Tag.github_repository;
-                                break :brk std.mem.trim(u8, remainder[0 .. i + 1 + last_slash], "# \r\t");
-                            } else {
-                                example_tag = Example.Tag.github_repository;
-                                break :brk std.mem.trim(u8, remainder, "# \r\t");
-                            }
-                        }
-                    }
-                }
-            }
-
-            example_tag = Example.Tag.official;
-            break :brk positional;
-        };
 
         const dirname: string = brk: {
             if (positionals.len == 1) {
@@ -1677,6 +1579,109 @@ pub const CreateCommand = struct {
                 _ = child.wait() catch {};
             }
         }
+    }
+    pub fn extractInfo(ctx: Command.Context) !struct { example_tag: Example.Tag, template: []const u8 } {
+        var example_tag = Example.Tag.unknown;
+        var filesystem = try fs.FileSystem.init(null);
+
+        var create_options = try CreateOptions.parse(ctx, false);
+        const positionals = create_options.positionals;
+
+        var env_loader: DotEnv.Loader = brk: {
+            var map = try ctx.allocator.create(DotEnv.Map);
+            map.* = DotEnv.Map.init(ctx.allocator);
+
+            break :brk DotEnv.Loader.init(map, ctx.allocator);
+        };
+
+        env_loader.loadProcess();
+
+        // var unsupported_packages = UnsupportedPackages{};
+        const template = brk: {
+            var positional = positionals[0];
+
+            if (!std.fs.path.isAbsolute(positional)) {
+                outer: {
+                    if (env_loader.map.get("BUN_CREATE_DIR")) |home_dir| {
+                        var parts = [_]string{ home_dir, positional };
+                        var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
+                        home_dir_buf[outdir_path.len] = 0;
+                        var outdir_path_ = home_dir_buf[0..outdir_path.len :0];
+                        std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
+                        example_tag = Example.Tag.local_folder;
+                        break :brk outdir_path;
+                    }
+                }
+
+                outer: {
+                    var parts = [_]string{ filesystem.top_level_dir, BUN_CREATE_DIR, positional };
+                    var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
+                    home_dir_buf[outdir_path.len] = 0;
+                    var outdir_path_ = home_dir_buf[0..outdir_path.len :0];
+                    std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
+                    example_tag = Example.Tag.local_folder;
+                    break :brk outdir_path;
+                }
+
+                outer: {
+                    if (env_loader.map.get("HOME")) |home_dir| {
+                        var parts = [_]string{ home_dir, BUN_CREATE_DIR, positional };
+                        var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
+                        home_dir_buf[outdir_path.len] = 0;
+                        var outdir_path_ = home_dir_buf[0..outdir_path.len :0];
+                        std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
+                        example_tag = Example.Tag.local_folder;
+                        break :brk outdir_path;
+                    }
+                }
+
+                if (std.fs.path.isAbsolute(positional)) {
+                    example_tag = Example.Tag.local_folder;
+                    break :brk positional;
+                }
+
+                var repo_begin: usize = std.math.maxInt(usize);
+                // "https://github.com/foo/bar"
+                if (strings.startsWith(positional, "github.com/")) {
+                    repo_begin = "github.com/".len;
+                }
+
+                if (strings.startsWith(positional, "https://github.com/")) {
+                    repo_begin = "https://github.com/".len;
+                }
+
+                if (repo_begin == std.math.maxInt(usize) and positional[0] != '/') {
+                    if (std.mem.indexOfScalar(u8, positional, '/')) |first_slash_index| {
+                        if (std.mem.indexOfScalar(u8, positional, '/')) |last_slash_index| {
+                            if (first_slash_index == last_slash_index and
+                                positional[last_slash_index..].len > 0 and
+                                last_slash_index > 0)
+                            {
+                                repo_begin = 0;
+                            }
+                        }
+                    }
+                }
+
+                if (repo_begin != std.math.maxInt(usize)) {
+                    const remainder = positional[repo_begin..];
+                    if (std.mem.indexOfScalar(u8, remainder, '/')) |i| {
+                        if (i > 0 and remainder[i + 1 ..].len > 0) {
+                            if (std.mem.indexOfScalar(u8, remainder[i + 1 ..], '/')) |last_slash| {
+                                example_tag = Example.Tag.github_repository;
+                                break :brk std.mem.trim(u8, remainder[0 .. i + 1 + last_slash], "# \r\t");
+                            } else {
+                                example_tag = Example.Tag.github_repository;
+                                break :brk std.mem.trim(u8, remainder, "# \r\t");
+                            }
+                        }
+                    }
+                }
+            }
+            example_tag = Example.Tag.official;
+            break :brk positional;
+        };
+        return .{ .example_tag = example_tag, .template = template };
     }
 };
 const Commands = .{

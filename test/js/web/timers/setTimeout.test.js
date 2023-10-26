@@ -67,6 +67,20 @@ it("clearTimeout", async () => {
   expect(called).toBe(false);
 });
 
+it("setImmediate runs after setTimeout cb", async () => {
+  var ranFirst = -1;
+  setTimeout(() => {
+    if (ranFirst === -1) ranFirst = 1;
+  }, 0);
+  setImmediate(() => {
+    if (ranFirst === -1) ranFirst = 0;
+  });
+
+  await Bun.sleep(5);
+
+  expect(ranFirst).toBe(1);
+});
+
 it("setTimeout(() => {}, 0)", async () => {
   var called = false;
   setTimeout(() => {
@@ -80,10 +94,10 @@ it("setTimeout(() => {}, 0)", async () => {
   expect(called).toBe(true);
   var ranFirst = -1;
   setTimeout(() => {
-    if (ranFirst === -1) ranFirst = 1;
+    if (ranFirst === -1) ranFirst = 0;
   }, 1);
   setTimeout(() => {
-    if (ranFirst === -1) ranFirst = 0;
+    if (ranFirst === -1) ranFirst = 1;
   }, 0);
 
   await new Promise((resolve, reject) => {

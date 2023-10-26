@@ -944,8 +944,6 @@ pub const EventLoop = struct {
     }
 
     pub fn tickImmediateTasks(this: *EventLoop) void {
-        this.flushImmediateQueue();
-
         _ = this.tickQueueWithCount("immediate_tasks");
     }
 
@@ -999,6 +997,9 @@ pub const EventLoop = struct {
         var ctx = this.virtual_machine;
         var loop = ctx.event_loop_handle.?;
 
+        this.flushImmediateQueue();
+        this.tickImmediateTasks();
+
         // Some tasks need to keep the event loop alive for one more tick.
         // We want to keep the event loop alive long enough to process those ticks and any microtasks
         //
@@ -1023,6 +1024,9 @@ pub const EventLoop = struct {
     pub fn autoTickWithTimeout(this: *EventLoop, timeoutMs: i64) void {
         var ctx = this.virtual_machine;
         var loop = ctx.event_loop_handle.?;
+
+        this.flushImmediateQueue();
+        this.tickImmediateTasks();
 
         // Some tasks need to keep the event loop alive for one more tick.
         // We want to keep the event loop alive long enough to process those ticks and any microtasks
@@ -1062,6 +1066,9 @@ pub const EventLoop = struct {
         var ctx = this.virtual_machine;
         var loop = ctx.event_loop_handle.?;
 
+        this.flushImmediateQueue();
+        this.tickImmediateTasks();
+
         const pending_unref = ctx.pending_unref_counter;
         if (pending_unref > 0) {
             ctx.pending_unref_counter = 0;
@@ -1091,6 +1098,9 @@ pub const EventLoop = struct {
     pub fn autoTickActive(this: *EventLoop) void {
         var loop = this.virtual_machine.event_loop_handle.?;
 
+        this.flushImmediateQueue();
+        this.tickImmediateTasks();
+
         var ctx = this.virtual_machine;
 
         const pending_unref = ctx.pending_unref_counter;
@@ -1105,8 +1115,6 @@ pub const EventLoop = struct {
             this.flushImmediateQueue();
             ctx.onAfterEventLoop();
             // this.afterUSocketsTick();
-        } else {
-            this.flushImmediateQueue();
         }
     }
 
@@ -1120,8 +1128,6 @@ pub const EventLoop = struct {
         var ctx = this.virtual_machine;
         this.tickConcurrent();
         this.processGCTimer();
-
-        this.tickImmediateTasks();
 
         var global = ctx.global;
         var global_vm = ctx.jsc;

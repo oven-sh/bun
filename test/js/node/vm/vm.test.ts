@@ -121,8 +121,7 @@ function testRunInContext(
   });
   test("can reject a promise", () => {
     const context = createContext({});
-    const result = fn("Promise.reject(new TypeError('Oops!'));", context);
-    expect(async () => await result).toThrow({
+    expect(async () => await fn("Promise.reject(new TypeError('Oops!'));", context)).toThrow({
       name: "TypeError",
       message: "Oops!",
     });

@@ -44,16 +44,12 @@ jobs:
             arch: x86_64
             build_arch: amd64
             runner: big-ubuntu
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-4/bun-webkit-linux-amd64-lto.tar.gz"
-            webkit_basename: "bun-webkit-linux-amd64-lto"
             build_machine_arch: x86_64
           - cpu: nehalem
             tag: linux-x64-baseline
             arch: x86_64
             build_arch: amd64
             runner: big-ubuntu
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-4/bun-webkit-linux-amd64-lto.tar.gz"
-            webkit_basename: "bun-webkit-linux-amd64-lto"
             build_machine_arch: x86_64
 
     steps:
@@ -87,9 +83,7 @@ jobs:
             BUILDARCH=${{matrix.build_arch}}
             BUILD_MACHINE_ARCH=${{matrix.build_machine_arch}}
             CPU_TARGET=${{matrix.cpu}}
-            WEBKIT_URL=${{matrix.webkit_url}}
             GIT_SHA=${{github.sha}}
-            WEBKIT_BASENAME=${{matrix.webkit_basename}}
 
             SCCACHE_BUCKET=bun
             SCCACHE_REGION=auto

@@ -1617,18 +1617,10 @@ extern "C"
 
     if (length == 0) return 0;
     if (length == 4) {
-      length = snprintf(
-        b,
-        64,
-        "%u.%u.%u.%u",
-        static_cast<unsigned char>(b[0]),
-        static_cast<unsigned char>(b[1]),
-        static_cast<unsigned char>(b[2]),
-        static_cast<unsigned char>(b[3])
-      );
-      *dest = b;
+      ares_inet_ntop(AF_INET, b, &b[4], 64 - 4);
+      *dest = &b[4];
       *is_ipv6 = false;
-      return length;
+      return strlen(*dest);
     } else {
       ares_inet_ntop(AF_INET6, b, &b[16], 64 - 16);
       *dest = &b[16];

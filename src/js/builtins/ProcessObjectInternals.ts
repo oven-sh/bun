@@ -93,6 +93,8 @@ export function getStdinStream(fd) {
   const stream = new ReadStream(fd);
 
   const originalOn = stream.on;
+
+  let stream_destroyed = false;
   stream.on = function (event, listener) {
     // Streams don't generally required to present any data when only
     // `readable` events are present, i.e. `readableFlowing === false`
@@ -145,8 +147,11 @@ export function getStdinStream(fd) {
         }
       } else {
         stream.emit("end");
-        stream.emit("close");
-        stream.pause();
+        if (!stream_destroyed) {
+          stream_destroyed = true;
+          stream.destroy();
+          unref();
+        }
       }
     } catch (err) {
       stream.destroy(err);
@@ -173,10 +178,13 @@ export function getStdinStream(fd) {
   });
 
   stream.on("close", () => {
-    process.nextTick(() => {
-      stream.destroy();
-      unref();
-    });
+    if (!stream_destroyed) {
+      stream_destroyed = true;
+      process.nextTick(() => {
+        stream.destroy();
+        unref();
+      });
+    }
   });
 
   return stream;

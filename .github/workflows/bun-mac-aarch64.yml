@@ -236,7 +236,6 @@ jobs:
             obj: bun-obj-darwin-aarch64
             package: bun-darwin-aarch64
             artifact: bun-obj-darwin-aarch64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-3/bun-webkit-macos-arm64-lto.tar.gz"
             runner: macos-arm64
     steps:
       - uses: actions/checkout@v3

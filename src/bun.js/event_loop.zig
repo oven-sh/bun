@@ -987,6 +987,9 @@ pub const EventLoop = struct {
         var ctx = this.virtual_machine;
         var loop = this.usocketsLoop();
 
+        this.flushImmediateQueue();
+        this.tickImmediateTasks();
+
         if (comptime Environment.isPosix) {
             // Some tasks need to keep the event loop alive for one more tick.
             // We want to keep the event loop alive long enough to process those ticks and any microtasks
@@ -1015,6 +1018,9 @@ pub const EventLoop = struct {
         var ctx = this.virtual_machine;
         var loop = this.usocketsLoop();
 
+        this.flushImmediateQueue();
+        this.tickImmediateTasks();
+
         if (comptime Environment.isPosix) {
             // Some tasks need to keep the event loop alive for one more tick.
             // We want to keep the event loop alive long enough to process those ticks and any microtasks
@@ -1030,8 +1036,8 @@ pub const EventLoop = struct {
         }
 
         if (loop.isActive()) {
-            loop.tickWithTimeout(timeoutMs);
             this.processGCTimer();
+            loop.tickWithTimeout(timeoutMs);
             this.flushImmediateQueue();
             ctx.onAfterEventLoop();
         } else {
@@ -1087,11 +1093,13 @@ pub const EventLoop = struct {
 
     fn noopForeverTimer(_: *uws.Timer) callconv(.C) void {
         // do nothing
-        std.debug.print("noopForeverTimer\n", .{});
     }
 
     pub fn autoTickActive(this: *EventLoop) void {
         var loop = this.usocketsLoop();
+
+        this.flushImmediateQueue();
+        this.tickImmediateTasks();
 
         var ctx = this.virtual_machine;
         if (comptime Environment.isPosix) {
@@ -1103,8 +1111,8 @@ pub const EventLoop = struct {
         }
 
         if (loop.isActive()) {
-            loop.tick();
             this.processGCTimer();
+            loop.tick();
             this.flushImmediateQueue();
             ctx.onAfterEventLoop();
         } else {
@@ -1121,7 +1129,6 @@ pub const EventLoop = struct {
 
         var ctx = this.virtual_machine;
         this.tickConcurrent();
-        this.tickImmediateTasks();
         this.processGCTimer();
 
         const global = ctx.global;

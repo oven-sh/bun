@@ -45,8 +45,6 @@ jobs:
             tag: bun-obj-darwin-x64
     steps:
       - uses: actions/checkout@v4
-      # - name: Checkout submodules
-      #   run: git submodule update --init --recursive --depth=1 --progress --force
 
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v2
@@ -180,27 +178,12 @@ jobs:
     strategy:
       matrix:
         include:
-          # - cpu: nehalem
-          #   arch: x86_64
-          #   tag: bun-darwin-x64-baseline
-          #   obj: bun-obj-darwin-x64-baseline
-          #   runner: macos-12
-          #   artifact: bun-obj-darwin-x64-baseline
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-2/bun-webkit-macos-amd64-lto.tar.gz"
           - cpu: haswell
             arch: x86_64
             tag: bun-darwin-x64
             obj: bun-obj-darwin-x64
             runner: macos-12
             artifact: bun-obj-darwin-x64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-2/bun-webkit-macos-amd64-lto.tar.gz"
-          # - cpu: native
-          #   arch: aarch64
-          #   tag: bun-darwin-aarch64
-          #   obj: bun-obj-darwin-aarch64
-          #   artifact: bun-obj-darwin-aarch64
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-3/bun-webkit-macos-arm64-lto.tar.gz"
-          #   runner: macos-arm64
     steps:
       - uses: actions/checkout@v4
       - name: Checkout submodules
@@ -265,14 +248,6 @@ jobs:
     strategy:
       matrix:
         include:
-          # - cpu: nehalem
-          #   arch: x86_64
-          #   tag: bun-darwin-x64-baseline
-          #   obj: bun-obj-darwin-x64-baseline
-          #   package: bun-darwin-x64
-          #   runner: macos-12
-          #   artifact: bun-obj-darwin-x64-baseline
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-3/bun-webkit-macos-amd64-lto.tar.gz"
           - cpu: haswell
             arch: x86_64
             tag: bun-darwin-x64
@@ -280,15 +255,7 @@ jobs:
             package: bun-darwin-x64
             runner: macos-12
             artifact: bun-obj-darwin-x64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-3/bun-webkit-macos-amd64-lto.tar.gz"
-          # - cpu: native
-          #   arch: aarch64
-          #   tag: bun-darwin-aarch64
-          #   obj: bun-obj-darwin-aarch64
-          #   package: bun-darwin-aarch64
-          #   artifact: bun-obj-darwin-aarch64
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-3/bun-webkit-macos-arm64-lto.tar.gz"
-          #   runner: macos-arm64
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-4/bun-webkit-macos-amd64-lto.tar.gz"
     steps:
       - uses: actions/checkout@v3
       - name: Checkout submodules

@@ -262,6 +262,8 @@ public:
     JSC::Identifier spyIdentifier;
     unsigned spyAttributes = 0;
 
+    static constexpr unsigned SpyAttributeESModuleNamespace = 1 << 30;
+
     void setName(const WTF::String& name)
     {
         auto& vm = this->vm();
@@ -338,7 +340,12 @@ public:
             }
 
             // Reset the spy back to the original value.
-            target->putDirect(this->vm(), this->spyIdentifier, implValue, this->spyAttributes);
+            if (this->spyAttributes & SpyAttributeESModuleNamespace) {
+                auto* moduleNamespaceObject = jsCast<JSModuleNamespaceObject*>(target);
+                moduleNamespaceObject->overrideExportValue(moduleNamespaceObject->globalObject(), this->spyIdentifier, implValue);
+            } else {
+                target->putDirect(this->vm(), this->spyIdentifier, implValue, this->spyAttributes);
+            }
         }
 
         this->spyTarget.clear();
@@ -634,6 +641,7 @@ extern "C" JSC::EncodedJSValue JSMock__jsSpyOn(JSC::JSGlobalObject* lexicalGloba
 
             if (JSModuleNamespaceObject* moduleNamespaceObject = jsDynamicCast<JSModuleNamespaceObject*>(object)) {
                 moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
+                mock->spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
             } else {
                 object->putDirect(vm, propertyKey, mock, attributes);
             }
@@ -649,6 +657,7 @@ extern "C" JSC::EncodedJSValue JSMock__jsSpyOn(JSC::JSGlobalObject* lexicalGloba
 
             if (JSModuleNamespaceObject* moduleNamespaceObject = jsDynamicCast<JSModuleNamespaceObject*>(object)) {
                 moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
+                mock->spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
             } else {
                 object->putDirect(vm, propertyKey, JSC::GetterSetter::create(vm, globalObject, mock, mock), attributes);
             }

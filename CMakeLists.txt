@@ -152,10 +152,8 @@ message(STATUS "C++ Compiler: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERS
 # --- End LLVM ---
 
 set(DEFAULT_ON_UNLESS_WINDOWS ON)
-set(REQUIRED_IF_NOT_WINDOWS "REQUIRED")
 if(WIN32)
     set(DEFAULT_ON_UNLESS_WINDOWS OFF)
-    set(REQUIRED_IF_NOT_WINDOWS OFF)
 endif()
 set(DEFAULT_ON_UNLESS_APPLE ON)
 if(APPLE)
@@ -169,12 +167,12 @@ endif()
 
 # -- Build Flags --
 option(USE_STATIC_SQLITE "Statically link SQLite?" ${DEFAULT_ON_UNLESS_APPLE})
-option(USE_CUSTOM_ZLIB "Use Bun's recommended version of zlib" ${DEFAULT_ON_UNLESS_WINDOWS})
+option(USE_CUSTOM_ZLIB "Use Bun's recommended version of zlib" ON)
 option(USE_CUSTOM_BORINGSSL "Use Bun's recommended version of BoringSSL" ON)
 option(USE_CUSTOM_LIBARCHIVE "Use Bun's recommended version of libarchive" ON)
 option(USE_CUSTOM_MIMALLOC "Use Bun's recommended version of Mimalloc" ON)
 option(USE_CUSTOM_ZSTD "Use Bun's recommended version of zstd" ON)
-option(USE_CUSTOM_CARES "Use Bun's recommended version of c-ares" ${DEFAULT_ON_UNLESS_WINDOWS})
+option(USE_CUSTOM_CARES "Use Bun's recommended version of c-ares" ON)
 option(USE_CUSTOM_BASE64 "Use Bun's recommended version of libbase64" ON)
 option(USE_CUSTOM_LOLHTML "Use Bun's recommended version of lolhtml" ON)
 option(USE_CUSTOM_TINYCC "Use Bun's recommended version of tinycc" ON)
@@ -568,33 +566,33 @@ add_custom_command(
 list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp")
 
 # --- Peechy API ---
-if(NOT NO_CODEGEN)
-    add_custom_command(
-        OUTPUT "${BUN_SRC}/api/schema.js"
-            "${BUN_SRC}/api/schema.d.ts"
-            "${BUN_SRC}/api/schema.zig"
-        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/node_modules/.bin/peechy"
-            "--schema" "${BUN_SRC}/api/schema.peechy"
-            "--esm" "${BUN_SRC}/api/schema.js"
-            "--ts" "${BUN_SRC}/api/schema.d.ts"
-            "--zig" "${BUN_SRC}/api/schema.zig"
-        COMMAND "${ZIG_COMPILER}" "fmt" "src/api/schema.zig"
-        COMMAND "${PRETTIER}" "--config=.prettierrc.cjs" "--write" "src/api/schema.js" "src/api/schema.d.ts"
-        DEPENDS "${BUN_SRC}/api/schema.peechy"
-        COMMENT "Building schema"
-    )
-    add_custom_command(
-        OUTPUT "${BUN_SRC}/analytics/analytics_schema.zig"
-        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/node_modules/.bin/peechy"
-            "--schema" "${BUN_SRC}/analytics/schema.peechy"
-            "--zig" "${BUN_SRC}/analytics/analytics_schema.zig"
-        COMMAND "${ZIG_COMPILER}" "fmt" "${BUN_SRC}/analytics/analytics_schema.zig"
-        DEPENDS "${BUN_SRC}/api/schema.peechy"
-        COMMENT "Building analytics_schema.zig"
-    )
-endif()
+# if(NOT NO_CODEGEN)
+#     add_custom_command(
+#         OUTPUT "${BUN_SRC}/api/schema.js"
+#             "${BUN_SRC}/api/schema.d.ts"
+#             "${BUN_SRC}/api/schema.zig"
+#         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+#         COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/node_modules/.bin/peechy"
+#             "--schema" "${BUN_SRC}/api/schema.peechy"
+#             "--esm" "${BUN_SRC}/api/schema.js"
+#             "--ts" "${BUN_SRC}/api/schema.d.ts"
+#             "--zig" "${BUN_SRC}/api/schema.zig"
+#         COMMAND "${ZIG_COMPILER}" "fmt" "src/api/schema.zig"
+#         COMMAND "${PRETTIER}" "--config=.prettierrc.cjs" "--write" "src/api/schema.js" "src/api/schema.d.ts"
+#         DEPENDS "${BUN_SRC}/api/schema.peechy"
+#         COMMENT "Building schema"
+#     )
+#     add_custom_command(
+#         OUTPUT "${BUN_SRC}/analytics/analytics_schema.zig"
+#         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+#         COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/node_modules/.bin/peechy"
+#             "--schema" "${BUN_SRC}/analytics/schema.peechy"
+#             "--zig" "${BUN_SRC}/analytics/analytics_schema.zig"
+#         COMMAND "${ZIG_COMPILER}" "fmt" "${BUN_SRC}/analytics/analytics_schema.zig"
+#         DEPENDS "${BUN_SRC}/api/schema.peechy"
+#         COMMENT "Building analytics_schema.zig"
+#     )
+# endif()
 
 # --- Runtime.js ---
 if(NOT NO_CODEGEN)
@@ -906,9 +904,13 @@ endif()
 
 # --- Dependencies ---
 
-if(USE_CUSTOM_ZLIB AND (NOT WIN32))
-    target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libz.a")
+if(USE_CUSTOM_ZLIB)
     include_directories(${BUN_DEPS_DIR}/zlib)
+    if(WIN32)
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libz.a")
+    else()
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/zlibstatic.lib")
+    endif()
 else()
     find_package(ZLIB REQUIRED)
     target_link_libraries(${bun} PRIVATE ZLIB::ZLIB)

@@ -1675,7 +1675,7 @@ pub const PackageManager = struct {
     package_json_updates: []UpdateRequest = &[_]UpdateRequest{},
 
     // used for looking up workspaces that aren't loaded into Lockfile.workspace_paths
-    workspaces: std.StringArrayHashMap(?Semver.Version),
+    workspaces: std.StringArrayHashMap(Semver.Version),
 
     // progress bar stuff when not stack allocated
     root_progress_node: *std.Progress.Node = undefined,
@@ -2665,24 +2665,17 @@ pub const PackageManager = struct {
     }
 
     fn resolutionSatisfiesDependency(this: *PackageManager, resolution: Resolution, dependency: Dependency.Version) bool {
+        const buf = this.lockfile.buffers.string_bytes.items;
         if (resolution.tag == .npm and dependency.tag == .npm) {
-            return dependency.value.npm.version.satisfies(resolution.value.npm.version, this.lockfile.buffers.string_bytes.items);
+            return dependency.value.npm.version.satisfies(resolution.value.npm.version, buf);
         }
 
         if (resolution.tag == .git and dependency.tag == .git) {
-            return resolution.value.git.eql(
-                &dependency.value.git,
-                this.lockfile.buffers.string_bytes.items,
-                this.lockfile.buffers.string_bytes.items,
-            );
+            return resolution.value.git.eql(&dependency.value.git, buf, buf);
         }
 
         if (resolution.tag == .github and dependency.tag == .github) {
-            return resolution.value.github.eql(
-                &dependency.value.github,
-                this.lockfile.buffers.string_bytes.items,
-                this.lockfile.buffers.string_bytes.items,
-            );
+            return resolution.value.github.eql(&dependency.value.github, buf, buf);
         }
 
         return false;
@@ -2742,7 +2735,8 @@ pub const PackageManager = struct {
                 if (version.tag == .npm) {
                     if (this.lockfile.workspace_versions.count() > 0) resolve_from_workspace: {
                         if (this.lockfile.workspace_versions.get(name_hash)) |workspace_version| {
-                            if (version.value.npm.version.satisfies(workspace_version, this.lockfile.buffers.string_bytes.items)) {
+                            const buf = this.lockfile.buffers.string_bytes.items;
+                            if (version.value.npm.version.satisfies(workspace_version, buf)) {
                                 const root_package = this.lockfile.rootPackage() orelse break :resolve_from_workspace;
                                 const root_dependencies = root_package.dependencies.get(this.lockfile.buffers.dependencies.items);
                                 const root_resolutions = root_package.resolutions.get(this.lockfile.buffers.resolutions.items);
@@ -5684,9 +5678,16 @@ pub const PackageManager = struct {
             } else |_| {}
         }
 
-        var workspaces = std.StringArrayHashMap(?Semver.Version).init(ctx.allocator);
+        var workspaces = std.StringArrayHashMap(Semver.Version).init(ctx.allocator);
         for (workspace_names.values()) |entry| {
-            try workspaces.put(entry.name, entry.version);
+            if (entry.version) |version_string| {
+                const sliced_version = SlicedString.init(version_string, version_string);
+                const result = Semver.Version.parse(sliced_version);
+                if (result.valid and result.wildcard == .none) {
+                    try workspaces.put(entry.name, result.version.fill());
+                    continue;
+                }
+            }
         }
 
         workspace_names.map.deinit();
@@ -5788,7 +5789,7 @@ pub const PackageManager = struct {
             .lockfile = undefined,
             .root_package_json_file = undefined,
             .waiter = try Waker.init(allocator),
-            .workspaces = std.StringArrayHashMap(?Semver.Version).init(allocator),
+            .workspaces = std.StringArrayHashMap(Semver.Version).init(allocator),
         };
         manager.lockfile = try allocator.create(Lockfile);
 

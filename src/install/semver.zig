@@ -772,9 +772,10 @@ pub const Version = extern struct {
             const rhs_str = rhs.pre.slice(rhs_buf);
 
             // 1. split each by '.', iterating through each one looking for integers
-            // 2. compare the first integer-y part for each
+            // 2. compare as integers, or if not possible compare as string
             // 3. whichever is greater is the greater one
-            // and the non-integer-y part must be the same
+            //
+            // 1.0.0-canary.0.0.0.0.0.0 < 1.0.0-canary.0.0.0.0.0.1
 
             var lhs_itr = strings.split(lhs_str, ".");
             var rhs_itr = strings.split(rhs_str, ".");
@@ -802,8 +803,10 @@ pub const Version = extern struct {
                     }
                 }
 
-                const uint_order = std.math.order(lhs_uint.?, rhs_uint.?);
-                return uint_order;
+                switch (std.math.order(lhs_uint.?, rhs_uint.?)) {
+                    .eq => continue,
+                    else => |not_equal| return not_equal,
+                }
             }
 
             unreachable;
@@ -1407,10 +1410,10 @@ pub const Range = struct {
                 const rhs_part = if (has_rhs_pre) rhs_itr.?.next() else null;
                 const ver_part = ver_itr.next();
 
-                // no number in prerelease, it's a match
+                // it's a match
                 if (lhs_part == null and ver_part == null and rhs_part == null) return true;
 
-                // no number found in prerelease, but parts do not have equal length
+                // parts do not have equal length
                 if (lhs_part == null or ver_part == null) return false;
                 if (Environment.allow_assert) {
                     if (has_rhs_pre) {
@@ -1426,11 +1429,11 @@ pub const Range = struct {
                     if (has_rhs_pre and rhs_uint == null) return false;
 
                     if (lhs_uint.? <= ver_uint.?) {
-                        if (!has_rhs_pre) return true;
+                        if (!has_rhs_pre) continue;
 
                         if (ver_uint.? <= rhs_uint.?) {
                             // between lhs and rhs
-                            return true;
+                            continue;
                         }
 
                         // is not between lhs and rhs.

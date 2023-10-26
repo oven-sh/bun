@@ -46,6 +46,7 @@ pub const API = struct {
     pub const TLSSocket = @import("./bun.js/api/bun/socket.zig").TLSSocket;
     pub const Listener = @import("./bun.js/api/bun/socket.zig").Listener;
 };
+pub const Postgres = @import("./sql/postgres.zig");
 pub const DNS = @import("./bun.js/api/bun/dns_resolver.zig");
 pub const FFI = @import("./bun.js/api/ffi.zig").FFI;
 pub const Node = struct {
@@ -86,3 +87,6 @@ pub const Subprocess = @import("./bun.js/api/bun.zig").Subprocess;
 ///  5. make clean-bindings && make bindings -j10
 ///
 pub const Codegen = @import("./bun.js/bindings/generated_classes.zig");
+
+pub const Weak = @import("./bun.js/Weak.zig").Weak;
+pub const NewWeakFinalizer = @import("./bun.js/Weak.zig").NewWeakFinalizer;

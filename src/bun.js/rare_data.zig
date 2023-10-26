@@ -20,6 +20,8 @@ stderr_store: ?*Blob.Store = null,
 stdin_store: ?*Blob.Store = null,
 stdout_store: ?*Blob.Store = null,
 
+postgresql_context: JSC.Postgres.PostgresSQLContext = .{},
+
 entropy_cache: ?*EntropyCache = null,
 
 hot_map: ?HotMap = null,

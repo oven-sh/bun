@@ -47,12 +47,12 @@
 
 namespace WebCore {
 
-class JSSQLStatementConstructor final : public JSC::JSFunction {
+class JSSQLiteStatementConstructor final : public JSC::JSFunction {
 public:
     using Base = JSC::JSFunction;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-    static JSSQLStatementConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure);
+    static JSSQLiteStatementConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure);
 
     DECLARE_INFO;
 
@@ -62,13 +62,13 @@ public:
     }
 
 private:
-    JSSQLStatementConstructor(JSC::VM& vm, NativeExecutable* native, JSGlobalObject* globalObject, JSC::Structure* structure)
+    JSSQLiteStatementConstructor(JSC::VM& vm, NativeExecutable* native, JSGlobalObject* globalObject, JSC::Structure* structure)
         : Base(vm, native, globalObject, structure)
     {
     }
 
     void finishCreation(JSC::VM&);
 };
-static_assert(sizeof(JSSQLStatementConstructor) == sizeof(JSFunction), "Allocate JSSQLStatementConstructor in JSFunction IsoSubspace");
+static_assert(sizeof(JSSQLiteStatementConstructor) == sizeof(JSFunction), "Allocate JSSQLiteStatementConstructor in JSFunction IsoSubspace");
 
 }

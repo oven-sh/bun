@@ -191,6 +191,18 @@ ALWAYS_INLINE void GlobalObject::initGeneratedLazyClasses() {
                  init.setStructure(WebCore::JSNodeJSFS::createStructure(init.vm, init.global, init.prototype));
                  init.setConstructor(WebCore::JSNodeJSFS::createConstructor(init.vm, init.global, init.prototype));
               });
+    m_JSPostgresSQLConnection.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSPostgresSQLConnection::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSPostgresSQLConnection::createStructure(init.vm, init.global, init.prototype));
+                 init.setConstructor(WebCore::JSPostgresSQLConnection::createConstructor(init.vm, init.global, init.prototype));
+              });
+    m_JSPostgresSQLQuery.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSPostgresSQLQuery::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSPostgresSQLQuery::createStructure(init.vm, init.global, init.prototype));
+                 init.setConstructor(WebCore::JSPostgresSQLQuery::createConstructor(init.vm, init.global, init.prototype));
+              });
     m_JSRequest.initLater(
               [](LazyClassStructure::Initializer& init) {
                  init.setPrototype(WebCore::JSRequest::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
@@ -341,6 +353,8 @@ void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& 
       thisObject->m_JSMD5.visit(visitor);
       thisObject->m_JSMatchedRoute.visit(visitor);
       thisObject->m_JSNodeJSFS.visit(visitor);
+      thisObject->m_JSPostgresSQLConnection.visit(visitor);
+      thisObject->m_JSPostgresSQLQuery.visit(visitor);
       thisObject->m_JSRequest.visit(visitor);
       thisObject->m_JSResolveMessage.visit(visitor);
       thisObject->m_JSResponse.visit(visitor);

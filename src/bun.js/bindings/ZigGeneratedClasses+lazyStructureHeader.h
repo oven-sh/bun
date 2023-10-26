@@ -126,6 +126,14 @@ JSC::Structure* JSNodeJSFSStructure() { return m_JSNodeJSFS.getInitializedOnMain
   JSC::JSObject* JSNodeJSFSConstructor() { return m_JSNodeJSFS.constructorInitializedOnMainThread(this); }
   JSC::JSValue JSNodeJSFSPrototype() { return m_JSNodeJSFS.prototypeInitializedOnMainThread(this); }
   JSC::LazyClassStructure m_JSNodeJSFS;
+JSC::Structure* JSPostgresSQLConnectionStructure() { return m_JSPostgresSQLConnection.getInitializedOnMainThread(this); }
+  JSC::JSObject* JSPostgresSQLConnectionConstructor() { return m_JSPostgresSQLConnection.constructorInitializedOnMainThread(this); }
+  JSC::JSValue JSPostgresSQLConnectionPrototype() { return m_JSPostgresSQLConnection.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSPostgresSQLConnection;
+JSC::Structure* JSPostgresSQLQueryStructure() { return m_JSPostgresSQLQuery.getInitializedOnMainThread(this); }
+  JSC::JSObject* JSPostgresSQLQueryConstructor() { return m_JSPostgresSQLQuery.constructorInitializedOnMainThread(this); }
+  JSC::JSValue JSPostgresSQLQueryPrototype() { return m_JSPostgresSQLQuery.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSPostgresSQLQuery;
 JSC::Structure* JSRequestStructure() { return m_JSRequest.getInitializedOnMainThread(this); }
   JSC::JSObject* JSRequestConstructor() { return m_JSRequest.constructorInitializedOnMainThread(this); }
   JSC::JSValue JSRequestPrototype() { return m_JSRequest.prototypeInitializedOnMainThread(this); }

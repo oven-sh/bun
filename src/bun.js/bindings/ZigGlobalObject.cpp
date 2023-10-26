@@ -107,7 +107,7 @@
 #include "JavaScriptCore/FunctionPrototype.h"
 #include "JavaScriptCore/GetterSetter.h"
 #include "napi.h"
-#include "JSSQLStatement.h"
+#include "JSSQLiteStatement.h"
 #include "ModuleLoader.h"
 #include "NodeVMScript.h"
 #include "ProcessIdentifier.h"
@@ -1635,6 +1635,10 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
     return JSC::JSValue::encode(jsUndefined());
 }
 
+extern "C" JSC::EncodedJSValue PostgresSQLQuery__createInstance(JSC::JSGlobalObject*, JSC::CallFrame*);
+extern "C" JSC::EncodedJSValue PostgresSQLConnection__createInstance(JSC::JSGlobalObject*, JSC::CallFrame*);
+extern "C" JSC::EncodedJSValue PostgresSQLContext__init(JSC::JSGlobalObject*, JSC::CallFrame*);
+
 // we're trying out a new way to do this lazy loading
 // this is $lazy() in js code
 JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
@@ -1688,7 +1692,7 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
         }
 
         if (string == "sqlite"_s) {
-            return JSC::JSValue::encode(JSSQLStatementConstructor::create(vm, globalObject, JSSQLStatementConstructor::createStructure(vm, globalObject, globalObject->m_functionPrototype.get())));
+            return JSC::JSValue::encode(JSSQLiteStatementConstructor::create(vm, globalObject, JSSQLiteStatementConstructor::createStructure(vm, globalObject, globalObject->m_functionPrototype.get())));
         }
 
         if (string == "http"_s) {
@@ -1868,6 +1872,28 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
             obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "getWindowSize"_s)), JSFunction::create(vm, globalObject, 0, "getWindowSize"_s, Bun::Process_functionInternalGetWindowSize, ImplementationVisibility::Public), 2);
 
             return JSValue::encode(obj);
+        }
+
+        if (string == "bun:sql"_s) {
+            auto* obj = constructEmptyObject(globalObject);
+
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createQuery"_s)),
+                JSC::JSFunction::create(vm, globalObject, 0, "createQuery"_s, PostgresSQLQuery__createInstance, ImplementationVisibility::Public), 0);
+
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createConnection"_s)),
+                JSC::JSFunction::create(vm, globalObject, 0, "createConnection"_s, PostgresSQLConnection__createInstance, ImplementationVisibility::Public), 0);
+
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "init"_s)),
+                JSC::JSFunction::create(vm, globalObject, 0, "init"_s, PostgresSQLContext__init, ImplementationVisibility::Public), 0);
+
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "PostgresSQLConnection"_s)),
+                globalObject->JSPostgresSQLConnectionConstructor(), 0);
+
+            return JSC::JSValue::encode(obj);
         }
 
         if (UNLIKELY(string == "noop"_s)) {
@@ -2487,7 +2513,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotask, (JSGlobalObject * globalObj
     auto& vm = globalObject->vm();
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
-    auto job = callframe->argument(0);
+    JSValue job = callframe->argument(0);
+    JSValue setAsyncContext = callframe->argument(1);
+    JSValue arg1 = callframe->argument(2);
+    JSValue arg2 = callframe->argument(3);
+
     if (UNLIKELY(!job || job.isUndefinedOrNull())) {
         return JSValue::encode(jsUndefined());
     }
@@ -2504,26 +2534,22 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotask, (JSGlobalObject * globalObj
 
     JSValue restoreAsyncContext = {};
     InternalFieldTuple* asyncContextData = nullptr;
-    auto setAsyncContext = callframe->argument(1);
-    if (!setAsyncContext.isUndefined()) {
+
+    if (setAsyncContext && !setAsyncContext.isUndefined()) {
         asyncContextData = globalObject->m_asyncContextData.get();
         restoreAsyncContext = asyncContextData->getInternalField(0);
         asyncContextData->putInternalField(vm, 0, setAsyncContext);
     }
 
     size_t argCount = callframe->argumentCount();
-    switch (argCount) {
-    case 3: {
-        arguments.append(callframe->uncheckedArgument(2));
-        break;
-    }
-    case 4: {
-        arguments.append(callframe->uncheckedArgument(2));
-        arguments.append(callframe->uncheckedArgument(3));
-        break;
-    }
-    default:
-        break;
+
+    if (argCount > 2) {
+        if (arg1) {
+            arguments.append(arg1);
+            if (arg2) {
+                arguments.append(arg2);
+            }
+        }
     }
 
     JSC::call(globalObject, job, callData, jsUndefined(), arguments, exceptionPtr);

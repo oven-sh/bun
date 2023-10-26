@@ -45,6 +45,25 @@ pub const JSObject = extern struct {
         });
     }
 
+    extern fn JSC__createStructure(*JSC.JSGlobalObject, *JSC.JSCell, u32, names: [*]bun.String) JSC.JSValue;
+    extern fn JSC__createEmptyObjectWithStructure(*JSC.JSGlobalObject, *anyopaque) JSC.JSValue;
+    extern fn JSC__putDirectOffset(*JSC.VM, JSC.JSValue, offset: u32, JSC.JSValue) void;
+
+    pub fn createStructure(global: *JSGlobalObject, owner: JSC.JSValue, length: u32, names: [*]bun.String) JSValue {
+        JSC.markBinding(@src());
+        return JSC__createStructure(global, owner.asCell(), length, names);
+    }
+
+    pub fn uninitialized(global: *JSGlobalObject, structure: JSC.JSValue) JSValue {
+        JSC.markBinding(@src());
+        return JSC__createEmptyObjectWithStructure(global, structure.asCell());
+    }
+
+    pub fn putDirectOffset(this: JSValue, vm: *VM, offset: u32, value: JSValue) void {
+        JSC.markBinding(@src());
+        return JSC__putDirectOffset(vm, this, offset, value);
+    }
+
     pub fn Initializer(comptime Ctx: type, comptime func: fn (*Ctx, obj: *JSObject, global: *JSGlobalObject) void) type {
         return struct {
             pub fn call(this: ?*anyopaque, obj: [*c]JSObject, global: [*c]JSGlobalObject) callconv(.C) void {
@@ -2774,7 +2793,7 @@ pub const JSGlobalObject = extern struct {
     pub fn queueMicrotask(
         this: *JSGlobalObject,
         function: JSValue,
-        args: []JSC.JSValue,
+        args: []const JSC.JSValue,
     ) void {
         this.queueMicrotaskJob(
             function,
@@ -3557,6 +3576,16 @@ pub const JSValue = enum(JSValueReprInt) {
         cppFn("push", .{ value, globalObject, out });
     }
 
+    extern fn JSC__JSValue__toISOString(*JSC.JSGlobalObject, JSC.JSValue, *[28]u8) c_int;
+    pub fn toISOString(this: JSValue, globalObject: *JSC.JSGlobalObject, buf: *[28]u8) []const u8 {
+        const count = JSC__JSValue__toISOString(globalObject, this, buf);
+        if (count < 0) {
+            return "";
+        }
+
+        return buf[0..@as(usize, @intCast(count))];
+    }
+
     pub fn as(value: JSValue, comptime ZigType: type) ?*ZigType {
         if (value.isEmptyOrUndefinedOrNull())
             return null;
@@ -3586,6 +3615,12 @@ pub const JSValue = enum(JSValueReprInt) {
         }
 
         return JSC.GetJSPrivateData(ZigType, value.asObjectRef());
+    }
+
+    extern fn JSC__JSValue__dateInstanceFromNullTerminatedString(*JSGlobalObject, [*:0]const u8) JSValue;
+    pub fn fromDateString(globalObject: *JSGlobalObject, str: [*:0]const u8) JSValue {
+        JSC.markBinding(@src());
+        return JSC__JSValue__dateInstanceFromNullTerminatedString(globalObject, str);
     }
 
     extern fn JSBuffer__isBuffer(*JSGlobalObject, JSValue) bool;
@@ -5068,6 +5103,13 @@ pub const VM = extern struct {
         cppFn("holdAPILock", .{ this, ctx, callback });
     }
 
+    extern fn JSC__runInDeferralContext(this: *VM, ctx: ?*anyopaque, callback: *const fn (ctx: ?*anyopaque) callconv(.C) void) void;
+
+    pub fn runInDeferralContext(this: *VM, ctx: ?*anyopaque, callback: *const fn (ctx: ?*anyopaque) callconv(.C) void) void {
+        JSC.markBinding(@src());
+        JSC__runInDeferralContext(this, ctx, callback);
+    }
+
     pub fn deferGC(this: *VM, ctx: ?*anyopaque, callback: *const fn (ctx: ?*anyopaque) callconv(.C) void) void {
         cppFn("deferGC", .{ this, ctx, callback });
     }
@@ -5339,14 +5381,15 @@ pub const CallFrame = opaque {
         var ptr = self.argumentsPtr();
         return switch (@as(u4, @min(len, max))) {
             0 => .{ .ptr = undefined, .len = 0 },
-            4 => Arguments(max).init(comptime @min(4, max), ptr),
-            2 => Arguments(max).init(comptime @min(2, max), ptr),
-            6 => Arguments(max).init(comptime @min(6, max), ptr),
-            3 => Arguments(max).init(comptime @min(3, max), ptr),
-            8 => Arguments(max).init(comptime @min(8, max), ptr),
-            5 => Arguments(max).init(comptime @min(5, max), ptr),
             1 => Arguments(max).init(comptime @min(1, max), ptr),
+            2 => Arguments(max).init(comptime @min(2, max), ptr),
+            3 => Arguments(max).init(comptime @min(3, max), ptr),
+            4 => Arguments(max).init(comptime @min(4, max), ptr),
+            5 => Arguments(max).init(comptime @min(5, max), ptr),
+            6 => Arguments(max).init(comptime @min(6, max), ptr),
             7 => Arguments(max).init(comptime @min(7, max), ptr),
+            8 => Arguments(max).init(comptime @min(8, max), ptr),
+            9 => Arguments(max).init(comptime @min(9, max), ptr),
             else => unreachable,
         };
     }

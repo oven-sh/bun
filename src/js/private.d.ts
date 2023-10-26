@@ -172,6 +172,7 @@ interface BunLazyModules {
     ReadableState: Function;
   };
   sqlite: any;
+  "bun:sql": any;
   "vm": {
     createContext: Function;
     isContext: Function;

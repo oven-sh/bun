@@ -36,6 +36,7 @@ static constexpr ASCIILiteral builtinModuleNamesSortedLength[] = {
     "cluster"_s,
     "console"_s,
     "process"_s,
+    "bun:sql"_s,
     "bun:wrap"_s,
     "punycode"_s,
     "bun:test"_s,
@@ -83,16 +84,17 @@ static constexpr ASCIILiteral builtinModuleNamesSortedLength[] = {
 
 namespace Bun {
 
-bool isBuiltinModule(const String &namePossiblyWithNodePrefix) {
-  String name = namePossiblyWithNodePrefix;
-  if (name.startsWith("node:"_s))
-    name = name.substringSharingImpl(5);
+bool isBuiltinModule(const String& namePossiblyWithNodePrefix)
+{
+    String name = namePossiblyWithNodePrefix;
+    if (name.startsWith("node:"_s))
+        name = name.substringSharingImpl(5);
 
-  for (auto &builtinModule : builtinModuleNamesSortedLength) {
-    if (name == builtinModule)
-      return true;
-  }
-  return false;
+    for (auto& builtinModule : builtinModuleNamesSortedLength) {
+        if (name == builtinModule)
+            return true;
+    }
+    return false;
 }
 
 } // namespace Bun

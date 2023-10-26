@@ -3399,7 +3399,14 @@ pub const PackageManager = struct {
                         try entry.value_ptr.append(this.allocator, ctx);
                     }
 
-                    if (dependency.behavior.isPeer()) return;
+                    if (dependency.behavior.isPeer()) {
+                        if (!install_peer) {
+                            if (this.options.do.install_peer_dependencies and !dependency.behavior.isOptionalPeer()) {
+                                try this.peer_dependencies.writeItem(id);
+                            }
+                            return;
+                        }
+                    }
 
                     const network_entry = try this.network_dedupe_map.getOrPutContext(this.allocator, checkout_id, .{});
                     if (network_entry.found_existing) return;
@@ -3463,7 +3470,15 @@ pub const PackageManager = struct {
                 const callback_tag = comptime if (successFn == assignRootResolution) "root_dependency" else "dependency";
                 try entry.value_ptr.append(this.allocator, @unionInit(TaskCallbackContext, callback_tag, id));
 
-                if (dependency.behavior.isPeer()) return;
+                if (dependency.behavior.isPeer()) {
+                    if (!install_peer) {
+                        if (this.options.do.install_peer_dependencies and !dependency.behavior.isOptionalPeer()) {
+                            try this.peer_dependencies.writeItem(id);
+                        }
+                        return;
+                    }
+                }
+
                 if (try this.generateNetworkTaskForTarball(task_id, url, id, .{
                     .name = dependency.name,
                     .name_hash = dependency.name_hash,
@@ -3635,7 +3650,15 @@ pub const PackageManager = struct {
                 const callback_tag = comptime if (successFn == assignRootResolution) "root_dependency" else "dependency";
                 try entry.value_ptr.append(this.allocator, @unionInit(TaskCallbackContext, callback_tag, id));
 
-                if (dependency.behavior.isPeer()) return;
+                if (dependency.behavior.isPeer()) {
+                    if (!install_peer) {
+                        if (this.options.do.install_peer_dependencies and !dependency.behavior.isOptionalPeer()) {
+                            try this.peer_dependencies.writeItem(id);
+                        }
+                        return;
+                    }
+                }
+
                 switch (version.value.tarball.uri) {
                     .local => {
                         const network_entry = try this.network_dedupe_map.getOrPutContext(this.allocator, task_id, .{});

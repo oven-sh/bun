@@ -20,7 +20,9 @@
 #include <JavaScriptCore/WeakMapImplInlines.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/DateInstance.h>
-
+#include <JavaScriptCore/JSModuleEnvironment.h>
+#include <JavaScriptCore/JSModuleNamespaceObject.h>
+#include "BunPlugin.h"
 namespace Bun {
 
 /**
@@ -260,6 +262,8 @@ public:
     JSC::Identifier spyIdentifier;
     unsigned spyAttributes = 0;
 
+    static constexpr unsigned SpyAttributeESModuleNamespace = 1 << 30;
+
     void setName(const WTF::String& name)
     {
         auto& vm = this->vm();
@@ -336,7 +340,12 @@ public:
             }
 
             // Reset the spy back to the original value.
-            target->putDirect(this->vm(), this->spyIdentifier, implValue, this->spyAttributes);
+            if (this->spyAttributes & SpyAttributeESModuleNamespace) {
+                auto* moduleNamespaceObject = jsCast<JSModuleNamespaceObject*>(target);
+                moduleNamespaceObject->overrideExportValue(moduleNamespaceObject->globalObject(), this->spyIdentifier, implValue);
+            } else {
+                target->putDirect(this->vm(), this->spyIdentifier, implValue, this->spyAttributes);
+            }
         }
 
         this->spyTarget.clear();
@@ -606,7 +615,13 @@ extern "C" EncodedJSValue JSMock__jsSpyOn(JSC::JSGlobalObject* lexicalGlobalObje
     if (!hasValue || slot.isValue()) {
         JSValue value = jsUndefined();
         if (hasValue) {
-            value = slot.getValue(globalObject, propertyKey);
+            if (UNLIKELY(slot.isTaintedByOpaqueObject())) {
+                // if it's a Proxy or JSModuleNamespaceObject
+                value = object->get(globalObject, propertyKey);
+            } else {
+                value = slot.getValue(globalObject, propertyKey);
+            }
+
             if (jsDynamicCast<JSMockFunction*>(value)) {
                 return JSValue::encode(value);
             }
@@ -624,7 +639,13 @@ extern "C" EncodedJSValue JSMock__jsSpyOn(JSC::JSGlobalObject* lexicalGlobalObje
 
             mock->copyNameAndLength(vm, globalObject, value);
 
-            object->putDirect(vm, propertyKey, mock, attributes);
+            if (JSModuleNamespaceObject* moduleNamespaceObject = jsDynamicCast<JSModuleNamespaceObject*>(object)) {
+                moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
+                mock->spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
+            } else {
+                object->putDirect(vm, propertyKey, mock, attributes);
+            }
+
             RETURN_IF_EXCEPTION(scope, {});
 
             pushImpl(mock, globalObject, JSMockImplementation::Kind::Call, value);
@@ -633,7 +654,14 @@ extern "C" EncodedJSValue JSMock__jsSpyOn(JSC::JSGlobalObject* lexicalGlobalObje
                 attributes = slot.attributes();
 
             attributes |= PropertyAttribute::Accessor;
-            object->putDirect(vm, propertyKey, JSC::GetterSetter::create(vm, globalObject, mock, mock), attributes);
+
+            if (JSModuleNamespaceObject* moduleNamespaceObject = jsDynamicCast<JSModuleNamespaceObject*>(object)) {
+                moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
+                mock->spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
+            } else {
+                object->putDirect(vm, propertyKey, JSC::GetterSetter::create(vm, globalObject, mock, mock), attributes);
+            }
+
             // mock->setName(propertyKey.publicName());
             RETURN_IF_EXCEPTION(scope, {});
 
@@ -696,6 +724,13 @@ JSMockModule JSMockModule::create(JSC::JSGlobalObject* globalObject)
         Structure* implementation = ActiveSpySet::createStructure(init.vm, init.owner, jsNull());
         init.set(implementation);
     });
+
+    mock.mockModuleStructure.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
+            Structure* implementation = createModuleMockStructure(init.vm, init.owner, jsNull());
+            init.set(implementation);
+        });
+
     mock.mockImplementationStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
             Structure* implementation = JSMockImplementation::createStructure(init.vm, init.owner, jsNull());

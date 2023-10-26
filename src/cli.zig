@@ -1220,6 +1220,7 @@ pub const Command = struct {
 
         const AddCommand = @import("./cli/add_command.zig").AddCommand;
         const CreateCommand = @import("./cli/create_command.zig").CreateCommand;
+        const CreateCommandExample = @import("./cli/create_command.zig").Example;
         const CreateListExamplesCommand = @import("./cli/create_command.zig").CreateListExamplesCommand;
         const DiscordCommand = @import("./cli/discord_command.zig").DiscordCommand;
         const InstallCommand = @import("./cli/install_command.zig").InstallCommand;
@@ -1512,7 +1513,6 @@ pub const Command = struct {
                         }
                     }
                 }
-                var positionals_ = positionals[0..positional_i];
 
                 const template_name = positionals[0];
 
@@ -1538,9 +1538,14 @@ pub const Command = struct {
                     return;
                 }
 
+                const create_command_info = try CreateCommand.extractInfo(ctx);
+                const template = create_command_info.template;
+                var example_tag = create_command_info.example_tag;
+
                 const use_bunx = !HardcodedNonBunXList.has(template_name) and
                     (!strings.containsComptime(template_name, "/") or
-                    strings.startsWithChar(template_name, '@'));
+                    strings.startsWithChar(template_name, '@')) and
+                    example_tag != CreateCommandExample.Tag.local_folder;
 
                 if (use_bunx) {
                     const bunx_args = try allocator.alloc([*:0]const u8, args.len - template_name_start);
@@ -1553,7 +1558,7 @@ pub const Command = struct {
                     return;
                 }
 
-                try CreateCommand.exec(ctx, positionals_);
+                try CreateCommand.exec(ctx, example_tag, template);
                 return;
             },
             .RunCommand => {

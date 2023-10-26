@@ -1684,7 +1684,7 @@ pub fn getPackageID(
             }
 
             if (npm_version) |range| {
-                if (range.satisfies(resolutions[id].value.npm.version)) return id;
+                if (range.satisfies(resolutions[id].value.npm.version, this.buffers.string_bytes.items)) return id;
             }
         },
         .PackageIDMultiple => |ids| {
@@ -1696,7 +1696,7 @@ pub fn getPackageID(
                 }
 
                 if (npm_version) |range| {
-                    if (range.satisfies(resolutions[id].value.npm.version)) return id;
+                    if (range.satisfies(resolutions[id].value.npm.version, this.buffers.string_bytes.items)) return id;
                 }
             }
         },
@@ -1712,16 +1712,35 @@ pub fn getOrPutID(this: *Lockfile, id: PackageID, name_hash: PackageNameHash) !v
         var index: *PackageIndex.Entry = gpe.value_ptr;
 
         switch (index.*) {
-            .PackageID => |single| {
+            .PackageID => |existing_id| {
                 var ids = try PackageIDList.initCapacity(this.allocator, 8);
-                ids.appendAssumeCapacity(single);
-                ids.appendAssumeCapacity(id);
+                ids.items.len = 2;
+
+                const resolutions = this.packages.items(.resolution);
+                const buf = this.buffers.string_bytes.items;
+
+                ids.items[0..2].* = if (resolutions[id].order(&resolutions[existing_id], buf, buf) == .gt)
+                    .{ id, existing_id }
+                else
+                    .{ existing_id, id };
+
                 index.* = .{
                     .PackageIDMultiple = ids,
                 };
             },
-            .PackageIDMultiple => {
-                try index.PackageIDMultiple.append(this.allocator, id);
+            .PackageIDMultiple => |*existing_ids| {
+                const resolutions = this.packages.items(.resolution);
+                const buf = this.buffers.string_bytes.items;
+
+                for (existing_ids.items, 0..) |existing_id, i| {
+                    if (resolutions[id].order(&resolutions[existing_id], buf, buf) == .gt) {
+                        try existing_ids.insert(this.allocator, i, id);
+                        return;
+                    }
+                }
+
+                // append to end because it's the smallest or equal to the smallest
+                try existing_ids.append(this.allocator, id);
             },
         }
     } else {
@@ -1894,6 +1913,25 @@ pub const PackageIndex = struct {
             PackageID = 0,
             PackageIDMultiple = 1,
         };
+
+        const Sorter = struct {
+            buf: []const u8,
+            reoslutions: []const Resolution,
+
+            pub fn isLessThan(this: @This(), left: PackageID, right: PackageID) bool {
+                return this.reoslutions[left].order(&this.reoslutions[right], this.buf, this.buf) == .lt;
+            }
+        };
+
+        pub fn sort(this: *@This(), resolutions: []const Resolution, buf: []const u8) void {
+            if (this.* == .PackageID) return;
+            var sorter = Sorter{
+                .buf = buf,
+                .reoslutions = resolutions,
+            };
+
+            std.sort.block(PackageID, this.PackageIDMultiple.items, sorter, Sorter.isLessThan);
+        }
     };
 };
 
@@ -3101,7 +3139,7 @@ pub const Package = extern struct {
             .npm => if (comptime tag != null)
                 unreachable
             else if (workspace_version) |ver| {
-                if (dependency_version.value.npm.version.satisfies(ver)) {
+                if (dependency_version.value.npm.version.satisfies(ver, lockfile.buffers.string_bytes.items)) {
                     for (package_dependencies[0..dependencies_count]) |dep| {
                         // `dependencies` & `workspaces` defined within the same `package.json`
                         if (dep.version.tag == .workspace and dep.name_hash == name_hash) {
@@ -3126,7 +3164,7 @@ pub const Package = extern struct {
             .workspace => if (workspace_path) |path| {
                 if (workspace_range) |range| {
                     if (workspace_version) |ver| {
-                        if (range.satisfies(ver)) {
+                        if (range.satisfies(ver, lockfile.buffers.string_bytes.items)) {
                             dependency_version.literal = path;
                             dependency_version.value.workspace = path;
                         }
@@ -3181,7 +3219,7 @@ pub const Package = extern struct {
                         if (switch (package_dep.version.tag) {
                             // `dependencies` & `workspaces` defined within the same `package.json`
                             .npm => String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash and
-                                package_dep.version.value.npm.version.satisfies(ver),
+                                package_dep.version.value.npm.version.satisfies(ver, lockfile.buffers.string_bytes.items),
                             // `workspace:*`
                             .workspace => workspace_entry.found_existing and
                                 String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash,
@@ -5065,7 +5103,7 @@ pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Ve
                 const resolutions = this.packages.items(.resolution);
 
                 if (comptime Environment.allow_assert) std.debug.assert(id < resolutions.len);
-                if (version.value.npm.version.satisfies(resolutions[id].value.npm.version)) {
+                if (version.value.npm.version.satisfies(resolutions[id].value.npm.version, this.buffers.string_bytes.items)) {
                     return id;
                 }
             },
@@ -5074,7 +5112,7 @@ pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Ve
 
                 for (ids.items) |id| {
                     if (comptime Environment.allow_assert) std.debug.assert(id < resolutions.len);
-                    if (version.value.npm.version.satisfies(resolutions[id].value.npm.version)) {
+                    if (version.value.npm.version.satisfies(resolutions[id].value.npm.version, this.buffers.string_bytes.items)) {
                         return id;
                     }
                 }

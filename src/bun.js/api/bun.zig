@@ -3630,7 +3630,6 @@ pub const Timer = struct {
         var map = vm.timer.maps.get(kind);
 
         // setImmediate(foo)
-        // setTimeout(foo, 0)
         if (kind == .setTimeout and interval == 0) {
             var cb: CallbackJob = .{
                 .callback = JSC.Strong.create(callback, globalThis),
@@ -3651,7 +3650,7 @@ pub const Timer = struct {
             job.task = CallbackJob.Task.init(job);
             job.ref.ref(vm);
 
-            vm.enqueueTask(JSC.Task.init(&job.task));
+            vm.enqueueImmediateTask(JSC.Task.init(&job.task));
             if (vm.isInspectorEnabled()) {
                 Debugger.didScheduleAsyncCall(globalThis, .DOMTimer, Timeout.ID.asyncID(.{ .id = id, .kind = kind }), !repeat);
             }
@@ -3693,6 +3692,31 @@ pub const Timer = struct {
         );
     }
 
+    pub fn setImmediate(
+        globalThis: *JSGlobalObject,
+        callback: JSValue,
+        arguments: JSValue,
+    ) callconv(.C) JSValue {
+        JSC.markBinding(@src());
+        const id = globalThis.bunVM().timer.last_id;
+        globalThis.bunVM().timer.last_id +%= 1;
+
+        const interval: i32 = 0;
+
+        const wrappedCallback = callback.withAsyncContextIfNeeded(globalThis);
+
+        Timer.set(id, globalThis, wrappedCallback, interval, arguments, false) catch
+            return JSValue.jsUndefined();
+
+        return TimerObject.init(globalThis, id, .setTimeout, interval, wrappedCallback, arguments);
+    }
+
+    comptime {
+        if (!JSC.is_bindgen) {
+            @export(setImmediate, .{ .name = "Bun__Timer__setImmediate" });
+        }
+    }
+
     pub fn setTimeout(
         globalThis: *JSGlobalObject,
         callback: JSValue,
@@ -3705,7 +3729,8 @@ pub const Timer = struct {
 
         const interval: i32 = @max(
             countdown.coerce(i32, globalThis),
-            0,
+            // It must be 1 at minimum or setTimeout(cb, 0) will seemingly hang
+            1,
         );
 
         const wrappedCallback = callback.withAsyncContextIfNeeded(globalThis);

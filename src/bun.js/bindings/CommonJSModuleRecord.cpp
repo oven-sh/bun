@@ -645,14 +645,15 @@ bool JSCommonJSModule::evaluate(
     RELEASE_AND_RETURN(throwScope, true);
 }
 
-void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,
-    JSC::Identifier moduleKey,
+void populateESMExports(
+    JSC::JSGlobalObject* globalObject,
+    JSValue result,
     Vector<JSC::Identifier, 4>& exportNames,
-    JSC::MarkedArgumentBuffer& exportValues)
+    JSC::MarkedArgumentBuffer& exportValues,
+    bool ignoreESModuleAnnotation)
 {
-    auto result = this->exportsObject();
-
     auto& vm = globalObject->vm();
+    Identifier esModuleMarker = builtinNames(vm).__esModulePublicName();
 
     // Bun's intepretation of the "__esModule" annotation:
     //
@@ -686,6 +687,7 @@ void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,
 
     if (result.isObject()) {
         auto* exports = result.getObject();
+        bool hasESModuleMarker = !ignoreESModuleAnnotation && exports->hasProperty(globalObject, esModuleMarker);
 
         auto* structure = exports->structure();
         uint32_t size = structure->inlineSize() + structure->outOfLineSize();
@@ -694,8 +696,6 @@ void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,
 
         auto catchScope = DECLARE_CATCH_SCOPE(vm);
 
-        Identifier esModuleMarker = builtinNames(vm).__esModulePublicName();
-        bool hasESModuleMarker = !this->ignoreESModuleAnnotation && exports->hasProperty(globalObject, esModuleMarker);
         if (catchScope.exception()) {
             catchScope.clearException();
         }
@@ -803,6 +803,18 @@ void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,
         exportNames.append(vm.propertyNames->defaultKeyword);
         exportValues.append(result);
     }
+}
+
+void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,
+    JSC::Identifier moduleKey,
+    Vector<JSC::Identifier, 4>& exportNames,
+    JSC::MarkedArgumentBuffer& exportValues)
+{
+    auto result = this->exportsObject();
+
+    auto& vm = globalObject->vm();
+    Identifier esModuleMarker = builtinNames(vm).__esModulePublicName();
+    populateESMExports(globalObject, result, exportNames, exportValues, this->ignoreESModuleAnnotation);
 }
 
 JSValue JSCommonJSModule::exportsObject()

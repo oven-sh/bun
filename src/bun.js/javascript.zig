@@ -640,7 +640,7 @@ pub const VirtualMachine = struct {
     }
 
     pub fn isEventLoopAlive(vm: *const VirtualMachine) bool {
-        return @as(usize, vm.event_loop_handle.?.isActive()) or (vm.active_tasks +
+        return vm.event_loop_handle.?.isActive() or (vm.active_tasks +
             vm.event_loop.tasks.count +
             vm.event_loop.immediate_tasks.count + vm.event_loop.next_immediate_tasks.count > 0);
     }

@@ -1,6 +1,6 @@
 import { parentPort, workerData } from "worker_threads";
 
-parentPort.on("message", m => {
+parentPort?.on("message", m => {
   let sharedBufferView = new Int32Array(m.sharedBuffer);
   if (workerData instanceof MessagePort) {
     workerData.postMessage("done!");

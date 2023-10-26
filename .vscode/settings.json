@@ -11,6 +11,7 @@
   "zig.buildArgs": ["obj", "-Dfor-editor"],
   "zig.buildOption": "build",
   "zig.buildFilePath": "${workspaceFolder}/build.zig",
+  "deno.enable": false,
   "[zig]": {
     "editor.tabSize": 4,
     "editor.useTabStops": false,

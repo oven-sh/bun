@@ -1718,7 +1718,7 @@ pub const PackageManager = struct {
     onWake: WakeHandler = .{},
     ci_mode: bun.LazyBool(computeIsContinuousIntegration, @This(), "ci_mode") = .{},
 
-    peer_dependencies: std.ArrayListUnmanaged(DependencyID) = .{},
+    peer_dependencies: std.fifo.LinearFifo(DependencyID, .Dynamic) = std.fifo.LinearFifo(DependencyID, .Dynamic).init(default_allocator),
 
     // name hash from alias package name -> aliased package dependency version info
     known_npm_aliases: NpmAliasMap = .{},
@@ -2455,7 +2455,7 @@ pub const PackageManager = struct {
             Semver.Version.sortGt,
         );
         for (installed_versions.items) |installed_version| {
-            if (version.value.npm.version.satisfies(installed_version)) {
+            if (version.value.npm.version.satisfies(installed_version, this.lockfile.buffers.string_bytes.items)) {
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 var npm_package_path = this.pathForCachedNPMPath(&buf, package_name, installed_version) catch |err| {
                     Output.debug("error getting path for cached npm path: {s}", .{bun.span(@errorName(err))});
@@ -2664,6 +2664,30 @@ pub const PackageManager = struct {
         }
     }
 
+    fn resolutionSatisfiesDependency(this: *PackageManager, resolution: Resolution, dependency: Dependency.Version) bool {
+        if (resolution.tag == .npm and dependency.tag == .npm) {
+            return dependency.value.npm.version.satisfies(resolution.value.npm.version, this.lockfile.buffers.string_bytes.items);
+        }
+
+        if (resolution.tag == .git and dependency.tag == .git) {
+            return resolution.value.git.eql(
+                &dependency.value.git,
+                this.lockfile.buffers.string_bytes.items,
+                this.lockfile.buffers.string_bytes.items,
+            );
+        }
+
+        if (resolution.tag == .github and dependency.tag == .github) {
+            return resolution.value.github.eql(
+                &dependency.value.github,
+                this.lockfile.buffers.string_bytes.items,
+                this.lockfile.buffers.string_bytes.items,
+            );
+        }
+
+        return false;
+    }
+
     fn getOrPutResolvedPackage(
         this: *PackageManager,
         name_hash: PackageNameHash,
@@ -2681,12 +2705,44 @@ pub const PackageManager = struct {
             return .{ .package = this.lockfile.packages.get(resolution) };
         }
 
+        if (install_peer and behavior.isPeer()) {
+            if (this.lockfile.package_index.get(name_hash)) |index| {
+                const resolutions: []Resolution = this.lockfile.packages.items(.resolution);
+                switch (index) {
+                    .PackageID => |existing_id| {
+                        if (@as(usize, existing_id) < resolutions.len) {
+                            const existing_resolution = resolutions[existing_id];
+                            if (this.resolutionSatisfiesDependency(existing_resolution, version)) {
+                                successFn(this, dependency_id, existing_id);
+                                return .{
+                                    .package = this.lockfile.packages.get(existing_id),
+                                };
+                            }
+                        }
+                    },
+                    .PackageIDMultiple => |list| {
+                        for (list.items) |existing_id| {
+                            if (@as(usize, existing_id) < resolutions.len) {
+                                const existing_resolution = resolutions[existing_id];
+                                if (this.resolutionSatisfiesDependency(existing_resolution, version)) {
+                                    successFn(this, dependency_id, existing_id);
+                                    return .{
+                                        .package = this.lockfile.packages.get(existing_id),
+                                    };
+                                }
+                            }
+                        }
+                    },
+                }
+            }
+        }
+
         switch (version.tag) {
             .npm, .dist_tag => {
                 if (version.tag == .npm) {
                     if (this.lockfile.workspace_versions.count() > 0) resolve_from_workspace: {
                         if (this.lockfile.workspace_versions.get(name_hash)) |workspace_version| {
-                            if (version.value.npm.version.satisfies(workspace_version)) {
+                            if (version.value.npm.version.satisfies(workspace_version, this.lockfile.buffers.string_bytes.items)) {
                                 const root_package = this.lockfile.rootPackage() orelse break :resolve_from_workspace;
                                 const root_dependencies = root_package.dependencies.get(this.lockfile.buffers.dependencies.items);
                                 const root_resolutions = root_package.resolutions.get(this.lockfile.buffers.resolutions.items);
@@ -2694,7 +2750,7 @@ pub const PackageManager = struct {
                                 for (root_dependencies, root_resolutions) |root_dep, workspace_package_id| {
                                     if (workspace_package_id != invalid_package_id and root_dep.version.tag == .workspace and root_dep.name_hash == name_hash) {
                                         // make sure verifyResolutions sees this resolution as a valid package id
-                                        this.lockfile.buffers.resolutions.items[dependency_id] = workspace_package_id;
+                                        successFn(this, dependency_id, workspace_package_id);
                                         return .{
                                             .package = this.lockfile.packages.get(workspace_package_id),
                                             .is_first_time = false,
@@ -3037,11 +3093,12 @@ pub const PackageManager = struct {
             if (dependency.version.tag == .npm) {
                 if (this.known_npm_aliases.get(name_hash)) |aliased| {
                     const group = dependency.version.value.npm.version;
+                    const buf = this.lockfile.buffers.string_bytes.items;
                     var curr_list: ?*const Semver.Query.List = &aliased.value.npm.version.head;
                     while (curr_list) |queries| {
                         var curr: ?*const Semver.Query = &queries.head;
                         while (curr) |query| {
-                            if (group.satisfies(query.range.left.version) or group.satisfies(query.range.right.version)) {
+                            if (group.satisfies(query.range.left.version, buf) or group.satisfies(query.range.right.version, buf)) {
                                 name = aliased.value.npm.name;
                                 name_hash = String.Builder.stringHash(this.lockfile.str(&name));
                                 break :version aliased;
@@ -3272,13 +3329,13 @@ pub const PackageManager = struct {
                                         this.allocator,
                                         this.scopeForPackageName(name_str),
                                         loaded_manifest,
-                                        dependency.behavior.isOptional() or dependency.behavior.isPeer(),
+                                        dependency.behavior.isOptional() or !this.options.do.install_peer_dependencies,
                                     );
                                     this.enqueueNetworkTask(network_task);
                                 }
                             } else {
                                 if (this.options.do.install_peer_dependencies and !dependency.behavior.isOptionalPeer()) {
-                                    try this.peer_dependencies.append(this.allocator, id);
+                                    try this.peer_dependencies.writeItem(id);
                                 }
                             }
 
@@ -3787,10 +3844,10 @@ pub const PackageManager = struct {
     fn processPeerDependencyList(
         this: *PackageManager,
     ) !void {
-        while (this.peer_dependencies.popOrNull()) |peer_dependency_id| {
-            try this.processDependencyListItem(.{ .dependency = peer_dependency_id }, null, true);
+        while (this.peer_dependencies.readItem()) |peer_dependency_id| {
             const dependency = this.lockfile.buffers.dependencies.items[peer_dependency_id];
             const resolution = this.lockfile.buffers.resolutions.items[peer_dependency_id];
+
             try this.enqueueDependencyWithMain(
                 peer_dependency_id,
                 &dependency,
@@ -4207,7 +4264,13 @@ pub const PackageManager = struct {
                             var dependency_list = dependency_list_entry.value_ptr.*;
                             dependency_list_entry.value_ptr.* = .{};
 
-                            try manager.processDependencyList(dependency_list, ExtractCompletionContext, extract_ctx, callbacks, install_peer);
+                            try manager.processDependencyList(
+                                dependency_list,
+                                ExtractCompletionContext,
+                                extract_ctx,
+                                callbacks,
+                                install_peer,
+                            );
 
                             continue;
                         }
@@ -8103,7 +8166,7 @@ pub const PackageManager = struct {
             manager.drainDependencyList();
         }
 
-        if (manager.pending_tasks > 0 or manager.peer_dependencies.items.len > 0) {
+        if (manager.pending_tasks > 0 or manager.peer_dependencies.readableLength() > 0) {
             if (root.dependencies.len > 0) {
                 _ = manager.getCacheDirectory();
                 _ = manager.getTemporaryDirectory();
@@ -8140,7 +8203,7 @@ pub const PackageManager = struct {
             }
 
             if (manager.options.do.install_peer_dependencies) {
-                while (manager.pending_tasks > 0 or manager.peer_dependencies.items.len > 0) {
+                while (manager.pending_tasks > 0 or manager.peer_dependencies.readableLength() > 0) {
                     try manager.processPeerDependencyList();
 
                     manager.drainDependencyList();

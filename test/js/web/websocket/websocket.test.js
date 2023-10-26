@@ -172,7 +172,6 @@ describe("WebSocket", () => {
         expect(["Hello from Bun!", "Hello from client!"]).toEqual(messages);
         expect(result.code).toBe(1001);
       }
-
     } finally {
       server.stop(true);
     }

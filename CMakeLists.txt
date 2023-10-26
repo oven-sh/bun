@@ -73,6 +73,12 @@ macro(BUN_FIND_LLVM)
         DOC "Path to LLVM ${LLVM_VERSION}'s llvm-strip binary"
     )
     find_program(
+        STRIP
+        NAMES strip
+        PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
+        DOC "Path to LLVM ${LLVM_VERSION}'s llvm-strip binary"
+    )
+    find_program(
         DSYMUTIL
         NAMES dsymutil
         PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
@@ -836,7 +842,11 @@ if(UNIX AND NOT APPLE)
         "-Wl,--dynamic-list=${BUN_SRC}/symbols.dyn"
         "-Wl,--version-script=${BUN_SRC}/linker.lds"
     )
+    
     target_link_libraries(${bun} PRIVATE "c")
+    target_link_libraries(${bun} PRIVATE "pthread")
+    target_link_libraries(${bun} PRIVATE "ldl")
+
     target_link_libraries(${bun} PRIVATE "libatomic.a")
 
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicudata.a")

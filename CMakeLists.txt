@@ -456,43 +456,45 @@ add_custom_command(
 list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/JSSink.cpp")
 
 # --- .lut.h Generator ---
-set(BUN_OBJECT_LUT_SOURCES
-    bun.js/bindings/BunObject.cpp
-    bun.js/bindings/ZigGlobalObject.lut.txt
-    bun.js/bindings/JSBuffer.cpp
-    bun.js/bindings/BunProcess.cpp
-    bun.js/bindings/ProcessBindingConstants.cpp
-    bun.js/bindings/ProcessBindingNatives.cpp
-)
-set(BUN_HASH_LUT_GENERATOR "${BUN_CODEGEN_SRC}/create-hash-table.ts")
-macro(GENERATE_HASH_LUT _input _output _display_name)
-    add_custom_command(
-        OUTPUT ${_output}
-        MAIN_DEPENDENCY ${BUN_HASH_LUT_GENERATOR}
-        DEPENDS ${_input}
-        COMMAND ${BUN_EXECUTABLE} ${BUN_HASH_LUT_GENERATOR} ${_input} ${_output}
-        VERBATIM
-        COMMENT "Generating ${_display_name}"
+if(NOT BUN_LINK_ONLY)
+    set(BUN_OBJECT_LUT_SOURCES
+        bun.js/bindings/BunObject.cpp
+        bun.js/bindings/ZigGlobalObject.lut.txt
+        bun.js/bindings/JSBuffer.cpp
+        bun.js/bindings/BunProcess.cpp
+        bun.js/bindings/ProcessBindingConstants.cpp
+        bun.js/bindings/ProcessBindingNatives.cpp
     )
-    # list(APPEND JavaScriptCore_HEADERS ${_output})
-    WEBKIT_ADD_SOURCE_DEPENDENCIES(${_input} ${_output})
-endmacro()
-foreach(_file ${BUN_OBJECT_LUT_SOURCES})
-    if(NOT EXISTS "${BUN_SRC}/${_file}")
-        message(FATAL_ERROR "Could not find ${_file} needed for LUT generation")
-    endif()
-    
-    get_filename_component(_name ${_file} NAME_WE)
+    set(BUN_HASH_LUT_GENERATOR "${BUN_CODEGEN_SRC}/create-hash-table.ts")
+    macro(GENERATE_HASH_LUT _input _output _display_name)
+        add_custom_command(
+            OUTPUT ${_output}
+            MAIN_DEPENDENCY ${BUN_HASH_LUT_GENERATOR}
+            DEPENDS ${_input}
+            COMMAND ${BUN_EXECUTABLE} ${BUN_HASH_LUT_GENERATOR} ${_input} ${_output}
+            VERBATIM
+            COMMENT "Generating ${_display_name}"
+        )
+        # list(APPEND JavaScriptCore_HEADERS ${_output})
+        WEBKIT_ADD_SOURCE_DEPENDENCIES(${_input} ${_output})
+    endmacro()
+    foreach(_file ${BUN_OBJECT_LUT_SOURCES})
+        if(NOT EXISTS "${BUN_SRC}/${_file}")
+            message(FATAL_ERROR "Could not find ${_file} needed for LUT generation")
+        endif()
+        
+        get_filename_component(_name ${_file} NAME_WE)
 
-    # workaround for ZigGlobalObject
-    if(_name MATCHES "ZigGlobalObject")
-        set(_name "ZigGlobalObject")
-    endif()
+        # workaround for ZigGlobalObject
+        if(_name MATCHES "ZigGlobalObject")
+            set(_name "ZigGlobalObject")
+        endif()
 
-    GENERATE_HASH_LUT(${BUN_SRC}/${_file} ${BUN_WORKDIR}/codegen/${_name}.lut.h ${_name}.lut.h)
-endforeach()
+        GENERATE_HASH_LUT(${BUN_SRC}/${_file} ${BUN_WORKDIR}/codegen/${_name}.lut.h ${_name}.lut.h)
+    endforeach()
 
-WEBKIT_ADD_SOURCE_DEPENDENCIES(${BUN_SRC}/bun.js/bindings/ZigGlobalObject.cpp ${BUN_WORKDIR}/codegen/ZigGlobalObject.lut.h)
+    WEBKIT_ADD_SOURCE_DEPENDENCIES(${BUN_SRC}/bun.js/bindings/ZigGlobalObject.cpp ${BUN_WORKDIR}/codegen/ZigGlobalObject.lut.h)
+endif()
 
 # --- Identifier Cache ---
 if(NOT NO_CODEGEN)

@@ -4,11 +4,6 @@ concurrency:
   group: bun-linux-aarch64-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-  TEST_TAG: bun-test'
-
 on:
   push:
     branches:

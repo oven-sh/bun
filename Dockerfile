@@ -442,7 +442,7 @@ RUN mkdir -p build \
   -DWEBKIT_DIR="omit" \
   -DNO_CONFIGURE_DEPENDS=1 \
   -DNO_CODEGEN=1 \
-  -DBUN_ZIG_OBJ="/tmp/bun-zig.o"  \
+  -DBUN_ZIG_OBJ="/tmp/bun-zig.o" \
   && ONLY_ZIG=1 ninja "/tmp/bun-zig.o" \
   && echo "-> /tmp/bun-zig.o"
 

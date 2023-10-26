@@ -134,15 +134,13 @@ describe("WebSocket", () => {
         websocket: {
           open(ws) {
             ws.sendBinary(new Uint8Array([1, 2, 3]));
-            setTimeout(() => {
-              client.onmessage = ({ data }) => {
-                client.close();
-                expect(Buffer.isBuffer(data)).toBe(true);
-                expect(data).toEqual(new Uint8Array([1, 2, 3]));
-                server.stop(true);
-                done();
-              };
-            }, 0);
+            client.onmessage = ({ data }) => {
+              client.close();
+              expect(Buffer.isBuffer(data)).toBe(true);
+              expect(data).toEqual(new Uint8Array([1, 2, 3]));
+              server.stop(true);
+              done();
+            };
           },
         },
       });

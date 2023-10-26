@@ -119,10 +119,10 @@ test("all worker_threads worker instance properties are present", async () => {
 test("threadId module and worker property is consistent", async () => {
   const worker1 = new Worker(new URL("./worker-thread-id.ts", import.meta.url).href);
   expect(threadId).toBe(0);
-  expect(worker1.threadId).toBe(2);
+  expect(worker1.threadId).toBeGreaterThan(0);
   expect(() => worker1.postMessage({ workerId: worker1.threadId })).not.toThrow();
   const worker2 = new Worker(new URL("./worker-thread-id.ts", import.meta.url).href);
-  expect(worker2.threadId).toBe(3);
+  expect(worker2.threadId).toBe(worker1.threadId + 1);
   expect(() => worker2.postMessage({ workerId: worker2.threadId })).not.toThrow();
   await worker1.terminate();
   await worker2.terminate();

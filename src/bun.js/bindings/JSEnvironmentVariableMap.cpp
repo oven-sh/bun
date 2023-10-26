@@ -8,7 +8,9 @@
 #include "BunClientData.h"
 using namespace JSC;
 
-extern "C" size_t Bun__getEnvNames(JSGlobalObject*, ZigString* names, size_t max);
+extern "C" size_t Bun__getEnvCount(JSGlobalObject* globalObject, void** list_ptr);
+extern "C" size_t Bun__getEnvKey(void* list, size_t index, unsigned char** out);
+
 extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, ZigString* name, ZigString* value);
 
 namespace Bun {
@@ -113,9 +115,8 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    constexpr size_t max = 768;
-    ZigString names[max];
-    size_t count = Bun__getEnvNames(globalObject, names, max);
+    void* list;
+    size_t count = Bun__getEnvCount(globalObject, &list);
     JSC::JSObject* object = nullptr;
     if (count < 63) {
         object = constructEmptyObject(globalObject, globalObject->objectPrototype(), count);
@@ -126,7 +127,9 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     static NeverDestroyed<String> TZ = MAKE_STATIC_STRING_IMPL("TZ");
     bool hasTZ = false;
     for (size_t i = 0; i < count; i++) {
-        auto name = Zig::toStringCopy(names[i]);
+        unsigned char* chars;
+        size_t len = Bun__getEnvKey(list, i, &chars);
+        auto name = String::fromUTF8(chars, len);
         if (name == TZ) {
             hasTZ = true;
             continue;

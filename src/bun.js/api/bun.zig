@@ -3633,7 +3633,6 @@ pub const Timer = struct {
         var map = vm.timer.maps.get(kind);
 
         // setImmediate(foo)
-        // setTimeout(foo, 0)
         if (kind == .setTimeout and interval == 0) {
             var cb: CallbackJob = .{
                 .callback = JSC.Strong.create(callback, globalThis),
@@ -3654,7 +3653,7 @@ pub const Timer = struct {
             job.task = CallbackJob.Task.init(job);
             job.ref.ref(vm);
 
-            vm.enqueueTask(JSC.Task.init(&job.task));
+            vm.enqueueImmediateTask(JSC.Task.init(&job.task));
             if (vm.isInspectorEnabled()) {
                 Debugger.didScheduleAsyncCall(globalThis, .DOMTimer, Timeout.ID.asyncID(.{ .id = id, .kind = kind }), !repeat);
             }
@@ -3696,6 +3695,31 @@ pub const Timer = struct {
         );
     }
 
+    pub fn setImmediate(
+        globalThis: *JSGlobalObject,
+        callback: JSValue,
+        arguments: JSValue,
+    ) callconv(.C) JSValue {
+        JSC.markBinding(@src());
+        const id = globalThis.bunVM().timer.last_id;
+        globalThis.bunVM().timer.last_id +%= 1;
+
+        const interval: i32 = 0;
+
+        const wrappedCallback = callback.withAsyncContextIfNeeded(globalThis);
+
+        Timer.set(id, globalThis, wrappedCallback, interval, arguments, false) catch
+            return JSValue.jsUndefined();
+
+        return TimerObject.init(globalThis, id, .setTimeout, interval, wrappedCallback, arguments);
+    }
+
+    comptime {
+        if (!JSC.is_bindgen) {
+            @export(setImmediate, .{ .name = "Bun__Timer__setImmediate" });
+        }
+    }
+
     pub fn setTimeout(
         globalThis: *JSGlobalObject,
         callback: JSValue,
@@ -3708,7 +3732,8 @@ pub const Timer = struct {
 
         const interval: i32 = @max(
             countdown.coerce(i32, globalThis),
-            0,
+            // It must be 1 at minimum or setTimeout(cb, 0) will seemingly hang
+            1,
         );
 
         const wrappedCallback = callback.withAsyncContextIfNeeded(globalThis);
@@ -4417,8 +4442,16 @@ pub const FFIObject = struct {
 /// Also, you can't iterate over process.env normally since it only exists at build-time otherwise
 // This is aliased to Bun.env
 pub const EnvironmentVariables = struct {
-    pub export fn Bun__getEnvNames(globalObject: *JSC.JSGlobalObject, names: [*]ZigString, max: usize) usize {
-        return getEnvNames(globalObject, names[0..max]);
+    pub export fn Bun__getEnvCount(globalObject: *JSC.JSGlobalObject, ptr: *[*][]const u8) usize {
+        const bunVM = globalObject.bunVM();
+        ptr.* = bunVM.bundler.env.map.map.keys().ptr;
+        return bunVM.bundler.env.map.map.unmanaged.entries.len;
+    }
+
+    pub export fn Bun__getEnvKey(ptr: [*][]const u8, i: usize, data_ptr: *[*]const u8) usize {
+        const item = ptr[i];
+        data_ptr.* = item.ptr;
+        return item.len;
     }
 
     pub export fn Bun__getEnvValue(globalObject: *JSC.JSGlobalObject, name: *ZigString, value: *ZigString) bool {
@@ -4456,7 +4489,8 @@ export fn Bun__reportError(globalObject: *JSGlobalObject, err: JSC.JSValue) void
 comptime {
     if (!is_bindgen) {
         _ = Bun__reportError;
-        _ = EnvironmentVariables.Bun__getEnvNames;
+        _ = EnvironmentVariables.Bun__getEnvCount;
+        _ = EnvironmentVariables.Bun__getEnvKey;
         _ = EnvironmentVariables.Bun__getEnvValue;
     }
 }

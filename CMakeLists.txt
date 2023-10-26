@@ -4,7 +4,7 @@ cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW) 
 
 set(Bun_VERSION "1.0.7")
-set(WEBKIT_TAG 1a49a1f94bf42ab4f8c6b11d7bbbb21e491d2d62)
+set(WEBKIT_TAG b3eb3541118a997adc959e138155f5f4736892da)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -81,6 +81,12 @@ macro(BUN_FIND_LLVM)
     find_program(
         AR
         NAMES llvm-ar
+        PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
+        DOC "Path to LLVM ${LLVM_VERSION}'s llvm-ar binary"
+    )
+    find_program(
+        AR
+        NAMES ar
         PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
         DOC "Path to LLVM ${LLVM_VERSION}'s llvm-ar binary"
     )
@@ -201,10 +207,16 @@ if(NOT ZIG_TARGET)
     endif()
 endif()
 
-# set(CONFIGURE_DEPENDS "")
 set(CONFIGURE_DEPENDS "CONFIGURE_DEPENDS")
+if(NO_CONFIGURE_DEPENDS)
+    set(CONFIGURE_DEPENDS "")
+endif()
 
 # --- CLI Paths ---
+set(REQUIRED_IF_NOT_ONLY_CPP_OR_LINK "")
+if(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY)
+    set(REQUIRED_IF_NOT_ONLY_CPP_OR_LINK "REQUIRED")
+endif()
 
 # Zig Compiler
 function(validate_zig validator_result_var item)
@@ -218,12 +230,12 @@ function(validate_zig validator_result_var item)
         set(${validator_result_var} FALSE PARENT_SCOPE)
     endif()
 endfunction()
-find_program(ZIG_COMPILER zig REQUIRED DOC "Path to the Zig compiler" VALIDATOR validate_zig)
+find_program(ZIG_COMPILER zig ${REQUIRED_IF_NOT_ONLY_CPP_OR_LINK} DOC "Path to the Zig compiler" VALIDATOR validate_zig)
 message(STATUS "Found Zig Compiler: ${ZIG_COMPILER}")
 
 # Bun
 if(NOT WIN32)
-    find_program(BUN_EXECUTABLE bun REQUIRED DOC "Path to an already built release of Bun")
+    find_program(BUN_EXECUTABLE bun ${REQUIRED_IF_NOT_ONLY_CPP_OR_LINK} DOC "Path to an already built release of Bun")
     message(STATUS "Found Bun: ${BUN_EXECUTABLE}")
 else()
     set(BUN_EXECUTABLE "echo")
@@ -377,6 +389,10 @@ set(BUN_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 set(BUN_DEPS_DIR "${BUN_SRC}/deps")
 set(BUN_CODEGEN_SRC "${BUN_SRC}/codegen")
 
+if(NOT BUN_DEPS_OUT_DIR)
+    set(BUN_DEPS_OUT_DIR "${BUN_DEPS_DIR}")
+endif()
+
 set(BUN_RAW_SOURCES, "")
 
 file(GLOB BUN_CPP ${CONFIGURE_DEPENDS}
@@ -440,90 +456,96 @@ add_custom_command(
 list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/JSSink.cpp")
 
 # --- .lut.h Generator ---
-set(BUN_OBJECT_LUT_SOURCES
-    bun.js/bindings/BunObject.cpp
-    bun.js/bindings/ZigGlobalObject.lut.txt
-    bun.js/bindings/JSBuffer.cpp
-    bun.js/bindings/BunProcess.cpp
-    bun.js/bindings/ProcessBindingConstants.cpp
-    bun.js/bindings/ProcessBindingNatives.cpp
-)
-set(BUN_HASH_LUT_GENERATOR "${BUN_CODEGEN_SRC}/create-hash-table.ts")
-macro(GENERATE_HASH_LUT _input _output _display_name)
-    add_custom_command(
-        OUTPUT ${_output}
-        MAIN_DEPENDENCY ${BUN_HASH_LUT_GENERATOR}
-        DEPENDS ${_input}
-        COMMAND ${BUN_EXECUTABLE} ${BUN_HASH_LUT_GENERATOR} ${_input} ${_output}
-        VERBATIM
-        COMMENT "Generating ${_display_name}"
+if(NOT BUN_LINK_ONLY)
+    set(BUN_OBJECT_LUT_SOURCES
+        bun.js/bindings/BunObject.cpp
+        bun.js/bindings/ZigGlobalObject.lut.txt
+        bun.js/bindings/JSBuffer.cpp
+        bun.js/bindings/BunProcess.cpp
+        bun.js/bindings/ProcessBindingConstants.cpp
+        bun.js/bindings/ProcessBindingNatives.cpp
     )
-    # list(APPEND JavaScriptCore_HEADERS ${_output})
-    WEBKIT_ADD_SOURCE_DEPENDENCIES(${_input} ${_output})
-endmacro()
-foreach(_file ${BUN_OBJECT_LUT_SOURCES})
-    if(NOT EXISTS "${BUN_SRC}/${_file}")
-        message(FATAL_ERROR "Could not find ${_file} needed for LUT generation")
-    endif()
-    
-    get_filename_component(_name ${_file} NAME_WE)
+    set(BUN_HASH_LUT_GENERATOR "${BUN_CODEGEN_SRC}/create-hash-table.ts")
+    macro(GENERATE_HASH_LUT _input _output _display_name)
+        add_custom_command(
+            OUTPUT ${_output}
+            MAIN_DEPENDENCY ${BUN_HASH_LUT_GENERATOR}
+            DEPENDS ${_input}
+            COMMAND ${BUN_EXECUTABLE} ${BUN_HASH_LUT_GENERATOR} ${_input} ${_output}
+            VERBATIM
+            COMMENT "Generating ${_display_name}"
+        )
+        # list(APPEND JavaScriptCore_HEADERS ${_output})
+        WEBKIT_ADD_SOURCE_DEPENDENCIES(${_input} ${_output})
+    endmacro()
+    foreach(_file ${BUN_OBJECT_LUT_SOURCES})
+        if(NOT EXISTS "${BUN_SRC}/${_file}")
+            message(FATAL_ERROR "Could not find ${_file} needed for LUT generation")
+        endif()
+        
+        get_filename_component(_name ${_file} NAME_WE)
 
-    # workaround for ZigGlobalObject
-    if(_name MATCHES "ZigGlobalObject")
-        set(_name "ZigGlobalObject")
-    endif()
+        # workaround for ZigGlobalObject
+        if(_name MATCHES "ZigGlobalObject")
+            set(_name "ZigGlobalObject")
+        endif()
 
-    GENERATE_HASH_LUT(${BUN_SRC}/${_file} ${BUN_WORKDIR}/codegen/${_name}.lut.h ${_name}.lut.h)
-endforeach()
+        GENERATE_HASH_LUT(${BUN_SRC}/${_file} ${BUN_WORKDIR}/codegen/${_name}.lut.h ${_name}.lut.h)
+    endforeach()
 
-WEBKIT_ADD_SOURCE_DEPENDENCIES(${BUN_SRC}/bun.js/bindings/ZigGlobalObject.cpp ${BUN_WORKDIR}/codegen/ZigGlobalObject.lut.h)
+    WEBKIT_ADD_SOURCE_DEPENDENCIES(${BUN_SRC}/bun.js/bindings/ZigGlobalObject.cpp ${BUN_WORKDIR}/codegen/ZigGlobalObject.lut.h)
+endif()
 
 # --- Identifier Cache ---
-set(BUN_IDENTIFIER_CACHE_OUT
-    "${BUN_SRC}/js_lexer/id_continue_bitset.blob" 
-    "${BUN_SRC}/js_lexer/id_continue_bitset.meta.blob" 
-    "${BUN_SRC}/js_lexer/id_start_bitset.blob"
-    "${BUN_SRC}/js_lexer/id_start_bitset.meta.blob")
-add_custom_command(
-    OUTPUT ${BUN_IDENTIFIER_CACHE_OUT}
-    MAIN_DEPENDENCY "${BUN_SRC}/js_lexer/identifier_data.zig"
-    DEPENDS "${BUN_SRC}/js_lexer/identifier_cache.zig"
-    COMMAND ${ZIG_COMPILER} run "${BUN_SRC}/js_lexer/identifier_data.zig"
-    VERBATIM
-    COMMENT "Building Identifier Cache"
-)
+if(NOT NO_CODEGEN)
+    set(BUN_IDENTIFIER_CACHE_OUT
+        "${BUN_SRC}/js_lexer/id_continue_bitset.blob" 
+        "${BUN_SRC}/js_lexer/id_continue_bitset.meta.blob" 
+        "${BUN_SRC}/js_lexer/id_start_bitset.blob"
+        "${BUN_SRC}/js_lexer/id_start_bitset.meta.blob")
+    add_custom_command(
+        OUTPUT ${BUN_IDENTIFIER_CACHE_OUT}
+        MAIN_DEPENDENCY "${BUN_SRC}/js_lexer/identifier_data.zig"
+        DEPENDS "${BUN_SRC}/js_lexer/identifier_cache.zig"
+        COMMAND ${ZIG_COMPILER} run "${BUN_SRC}/js_lexer/identifier_data.zig"
+        VERBATIM
+        COMMENT "Building Identifier Cache"
+    )
+endif()
 
 # --- Bundled TS/JS ---
 # Note: It's not worth doing this in parallel at the CMake/Ninja level, because this bundling
 # requires all the JS files to be known, but also Bun will use all cores during bundling anyways.
-file(GLOB BUN_TS_MODULES ${CONFIGURE_DEPENDS}
-    "${BUN_SRC}/js/node/*.ts"
-    "${BUN_SRC}/js/node/*.js"
-    "${BUN_SRC}/js/bun/*.js"
-    "${BUN_SRC}/js/bun/*.ts"
-    "${BUN_SRC}/js/thirdparty/*.js"
-    "${BUN_SRC}/js/thirdparty/*.ts"
-    "${BUN_SRC}/js/internal/*.js"
-    "${BUN_SRC}/js/internal/*.ts"
-)
-file(GLOB BUN_TS_FUNCTIONS ${CONFIGURE_DEPENDS} "${BUN_SRC}/js/builtins/*.ts")
+if(NOT NO_CODEGEN)
+    file(GLOB BUN_TS_MODULES ${CONFIGURE_DEPENDS}
+        "${BUN_SRC}/js/node/*.ts"
+        "${BUN_SRC}/js/node/*.js"
+        "${BUN_SRC}/js/bun/*.js"
+        "${BUN_SRC}/js/bun/*.ts"
+        "${BUN_SRC}/js/thirdparty/*.js"
+        "${BUN_SRC}/js/thirdparty/*.ts"
+        "${BUN_SRC}/js/internal/*.js"
+        "${BUN_SRC}/js/internal/*.ts"
+    )
+    file(GLOB BUN_TS_FUNCTIONS ${CONFIGURE_DEPENDS} "${BUN_SRC}/js/builtins/*.ts")
 
-file(GLOB CODEGEN_FILES ${CONFIGURE_DEPENDS} "${BUN_CODEGEN_SRC}/*.ts")
+    file(GLOB CODEGEN_FILES ${CONFIGURE_DEPENDS} "${BUN_CODEGEN_SRC}/*.ts")
 
-add_custom_command(
-    OUTPUT 
-           "${BUN_WORKDIR}/codegen/InternalModuleRegistryConstants.h"
-           "${BUN_WORKDIR}/codegen/InternalModuleRegistry+createInternalModuleById.h"
-           "${BUN_WORKDIR}/codegen/InternalModuleRegistry+enum.h"
-           "${BUN_WORKDIR}/codegen/InternalModuleRegistry+numberOfModules.h"
-           "${BUN_WORKDIR}/codegen/NativeModuleImpl.h"
-           "${BUN_WORKDIR}/codegen/ResolvedSourceTag.zig"
-           "${BUN_WORKDIR}/codegen/SyntheticModuleType.h"
-    COMMAND ${BUN_EXECUTABLE} "${BUN_SRC}/codegen/bundle-modules.ts" "${BUN_WORKDIR}"
-    DEPENDS ${BUN_TS_MODULES} ${CODEGEN_FILES}
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMENT "Bundling JS modules"
-)
+    add_custom_command(
+        OUTPUT 
+            "${BUN_WORKDIR}/codegen/InternalModuleRegistryConstants.h"
+            "${BUN_WORKDIR}/codegen/InternalModuleRegistry+createInternalModuleById.h"
+            "${BUN_WORKDIR}/codegen/InternalModuleRegistry+enum.h"
+            "${BUN_WORKDIR}/codegen/InternalModuleRegistry+numberOfModules.h"
+            "${BUN_WORKDIR}/codegen/NativeModuleImpl.h"
+            "${BUN_WORKDIR}/codegen/ResolvedSourceTag.zig"
+            "${BUN_WORKDIR}/codegen/SyntheticModuleType.h"
+        COMMAND ${BUN_EXECUTABLE} "${BUN_SRC}/codegen/bundle-modules.ts" "--debug=${DEBUG}" "${BUN_WORKDIR}"
+        DEPENDS ${BUN_TS_MODULES} ${CODEGEN_FILES}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMENT "Bundling JS modules"
+    )
+endif()
 WEBKIT_ADD_SOURCE_DEPENDENCIES(
     "${BUN_SRC}/bun.js/bindings/InternalModuleRegistry.cpp"
     "${BUN_WORKDIR}/codegen/InternalModuleRegistryConstants.h"
@@ -532,7 +554,7 @@ WEBKIT_ADD_SOURCE_DEPENDENCIES(
 add_custom_command(
     OUTPUT "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp"
            "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.h"
-    COMMAND ${BUN_EXECUTABLE} "${BUN_SRC}/codegen/bundle-functions.ts" "${BUN_WORKDIR}"
+    COMMAND ${BUN_EXECUTABLE} "${BUN_SRC}/codegen/bundle-functions.ts" "--debug=${DEBUG}" "${BUN_WORKDIR}"
     DEPENDS ${BUN_TS_FUNCTIONS} ${CODEGEN_FILES}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Bundling JS builtin functions"
@@ -540,31 +562,43 @@ add_custom_command(
 list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp")
 
 # --- Peechy API ---
-add_custom_command(
-    OUTPUT "${BUN_SRC}/api/schema.js"
-           "${BUN_SRC}/api/schema.d.ts"
-           "${BUN_SRC}/api/schema.zig"
-    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-    COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/node_modules/.bin/peechy"
-        "--schema" "${BUN_SRC}/api/schema.peechy"
-        "--esm" "${BUN_SRC}/api/schema.js"
-        "--ts" "${BUN_SRC}/api/schema.d.ts"
-        "--zig" "${BUN_SRC}/api/schema.zig"
-    COMMAND "${ZIG_COMPILER}" "fmt" "src/api/schema.zig"
-    COMMAND "${PRETTIER}" "--config=.prettierrc.cjs" "--write" "src/api/schema.js" "src/api/schema.d.ts"
-    DEPENDS "${BUN_SRC}/api/schema.peechy"
-    COMMENT "Building schema"
-)
-add_custom_command(
-    OUTPUT "${BUN_SRC}/analytics/analytics_schema.zig"
-    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-    COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/node_modules/.bin/peechy"
-        "--schema" "${BUN_SRC}/analytics/schema.peechy"
-        "--zig" "${BUN_SRC}/analytics/analytics_schema.zig"
-    COMMAND "${ZIG_COMPILER}" "fmt" "${BUN_SRC}/analytics/analytics_schema.zig"
-    DEPENDS "${BUN_SRC}/api/schema.peechy"
-    COMMENT "Building analytics_schema.zig"
-)
+if(NOT NO_CODEGEN)
+    add_custom_command(
+        OUTPUT "${BUN_SRC}/api/schema.js"
+            "${BUN_SRC}/api/schema.d.ts"
+            "${BUN_SRC}/api/schema.zig"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/node_modules/.bin/peechy"
+            "--schema" "${BUN_SRC}/api/schema.peechy"
+            "--esm" "${BUN_SRC}/api/schema.js"
+            "--ts" "${BUN_SRC}/api/schema.d.ts"
+            "--zig" "${BUN_SRC}/api/schema.zig"
+        COMMAND "${ZIG_COMPILER}" "fmt" "src/api/schema.zig"
+        COMMAND "${PRETTIER}" "--config=.prettierrc.cjs" "--write" "src/api/schema.js" "src/api/schema.d.ts"
+        DEPENDS "${BUN_SRC}/api/schema.peechy"
+        COMMENT "Building schema"
+    )
+    add_custom_command(
+        OUTPUT "${BUN_SRC}/analytics/analytics_schema.zig"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/node_modules/.bin/peechy"
+            "--schema" "${BUN_SRC}/analytics/schema.peechy"
+            "--zig" "${BUN_SRC}/analytics/analytics_schema.zig"
+        COMMAND "${ZIG_COMPILER}" "fmt" "${BUN_SRC}/analytics/analytics_schema.zig"
+        DEPENDS "${BUN_SRC}/api/schema.peechy"
+        COMMENT "Building analytics_schema.zig"
+    )
+endif()
+
+# --- Runtime.js ---
+if(NOT NO_CODEGEN)
+    add_custom_command(
+        OUTPUT "src/fallback.out.js"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        COMMAND "${ESBUILD}" "--target=esnext" "--bundle" "src/fallback.ts" "--format=iife" "--platform=browser" "--minify" "--outfile=src/fallback.out.js"
+        DEPENDS "src/fallback.ts"
+    )
+endif()
 
 # --- Zig Object ---
 file(GLOB ZIG_FILES
@@ -649,9 +683,10 @@ if(NOT BUN_CPP_ARCHIVE)
 
     write_file("${BUN_WORKDIR}/compile-cpp-only.sh"
         "#!/usr/bin/env bash\n"
+        "set -e\n"
         "OBJ_LIST=(\n  ${BUN_OBJECT_LIST}\n)\n"
         "ninja \${OBJ_LIST[@]}\n"
-        "llvm-ar rcvs bun-cpp-objects.a \${OBJ_LIST[@]}\n"
+        "${AR} rcvs bun-cpp-objects.a \${OBJ_LIST[@]}\n"
         "echo '-> bun-cpp-objects.a'\n"
     )
 else()
@@ -862,8 +897,8 @@ endif()
 # --- Dependencies ---
 
 if(USE_CUSTOM_ZLIB AND (NOT WIN32))
-    target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/libz.a")
-    include_directories(${BUN_DEPS_DIR}/zlib/include)
+    target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libz.a")
+    include_directories(${BUN_DEPS_DIR}/zlib)
 else()
     if(WIN32)
         target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/zlib_maybethisworks.lib")
@@ -874,15 +909,15 @@ else()
 endif()
 
 if(USE_CUSTOM_BORINGSSL)
-    include_directories(src/deps/boringssl/include)
+    include_directories(${BUN_DEPS_DIR}/boringssl/include)
     if (WIN32)
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/crypto.lib")
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/ssl.lib")
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/decrepit.lib")
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/crypto.lib")
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/ssl.lib")
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/decrepit.lib")
     else()
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/libcrypto.a")
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/libssl.a")
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/libdecrepit.a")
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libcrypto.a")
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libssl.a")
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libdecrepit.a")
     endif()
 else()
     include(FindBoringSSL)
@@ -890,11 +925,11 @@ else()
 endif()
 
 if(USE_CUSTOM_LIBARCHIVE)
-    include_directories(src/deps/libarchive/include)
+    include_directories(${BUN_DEPS_DIR}/libarchive/include)
     if (WIN32)
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/archive.lib")
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/archive.lib")
     else()
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/libarchive.a")
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libarchive.a")
     endif()
 else()
     find_package(LibArchive REQUIRED)
@@ -902,15 +937,15 @@ else()
 endif()
 
 if(USE_CUSTOM_MIMALLOC)
-    include_directories(src/deps/mimalloc/include)
+    include_directories(${BUN_DEPS_DIR}/mimalloc/include)
     if (WIN32)
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/mimalloc-static.lib")
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/mimalloc-static.lib")
     elseif(APPLE)
         # https://github.com/microsoft/mimalloc/issues/512
         # Linking mimalloc via object file on macOS x64 can cause heap corruption
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/libmimalloc.a")
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc.a")
     else()
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/libmimalloc.o")
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc.o")
     endif()
 else()
     find_package(mimalloc REQUIRED)
@@ -918,11 +953,11 @@ else()
 endif()
 
 if(USE_CUSTOM_ZSTD)
-    include_directories(src/deps/zstd/include)
+    include_directories(${BUN_DEPS_DIR}/zstd/include)
     if (WIN32)
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/zstd.lib")
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/zstd.lib")
     else()
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/libzstd.a")
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libzstd.a")
     endif()
 else()
     find_package(zstd CONFIG REQUIRED)
@@ -930,11 +965,11 @@ else()
 endif()
 
 if(USE_CUSTOM_CARES)
-    include_directories(src/deps/c-ares/include)
+    include_directories(${BUN_DEPS_DIR}/c-ares/include)
     if (WIN32)
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/cares.lib")
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/cares.lib")
     else()
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/libcares.a")
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libcares.a")
     endif()
 else()
     find_package(c-ares CONFIG REQUIRED)
@@ -942,11 +977,11 @@ else()
 endif()
 
 if(USE_CUSTOM_BASE64)
-    include_directories(src/deps/base64/include)
+    include_directories(${BUN_DEPS_DIR}/base64/include)
     if (WIN32)
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/base64.lib")
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/base64.lib")
     else()
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/libbase64.a")
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libbase64.a")
     endif()
 else()
     find_package(base64 REQUIRED)
@@ -956,9 +991,10 @@ endif()
 if(NOT WIN32)
     if (USE_CUSTOM_TINYCC)
         if (WIN32)
-            # target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/tcc.lib")
+            # target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/tcc.lib")
+            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/tcc.lib")
         else()
-            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/libtcc.a")
+            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libtcc.a")
         endif()
     else()
         find_package(tinycc REQUIRED)
@@ -968,9 +1004,9 @@ endif()
 
 if(USE_CUSTOM_LOLHTML)
     if (WIN32)
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/lolhtml.lib")
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/lolhtml.lib")
     else()
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/liblolhtml.a")
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/liblolhtml.a")
     endif()
 else()
     find_package(lolhtml REQUIRED)
@@ -979,7 +1015,7 @@ endif()
 
 if(WIN32)
     if (USE_CUSTOM_LIBUV)
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/uv.lib")
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/uv.lib")
     else()
         find_package(libuv CONFIG REQUIRED )
         target_link_libraries(${bun} PRIVATE $<IF:$<TARGET_EXISTS:libuv::uv_a>,libuv::uv_a,libuv::uv>)
@@ -1029,4 +1065,8 @@ else()
 
     target_link_libraries(${bun} PUBLIC icuuc icudt icutu icuio icuin icutest)
     target_link_libraries(${bun} PUBLIC winmm ws2_32 bcrypt ntdll kernel32 shell32 shlwapi advapi32 vcruntime ucrt legacy_stdio_definitions)
+endif()
+
+if(NO_CODEGEN)
+    message(STATUS "NO_CODEGEN is ON, a handful of build steps will not run.")
 endif()

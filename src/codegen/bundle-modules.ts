@@ -1,24 +1,24 @@
 // This script is run when you change anything in src/js/*
 import fs from "fs";
+import { writeFile, rm, mkdir } from "fs/promises";
 import path from "path";
 import { sliceSourceCode } from "./builtin-parser";
 import { cap, declareASCIILiteral, readdirRecursive, resolveSyncOrNull, writeIfNotChanged } from "./helpers";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { builtinModules } from "node:module";
-import { BuildConfig } from "bun";
 import { define } from "./replacements";
 import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
 
 const BASE = path.join(import.meta.dir, "../js");
-const CMAKE_BUILD_ROOT = process.argv[2];
-const debug = true;
+const debug = process.argv[2] === "--debug=ON";
+const CMAKE_BUILD_ROOT = process.argv[3];
 
 if (!CMAKE_BUILD_ROOT) {
   console.error("Usage: bun bundle-modules.ts <CMAKE_WORK_DIR>");
   process.exit(1);
 }
 
-const TMP_DIR = path.join(CMAKE_BUILD_ROOT, "tmp");
+const TMP_DIR = path.join(CMAKE_BUILD_ROOT, "tmp_modules");
 const CODEGEN_DIR = path.join(CMAKE_BUILD_ROOT, "codegen");
 const JS_DIR = path.join(CMAKE_BUILD_ROOT, "js");
 
@@ -39,6 +39,26 @@ const {
   nativeModuleEnums,
   requireTransformer,
 } = createInternalModuleRegistry(BASE);
+
+// these logs surround a very weird issue where writing files and then bundling sometimes doesn't
+// work, so i have lot of debug logs that blow up the console because not sure what is going on.
+// that is also the reason for using `retry` when theoretically writing a file the first time
+// should actually write the file.
+const verbose = Bun.env.VERBOSE ? console.log : () => {};
+async function retry(n, fn) {
+  var err;
+  while (n > 0) {
+    try {
+      await fn();
+      return;
+    } catch (e) {
+      err = e;
+      n--;
+      await Bun.sleep(5);
+    }
+  }
+  throw err;
+}
 
 // Preprocess builtins
 const bundledEntryPoints: string[] = [];
@@ -99,8 +119,31 @@ $$EXPORT$$(__intrinsic__exports).$$EXPORT_END$$;
       fileToTranspile = `var $;` + fileToTranspile.replaceAll("__intrinsic__exports", "$");
     }
     const outputPath = path.join(TMP_DIR, moduleList[i].slice(0, -3) + ".ts");
-    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-    fs.writeFileSync(outputPath, fileToTranspile);
+
+    await mkdir(path.dirname(outputPath), { recursive: true });
+    if (!fs.existsSync(path.dirname(outputPath))) {
+      verbose("directory did not exist after mkdir twice:", path.dirname(outputPath));
+    }
+    // await Bun.sleep(10);
+
+    try {
+      await writeFile(outputPath, fileToTranspile);
+      if (!fs.existsSync(outputPath)) {
+        verbose("file did not exist after write:", outputPath);
+        throw new Error("file did not exist after write: " + outputPath);
+      }
+      verbose("wrote to", outputPath, "successfully");
+    } catch {
+      await retry(3, async () => {
+        await mkdir(path.dirname(outputPath), { recursive: true });
+        await writeFile(outputPath, fileToTranspile);
+        if (!fs.existsSync(outputPath)) {
+          verbose("file did not exist after write:", outputPath);
+          throw new Error("file did not exist after write: " + outputPath);
+        }
+        verbose("wrote to", outputPath, "successfully later");
+      });
+    }
     bundledEntryPoints.push(outputPath);
   } catch (error) {
     console.error(error);
@@ -111,58 +154,63 @@ $$EXPORT$$(__intrinsic__exports).$$EXPORT_END$$;
 
 mark("Preprocess modules");
 
-const config = ({ debug }: { debug?: boolean }) =>
-  ({
-    entrypoints: bundledEntryPoints,
-    // Whitespace and identifiers are not minified to give better error messages when an error happens in our builtins
-    minify: { syntax: !debug, whitespace: false },
-    root: TMP_DIR,
-    target: "bun",
-    external: builtinModules,
-    define: {
-      ...define,
-      IS_BUN_DEVELOPMENT: String(!!debug),
-      __intrinsic__debug: debug ? "$debug_log_enabled" : "false",
-    },
-  } satisfies BuildConfig);
+await Bun.sleep(10);
 
-async function attempt() {
-  const bundle = await Bun.build(config({ debug }));
-  for (const bundled of [bundle]) {
-    if (!bundled.success) {
-      if (bundled.logs[0].message.includes("ModuleNotFound")) {
-        return false;
-      }
-      console.error(bundled.logs);
-      process.exit(1);
-    }
-  }
-  return bundle;
+// directory caching stuff breaks this sometimes. CLI rules
+const config_cli = [
+  process.execPath,
+  "build",
+  ...bundledEntryPoints,
+  ...(debug ? [] : ["--minify-syntax"]),
+  "--root",
+  TMP_DIR,
+  "--target",
+  "bun",
+  ...builtinModules.map(x => ["--external", x]).flat(),
+  ...Object.keys(define)
+    .map(x => [`--define`, `${x}=${define[x]}`])
+    .flat(),
+  "--define",
+  `IS_BUN_DEVELOPMENT=${String(!!debug)}`,
+  "--define",
+  `__intrinsic__debug=${debug ? "$debug_log_enabled" : "false"}`,
+  "--outdir",
+  path.join(TMP_DIR, "modules_out"),
+];
+verbose("running: ", config_cli);
+const out = Bun.spawnSync({
+  cmd: config_cli,
+  cwd: process.cwd(),
+  env: process.env,
+  stdio: ["pipe", "pipe", "pipe"],
+});
+if (out.exitCode !== 0) {
+  console.error(out.stderr.toString());
+  process.exit(out.exitCode);
 }
 
-async function bundleWithRetries() {
-  let max_retries = 5;
-  let bundle: any = false;
-  while (!bundle && max_retries > 0) {
-    bundle = await attempt();
-    if (bundle) return bundle;
-    max_retries--;
-    Bun.sleepSync(100);
-  }
-  if (!bundle) {
-    console.error("Failed to bundle modules");
-    process.exit(1);
-  }
-  return bundle;
-}
-
-const bundle = await bundleWithRetries();
+// const config = ({ debug }: { debug?: boolean }) =>
+//   ({
+//     entrypoints: bundledEntryPoints,
+//     // Whitespace and identifiers are not minified to give better error messages when an error happens in our builtins
+//     minify: { syntax: !debug, whitespace: false },
+//     root: TMP_DIR,
+//     target: "bun",
+//     external: builtinModules,
+//     define: {
+//       ...define,
+//       IS_BUN_DEVELOPMENT: String(!!debug),
+//       __intrinsic__debug: debug ? "$debug_log_enabled" : "false",
+//     },
+//   } satisfies BuildConfig);
 
 mark("Bundle modules");
 
 const outputs = new Map();
 
-for (const file of bundle.outputs) {
+for (const entrypoint of bundledEntryPoints) {
+  const file_path = entrypoint.slice(TMP_DIR.length + 1).replace(/\.ts$/, ".js");
+  const file = Bun.file(path.join(TMP_DIR, "modules_out", file_path));
   const output = await file.text();
   let captured = `(function (){${output.replace("// @bun\n", "").trim()}})`;
   let usesDebug = output.includes("$debug_log");
@@ -182,14 +230,7 @@ for (const file of bundle.outputs) {
       .replace(/]\s*,\s*__debug_end__\)/g, ")")
       // .replace(/__intrinsic__lazy\(/g, "globalThis[globalThis.Symbol.for('Bun.lazy')](")
       .replace(/import.meta.require\((.*?)\)/g, (expr, specifier) => {
-        try {
-          const str = JSON.parse(specifier);
-          return requireTransformer(str, file.path);
-        } catch {
-          throw new Error(
-            `Builtin Bundler: import.meta.require() must be called with a string literal. Found ${specifier}. (in ${file.path}))`,
-          );
-        }
+        throw new Error(`Builtin Bundler: do not use import.meta.require() (in ${file_path}))`);
       })
       .replace(/__intrinsic__/g, "@") + "\n";
   captured = captured.replace(
@@ -197,16 +238,16 @@ for (const file of bundle.outputs) {
     '$&"use strict";' +
       (usesDebug
         ? createLogClientJS(
-            file.path.replace(".js", ""),
-            idToPublicSpecifierOrEnumName(file.path).replace(/^node:|^bun:/, ""),
+            file_path.replace(".js", ""),
+            idToPublicSpecifierOrEnumName(file_path).replace(/^node:|^bun:/, ""),
           )
         : "") +
-      (usesAssert ? createAssertClientJS(idToPublicSpecifierOrEnumName(file.path).replace(/^node:|^bun:/, "")) : ""),
+      (usesAssert ? createAssertClientJS(idToPublicSpecifierOrEnumName(file_path).replace(/^node:|^bun:/, "")) : ""),
   );
-  const outputPath = path.join(JS_DIR, file.path);
+  const outputPath = path.join(JS_DIR, file_path);
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   fs.writeFileSync(outputPath, captured);
-  outputs.set(file.path.replace(".js", ""), captured);
+  outputs.set(file_path.replace(".js", ""), captured);
 }
 
 mark("Postprocesss modules");

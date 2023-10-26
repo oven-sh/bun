@@ -1,3 +1,7 @@
+# This Dockerfile is used by CI workflows to build Bun. It is not intended as a development
+# environment, or to be used as a base image for other projects.
+#
+# You likely want this image instead: https://hub.docker.com/r/oven/bun
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
 ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
@@ -308,77 +312,6 @@ RUN mkdir ${BUN_DIR}/bun-webkit \
   && echo "Downloading ${WEBKIT_URL}" \
   && curl -fsSL "${WEBKIT_URL}" | tar -xz -C ${BUN_DIR}/bun-webkit --strip-components=1
 
-#! lose
-# FROM bun-base-with-zig as prepare_release
-
-# ARG DEBIAN_FRONTEND
-# ARG GITHUB_WORKSPACE
-# ARG ZIG_PATH
-# # Directory extracts to "bun-webkit"
-# ARG WEBKIT_DIR
-# ARG BUN_RELEASE_DIR
-# ARG BUN_DEPS_OUT_DIR
-# ARG BUN_DIR
-# ARG CPU_TARGET
-# ENV CPU_TARGET=${CPU_TARGET}
-
-# WORKDIR $BUN_DIR
-
-# COPY ./root.zig ${BUN_DIR}/root.zig
-# COPY ./src ${BUN_DIR}/src
-# COPY ./build.zig ${BUN_DIR}/build.zig
-# COPY ./completions ${BUN_DIR}/completions
-# COPY ./packages ${BUN_DIR}/packages
-# COPY ./package.json ${BUN_DIR}/package.json
-# COPY ./misctools ${BUN_DIR}/misctools
-# COPY Makefile ${BUN_DIR}/Makefile
-
-#! lose
-# FROM prepare_release as compile_release_obj
-
-# ARG DEBIAN_FRONTEND
-# ARG GITHUB_WORKSPACE
-# ARG ZIG_PATH
-# # Directory extracts to "bun-webkit"
-# ARG WEBKIT_DIR
-# ARG BUN_RELEASE_DIR
-# ARG BUN_DEPS_OUT_DIR
-# ARG BUN_DIR
-# ARG CPU_TARGET
-# ENV CPU_TARGET=${CPU_TARGET}
-
-# COPY Makefile ${BUN_DIR}/Makefile
-# COPY .prettierrc.cjs ${BUN_DIR}/.prettierrc.cjs
-
-# WORKDIR $BUN_DIR
-
-# ENV JSC_BASE_DIR=${WEBKIT_DIR}
-# ENV LIB_ICU_PATH=${WEBKIT_DIR}/lib
-# ARG ARCH
-# ARG TRIPLET
-# ARG CPU_TARGET
-# ENV CPU_TARGET=${CPU_TARGET}
-# ARG GIT_SHA
-# ARG BUN_BASE_VERSION
-
-# ENV BUN_BASE_VERSION=${BUN_BASE_VERSION}
-# ENV GIT_SHA=${GIT_SHA}
-
-# COPY --from=identifier_cache ${BUN_DIR}/src/js_lexer/*.blob ${BUN_DIR}/src/js_lexer/
-# COPY --from=node_fallbacks ${BUN_DIR}/src/node-fallbacks/out ${BUN_DIR}/src/node-fallbacks/out
-
-# COPY ./src/build-id ${BUN_DIR}/src/build-id
-
-# ENV CCACHE_DIR=/ccache
-
-# RUN --mount=type=cache,target=/ccache cd $BUN_DIR \
-#   && mkdir -p src/bun.js/bindings-obj \
-#   && rm -rf $HOME/.cache zig-cache && make prerelease \
-#   && mkdir -p $BUN_RELEASE_DIR \
-#   && OUTPUT_DIR=/tmp/bun-${TRIPLET}-${GIT_SHA} $ZIG_PATH/zig build obj -Doutput-file=/tmp/bun.o -Doptimize=ReleaseFast -Dtarget="${TRIPLET}" -Dcpu="${CPU_TARGET}" \
-#   && cp /tmp/bun.o /tmp/bun-${BUN_BASE_VERSION}.$(cat ${BUN_DIR}/src/build-id).o && cd / \
-#   && rm -rf $BUN_DIR
-
 FROM bun-base as bun-cpp-objects
 
 COPY --from=bun-webkit ${BUN_DIR}/bun-webkit ${BUN_DIR}/bun-webkit
@@ -395,22 +328,6 @@ RUN --mount=type=cache,target=/ccache  mkdir ${BUN_DIR}/build \
   && mkdir -p tmp_modules tmp_functions js codegen \
   && cmake .. -GNinja -DCMAKE_BUILD_TYPE=Release -DBUN_CPP_ONLY=1 -DWEBKIT_DIR=/build/bun/bun-webkit \
   && bash compile-cpp-only.sh
-
-# FROM scratch as artifact
-
-# ARG DEBIAN_FRONTEND
-# ARG GITHUB_WORKSPACE
-# ARG ZIG_PATH
-# # Directory extracts to "bun-webkit"
-# ARG WEBKIT_DIR
-# ARG BUN_RELEASE_DIR
-# ARG BUN_DEPS_OUT_DIR
-# ARG BUN_DIR
-
-# COPY --from=build_release ${BUN_RELEASE_DIR}/bun /bun
-# COPY --from=build_release ${BUN_RELEASE_DIR}/bun-profile /bun-profile
-# COPY --from=build_release ${BUN_DEPS_OUT_DIR}/* /bun-dependencies
-# COPY --from=build_release_obj /*.o /bun-obj
 
 FROM bun-base-with-zig as bun-codegen-for-zig
 
@@ -504,7 +421,7 @@ RUN cmake .. \
   -DBUN_ZIG_OBJ="${BUN_DIR}/build/bun-zig.o" \
   -DBUN_CPP_ARCHIVE="${BUN_DIR}/build/bun-cpp-objects.a" \
   -DWEBKIT_DIR="${BUN_DIR}/bun-webkit" \
-  -BUN_DEPS_OUT_DIR="${BUN_DEPS_OUT_DIR}" \
+  -DBUN_DEPS_OUT_DIR="${BUN_DEPS_OUT_DIR}" \
   && ninja \
   && mkdir -p /build/out \
   && mv bun bun-profile /build/out \

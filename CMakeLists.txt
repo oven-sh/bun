@@ -85,6 +85,12 @@ macro(BUN_FIND_LLVM)
         DOC "Path to LLVM ${LLVM_VERSION}'s llvm-ar binary"
     )
     find_program(
+        AR
+        NAMES ar
+        PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
+        DOC "Path to LLVM ${LLVM_VERSION}'s llvm-ar binary"
+    )
+    find_program(
         RANLIB
         NAMES llvm-ranlib
         PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
@@ -207,6 +213,10 @@ if(NO_CONFIGURE_DEPENDS)
 endif()
 
 # --- CLI Paths ---
+set(REQUIRED_IF_NOT_BUN_CPP_ONLY "")
+if(NOT BUN_CPP_ONLY)
+    set(REQUIRED_IF_NOT_BUN_CPP_ONLY "REQUIRED")
+endif()
 
 # Zig Compiler
 function(validate_zig validator_result_var item)
@@ -220,16 +230,12 @@ function(validate_zig validator_result_var item)
         set(${validator_result_var} FALSE PARENT_SCOPE)
     endif()
 endfunction()
-set(REQUIRED_IF_NOT_BUN_CPP_ONLY "")
-if(NOT BUN_CPP_ONLY)
-    set(REQUIRED_IF_NOT_BUN_CPP_ONLY "REQUIRED")
-endif()
 find_program(ZIG_COMPILER zig ${REQUIRED_IF_NOT_BUN_CPP_ONLY} DOC "Path to the Zig compiler" VALIDATOR validate_zig)
 message(STATUS "Found Zig Compiler: ${ZIG_COMPILER}")
 
 # Bun
 if(NOT WIN32)
-    find_program(BUN_EXECUTABLE bun REQUIRED DOC "Path to an already built release of Bun")
+    find_program(BUN_EXECUTABLE bun ${REQUIRED_IF_NOT_BUN_CPP_ONLY} DOC "Path to an already built release of Bun")
     message(STATUS "Found Bun: ${BUN_EXECUTABLE}")
 else()
     set(BUN_EXECUTABLE "echo")
@@ -678,7 +684,7 @@ if(NOT BUN_CPP_ARCHIVE)
         "set -e\n"
         "OBJ_LIST=(\n  ${BUN_OBJECT_LIST}\n)\n"
         "ninja \${OBJ_LIST[@]}\n"
-        "llvm-ar rcvs bun-cpp-objects.a \${OBJ_LIST[@]}\n"
+        "${AR} rcvs bun-cpp-objects.a \${OBJ_LIST[@]}\n"
         "echo '-> bun-cpp-objects.a'\n"
     )
 else()
@@ -890,7 +896,7 @@ endif()
 
 if(USE_CUSTOM_ZLIB AND (NOT WIN32))
     target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libz.a")
-    include_directories(${BUN_DEPS_DIR}/zlib/include)
+    include_directories(${BUN_DEPS_DIR}/zlib)
 else()
     find_package(ZLIB REQUIRED)
     target_link_libraries(${bun} PRIVATE ZLIB::ZLIB)

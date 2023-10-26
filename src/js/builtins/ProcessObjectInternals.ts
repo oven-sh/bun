@@ -145,6 +145,7 @@ export function getStdinStream(fd) {
         }
       } else {
         stream.emit("end");
+        stream.emit("close");
         stream.pause();
       }
     } catch (err) {

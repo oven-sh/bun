@@ -42,12 +42,6 @@ jobs:
     strategy:
       matrix:
         include:
-          # - cpu: nehalem
-          #   arch: x86_64
-          #   tag: bun-obj-darwin-x64-baseline
-          # - cpu: haswell
-          #   arch: x86_64
-          #   tag: bun-obj-darwin-x64
           - cpu: native
             arch: aarch64
             tag: bun-obj-darwin-aarch64
@@ -75,12 +69,11 @@ jobs:
         with:
           context: .
           push: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=min
+          cache-from: type=s3,endpoint_url=${{ secrets.CACHE_S3_ENDPOINT }},blobs_prefix=docker_blobs/,manifests_prefix=docker_manifests/,access_key_id=${{ secrets.CACHE_S3_ACCESS_KEY_ID }},secret_access_key=${{ secrets.CACHE_S3_SECRET_ACCESS_KEY }},bucket=bun,region=auto
+          cache-to: type=s3,endpoint_url=${{ secrets.CACHE_S3_ENDPOINT }},blobs_prefix=docker_blobs/,manifests_prefix=docker_manifests/,access_key_id=${{ secrets.CACHE_S3_ACCESS_KEY_ID }},secret_access_key=${{ secrets.CACHE_S3_SECRET_ACCESS_KEY }},bucket=bun,region=auto
           build-args: |
             BUILDARCH=${{ runner.arch == 'X64' && 'amd64' || 'arm64' }}
             BUILD_MACHINE_ARCH=${{ runner.arch == 'X64' && 'x86_64' || 'aarch64' }}
-
             ARCH=${{ matrix.arch }}
             CPU_TARGET=${{ matrix.cpu }}
             TRIPLET=${{ matrix.arch }}-macos-none
@@ -312,6 +305,8 @@ jobs:
         run: |
           cd ${{runner.temp}}/link-build
           chmod +x bun-profile bun
+
+          mkdir -p ${{matrix.tag}}-profile/ ${{matrix.tag}}/
 
           mv bun-profile ${{matrix.tag}}-profile/bun-profile
           mv bun ${{matrix.tag}}/bun

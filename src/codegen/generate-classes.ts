@@ -1,9 +1,10 @@
 // @ts-nocheck
-import { unlinkSync } from "fs";
-import { readdirSync } from "fs";
 import { resolve } from "path";
 import type { Field, ClassDefinition } from "./class-definitions";
 import { writeIfNotChanged } from "./helpers";
+
+const files = process.argv.slice(2);
+const outBase = files.pop();
 
 const CommonIdentifiers = {
   "name": true,
@@ -1697,9 +1698,6 @@ pub const StaticCallbackType = fn(*JSC.JSGlobalObject, *JSC.CallFrame) callconv(
 
 `;
 
-const files = process.argv.slice(2);
-const outBase = files.pop();
-
 const classes = [];
 for (const file of files) {
   const result = require(file);
@@ -1800,46 +1798,48 @@ comptime {
 
   `,
 ]);
-const allHeaders = classes.map(a => generateHeader(a.name, a));
-await writeIfNotChanged(`${outBase}/ZigGeneratedClasses.h`, [
-  GENERATED_CLASSES_HEADER[0],
-  ...[...new Set(extraIncludes.map(a => `#include "${a}";` + "\n"))],
-  GENERATED_CLASSES_HEADER[1],
-  ...allHeaders,
-  GENERATED_CLASSES_FOOTER,
-]);
-await writeIfNotChanged(`${outBase}/ZigGeneratedClasses.cpp`, [
-  GENERATED_CLASSES_IMPL_HEADER,
-  ...classes.map(a => generateImpl(a.name, a)),
-  writeCppSerializers(classes),
-  GENERATED_CLASSES_IMPL_FOOTER,
-]);
-await writeIfNotChanged(
-  `${outBase}/ZigGeneratedClasses+lazyStructureHeader.h`,
-  classes.map(a => generateLazyClassStructureHeader(a.name, a)).join("\n"),
-);
+if (!process.env.ONLY_ZIG) {
+  const allHeaders = classes.map(a => generateHeader(a.name, a));
+  await writeIfNotChanged(`${outBase}/ZigGeneratedClasses.h`, [
+    GENERATED_CLASSES_HEADER[0],
+    ...[...new Set(extraIncludes.map(a => `#include "${a}";` + "\n"))],
+    GENERATED_CLASSES_HEADER[1],
+    ...allHeaders,
+    GENERATED_CLASSES_FOOTER,
+  ]);
+  await writeIfNotChanged(`${outBase}/ZigGeneratedClasses.cpp`, [
+    GENERATED_CLASSES_IMPL_HEADER,
+    ...classes.map(a => generateImpl(a.name, a)),
+    writeCppSerializers(classes),
+    GENERATED_CLASSES_IMPL_FOOTER,
+  ]);
+  await writeIfNotChanged(
+    `${outBase}/ZigGeneratedClasses+lazyStructureHeader.h`,
+    classes.map(a => generateLazyClassStructureHeader(a.name, a)).join("\n"),
+  );
 
-await writeIfNotChanged(
-  `${outBase}/ZigGeneratedClasses+DOMClientIsoSubspaces.h`,
-  classes.map(a =>
-    [
-      `std::unique_ptr<GCClient::IsoSubspace> ${clientSubspaceFor(a.name)};`,
-      !a.noConstructor ? `std::unique_ptr<GCClient::IsoSubspace> ${clientSubspaceFor(a.name)}Constructor;` : "",
-    ].join("\n"),
-  ),
-);
+  await writeIfNotChanged(
+    `${outBase}/ZigGeneratedClasses+DOMClientIsoSubspaces.h`,
+    classes.map(a =>
+      [
+        `std::unique_ptr<GCClient::IsoSubspace> ${clientSubspaceFor(a.name)};`,
+        !a.noConstructor ? `std::unique_ptr<GCClient::IsoSubspace> ${clientSubspaceFor(a.name)}Constructor;` : "",
+      ].join("\n"),
+    ),
+  );
 
-await writeIfNotChanged(
-  `${outBase}/ZigGeneratedClasses+DOMIsoSubspaces.h`,
-  classes.map(a =>
-    [
-      `std::unique_ptr<IsoSubspace> ${subspaceFor(a.name)};`,
-      !a.noConstructor ? `std::unique_ptr<IsoSubspace> ${subspaceFor(a.name)}Constructor;` : ``,
-    ].join("\n"),
-  ),
-);
+  await writeIfNotChanged(
+    `${outBase}/ZigGeneratedClasses+DOMIsoSubspaces.h`,
+    classes.map(a =>
+      [
+        `std::unique_ptr<IsoSubspace> ${subspaceFor(a.name)};`,
+        !a.noConstructor ? `std::unique_ptr<IsoSubspace> ${subspaceFor(a.name)}Constructor;` : ``,
+      ].join("\n"),
+    ),
+  );
 
-await writeIfNotChanged(
-  `${outBase}/ZigGeneratedClasses+lazyStructureImpl.h`,
-  initLazyClasses(classes.map(a => generateLazyClassStructureImpl(a.name, a))) + "\n" + visitLazyClasses(classes),
-);
+  await writeIfNotChanged(
+    `${outBase}/ZigGeneratedClasses+lazyStructureImpl.h`,
+    initLazyClasses(classes.map(a => generateLazyClassStructureImpl(a.name, a))) + "\n" + visitLazyClasses(classes),
+  );
+}

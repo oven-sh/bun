@@ -1,6 +1,5 @@
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
-ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
 ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
 ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
@@ -8,29 +7,27 @@ ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
 ARG CPU_TARGET=native
 ARG ARCH=x86_64
 ARG BUILD_MACHINE_ARCH=x86_64
-ARG TRIPLET=${ARCH}-linux-gnu
 ARG BUILDARCH=amd64
-ARG WEBKIT_TAG=2023-oct3-2
-ARG WEBKIT_BASENAME="bun-webkit-linux-$BUILDARCH"
+ARG TRIPLET=${ARCH}-linux-gnu
 
 ARG BUN_VERSION="1.0.7"
 ARG NODE_VERSION="20"
 ARG LLVM_VERSION="16"
 
 ARG ZIG_VERSION="0.12.0-dev.899+027aabf49"
-ARG ZIG_FOLDERNAME=zig-linux-${BUILD_MACHINE_ARCH}-${ZIG_VERSION}
-ARG ZIG_FILENAME=${ZIG_FOLDERNAME}.tar.xz
-ARG ZIG_URL="https://ziglang.org/builds/${ZIG_FILENAME}"
 
-ARG WEBKIT_URL="https://github.com/oven-sh/WebKit/releases/download/$WEBKIT_TAG/${WEBKIT_BASENAME}.tar.gz"
-ARG GIT_SHA=""
+ARG GIT_SHA="unknown"
 ARG BUN_BASE_VERSION=1.0
 
 FROM bitnami/minideb:bullseye as bun-base
 
+ARG DEBIAN_FRONTEND
 ARG BUN_VERSION
 ARG NODE_VERSION
 ARG LLVM_VERSION
+ARG BUILD_MACHINE_ARCH
+ARG BUN_DIR
+ARG BUN_DEPS_OUT_DIR
 
 RUN apt-get update -y \
   && install_packages \
@@ -59,7 +56,6 @@ RUN apt-get update -y \
   clangd-${LLVM_VERSION} \
   make \
   cmake \
-  ccache \
   ninja-build \
   file \
   libc-dev \
@@ -84,7 +80,6 @@ RUN apt-get update -y \
   && ln -s /usr/bin/clangd-${LLVM_VERSION} /usr/bin/clangd \
   && ln -s /usr/bin/llvm-ar-${LLVM_VERSION} /usr/bin/llvm-ar \
   && arch="$(dpkg --print-architecture)" \
-  && arch="$(dpkg --print-architecture)" \
   && case "${arch##*-}" in \
   amd64) variant="x64";; \
   arm64) variant="aarch64";; \
@@ -94,34 +89,36 @@ RUN apt-get update -y \
   && unzip bun-linux-${variant}.zip \
   && mv bun-linux-${variant}/bun /usr/bin/bun \
   && ln -s /usr/bin/bun /usr/bin/bunx \
-  && rm -rf bun-linux-${variant} bun-linux-${variant}.zip
+  && rm -rf bun-linux-${variant} bun-linux-${variant}.zip \
+  && wget https://github.com/mozilla/sccache/releases/download/v0.5.4/sccache-v0.5.4-${BUILD_MACHINE_ARCH}-unknown-linux-musl.tar.gz \
+  && tar xf sccache-v0.5.4-${BUILD_MACHINE_ARCH}-unknown-linux-musl.tar.gz \
+  && mv sccache-v0.5.4-${BUILD_MACHINE_ARCH}-unknown-linux-musl/sccache /usr/bin/sccache \
+  && rm -rf sccache-v0.5.4-${BUILD_MACHINE_ARCH}-unknown-linux-musl.tar.gz sccache-v0.5.4-${BUILD_MACHINE_ARCH}-unknown-linux-musl \
+  && mkdir -p ${BUN_DIR} ${BUN_DEPS_OUT_DIR} 
 
 ENV CXX=clang++-16
 ENV CC=clang-16
-
-ARG DEBIAN_FRONTEND
-ARG GITHUB_WORKSPACE
-ARG WEBKIT_DIR
-ARG BUN_RELEASE_DIR
-ARG BUN_DEPS_OUT_DIR
-ARG BUN_DIR
-ARG BUILDARCH
-ARG ZIG_PATH
-ARG WEBKIT_URL
-ARG ZIG_URL
-ARG ZIG_FOLDERNAME
-ARG ZIG_FILENAME
-
-ENV WEBKIT_OUT_DIR=${WEBKIT_DIR}
-ENV BUILDARCH=${BUILDARCH}
 ENV AR=/usr/bin/llvm-ar-16
-ENV ZIG "${ZIG_PATH}/zig"
-ENV PATH="$ZIG/bin:$PATH"
 ENV LD=lld-16
-
-RUN mkdir -p $BUN_DIR $BUN_DEPS_OUT_DIR 
+ENV BUILDARCH=${BUILDARCH}
 
 ENV CI 1
+
+FROM bun-base as bun-base-with-zig
+
+ARG ZIG_VERSION
+ARG BUILD_MACHINE_ARCH
+ARG ZIG_FOLDERNAME=zig-linux-${BUILD_MACHINE_ARCH}-${ZIG_VERSION}
+ARG ZIG_FILENAME=${ZIG_FOLDERNAME}.tar.xz
+ARG ZIG_URL="https://ziglang.org/builds/${ZIG_FILENAME}"
+
+WORKDIR $GITHUB_WORKSPACE
+
+ADD $ZIG_URL .
+RUN tar xf ${ZIG_FILENAME} \
+  && mv ${ZIG_FOLDERNAME}/lib /usr/lib/zig \
+  && mv ${ZIG_FOLDERNAME}/zig /usr/bin/zig \
+  && rm -rf ${ZIG_FILENAME} ${ZIG_FOLDERNAME}
 
 FROM bun-base as bun-base-with-zig-and-webkit
 
@@ -130,8 +127,6 @@ WORKDIR $GITHUB_WORKSPACE
 ADD $ZIG_URL .
 RUN tar xf ${ZIG_FILENAME} && \
   rm ${ZIG_FILENAME} && mv ${ZIG_FOLDERNAME} zig;
-
-
 
 WORKDIR $GITHUB_WORKSPACE
 
@@ -386,48 +381,39 @@ RUN cd $BUN_DIR && \
   make picohttp
 
 
-FROM bun-base-with-zig-and-webkit as identifier_cache
+FROM bun-base-with-zig as bun-identifier-cache
 
 ARG DEBIAN_FRONTEND
 ARG GITHUB_WORKSPACE
-ARG ZIG_PATH
-# Directory extracts to "bun-webkit"
-ARG WEBKIT_DIR
-ARG BUN_RELEASE_DIR
-ARG BUN_DEPS_OUT_DIR
-ARG BUN_DIR
 ARG CPU_TARGET
+ARG BUN_DIR
 ENV CPU_TARGET=${CPU_TARGET}
 
 WORKDIR $BUN_DIR
 
-COPY Makefile ${BUN_DIR}/Makefile
 COPY src/js_lexer/identifier_data.zig ${BUN_DIR}/src/js_lexer/identifier_data.zig
 COPY src/js_lexer/identifier_cache.zig ${BUN_DIR}/src/js_lexer/identifier_cache.zig
 
-RUN cd $BUN_DIR && \
-  make identifier-cache && rm -rf zig-cache Makefile
+RUN cd $BUN_DIR \
+  && zig run src/js_lexer/identifier_data.zig \
+  && rm -rf zig-cache
 
-FROM bun-base-with-zig-and-webkit as node_fallbacks
+FROM bun-base as node_fallbacks
 
 ARG DEBIAN_FRONTEND
 ARG GITHUB_WORKSPACE
 ARG ZIG_PATH
-# Directory extracts to "bun-webkit"
-ARG WEBKIT_DIR
-ARG BUN_RELEASE_DIR
-ARG BUN_DEPS_OUT_DIR
-ARG BUN_DIR
 ARG CPU_TARGET
 ENV CPU_TARGET=${CPU_TARGET}
 
 WORKDIR $BUN_DIR
 
-
-COPY Makefile ${BUN_DIR}/Makefile
 COPY src/node-fallbacks ${BUN_DIR}/src/node-fallbacks
-RUN cd $BUN_DIR && \
-  make node-fallbacks && rm -rf src/node-fallbacks/node_modules Makefile
+
+RUN cd $BUN_DIR/src/node-fallbacks \
+  && bun install --frozen-lockfile \
+  && bun run build \
+  && rm -rf src/node-fallbacks/node_modules
 
 FROM bun-base-with-zig-and-webkit as prepare_release
 
@@ -716,19 +702,21 @@ CMD make headers \
 
 # FROM release
 
-FROM bun-base as bun-base-with-zig
+FROM bun-base-with-zig as bun-codegen-for-zig
 
-ARG ZIG_VERSION
-ARG BUILD_MACHINE_ARCH
-ARG ZIG_FOLDERNAME=zig-linux-${BUILD_MACHINE_ARCH}-${ZIG_VERSION}
-ARG ZIG_FILENAME=${ZIG_FOLDERNAME}.tar.xz
-ARG ZIG_URL="https://ziglang.org/builds/${ZIG_FILENAME}"
+COPY package.json bun.lockb Makefile .gitmodules .prettierrc.cjs ${BUN_DIR}/
+COPY src/runtime ${BUN_DIR}/src/runtime
+COPY src/runtime.js src/runtime.footer*.js ${BUN_DIR}/src/
+COPY packages/bun-error ${BUN_DIR}/packages/bun-error
+COPY src/fallback.ts ${BUN_DIR}/src/fallback.ts
+COPY src/api ${BUN_DIR}/src/api
 
-WORKDIR $GITHUB_WORKSPACE
+WORKDIR $BUN_DIR
 
-ADD $ZIG_URL .
-RUN tar xf ${ZIG_FILENAME} && \
-  rm ${ZIG_FILENAME} && mv ${ZIG_FOLDERNAME} zig;
+# TODO: move away from Makefile entirely
+RUN bun install --frozen-lockfile \
+  && make runtime_js fallback_decoder bun_error \
+  && rm -rf src/runtime src/fallback.ts node_modules bun.lockb package.json Makefile
 
 FROM bun-base-with-zig as bun-compile-zig-obj
 
@@ -737,27 +725,32 @@ ARG TRIPLET
 ARG GIT_SHA
 ARG CPU_TARGET
 
-# TODO: why is prettierrc needed by src/api/schema.js
-COPY *.zig package.json bun.lockb CMakeLists.txt .prettierrc.cjs Makefile ./
-COPY completions ./completions
-COPY packages ./packages
-COPY src ./src
+COPY *.zig package.json CMakeLists.txt ${BUN_DIR}/
+COPY completions ${BUN_DIR}/completions
+COPY packages ${BUN_DIR}/packages
+COPY src ${BUN_DIR}/src
 
-RUN bun install --frozen-lockfile \
-  && make runtime_js fallback_decoder bun_error node-fallbacks \
-  && mkdir -p build \
+COPY --from=bun-identifier-cache ${BUN_DIR}/src/js_lexer/*.blob ${BUN_DIR}/src/js_lexer/
+COPY --from=node_fallbacks ${BUN_DIR}/src/node-fallbacks/out ${BUN_DIR}/src/node-fallbacks/out
+COPY --from=bun-codegen-for-zig ${BUN_DIR}/src/*.out.js ${BUN_DIR}/src/*.out.refresh.js ${BUN_DIR}/src/
+COPY --from=bun-codegen-for-zig ${BUN_DIR}/packages/bun-error/dist ${BUN_DIR}/packages/bun-error/dist
+
+WORKDIR $BUN_DIR
+
+RUN mkdir -p build \
+  && bun run $BUN_DIR/src/codegen/bundle-modules-fast.ts $BUN_DIR/build \
   && cd build \
-  && mkdir -p codegen tmp_modules tmp_functions js \
   && cmake .. \
   -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCPU_TARGET="${CPU_TARGET}" \
   -DZIG_TARGET="${TRIPLET}" \
-  -DZIG_COMPILER="${ZIG_PATH}/zig" \
   -DWEBKIT_DIR="omit" \
   -DNO_CONFIGURE_DEPENDS=1 \
+  -DNO_CODEGEN=1 \
   -DBUN_ZIG_OBJ="/tmp/bun-${TRIPLET}-${GIT_SHA}/bun-zig.o"  \
-  && ninja "/tmp/bun-${TRIPLET}-${GIT_SHA}/bun-zig.o"
+  && ONLY_ZIG=1 ninja "/tmp/bun-${TRIPLET}-${GIT_SHA}/bun-zig.o" \
+  && echo "-> /tmp/bun-${TRIPLET}-${GIT_SHA}/bun-zig.o"
 
 FROM scratch as build_release_obj
 

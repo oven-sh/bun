@@ -485,51 +485,55 @@ endforeach()
 WEBKIT_ADD_SOURCE_DEPENDENCIES(${BUN_SRC}/bun.js/bindings/ZigGlobalObject.cpp ${BUN_WORKDIR}/codegen/ZigGlobalObject.lut.h)
 
 # --- Identifier Cache ---
-set(BUN_IDENTIFIER_CACHE_OUT
-    "${BUN_SRC}/js_lexer/id_continue_bitset.blob" 
-    "${BUN_SRC}/js_lexer/id_continue_bitset.meta.blob" 
-    "${BUN_SRC}/js_lexer/id_start_bitset.blob"
-    "${BUN_SRC}/js_lexer/id_start_bitset.meta.blob")
-add_custom_command(
-    OUTPUT ${BUN_IDENTIFIER_CACHE_OUT}
-    MAIN_DEPENDENCY "${BUN_SRC}/js_lexer/identifier_data.zig"
-    DEPENDS "${BUN_SRC}/js_lexer/identifier_cache.zig"
-    COMMAND ${ZIG_COMPILER} run "${BUN_SRC}/js_lexer/identifier_data.zig"
-    VERBATIM
-    COMMENT "Building Identifier Cache"
-)
+if(NOT NO_CODEGEN)
+    set(BUN_IDENTIFIER_CACHE_OUT
+        "${BUN_SRC}/js_lexer/id_continue_bitset.blob" 
+        "${BUN_SRC}/js_lexer/id_continue_bitset.meta.blob" 
+        "${BUN_SRC}/js_lexer/id_start_bitset.blob"
+        "${BUN_SRC}/js_lexer/id_start_bitset.meta.blob")
+    add_custom_command(
+        OUTPUT ${BUN_IDENTIFIER_CACHE_OUT}
+        MAIN_DEPENDENCY "${BUN_SRC}/js_lexer/identifier_data.zig"
+        DEPENDS "${BUN_SRC}/js_lexer/identifier_cache.zig"
+        COMMAND ${ZIG_COMPILER} run "${BUN_SRC}/js_lexer/identifier_data.zig"
+        VERBATIM
+        COMMENT "Building Identifier Cache"
+    )
+endif()
 
 # --- Bundled TS/JS ---
 # Note: It's not worth doing this in parallel at the CMake/Ninja level, because this bundling
 # requires all the JS files to be known, but also Bun will use all cores during bundling anyways.
-file(GLOB BUN_TS_MODULES ${CONFIGURE_DEPENDS}
-    "${BUN_SRC}/js/node/*.ts"
-    "${BUN_SRC}/js/node/*.js"
-    "${BUN_SRC}/js/bun/*.js"
-    "${BUN_SRC}/js/bun/*.ts"
-    "${BUN_SRC}/js/thirdparty/*.js"
-    "${BUN_SRC}/js/thirdparty/*.ts"
-    "${BUN_SRC}/js/internal/*.js"
-    "${BUN_SRC}/js/internal/*.ts"
-)
-file(GLOB BUN_TS_FUNCTIONS ${CONFIGURE_DEPENDS} "${BUN_SRC}/js/builtins/*.ts")
+if(NOT NO_CODEGEN)
+    file(GLOB BUN_TS_MODULES ${CONFIGURE_DEPENDS}
+        "${BUN_SRC}/js/node/*.ts"
+        "${BUN_SRC}/js/node/*.js"
+        "${BUN_SRC}/js/bun/*.js"
+        "${BUN_SRC}/js/bun/*.ts"
+        "${BUN_SRC}/js/thirdparty/*.js"
+        "${BUN_SRC}/js/thirdparty/*.ts"
+        "${BUN_SRC}/js/internal/*.js"
+        "${BUN_SRC}/js/internal/*.ts"
+    )
+    file(GLOB BUN_TS_FUNCTIONS ${CONFIGURE_DEPENDS} "${BUN_SRC}/js/builtins/*.ts")
 
-file(GLOB CODEGEN_FILES ${CONFIGURE_DEPENDS} "${BUN_CODEGEN_SRC}/*.ts")
+    file(GLOB CODEGEN_FILES ${CONFIGURE_DEPENDS} "${BUN_CODEGEN_SRC}/*.ts")
 
-add_custom_command(
-    OUTPUT 
-           "${BUN_WORKDIR}/codegen/InternalModuleRegistryConstants.h"
-           "${BUN_WORKDIR}/codegen/InternalModuleRegistry+createInternalModuleById.h"
-           "${BUN_WORKDIR}/codegen/InternalModuleRegistry+enum.h"
-           "${BUN_WORKDIR}/codegen/InternalModuleRegistry+numberOfModules.h"
-           "${BUN_WORKDIR}/codegen/NativeModuleImpl.h"
-           "${BUN_WORKDIR}/codegen/ResolvedSourceTag.zig"
-           "${BUN_WORKDIR}/codegen/SyntheticModuleType.h"
-    COMMAND ${BUN_EXECUTABLE} "${BUN_SRC}/codegen/bundle-modules.ts" "--debug=${DEBUG}" "${BUN_WORKDIR}"
-    DEPENDS ${BUN_TS_MODULES} ${CODEGEN_FILES}
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMENT "Bundling JS modules"
-)
+    add_custom_command(
+        OUTPUT 
+            "${BUN_WORKDIR}/codegen/InternalModuleRegistryConstants.h"
+            "${BUN_WORKDIR}/codegen/InternalModuleRegistry+createInternalModuleById.h"
+            "${BUN_WORKDIR}/codegen/InternalModuleRegistry+enum.h"
+            "${BUN_WORKDIR}/codegen/InternalModuleRegistry+numberOfModules.h"
+            "${BUN_WORKDIR}/codegen/NativeModuleImpl.h"
+            "${BUN_WORKDIR}/codegen/ResolvedSourceTag.zig"
+            "${BUN_WORKDIR}/codegen/SyntheticModuleType.h"
+        COMMAND ${BUN_EXECUTABLE} "${BUN_SRC}/codegen/bundle-modules.ts" "--debug=${DEBUG}" "${BUN_WORKDIR}"
+        DEPENDS ${BUN_TS_MODULES} ${CODEGEN_FILES}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMENT "Bundling JS modules"
+    )
+endif()
 WEBKIT_ADD_SOURCE_DEPENDENCIES(
     "${BUN_SRC}/bun.js/bindings/InternalModuleRegistry.cpp"
     "${BUN_WORKDIR}/codegen/InternalModuleRegistryConstants.h"
@@ -546,39 +550,43 @@ add_custom_command(
 list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp")
 
 # --- Peechy API ---
-add_custom_command(
-    OUTPUT "${BUN_SRC}/api/schema.js"
-           "${BUN_SRC}/api/schema.d.ts"
-           "${BUN_SRC}/api/schema.zig"
-    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-    COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/node_modules/.bin/peechy"
-        "--schema" "${BUN_SRC}/api/schema.peechy"
-        "--esm" "${BUN_SRC}/api/schema.js"
-        "--ts" "${BUN_SRC}/api/schema.d.ts"
-        "--zig" "${BUN_SRC}/api/schema.zig"
-    COMMAND "${ZIG_COMPILER}" "fmt" "src/api/schema.zig"
-    COMMAND "${PRETTIER}" "--config=.prettierrc.cjs" "--write" "src/api/schema.js" "src/api/schema.d.ts"
-    DEPENDS "${BUN_SRC}/api/schema.peechy"
-    COMMENT "Building schema"
-)
-add_custom_command(
-    OUTPUT "${BUN_SRC}/analytics/analytics_schema.zig"
-    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-    COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/node_modules/.bin/peechy"
-        "--schema" "${BUN_SRC}/analytics/schema.peechy"
-        "--zig" "${BUN_SRC}/analytics/analytics_schema.zig"
-    COMMAND "${ZIG_COMPILER}" "fmt" "${BUN_SRC}/analytics/analytics_schema.zig"
-    DEPENDS "${BUN_SRC}/api/schema.peechy"
-    COMMENT "Building analytics_schema.zig"
-)
+if(NOT NO_CODEGEN)
+    add_custom_command(
+        OUTPUT "${BUN_SRC}/api/schema.js"
+            "${BUN_SRC}/api/schema.d.ts"
+            "${BUN_SRC}/api/schema.zig"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/node_modules/.bin/peechy"
+            "--schema" "${BUN_SRC}/api/schema.peechy"
+            "--esm" "${BUN_SRC}/api/schema.js"
+            "--ts" "${BUN_SRC}/api/schema.d.ts"
+            "--zig" "${BUN_SRC}/api/schema.zig"
+        COMMAND "${ZIG_COMPILER}" "fmt" "src/api/schema.zig"
+        COMMAND "${PRETTIER}" "--config=.prettierrc.cjs" "--write" "src/api/schema.js" "src/api/schema.d.ts"
+        DEPENDS "${BUN_SRC}/api/schema.peechy"
+        COMMENT "Building schema"
+    )
+    add_custom_command(
+        OUTPUT "${BUN_SRC}/analytics/analytics_schema.zig"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/node_modules/.bin/peechy"
+            "--schema" "${BUN_SRC}/analytics/schema.peechy"
+            "--zig" "${BUN_SRC}/analytics/analytics_schema.zig"
+        COMMAND "${ZIG_COMPILER}" "fmt" "${BUN_SRC}/analytics/analytics_schema.zig"
+        DEPENDS "${BUN_SRC}/api/schema.peechy"
+        COMMENT "Building analytics_schema.zig"
+    )
+endif()
 
 # --- Runtime.js ---
-add_custom_command(
-    OUTPUT "src/fallback.out.js"
-    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-    COMMAND "${ESBUILD}" "--target=esnext" "--bundle" "src/fallback.ts" "--format=iife" "--platform=browser" "--minify" "--outfile=src/fallback.out.js"
-    DEPENDS "src/fallback.ts"
-)
+if(NOT NO_CODEGEN)
+    add_custom_command(
+        OUTPUT "src/fallback.out.js"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        COMMAND "${ESBUILD}" "--target=esnext" "--bundle" "src/fallback.ts" "--format=iife" "--platform=browser" "--minify" "--outfile=src/fallback.out.js"
+        DEPENDS "src/fallback.ts"
+    )
+endif()
 
 # --- Zig Object ---
 file(GLOB ZIG_FILES
@@ -1040,4 +1048,8 @@ else()
 
     target_link_libraries(${bun} PUBLIC icuuc icudt icutu icuio icuin icutest)
     target_link_libraries(${bun} PUBLIC winmm ws2_32 bcrypt ntdll kernel32 shell32 shlwapi advapi32 vcruntime ucrt legacy_stdio_definitions)
+endif()
+
+if(NO_CODEGEN)
+    message(STATUS "NO_CODEGEN is ON, a handful of build steps will not run.")
 endif()

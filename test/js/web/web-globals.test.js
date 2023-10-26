@@ -30,7 +30,7 @@ const globalSetters = [
 
 for (const [Constructor, name, eventName, prop] of globalSetters) {
   test(`self.${name}`, () => {
-    var called = false;
+    let called = false;
     console.log("name", name);
 
     const callback = ({ [prop]: data }) => {
@@ -53,7 +53,7 @@ for (const [Constructor, name, eventName, prop] of globalSetters) {
   });
 
   test(`self.addEventListener(${name})`, () => {
-    var called = false;
+    let called = false;
 
     const callback = ({ [prop]: data }) => {
       expect(data).toBe("hello");
@@ -75,10 +75,10 @@ for (const [Constructor, name, eventName, prop] of globalSetters) {
 }
 
 test("CloseEvent", () => {
-  var event = new CloseEvent("close", { reason: "world" });
+  const event = new CloseEvent("close", { reason: "world" });
   expect(event.type).toBe("close");
   const target = new EventTarget();
-  var called = false;
+  let called = false;
   target.addEventListener("close", ({ type, reason }) => {
     expect(type).toBe("close");
     expect(reason).toBe("world");
@@ -89,10 +89,10 @@ test("CloseEvent", () => {
 });
 
 test("MessageEvent", () => {
-  var event = new MessageEvent("message", { data: "world" });
+  const event = new MessageEvent("message", { data: "world" });
   expect(event.type).toBe("message");
   const target = new EventTarget();
-  var called = false;
+  let called = false;
   target.addEventListener("message", ({ type, data }) => {
     expect(type).toBe("message");
     expect(data).toBe("world");
@@ -103,11 +103,11 @@ test("MessageEvent", () => {
 });
 
 it("crypto.getRandomValues", () => {
-  var foo = new Uint8Array(32);
+  const foo = new Uint8Array(32);
 
   // run it once buffered and unbuffered
   {
-    var array = crypto.getRandomValues(foo);
+    const array = crypto.getRandomValues(foo);
     expect(array).toBe(foo);
     expect(array.reduce((sum, a) => (sum += a === 0), 0) != foo.length).toBe(true);
   }
@@ -115,8 +115,8 @@ it("crypto.getRandomValues", () => {
   // disable it for this block because it tends to get stuck here running the GC forever
   withoutAggressiveGC(() => {
     // run it again to check that the fast path works
-    for (var i = 0; i < 9000; i++) {
-      var array = crypto.getRandomValues(foo);
+    for (let i = 0; i < 9000; i++) {
+      const array = crypto.getRandomValues(foo);
       expect(array).toBe(foo);
     }
   });
@@ -126,7 +126,7 @@ it("crypto.getRandomValues", () => {
 
   {
     // any additional input into getRandomValues() makes it unbuffered
-    var array = crypto.getRandomValues(foo, "unbuffered");
+    const array = crypto.getRandomValues(foo, "unbuffered");
     expect(array).toBe(foo);
     expect(array.reduce((sum, a) => (sum += a === 0), 0) != foo.length).toBe(true);
   }
@@ -135,7 +135,7 @@ it("crypto.getRandomValues", () => {
 // not actually a web global
 it("crypto.timingSafeEqual", () => {
   const crypto = import.meta.require("node:crypto");
-  var uuidStr = crypto.randomUUID();
+  const uuidStr = crypto.randomUUID();
   expect(uuidStr.length).toBe(36);
   expect(uuidStr[8]).toBe("-");
   expect(uuidStr[13]).toBe("-");
@@ -164,14 +164,14 @@ it("crypto.timingSafeEqual", () => {
     expect(e.name).toBe("TypeError");
   }
 
-  var shorter = uuid.slice(0, 1);
+  const shorter = uuid.slice(0, 1);
   for (let i = 0; i < 9000; i++) {
     if (!crypto.timingSafeEqual(shorter, shorter)) throw new Error("fail");
   }
 });
 
 it("crypto.randomUUID", () => {
-  var uuid = crypto.randomUUID();
+  const uuid = crypto.randomUUID();
   expect(uuid.length).toBe(36);
   expect(uuid[8]).toBe("-");
   expect(uuid[13]).toBe("-");
@@ -181,7 +181,7 @@ it("crypto.randomUUID", () => {
   withoutAggressiveGC(() => {
     // check that the fast path works
     for (let i = 0; i < 9000; i++) {
-      var uuid2 = crypto.randomUUID();
+      const uuid2 = crypto.randomUUID();
       expect(uuid2.length).toBe(36);
       expect(uuid2[8]).toBe("-");
       expect(uuid2[13]).toBe("-");
@@ -192,7 +192,7 @@ it("crypto.randomUUID", () => {
 });
 
 it("crypto.randomUUID version, issues#3575", () => {
-  var uuid = crypto.randomUUID();
+  const uuid = crypto.randomUUID();
 
   function validate(uuid) {
     const regex =

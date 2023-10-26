@@ -44,8 +44,8 @@ jobs:
             tag: bun-obj-darwin-aarch64
     steps:
       - uses: actions/checkout@v4
-      - name: Checkout submodules
-        run: git submodule update --init --recursive --depth=1 --progress --force
+      # - name: Checkout submodules
+      #   run: git submodule update --init --recursive --depth=1 --progress --force
 
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v2
@@ -123,8 +123,8 @@ jobs:
             git submodule | grep -v WebKit
             llvm-config --version
             rustc --version
+            cat $(echo scripts/build*.sh scripts/all-dependencies.sh | tr " " "\n" | sort)
           }
-          print_data
           echo "sha=$(print_data | sha1sum | cut -c 1-10)" >> $GITHUB_OUTPUT
         id: submodule-versions
 
@@ -361,7 +361,7 @@ jobs:
     name: Tests ${{matrix.tag}}
     runs-on: ${{ matrix.runner }}
     needs: [macOS-link]
-    if: github.event_name == 'pull_request' && github.repository_owner == 'oven-sh'
+    # if: github.event_name == 'pull_request' && github.repository_owner == 'oven-sh'
     permissions:
       pull-requests: write
     timeout-minutes: 30

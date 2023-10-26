@@ -4,6 +4,10 @@ source $(dirname -- "${BASH_SOURCE[0]}")/env.sh
 
 mkdir -p $BUN_DEPS_OUT_DIR
 cd $BUN_DEPS_DIR/zlib
-CFLAGS="-O3" ./configure --static
+export CFLAGS="-O3"
+if [[ $BUN_TARGET_PLATFORM == "darwin" ]]; then
+  export CFLAGS="$CFLAGS -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}"
+fi
+CFLAGS="${CFLAGS}" ./configure --static
 make -j${CPUS}
 cp ./libz.a $BUN_DEPS_OUT_DIR/libz.a

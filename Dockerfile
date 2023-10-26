@@ -504,6 +504,7 @@ RUN cmake .. \
   -DBUN_ZIG_OBJ="${BUN_DIR}/build/bun-zig.o" \
   -DBUN_CPP_ARCHIVE="${BUN_DIR}/build/bun-cpp-objects.a" \
   -DWEBKIT_DIR="${BUN_DIR}/bun-webkit" \
+  -BUN_DEPS_OUT_DIR="${BUN_DEPS_OUT_DIR}" \
   && ninja \
   && mkdir -p /build/out \
   && mv bun bun-profile /build/out \

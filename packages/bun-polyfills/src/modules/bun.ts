@@ -18,6 +18,7 @@ import { ArrayBufferSink as ArrayBufferSinkPolyfill } from './bun/arraybuffersin
 import { FileBlob, NodeJSStreamFileBlob } from './bun/fileblob.js';
 import { listen as listenPolyfill } from './bun/tcp_listen.js';
 import { connect as connectPolyfill } from './bun/tcp_connect.js';
+import { serve as servePolyfill } from './bun/serve.js';
 import TranspilerImpl from './bun/transpiler.js';
 import { mmap as mmapper } from './bun/mmap.js';
 import { SyncWorker } from '../utils/sync.mjs';
@@ -43,7 +44,7 @@ export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satis
 
 //? These are automatically updated on build by tools/updateversions.ts, do not edit manually.
 export const version = '1.0.4' satisfies typeof Bun.version;
-export const revision = '39a8aa82078825bf02f3fbd197ab20c49e836a75' satisfies typeof Bun.revision;
+export const revision = '195cee203a0679622673e84e5ca80074cb4a589e' satisfies typeof Bun.revision;
 
 export const gc = (globalThis.gc ? (() => (globalThis.gc!(), process.memoryUsage().heapUsed)) : (() => {
     const err = new Error('[bun-polyfills] Garbage collection polyfills are only available when Node.js is ran with the --expose-gc flag.');
@@ -159,7 +160,7 @@ export const openInEditor = ((file: string, opts?: EditorOptions) => {
     else openEditor(target, { editor: process.env.TERM_PROGRAM ?? process.env.VISUAL ?? process.env.EDITOR ?? 'vscode' });
 }) satisfies typeof Bun.openInEditor;
 
-export const serve = (() => { throw new NotImplementedError('Bun.serve', serve); }) satisfies typeof Bun.serve;
+export const serve = servePolyfill satisfies typeof Bun.serve;
 
 export const file = ((path: string | URL | Uint8Array | ArrayBufferLike | number, options?: BlobPropertyBag): BunFileBlob => {
     if (typeof path === 'object') throw new NotImplementedError('Bun.file with typed array', file);

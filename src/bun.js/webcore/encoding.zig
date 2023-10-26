@@ -955,7 +955,7 @@ pub const Encoder = struct {
             },
         }
     }
-  
+
     pub fn writeU8(input: [*]const u8, len: usize, to_ptr: [*]u8, to_len: usize, comptime encoding: JSC.Node.Encoding) !usize {
         if (len == 0 or to_len == 0)
             return 0;

@@ -220,7 +220,9 @@ function(validate_zig validator_result_var item)
         set(${validator_result_var} FALSE PARENT_SCOPE)
     endif()
 endfunction()
-find_program(ZIG_COMPILER zig REQUIRED DOC "Path to the Zig compiler" VALIDATOR validate_zig)
+set(REQUIRED_IF_NOT_BUN_CPP_ONLY "")
+if(NOT BUN_CPP_ONLY) set(REQUIRED_IF_NOT_BUN_CPP_ONLY "REQUIRED")
+find_program(ZIG_COMPILER zig ${REQUIRED_IF_NOT_BUN_CPP_ONLY} DOC "Path to the Zig compiler" VALIDATOR validate_zig)
 message(STATUS "Found Zig Compiler: ${ZIG_COMPILER}")
 
 # Bun

@@ -9,7 +9,7 @@ test("spawn can read from stdout multiple chunks", async () => {
   for (let i = 0; i < 100; i++) {
     await (async function () {
       const proc = spawn({
-        cmd: ["bun", import.meta.dir + "/spawn-streaming-stdout-repro.js"],
+        cmd: [bunExe(), import.meta.dir + "/spawn-streaming-stdout-repro.js"],
         stdin: "ignore",
         stdout: "pipe",
         stderr: "ignore",

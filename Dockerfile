@@ -462,6 +462,7 @@ WORKDIR $BUN_DIR
 
 RUN mkdir -p build bun-webkit
 
+COPY CMakeLists.txt ${BUN_DIR}/CMakeLists.txt
 COPY --from=zlib ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=base64 ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=libarchive ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/

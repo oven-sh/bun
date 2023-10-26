@@ -6,9 +6,6 @@ concurrency:
 
 env:
   LLVM_VERSION: 16
-# REGISTRY: ghcr.io
-# IMAGE_NAME: ${{ github.repository }}
-# TEST_TAG: bun-test'
 
 on:
   push:
@@ -82,7 +79,8 @@ jobs:
           target: build_release_obj
           outputs: type=local,dest=${{runner.temp}}/release
 
-      - uses: actions/upload-artifact@v3
+      - name: Upload Zig Object
+        uses: actions/upload-artifact@v3
         with:
           name: ${{ matrix.tag }}
           path: ${{runner.temp}}/release/bun-zig.o
@@ -112,8 +110,9 @@ jobs:
           HOMEBREW_NO_AUTO_UPDATE: 1
           HOMEBREW_NO_INSTALL_CLEANUP: 1
         run: |
-          brew install ccache rust llvm@$LLVM_VERSION pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config --force
+          brew install sccache ccache rust llvm@$LLVM_VERSION pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config --force
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
+          echo "$(brew --prefix sccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
           brew link --overwrite llvm@$LLVM_VERSION
@@ -179,7 +178,8 @@ jobs:
           HOMEBREW_NO_AUTO_UPDATE: 1
           HOMEBREW_NO_INSTALL_CLEANUP: 1
         run: |
-          brew install ccache rust llvm@$LLVM_VERSION pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config --force
+          brew install sccache ccache rust llvm@$LLVM_VERSION pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config --force
+          echo "$(brew --prefix sccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH

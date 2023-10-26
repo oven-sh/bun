@@ -16,6 +16,13 @@ ARG NODE_VERSION="20"
 ARG LLVM_VERSION="16"
 ARG ZIG_VERSION="0.12.0-dev.899+027aabf49"
 
+ARG SCCACHE_BUCKET
+ARG SCCACHE_REGION
+ARG SCCACHE_S3_USE_SSL
+ARG SCCACHE_ENDPOINT
+ARG AWS_ACCESS_KEY_ID
+ARG AWS_SECRET_ACCESS_KEY
+
 FROM bitnami/minideb:bullseye as bun-base
 
 ARG DEBIAN_FRONTEND
@@ -25,6 +32,22 @@ ARG LLVM_VERSION
 ARG BUILD_MACHINE_ARCH
 ARG BUN_DIR
 ARG BUN_DEPS_OUT_DIR
+
+ENV CI 1
+ENV BUILDARCH=${BUILDARCH}
+ENV BUN_DEPS_OUT_DIR=${BUN_DEPS_OUT_DIR}
+
+ENV CXX=clang++-16
+ENV CC=clang-16
+ENV AR=/usr/bin/llvm-ar-16
+ENV LD=lld-16
+
+ENV SCCACHE_BUCKET=${SCCACHE_BUCKET}
+ENV SCCACHE_REGION=${SCCACHE_REGION}
+ENV SCCACHE_S3_USE_SSL=${SCCACHE_S3_USE_SSL}
+ENV SCCACHE_ENDPOINT=${SCCACHE_ENDPOINT}
+ENV AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+ENV AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
 
 RUN apt-get update -y \
   && install_packages \
@@ -86,20 +109,13 @@ RUN apt-get update -y \
   && mv bun-linux-${variant}/bun /usr/bin/bun \
   && ln -s /usr/bin/bun /usr/bin/bunx \
   && rm -rf bun-linux-${variant} bun-linux-${variant}.zip \
-  && wget https://github.com/mozilla/sccache/releases/download/v0.5.4/sccache-v0.5.4-${BUILD_MACHINE_ARCH}-unknown-linux-musl.tar.gz \
-  && tar xf sccache-v0.5.4-${BUILD_MACHINE_ARCH}-unknown-linux-musl.tar.gz \
-  && mv sccache-v0.5.4-${BUILD_MACHINE_ARCH}-unknown-linux-musl/sccache /usr/bin/sccache \
-  && rm -rf sccache-v0.5.4-${BUILD_MACHINE_ARCH}-unknown-linux-musl.tar.gz sccache-v0.5.4-${BUILD_MACHINE_ARCH}-unknown-linux-musl \
-  && mkdir -p ${BUN_DIR} ${BUN_DEPS_OUT_DIR} 
-
-ENV CXX=clang++-16
-ENV CC=clang-16
-ENV AR=/usr/bin/llvm-ar-16
-ENV LD=lld-16
-ENV BUILDARCH=${BUILDARCH}
-ENV BUN_DEPS_OUT_DIR=${BUN_DEPS_OUT_DIR}
-
-ENV CI 1
+  && mkdir -p ${BUN_DIR} ${BUN_DEPS_OUT_DIR}
+# && if [ -n "${SCCACHE_BUCKET}" ]; then \
+#   echo "Setting up sccache" \
+#   && wget https://github.com/mozilla/sccache/releases/download/v0.5.4/sccache-v0.5.4-${BUILD_MACHINE_ARCH}-unknown-linux-musl.tar.gz \
+#   && tar xf sccache-v0.5.4-${BUILD_MACHINE_ARCH}-unknown-linux-musl.tar.gz \
+#   && mv sccache-v0.5.4-${BUILD_MACHINE_ARCH}-unknown-linux-musl/sccache /usr/bin/sccache \
+#   && rm -rf sccache-v0.5.4-${BUILD_MACHINE_ARCH}-unknown-linux-musl.tar.gz sccache-v0.5.4-${BUILD_MACHINE_ARCH}-unknown-linux-musl \
 
 FROM bun-base as bun-base-with-zig
 
@@ -461,6 +477,9 @@ ENV CPU_TARGET=${CPU_TARGET}
 WORKDIR $BUN_DIR
 
 RUN mkdir -p build bun-webkit
+
+# lol
+COPY src/bun.js/bindings/sqlite/sqlite3.c ${BUN_DIR}/src/bun.js/bindings/sqlite/sqlite3.c
 
 COPY CMakeLists.txt ${BUN_DIR}/CMakeLists.txt
 COPY --from=zlib ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/

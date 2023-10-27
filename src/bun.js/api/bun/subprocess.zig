@@ -32,12 +32,7 @@ pub const Subprocess = struct {
     stdin: Writable,
     stdout: Readable,
     stderr: Readable,
-<<<<<<< HEAD
-    killed: bool = false,
-    poll_ref: ?*Async.FilePoll = null,
-=======
     poll: Poll = Poll{ .poll_ref = null },
->>>>>>> origin
 
     exit_promise: JSC.Strong = .{},
     on_exit_callback: JSC.Strong = .{},
@@ -80,7 +75,7 @@ pub const Subprocess = struct {
 
     pub const WaitThreadPoll = struct {
         ref_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
-        poll_ref: JSC.PollRef = .{},
+        poll_ref: Async.KeepAlive = .{},
     };
 
     pub const IPCMode = enum {

@@ -11482,13 +11482,13 @@ JSC_DECLARE_CUSTOM_GETTER(jsGlobConstructor);
 
 extern "C" void GlobClass__finalize(void*);
 
-extern "C" EncodedJSValue GlobPrototype__testFunc(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(GlobPrototype__testFuncCallback);
+extern "C" EncodedJSValue GlobPrototype__match(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(GlobPrototype__matchCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSGlobPrototype, JSGlobPrototype::Base);
 
 static const HashTableValue JSGlobPrototypeTableValues[] = {
-    { "testFunc"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, GlobPrototype__testFuncCallback, 0 } }
+    { "match"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, GlobPrototype__matchCallback, 1 } }
 };
 
 const ClassInfo JSGlobPrototype::s_info = { "Glob"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSGlobPrototype) };
@@ -11505,7 +11505,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGlobConstructor, (JSGlobalObject * lexicalGlobalObjec
     return JSValue::encode(globalObject->JSGlobConstructor());
 }
 
-JSC_DEFINE_HOST_FUNCTION(GlobPrototype__testFuncCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(GlobPrototype__matchCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
 
@@ -11530,7 +11530,7 @@ JSC_DEFINE_HOST_FUNCTION(GlobPrototype__testFuncCallback, (JSGlobalObject * lexi
     }
 #endif
 
-    return GlobPrototype__testFunc(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+    return GlobPrototype__match(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 void JSGlobPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)

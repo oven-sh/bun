@@ -602,7 +602,6 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     generateHeapSnapshot                           BunObject_callback_generateHeapSnapshot                             DontDelete|Function 1
     getImportedStyles                              BunObject_callback_getImportedStyles                                DontEnum|DontDelete|Function 1
     gunzipSync                                     BunObject_callback_gunzipSync                                       DontDelete|Function 1
-    globMatch                                      BunObject_callback_globMatch                                        DontDelete|Function 1
     gzipSync                                       BunObject_callback_gzipSync                                         DontDelete|Function 1
     hash                                           BunObject_getter_wrap_hash                                          DontDelete|PropertyCallback
     indexOfLine                                    BunObject_callback_indexOfLine                                      DontDelete|Function 1

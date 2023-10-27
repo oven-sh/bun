@@ -3201,12 +3201,12 @@ pub const JSGlob = struct {
             @compileLog("Glob.finalize is not a finalizer");
         }
 
-        if (@TypeOf(Glob.testFunc) != CallbackType)
-            @compileLog("Expected Glob.testFunc to be a callback but received " ++ @typeName(@TypeOf(Glob.testFunc)));
+        if (@TypeOf(Glob.match) != CallbackType)
+            @compileLog("Expected Glob.match to be a callback but received " ++ @typeName(@TypeOf(Glob.match)));
         if (!JSC.is_bindgen) {
             @export(Glob.constructor, .{ .name = "GlobClass__construct" });
             @export(Glob.finalize, .{ .name = "GlobClass__finalize" });
-            @export(Glob.testFunc, .{ .name = "GlobPrototype__testFunc" });
+            @export(Glob.match, .{ .name = "GlobPrototype__match" });
         }
     }
 };

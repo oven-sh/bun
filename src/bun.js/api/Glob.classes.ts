@@ -10,9 +10,9 @@ export default [
     klass: {},
     JSType: "0b11101110",
     proto: {
-      testFunc: {
-        fn: "testFunc",
-        length: 0,
+      match: {
+        fn: "match",
+        length: 1,
       },
     },
   }),

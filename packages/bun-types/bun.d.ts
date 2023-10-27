@@ -70,19 +70,11 @@ declare module "bun" {
     options?: { PATH?: string; cwd?: string },
   ): string | null;
 
-  /**
-   * Match a string with the given glob pattern. Only supports a subset of traditional shell globbing syntax:
-   * - single wildcards (`src/*.ts`)
-   * - double wildcards (`**.ts`)
-   * - brace expansions (`src/*.{ts,tsx}`), but *only at the end of the pattern to match file extensions*.
-   *
-   * Use a more fully-featured open source glob implementation if you need more advanced glob features.
-   *
-   * @param {string} pattern The glob pattern to use for matching
-   * @param {string} str     The string to match against `pattern`
-   * @returns {boolean}      Whether or not `str` matched against `pattern`
-   **/
-  export function globMatch(pattern: string, str: string): boolean;
+  export class Glob {
+    constructor(pattern: string);
+
+    match(str: string): boolean;
+  }
 
   interface TOML {
     /**

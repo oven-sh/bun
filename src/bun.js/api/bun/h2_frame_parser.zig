@@ -170,7 +170,7 @@ const FullSettingsPayload = packed struct(u288) {
     _enablePushType: u16 = @intFromEnum(SettingsType.SETTINGS_ENABLE_PUSH),
     enablePush: u32 = 1,
     _maxConcurrentStreamsType: u16 = @intFromEnum(SettingsType.SETTINGS_MAX_CONCURRENT_STREAMS),
-    maxConcurrentStreams: u32 = 100,
+    maxConcurrentStreams: u32 = 2147483647,
     _initialWindowSizeType: u16 = @intFromEnum(SettingsType.SETTINGS_INITIAL_WINDOW_SIZE),
     initialWindowSize: u32 = 65535,
     _maxFrameSizeType: u16 = @intFromEnum(SettingsType.SETTINGS_MAX_FRAME_SIZE),
@@ -182,7 +182,7 @@ const FullSettingsPayload = packed struct(u288) {
     pub fn toJS(this: *FullSettingsPayload, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         var result = JSValue.createEmptyObject(globalObject, 6);
         result.put(globalObject, JSC.ZigString.static("headerTableSize"), JSC.JSValue.jsNumber(this.headerTableSize));
-        result.put(globalObject, JSC.ZigString.static("enablePush"), JSC.JSValue.jsNumber(this.enablePush));
+        result.put(globalObject, JSC.ZigString.static("enablePush"), JSC.JSValue.jsBoolean(this.enablePush == 1));
         result.put(globalObject, JSC.ZigString.static("maxConcurrentStreams"), JSC.JSValue.jsNumber(this.maxConcurrentStreams));
         result.put(globalObject, JSC.ZigString.static("initialWindowSize"), JSC.JSValue.jsNumber(this.initialWindowSize));
         result.put(globalObject, JSC.ZigString.static("maxFrameSize"), JSC.JSValue.jsNumber(this.maxFrameSize));

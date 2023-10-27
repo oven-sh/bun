@@ -16389,7 +16389,7 @@ fn NewParser_(
                                         p.log.addError(p.source, expr.loc, "macro threw exception") catch unreachable;
                                     }
                                 } else {
-                                    p.log.addErrorFmt(p.source, expr.loc, p.allocator, "{s} error in macro", .{@errorName(err)}) catch unreachable;
+                                    p.log.addErrorFmt(p.source, expr.loc, p.allocator, "\"{s}\" error in macro", .{@errorName(err)}) catch unreachable;
                                 }
                                 return expr;
                             };

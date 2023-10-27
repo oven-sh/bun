@@ -211,7 +211,7 @@ const FullSettingsPayload = packed struct(u288) {
     }
 };
 
-pub export fn BUN__HTTP2__getUnpackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.callframe) callconv(.C) JSC.JSValue {
+pub export fn BUN__HTTP2__getUnpackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
     JSC.markBinding(@src());
     var settings: FullSettingsPayload = .{};
 
@@ -225,7 +225,7 @@ pub export fn BUN__HTTP2__getUnpackedSettings(globalObject: *JSC.JSGlobalObject,
     if (data_arg.asArrayBuffer(globalObject)) |array_buffer| {
         var payload = array_buffer.slice();
         const settingByteSize = SettingsPayloadUnit.byteSize;
-        if (settingByteSize < payload.len or payload.length % settingByteSize != 0) return JSC.JSValue.jsUndefined();
+        if (payload.len < settingByteSize or payload.len % settingByteSize != 0) return JSC.JSValue.jsUndefined();
 
         var i: usize = 0;
         while (i < payload.len) {
@@ -252,7 +252,7 @@ pub export fn BUN__HTTP2_getPackedSettings(globalObject: *JSC.JSGlobalObject, ca
 
         if (!options.isObject()) {
             globalObject.throw("Expected settings to be a object", .{});
-            return false;
+            return .zero;
         }
 
         if (options.get(globalObject, "headerTableSize")) |headerTableSize| {
@@ -260,12 +260,12 @@ pub export fn BUN__HTTP2_getPackedSettings(globalObject: *JSC.JSGlobalObject, ca
                 const headerTableSizeValue = headerTableSize.toInt32();
                 if (headerTableSizeValue > MAX_HEADER_TABLE_SIZE or headerTableSizeValue < 0) {
                     globalObject.throw("Expected headerTableSize to be a number between 0 and 2^32-1", .{});
-                    return false;
+                    return .zero;
                 }
                 settings.headerTableSize = @intCast(headerTableSizeValue);
             } else if (!headerTableSize.isEmptyOrUndefinedOrNull()) {
                 globalObject.throw("Expected headerTableSize to be a number", .{});
-                return false;
+                return .zero;
             }
         }
 
@@ -274,7 +274,7 @@ pub export fn BUN__HTTP2_getPackedSettings(globalObject: *JSC.JSGlobalObject, ca
                 settings.enablePush = if (enablePush.asBoolean()) 1 else 0;
             } else if (!enablePush.isEmptyOrUndefinedOrNull()) {
                 globalObject.throw("Expected enablePush to be a boolean", .{});
-                return false;
+                return .zero;
             }
         }
 
@@ -283,12 +283,12 @@ pub export fn BUN__HTTP2_getPackedSettings(globalObject: *JSC.JSGlobalObject, ca
                 const initialWindowSizeValue = initialWindowSize.toInt32();
                 if (initialWindowSizeValue > MAX_HEADER_TABLE_SIZE or initialWindowSizeValue < 0) {
                     globalObject.throw("Expected initialWindowSize to be a number between 0 and 2^32-1", .{});
-                    return false;
+                    return .zero;
                 }
                 settings.initialWindowSize = @intCast(initialWindowSizeValue);
             } else if (!initialWindowSize.isEmptyOrUndefinedOrNull()) {
                 globalObject.throw("Expected initialWindowSize to be a number", .{});
-                return false;
+                return .zero;
             }
         }
 
@@ -297,12 +297,12 @@ pub export fn BUN__HTTP2_getPackedSettings(globalObject: *JSC.JSGlobalObject, ca
                 const maxFrameSizeValue = maxFrameSize.toInt32();
                 if (maxFrameSizeValue > MAX_FRAME_SIZE or maxFrameSizeValue < 16384) {
                     globalObject.throw("Expected maxFrameSize to be a number between 16,384 and 2^24-1", .{});
-                    return false;
+                    return .zero;
                 }
                 settings.maxFrameSize = @intCast(maxFrameSizeValue);
             } else if (!maxFrameSize.isEmptyOrUndefinedOrNull()) {
                 globalObject.throw("Expected maxFrameSize to be a number", .{});
-                return false;
+                return .zero;
             }
         }
 
@@ -311,12 +311,12 @@ pub export fn BUN__HTTP2_getPackedSettings(globalObject: *JSC.JSGlobalObject, ca
                 const maxConcurrentStreamsValue = maxConcurrentStreams.toInt32();
                 if (maxConcurrentStreamsValue > MAX_HEADER_TABLE_SIZE or maxConcurrentStreamsValue < 0) {
                     globalObject.throw("Expected maxConcurrentStreams to be a number between 0 and 2^32-1", .{});
-                    return false;
+                    return .zero;
                 }
                 settings.maxConcurrentStreams = @intCast(maxConcurrentStreamsValue);
             } else if (!maxConcurrentStreams.isEmptyOrUndefinedOrNull()) {
                 globalObject.throw("Expected maxConcurrentStreams to be a number", .{});
-                return false;
+                return .zero;
             }
         }
 
@@ -325,12 +325,12 @@ pub export fn BUN__HTTP2_getPackedSettings(globalObject: *JSC.JSGlobalObject, ca
                 const maxHeaderListSizeValue = maxHeaderListSize.toInt32();
                 if (maxHeaderListSizeValue > MAX_HEADER_TABLE_SIZE or maxHeaderListSizeValue < 0) {
                     globalObject.throw("Expected maxHeaderListSize to be a number between 0 and 2^32-1", .{});
-                    return false;
+                    return .zero;
                 }
                 settings.maxHeaderListSize = @intCast(maxHeaderListSizeValue);
             } else if (!maxHeaderListSize.isEmptyOrUndefinedOrNull()) {
                 globalObject.throw("Expected maxHeaderListSize to be a number", .{});
-                return false;
+                return .zero;
             }
         }
 
@@ -339,12 +339,12 @@ pub export fn BUN__HTTP2_getPackedSettings(globalObject: *JSC.JSGlobalObject, ca
                 const maxHeaderSizeValue = maxHeaderSize.toInt32();
                 if (maxHeaderSizeValue > MAX_HEADER_TABLE_SIZE or maxHeaderSizeValue < 0) {
                     globalObject.throw("Expected maxHeaderSize to be a number between 0 and 2^32-1", .{});
-                    return false;
+                    return .zero;
                 }
                 settings.maxHeaderListSize = @intCast(maxHeaderSizeValue);
             } else if (!maxHeaderSize.isEmptyOrUndefinedOrNull()) {
                 globalObject.throw("Expected maxHeaderSize to be a number", .{});
-                return false;
+                return .zero;
             }
         }
     }
@@ -359,6 +359,7 @@ pub export fn BUN__HTTP2_getPackedSettings(globalObject: *JSC.JSGlobalObject, ca
 
 comptime {
     _ = BUN__HTTP2__getUnpackedSettings;
+    _ = BUN__HTTP2_getPackedSettings;
 }
 
 const Handlers = struct {

@@ -11,6 +11,12 @@ const lshpack = @import("./lshpack.translated.zig");
 const JSValue = JSC.JSValue;
 
 const BinaryType = JSC.BinaryType;
+const MAX_WINDOW_SIZE = 2147483647;
+const MAX_HEADER_TABLE_SIZE = 4294967295;
+const MAX_STREAM_ID = 2147483647;
+const WINDOW_INCREMENT_SIZE = 65536;
+const MAX_HPACK_HEADER_SIZE = 65536;
+const MAX_FRAME_SIZE = 16777215;
 
 const FrameType = enum(u8) {
     HTTP_FRAME_DATA = 0x00,
@@ -213,13 +219,13 @@ pub export fn BUN__HTTP2__getUnpackedSettings(globalObject: *JSC.JSGlobalObject,
     if (args_list.len < 1) {
         return settings.toJS(globalObject);
     }
-    
+
     const data_arg = args_list.ptr[0];
 
     if (data_arg.asArrayBuffer(globalObject)) |array_buffer| {
         var payload = array_buffer.slice();
         const settingByteSize = SettingsPayloadUnit.byteSize;
-        if (settingByteSize < payload.len or frame.length % settingByteSize != 0) return JSC.JSValue.jsUndefined();
+        if (settingByteSize < payload.len or payload.length % settingByteSize != 0) return JSC.JSValue.jsUndefined();
 
         var i: usize = 0;
         while (i < payload.len) {
@@ -346,7 +352,7 @@ pub export fn BUN__HTTP2_getPackedSettings(globalObject: *JSC.JSGlobalObject, ca
     if (native_endian != .Big) {
         std.mem.byteSwapAllFields(FullSettingsPayload, &settings);
     }
-    const bytes = std.mem.asBytes(&swap)[0..FullSettingsPayload.byteSize];
+    const bytes = std.mem.asBytes(&settings)[0..FullSettingsPayload.byteSize];
     const binary_type: BinaryType = .Buffer;
     return binary_type.toJS(bytes, globalObject);
 }
@@ -528,12 +534,6 @@ const Handlers = struct {
 pub const H2FrameParser = struct {
     pub const log = Output.scoped(.H2FrameParser, false);
     pub usingnamespace JSC.Codegen.JSH2FrameParser;
-    const MAX_WINDOW_SIZE = 2147483647;
-    const MAX_HEADER_TABLE_SIZE = 4294967295;
-    const MAX_STREAM_ID = 2147483647;
-    const WINDOW_INCREMENT_SIZE = 65536;
-    const MAX_HPACK_HEADER_SIZE = 65536;
-    const MAX_FRAME_SIZE = 16777215;
 
     strong_ctx: JSC.Strong = .{},
     allocator: Allocator,

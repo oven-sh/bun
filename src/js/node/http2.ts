@@ -10,7 +10,6 @@ const EventEmitter = require("node:events");
 const { Duplex } = require("node:stream");
 const { H2FrameParser, getPackedSettings, getUnpackedSettings } = $lazy("internal/http2");
 
-
 const sensitiveHeaders = Symbol.for("nodejs.http2.sensitiveHeaders");
 const bunHTTP2Native = Symbol.for("::bunhttp2native::");
 const bunHTTP2StreamResponded = Symbol.for("::bunhttp2hasResponded::");

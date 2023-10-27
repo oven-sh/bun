@@ -39,26 +39,13 @@ public:
     {
         Blob__destroy(m_impl);
     }
-
-    String fileName()
-    {
-        return m_fileName;
-    }
-
-    void setFileName(String fileName)
-    {
-        m_fileName = fileName;
-    }
     void* m_impl;
 
 private:
     Blob(void* impl, String fileName = String())
     {
         m_impl = impl;
-        m_fileName = fileName;
     }
-
-    String m_fileName;
 };
 
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, Blob&);

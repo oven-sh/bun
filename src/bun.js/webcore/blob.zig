@@ -93,6 +93,7 @@ pub const Blob = struct {
     globalThis: *JSGlobalObject = undefined,
 
     last_modified: f64 = 0.0,
+    fileName: string = "",
 
     /// Max int of double precision
     /// 9 petabytes is probably enough for awhile
@@ -477,6 +478,25 @@ pub const Blob = struct {
         return this.store == null;
     }
 
+    export fn File__dupeFromJSBlob(value: JSC.JSValue, fileName: *bun.String) ?*Blob {
+        var this = Blob.fromJS(value) orelse return null;
+        var new = bun.default_allocator.create(Blob) catch unreachable;
+        new.* = this.dupeWithContentType(true);
+        new.allocator = bun.default_allocator;
+        new.is_jsdom_file = true;
+        new.fileName = fileName.clone().byteSlice();
+        return new;
+    }
+
+    export fn File__dupeFromBlob(this: *Blob, fileName: *bun.String) *Blob {
+        var new = bun.default_allocator.create(Blob) catch unreachable;
+        new.* = this.dupeWithContentType(true);
+        new.allocator = bun.default_allocator;
+        new.is_jsdom_file = true;
+        new.fileName = fileName.clone().byteSlice();
+        return new;
+    }
+
     export fn Blob__dupeFromJS(value: JSC.JSValue) ?*Blob {
         var this = Blob.fromJS(value) orelse return null;
         return Blob__dupe(this);
@@ -485,15 +505,7 @@ pub const Blob = struct {
     export fn Blob__setAsFile(this: *Blob, path_str: *bun.String) *Blob {
         this.is_jsdom_file = true;
 
-        // This is not 100% correct...
-        if (this.store) |store| {
-            if (store.data == .bytes) {
-                if (store.data.bytes.stored_name.len == 0) {
-                    var utf8 = path_str.toUTF8WithoutRef(bun.default_allocator).clone(bun.default_allocator) catch unreachable;
-                    store.data.bytes.stored_name = bun.PathString.init(utf8.slice());
-                }
-            }
-        }
+        this.fileName = path_str.byteSlice();
 
         return this;
     }
@@ -518,12 +530,22 @@ pub const Blob = struct {
         return bun.String.empty;
     }
 
+    export fn Blob__setFileNameString(
+        this: *Blob,
+        name: bun.String,
+    ) callconv(.C) void {
+        this.fileName = name.byteSlice();
+    }
+
     comptime {
         _ = Blob__dupeFromJS;
         _ = Blob__destroy;
         _ = Blob__dupe;
         _ = Blob__setAsFile;
         _ = Blob__getFileNameString;
+        _ = Blob__setFileNameString;
+        _ = File__dupeFromBlob;
+        _ = File__dupeFromJSBlob;
     }
 
     pub fn writeFormatForSize(size: usize, writer: anytype, comptime enable_ansi_colors: bool) !void {
@@ -1170,13 +1192,7 @@ pub const Blob = struct {
         return JSC.JSPromise.resolvedPromiseValue(globalThis, JSC.JSValue.jsNumber(written));
     }
 
-    pub export fn JSDOMFile__hasInstance(_: JSC.JSValue, _: *JSC.JSGlobalObject, value: JSC.JSValue) callconv(.C) bool {
-        JSC.markBinding(@src());
-        var blob = value.as(Blob) orelse return false;
-        return blob.is_jsdom_file;
-    }
-
-    pub export fn JSDOMFile__construct(
+    pub export fn File__construct(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) ?*Blob {
@@ -1205,11 +1221,7 @@ pub const Blob = struct {
             return null;
         };
 
-        if (blob.store) |store_| {
-            store_.data.bytes.stored_name = bun.PathString.init(
-                (name_value_str.toUTF8WithoutRef(bun.default_allocator).clone(bun.default_allocator) catch unreachable).slice(),
-            );
-        }
+        blob.fileName = name_value_str.byteSlice();
 
         if (args.len > 2) {
             const options = args[2];
@@ -1276,21 +1288,15 @@ pub const Blob = struct {
         var size = this.estimatedByteSize() + @sizeOf(Blob);
 
         if (this.store) |store| {
+            _ = store;
             size += @sizeOf(Blob.Store);
-            size += switch (store.data) {
-                .bytes => store.data.bytes.stored_name.estimatedSize(),
-                .file => store.data.file.pathlike.estimatedSize(),
-            };
         }
 
         return size + (this.content_type.len * @as(usize, @intFromBool(this.content_type_allocated)));
     }
 
     comptime {
-        if (!JSC.is_bindgen) {
-            _ = JSDOMFile__hasInstance;
-            _ = JSDOMFile__construct;
-        }
+        if (!JSC.is_bindgen) {}
     }
 
     pub fn constructBunFile(
@@ -2723,9 +2729,6 @@ pub const Blob = struct {
         cap: SizeType = 0,
         allocator: std.mem.Allocator,
 
-        /// Used by standalone module graph and the File constructor
-        stored_name: bun.PathString = bun.PathString.empty,
-
         pub fn init(bytes: []u8, allocator: std.mem.Allocator) ByteStore {
             return .{
                 .ptr = bytes.ptr,
@@ -2744,7 +2747,6 @@ pub const Blob = struct {
         }
 
         pub fn deinit(this: *ByteStore) void {
-            bun.default_allocator.free(this.stored_name.slice());
             this.allocator.free(this.ptr[0..this.cap]);
         }
 
@@ -3100,7 +3102,6 @@ pub const Blob = struct {
         return ZigString.Empty.toValue(globalThis);
     }
 
-    // TODO: Move this to a separate `File` object or BunFile
     pub fn getName(
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
@@ -3116,23 +3117,22 @@ pub const Blob = struct {
     pub fn getFileName(
         this: *const Blob,
     ) ?[]const u8 {
+        if (this.fileName.len > 0) {
+            return this.fileName;
+        }
         if (this.store) |store| {
             if (store.data == .file) {
                 if (store.data.file.pathlike == .path) {
                     return store.data.file.pathlike.path.slice();
                 }
-
-                // we shouldn't return Number here.
-            } else if (store.data == .bytes) {
-                if (store.data.bytes.stored_name.slice().len > 0)
-                    return store.data.bytes.stored_name.slice();
+            } else {
+                return "";
             }
         }
 
         return null;
     }
 
-    // TODO: Move this to a separate `File` object or BunFile
     pub fn getLastModified(
         this: *Blob,
         _: *JSC.JSGlobalObject,
@@ -3149,9 +3149,10 @@ pub const Blob = struct {
 
         if (this.is_jsdom_file) {
             return JSValue.jsNumber(this.last_modified);
+        } else {
+            // BunFile already returns before this statement, and Blob does not expose this method to JS.
+            unreachable;
         }
-
-        return JSValue.jsNumber(init_timestamp);
     }
 
     pub fn getSizeForBindings(this: *Blob) u64 {
@@ -3464,11 +3465,18 @@ pub const Blob = struct {
         }
 
         duped.allocator = null;
+        if (this.store) |store| {
+            if (store.data == .file) {
+                duped.fileName = this.fileName;
+            }
+        }
+
         return duped;
     }
 
     pub fn deinit(this: *Blob) void {
         this.detach();
+        bun.default_allocator.free(this.fileName);
 
         if (this.allocator) |alloc| {
             this.allocator = null;

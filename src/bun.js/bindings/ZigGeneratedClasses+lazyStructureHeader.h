@@ -90,6 +90,10 @@ JSC::Structure* JSFSWatcherStructure() { return m_JSFSWatcher.getInitializedOnMa
   JSC::JSObject* JSFSWatcherConstructor() { return m_JSFSWatcher.constructorInitializedOnMainThread(this); }
   JSC::JSValue JSFSWatcherPrototype() { return m_JSFSWatcher.prototypeInitializedOnMainThread(this); }
   JSC::LazyClassStructure m_JSFSWatcher;
+JSC::Structure* JSFileStructure() { return m_JSFile.getInitializedOnMainThread(this); }
+  JSC::JSObject* JSFileConstructor() { return m_JSFile.constructorInitializedOnMainThread(this); }
+  JSC::JSValue JSFilePrototype() { return m_JSFile.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSFile;
 JSC::Structure* JSFileSystemRouterStructure() { return m_JSFileSystemRouter.getInitializedOnMainThread(this); }
   JSC::JSObject* JSFileSystemRouterConstructor() { return m_JSFileSystemRouter.constructorInitializedOnMainThread(this); }
   JSC::JSValue JSFileSystemRouterPrototype() { return m_JSFileSystemRouter.prototypeInitializedOnMainThread(this); }

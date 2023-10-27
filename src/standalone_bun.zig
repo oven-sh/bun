@@ -57,7 +57,8 @@ pub const StandaloneModuleGraph = struct {
                     blob_.content_type_allocated = false;
                 }
 
-                store.data.bytes.stored_name = bun.PathString.init(this.name);
+                // Assigning this.name directly would cause a use-after-free if blob was deinited
+                blob_.fileName = bun.default_allocator.dupeZ(u8, this.name) catch @panic("out of memory");
 
                 this.blob_ = blob_;
             }

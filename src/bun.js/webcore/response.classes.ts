@@ -140,19 +140,6 @@ export default [
         getter: "getType",
       },
 
-      // TODO: Move this to a separate `File` object or BunFile
-      // This is *not* spec-compliant.
-      name: {
-        getter: "getName",
-        cache: true,
-      },
-
-      // TODO: Move this to a separate `File` object or BunFile
-      // This is *not* spec-compliant.
-      lastModified: {
-        getter: "getLastModified",
-      },
-
       size: {
         getter: "getSize",
       },
@@ -160,6 +147,27 @@ export default [
       writer: {
         fn: "getWriter",
         length: 1,
+      },
+    },
+  }),
+  define({
+    name: "File",
+    construct: true,
+    finalize: true,
+    JSType: "0b11101110",
+    klass: {},
+    configurable: false,
+    structuredClone: { transferable: false, tag: 253 },
+    estimatedSize: true,
+    extends: "Blob",
+    proto: {
+      name: {
+        getter: "getName",
+        cache: true,
+      },
+
+      lastModified: {
+        getter: "getLastModified",
       },
     },
   }),

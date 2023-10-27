@@ -25,6 +25,7 @@ export type Field =
 
 export interface ClassDefinition {
   name: string;
+  extends?: string;
   construct?: boolean;
   call?: boolean;
   finalize?: boolean;
@@ -44,6 +45,8 @@ export interface ClassDefinition {
   configurable?: boolean;
   enumerable?: boolean;
   structuredClone?: boolean | { transferable: boolean; tag: number };
+
+  _baseExtends?: string;
 }
 
 export interface CustomField {

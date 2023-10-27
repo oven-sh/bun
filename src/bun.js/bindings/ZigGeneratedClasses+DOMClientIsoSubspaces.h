@@ -21,7 +21,8 @@ std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExpectStringContaining
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExpectStringMatching;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFFI;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFSWatcher;
-std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFileSystemRouter;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFile;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFileConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFileSystemRouter;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFileSystemRouterConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForHTMLRewriter;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForHTMLRewriterConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForHTTPSServer;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForHTTPServer;

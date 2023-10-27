@@ -17,7 +17,7 @@ pub const isMac = build_target == .native and @import("builtin").target.os.tag =
 pub const isBrowser = !isWasi and isWasm;
 pub const isWindows = @import("builtin").target.os.tag == .windows;
 pub const isPosix = !isWindows and !isWasm;
-pub const isDebug = std.builtin.Mode.Debug == @import("builtin").mode;
+pub const isDebug = false;
 pub const isRelease = std.builtin.Mode.Debug != @import("builtin").mode and !isTest;
 pub const isTest = @import("builtin").is_test;
 pub const isLinux = @import("builtin").target.os.tag == .linux;

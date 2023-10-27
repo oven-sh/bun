@@ -5,11 +5,94 @@ const { hideFromStack, throwNotImplemented } = require("$shared");
 const tls = require("node:tls");
 const net = require("node:net");
 type Socket = typeof net.Socket;
-type TLSSocket = typeof tls.TLSSocket;
+const TLSSocket = tls.TLSSocket;
 const EventEmitter = require("node:events");
 const { Duplex } = require("node:stream");
 const { H2FrameParser } = $lazy("internal/http2");
 const sensitiveHeaders = Symbol.for("nodejs.http2.sensitiveHeaders");
+const bunHTTP2Native = Symbol.for("::bunhttp2native::");
+const bunHTTP2StreamResponded = Symbol.for("::bunhttp2hasResponded::");
+const bunHTTP2StreamReadQueue = Symbol.for("::bunhttp2ReadQueue::");
+const bunHTTP2Closed = Symbol.for("::bunhttp2closed::");
+const bunHTTP2Socket = Symbol.for("::bunhttp2socket::");
+
+const ReflectGetPrototypeOf = Reflect.getPrototypeOf;
+const FunctionPrototypeBind =Function.prototype.call.bind(Function.prototype.bind);
+
+const proxySocketHandler = {
+  get(session, prop) {
+    switch (prop) {
+      case "setTimeout":
+      case "ref":
+      case "unref":
+        return FunctionPrototypeBind(session[prop], session);
+      case "destroy":
+      case "emit":
+      case "end":
+      case "pause":
+      case "read":
+      case "resume":
+      case "write":
+      case "setEncoding":
+      case "setKeepAlive":
+      case "setNoDelay":
+        const error = new Error("ERR_HTTP2_NO_SOCKET_MANIPULATION: HTTP/2 sockets should not be directly manipulated (e.g. read and written)");
+        error.code = "ERR_HTTP2_NO_SOCKET_MANIPULATION";
+        throw error;
+      default: {
+        const socket = session[bunHTTP2Socket];
+        if (!socket) {
+          const error = new Error("ERR_HTTP2_SOCKET_UNBOUND: The socket has been disconnected from the Http2Session");
+          error.code = "ERR_HTTP2_SOCKET_UNBOUND";
+          throw error;
+        }
+        const value = socket[prop];
+        return typeof value === "function" ? FunctionPrototypeBind(value, socket) : value;
+      }
+    }
+  },
+  getPrototypeOf(session) {
+    const socket = session[bunHTTP2Socket];
+    if (!socket) {
+        const error = new Error("ERR_HTTP2_SOCKET_UNBOUND: The socket has been disconnected from the Http2Session");
+        error.code = "ERR_HTTP2_SOCKET_UNBOUND";
+        throw error;
+    }
+    return ReflectGetPrototypeOf(socket);
+  },
+  set(session, prop, value) {
+    switch (prop) {
+      case "setTimeout":
+      case "ref":
+      case "unref":
+        session[prop] = value;
+        return true;
+      case "destroy":
+      case "emit":
+      case "end":
+      case "pause":
+      case "read":
+      case "resume":
+      case "write":
+      case "setEncoding":
+      case "setKeepAlive":
+      case "setNoDelay":
+        const error = new Error("ERR_HTTP2_NO_SOCKET_MANIPULATION: HTTP/2 sockets should not be directly manipulated (e.g. read and written)");
+        error.code = "ERR_HTTP2_NO_SOCKET_MANIPULATION";
+        throw error;
+      default: {
+        const socket = session[bunHTTP2Socket];
+        if (!socket) {
+          const error = new Error("ERR_HTTP2_SOCKET_UNBOUND: The socket has been disconnected from the Http2Session");
+          error.code = "ERR_HTTP2_SOCKET_UNBOUND";
+          throw error;
+        }
+        socket[prop] = value;
+        return true;
+      }
+    }
+  },
+};
 
 const constants = {
   NGHTTP2_ERR_FRAME_SIZE_ERROR: -522,
@@ -348,17 +431,13 @@ function assertPseudoHeader(name: string) {
 }
 
 function assertSingleValueHeader(name: string) {
-  if (SingleValueHeaders.has(name)) return;
+  if (!SingleValueHeaders.has(name)) return;
 
-  const error = new TypeError(`"${name}" is an invalid single value header`);
+  const error = new TypeError(`Header field "${name}" must only have a single value`);
   error.code = "ERR_HTTP2_INVALID_SINGLE_VALUE_HEADER";
   throw error;
 }
 
-const bunHTTP2Native = Symbol.for("::bunhttp2native::");
-const bunHTTP2StreamResponded = Symbol.for("::bunhttp2hasResponded::");
-const bunHTTP2StreamReadQueue = Symbol.for("::bunhttp2ReadQueue::");
-const bunHTTP2Closed = Symbol.for("::bunhttp2closed::");
 function reduceToCompatibleHeaders(obj: any, currentValue: any) {
   let { name, value } = currentValue;
   if (name === constants.HTTP2_HEADER_STATUS) {
@@ -558,7 +637,8 @@ class ClientHttp2Session extends Http2Session {
   #closed: boolean = false;
   #queue: Array<Buffer> = [];
   #connecions: number = 0;
-  #socket: TLSSocket | Socket | null;
+  [bunHTTP2Socket]: TLSSocket | Socket | null;
+  #socket_proxy: Proxy<TLSSocket | Socket>;
   #parser: typeof H2FrameParser | null;
   #url: URL;
   #originSet = new Set<string>();
@@ -604,7 +684,7 @@ class ClientHttp2Session extends Http2Session {
         stream.emit("end");
       }
       if (self.#connecions === 0 && self.#closed) {
-        self.#socket?.end();
+        self[bunHTTP2Socket]?.end();
         self.#parser?.detach();
         self.#parser = null;
         self.emit("close");
@@ -646,23 +726,23 @@ class ClientHttp2Session extends Http2Session {
     },
     error(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       self.emit("error", new Error("ERROR_HTTP2"));
-      self.#socket?.end();
+      self[bunHTTP2Socket]?.end();
       self.#parser?.detach();
       self.#parser = null;
     },
     goaway(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       self.emit("goaway", errorCode, lastStreamId, opaqueData);
-      self.#socket?.end();
+      self[bunHTTP2Socket]?.end();
       self.#parser?.detach();
       self.#parser = null;
     },
     end(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
-      self.#socket?.end();
+      self[bunHTTP2Socket]?.end();
       self.#parser.detach();
       self.#parser = null;
     },
     write(self: ClientHttp2Session, buffer: Buffer) {
-      const socket = self.#socket;
+      const socket = self[bunHTTP2Socket];
       if (self.#closed) {
         //queue
         self.#queue.push(buffer);
@@ -682,13 +762,13 @@ class ClientHttp2Session extends Http2Session {
     }
   }
   get alpnProtocol() {
-    const socket = this.#socket;
+    const socket = this[bunHTTP2Socket];
     if (!socket) return;
     return (socket as TLSSocket).alpnProtocol;
   }
   #onConnect() {
     this.#closed = false;
-    const socket = this.#socket as TLSSocket;
+    const socket = this[bunHTTP2Socket] as TLSSocket;
     if (socket.alpnProtocol !== "h2") {
       socket.end();
       this.emit("error", new Error("h2 is not supported"));
@@ -712,7 +792,7 @@ class ClientHttp2Session extends Http2Session {
     this.#parser?.detach();
     this.#parser = null;
     this.emit("close");
-    this.#socket = null;
+    this[bunHTTP2Socket] = null;
   }
   #onError(error: Error) {
     this.#parser?.detach();
@@ -730,15 +810,16 @@ class ClientHttp2Session extends Http2Session {
   }
 
   get connected() {
-    return this.#socket?.connecting === false;
+    return this[bunHTTP2Socket]?.connecting === false;
   }
   get destroyed() {
-    return this.#socket === null;
+    return this[bunHTTP2Socket] === null;
   }
   get encrypted() {
-    if (!this.#socket) return;
+    const socket = this[bunHTTP2Socket];
+    if (!socket) return;
 
-    return this.#socket instanceof TLSSocket;
+    return socket instanceof TLSSocket;
   }
   get closed() {
     return this.#closed;
@@ -761,13 +842,13 @@ class ClientHttp2Session extends Http2Session {
     return 1;
   }
   unref() {
-    return this.#socket?.unref();
+    return this[bunHTTP2Socket]?.unref();
   }
   ref() {
-    return this.#socket?.ref();
+    return this[bunHTTP2Socket]?.ref();
   }
   setTimeout(msecs, callback) {
-    return this.#socket?.setTimeout(msecs, callback);
+    return this[bunHTTP2Socket]?.setTimeout(msecs, callback);
   }
   ping(payload, callback) {
     if (typeof callback === "function") {
@@ -778,7 +859,7 @@ class ClientHttp2Session extends Http2Session {
       throw new Error("ERR_HTTP2_PING_PAYLOAD_SIZE");
     }
     this.#parser?.ping(payload);
-    return this.#parser && this.#socket ? true : false;
+    return this.#parser && this[bunHTTP2Socket] ? true : false;
   }
   goaway(errorCode, lastStreamId, opaqueData) {
     return this.#parser?.goaway(errorCode, lastStreamId, opaqueData);
@@ -788,8 +869,11 @@ class ClientHttp2Session extends Http2Session {
     return this.#parser?.setLocalWindowSize(windowSize);
   }
   get socket() {
-    // TODO: Proxy socket
-    return this.#socket;
+    const socket = this[bunHTTP2Socket];
+    if (!socket) return null;
+    if (this.#socket_proxy) return this.#socket_proxy;
+    this.#socket_proxy = new Proxy(socket, proxySocketHandler);
+    return this.#socket_proxy;
   }
   get state() {
     return this.#parser?.getCurrentState();
@@ -817,22 +901,32 @@ class ClientHttp2Session extends Http2Session {
     }
     this.#isServer = true;
     this.#url = url;
-    this.#socket = tls.connect(
+    const port =  url.port ? parseInt(url.port, 10) : url.protocol === "https:" ? 443 : 80;
+    // TODO: h2c or HTTP2 Over Cleartext
+    // h2c is not supported yet but should 
+    // need to implement upgrade from http1.1 to h2c
+    // we can use picohttp to do that
+    // browsers dont support h2c (and probably never will)
+
+
+    // h2 with ALPNProtocols
+    const socket = tls.connect(
       {
         host: url.hostname,
-        port: url.port ? parseInt(url.port, 10) : url.protocol === "https:" ? 443 : 80,
+        port,
         ALPNProtocols: ["h2", "http/1.1"],
       },
       this.#onConnect.bind(this),
     );
+    this[bunHTTP2Socket] = socket;
     this.#parser = new H2FrameParser({
       context: this,
       settings: options,
       handlers: ClientHttp2Session.#Handlers,
     });
-    this.#socket.on("close", this.#onClose.bind(this));
-    this.#socket.on("error", this.#onError.bind(this));
-    this.#socket.on("timeout", this.#onTimeout.bind(this));
+    socket.on("close", this.#onClose.bind(this));
+    socket.on("error", this.#onError.bind(this));
+    socket.on("timeout", this.#onTimeout.bind(this));
   }
 
   // Gracefully closes the Http2Session, allowing any existing streams to complete on their own and preventing new Http2Stream instances from being created. Once closed, http2session.destroy() might be called if there are no open Http2Stream instances.
@@ -845,12 +939,13 @@ class ClientHttp2Session extends Http2Session {
   }
 
   destroy(error: Error, code: number) {
-    if (!this.#socket) return;
+    const socket = this[bunHTTP2Socket];
+    if (!socket) return;
     this.goaway(code || constants.NGHTTP2_INTERNAL_ERROR, 0, Buffer.alloc(0));
     this.#parser?.detach();
-    this.#socket?.end();
+    socket.end();
     this.#parser = null;
-    this.#socket = null;
+    this[bunHTTP2Socket] = null;
     // this should not be needed since RST + GOAWAY should be sent
     for (let [_, stream] of this.#streams) {
       if (error) {
@@ -911,11 +1006,11 @@ class ClientHttp2Session extends Http2Session {
 
       const value = headers[key];
       if (Array.isArray(value)) {
+        assertSingleValueHeader(key);
         for (let i = 0; i < value.length; i++) {
           flat_headers.push({ name: key, value: value[i]?.toString(), neverIndex: sensitiveNames[key] || false });
         }
       } else {
-        assertSingleValueHeader(key);
         flat_headers.push({ name: key, value: value?.toString() });
       }
     });

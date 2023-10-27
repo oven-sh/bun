@@ -3873,7 +3873,6 @@ pub const Resolver = struct {
                                     .text = abs_path,
                                 },
                             }) catch {};
-                            if (@errorReturnTrace()) |trace| std.debug.dumpStackTrace(trace.*);
                             break;
                         };
                         if (parent_config_maybe) |parent_config| {

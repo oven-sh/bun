@@ -205,6 +205,156 @@ const FullSettingsPayload = packed struct(u288) {
     }
 };
 
+pub export fn BUN__HTTP2__getUnpackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.callframe) callconv(.C) JSC.JSValue {
+    JSC.markBinding(@src());
+    var settings: FullSettingsPayload = .{};
+
+    const args_list = callframe.arguments(1);
+    if (args_list.len < 1) {
+        return settings.toJS(globalObject);
+    }
+    
+    const data_arg = args_list.ptr[0];
+
+    if (data_arg.asArrayBuffer(globalObject)) |array_buffer| {
+        var payload = array_buffer.slice();
+        const settingByteSize = SettingsPayloadUnit.byteSize;
+        if (settingByteSize < payload.len or frame.length % settingByteSize != 0) return JSC.JSValue.jsUndefined();
+
+        var i: usize = 0;
+        while (i < payload.len) {
+            defer i += settingByteSize;
+            var unit: SettingsPayloadUnit = undefined;
+            SettingsPayloadUnit.from(&unit, payload[i .. i + settingByteSize], 0, true);
+            settings.updateWith(unit);
+        }
+        return settings.toJS(globalObject);
+    } else if (!data_arg.isEmptyOrUndefinedOrNull()) {
+        globalObject.throw("Expected buf must be a buffer", .{});
+        return .zero;
+    } else {
+        return settings.toJS(globalObject);
+    }
+}
+
+pub export fn BUN__HTTP2_getPackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    var settings: FullSettingsPayload = .{};
+    const args_list = callframe.arguments(1);
+
+    if (args_list.len > 0 and !args_list.ptr[0].isEmptyOrUndefinedOrNull()) {
+        const options = args_list.ptr[0];
+
+        if (!options.isObject()) {
+            globalObject.throw("Expected settings to be a object", .{});
+            return false;
+        }
+
+        if (options.get(globalObject, "headerTableSize")) |headerTableSize| {
+            if (headerTableSize.isNumber()) {
+                const headerTableSizeValue = headerTableSize.toInt32();
+                if (headerTableSizeValue > MAX_HEADER_TABLE_SIZE or headerTableSizeValue < 0) {
+                    globalObject.throw("Expected headerTableSize to be a number between 0 and 2^32-1", .{});
+                    return false;
+                }
+                settings.headerTableSize = @intCast(headerTableSizeValue);
+            } else if (!headerTableSize.isEmptyOrUndefinedOrNull()) {
+                globalObject.throw("Expected headerTableSize to be a number", .{});
+                return false;
+            }
+        }
+
+        if (options.get(globalObject, "enablePush")) |enablePush| {
+            if (enablePush.isBoolean()) {
+                settings.enablePush = if (enablePush.asBoolean()) 1 else 0;
+            } else if (!enablePush.isEmptyOrUndefinedOrNull()) {
+                globalObject.throw("Expected enablePush to be a boolean", .{});
+                return false;
+            }
+        }
+
+        if (options.get(globalObject, "initialWindowSize")) |initialWindowSize| {
+            if (initialWindowSize.isNumber()) {
+                const initialWindowSizeValue = initialWindowSize.toInt32();
+                if (initialWindowSizeValue > MAX_HEADER_TABLE_SIZE or initialWindowSizeValue < 0) {
+                    globalObject.throw("Expected initialWindowSize to be a number between 0 and 2^32-1", .{});
+                    return false;
+                }
+                settings.initialWindowSize = @intCast(initialWindowSizeValue);
+            } else if (!initialWindowSize.isEmptyOrUndefinedOrNull()) {
+                globalObject.throw("Expected initialWindowSize to be a number", .{});
+                return false;
+            }
+        }
+
+        if (options.get(globalObject, "maxFrameSize")) |maxFrameSize| {
+            if (maxFrameSize.isNumber()) {
+                const maxFrameSizeValue = maxFrameSize.toInt32();
+                if (maxFrameSizeValue > MAX_FRAME_SIZE or maxFrameSizeValue < 16384) {
+                    globalObject.throw("Expected maxFrameSize to be a number between 16,384 and 2^24-1", .{});
+                    return false;
+                }
+                settings.maxFrameSize = @intCast(maxFrameSizeValue);
+            } else if (!maxFrameSize.isEmptyOrUndefinedOrNull()) {
+                globalObject.throw("Expected maxFrameSize to be a number", .{});
+                return false;
+            }
+        }
+
+        if (options.get(globalObject, "maxConcurrentStreams")) |maxConcurrentStreams| {
+            if (maxConcurrentStreams.isNumber()) {
+                const maxConcurrentStreamsValue = maxConcurrentStreams.toInt32();
+                if (maxConcurrentStreamsValue > MAX_HEADER_TABLE_SIZE or maxConcurrentStreamsValue < 0) {
+                    globalObject.throw("Expected maxConcurrentStreams to be a number between 0 and 2^32-1", .{});
+                    return false;
+                }
+                settings.maxConcurrentStreams = @intCast(maxConcurrentStreamsValue);
+            } else if (!maxConcurrentStreams.isEmptyOrUndefinedOrNull()) {
+                globalObject.throw("Expected maxConcurrentStreams to be a number", .{});
+                return false;
+            }
+        }
+
+        if (options.get(globalObject, "maxHeaderListSize")) |maxHeaderListSize| {
+            if (maxHeaderListSize.isNumber()) {
+                const maxHeaderListSizeValue = maxHeaderListSize.toInt32();
+                if (maxHeaderListSizeValue > MAX_HEADER_TABLE_SIZE or maxHeaderListSizeValue < 0) {
+                    globalObject.throw("Expected maxHeaderListSize to be a number between 0 and 2^32-1", .{});
+                    return false;
+                }
+                settings.maxHeaderListSize = @intCast(maxHeaderListSizeValue);
+            } else if (!maxHeaderListSize.isEmptyOrUndefinedOrNull()) {
+                globalObject.throw("Expected maxHeaderListSize to be a number", .{});
+                return false;
+            }
+        }
+
+        if (options.get(globalObject, "maxHeaderSize")) |maxHeaderSize| {
+            if (maxHeaderSize.isNumber()) {
+                const maxHeaderSizeValue = maxHeaderSize.toInt32();
+                if (maxHeaderSizeValue > MAX_HEADER_TABLE_SIZE or maxHeaderSizeValue < 0) {
+                    globalObject.throw("Expected maxHeaderSize to be a number between 0 and 2^32-1", .{});
+                    return false;
+                }
+                settings.maxHeaderListSize = @intCast(maxHeaderSizeValue);
+            } else if (!maxHeaderSize.isEmptyOrUndefinedOrNull()) {
+                globalObject.throw("Expected maxHeaderSize to be a number", .{});
+                return false;
+            }
+        }
+    }
+
+    if (native_endian != .Big) {
+        std.mem.byteSwapAllFields(FullSettingsPayload, &settings);
+    }
+    const bytes = std.mem.asBytes(&swap)[0..FullSettingsPayload.byteSize];
+    const binary_type: BinaryType = .Buffer;
+    return binary_type.toJS(bytes, globalObject);
+}
+
+comptime {
+    _ = BUN__HTTP2__getUnpackedSettings;
+}
+
 const Handlers = struct {
     onError: JSC.JSValue = .zero,
     onWrite: JSC.JSValue = .zero,
@@ -1312,6 +1462,7 @@ pub const H2FrameParser = struct {
                     globalObject.throw("Expected initialWindowSize to be a number between 0 and 2^32-1", .{});
                     return false;
                 }
+                this.localSettings.initialWindowSize = @intCast(initialWindowSizeValue);
             } else if (!initialWindowSize.isEmptyOrUndefinedOrNull()) {
                 globalObject.throw("Expected initialWindowSize to be a number", .{});
                 return false;

@@ -8,7 +8,9 @@ type Socket = typeof net.Socket;
 const TLSSocket = tls.TLSSocket;
 const EventEmitter = require("node:events");
 const { Duplex } = require("node:stream");
-const { H2FrameParser } = $lazy("internal/http2");
+const { H2FrameParser, getPackedSettings, getUnpackedSettings } = $lazy("internal/http2");
+
+
 const sensitiveHeaders = Symbol.for("nodejs.http2.sensitiveHeaders");
 const bunHTTP2Native = Symbol.for("::bunhttp2native::");
 const bunHTTP2StreamResponded = Symbol.for("::bunhttp2hasResponded::");
@@ -1108,22 +1110,8 @@ function createSecureServer() {
   throwNotImplemented("node:http2 createSecureServer", 887);
 }
 function getDefaultSettings() {
-  return {
-    headerTableSize: 4096,
-    enablePush: true,
-    initialWindowSize: 65535,
-    maxFrameSize: 16384,
-    maxConcurrentStreams: 4294967295,
-    maxHeaderSize: 65535,
-    maxHeaderListSize: 65535,
-    enableConnectProtocol: false,
-  };
-}
-function getPackedSettings() {
-  return Buffer.alloc(0);
-}
-function getUnpackedSettings() {
-  return Buffer.alloc(0);
+  // return default settings
+  return getUnpackedSettings();
 }
 function Http2ServerRequest() {
   throwNotImplemented("node:http2 Http2ServerRequest", 887);

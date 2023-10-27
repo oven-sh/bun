@@ -135,7 +135,7 @@ We last updated Zig on **October 26th, 2023**
 After cloning the repository, run the following command to run the first build. This may take a while as it will clone submodules and build dependencies.
 
 ```bash
-$ bash ./src/scripts/setup.sh
+$ bash ./scripts/setup.sh
 ```
 
 The binary will be located at `./build/bun-debug`. It is recommended to add this to your `$PATH`. To verify the build worked, let's print the version number on the development build of Bun.

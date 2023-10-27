@@ -892,12 +892,12 @@ endif()
 
 # --- Stripped Binary "bun"
 if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32)
-    add_custom_command(
-        TARGET ${bun}
-        POST_BUILD
-        COMMAND ${DSYMUTIL} -o ${BUN_WORKDIR}/bun.dSYM ${BUN_WORKDIR}/${bun}
-        COMMENT "Stripping Symbols"
-    )
+    # add_custom_command(
+    #     TARGET ${bun}
+    #     POST_BUILD
+    #     COMMAND ${DSYMUTIL} -o ${BUN_WORKDIR}/bun.dSYM ${BUN_WORKDIR}/${bun}
+    #     COMMENT "Stripping Symbols"
+    # )
     add_custom_command(
         TARGET ${bun}
         POST_BUILD

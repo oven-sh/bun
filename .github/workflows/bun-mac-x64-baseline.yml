@@ -5,9 +5,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-  TEST_TAG: bun-test'
+  LLVM_VERSION: 16
 
 on:
   push:

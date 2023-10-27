@@ -1,5 +1,5 @@
 #include "JSDOMGlobalObject.h"
-#include "JavaScriptCore/JSCast.h"
+#include <JavaScriptCore/JSCast.h>
 #include "ZigGlobalObject.h"
 
 namespace WebCore {

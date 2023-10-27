@@ -30,6 +30,7 @@
 #include "JsonWebKey.h"
 #include "../wtf-bindings.h"
 #include <wtf/text/Base64.h>
+#include "Bun_base64URLEncodeToString.h"
 
 #if ENABLE(WEB_CRYPTO)
 
@@ -74,7 +75,7 @@ RefPtr<CryptoKeyRSA> CryptoKeyRSA::importJwk(CryptoAlgorithmIdentifier algorithm
 
     if (keyData.p.isNull() || keyData.q.isNull() || keyData.dp.isNull() || keyData.dq.isNull() || keyData.qi.isNull())
         return nullptr;
-    
+
     auto firstPrimeFactor = base64URLDecode(keyData.p);
     if (!firstPrimeFactor)
         return nullptr;
@@ -94,14 +95,14 @@ RefPtr<CryptoKeyRSA> CryptoKeyRSA::importJwk(CryptoAlgorithmIdentifier algorithm
     CryptoKeyRSAComponents::PrimeInfo firstPrimeInfo;
     firstPrimeInfo.primeFactor = WTFMove(*firstPrimeFactor);
     firstPrimeInfo.factorCRTExponent = WTFMove(*firstFactorCRTExponent);
-    
+
     CryptoKeyRSAComponents::PrimeInfo secondPrimeInfo;
     secondPrimeInfo.primeFactor = WTFMove(*secondPrimeFactor);
     secondPrimeInfo.factorCRTExponent = WTFMove(*secondFactorCRTExponent);
     secondPrimeInfo.factorCRTCoefficient = WTFMove(*secondFactorCRTCoefficient);
 
     if (!keyData.oth) {
-        auto privateKeyComponents = CryptoKeyRSAComponents::createPrivateWithAdditionalData(WTFMove(*modulus), WTFMove(*exponent), WTFMove(*privateExponent), WTFMove(firstPrimeInfo), WTFMove(secondPrimeInfo), { });
+        auto privateKeyComponents = CryptoKeyRSAComponents::createPrivateWithAdditionalData(WTFMove(*modulus), WTFMove(*exponent), WTFMove(*privateExponent), WTFMove(firstPrimeInfo), WTFMove(secondPrimeInfo), {});
         // Notice: CryptoAlgorithmIdentifier::SHA_1 is just a placeholder. It should not have any effect if hash is std::nullopt.
         return CryptoKeyRSA::create(algorithm, hash.value_or(CryptoAlgorithmIdentifier::SHA_1), !!hash, *privateKeyComponents, extractable, usages);
     }

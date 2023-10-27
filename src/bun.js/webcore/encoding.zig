@@ -880,6 +880,7 @@ pub const Encoder = struct {
             else => toString(input, len, globalObject, .utf8),
         };
     }
+
     pub fn toString(input_ptr: [*]const u8, len: usize, global: *JSGlobalObject, comptime encoding: JSC.Node.Encoding) JSValue {
         if (len == 0)
             return ZigString.Empty.toValue(global);
@@ -1254,4 +1255,10 @@ comptime {
     }
 }
 
-test "Vec" {}
+export fn Zig__Bun_base64URLEncodeToString(input_ptr: [*]const u8, len: usize, ret: *bun.String) void {
+    const input = input_ptr[0..len];
+    var out = bun.String.createUninitialized(.latin1, bun.base64.urlSafeEncodeLen(input)) orelse @panic("Out of memory");
+    defer out.deref();
+    _ = bun.base64.encodeURLSafe(@constCast(out.latin1()), input);
+    ret.* = out;
+}

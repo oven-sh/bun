@@ -13,8 +13,9 @@ const JSC = @import("root").bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const Which = @import("../../../which.zig");
-const uws = @import("../../../deps/uws.zig");
+const Async = bun.Async;
 const IPC = @import("../../ipc.zig");
+const uws = bun.uws;
 
 const PosixSpawn = @import("./spawn.zig").PosixSpawn;
 
@@ -68,13 +69,13 @@ pub const Subprocess = struct {
     pub const SignalCode = bun.SignalCode;
 
     pub const Poll = union(enum) {
-        poll_ref: ?*JSC.FilePoll,
+        poll_ref: ?*Async.FilePoll,
         wait_thread: WaitThreadPoll,
     };
 
     pub const WaitThreadPoll = struct {
         ref_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
-        poll_ref: JSC.PollRef = .{},
+        poll_ref: Async.KeepAlive = .{},
     };
 
     pub const IPCMode = enum {
@@ -524,7 +525,7 @@ pub const Subprocess = struct {
     pub const BufferedInput = struct {
         remain: []const u8 = "",
         fd: bun.FileDescriptor = bun.invalid_fd,
-        poll_ref: ?*JSC.FilePoll = null,
+        poll_ref: ?*Async.FilePoll = null,
         written: usize = 0,
 
         source: union(enum) {
@@ -1574,7 +1575,7 @@ pub const Subprocess = struct {
         subprocess.* = Subprocess{
             .globalThis = globalThis,
             .pid = pid,
-            .pidfd = @truncate(pidfd),
+            .pidfd = if (WaiterThread.shouldUseWaiterThread()) @truncate(bun.invalid_fd) else @truncate(pidfd),
             .stdin = Writable.init(stdio[bun.STDIN_FD], stdin_pipe[1], globalThis) catch {
                 globalThis.throw("out of memory", .{});
                 return .zero;
@@ -1612,7 +1613,7 @@ pub const Subprocess = struct {
 
         if (comptime !is_sync) {
             if (!WaiterThread.shouldUseWaiterThread()) {
-                var poll = JSC.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
+                var poll = Async.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
                 subprocess.poll = .{ .poll_ref = poll };
                 subprocess.flags.reference_count += 1;
                 switch (subprocess.poll.poll_ref.?.register(
@@ -1679,7 +1680,7 @@ pub const Subprocess = struct {
         subprocess.closeIO(.stdin);
 
         if (!WaiterThread.shouldUseWaiterThread()) {
-            var poll = JSC.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
+            var poll = Async.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
             subprocess.poll = .{ .poll_ref = poll };
             subprocess.flags.reference_count += 1;
             switch (subprocess.poll.poll_ref.?.register(
@@ -1781,6 +1782,9 @@ pub const Subprocess = struct {
     }
 
     pub fn onWaitPid(this: *Subprocess, sync: bool, this_jsvalue: JSC.JSValue, waitpid_result_: JSC.Maybe(PosixSpawn.WaitPidResult)) void {
+        if(Environment.isWindows) {
+            @panic("windows doesnt support subprocess yet. haha");
+        }
         defer if (sync) this.updateHasPendingActivity();
 
         const pid = this.pid;
@@ -2180,6 +2184,8 @@ pub const Subprocess = struct {
         concurrent_queue: Queue = .{},
         queue: std.ArrayList(*Subprocess) = std.ArrayList(*Subprocess).init(bun.default_allocator),
         started: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
+        signalfd: if (Environment.isLinux) bun.FileDescriptor else u0 = undefined,
+        eventfd: if (Environment.isLinux) bun.FileDescriptor else u0 = undefined,
 
         pub fn setShouldUseWaiterThread() void {
             @atomicStore(bool, &should_use_waiter_thread, true, .Monotonic);
@@ -2207,6 +2213,14 @@ pub const Subprocess = struct {
 
             var thread = try std.Thread.spawn(.{ .stack_size = 512 * 1024 }, loop, .{});
             thread.detach();
+
+            if (comptime Environment.isLinux) {
+                const linux = std.os.linux;
+                var mask = std.os.empty_sigset;
+                linux.sigaddset(&mask, std.os.SIG.CHLD);
+                instance.signalfd = try std.os.signalfd(-1, &mask, linux.SFD.CLOEXEC | linux.SFD.NONBLOCK);
+                instance.eventfd = try std.os.eventfd(0, linux.EFD.NONBLOCK | linux.EFD.CLOEXEC | 0);
+            }
         }
 
         pub const WaitPidResultTask = struct {
@@ -2244,6 +2258,11 @@ pub const Subprocess = struct {
             process.updateHasPendingActivity();
 
             init() catch @panic("Failed to start WaiterThread");
+
+            if (comptime Environment.isLinux) {
+                const one = @as([8]u8, @bitCast(@as(usize, 1)));
+                _ = std.os.write(instance.eventfd, &one) catch @panic("Failed to write to eventfd");
+            }
         }
 
         pub fn loop() void {
@@ -2296,10 +2315,31 @@ pub const Subprocess = struct {
                     i += 1;
                 }
 
-                var mask = std.os.empty_sigset;
-                var signal: c_int = std.os.SIG.CHLD;
-                var rc = std.c.sigwait(&mask, &signal);
-                _ = rc;
+                if (comptime Environment.isLinux) {
+                    var polls = [_]std.os.pollfd{
+                        .{
+                            .fd = @intCast(this.signalfd),
+                            .events = std.os.POLL.IN | std.os.POLL.ERR,
+                            .revents = 0,
+                        },
+                        .{
+                            .fd = @intCast(this.eventfd),
+                            .events = std.os.POLL.IN | std.os.POLL.ERR,
+                            .revents = 0,
+                        },
+                    };
+
+                    _ = std.os.poll(&polls, std.math.maxInt(i32)) catch 0;
+
+                    // Make sure we consume any pending signals
+                    var buf: [1024]u8 = undefined;
+                    _ = std.os.read(this.signalfd, &buf) catch 0;
+                } else {
+                    var mask = std.os.empty_sigset;
+                    var signal: c_int = std.os.SIG.CHLD;
+                    var rc = std.c.sigwait(&mask, &signal);
+                    _ = rc;
+                }
             }
         }
     };

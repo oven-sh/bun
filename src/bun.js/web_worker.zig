@@ -4,6 +4,7 @@ const Output = bun.Output;
 const log = Output.scoped(.Worker, true);
 const std = @import("std");
 const JSValue = JSC.JSValue;
+const Async = bun.Async;
 
 /// Shared implementation of Web and Node `Worker`
 pub const WebWorker = struct {
@@ -28,7 +29,7 @@ pub const WebWorker = struct {
     /// if false, then the parent poll will always be unref, otherwise the worker's event loop will keep the poll alive.
     user_keep_alive: bool = false,
     worker_event_loop_running: bool = true,
-    parent_poll_ref: JSC.PollRef = .{},
+    parent_poll_ref: Async.KeepAlive = .{},
 
     pub const Status = enum {
         start,

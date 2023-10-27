@@ -3,7 +3,6 @@ const JSC = @import("root").bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const VirtualMachine = JSC.VirtualMachine;
 const Lock = @import("../lock.zig").Lock;
-const Microtask = JSC.Microtask;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 const Fetch = JSC.WebCore.Fetch;
@@ -23,6 +22,7 @@ pub const WorkPool = @import("../work_pool.zig").WorkPool;
 pub const WorkPoolTask = @import("../work_pool.zig").Task;
 const NetworkThread = @import("root").bun.HTTP.NetworkThread;
 const uws = @import("root").bun.uws;
+const Async = bun.Async;
 
 pub fn ConcurrentPromiseTask(comptime Context: type) type {
     return struct {
@@ -36,7 +36,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         concurrent_task: JSC.ConcurrentTask = .{},
 
         // This is a poll because we want it to enter the uSockets loop
-        ref: JSC.PollRef = .{},
+        ref: Async.KeepAlive = .{},
 
         pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSGlobalObject, value: *Context) !*This {
             var this = try allocator.create(This);
@@ -100,7 +100,7 @@ pub fn WorkTask(comptime Context: type, comptime async_io: bool) type {
         async_task_tracker: JSC.AsyncTaskTracker,
 
         // This is a poll because we want it to enter the uSockets loop
-        ref: JSC.PollRef = .{},
+        ref: Async.KeepAlive = .{},
 
         pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSGlobalObject, value: *Context) !*This {
             var this = try allocator.create(This);
@@ -297,7 +297,6 @@ pub const JSCScheduler = struct {
 };
 
 const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
-const MicrotaskForDefaultGlobalObject = JSC.MicrotaskForDefaultGlobalObject;
 const HotReloadTask = JSC.HotReloader.HotReloadTask;
 const FSWatchTask = JSC.Node.FSWatcher.FSWatchTask;
 const PollPendingModulesTask = JSC.ModuleLoader.AsyncModule.Queue;
@@ -348,8 +347,6 @@ const WaitPidResultTask = JSC.Subprocess.WaiterThread.WaitPidResultTask;
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
-    Microtask,
-    MicrotaskForDefaultGlobalObject,
     AsyncTransformTask,
     ReadFileTask,
     CopyFilePromiseTask,
@@ -465,7 +462,7 @@ pub const GarbageCollectionController = struct {
     disabled: bool = false,
 
     pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
-        var actual = vm.event_loop_handle.?;
+        var actual = uws.Loop.get();
         this.gc_timer = uws.Timer.createFallthrough(actual, this);
         this.gc_repeating_timer = uws.Timer.createFallthrough(actual, this);
 
@@ -607,6 +604,7 @@ comptime {
 }
 
 pub const DeferredRepeatingTask = *const (fn (*anyopaque) bool);
+const Waker = AsyncIO.Waker;
 pub const EventLoop = struct {
     tasks: if (JSC.is_bindgen) void else Queue = undefined,
 
@@ -625,20 +623,21 @@ pub const EventLoop = struct {
     concurrent_tasks: ConcurrentTask.Queue = ConcurrentTask.Queue{},
     global: *JSGlobalObject = undefined,
     virtual_machine: *JSC.VirtualMachine = undefined,
-    waker: ?AsyncIO.Waker = null,
+    waker: ?Waker = null,
     start_server_on_next_tick: bool = false,
     defer_count: std.atomic.Atomic(usize) = std.atomic.Atomic(usize).init(0),
     forever_timer: ?*uws.Timer = null,
     deferred_microtask_map: std.AutoArrayHashMapUnmanaged(?*anyopaque, DeferredRepeatingTask) = .{},
-
+    uws_loop: if (Environment.isWindows) *uws.Loop else void = undefined,
     pub const Queue = std.fifo.LinearFifo(Task, .Dynamic);
     const log = bun.Output.scoped(.EventLoop, false);
 
     pub fn tickWhilePaused(this: *EventLoop, done: *bool) void {
         while (!done.*) {
-            this.virtual_machine.event_loop_handle.?.tick(this.virtual_machine.jsc);
+            this.virtual_machine.event_loop_handle.?.tick();
         }
     }
+
     extern fn JSC__JSGlobalObject__drainMicrotasks(*JSC.JSGlobalObject) void;
     fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *JSC.JSGlobalObject) void {
         JSC.markBinding(@src());
@@ -648,12 +647,6 @@ pub const EventLoop = struct {
 
     pub fn drainMicrotasks(this: *EventLoop) void {
         this.drainMicrotasksWithGlobal(this.global);
-    }
-
-    pub fn ensureAliveForOneTick(this: *EventLoop) void {
-        if (this.noop_task.scheduled) return;
-        this.enqueueTask(Task.init(&this.noop_task));
-        this.noop_task.scheduled = true;
     }
 
     pub fn registerDeferredTask(this: *EventLoop, ctx: ?*anyopaque, task: DeferredRepeatingTask) bool {
@@ -691,14 +684,6 @@ pub const EventLoop = struct {
         while (@field(this, queue_name).readItem()) |task| {
             defer counter += 1;
             switch (task.tag()) {
-                .Microtask => {
-                    var micro: *Microtask = task.as(Microtask);
-                    micro.run(global);
-                },
-                .MicrotaskForDefaultGlobalObject => {
-                    var micro: *MicrotaskForDefaultGlobalObject = task.as(MicrotaskForDefaultGlobalObject);
-                    micro.run(global);
-                },
                 .FetchTasklet => {
                     var fetch_task: *Fetch.FetchTasklet = task.get(Fetch.FetchTasklet).?;
                     fetch_task.onProgressUpdate();
@@ -998,58 +983,73 @@ pub const EventLoop = struct {
         return this.tasks.count - start_count;
     }
 
+    inline fn usocketsLoop(this: *const EventLoop) *uws.Loop {
+        if (comptime Environment.isWindows) {
+            return this.uws_loop;
+        }
+
+        return this.virtual_machine.event_loop_handle.?;
+    }
+
     pub fn autoTick(this: *EventLoop) void {
         var ctx = this.virtual_machine;
-        var loop = ctx.event_loop_handle.?;
+        var loop = this.usocketsLoop();
 
         this.flushImmediateQueue();
         this.tickImmediateTasks();
 
-        // Some tasks need to keep the event loop alive for one more tick.
-        // We want to keep the event loop alive long enough to process those ticks and any microtasks
-        //
-        // BUT. We don't actually have an idle event in that case.
-        // That means the process will be waiting forever on nothing.
-        // So we need to drain the counter immediately before entering uSockets loop
-        const pending_unref = ctx.pending_unref_counter;
-        if (pending_unref > 0) {
-            ctx.pending_unref_counter = 0;
-            loop.unrefCount(pending_unref);
+        if (comptime Environment.isPosix) {
+            // Some tasks need to keep the event loop alive for one more tick.
+            // We want to keep the event loop alive long enough to process those ticks and any microtasks
+            //
+            // BUT. We don't actually have an idle event in that case.
+            // That means the process will be waiting forever on nothing.
+            // So we need to drain the counter immediately before entering uSockets loop
+            const pending_unref = ctx.pending_unref_counter;
+            if (pending_unref > 0) {
+                ctx.pending_unref_counter = 0;
+                loop.unrefCount(pending_unref);
+            }
         }
 
-        if (loop.num_polls > 0 or loop.active > 0) {
+        if (loop.isActive()) {
             this.processGCTimer();
-            loop.tick(ctx.jsc);
-
+            loop.tick();
+            this.flushImmediateQueue();
             ctx.onAfterEventLoop();
-            // this.afterUSocketsTick();
+        } else {
+            this.flushImmediateQueue();
         }
     }
 
     pub fn autoTickWithTimeout(this: *EventLoop, timeoutMs: i64) void {
         var ctx = this.virtual_machine;
-        var loop = ctx.event_loop_handle.?;
+        var loop = this.usocketsLoop();
 
         this.flushImmediateQueue();
         this.tickImmediateTasks();
 
-        // Some tasks need to keep the event loop alive for one more tick.
-        // We want to keep the event loop alive long enough to process those ticks and any microtasks
-        //
-        // BUT. We don't actually have an idle event in that case.
-        // That means the process will be waiting forever on nothing.
-        // So we need to drain the counter immediately before entering uSockets loop
-        const pending_unref = ctx.pending_unref_counter;
-        if (pending_unref > 0) {
-            ctx.pending_unref_counter = 0;
-            loop.unrefCount(pending_unref);
+        if (comptime Environment.isPosix) {
+            // Some tasks need to keep the event loop alive for one more tick.
+            // We want to keep the event loop alive long enough to process those ticks and any microtasks
+            //
+            // BUT. We don't actually have an idle event in that case.
+            // That means the process will be waiting forever on nothing.
+            // So we need to drain the counter immediately before entering uSockets loop
+            const pending_unref = ctx.pending_unref_counter;
+            if (pending_unref > 0) {
+                ctx.pending_unref_counter = 0;
+                loop.unrefCount(pending_unref);
+            }
         }
 
-        if (loop.num_polls > 0 or loop.active > 0) {
+        if (loop.isActive()) {
             this.processGCTimer();
-            loop.tickWithTimeout(timeoutMs, ctx.jsc);
+            loop.tickWithTimeout(timeoutMs);
+            this.flushImmediateQueue();
             ctx.onAfterEventLoop();
-            // this.afterUSocketsTick();
+        } else {
+            this.flushImmediateQueue();
         }
     }
 
@@ -1069,27 +1069,30 @@ pub const EventLoop = struct {
 
     pub fn tickPossiblyForever(this: *EventLoop) void {
         var ctx = this.virtual_machine;
-        var loop = ctx.event_loop_handle.?;
+        var loop = this.usocketsLoop();
 
-        this.flushImmediateQueue();
-        this.tickImmediateTasks();
-
-        const pending_unref = ctx.pending_unref_counter;
-        if (pending_unref > 0) {
-            ctx.pending_unref_counter = 0;
-            loop.unrefCount(pending_unref);
+        if (comptime Environment.isPosix) {
+            const pending_unref = ctx.pending_unref_counter;
+            if (pending_unref > 0) {
+                ctx.pending_unref_counter = 0;
+                loop.unrefCount(pending_unref);
+            }
         }
 
-        if (loop.num_polls == 0 or loop.active == 0) {
-            if (this.forever_timer == null) {
-                var t = uws.Timer.create(loop, this);
-                t.set(this, &noopForeverTimer, 1000 * 60 * 4, 1000 * 60 * 4);
-                this.forever_timer = t;
+        if (!loop.isActive()) {
+            if (comptime Environment.isWindows) {
+                bun.todo(@src(), {});
+            } else {
+                if (this.forever_timer == null) {
+                    var t = uws.Timer.create(loop, this);
+                    t.set(this, &noopForeverTimer, 1000 * 60 * 4, 1000 * 60 * 4);
+                    this.forever_timer = t;
+                }
             }
         }
 
         this.processGCTimer();
-        loop.tick(ctx.jsc);
+        loop.tick();
 
         ctx.onAfterEventLoop();
         this.tickConcurrent();
@@ -1101,25 +1104,27 @@ pub const EventLoop = struct {
     }
 
     pub fn autoTickActive(this: *EventLoop) void {
-        var loop = this.virtual_machine.event_loop_handle.?;
+        var loop = this.usocketsLoop();
 
         this.flushImmediateQueue();
         this.tickImmediateTasks();
 
         var ctx = this.virtual_machine;
-
-        const pending_unref = ctx.pending_unref_counter;
-        if (pending_unref > 0) {
-            ctx.pending_unref_counter = 0;
-            loop.unrefCount(pending_unref);
+        if (comptime Environment.isPosix) {
+            const pending_unref = ctx.pending_unref_counter;
+            if (pending_unref > 0) {
+                ctx.pending_unref_counter = 0;
+                loop.unrefCount(pending_unref);
+            }
         }
 
-        if (loop.active > 0) {
+        if (loop.isActive()) {
             this.processGCTimer();
-            loop.tick(ctx.jsc);
+            loop.tick();
             this.flushImmediateQueue();
             ctx.onAfterEventLoop();
-            // this.afterUSocketsTick();
+        } else {
+            this.flushImmediateQueue();
         }
     }
 
@@ -1134,8 +1139,8 @@ pub const EventLoop = struct {
         this.tickConcurrent();
         this.processGCTimer();
 
-        var global = ctx.global;
-        var global_vm = ctx.jsc;
+        const global = ctx.global;
+        const global_vm = ctx.jsc;
 
         while (true) {
             while (this.tickWithCount() > 0) : (this.global.handleRejectedPromises()) {
@@ -1209,6 +1214,11 @@ pub const EventLoop = struct {
     }
 
     pub fn enqueueTaskWithTimeout(this: *EventLoop, task: Task, timeout: i32) void {
+        if (comptime Environment.isWindows) {
+            bun.todo(@src(), {});
+            return;
+        }
+
         // TODO: make this more efficient!
         var loop = this.virtual_machine.event_loop_handle orelse @panic("EventLoop.enqueueTaskWithTimeout: uSockets event loop is not initialized");
         var timer = uws.Timer.createFallthrough(loop, task.ptr());
@@ -1225,8 +1235,14 @@ pub const EventLoop = struct {
     pub fn ensureWaker(this: *EventLoop) void {
         JSC.markBinding(@src());
         if (this.virtual_machine.event_loop_handle == null) {
-            var actual = uws.Loop.get().?;
-            this.virtual_machine.event_loop_handle = actual;
+            // Ensure the uWS loop is created first on windows
+            if (comptime Environment.isWindows) {
+                this.uws_loop = bun.uws.Loop.get();
+                this.virtual_machine.event_loop_handle = bun.Async.Loop.get();
+            } else {
+                this.virtual_machine.event_loop_handle = bun.Async.Loop.get();
+            }
+
             this.virtual_machine.gc_controller.init(this.virtual_machine);
             // _ = actual.addPostHandler(*JSC.EventLoop, this, JSC.EventLoop.afterUSocketsTick);
             // _ = actual.addPreHandler(*JSC.VM, this.virtual_machine.jsc, JSC.VM.drainMicrotasks);
@@ -1239,6 +1255,11 @@ pub const EventLoop = struct {
     }
 
     pub fn wakeup(this: *EventLoop) void {
+        if (comptime Environment.isWindows) {
+            this.uws_loop.wakeup();
+            return;
+        }
+
         if (this.virtual_machine.event_loop_handle) |loop| {
             loop.wakeup();
         }
@@ -1267,7 +1288,7 @@ pub const MiniEventLoop = struct {
         return .{
             .tasks = Queue.init(allocator),
             .allocator = allocator,
-            .loop = uws.Loop.get().?,
+            .loop = uws.Loop.get(),
         };
     }
 
@@ -1307,9 +1328,9 @@ pub const MiniEventLoop = struct {
     ) void {
         while (!isDone(context)) {
             if (this.tickConcurrentWithCount() == 0 and this.tasks.count == 0) {
-                this.loop.num_polls += 1;
-                this.loop.tick(null);
-                this.loop.num_polls -= 1;
+                this.loop.inc();
+                this.loop.tick();
+                this.loop.dec();
             }
 
             while (this.tasks.readItem()) |task| {

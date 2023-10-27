@@ -159,159 +159,163 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
         // #endif
     case MessageEventInterfaceType:
         return createWrapper<MessageEvent>(globalObject, WTFMove(impl));
-        //     case MouseEventInterfaceType:
-        //         return createWrapper<MouseEvent>(globalObject, WTFMove(impl));
-        //     case MutationEventInterfaceType:
-        //         return createWrapper<MutationEvent>(globalObject, WTFMove(impl));
-        // #if ENABLE(NOTIFICATION_EVENT)
-        //     case NotificationEventInterfaceType:
-        //         return createWrapper<NotificationEvent>(globalObject, WTFMove(impl));
-        // #endif
-        // #if ENABLE(WEB_AUDIO)
-        //     case OfflineAudioCompletionEventInterfaceType:
-        //         return createWrapper<OfflineAudioCompletionEvent>(globalObject, WTFMove(impl));
-        // #endif
-        // #if ENABLE(MEDIA_STREAM)
-        //     case OverconstrainedErrorEventInterfaceType:
-        //         return createWrapper<OverconstrainedErrorEvent>(globalObject, WTFMove(impl));
-        // #endif
-        //     case OverflowEventInterfaceType:
-        //         return createWrapper<OverflowEvent>(globalObject, WTFMove(impl));
-        //     case PageTransitionEventInterfaceType:
-        //         return createWrapper<PageTransitionEvent>(globalObject, WTFMove(impl));
-        // #if ENABLE(PAYMENT_REQUEST)
-        //     case PaymentMethodChangeEventInterfaceType:
-        //         return createWrapper<PaymentMethodChangeEvent>(globalObject, WTFMove(impl));
-        // #endif
-        // #if ENABLE(PAYMENT_REQUEST)
-        //     case PaymentRequestUpdateEventInterfaceType:
-        //         return createWrapper<PaymentRequestUpdateEvent>(globalObject, WTFMove(impl));
-        // #endif
-        // #if ENABLE(PICTURE_IN_PICTURE_API)
-        //     case PictureInPictureEventInterfaceType:
-        //         return createWrapper<PictureInPictureEvent>(globalObject, WTFMove(impl));
-        // #endif
-        //     case PointerEventInterfaceType:
-        //         return createWrapper<PointerEvent>(globalObject, WTFMove(impl));
-        //     case PopStateEventInterfaceType:
-        //         return createWrapper<PopStateEvent>(globalObject, WTFMove(impl));
-        //     case ProgressEventInterfaceType:
-        //         return createWrapper<ProgressEvent>(globalObject, WTFMove(impl));
-        //     case PromiseRejectionEventInterfaceType:
-        //         return createWrapper<PromiseRejectionEvent>(globalObject, WTFMove(impl));
-        // #if ENABLE(SERVICE_WORKER)
-        //     case PushEventInterfaceType:
-        //         return createWrapper<PushEvent>(globalObject, WTFMove(impl));
-        // #endif
-        // #if ENABLE(SERVICE_WORKER)
-        //     case PushSubscriptionChangeEventInterfaceType:
-        //         return createWrapper<PushSubscriptionChangeEvent>(globalObject, WTFMove(impl));
-        // #endif
-        // #if ENABLE(WEB_RTC)
-        //     case RTCDTMFToneChangeEventInterfaceType:
-        //         return createWrapper<RTCDTMFToneChangeEvent>(globalObject, WTFMove(impl));
-        // #endif
-        // #if ENABLE(WEB_RTC)
-        //     case RTCDataChannelEventInterfaceType:
-        //         return createWrapper<RTCDataChannelEvent>(globalObject, WTFMove(impl));
-        // #endif
-        // #if ENABLE(WEB_RTC)
-        //     case RTCErrorEventInterfaceType:
-        //         return createWrapper<RTCErrorEvent>(globalObject, WTFMove(impl));
-        // #endif
-        // #if ENABLE(WEB_RTC)
-        //     case RTCPeerConnectionIceErrorEventInterfaceType:
-        //         return createWrapper<RTCPeerConnectionIceErrorEvent>(globalObject, WTFMove(impl));
-        // #endif
-        // #if ENABLE(WEB_RTC)
-        //     case RTCPeerConnectionIceEventInterfaceType:
-        //         return createWrapper<RTCPeerConnectionIceEvent>(globalObject, WTFMove(impl));
-        // #endif
-        // #if ENABLE(WEB_RTC)
-        //     case RTCRtpSFrameTransformErrorEventInterfaceType:
-        //         return createWrapper<RTCRtpSFrameTransformErrorEvent>(globalObject, WTFMove(impl));
-        // #endif
-        // #if ENABLE(WEB_RTC)
-        //     case RTCTrackEventInterfaceType:
-        //         return createWrapper<RTCTrackEvent>(globalObject, WTFMove(impl));
-        // #endif
-        // #if ENABLE(WEB_RTC)
-        //     case RTCTransformEventInterfaceType:
-        //         return createWrapper<RTCTransformEvent>(globalObject, WTFMove(impl));
-        // #endif
-        //     case SVGZoomEventInterfaceType:
-        //         return createWrapper<SVGZoomEvent>(globalObject, WTFMove(impl));
-        //     case SecurityPolicyViolationEventInterfaceType:
-        //         return createWrapper<SecurityPolicyViolationEvent>(globalObject, WTFMove(impl));
-        //     case SpeechRecognitionErrorEventInterfaceType:
-        //         return createWrapper<SpeechRecognitionErrorEvent>(globalObject, WTFMove(impl));
-        //     case SpeechRecognitionEventInterfaceType:
-        //         return createWrapper<SpeechRecognitionEvent>(globalObject, WTFMove(impl));
-        // #if ENABLE(SPEECH_SYNTHESIS)
-        //     case SpeechSynthesisErrorEventInterfaceType:
-        //         return createWrapper<SpeechSynthesisErrorEvent>(globalObject, WTFMove(impl));
-        // #endif
-        // #if ENABLE(SPEECH_SYNTHESIS)
-        //     case SpeechSynthesisEventInterfaceType:
-        //         return createWrapper<SpeechSynthesisEvent>(globalObject, WTFMove(impl));
-        // #endif
-        //     case StorageEventInterfaceType:
-        //         return createWrapper<StorageEvent>(globalObject, WTFMove(impl));
-        //     case SubmitEventInterfaceType:
-        //         return createWrapper<SubmitEvent>(globalObject, WTFMove(impl));
-        //     case TextEventInterfaceType:
-        //         return createWrapper<TextEvent>(globalObject, WTFMove(impl));
-        // #if ENABLE(TOUCH_EVENTS)
-        //     case TouchEventInterfaceType:
-        //         return createWrapper<TouchEvent>(globalObject, WTFMove(impl));
-        // #endif
-        // #if ENABLE(VIDEO)
-        //     case TrackEventInterfaceType:
-        //         return createWrapper<TrackEvent>(globalObject, WTFMove(impl));
-        // #endif
-        //     case TransitionEventInterfaceType:
-        //         return createWrapper<TransitionEvent>(globalObject, WTFMove(impl));
-        //     case UIEventInterfaceType:
-        //         return createWrapper<UIEvent>(globalObject, WTFMove(impl));
-        // #if ENABLE(WEBGL)
-        //     case WebGLContextEventInterfaceType:
-        //         return createWrapper<WebGLContextEvent>(globalObject, WTFMove(impl));
-        // #endif
-        // #if ENABLE(LEGACY_ENCRYPTED_MEDIA)
-        //     case WebKitMediaKeyMessageEventInterfaceType:
-        //         return createWrapper<WebKitMediaKeyMessageEvent>(globalObject, WTFMove(impl));
-        // #endif
-        // #if ENABLE(LEGACY_ENCRYPTED_MEDIA)
-        //     case WebKitMediaKeyNeededEventInterfaceType:
-        //         return createWrapper<WebKitMediaKeyNeededEvent>(globalObject, WTFMove(impl));
-        // #endif
-        // #if ENABLE(WIRELESS_PLAYBACK_TARGET)
-        //     case WebKitPlaybackTargetAvailabilityEventInterfaceType:
-        //         return createWrapper<WebKitPlaybackTargetAvailabilityEvent>(globalObject, WTFMove(impl));
-        // #endif
-        //     case WheelEventInterfaceType:
-        //         return createWrapper<WheelEvent>(globalObject, WTFMove(impl));
-        //     case XMLHttpRequestProgressEventInterfaceType:
-        //         return createWrapper<XMLHttpRequestProgressEvent>(globalObject, WTFMove(impl));
-        // #if ENABLE(WEBXR)
-        //     case XRInputSourceEventInterfaceType:
-        //         return createWrapper<XRInputSourceEvent>(globalObject, WTFMove(impl));
-        // #endif
-        // #if ENABLE(WEBXR)
-        //     case XRInputSourcesChangeEventInterfaceType:
-        //         return createWrapper<XRInputSourcesChangeEvent>(globalObject, WTFMove(impl));
-        // #endif
-        // #if ENABLE(WEBXR)
-        //     case XRReferenceSpaceEventInterfaceType:
-        //         return createWrapper<XRReferenceSpaceEvent>(globalObject, WTFMove(impl));
-        // #endif
-        // #if ENABLE(WEBXR)
-        //     case XRSessionEventInterfaceType:
-        //         return createWrapper<XRSessionEvent>(globalObject, WTFMove(impl));
-        // #endif
-        //     }
-        return createWrapper<Event>(globalObject, WTFMove(impl));
+    //     case MouseEventInterfaceType:
+    //         return createWrapper<MouseEvent>(globalObject, WTFMove(impl));
+    //     case MutationEventInterfaceType:
+    //         return createWrapper<MutationEvent>(globalObject, WTFMove(impl));
+    // #if ENABLE(NOTIFICATION_EVENT)
+    //     case NotificationEventInterfaceType:
+    //         return createWrapper<NotificationEvent>(globalObject, WTFMove(impl));
+    // #endif
+    // #if ENABLE(WEB_AUDIO)
+    //     case OfflineAudioCompletionEventInterfaceType:
+    //         return createWrapper<OfflineAudioCompletionEvent>(globalObject, WTFMove(impl));
+    // #endif
+    // #if ENABLE(MEDIA_STREAM)
+    //     case OverconstrainedErrorEventInterfaceType:
+    //         return createWrapper<OverconstrainedErrorEvent>(globalObject, WTFMove(impl));
+    // #endif
+    //     case OverflowEventInterfaceType:
+    //         return createWrapper<OverflowEvent>(globalObject, WTFMove(impl));
+    //     case PageTransitionEventInterfaceType:
+    //         return createWrapper<PageTransitionEvent>(globalObject, WTFMove(impl));
+    // #if ENABLE(PAYMENT_REQUEST)
+    //     case PaymentMethodChangeEventInterfaceType:
+    //         return createWrapper<PaymentMethodChangeEvent>(globalObject, WTFMove(impl));
+    // #endif
+    // #if ENABLE(PAYMENT_REQUEST)
+    //     case PaymentRequestUpdateEventInterfaceType:
+    //         return createWrapper<PaymentRequestUpdateEvent>(globalObject, WTFMove(impl));
+    // #endif
+    // #if ENABLE(PICTURE_IN_PICTURE_API)
+    //     case PictureInPictureEventInterfaceType:
+    //         return createWrapper<PictureInPictureEvent>(globalObject, WTFMove(impl));
+    // #endif
+    //     case PointerEventInterfaceType:
+    //         return createWrapper<PointerEvent>(globalObject, WTFMove(impl));
+    //     case PopStateEventInterfaceType:
+    //         return createWrapper<PopStateEvent>(globalObject, WTFMove(impl));
+    //     case ProgressEventInterfaceType:
+    //         return createWrapper<ProgressEvent>(globalObject, WTFMove(impl));
+    //     case PromiseRejectionEventInterfaceType:
+    //         return createWrapper<PromiseRejectionEvent>(globalObject, WTFMove(impl));
+    // #if ENABLE(SERVICE_WORKER)
+    //     case PushEventInterfaceType:
+    //         return createWrapper<PushEvent>(globalObject, WTFMove(impl));
+    // #endif
+    // #if ENABLE(SERVICE_WORKER)
+    //     case PushSubscriptionChangeEventInterfaceType:
+    //         return createWrapper<PushSubscriptionChangeEvent>(globalObject, WTFMove(impl));
+    // #endif
+    // #if ENABLE(WEB_RTC)
+    //     case RTCDTMFToneChangeEventInterfaceType:
+    //         return createWrapper<RTCDTMFToneChangeEvent>(globalObject, WTFMove(impl));
+    // #endif
+    // #if ENABLE(WEB_RTC)
+    //     case RTCDataChannelEventInterfaceType:
+    //         return createWrapper<RTCDataChannelEvent>(globalObject, WTFMove(impl));
+    // #endif
+    // #if ENABLE(WEB_RTC)
+    //     case RTCErrorEventInterfaceType:
+    //         return createWrapper<RTCErrorEvent>(globalObject, WTFMove(impl));
+    // #endif
+    // #if ENABLE(WEB_RTC)
+    //     case RTCPeerConnectionIceErrorEventInterfaceType:
+    //         return createWrapper<RTCPeerConnectionIceErrorEvent>(globalObject, WTFMove(impl));
+    // #endif
+    // #if ENABLE(WEB_RTC)
+    //     case RTCPeerConnectionIceEventInterfaceType:
+    //         return createWrapper<RTCPeerConnectionIceEvent>(globalObject, WTFMove(impl));
+    // #endif
+    // #if ENABLE(WEB_RTC)
+    //     case RTCRtpSFrameTransformErrorEventInterfaceType:
+    //         return createWrapper<RTCRtpSFrameTransformErrorEvent>(globalObject, WTFMove(impl));
+    // #endif
+    // #if ENABLE(WEB_RTC)
+    //     case RTCTrackEventInterfaceType:
+    //         return createWrapper<RTCTrackEvent>(globalObject, WTFMove(impl));
+    // #endif
+    // #if ENABLE(WEB_RTC)
+    //     case RTCTransformEventInterfaceType:
+    //         return createWrapper<RTCTransformEvent>(globalObject, WTFMove(impl));
+    // #endif
+    //     case SVGZoomEventInterfaceType:
+    //         return createWrapper<SVGZoomEvent>(globalObject, WTFMove(impl));
+    //     case SecurityPolicyViolationEventInterfaceType:
+    //         return createWrapper<SecurityPolicyViolationEvent>(globalObject, WTFMove(impl));
+    //     case SpeechRecognitionErrorEventInterfaceType:
+    //         return createWrapper<SpeechRecognitionErrorEvent>(globalObject, WTFMove(impl));
+    //     case SpeechRecognitionEventInterfaceType:
+    //         return createWrapper<SpeechRecognitionEvent>(globalObject, WTFMove(impl));
+    // #if ENABLE(SPEECH_SYNTHESIS)
+    //     case SpeechSynthesisErrorEventInterfaceType:
+    //         return createWrapper<SpeechSynthesisErrorEvent>(globalObject, WTFMove(impl));
+    // #endif
+    // #if ENABLE(SPEECH_SYNTHESIS)
+    //     case SpeechSynthesisEventInterfaceType:
+    //         return createWrapper<SpeechSynthesisEvent>(globalObject, WTFMove(impl));
+    // #endif
+    //     case StorageEventInterfaceType:
+    //         return createWrapper<StorageEvent>(globalObject, WTFMove(impl));
+    //     case SubmitEventInterfaceType:
+    //         return createWrapper<SubmitEvent>(globalObject, WTFMove(impl));
+    //     case TextEventInterfaceType:
+    //         return createWrapper<TextEvent>(globalObject, WTFMove(impl));
+    // #if ENABLE(TOUCH_EVENTS)
+    //     case TouchEventInterfaceType:
+    //         return createWrapper<TouchEvent>(globalObject, WTFMove(impl));
+    // #endif
+    // #if ENABLE(VIDEO)
+    //     case TrackEventInterfaceType:
+    //         return createWrapper<TrackEvent>(globalObject, WTFMove(impl));
+    // #endif
+    //     case TransitionEventInterfaceType:
+    //         return createWrapper<TransitionEvent>(globalObject, WTFMove(impl));
+    //     case UIEventInterfaceType:
+    //         return createWrapper<UIEvent>(globalObject, WTFMove(impl));
+    // #if ENABLE(WEBGL)
+    //     case WebGLContextEventInterfaceType:
+    //         return createWrapper<WebGLContextEvent>(globalObject, WTFMove(impl));
+    // #endif
+    // #if ENABLE(LEGACY_ENCRYPTED_MEDIA)
+    //     case WebKitMediaKeyMessageEventInterfaceType:
+    //         return createWrapper<WebKitMediaKeyMessageEvent>(globalObject, WTFMove(impl));
+    // #endif
+    // #if ENABLE(LEGACY_ENCRYPTED_MEDIA)
+    //     case WebKitMediaKeyNeededEventInterfaceType:
+    //         return createWrapper<WebKitMediaKeyNeededEvent>(globalObject, WTFMove(impl));
+    // #endif
+    // #if ENABLE(WIRELESS_PLAYBACK_TARGET)
+    //     case WebKitPlaybackTargetAvailabilityEventInterfaceType:
+    //         return createWrapper<WebKitPlaybackTargetAvailabilityEvent>(globalObject, WTFMove(impl));
+    // #endif
+    //     case WheelEventInterfaceType:
+    //         return createWrapper<WheelEvent>(globalObject, WTFMove(impl));
+    //     case XMLHttpRequestProgressEventInterfaceType:
+    //         return createWrapper<XMLHttpRequestProgressEvent>(globalObject, WTFMove(impl));
+    // #if ENABLE(WEBXR)
+    //     case XRInputSourceEventInterfaceType:
+    //         return createWrapper<XRInputSourceEvent>(globalObject, WTFMove(impl));
+    // #endif
+    // #if ENABLE(WEBXR)
+    //     case XRInputSourcesChangeEventInterfaceType:
+    //         return createWrapper<XRInputSourcesChangeEvent>(globalObject, WTFMove(impl));
+    // #endif
+    // #if ENABLE(WEBXR)
+    //     case XRReferenceSpaceEventInterfaceType:
+    //         return createWrapper<XRReferenceSpaceEvent>(globalObject, WTFMove(impl));
+    // #endif
+    // #if ENABLE(WEBXR)
+    //     case XRSessionEventInterfaceType:
+    //         return createWrapper<XRSessionEvent>(globalObject, WTFMove(impl));
+    // #endif
+    //     }
+    default: {
+        break;
     }
+    }
+
+    return createWrapper<Event>(globalObject, WTFMove(impl));
 }
 
 } // namespace WebCore

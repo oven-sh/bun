@@ -2326,7 +2326,7 @@ pub const Subprocess = struct {
                         },
                     };
 
-                    _ = std.os.poll(&polls, 0) catch 0;
+                    _ = std.os.poll(&polls, std.math.maxInt(i32)) catch 0;
 
                     // Make sure we consume any pending signals
                     var buf: [1024]u8 = undefined;

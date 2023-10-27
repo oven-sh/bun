@@ -1650,12 +1650,16 @@ const PackageInstall = struct {
             .hardlink => {
                 if (this.installWithHardlink()) |result| {
                     return result;
-                } else |err| {
+                } else |err| outer: {
+                    if (comptime !Environment.isWindows) {
+                        if (err == error.NotSameFileSystem) {
+                            supported_method = .copyfile;
+                            supported_method_to_use = .copyfile;
+                            break :outer;
+                        }
+                    }
+
                     switch (err) {
-                        // error.ENXIO => {
-                        //     supported_method = .copyfile;
-                        //     supported_method_to_use = .copyfile;
-                        // },
                         error.FileNotFound => return Result{
                             .fail = .{ .err = error.FileNotFound, .step = .opening_cache_dir },
                         },

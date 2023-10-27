@@ -5,7 +5,7 @@ const { hideFromStack, throwNotImplemented } = require("$shared");
 const tls = require("node:tls");
 const net = require("node:net");
 type Socket = typeof net.Socket;
-type Http2ConnectOptions = { settings?: Settings, protocol?: "https:" | "http:", createConnection?: Function };
+type Http2ConnectOptions = { settings?: Settings; protocol?: "https:" | "http:"; createConnection?: Function };
 const TLSSocket = tls.TLSSocket;
 const EventEmitter = require("node:events");
 const { Duplex } = require("node:stream");
@@ -524,7 +524,7 @@ class ClientHttp2Stream extends Duplex {
           sensitiveNames[sensitives[i]] = true;
         }
       }
-  
+
       Object.keys(headers).forEach(key => {
         //@ts-ignore
         if (key === sensitiveHeaders) {
@@ -533,7 +533,7 @@ class ClientHttp2Stream extends Duplex {
         if (key.startsWith(":")) {
           assertPseudoHeader(key);
         }
-  
+
         const value = headers[key];
         if (Array.isArray(value)) {
           assertSingleValueHeader(key);
@@ -544,7 +544,7 @@ class ClientHttp2Stream extends Duplex {
           flat_headers.push({ name: key, value: value?.toString() });
         }
       });
-      
+
       session[bunHTTP2Native]?.sendTrailers(this.#id, flat_headers);
       this.#sentTrailers = headers;
     }
@@ -800,9 +800,9 @@ class ClientHttp2Session extends Http2Session {
     },
     goaway(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       self.emit("goaway", errorCode, lastStreamId, opaqueData);
-      if(errorCode !== 0) { 
-      for(let [_, stream] of self.#streams) {
-          if(!stream[bunHTTP2Closed]) {
+      if (errorCode !== 0) {
+        for (let [_, stream] of self.#streams) {
+          if (!stream[bunHTTP2Closed]) {
             stream[bunHTTP2Closed] = true;
             stream.destroy(new Error(`ERR_HTTP2_SESSION_ERROR: Session closed with error code ${errorCode}`));
           }
@@ -977,7 +977,7 @@ class ClientHttp2Session extends Http2Session {
     }
     this.#isServer = true;
     this.#url = url;
-    
+
     const protocol = url.protocol || options?.protocol || "https:";
     const port = url.port ? parseInt(url.port, 10) : protocol === "http:" ? 80 : 443;
     // TODO: h2c or HTTP2 Over Cleartext
@@ -988,12 +988,12 @@ class ClientHttp2Session extends Http2Session {
 
     // h2 with ALPNProtocols
     let socket;
-    if(typeof options?.createConnection === "function") {
+    if (typeof options?.createConnection === "function") {
       socket = options.createConnection(url, options);
       this[bunHTTP2Socket] = socket;
       // it can return any duplex stream so we manually call onConnect
       this.#onConnect();
-    }else {
+    } else {
       socket = tls.connect(
         {
           host: url.hostname,

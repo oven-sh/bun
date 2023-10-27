@@ -3993,7 +3993,7 @@ pub const PackageManager = struct {
         }
 
         if (env.map.get("XDG_CACHE_HOME")) |dir| {
-            var parts = [_]string{ dir, ".bun/", "install/", "cache/" };
+            var parts = [_]string{ dir, "bun/", "install/", "cache/" };
             return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
         }
 
@@ -4751,7 +4751,7 @@ pub const PackageManager = struct {
 
             if (bun.getenvZ("XDG_CACHE_HOME") orelse bun.getenvZ("HOME")) |home_dir| {
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                var parts = [_]string{ ".bun", "install", "global" };
+                var parts = [_]string{ "bun", "install", "global" };
                 var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
                 return try std.fs.cwd().makeOpenPathIterable(path, .{});
             }
@@ -4781,7 +4781,17 @@ pub const PackageManager = struct {
                 return try std.fs.cwd().makeOpenPathIterable(path, .{});
             }
 
-            if (bun.getenvZ("XDG_CACHE_HOME") orelse bun.getenvZ("HOME")) |home_dir| {
+            if (bun.getenvZ("XDG_CACHE_HOME")) |home_dir| {
+                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var parts = [_]string{
+                    "bun",
+                    "bin",
+                };
+                var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
+                return try std.fs.cwd().makeOpenPathIterable(path, .{});
+            }
+
+            if (bun.getenvZ("HOME")) |home_dir| {
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 var parts = [_]string{
                     ".bun",

@@ -430,11 +430,8 @@ pub fn open(
             .flags = flags,
         },
         struct {
-            fn do_operation(ctx: Completion.Context, op: anytype) OpenError!bun.FileDescriptor {
-                _ = ctx;
-                const result = bun.sys.openat(bun.invalid_fd, op.path, op.flags, 0);
-                try result.throw();
-                return result.result;
+            fn do_operation(_: Completion.Context, op: anytype) OpenError!bun.FileDescriptor {
+                return try bun.sys.openat(bun.invalid_fd, op.path, op.flags, 0).unwrap();
             }
         },
     );

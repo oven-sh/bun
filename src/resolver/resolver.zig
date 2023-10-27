@@ -2542,17 +2542,14 @@ pub const Resolver = struct {
                     );
                 } else if (comptime Environment.isWindows) {
                     const dirfd_result = bun.sys.openDirAtWindowsA(bun.invalid_fd, sentinel, true, !follow_symlinks);
-                    if (dirfd_result.throw()) {
-                        _open_dir = std.fs.IterableDir{ .dir = .{
-                            .fd = bun.fdcast(dirfd_result.result),
-                        } };
+                    if (dirfd_result.unwrap()) |result| {
+                        _open_dir = std.fs.IterableDir{ .dir = .{ .fd = bun.fdcast(result) } };
                     } else |err| {
                         _open_dir = err;
                     }
                 }
 
                 bun.fs.debug("open({s}) = {any}", .{ sentinel, _open_dir });
-                // }
             }
 
             const open_dir = if (queue_top.fd != 0) std.fs.IterableDir{ .dir = .{ .fd = bun.fdcast(queue_top.fd) } } else (_open_dir catch |err| {
@@ -3870,9 +3867,13 @@ pub const Resolver = struct {
                         // not sure why this needs cwd but we'll just pass in the dir of the tsconfig...
                         var abs_path = ResolvePath.joinAbsStringBuf(ts_dir_name, bufs(.tsconfig_path_abs), &[_]string{ ts_dir_name, current.extends }, .auto);
                         var parent_config_maybe = r.parseTSConfig(abs_path, 0) catch |err| {
-                            r.log.addDebugFmt(null, logger.Loc.Empty, r.allocator, "{s} loading tsconfig.json extends {}", .{ @errorName(err), strings.QuotedFormatter{
-                                .text = abs_path,
-                            } }) catch {};
+                            r.log.addDebugFmt(null, logger.Loc.Empty, r.allocator, "{s} loading tsconfig.json extends {}", .{
+                                @errorName(err),
+                                strings.QuotedFormatter{
+                                    .text = abs_path,
+                                },
+                            }) catch {};
+                            if (@errorReturnTrace()) |trace| std.debug.dumpStackTrace(trace.*);
                             break;
                         };
                         if (parent_config_maybe) |parent_config| {

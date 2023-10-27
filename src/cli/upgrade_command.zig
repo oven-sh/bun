@@ -668,7 +668,7 @@ pub const UpgradeCommand = struct {
                     "--version",
                 };
 
-                const result = std.ChildProcess.exec(.{
+                const result = std.ChildProcess.run(.{
                     .allocator = ctx.allocator,
                     .argv = &verify_argv,
                     .cwd = tmpdir_path,
@@ -795,7 +795,7 @@ pub const UpgradeCommand = struct {
 
                 env_loader.map.put("IS_BUN_AUTO_UPDATE", "true") catch unreachable;
                 var buf_map = try env_loader.map.cloneToEnvMap(ctx.allocator);
-                _ = std.ChildProcess.exec(.{
+                _ = std.ChildProcess.run(.{
                     .allocator = ctx.allocator,
                     .argv = &completions_argv,
                     .cwd = target_dirname,

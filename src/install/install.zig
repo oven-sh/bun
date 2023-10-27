@@ -3154,7 +3154,14 @@ pub const PackageManager = struct {
                 }
             }
 
-            break :version dependency.version;
+            // explicit copy here due to `dependency.version` becoming undefined
+            // when `getOrPutResolvedPackageWithFindResult` is called and resizes the list.
+            break :version Dependency.Version{
+                .literal = dependency.version.literal,
+                .tag = dependency.version.tag,
+                .value = dependency.version.value,
+            };
+            // break :version dependency.version;
         };
         var loaded_manifest: ?Npm.PackageManifest = null;
 
@@ -5660,7 +5667,7 @@ pub const PackageManager = struct {
             break :brk child_json;
         };
 
-        try bun.sys.chdir(fs.top_level_dir).throw();
+        try bun.sys.chdir(fs.top_level_dir).unwrap();
         try BunArguments.loadConfig(ctx.allocator, cli.config, ctx, .InstallCommand);
         bun.copy(u8, &cwd_buf, fs.top_level_dir);
         cwd_buf[fs.top_level_dir.len] = '/';
@@ -6411,7 +6418,7 @@ pub const PackageManager = struct {
                     buf[cwd_.len] = 0;
                     final_path = buf[0..cwd_.len :0];
                 }
-                try bun.sys.chdir(final_path).throw();
+                try bun.sys.chdir(final_path).unwrap();
             }
 
             const specified_backend: ?PackageInstall.Method = brk: {
@@ -7645,7 +7652,7 @@ pub const PackageManager = struct {
         const cwd = std.fs.cwd();
         var node_modules_folder = cwd.openIterableDir("node_modules", .{}) catch brk: {
             skip_verify_installed_version_number = true;
-            bun.sys.mkdir("node_modules", 0o755).throw() catch |err| {
+            bun.sys.mkdir("node_modules", 0o755).unwrap() catch |err| {
                 if (err != error.EEXIST) {
                     Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating <b>node_modules<r> folder", .{@errorName(err)});
                     Global.crash();

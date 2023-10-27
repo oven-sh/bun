@@ -1,6 +1,7 @@
-const required_zig_version = "0.12.0-dev.899+027aabf49";
-
+const recommended_zig_version = "0.12.0-dev.1297+a9e66ed73";
+const zig_version = @import("builtin").zig_version;
 const std = @import("std");
+
 const pathRel = std.fs.path.relative;
 const Wyhash = @import("./src/wyhash.zig").Wyhash;
 var is_debug_build = false;
@@ -187,18 +188,24 @@ pub fn build(b: *Build) !void {
 }
 
 pub fn build_(b: *Build) !void {
-    if (!std.mem.eql(u8, @import("builtin").zig_version_string, required_zig_version)) {
-        const colors = std.io.getStdErr().supportsAnsiEscapeCodes();
-        std.debug.print(
-            "{s}WARNING:\nBun recommends Zig version '{s}', but found '{s}', build may fail...\nMake sure you installed the right version as per https://bun.sh/docs/project/contributing#install-zig\n{s}You can update to the right version using 'zigup {s}'\n\n",
-            .{
-                if (colors) "\x1b[1;33m" else "",
-                required_zig_version,
-                @import("builtin").zig_version_string,
-                if (colors) "\x1b[0m" else "",
-                required_zig_version,
-            },
-        );
+    switch (comptime zig_version.order(std.SemanticVersion.parse(recommended_zig_version) catch unreachable)) {
+        .eq => {},
+        .lt => {
+            @compileError("The minimum version of Zig required to compile Bun is " ++ recommended_zig_version ++ ", found " ++ @import("builtin").zig_version_string);
+        },
+        .gt => {
+            const colors = std.io.getStdErr().supportsAnsiEscapeCodes();
+            std.debug.print(
+                "{s}WARNING:\nBun recommends Zig version '{s}', but found '{s}', build may fail...\nMake sure you installed the right version as per https://bun.sh/docs/project/contributing#install-zig\n{s}You can update to the right version using 'zigup {s}'\n\n",
+                .{
+                    if (colors) "\x1b[1;33m" else "",
+                    recommended_zig_version,
+                    @import("builtin").zig_version_string,
+                    if (colors) "\x1b[0m" else "",
+                    recommended_zig_version,
+                },
+            );
+        },
     }
 
     // Standard target options allows the person running `zig build` to choose
@@ -210,7 +217,7 @@ pub fn build_(b: *Build) !void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     optimize = b.standardOptimizeOption(.{});
 
-    const generated_code_directory = b.option([]const u8, "generated-code", "Set the generated code directory") orelse "./";
+    const generated_code_directory = b.option([]const u8, "generated-code", "Set the generated code directory") orelse "./build";
 
     var output_dir_buf = std.mem.zeroes([4096]u8);
     var bin_label = if (optimize == std.builtin.OptimizeMode.Debug) "packages/debug-bun-" else "packages/bun-";
@@ -311,7 +318,7 @@ pub fn build_(b: *Build) !void {
             git_sha = b.allocator.dupeZ(u8, sha) catch unreachable;
         } else {
             sha: {
-                const result = std.ChildProcess.exec(.{
+                const result = std.ChildProcess.run(.{
                     .allocator = b.allocator,
                     .argv = &.{
                         "git",
@@ -388,6 +395,7 @@ pub fn build_(b: *Build) !void {
         obj.addOptions("build_options", actual_build_options.step(b));
 
         // Generated Code
+        // TODO: exit with a better error early if these files do not exist. it is an indication someone ran `zig build` directly without the code generators.
         obj.addModule("generated/ZigGeneratedClasses.zig", b.createModule(.{
             .source_file = .{ .path = b.fmt("{s}/ZigGeneratedClasses.zig", .{generated_code_directory}) },
         }));

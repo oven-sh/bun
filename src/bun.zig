@@ -748,9 +748,8 @@ pub fn openFileZ(pathZ: [:0]const u8, open_flags: std.fs.File.OpenFlags) !std.fs
         .read_write => flags |= std.os.O.RDWR,
     }
 
-    const res = sys.open(pathZ, flags, 0);
-    try res.throw();
-    return std.fs.File{ .handle = fdcast(res.result) };
+    const res = try sys.open(pathZ, flags, 0).unwrap();
+    return std.fs.File{ .handle = fdcast(res) };
 }
 
 pub fn openFile(path_: []const u8, open_flags: std.fs.File.OpenFlags) !std.fs.File {
@@ -1972,9 +1971,8 @@ pub fn makePath(dir: std.fs.Dir, sub_path: []const u8) !void {
 
                 path_buf2[component.path.len] = 0;
                 var path_to_use = path_buf2[0..component.path.len :0];
-                const result = sys.lstat(path_to_use);
-                try result.throw();
-                const is_dir = std.os.S.ISDIR(result.result.mode);
+                const result = try sys.lstat(path_to_use).unwrap();
+                const is_dir = std.os.S.ISDIR(result.mode);
                 // dangling symlink
                 if (!is_dir) {
                     dir.deleteTree(component.path) catch {};

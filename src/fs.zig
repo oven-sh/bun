@@ -650,10 +650,8 @@ pub const FileSystem = struct {
                 const flags = std.os.O.CREAT | std.os.O.RDWR | std.os.O.CLOEXEC;
                 this.dir_fd = bun.toFD(tmpdir_.fd);
 
-                const result = bun.sys.openat(tmpdir_.fd, name, flags, std.os.S.IRWXU);
-                try result.throw();
-
-                this.fd = bun.toFD(result.result);
+                const result = try bun.sys.openat(tmpdir_.fd, name, flags, std.os.S.IRWXU).unwrap();
+                this.fd = bun.toFD(result);
             }
 
             pub fn promoteToCWD(this: *TmpfilePosix, from_name: [*:0]const u8, name: [*:0]const u8) !void {
@@ -698,8 +696,7 @@ pub const FileSystem = struct {
 
                 const flags = std.os.O.CREAT | std.os.O.WRONLY | std.os.O.CLOEXEC;
 
-                var result = bun.sys.openat(bun.toFD(tmpdir_.fd), name, flags, 0);
-                try result.throw();
+                var result = try bun.sys.openat(bun.toFD(tmpdir_.fd), name, flags, 0).unwrap();
 
                 this.fd = bun.toFD(result.result);
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -722,7 +719,7 @@ pub const FileSystem = struct {
                 }
 
                 if (bun.windows.kernel32.MoveFileExW(existing.ptr, new.ptr, bun.windows.MOVEFILE_COPY_ALLOWED | bun.windows.MOVEFILE_REPLACE_EXISTING | bun.windows.MOVEFILE_WRITE_THROUGH) == bun.windows.FALSE) {
-                    try bun.windows.Win32Error.get().throw();
+                    try bun.windows.Win32Error.get().unwrap();
                 }
             }
 

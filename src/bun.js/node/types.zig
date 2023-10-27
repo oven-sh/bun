@@ -83,15 +83,11 @@ pub fn Maybe(comptime ResultType: type) type {
 
         pub const todo: @This() = @This(){ .err = Syscall.Error.todo };
 
-        pub fn throw(this: @This()) !void {
-            if (this == .err) {
-                return bun.AsyncIO.asError(this.err.errno);
-            }
-        }
-
         pub fn unwrap(this: @This()) !ReturnType {
-            try this.throw();
-            return this.result;
+            return switch (this) {
+                .err => |err| bun.AsyncIO.asError(err.errno),
+                .result => |result| result,
+            };
         }
 
         pub fn toJS(this: @This(), globalThis: *JSC.JSGlobalObject) JSC.JSValue {

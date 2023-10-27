@@ -454,6 +454,10 @@ function reduceToCompatibleHeaders(obj: any, currentValue: any) {
   return obj;
 }
 
+function sum(acc, cur) {
+  return acc + cur.byteLength;
+}
+
 class ClientHttp2Stream extends Duplex {
   #id: number;
   #session: ClientHttp2Session | null = null;
@@ -477,6 +481,12 @@ class ClientHttp2Stream extends Duplex {
 
   get pending() {
     return !this.#id;
+  }
+
+  get bufferSize() {
+    // we have no buffer
+    // we write into TLSSocket/Socket directly and let it buffer for us
+    return 0;
   }
 
   get sentHeaders() {
@@ -729,6 +739,12 @@ class ClientHttp2Session extends Http2Session {
       self[bunHTTP2Socket]?.end();
       self.#parser?.detach();
       self.#parser = null;
+    },
+    aborted(self: ClientHttp2Session, streamId: number, error: any) {
+      var stream = self.#streams.get(streamId);
+      if (stream) {
+        stream.emit("aborted", error);
+      }
     },
     goaway(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       self.emit("goaway", errorCode, lastStreamId, opaqueData);
@@ -1052,6 +1068,7 @@ class ClientHttp2Session extends Http2Session {
     const req = new ClientHttp2Stream(stream_id, this, headers);
     req.authority = authority;
     this.#streams.set(stream_id, req);
+    req.emit("ready");
     return req;
   }
   static connect(url: string | URL, options?: Settings) {

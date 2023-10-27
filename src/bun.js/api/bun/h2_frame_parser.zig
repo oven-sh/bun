@@ -220,6 +220,7 @@ const Handlers = struct {
     onEnd: JSC.JSValue = .zero,
     onGoAway: JSC.JSValue = .zero,
     onFrameError: JSC.JSValue = .zero,
+    onAborted: JSC.JSValue = .zero,
 
     binary_type: BinaryType = .Buffer,
 
@@ -282,6 +283,7 @@ const Handlers = struct {
             .{ "onError", "error" },
             .{ "onGoAway", "goaway" },
             .{ "onFrameError", "frameError" },
+            .{ "onAborted", "aborted" },
             .{ "onWrite", "write" },
         };
 
@@ -332,6 +334,7 @@ const Handlers = struct {
         this.onPing.unprotect();
         this.onEnd.unprotect();
         this.onFrameError.unprotect();
+        this.onAborted.unprotect();
     }
 
     pub fn clear(this: *Handlers) void {
@@ -350,6 +353,7 @@ const Handlers = struct {
         this.onEnd = .zero;
         this.onGoAway = .zero;
         this.onFrameError = .zero;
+        this.onAborted = .zero;
     }
 
     pub fn protect(this: *Handlers) void {
@@ -367,6 +371,7 @@ const Handlers = struct {
         this.onEnd.protect();
         this.onGoAway.protect();
         this.onFrameError.protect();
+        this.onAborted.protect();
     }
 };
 
@@ -471,6 +476,7 @@ pub const H2FrameParser = struct {
             if (this.canReceiveData() or this.canSendData()) {
                 this.state = .CLOSED;
                 this.client.endStream(this, .CANCEL);
+                this.client.dispatchWithExtra(.onAborted, JSC.JSValue.jsNumber(this.id), reason);
             }
         }
 

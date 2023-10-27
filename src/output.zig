@@ -483,11 +483,23 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
             defer lock.unlock();
 
             if (Output.enable_ansi_colors_stderr) {
-                out.print(comptime prettyFmt("<r><d>[" ++ @tagName(tag) ++ "]<r> " ++ fmt, true), args) catch unreachable;
-                buffered_writer.flush() catch unreachable;
+                out.print(comptime prettyFmt("<r><d>[" ++ @tagName(tag) ++ "]<r> " ++ fmt, true), args) catch {
+                    really_disable = true;
+                    return;
+                };
+                buffered_writer.flush() catch {
+                    really_disable = true;
+                    return;
+                };
             } else {
-                out.print(comptime prettyFmt("<r><d>[" ++ @tagName(tag) ++ "]<r> " ++ fmt, false), args) catch unreachable;
-                buffered_writer.flush() catch unreachable;
+                out.print(comptime prettyFmt("<r><d>[" ++ @tagName(tag) ++ "]<r> " ++ fmt, false), args) catch {
+                    really_disable = true;
+                    return;
+                };
+                buffered_writer.flush() catch {
+                    really_disable = true;
+                    return;
+                };
             }
         }
     }.log;

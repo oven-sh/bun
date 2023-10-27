@@ -2913,7 +2913,6 @@ pub const Win32Error = enum(u16) {
     }
 
     pub fn unwrap(this: @This()) !void {
-        std.os.exit
         if (this == .SUCCESS) return;
         if (this.toSystemErrno()) |err| {
             return err.toError();

@@ -18,6 +18,9 @@ $Env:CFLAGS = $CFLAGS
 $Env:CXXFLAGS = $CXXFLAGS
 
 $CMAKE_FLAGS = @(
+  "-GNinja",
+  "-DCMAKE_C_COMPILER=clang-cl",
+  "-DCMAKE_CXX_COMPILER=clang-cl",
   "-DCMAKE_C_FLAGS=`"$CFLAGS`"",
   "-DCMAKE_CXX_FLAGS=`"$CXXFLAGS`"",
   "-DCMAKE_BUILD_TYPE=Release"

@@ -2874,7 +2874,7 @@ pub const JSGlobalObject = extern struct {
         return cppFn("deleteModuleRegistryEntry", .{ this, name_ });
     }
 
-    pub fn bunVM_(this: *JSGlobalObject) *anyopaque {
+    fn bunVM_(this: *JSGlobalObject) *anyopaque {
         return cppFn("bunVM", .{this});
     }
 

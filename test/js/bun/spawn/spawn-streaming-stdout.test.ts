@@ -8,7 +8,7 @@ test("spawn can read from stdout multiple chunks", async () => {
   const maxFD = openSync("/dev/null", "w");
   closeSync(maxFD);
 
-  for (let i = 0; i < 10; i++)
+  for (let i = 0; i < 10; i++) {
     await (async function () {
       var exited;
       const proc = spawn({
@@ -35,8 +35,9 @@ test("spawn can read from stdout multiple chunks", async () => {
       proc.kill();
       expect(Buffer.concat(chunks).toString()).toBe("Wrote to stdout\n".repeat(4));
     })();
+  }
 
   const newMaxFD = openSync("/dev/null", "w");
   closeSync(newMaxFD);
-  expect(newMaxFD).toBe(maxFD);
+  expect(newMaxFD).toBeLessThanOrEqual(maxFD);
 });

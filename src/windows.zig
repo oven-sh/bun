@@ -2912,7 +2912,8 @@ pub const Win32Error = enum(u16) {
         return @enumFromInt(@intFromEnum(bun.windows.kernel32.GetLastError()));
     }
 
-    pub fn throw(this: @This()) !void {
+    pub fn unwrap(this: @This()) !void {
+        std.os.exit
         if (this == .SUCCESS) return;
         if (this.toSystemErrno()) |err| {
             return err.toError();

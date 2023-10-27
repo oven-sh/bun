@@ -1808,11 +1808,11 @@ pub const Subprocess = struct {
                         switch (this.watch()) {
                             .result => {},
                             .err => |err| {
-                                if (err.getErrno() == .SRCH) {
-                                    waitpid_result = PosixSpawn.waitpid(pid, if (sync) 0 else std.os.W.NOHANG);
-                                    continue;
-                                } else {
-                                    // @panic("This shouldn't happen");
+                                if (!WaiterThread.shouldUseWaiterThread()) {
+                                    if (err.getErrno() == .SRCH) {
+                                        waitpid_result = PosixSpawn.waitpid(pid, if (sync) 0 else std.os.W.NOHANG);
+                                        continue;
+                                    }
                                 }
                             },
                         }

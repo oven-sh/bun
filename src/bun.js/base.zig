@@ -1834,7 +1834,7 @@ pub const FilePoll = struct {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) Subprocess", .{poll.fd});
                 var loader = ptr.as(JSC.Subprocess);
 
-                loader.onExitNotification();
+                loader.onExitNotificationTask();
             },
             @field(Owner.Tag, "FileSink") => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) FileSink", .{poll.fd});

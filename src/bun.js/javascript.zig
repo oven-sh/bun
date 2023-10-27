@@ -754,6 +754,13 @@ pub const VirtualMachine = struct {
         }
 
         if (map.get("BUN_GARBAGE_COLLECTOR_LEVEL")) |gc_level| {
+            // Reuse this flag for other things to avoid unnecessary hashtable
+            // lookups on start for obscure flags which we do not want others to
+            // depend on.
+            if (map.get("BUN_FEATURE_FLAG_FORCE_WAITER_THREAD") != null) {
+                JSC.Subprocess.WaiterThread.setShouldUseWaiterThread();
+            }
+
             if (strings.eqlComptime(gc_level, "1")) {
                 this.aggressive_garbage_collection = .mild;
             } else if (strings.eqlComptime(gc_level, "2")) {

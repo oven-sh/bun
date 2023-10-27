@@ -343,7 +343,7 @@ const Futimes = JSC.Node.Async.futimes;
 const Lchmod = JSC.Node.Async.lchmod;
 const Lchown = JSC.Node.Async.lchown;
 const Unlink = JSC.Node.Async.unlink;
-
+const WaitPidResultTask = JSC.Subprocess.WaiterThread.WaitPidResultTask;
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
@@ -400,6 +400,7 @@ pub const Task = TaggedPointerUnion(.{
     Lchmod,
     Lchown,
     Unlink,
+    WaitPidResultTask,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
@@ -908,8 +909,15 @@ pub const EventLoop = struct {
                     var any: *Unlink = task.get(Unlink).?;
                     any.runFromJSThread();
                 },
-                else => {
-                    std.debug.panic("Unexpected event loop task: {s}\n", .{@tagName(task.tag())});
+                @field(Task.Tag, typeBaseName(@typeName(WaitPidResultTask))) => {
+                    var any: *WaitPidResultTask = task.get(WaitPidResultTask).?;
+                    any.runFromJSThread();
+                },
+                else => if (Environment.allow_assert) {
+                    bun.Output.prettyln("\nUnexpected tag: {s}\n", .{@tagName(task.tag())});
+                } else {
+                    log("\nUnexpected tag: {s}\n", .{@tagName(task.tag())});
+                    unreachable;
                 },
             }
 
@@ -1133,6 +1141,7 @@ pub const EventLoop = struct {
 
         const global = ctx.global;
         const global_vm = ctx.jsc;
+
         while (true) {
             while (this.tickWithCount() > 0) : (this.global.handleRejectedPromises()) {
                 this.tickConcurrent();

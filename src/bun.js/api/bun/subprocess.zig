@@ -1808,7 +1808,7 @@ pub const Subprocess = struct {
                         switch (this.watch()) {
                             .result => {},
                             .err => |err| {
-                                if (!WaiterThread.shouldUseWaiterThread()) {
+                                if (comptime !Environment.isLinux) {
                                     if (err.getErrno() == .SRCH) {
                                         waitpid_result = PosixSpawn.waitpid(pid, if (sync) 0 else std.os.W.NOHANG);
                                         continue;

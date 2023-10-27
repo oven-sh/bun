@@ -36,14 +36,13 @@ const VirtualMachine = JSC.VirtualMachine;
 
 var run: Run = undefined;
 pub const Run = struct {
-    ctx: Command.Context,
+    ctx: *Command.Context,
     vm: *VirtualMachine,
     entry_path: string,
     arena: Arena = undefined,
     any_unhandled: bool = false,
 
-    pub fn bootStandalone(ctx_: Command.Context, entry_path: string, graph: bun.StandaloneModuleGraph) !void {
-        var ctx = ctx_;
+    pub fn bootStandalone(ctx: *Command.Context, entry_path: string, graph: bun.StandaloneModuleGraph) !void {
         JSC.markBinding(@src());
         bun.JSC.initialize();
 
@@ -55,7 +54,7 @@ pub const Run = struct {
         var arena = try Arena.init();
 
         if (!ctx.debug.loaded_bunfig) {
-            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
+            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
         }
 
         run = .{
@@ -132,8 +131,7 @@ pub const Run = struct {
         vm.global.vm().holdAPILock(&run, callback);
     }
 
-    pub fn boot(ctx_: Command.Context, entry_path: string) !void {
-        var ctx = ctx_;
+    pub fn boot(ctx: *Command.Context, entry_path: string) !void {
         JSC.markBinding(@src());
         bun.JSC.initialize();
 
@@ -142,7 +140,7 @@ pub const Run = struct {
         var arena = try Arena.init();
 
         if (!ctx.debug.loaded_bunfig) {
-            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
+            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
         }
 
         run = .{

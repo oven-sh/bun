@@ -1065,19 +1065,14 @@ pub const Command = struct {
             minify_identifiers: bool = false,
         };
 
-        const _ctx = Command.Context{
-            .args = std.mem.zeroes(Api.TransformOptions),
-            .log = undefined,
-            .start_time = 0,
-            .allocator = undefined,
-        };
-
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
             Cli.cmd = command;
-            var ctx = _ctx;
-            ctx.log = log;
-            ctx.start_time = start_time;
-            ctx.allocator = allocator;
+            var ctx = Command.Context{
+                .args = comptime std.mem.zeroes(Api.TransformOptions),
+                .log = log,
+                .start_time = start_time,
+                .allocator = allocator,
+            };
 
             if (comptime Command.Tag.uses_global_options.get(command)) {
                 ctx.args = try Arguments.parse(allocator, &ctx, command);
@@ -1219,32 +1214,15 @@ pub const Command = struct {
         "help",
     };
 
+    var shared_ctx: Command.Context = undefined;
+
     pub fn start(allocator: std.mem.Allocator, log: *logger.Log) !void {
-        const BuildCommand = @import("./cli/build_command.zig").BuildCommand;
-
-        const AddCommand = @import("./cli/add_command.zig").AddCommand;
-        const CreateCommand = @import("./cli/create_command.zig").CreateCommand;
-        const CreateCommandExample = @import("./cli/create_command.zig").Example;
-        const CreateListExamplesCommand = @import("./cli/create_command.zig").CreateListExamplesCommand;
-        const DiscordCommand = @import("./cli/discord_command.zig").DiscordCommand;
-        const InstallCommand = @import("./cli/install_command.zig").InstallCommand;
-        const LinkCommand = @import("./cli/link_command.zig").LinkCommand;
-        const UnlinkCommand = @import("./cli/unlink_command.zig").UnlinkCommand;
-        const InstallCompletionsCommand = @import("./cli/install_completions_command.zig").InstallCompletionsCommand;
-        const PackageManagerCommand = @import("./cli/package_manager_command.zig").PackageManagerCommand;
-        const RemoveCommand = @import("./cli/remove_command.zig").RemoveCommand;
-        const RunCommand = @import("./cli/run_command.zig").RunCommand;
-        const ShellCompletions = @import("./cli/shell_completions.zig");
-        const UpdateCommand = @import("./cli/update_command.zig").UpdateCommand;
-
-        const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
-        const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
+        var ctx = &shared_ctx;
 
         if (comptime bun.fast_debug_build_mode) {
             // _ = AddCommand;
             // _ = BuildCommand;
             // _ = CreateCommand;
-            _ = CreateListExamplesCommand;
             // _ = InstallCommand;
             // _ = LinkCommand;
             // _ = UnlinkCommand;
@@ -1263,7 +1241,7 @@ pub const Command = struct {
         if (comptime !bun.Environment.isWindows) {
             // bun build --compile entry point
             if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
-                var ctx = Command.Context{
+                ctx.* = Command.Context{
                     .args = std.mem.zeroes(Api.TransformOptions),
                     .log = log,
                     .start_time = start_time,
@@ -1289,19 +1267,45 @@ pub const Command = struct {
         }
 
         const tag = which();
-
         switch (tag) {
+            inline else => |t| try handleArgumentTag(t, ctx, allocator, log),
+        }
+    }
+
+    fn handleArgumentTag(comptime tag: Tag, ctx: *Command.Context, allocator: std.mem.Allocator, log: *logger.Log) !void {
+        const BuildCommand = @import("./cli/build_command.zig").BuildCommand;
+
+        const AddCommand = @import("./cli/add_command.zig").AddCommand;
+        _ = AddCommand;
+        const CreateCommand = @import("./cli/create_command.zig").CreateCommand;
+        const CreateCommandExample = @import("./cli/create_command.zig").Example;
+        const CreateListExamplesCommand = @import("./cli/create_command.zig").CreateListExamplesCommand;
+        _ = CreateListExamplesCommand;
+        const DiscordCommand = @import("./cli/discord_command.zig").DiscordCommand;
+        const InstallCommand = @import("./cli/install_command.zig").InstallCommand;
+        const LinkCommand = @import("./cli/link_command.zig").LinkCommand;
+        const UnlinkCommand = @import("./cli/unlink_command.zig").UnlinkCommand;
+        const InstallCompletionsCommand = @import("./cli/install_completions_command.zig").InstallCompletionsCommand;
+        const PackageManagerCommand = @import("./cli/package_manager_command.zig").PackageManagerCommand;
+        const RemoveCommand = @import("./cli/remove_command.zig").RemoveCommand;
+        _ = RemoveCommand;
+        const RunCommand = @import("./cli/run_command.zig").RunCommand;
+        const ShellCompletions = @import("./cli/shell_completions.zig");
+        const UpdateCommand = @import("./cli/update_command.zig").UpdateCommand;
+        _ = UpdateCommand;
+
+        const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
+        const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
+
+        switch (comptime tag) {
             .DiscordCommand => return try DiscordCommand.exec(allocator),
             .HelpCommand => return try HelpCommand.exec(allocator),
             .InitCommand => return try InitCommand.exec(allocator, bun.argv()),
             .ReservedCommand => return try ReservedCommand.exec(allocator),
-            else => {},
-        }
 
-        switch (tag) {
             .BuildCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BuildCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .BuildCommand);
+                ctx.* = try Command.Context.create(allocator, log, .BuildCommand);
 
                 try BuildCommand.exec(ctx);
             },
@@ -1312,28 +1316,28 @@ pub const Command = struct {
             },
             .InstallCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .InstallCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .InstallCommand);
+                ctx.* = try Command.Context.create(allocator, log, .InstallCommand);
 
                 try InstallCommand.exec(ctx);
                 return;
             },
             .AddCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .AddCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .AddCommand);
+                ctx.* = try Command.Context.create(allocator, log, .AddCommand);
 
-                try AddCommand.exec(ctx);
+                try @import("./install/install.zig").PackageManager.add(ctx);
                 return;
             },
             .UpdateCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .UpdateCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .UpdateCommand);
+                ctx.* = try Command.Context.create(allocator, log, .UpdateCommand);
 
-                try UpdateCommand.exec(ctx);
+                try @import("./install/install.zig").PackageManager.update(ctx);
                 return;
             },
             .BunxCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunxCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .BunxCommand);
+                ctx.* = try Command.Context.create(allocator, log, .BunxCommand);
 
                 try BunxCommand.exec(ctx, bun.argv()[1..]);
                 return;
@@ -1341,7 +1345,7 @@ pub const Command = struct {
             .ReplCommand => {
                 // TODO: Put this in native code.
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunxCommand) unreachable;
-                var ctx = try Command.Context.create(allocator, log, .BunxCommand);
+                ctx.* = try Command.Context.create(allocator, log, .BunxCommand);
                 ctx.debug.run_in_bun = true; // force the same version of bun used. fixes bun-debug for example
                 var args = bun.argv()[1..];
                 args[0] = @constCast("bun-repl");
@@ -1350,42 +1354,42 @@ pub const Command = struct {
             },
             .RemoveCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RemoveCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .RemoveCommand);
+                ctx.* = try Command.Context.create(allocator, log, .RemoveCommand);
 
-                try RemoveCommand.exec(ctx);
+                try @import("./install/install.zig").PackageManager.remove(ctx);
                 return;
             },
             .LinkCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .LinkCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .LinkCommand);
+                ctx.* = try Command.Context.create(allocator, log, .LinkCommand);
 
                 try LinkCommand.exec(ctx);
                 return;
             },
             .UnlinkCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .UnlinkCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .UnlinkCommand);
+                ctx.* = try Command.Context.create(allocator, log, .UnlinkCommand);
 
                 try UnlinkCommand.exec(ctx);
                 return;
             },
             .PackageManagerCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .PackageManagerCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .PackageManagerCommand);
+                ctx.* = try Command.Context.create(allocator, log, .PackageManagerCommand);
 
                 try PackageManagerCommand.exec(ctx);
                 return;
             },
             .TestCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .TestCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .TestCommand);
+                ctx.* = try Command.Context.create(allocator, log, .TestCommand);
 
                 try TestCommand.exec(ctx);
                 return;
             },
             .GetCompletionsCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .GetCompletionsCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .GetCompletionsCommand);
+                ctx.* = try Command.Context.create(allocator, log, .GetCompletionsCommand);
                 var filter = ctx.positionals;
 
                 for (filter, 0..) |item, i| {
@@ -1481,7 +1485,7 @@ pub const Command = struct {
                 });
 
                 // Create command wraps bunx
-                const ctx = try Command.Context.create(allocator, log, .CreateCommand);
+                ctx.* = try Command.Context.create(allocator, log, .CreateCommand);
 
                 var args = try std.process.argsAlloc(allocator);
 
@@ -1571,7 +1575,7 @@ pub const Command = struct {
             },
             .RunCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RunCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .RunCommand);
+                ctx.* = try Command.Context.create(allocator, log, .RunCommand);
                 if (ctx.positionals.len > 0) {
                     if (try RunCommand.exec(ctx, false, true)) {
                         return;
@@ -1582,13 +1586,13 @@ pub const Command = struct {
             },
             .UpgradeCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .UpgradeCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .UpgradeCommand);
+                ctx.* = try Command.Context.create(allocator, log, .UpgradeCommand);
                 try UpgradeCommand.exec(ctx);
                 return;
             },
             .AutoCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .AutoCommand) unreachable;
-                var ctx = Command.Context.create(allocator, log, .AutoCommand) catch |e| {
+                ctx.* = Command.Context.create(allocator, log, .AutoCommand) catch |e| {
                     switch (e) {
                         error.MissingEntryPoint => {
                             HelpCommand.execWithReason(allocator, .explicit);
@@ -1642,7 +1646,7 @@ pub const Command = struct {
 
                     if (extension.len > 0) {
                         if (!ctx.debug.loaded_bunfig) {
-                            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
+                            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
                         }
 
                         if (ctx.preloads.len > 0)
@@ -1657,7 +1661,7 @@ pub const Command = struct {
                 if (default_loader) |loader| {
                     if (loader.canBeRunByBun()) {
                         was_js_like = true;
-                        if (maybeOpenWithBunJS(&ctx)) {
+                        if (maybeOpenWithBunJS(ctx)) {
                             return;
                         }
                         did_check = true;
@@ -1665,7 +1669,7 @@ pub const Command = struct {
                 }
 
                 if (force_using_bun and !did_check) {
-                    if (maybeOpenWithBunJS(&ctx)) {
+                    if (maybeOpenWithBunJS(ctx)) {
                         return;
                     }
                 }
@@ -1700,7 +1704,6 @@ pub const Command = struct {
 
                 try HelpCommand.exec(allocator);
             },
-            else => unreachable,
         }
     }
 
@@ -1752,7 +1755,7 @@ pub const Command = struct {
         }
 
         BunJS.Run.boot(
-            ctx.*,
+            ctx,
             absolute_script_path,
         ) catch |err| {
             if (Output.enable_ansi_colors) {

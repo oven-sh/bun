@@ -5516,7 +5516,7 @@ pub const PackageManager = struct {
     };
 
     // Corresponds to possible commands from the CLI.
-    pub const Subcommand = enum {
+    pub const Subcommand = enum(u8) {
         install,
         update,
         pm,
@@ -5526,20 +5526,14 @@ pub const PackageManager = struct {
         unlink,
     };
 
-    pub fn init(ctx: Command.Context, comptime subcommand: Subcommand) !*PackageManager {
-        const cli = try CommandLineArguments.parse(ctx.allocator, subcommand);
-
-        var _ctx = ctx;
-        return initWithCLI(&_ctx, cli, subcommand);
-    }
-
-    fn initWithCLI(
+    pub fn init(
         ctx: *Command.Context,
-        cli: CommandLineArguments,
         comptime subcommand: Subcommand,
-    ) !*PackageManager {
+    ) anyerror!*PackageManager {
         // assume that spawning a thread will take a lil so we do that asap
         try HTTP.HTTPThread.init();
+
+        var cli = try CommandLineArguments.parse(ctx.allocator, comptime subcommand);
 
         if (cli.global) {
             var explicit_global_dir: string = "";
@@ -5914,19 +5908,37 @@ pub const PackageManager = struct {
         file.close();
     }
 
-    pub inline fn update(ctx: Command.Context) !void {
-        try updatePackageJSONAndInstall(ctx, .update, .update);
+    pub fn update(ctx: *Command.Context) anyerror!void {
+        var manager = PackageManager.init(ctx, .update) catch |err| {
+            if (err == error.MissingPackageJSON) {
+                Output.prettyErrorln("<r>No package.json, so nothing to update\n", .{});
+                Global.crash();
+            }
+            return err;
+        };
+        try updatePackageJSONAndInstallPre(ctx, manager, .update);
     }
 
-    pub inline fn add(ctx: Command.Context) !void {
-        try updatePackageJSONAndInstall(ctx, .add, .add);
+    pub fn add(ctx: *Command.Context) !void {
+        var manager = PackageManager.init(ctx, .add) catch brk: {
+            try attemptToCreatePackageJSON();
+            break :brk try PackageManager.init(ctx, .add);
+        };
+        try updatePackageJSONAndInstallPre(ctx, manager, .add);
     }
 
-    pub inline fn remove(ctx: Command.Context) !void {
-        try updatePackageJSONAndInstall(ctx, .remove, .remove);
+    pub fn remove(ctx: *Command.Context) !void {
+        var manager = PackageManager.init(ctx, .remove) catch |err| {
+            if (err == error.MissingPackageJSON) {
+                Output.prettyErrorln("<r>No package.json, so nothing to remove\n", .{});
+                Global.crash();
+            }
+            return err;
+        };
+        try updatePackageJSONAndInstallPre(ctx, manager, .remove);
     }
 
-    pub inline fn link(ctx: Command.Context) !void {
+    pub fn link(ctx: *Command.Context) !void {
         if (comptime Environment.isWindows) {
             Output.prettyErrorln("<r><red>error:<r> bun link is not supported on Windows yet", .{});
             Global.crash();
@@ -5995,7 +6007,7 @@ pub const PackageManager = struct {
                 }
                 manager.global_dir = try Options.openGlobalDir(explicit_global_dir);
 
-                try manager.setupGlobalDir(&ctx);
+                try manager.setupGlobalDir(ctx);
 
                 break :brk manager.global_dir.?.dir.makeOpenPathIterable("node_modules", .{}) catch |err| {
                     if (manager.options.log_level != .silent)
@@ -6081,7 +6093,7 @@ pub const PackageManager = struct {
         }
     }
 
-    pub inline fn unlink(ctx: Command.Context) !void {
+    pub fn unlink(ctx: *Command.Context) !void {
         if (comptime Environment.isWindows) {
             Output.prettyErrorln("<r><red>error:<r> bun unlink is not supported on Windows yet", .{});
             Global.crash();
@@ -6163,7 +6175,7 @@ pub const PackageManager = struct {
                 }
                 manager.global_dir = try Options.openGlobalDir(explicit_global_dir);
 
-                try manager.setupGlobalDir(&ctx);
+                try manager.setupGlobalDir(ctx);
 
                 break :brk manager.global_dir.?.dir.makeOpenPathIterable("node_modules", .{}) catch |err| {
                     if (manager.options.log_level != .silent)
@@ -6316,7 +6328,7 @@ pub const PackageManager = struct {
             optional: bool = true,
             peer: bool = false,
 
-            pub inline fn toFeatures(this: Omit) Features {
+            pub fn toFeatures(this: Omit) Features {
                 return .{
                     .dev_dependencies = this.dev,
                     .optional_dependencies = this.optional,
@@ -6326,14 +6338,14 @@ pub const PackageManager = struct {
         };
 
         pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !CommandLineArguments {
-            comptime var params: []const ParamType = &switch (subcommand) {
-                .install => install_params,
-                .update => update_params,
-                .pm => pm_params,
-                .add => add_params,
-                .remove => remove_params,
-                .link => link_params,
-                .unlink => unlink_params,
+            const params: []const ParamType = comptime switch (subcommand) {
+                .install => &install_params,
+                .update => &update_params,
+                .pm => &pm_params,
+                .add => &add_params,
+                .remove => &remove_params,
+                .link => &link_params,
+                .unlink => &unlink_params,
             };
 
             var diag = clap.Diagnostic{};
@@ -6458,7 +6470,7 @@ pub const PackageManager = struct {
 
         pub const Array = std.BoundedArray(UpdateRequest, 64);
 
-        pub inline fn matches(this: PackageManager.UpdateRequest, dependency: Dependency, string_buf: []const u8) bool {
+        pub fn matches(this: PackageManager.UpdateRequest, dependency: Dependency, string_buf: []const u8) bool {
             return this.name_hash == if (this.name.len == 0)
                 String.Builder.stringHash(dependency.version.literal.slice(string_buf))
             else
@@ -6563,32 +6575,11 @@ pub const PackageManager = struct {
         }
     };
 
-    fn updatePackageJSONAndInstall(
-        ctx: Command.Context,
+    fn updatePackageJSONAndInstallPre(
+        ctx: *Command.Context,
+        manager: *PackageManager,
         comptime op: Lockfile.Package.Diff.Op,
-        comptime subcommand: Subcommand,
     ) !void {
-        var manager = init(ctx, subcommand) catch |err| brk: {
-            if (err == error.MissingPackageJSON) {
-                switch (op) {
-                    .update => {
-                        Output.prettyErrorln("<r>No package.json, so nothing to update\n", .{});
-                        Global.crash();
-                    },
-                    .remove => {
-                        Output.prettyErrorln("<r>No package.json, so nothing to remove\n", .{});
-                        Global.crash();
-                    },
-                    else => {
-                        try attemptToCreatePackageJSON();
-                        break :brk try PackageManager.init(ctx, subcommand);
-                    },
-                }
-            }
-
-            return err;
-        };
-
         if (manager.options.shouldPrintCommandName()) {
             Output.prettyErrorln("<r><b>bun " ++ @tagName(op) ++ " <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
             Output.flush();
@@ -6601,7 +6592,7 @@ pub const PackageManager = struct {
 
     fn updatePackageJSONAndInstallWithManager(
         manager: *PackageManager,
-        ctx: Command.Context,
+        ctx: *Command.Context,
         comptime op: Lockfile.Package.Diff.Op,
         comptime log_level: Options.LogLevel,
     ) !void {
@@ -6709,7 +6700,7 @@ pub const PackageManager = struct {
 
     fn updatePackageJSONAndInstallWithManagerWithUpdates(
         manager: *PackageManager,
-        ctx: Command.Context,
+        ctx: *Command.Context,
         updates: []UpdateRequest,
         auto_free: bool,
         comptime op: Lockfile.Package.Diff.Op,
@@ -6990,7 +6981,7 @@ pub const PackageManager = struct {
     var package_json_cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
     var package_json_cwd: string = "";
 
-    pub inline fn install(ctx: Command.Context) !void {
+    pub fn install(ctx: *Command.Context) !void {
         var manager = try init(ctx, .install);
 
         // switch to `bun add <package>`
@@ -7933,7 +7924,7 @@ pub const PackageManager = struct {
 
     fn installWithManager(
         manager: *PackageManager,
-        ctx: Command.Context,
+        ctx: *Command.Context,
         package_json_contents: string,
         comptime log_level: Options.LogLevel,
     ) !void {
@@ -8308,7 +8299,7 @@ pub const PackageManager = struct {
         }
 
         if (manager.options.global) {
-            try manager.setupGlobalDir(&ctx);
+            try manager.setupGlobalDir(ctx);
         }
 
         // We don't always save the lockfile.

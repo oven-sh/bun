@@ -324,7 +324,7 @@ pub const RunCommand = struct {
         return true;
     }
     pub fn runBinary(
-        ctx: Command.Context,
+        ctx: *Command.Context,
         executable: []const u8,
         cwd: string,
         env: *DotEnv.Loader,
@@ -396,7 +396,7 @@ pub const RunCommand = struct {
         return true;
     }
 
-    pub fn ls(ctx: Command.Context) !void {
+    pub fn ls(ctx: *Command.Context) !void {
         var args = ctx.args;
 
         var this_bundler = try bundler.Bundler.init(ctx.allocator, ctx.log, args, null);
@@ -477,7 +477,7 @@ pub const RunCommand = struct {
     pub const Filter = enum { script, bin, all, bun_js, all_plus_bun_js, script_and_descriptions, script_exclude };
     const DirInfo = @import("../resolver/dir_info.zig");
     pub fn configureEnvForRun(
-        ctx: Command.Context,
+        ctx: *Command.Context,
         this_bundler: *bundler.Bundler,
         env: ?*DotEnv.Loader,
         ORIGINAL_PATH: *string,
@@ -667,7 +667,7 @@ pub const RunCommand = struct {
         return root_dir_info;
     }
 
-    pub fn completions(ctx: Command.Context, default_completions: ?[]const string, reject_list: []const string, comptime filter: Filter) !ShellCompletions {
+    pub fn completions(ctx: *Command.Context, default_completions: ?[]const string, reject_list: []const string, comptime filter: Filter) !ShellCompletions {
         var shell_out = ShellCompletions{};
         if (filter != .script_exclude) {
             if (default_completions) |defaults| {
@@ -867,8 +867,8 @@ pub const RunCommand = struct {
         return shell_out;
     }
 
-    pub fn exec(ctx_: Command.Context, comptime bin_dirs_only: bool, comptime log_errors: bool) !bool {
-        var ctx = ctx_;
+    pub fn exec(ctx: *Command.Context, comptime bin_dirs_only: bool, comptime log_errors: bool) !bool {
+
         // Step 1. Figure out what we're trying to run
         var positionals = ctx.positionals;
         if (positionals.len > 0 and strings.eqlComptime(positionals[0], "run") or strings.eqlComptime(positionals[0], "r")) {
@@ -955,7 +955,7 @@ pub const RunCommand = struct {
                         // once we know it's a file, check if they have any preloads
                         if (ext.len > 0 and !has_loader) {
                             if (!ctx.debug.loaded_bunfig) {
-                                try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
+                                try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
                             }
 
                             if (ctx.preloads.len == 0)

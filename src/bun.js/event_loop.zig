@@ -924,6 +924,10 @@ pub const EventLoop = struct {
                     var any: *Unlink = task.get(Unlink).?;
                     any.runFromJSThread();
                 },
+                @field(Task.Tag, typeBaseName(@typeName(WaitPidResultTask))) => {
+                    var any: *WaitPidResultTask = task.get(WaitPidResultTask).?;
+                    any.runFromJSThread();
+                },
                 else => if (Environment.allow_assert) {
                     bun.Output.prettyln("\nUnexpected tag: {s}\n", .{@tagName(task.tag())});
                 } else {

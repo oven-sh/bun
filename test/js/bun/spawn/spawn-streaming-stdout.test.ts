@@ -31,6 +31,7 @@ test("spawn can read from stdout multiple chunks", async () => {
       // TODO: fix bug with returning SIGHUP instead of exit code 1
       proc.kill();
       expect(Buffer.concat(chunks).toString()).toBe("Wrote to stdout\n".repeat(4));
+      await proc.exited;
     })();
     if (maxFD === -1) {
       maxFD = openSync("/dev/null", "w");
@@ -40,4 +41,4 @@ test("spawn can read from stdout multiple chunks", async () => {
   const newMaxFD = openSync("/dev/null", "w");
   closeSync(newMaxFD);
   expect(newMaxFD).toBe(maxFD);
-});
+}, 60_000);

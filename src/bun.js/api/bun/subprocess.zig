@@ -31,7 +31,6 @@ pub const Subprocess = struct {
     stdin: Writable,
     stdout: Readable,
     stderr: Readable,
-    killed: bool = false,
     poll: Poll = Poll{ .poll_ref = null },
 
     exit_promise: JSC.Strong = .{},
@@ -40,14 +39,6 @@ pub const Subprocess = struct {
     exit_code: ?u8 = null,
     signal_code: ?SignalCode = null,
     waitpid_err: ?bun.sys.Error = null,
-
-    has_waitpid_task: bool = false,
-    notification_task: JSC.AnyTask = undefined,
-    waitpid_task: JSC.AnyTask = undefined,
-
-    wait_task: JSC.ConcurrentTask = .{},
-
-    finalized: bool = false,
 
     globalThis: *JSC.JSGlobalObject,
     observable_getters: std.enums.EnumSet(enum {
@@ -61,14 +52,19 @@ pub const Subprocess = struct {
         stderr,
     }) = .{},
     has_pending_activity: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(true),
-    is_sync: bool = false,
     this_jsvalue: JSC.JSValue = .zero,
 
     ipc_mode: IPCMode,
     ipc_callback: JSC.Strong = .{},
     ipc: IPC.IPCData,
+    flags: Flags = .{},
 
-    has_pending_unref: bool = false,
+    pub const Flags = packed struct(u32) {
+        is_sync: bool = false,
+        killed: bool = false,
+        reference_count: u30 = 0,
+    };
+
     pub const SignalCode = bun.SignalCode;
 
     pub const Poll = union(enum) {
@@ -87,26 +83,40 @@ pub const Subprocess = struct {
         // json,
     };
 
-    pub fn poll_ref(this: *Subprocess) ?*JSC.FilePoll {
-        if (this.poll == .poll_ref) {
-            return this.poll.poll_ref;
-        }
-
-        return null;
-    }
-
     pub fn hasExited(this: *const Subprocess) bool {
         return this.exit_code != null or this.waitpid_err != null or this.signal_code != null;
     }
 
+    pub fn hasPendingActivityNonThreadsafe(this: *const Subprocess) bool {
+        if (this.poll == .wait_thread and this.poll.wait_thread.ref_count.load(.Monotonic) > 0) {
+            return true;
+        }
+
+        if (this.flags.reference_count > 0) {
+            return true;
+        }
+
+        if (this.ipc_mode != .none) {
+            return true;
+        }
+
+        if (this.poll == .poll_ref) {
+            if (this.poll.poll_ref) |poll| {
+                if (poll.isRegistered()) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     pub fn updateHasPendingActivity(this: *Subprocess) void {
         @fence(.SeqCst);
+
         this.has_pending_activity.store(
-            (this.poll == .wait_thread and this.poll.wait_thread.ref_count.load(.Monotonic) > 0) or (this.waitpid_err == null and
-                this.exit_code == null and
-                this.ipc_mode == .none and
-                this.has_pending_unref),
-            .SeqCst,
+            this.hasPendingActivityNonThreadsafe(),
+            .Monotonic,
         );
     }
 
@@ -118,7 +128,11 @@ pub const Subprocess = struct {
     pub fn ref(this: *Subprocess) void {
         var vm = this.globalThis.bunVM();
         switch (this.poll) {
-            .poll_ref => |poll| if (poll != null) poll.?.enableKeepingProcessAlive(vm),
+            .poll_ref => if (this.poll.poll_ref) |poll| {
+                this.flags.reference_count += @as(u30, @intFromBool(!poll.isRegistered()));
+                poll.enableKeepingProcessAlive(vm);
+            },
+
             .wait_thread => |*wait_thread| {
                 wait_thread.poll_ref.ref(vm);
             },
@@ -142,7 +156,10 @@ pub const Subprocess = struct {
         var vm = this.globalThis.bunVM();
 
         switch (this.poll) {
-            .poll_ref => |poll| if (poll != null) poll.?.disableKeepingProcessAlive(vm),
+            .poll_ref => if (this.poll.poll_ref) |poll| {
+                this.flags.reference_count -= @as(u30, @intFromBool(poll.isRegistered()));
+                poll.disableKeepingProcessAlive(vm);
+            },
             .wait_thread => |*wait_thread| {
                 wait_thread.poll_ref.unref(vm);
             },
@@ -390,7 +407,7 @@ pub const Subprocess = struct {
     }
 
     pub fn hasKilled(this: *const Subprocess) bool {
-        return this.killed or this.hasExited();
+        return this.flags.killed or this.exit_code != null;
     }
 
     pub fn tryKill(this: *Subprocess, sig: i32) JSC.Node.Maybe(void) {
@@ -433,7 +450,7 @@ pub const Subprocess = struct {
             }
         }
 
-        this.killed = true;
+        this.flags.killed = true;
         return .{ .result = {} };
     }
 
@@ -1566,11 +1583,13 @@ pub const Subprocess = struct {
             .stdout = Readable.init(stdio[bun.STDOUT_FD], stdout_pipe[0], jsc_vm.allocator, default_max_buffer_size),
             .stderr = Readable.init(stdio[bun.STDERR_FD], stderr_pipe[0], jsc_vm.allocator, default_max_buffer_size),
             .on_exit_callback = if (on_exit_callback != .zero) JSC.Strong.create(on_exit_callback, globalThis) else .{},
-            .is_sync = is_sync,
             .ipc_mode = ipc_mode,
             // will be assigned in the block below
             .ipc = .{ .socket = socket },
             .ipc_callback = if (ipc_callback != .zero) JSC.Strong.create(ipc_callback, globalThis) else undefined,
+            .flags = .{
+                .is_sync = is_sync,
+            },
         };
         if (ipc_mode != .none) {
             var ptr = socket.ext(*Subprocess);
@@ -1595,6 +1614,7 @@ pub const Subprocess = struct {
             if (!WaiterThread.shouldUseWaiterThread()) {
                 var poll = JSC.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
                 subprocess.poll = .{ .poll_ref = poll };
+                subprocess.flags.reference_count += 1;
                 switch (subprocess.poll.poll_ref.?.register(
                     jsc_vm.event_loop_handle.?,
                     .process,
@@ -1619,7 +1639,7 @@ pub const Subprocess = struct {
             if (send_exit_notification) {
                 // process has already exited
                 // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
-                subprocess.onExitNotification();
+                subprocess.wait(subprocess.flags.is_sync);
             }
         }
 
@@ -1661,6 +1681,7 @@ pub const Subprocess = struct {
         if (!WaiterThread.shouldUseWaiterThread()) {
             var poll = JSC.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
             subprocess.poll = .{ .poll_ref = poll };
+            subprocess.flags.reference_count += 1;
             switch (subprocess.poll.poll_ref.?.register(
                 jsc_vm.event_loop_handle.?,
                 .process,
@@ -1709,15 +1730,22 @@ pub const Subprocess = struct {
 
     pub fn onExitNotificationTask(this: *Subprocess) void {
         var vm = this.globalThis.bunVM();
-        defer vm.drainMicrotasks();
-        std.debug.assert(!this.is_sync);
+        const is_sync = this.flags.is_sync;
+
+        defer {
+            if (!is_sync)
+                vm.drainMicrotasks();
+        }
         this.wait(false);
     }
 
     pub fn onExitNotification(
         this: *Subprocess,
     ) void {
-        this.wait(this.is_sync);
+        std.debug.assert(this.flags.is_sync);
+
+        defer this.flags.reference_count -= 1;
+        this.wait(this.flags.is_sync);
     }
 
     pub fn wait(this: *Subprocess, sync: bool) void {
@@ -1731,6 +1759,7 @@ pub const Subprocess = struct {
         }
 
         if (this.poll.poll_ref) |poll| {
+            this.flags.reference_count += @as(u30, @intFromBool(!poll.isRegistered()));
             _ = poll.register(
                 this.globalThis.bunVM().event_loop_handle.?,
                 .process,
@@ -1746,10 +1775,6 @@ pub const Subprocess = struct {
         sync: bool,
         this_jsvalue: JSC.JSValue,
     ) void {
-        if (this.has_waitpid_task) {
-            return;
-        }
-        this.has_waitpid_task = true;
         this.onWaitPid(sync, this_jsvalue, PosixSpawn.waitpid(this.pid, if (sync) 0 else std.os.W.NOHANG));
     }
 
@@ -1780,7 +1805,6 @@ pub const Subprocess = struct {
                 }
             },
         }
-        this.has_waitpid_task = false;
 
         if (!sync and this.hasExited()) {
             var vm = this.globalThis.bunVM();
@@ -1790,6 +1814,7 @@ pub const Subprocess = struct {
                 .poll_ref => |poll_| {
                     if (poll_) |poll| {
                         this.poll.poll_ref = null;
+                        this.flags.reference_count -= @as(u30, @intFromBool(poll.isRegistered()));
                         poll.deinitWithVM(vm);
                     }
                 },
@@ -1810,16 +1835,43 @@ pub const Subprocess = struct {
         log("onExit {d}, code={d}", .{ this.pid, if (this.exit_code) |e| @as(i32, @intCast(e)) else -1 });
         defer this.updateHasPendingActivity();
         this_jsvalue.ensureStillAlive();
-        this.has_waitpid_task = false;
 
         if (this.hasExited()) {
+            {
+                this.flags.reference_count += 1;
+
+                const Holder = struct {
+                    process: *Subprocess,
+                    task: JSC.AnyTask,
+
+                    pub fn unref(self: *@This()) void {
+                        // this calls disableKeepingProcessAlive on pool_ref and stdin, stdout, stderr
+                        self.process.unref();
+                        self.process.flags.reference_count -= 1;
+                        self.process.updateHasPendingActivity();
+                        bun.default_allocator.destroy(self);
+                    }
+                };
+
+                var holder = bun.default_allocator.create(Holder) catch @panic("OOM");
+
+                holder.* = .{
+                    .process = this,
+                    .task = JSC.AnyTask.New(Holder, Holder.unref).init(holder),
+                };
+
+                this.globalThis.bunVM().enqueueTask(JSC.Task.init(&holder.task));
+            }
+
             if (this.exit_promise.trySwap()) |promise| {
+                const waitpid_error = this.waitpid_err;
+                this.waitpid_err = null;
+
                 if (this.exit_code) |code| {
                     promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(code));
                 } else if (this.signal_code != null) {
                     promise.asAnyPromise().?.resolve(globalThis, this.getSignalCode(globalThis));
-                } else if (this.waitpid_err) |err| {
-                    this.waitpid_err = null;
+                } else if (waitpid_error) |err| {
                     promise.asAnyPromise().?.reject(globalThis, err.toJSC(globalThis));
                 } else {
                     // crash in debug mode
@@ -1830,8 +1882,11 @@ pub const Subprocess = struct {
         }
 
         if (this.on_exit_callback.trySwap()) |callback| {
+            const waitpid_error = this.waitpid_err;
+            this.waitpid_err = null;
+
             const waitpid_value: JSValue =
-                if (this.waitpid_err) |err|
+                if (waitpid_error) |err|
                 err.toJSC(globalThis)
             else
                 JSC.JSValue.jsUndefined();
@@ -1855,32 +1910,6 @@ pub const Subprocess = struct {
             if (result.isAnyError()) {
                 globalThis.bunVM().onUnhandledError(globalThis, result);
             }
-        }
-
-        if (this.hasExited()) {
-            this.has_pending_unref = true;
-
-            const Holder = struct {
-                process: *Subprocess,
-                task: JSC.AnyTask,
-
-                pub fn unref(self: *@This()) void {
-                    // this calls disableKeepingProcessAlive on pool_ref and stdin, stdout, stderr
-                    self.process.unref();
-                    self.process.has_pending_unref = false;
-                    self.process.updateHasPendingActivity();
-                    bun.default_allocator.destroy(self);
-                }
-            };
-
-            var holder = bun.default_allocator.create(Holder) catch @panic("OOM");
-
-            holder.* = .{
-                .process = this,
-                .task = JSC.AnyTask.New(Holder, Holder.unref).init(holder),
-            };
-
-            this.globalThis.bunVM().enqueueTask(JSC.Task.init(&holder.task));
         }
     }
 
@@ -2137,7 +2166,7 @@ pub const Subprocess = struct {
         started: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
 
         pub fn setShouldUseWaiterThread() void {
-            should_use_waiter_thread = true;
+            @atomicStore(bool, &should_use_waiter_thread, true, .Monotonic);
         }
 
         pub fn shouldUseWaiterThread() bool {

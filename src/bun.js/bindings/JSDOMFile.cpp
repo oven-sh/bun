@@ -1,8 +1,8 @@
 #include "root.h"
 #include "ZigGeneratedClasses.h"
-#include "JavaScriptCore/ObjectConstructor.h"
-#include "JavaScriptCore/InternalFunction.h"
-#include "JavaScriptCore/FunctionPrototype.h"
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/InternalFunction.h>
+#include <JavaScriptCore/FunctionPrototype.h>
 #include "JSDOMFile.h"
 
 using namespace JSC;
@@ -63,7 +63,7 @@ public:
         return JSDOMFile__hasInstance(JSValue::encode(object), globalObject, JSValue::encode(value));
     }
 
-    static EncodedJSValue construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
+    static JSC::EncodedJSValue construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
     {
         Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
         JSC::VM& vm = globalObject->vm();
@@ -97,6 +97,7 @@ public:
     {
         auto scope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
         throwTypeError(lexicalGlobalObject, scope, "Class constructor File cannot be invoked without 'new"_s);
+        return {};
     }
 };
 

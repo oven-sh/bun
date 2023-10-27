@@ -72,16 +72,11 @@ If not, run this to manually link it:
 ```bash#macOS (Homebrew)
 # use fish_add_path if you're using fish
 $ export PATH="$PATH:$(brew --prefix llvm@16)/bin"
-$ export LDFLAGS="$LDFLAGS -L$(brew --prefix llvm@16)/lib"
-$ export CPPFLAGS="$CPPFLAGS -I$(brew --prefix llvm@16)/include"
 ```
 
 ```bash#Arch
-
+# use fish_add_path if you're using fish
 $ export PATH="$PATH:/usr/lib/llvm16/bin"
-$ export LDFLAGS="$LDFLAGS -L/usr/lib/llvm16/lib"
-$ export CPPFLAGS="$CPPFLAGS -I/usr/lib/llvm16/include"
-
 ```
 
 {% /codetabs %}
@@ -93,24 +88,24 @@ Using your system's package manager, install the rest of Bun's dependencies:
 {% codetabs %}
 
 ```bash#macOS (Homebrew)
-$ brew install automake ccache cmake coreutils esbuild gnu-sed go libiconv libtool ninja pkg-config rust
+$ brew install automake ccache cmake coreutils gnu-sed go libiconv libtool ninja pkg-config rust
 ```
 
 ```bash#Ubuntu/Debian
-$ sudo apt install cargo ccache cmake git golang libtool ninja-build pkg-config rustc esbuild
+$ sudo apt install cargo ccache cmake git golang libtool ninja-build pkg-config rustc
 ```
 
 ```bash#Arch
-$ sudo pacman -S base-devel ccache cmake esbuild git go libiconv libtool make ninja pkg-config python rust sed unzip
+$ sudo pacman -S base-devel ccache cmake git go libiconv libtool make ninja pkg-config python rust sed unzip
 ```
 
 ```bash#Fedora
-$ sudo dnf install cargo ccache cmake git golang libtool ninja-build pkg-config rustc golang-github-evanw-esbuild libatomic-static libstdc++-static sed unzip
+$ sudo dnf install cargo ccache cmake git golang libtool ninja-build pkg-config rustc libatomic-static libstdc++-static sed unzip
 ```
 
 {% /codetabs %}
 
-{% details summary="Ubuntu — Unable to locate package esbuild" %}
+<!-- {% details summary="Ubuntu — Unable to locate package esbuild" %}
 
 The `apt install esbuild` command may fail with an `Unable to locate package` error if you are using a Ubuntu mirror that does not contain an exact copy of the original Ubuntu server. Note that the same error may occur if you are not using any mirror but have the Ubuntu Universe enabled in the `sources.list`. In this case, you can install esbuild manually:
 
@@ -120,9 +115,7 @@ $ chmod +x ./esbuild
 $ sudo mv ./esbuild /usr/local/bin
 ```
 
-{% /details %}
-
-In addition to this, you will need an npm package manager (`bun`, `npm`, etc) to install the `package.json` dependencies.
+{% /details %} -->
 
 ## Install Zig
 
@@ -130,11 +123,11 @@ Zig can be installed either with our npm package [`@oven/zig`](https://www.npmjs
 
 ```bash
 $ bun install -g @oven/zig
-$ zigup 0.12.0-dev.899+027aabf49
+$ zigup 0.12.0-dev.1297+a9e66ed73
 ```
 
 {% callout %}
-We last updated Zig on **October 12th, 2023**
+We last updated Zig on **October 26th, 2023**
 {% /callout %}
 
 ## First Build
@@ -142,175 +135,36 @@ We last updated Zig on **October 12th, 2023**
 After cloning the repository, run the following command to run the first build. This may take a while as it will clone submodules and build dependencies.
 
 ```bash
-$ make setup
+$ bash ./scripts/setup.sh
 ```
 
-The binary will be located at `packages/debug-bun-{platform}-{arch}/bun-debug`. It is recommended to add this to your `$PATH`. To verify the build worked, let's print the version number on the development build of Bun.
+The binary will be located at `./build/bun-debug`. It is recommended to add this to your `$PATH`. To verify the build worked, let's print the version number on the development build of Bun.
 
 ```bash
-$ packages/debug-bun-*/bun-debug --version
+$ build/bun-debug --version
 bun 1.x.y__dev
 ```
 
-Note: `make setup` is just an alias for the following:
+To rebuild, you can simply invoke `ninja`
 
 ```bash
-$ make assert-deps submodule npm-install-dev node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive lolhtml sqlite usockets uws tinycc c-ares zstd base64 cpp zig link
+$ ninja -C build
 ```
 
-## Rebuilding
+Note: `make setup` is just an alias for the following steps:
 
-Bun uses a series of make commands to rebuild parts of the codebase. The general rule for rebuilding is there is `make link` to rerun the linker, and then different make targets for different parts of the codebase. Do not pass `-j` to make as these scripts will break if run out of order, and multiple cores will be used when possible during the builds.
-
-{% table %}
-
-- What changed
-- Run this command
-
----
-
-- Zig Code
-- `make zig`
-
----
-
-- C++ Code
-- `make cpp`
-
----
-
-- Zig + C++ Code
-- `make dev` (combination of the above two)
-
----
-
-- JS/TS Code in `src/js`
-- `make js` (in bun-debug, js is loaded from disk without a recompile). If you change the names of any file or add/remove anything, you must also run `make dev`.
-
----
-
-- `*.classes.ts`
-- `make generate-classes dev`
-
----
-
-- JSSink
-- `make generate-sink cpp`
-
----
-
-- `src/node_fallbacks/*`
-- `make node-fallbacks zig`
-
----
-
-- `identifier_data.zig`
-- `make identifier-cache zig`
-
----
-
-- Code using `cppFn`/`JSC.markBinding`
-- `make headers` (TODO: explain what this is used for and why it's useful)
-
-{% /table %}
-
-`make setup` cloned a bunch of submodules and built the subprojects. When a submodule is out of date, run `make submodule` to quickly reset/update all your submodules, then you can rebuild individual submodules with their respective command.
-
-{% table %}
-
-- Dependency
-- Run this command
-
----
-
-- WebKit
-- `bun install` (it is a prebuilt package)
-
----
-
-- uWebSockets
-- `make uws`
-
----
-
-- Mimalloc
-- `make mimalloc`
-
----
-
-- PicoHTTPParser
-- `make picohttp`
-
----
-
-- zlib
-- `make zlib`
-
----
-
-- BoringSSL
-- `make boringssl`
-
----
-
-- libarchive
-- `make libarchive`
-
----
-
-- lolhtml
-- `make lolhtml`
-
----
-
-- sqlite
-- `make sqlite`
-
----
-
-- TinyCC
-- `make tinycc`
-
----
-
-- c-ares
-- `make c-ares`
-
----
-
-- zstd
-- `make zstd`
-
----
-
-- Base64
-- `make base64`
-
-{% /table %}
-
-The above will probably also need Zig and/or C++ code rebuilt.
+```bash
+$ ./src/scripts/update-submodules.sh
+$ ./src/scripts/all-dependencies.sh
+$ cmake . -GNinja -B build -DCMAKE_BUILD_TYPE=Debug
+$ ninja -C build
+```
 
 ## VSCode
 
 VSCode is the recommended IDE for working on Bun, as it has been configured. Once opening, you can run `Extensions: Show Recommended Extensions` to install the recommended extensions for Zig and C++. ZLS is automatically configured.
 
-## JavaScript builtins
-
-When you change anything in `src/js/builtins/*` or switch branches, run this:
-
-```bash
-$ make js cpp
-```
-
-That inlines the TypeScript code into C++ headers.
-
-{% callout %}
-Make sure you have `ccache` installed, otherwise regeneration will take much longer than it should.
-{% /callout %}
-
-For more information on how `src/js` works, see `src/js/README.md` in the codebase.
-
-## Code generation scripts
+<!-- ## Code generation scripts
 
 Bun leverages a lot of code generation scripts.
 
@@ -340,30 +194,23 @@ To run that, run:
 $ make generate-sink
 ```
 
-You probably won't need to run that one much.
+You probably won't need to run that one much. -->
 
 ## Modifying ESM modules
 
-Certain modules like `node:fs`, `node:stream`, `bun:sqlite`, and `ws` are implemented in JavaScript. These live in `src/js/{node,bun,thirdparty}` files and are pre-bundled using Bun. The bundled code is committed so CI builds can run without needing a copy of Bun.
-
-When these are changed, run:
-
-```
-$ make js
-```
-
-In debug builds, Bun automatically loads these from the filesystem, wherever it was compiled, so no need to re-run `make dev`.
+Certain modules like `node:fs`, `node:stream`, `bun:sqlite`, and `ws` are implemented in JavaScript. These live in `src/js/{node,bun,thirdparty}` files and are pre-bundled using Bun. In debug builds, Bun automatically loads these from the filesystem, wherever it was compiled, so no need to re-run `make dev`.
 
 ## Release build
 
 To build a release build of Bun, run:
 
 ```bash
-$ make release-bindings -j12
-$ make release
+$ mkdir build-release
+$ cmake . -GNinja -B build-release -DCMAKE_BUILD_TYPE=Release
+$ ninja -C build-release
 ```
 
-The binary will be located at `packages/bun-{platform}-{arch}/bun`.
+The binary will be located at `./build-release/bun` and `./build-release/bun-profile`.
 
 ## Valgrind
 
@@ -393,6 +240,8 @@ $ make cpp
 ```
 
 ## Building WebKit locally + Debug mode of JSC
+
+**TODO**: This is out of date. TLDR is pass `-DUSE_DEBUG_JSC=1` or `-DWEBKIT_DIR=...` to cmake
 
 WebKit is not cloned by default (to save time and disk space). To clone and build WebKit locally, run:
 
@@ -455,15 +304,15 @@ If you see an error when compiling `libarchive`, run this:
 $ brew install pkg-config
 ```
 
-### missing files on `zig build obj`
+<!-- ### missing files on `zig build obj`
 
 If you see an error about missing files on `zig build obj`, make sure you built the headers.
 
 ```bash
 $ make headers
-```
+``` -->
 
-### cmakeconfig.h not found
+<!-- ### cmakeconfig.h not found
 
 If you see an error about `cmakeconfig.h` not being found, this is because the precompiled WebKit did not install properly.
 
@@ -476,7 +325,7 @@ Check to see the command installed webkit, and you can manually look for `node_m
 ```bash
 # this should reveal two directories. if not, something went wrong
 $ echo node_modules/bun-webkit*
-```
+``` -->
 
 ### macOS `library not found for -lSystem`
 
@@ -494,4 +343,4 @@ Bun requires `libatomic` to be statically linked. On Arch Linux, it is only give
 $ sudo ln -s /lib/libatomic.so /lib/libatomic.a
 ```
 
-The built version of bun may not work on other systems if compiled this way.
+The built version of Bun may not work on other systems if compiled this way.

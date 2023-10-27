@@ -94,7 +94,7 @@
 #include "JSStringDecoder.h"
 #include "JSReadableState.h"
 #include "JSReadableHelper.h"
-#include "Process.h"
+#include "BunProcess.h"
 #include "AsyncContextFrame.h"
 
 #include "WebCoreJSBuiltins.h"
@@ -154,7 +154,10 @@ using SourceOrigin = JSC::SourceOrigin;
 using JSObject = JSC::JSObject;
 using JSNonFinalObject = JSC::JSNonFinalObject;
 namespace JSCastingHelpers = JSC::JSCastingHelpers;
+
+#if !OS(WINDOWS)
 #include <dlfcn.h>
+#endif
 
 #include "IDLTypes.h"
 
@@ -222,7 +225,7 @@ constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 
 #ifdef __APPLE__
 #include <sys/sysctl.h>
-#else
+#elif defined(__linux__)
 // for sysconf
 #include <unistd.h>
 #endif
@@ -348,7 +351,8 @@ static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<Stack
     }
 
     size_t framesCount = stackTrace.size();
-    ZigStackFrame remappedFrames[framesCount];
+    ZigStackFrame remappedFrames[64];
+    framesCount = framesCount > 64 ? 64 : framesCount;
 
     bool hasSet = false;
     for (size_t i = 0; i < framesCount; i++) {
@@ -448,7 +452,11 @@ static String computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObje
     // We need to sourcemap it if it's a GlobalObject.
     if (globalObject == lexicalGlobalObject) {
         size_t framesCount = stackTrace.size();
+#if OS(WINDOWS) // MSVC workaround
+        ZigStackFrame* remappedFrames = new ZigStackFrame[framesCount];
+#else
         ZigStackFrame remappedFrames[framesCount];
+#endif
         for (int i = 0; i < framesCount; i++) {
             memset(remappedFrames + i, 0, sizeof(ZigStackFrame));
             remappedFrames[i].source_url = Bun::toString(lexicalGlobalObject, stackTrace.at(i).sourceURL());
@@ -476,6 +484,9 @@ static String computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObje
                 callSite->setLineNumber(lineNumber);
             }
         }
+#if OS(WINDOWS) // MSVC workaround
+        delete remappedFrames;
+#endif
     }
 
     globalObject->formatStackTrace(vm, lexicalGlobalObject, errorObject, callSites, prepareStackTrace);
@@ -2196,7 +2207,7 @@ extern "C" JSC__JSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalO
 extern "C" uint64_t Bun__readOriginTimer(void*);
 extern "C" double Bun__readOriginTimerStart(void*);
 
-static inline EncodedJSValue functionPerformanceNowBody(JSGlobalObject* globalObject)
+static inline JSC::EncodedJSValue functionPerformanceNowBody(JSGlobalObject* globalObject)
 {
     auto* global = reinterpret_cast<GlobalObject*>(globalObject);
     // nanoseconds to seconds
@@ -2756,7 +2767,9 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
      * node are interested in the (formatted) stack. */
 
     size_t framesCount = stackTrace.size();
-    ZigStackFrame remappedFrames[framesCount];
+    ZigStackFrame remappedFrames[64];
+    framesCount = framesCount > 64 ? 64 : framesCount;
+
     for (int i = 0; i < framesCount; i++) {
         memset(remappedFrames + i, 0, sizeof(ZigStackFrame));
         remappedFrames[i].source_url = Bun::toString(lexicalGlobalObject, stackTrace.at(i).sourceURL());
@@ -2806,7 +2819,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-extern "C" EncodedJSValue CryptoObject__create(JSGlobalObject*);
+extern "C" JSC::EncodedJSValue CryptoObject__create(JSGlobalObject*);
 
 void GlobalObject::finishCreation(VM& vm)
 {
@@ -3022,6 +3035,10 @@ void GlobalObject::finishCreation(VM& vm)
 #ifdef __APPLE__
             size_t count_len = sizeof(cpuCount);
             sysctlbyname("hw.logicalcpu", &cpuCount, &count_len, NULL, 0);
+#elif OS(WINDOWS)
+            SYSTEM_INFO sysinfo;
+            GetSystemInfo(&sysinfo);
+            cpuCount = sysinfo.dwNumberOfProcessors;
 #else
             // TODO: windows
             cpuCount = sysconf(_SC_NPROCESSORS_ONLN);
@@ -3427,7 +3444,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_CUSTOM_GETTER(JSDOMFileConstructor_getter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(JSDOMFileConstructor_getter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     Zig::GlobalObject* bunGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
     return JSValue::encode(
@@ -3447,7 +3464,7 @@ JSC_DEFINE_CUSTOM_SETTER(JSDOMFileConstructor_setter,
     return true;
 }
 
-JSC_DEFINE_CUSTOM_GETTER(BunCommonJSModule_getter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(BunCommonJSModule_getter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     Zig::GlobalObject* bunGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
     JSValue returnValue = bunGlobalObject->m_BunCommonJSModuleValue.get();
@@ -3553,12 +3570,12 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleStdout, (JSGlobalObject * globalObject, Encod
     auto global = jsCast<Zig::GlobalObject*>(globalObject);
 
     // instead of calling the constructor builtin, go through the process.stdout getter to ensure it's only created once.
-    auto stdout = global->processObject()->get(globalObject, Identifier::fromString(vm, "stdout"_s));
-    if (!stdout)
+    auto stdoutValue = global->processObject()->get(globalObject, Identifier::fromString(vm, "stdout"_s));
+    if (!stdoutValue)
         return JSValue::encode({});
 
-    console->putDirect(vm, property, stdout, PropertyAttribute::DontEnum | 0);
-    return JSValue::encode(stdout);
+    console->putDirect(vm, property, stdoutValue, PropertyAttribute::DontEnum | 0);
+    return JSValue::encode(stdoutValue);
 }
 
 // `console._stderr` is equal to `process.stderr`
@@ -3569,12 +3586,12 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleStderr, (JSGlobalObject * globalObject, Encod
     auto global = jsCast<Zig::GlobalObject*>(globalObject);
 
     // instead of calling the constructor builtin, go through the process.stdout getter to ensure it's only created once.
-    auto stdout = global->processObject()->get(globalObject, Identifier::fromString(vm, "stderr"_s));
-    if (!stdout)
+    auto stderrValue = global->processObject()->get(globalObject, Identifier::fromString(vm, "stderr"_s));
+    if (!stderrValue)
         return JSValue::encode({});
 
-    console->putDirect(vm, property, stdout, PropertyAttribute::DontEnum | 0);
-    return JSValue::encode(stdout);
+    console->putDirect(vm, property, stderrValue, PropertyAttribute::DontEnum | 0);
+    return JSValue::encode(stderrValue);
 }
 
 JSC_DEFINE_CUSTOM_SETTER(EventSource_setter,
@@ -3607,8 +3624,7 @@ EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
     WTF::NakedPtr<JSC::Exception> returnedException = nullptr;
 
     auto result = JSC::profiledCall(this, ProfilingReason::API, function, callData, JSC::jsUndefined(), arguments, returnedException);
-    if (returnedException.get()) {
-        auto* exception = WTFMove(returnedException.get());
+    if (auto* exception = returnedException.get()) {
         return JSC::JSValue::encode(exception);
     }
 
@@ -3678,9 +3694,9 @@ JSC::GCClient::IsoSubspace* GlobalObject::subspaceForImpl(JSC::VM& vm)
         [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForJSWorkerGlobalScope; });
 }
 
-extern "C" EncodedJSValue WebCore__alert(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" EncodedJSValue WebCore__prompt(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" EncodedJSValue WebCore__confirm(JSC::JSGlobalObject*, JSC::CallFrame*);
+extern "C" JSC::EncodedJSValue WebCore__alert(JSC::JSGlobalObject*, JSC::CallFrame*);
+extern "C" JSC::EncodedJSValue WebCore__prompt(JSC::JSGlobalObject*, JSC::CallFrame*);
+extern "C" JSC::EncodedJSValue WebCore__confirm(JSC::JSGlobalObject*, JSC::CallFrame*);
 
 JSValue GlobalObject_getPerformanceObject(VM& vm, JSObject* globalObject)
 {

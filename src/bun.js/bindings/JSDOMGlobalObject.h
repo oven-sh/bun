@@ -4,10 +4,10 @@
 
 #include "DOMWrapperWorld.h"
 
-#include "JavaScriptCore/HeapInlines.h"
-#include "JavaScriptCore/JSGlobalObject.h"
-#include "JavaScriptCore/JSObjectInlines.h"
-#include "JavaScriptCore/WeakGCMap.h"
+#include <JavaScriptCore/HeapInlines.h>
+#include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/JSObjectInlines.h>
+#include <JavaScriptCore/WeakGCMap.h>
 #include "ScriptExecutionContext.h"
 
 namespace WebCore {

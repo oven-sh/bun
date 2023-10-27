@@ -4,7 +4,7 @@ import * as API from "../api/schema";
 
 var __HMRModule, __FastRefreshModule, __HMRClient, __injectFastRefresh;
 if (typeof window !== "undefined") {
-  var textEncoder: TextEncoder;
+  var textEncoder: TextEncoder;environment
   // We add a scope here to minimize chances of namespace collisions
   var runOnce = false;
   var clientStartTime = 0;
@@ -617,7 +617,7 @@ if (typeof window !== "undefined") {
     }
 
     static activate(verboseOrFastRefresh: boolean = false) {
-      // Support browser-like envirnments where location and WebSocket exist
+      // Support browser-like environments where location and WebSocket exist
       // Maybe it'll work in Deno! Who knows.
       if (this.client || !("location" in globalThis) || !("WebSocket" in globalThis)) {
         return;

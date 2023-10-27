@@ -1042,6 +1042,15 @@ endif()
 if(USE_STATIC_SQLITE)
     add_library(sqlite3 STATIC src/bun.js/bindings/sqlite/sqlite3.c)
     target_include_directories(sqlite3 PUBLIC src/bun.js/bindings/sqlite)
+    target_compile_definitions(sqlite3 PRIVATE
+        "SQLITE_ENABLE_COLUMN_METADATA="
+        "SQLITE_MAX_VARIABLE_NUMBER=250000"
+        "SQLITE_ENABLE_RTREE=1"
+        "SQLITE_ENABLE_FTS3=1"
+        "SQLITE_ENABLE_FTS3_PARENTHESIS=1"
+        "SQLITE_ENABLE_FTS5=1"
+        "SQLITE_ENABLE_JSON1=1"
+    )
     target_link_libraries(${bun} PRIVATE sqlite3)
     message(STATUS "Using static sqlite3")
     target_compile_definitions(${bun} PRIVATE "LAZY_LOAD_SQLITE=0")

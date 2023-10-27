@@ -4,6 +4,7 @@ import { sliceSourceCode } from "./builtin-parser";
 import { applyGlobalReplacements, define } from "./replacements";
 import { cap, fmtCPPString, low, writeIfNotChanged } from "./helpers";
 import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
+import { createAssertClientJS, createLogClientJS } from "./client-js";
 
 console.log("Bundling Bun builtin functions...");
 
@@ -192,11 +193,20 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       throw new Error("expected one output");
     }
     const output = await build.outputs[0].text();
+    let usesDebug = output.includes("$debug_log");
+    let usesAssert = output.includes("$assert");
     const captured = output.match(/\$\$capture_start\$\$([\s\S]+)\.\$\$capture_end\$\$/)![1];
     const finalReplacement =
-      (fn.directives.sloppy ? captured : captured.replace(/function\s*\(.*?\)\s*{/, '$&"use strict";'))
+      (fn.directives.sloppy
+        ? captured
+        : captured.replace(
+            /function\s*\(.*?\)\s*{/,
+            '$&"use strict";' +
+              (usesDebug ? createLogClientJS("BUILTINS", fn.name) : "") +
+              (usesAssert ? createAssertClientJS(fn.name) : ""),
+          )
+      )
         .replace(/^\((async )?function\(/, "($1function (")
-        // .replace(/__intrinsic__lazy\(/g, "globalThis[globalThis.Symbol.for('Bun.lazy')](")
         .replace(/__intrinsic__/g, "@") + "\n";
 
     bundledFunctions.push({

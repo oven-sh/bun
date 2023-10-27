@@ -1869,7 +1869,6 @@ pub const PackageManager = struct {
     pub fn sleep(this: *PackageManager) void {
         if (this.wait_count.swap(0, .Monotonic) > 0) return;
         Output.flush();
-        bun.Mimalloc.mi_collect(false);
         this.waiter.wait();
     }
 

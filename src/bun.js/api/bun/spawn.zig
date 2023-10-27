@@ -30,13 +30,13 @@ const errno = std.os.errno;
 const mode_t = std.os.mode_t;
 const unexpectedErrno = std.os.unexpectedErrno;
 
-pub const WaitPidResult = struct {
-    pid: pid_t,
-    status: u32,
-};
-
 // mostly taken from zig's posix_spawn.zig
 pub const PosixSpawn = struct {
+    pub const WaitPidResult = struct {
+        pid: pid_t,
+        status: u32,
+    };
+
     pub const Attr = struct {
         attr: system.posix_spawnattr_t,
 

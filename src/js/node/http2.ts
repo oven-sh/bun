@@ -5,6 +5,7 @@ const { hideFromStack, throwNotImplemented } = require("$shared");
 const tls = require("node:tls");
 const net = require("node:net");
 type Socket = typeof net.Socket;
+type Http2ConnectOptions = { settings?: Settings, protocol?: "https:" | "http:", createConnection?: Function };
 const TLSSocket = tls.TLSSocket;
 const EventEmitter = require("node:events");
 const { Duplex } = require("node:stream");
@@ -507,11 +508,46 @@ class ClientHttp2Stream extends Duplex {
     if (this.#sentTrailers) return;
     const session = this.#session;
     if (session) {
-      session[bunHTTP2Native]?.sendTrailers(this.#id, headers);
+      if (!(headers instanceof Object)) {
+        throw new Error("ERROR_HTTP2: Invalid headers");
+      }
+      const flat_headers: Array<NativeHttp2HeaderValue> = [];
+      const sensitives = headers[sensitiveHeaders];
+      const sensitiveNames = {};
+      if (sensitives) {
+        if (!Array.isArray(sensitives)) {
+          const error = new TypeError("headers[http2.neverIndex]");
+          error.code = "ERR_INVALID_ARG_VALUE";
+          throw error;
+        }
+        for (let i = 0; i < sensitives.length; i++) {
+          sensitiveNames[sensitives[i]] = true;
+        }
+      }
+  
+      Object.keys(headers).forEach(key => {
+        //@ts-ignore
+        if (key === sensitiveHeaders) {
+          return;
+        }
+        if (key.startsWith(":")) {
+          assertPseudoHeader(key);
+        }
+  
+        const value = headers[key];
+        if (Array.isArray(value)) {
+          assertSingleValueHeader(key);
+          for (let i = 0; i < value.length; i++) {
+            flat_headers.push({ name: key, value: value[i]?.toString(), neverIndex: sensitiveNames[key] || false });
+          }
+        } else {
+          flat_headers.push({ name: key, value: value?.toString() });
+        }
+      });
+      
+      session[bunHTTP2Native]?.sendTrailers(this.#id, flat_headers);
       this.#sentTrailers = headers;
-      return true;
     }
-    return false;
   }
 
   setTimeout(timeout, callback) {
@@ -650,6 +686,12 @@ class ClientHttp2Stream extends Duplex {
   }
 }
 
+function emitWantTrailersNT(streams, streamId) {
+  const stream = streams.get(streamId);
+  if (stream) {
+    stream.emit("wantTrailers");
+  }
+}
 class ClientHttp2Session extends Http2Session {
   #closed: boolean = false;
   #queue: Array<Buffer> = [];
@@ -687,8 +729,8 @@ class ClientHttp2Session extends Http2Session {
       if (stream) {
         if (!stream[bunHTTP2Closed]) {
           stream[bunHTTP2Closed] = true;
-          stream.rstCode = error;
         }
+        stream.rstCode = error;
         stream.emit("error", error_instance);
         self.emit("sessionError", error_instance);
       }
@@ -742,7 +784,7 @@ class ClientHttp2Session extends Http2Session {
       self.emit("ping", ping);
     },
     error(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
-      self.emit("error", new Error("ERROR_HTTP2"));
+      self.emit("error", new Error(`ERR_HTTP2_SESSION_ERROR: error code ${errorCode}`));
       self[bunHTTP2Socket]?.end();
       self.#parser?.detach();
       self.#parser = null;
@@ -753,14 +795,19 @@ class ClientHttp2Session extends Http2Session {
         stream.emit("aborted", error);
       }
     },
-    wantTrailer(self: ClientHttp2Session, streamId: number) {
-      var stream = self.#streams.get(streamId);
-      if (stream) {
-        stream.emit("wantTrailers");
-      }
+    wantTrailers(self: ClientHttp2Session, streamId: number) {
+      process.nextTick(emitWantTrailersNT, self.#streams, streamId);
     },
     goaway(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       self.emit("goaway", errorCode, lastStreamId, opaqueData);
+      if(errorCode !== 0) { 
+      for(let [_, stream] of self.#streams) {
+          if(!stream[bunHTTP2Closed]) {
+            stream[bunHTTP2Closed] = true;
+            stream.destroy(new Error(`ERR_HTTP2_SESSION_ERROR: Session closed with error code ${errorCode}`));
+          }
+        }
+      }
       self[bunHTTP2Socket]?.end();
       self.#parser?.detach();
       self.#parser = null;
@@ -919,7 +966,7 @@ class ClientHttp2Session extends Http2Session {
     }
   }
 
-  constructor(url: string | URL, options?: Settings) {
+  constructor(url: string | URL, options?: Http2ConnectOptions) {
     super();
 
     if (typeof url === "string") {
@@ -930,7 +977,9 @@ class ClientHttp2Session extends Http2Session {
     }
     this.#isServer = true;
     this.#url = url;
-    const port = url.port ? parseInt(url.port, 10) : url.protocol === "https:" ? 443 : 80;
+    
+    const protocol = url.protocol || options?.protocol || "https:";
+    const port = url.port ? parseInt(url.port, 10) : protocol === "http:" ? 80 : 443;
     // TODO: h2c or HTTP2 Over Cleartext
     // h2c is not supported yet but should
     // need to implement upgrade from http1.1 to h2c
@@ -938,15 +987,23 @@ class ClientHttp2Session extends Http2Session {
     // browsers dont support h2c (and probably never will)
 
     // h2 with ALPNProtocols
-    const socket = tls.connect(
-      {
-        host: url.hostname,
-        port,
-        ALPNProtocols: ["h2", "http/1.1"],
-      },
-      this.#onConnect.bind(this),
-    );
-    this[bunHTTP2Socket] = socket;
+    let socket;
+    if(typeof options?.createConnection === "function") {
+      socket = options.createConnection(url, options);
+      this[bunHTTP2Socket] = socket;
+      // it can return any duplex stream so we manually call onConnect
+      this.#onConnect();
+    }else {
+      socket = tls.connect(
+        {
+          host: url.hostname,
+          port,
+          ALPNProtocols: ["h2", "http/1.1"],
+        },
+        this.#onConnect.bind(this),
+      );
+      this[bunHTTP2Socket] = socket;
+    }
     this.#parser = new H2FrameParser({
       context: this,
       settings: options,
@@ -994,7 +1051,6 @@ class ClientHttp2Session extends Http2Session {
     if (!(headers instanceof Object)) {
       throw new Error("ERROR_HTTP2: Invalid headers");
     }
-    options = options || {};
     const flat_headers: Array<NativeHttp2HeaderValue> = [];
     let has_scheme = false;
     let authority: any = null;
@@ -1068,6 +1124,7 @@ class ClientHttp2Session extends Http2Session {
     }
 
     if (NoPayloadMethods.has(method.toUpperCase())) {
+      options = options || {};
       options.endStream = true;
     }
 
@@ -1083,7 +1140,7 @@ class ClientHttp2Session extends Http2Session {
     req.emit("ready");
     return req;
   }
-  static connect(url: string | URL, options?: Settings) {
+  static connect(url: string | URL, options?: Http2ConnectOptions) {
     if (options) {
       return new ClientHttp2Session(url, options);
     }
@@ -1095,7 +1152,7 @@ class ClientHttp2Session extends Http2Session {
   }
 }
 
-function connect(url: string | URL, options?: Settings) {
+function connect(url: string | URL, options?: Http2ConnectOptions) {
   if (options) {
     return ClientHttp2Session.connect(url, options);
   }

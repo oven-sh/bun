@@ -1971,7 +1971,7 @@ pub const H2FrameParser = struct {
         }
 
         // max frame size will be always at least 16384
-        var buffer: [16384 - FrameHeader.byteSize - 5]u8 = undefined;
+        var buffer: [16384 - FrameHeader.byteSize]u8 = undefined;
         var header_buffer: [MAX_HPACK_HEADER_SIZE]u8 = undefined;
         @memset(&buffer, 0);
 

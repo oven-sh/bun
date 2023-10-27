@@ -11415,6 +11415,9 @@ JSC_DECLARE_HOST_FUNCTION(H2FrameParserPrototype__requestCallback);
 extern "C" EncodedJSValue H2FrameParserPrototype__rstStream(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(H2FrameParserPrototype__rstStreamCallback);
 
+extern "C" EncodedJSValue H2FrameParserPrototype__sendTrailers(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(H2FrameParserPrototype__sendTrailersCallback);
+
 extern "C" EncodedJSValue H2FrameParserPrototype__setEndAfterHeaders(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(H2FrameParserPrototype__setEndAfterHeadersCallback);
 
@@ -11440,6 +11443,7 @@ static const HashTableValue JSH2FrameParserPrototypeTableValues[] = {
     { "read"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, H2FrameParserPrototype__readCallback, 1 } },
     { "request"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, H2FrameParserPrototype__requestCallback, 2 } },
     { "rstStream"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, H2FrameParserPrototype__rstStreamCallback, 1 } },
+    { "sendTrailers"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, H2FrameParserPrototype__sendTrailersCallback, 2 } },
     { "setEndAfterHeaders"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, H2FrameParserPrototype__setEndAfterHeadersCallback, 2 } },
     { "setStreamPriority"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, H2FrameParserPrototype__setStreamPriorityCallback, 2 } },
     { "settings"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, H2FrameParserPrototype__settingsCallback, 1 } },
@@ -11738,6 +11742,34 @@ JSC_DEFINE_HOST_FUNCTION(H2FrameParserPrototype__rstStreamCallback, (JSGlobalObj
 #endif
 
     return H2FrameParserPrototype__rstStream(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(H2FrameParserPrototype__sendTrailersCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSH2FrameParser* thisObject = jsDynamicCast<JSH2FrameParser*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof H2FrameParser"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return H2FrameParserPrototype__sendTrailers(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 JSC_DEFINE_HOST_FUNCTION(H2FrameParserPrototype__setEndAfterHeadersCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

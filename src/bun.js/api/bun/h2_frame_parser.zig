@@ -1786,6 +1786,110 @@ pub const H2FrameParser = struct {
         }
     }
 
+    pub fn sendTrailers(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        JSC.markBinding(@src());
+        const args_list = callframe.arguments(2);
+        if (args_list.len < 2) {
+            globalObject.throw("Expected stream and headers arguments", .{});
+            return .zero;
+        }
+
+        const stream_arg = args_list.ptr[0];
+        const headers_arg = args_list.ptr[1];
+
+        if (!stream_arg.isNumber()) {
+            globalObject.throw("Expected stream to be a number", .{});
+            return .zero;
+        }
+
+        const stream_id = stream_arg.toU32();
+        if (stream_id == 0 or stream_id > MAX_STREAM_ID) {
+            globalObject.throw("Invalid stream id", .{});
+            return .zero;
+        }
+
+        var stream = this.streams.get(@intCast(stream_id)) orelse {
+            globalObject.throw("Invalid stream id", .{});
+            return .zero;
+        };
+
+        if (!headers_arg.jsType().isArray()) {
+            globalObject.throw("Expected headers to be an array", .{});
+            return .zero;
+        }
+
+        // max frame size will be always at least 16384
+        var buffer: [16384 - FrameHeader.byteSize - 5]u8 = undefined;
+        var header_buffer: [MAX_HPACK_HEADER_SIZE]u8 = undefined;
+        @memset(&buffer, 0);
+
+        var iter = headers_arg.arrayIterator(globalObject);
+        var encoded_size: usize = 0;
+
+        // TODO: support CONTINUE for more headers if headers are too big
+        while (iter.next()) |header| {
+            if (!header.isObject()) {
+                stream.state = .CLOSED;
+                stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
+                this.dispatchWithExtra(.onStreamError, JSC.JSValue.jsNumber(stream_id), JSC.JSValue.jsNumber(stream.rstCode));
+                globalObject.throwInvalidArguments("Expected header to be an Array of headers", .{});
+                return .zero;
+            }
+            var name = header.get(globalObject, "name") orelse JSC.JSValue.jsUndefined();
+            if (!name.isString()) {
+                stream.state = .CLOSED;
+                stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
+                this.dispatchWithExtra(.onStreamError, JSC.JSValue.jsNumber(stream_id), JSC.JSValue.jsNumber(stream.rstCode));
+                globalObject.throwInvalidArguments("Expected header name to be a string", .{});
+                return .zero;
+            }
+
+            var value = header.get(globalObject, "value") orelse JSC.JSValue.jsUndefined();
+            if (!value.isString()) {
+                stream.state = .CLOSED;
+                stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
+                this.dispatchWithExtra(.onStreamError, JSC.JSValue.jsNumber(stream_id), JSC.JSValue.jsNumber(stream.rstCode));
+                globalObject.throwInvalidArguments("Expected header value to be a string", .{});
+                return .zero;
+            }
+
+            var never_index = false;
+            var never_index_arg = header.get(globalObject, "neverIndex") orelse JSC.JSValue.jsUndefined();
+            if (never_index_arg.isBoolean()) {
+                never_index = never_index_arg.asBoolean();
+            } else {
+                never_index = false;
+            }
+
+            const name_slice = name.toSlice(globalObject, bun.default_allocator);
+            defer name_slice.deinit();
+            const value_slice = value.toSlice(globalObject, bun.default_allocator);
+            defer value_slice.deinit();
+
+            log("encode header {s} {s}", .{ name_slice.slice(), value_slice.slice() });
+            encoded_size += stream.encode(&header_buffer, buffer[encoded_size..], name_slice.slice(), value_slice.slice(), never_index) catch {
+                stream.state = .CLOSED;
+                stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
+                this.dispatchWithExtra(.onStreamError, JSC.JSValue.jsNumber(stream_id), JSC.JSValue.jsNumber(stream.rstCode));
+                globalObject.throw("Failed to encode header", .{});
+                return .zero;
+            };
+        }
+        var flags: u8 = @intFromEnum(HeadersFrameFlags.END_HEADERS) | @intFromEnum(HeadersFrameFlags.END_STREAM);
+
+        log("trailers encoded_size {}", .{encoded_size});
+        var frame: FrameHeader = .{
+            .type = @intFromEnum(FrameType.HTTP_FRAME_HEADERS),
+            .flags = flags,
+            .streamIdentifier = stream.id,
+            .length = @intCast(encoded_size),
+        };
+        var writer = this.toWriter();
+        frame.write(@TypeOf(writer), writer);
+        this.write(buffer[0..encoded_size]);
+
+        return JSC.JSValue.jsBoolean(true);
+    }
     pub fn writeStream(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(3);
@@ -1822,19 +1926,21 @@ pub const H2FrameParser = struct {
 
         if (data_arg.asArrayBuffer(globalObject)) |array_buffer| {
             var payload = array_buffer.slice();
-            log("writeStream as buffer", .{});
-
-            this.sendData(stream_id, payload, close);
+            this.sendData(stream_id, payload, close and !stream.waitForTrailers);
         } else if (bun.String.tryFromJS(data_arg, globalObject)) |bun_str| {
             var zig_str = bun_str.toUTF8(bun.default_allocator);
             defer zig_str.deinit();
             var payload = zig_str.slice();
-            log("writeStream as string", .{});
-
-            this.sendData(stream_id, payload, close);
+            this.sendData(stream_id, payload, close and !stream.waitForTrailers);
         } else {
             globalObject.throw("Expected data to be an ArrayBuffer or a string", .{});
             return .zero;
+        }
+
+        if (close) {
+            if (stream.waitForTrailers) {
+                this.dispatch(.onWantTrailers, JSC.JSValue.jsNumber(stream.id));
+            }
         }
 
         return JSC.JSValue.jsBoolean(true);
@@ -1938,7 +2044,6 @@ pub const H2FrameParser = struct {
                 return .zero;
             };
         }
-        headers_arg.protect();
         var flags: u8 = @intFromEnum(HeadersFrameFlags.END_HEADERS);
         var exclusive: bool = false;
         var has_priority: bool = false;
@@ -1957,11 +2062,21 @@ pub const H2FrameParser = struct {
                 return .zero;
             }
 
+            if (options.get(globalObject, "waitForTrailers")) |trailes_js| {
+                if (trailes_js.isBoolean()) {
+                    waitForTrailers = trailes_js.asBoolean();
+                    stream.waitForTrailers = waitForTrailers;
+                }
+            }
+
             if (options.get(globalObject, "endStream")) |end_stream_js| {
                 if (end_stream_js.isBoolean()) {
                     if (end_stream_js.asBoolean()) {
                         end_stream = true;
-                        flags |= @intFromEnum(HeadersFrameFlags.END_STREAM);
+                        // will end the stream after trailers
+                        if (!waitForTrailers) {
+                            flags |= @intFromEnum(HeadersFrameFlags.END_STREAM);
+                        }
                     }
                 }
             }
@@ -2015,13 +2130,6 @@ pub const H2FrameParser = struct {
                 stream.weight = @intCast(weight);
             }
 
-            if (options.get(globalObject, "waitForTrailers")) |trailes_js| {
-                if (trailes_js.isBoolean()) {
-                    waitForTrailers = trailes_js.asBoolean();
-                    stream.waitForTrailers = waitForTrailers;
-                }
-            }
-
             if (options.get(globalObject, "signal")) |signal_arg| {
                 if (signal_arg.as(JSC.WebCore.AbortSignal)) |signal_| {
                     signal = signal_;
@@ -2071,6 +2179,8 @@ pub const H2FrameParser = struct {
             if (waitForTrailers) {
                 this.dispatch(.onWantTrailers, JSC.JSValue.jsNumber(stream.id));
             }
+        } else {
+            stream.waitForTrailers = waitForTrailers;
         }
 
         return JSC.JSValue.jsNumber(stream.id);

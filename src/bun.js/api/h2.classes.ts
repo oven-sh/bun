@@ -41,6 +41,10 @@ export default [
         fn: "writeStream",
         length: 3,
       },
+      sendTrailers: {
+        fn: "sendTrailers",
+        length: 2,
+      },
       setStreamPriority: {
         fn: "setStreamPriority",
         length: 2,

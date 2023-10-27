@@ -17,7 +17,7 @@ const bunHTTP2Closed = Symbol.for("::bunhttp2closed::");
 const bunHTTP2Socket = Symbol.for("::bunhttp2socket::");
 
 const ReflectGetPrototypeOf = Reflect.getPrototypeOf;
-const FunctionPrototypeBind =Function.prototype.call.bind(Function.prototype.bind);
+const FunctionPrototypeBind = Function.prototype.call.bind(Function.prototype.bind);
 
 const proxySocketHandler = {
   get(session, prop) {
@@ -36,7 +36,9 @@ const proxySocketHandler = {
       case "setEncoding":
       case "setKeepAlive":
       case "setNoDelay":
-        const error = new Error("ERR_HTTP2_NO_SOCKET_MANIPULATION: HTTP/2 sockets should not be directly manipulated (e.g. read and written)");
+        const error = new Error(
+          "ERR_HTTP2_NO_SOCKET_MANIPULATION: HTTP/2 sockets should not be directly manipulated (e.g. read and written)",
+        );
         error.code = "ERR_HTTP2_NO_SOCKET_MANIPULATION";
         throw error;
       default: {
@@ -54,9 +56,9 @@ const proxySocketHandler = {
   getPrototypeOf(session) {
     const socket = session[bunHTTP2Socket];
     if (!socket) {
-        const error = new Error("ERR_HTTP2_SOCKET_UNBOUND: The socket has been disconnected from the Http2Session");
-        error.code = "ERR_HTTP2_SOCKET_UNBOUND";
-        throw error;
+      const error = new Error("ERR_HTTP2_SOCKET_UNBOUND: The socket has been disconnected from the Http2Session");
+      error.code = "ERR_HTTP2_SOCKET_UNBOUND";
+      throw error;
     }
     return ReflectGetPrototypeOf(socket);
   },
@@ -77,7 +79,9 @@ const proxySocketHandler = {
       case "setEncoding":
       case "setKeepAlive":
       case "setNoDelay":
-        const error = new Error("ERR_HTTP2_NO_SOCKET_MANIPULATION: HTTP/2 sockets should not be directly manipulated (e.g. read and written)");
+        const error = new Error(
+          "ERR_HTTP2_NO_SOCKET_MANIPULATION: HTTP/2 sockets should not be directly manipulated (e.g. read and written)",
+        );
         error.code = "ERR_HTTP2_NO_SOCKET_MANIPULATION";
         throw error;
       default: {
@@ -454,10 +458,6 @@ function reduceToCompatibleHeaders(obj: any, currentValue: any) {
   return obj;
 }
 
-function sum(acc, cur) {
-  return acc + cur.byteLength;
-}
-
 class ClientHttp2Stream extends Duplex {
   #id: number;
   #session: ClientHttp2Session | null = null;
@@ -467,7 +467,7 @@ class ClientHttp2Stream extends Duplex {
   [bunHTTP2StreamReadQueue]: Array<Buffer> = $createFIFO();
   [bunHTTP2StreamResponded]: boolean = false;
   #headers: any;
-  #trailers: any;
+  #sentTrailers: any;
   constructor(streamId, session, headers) {
     super();
     this.#id = streamId;
@@ -499,12 +499,18 @@ class ClientHttp2Stream extends Duplex {
   }
 
   get sentTrailers() {
-    return this.#trailers;
+    return this.#sentTrailers;
   }
 
   sendTrailers(headers) {
-    this.#trailers = headers;
-    // TODO look at nodejs implementation
+    if (this.#sentTrailers) return;
+    const session = this.#session;
+    if (session) {
+      session[bunHTTP2Native]?.sendTrailers(this.#id, headers);
+      this.#sentTrailers = headers;
+      return true;
+    }
+    return false;
   }
 
   setTimeout(timeout, callback) {
@@ -746,6 +752,12 @@ class ClientHttp2Session extends Http2Session {
         stream.emit("aborted", error);
       }
     },
+    wantTrailer(self: ClientHttp2Session, streamId: number) {
+      var stream = self.#streams.get(streamId);
+      if (stream) {
+        stream.emit("wantTrailers");
+      }
+    },
     goaway(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       self.emit("goaway", errorCode, lastStreamId, opaqueData);
       self[bunHTTP2Socket]?.end();
@@ -917,13 +929,12 @@ class ClientHttp2Session extends Http2Session {
     }
     this.#isServer = true;
     this.#url = url;
-    const port =  url.port ? parseInt(url.port, 10) : url.protocol === "https:" ? 443 : 80;
+    const port = url.port ? parseInt(url.port, 10) : url.protocol === "https:" ? 443 : 80;
     // TODO: h2c or HTTP2 Over Cleartext
-    // h2c is not supported yet but should 
+    // h2c is not supported yet but should
     // need to implement upgrade from http1.1 to h2c
     // we can use picohttp to do that
     // browsers dont support h2c (and probably never will)
-
 
     // h2 with ALPNProtocols
     const socket = tls.connect(

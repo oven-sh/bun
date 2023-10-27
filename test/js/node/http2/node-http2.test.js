@@ -162,8 +162,7 @@ describe("Client Basics", () => {
       let parsed;
       expect(() => (parsed = JSON.parse(results[i].data))).not.toThrow();
       expect(parsed.url).toBe("https://httpbin.org/post");
-      expect([1,2,3,4,5]).toContain(parsed.json?.request);
+      expect([1, 2, 3, 4, 5]).toContain(parsed.json?.request);
     }
   });
-
 });

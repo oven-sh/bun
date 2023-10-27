@@ -5,7 +5,7 @@ import { Readable } from "stream";
 describe("got", () => {
   test("should work", async () => {
     const server = Bun.serve({
-      port: 0, 
+      port: 0,
       fetch(request, server) {
         return new Response("Hello World!");
       },

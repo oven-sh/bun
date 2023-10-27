@@ -3169,6 +3169,8 @@ pub const JSH2FrameParser = struct {
             @compileLog("Expected H2FrameParser.request to be a callback but received " ++ @typeName(@TypeOf(H2FrameParser.request)));
         if (@TypeOf(H2FrameParser.rstStream) != CallbackType)
             @compileLog("Expected H2FrameParser.rstStream to be a callback but received " ++ @typeName(@TypeOf(H2FrameParser.rstStream)));
+        if (@TypeOf(H2FrameParser.sendTrailers) != CallbackType)
+            @compileLog("Expected H2FrameParser.sendTrailers to be a callback but received " ++ @typeName(@TypeOf(H2FrameParser.sendTrailers)));
         if (@TypeOf(H2FrameParser.setEndAfterHeaders) != CallbackType)
             @compileLog("Expected H2FrameParser.setEndAfterHeaders to be a callback but received " ++ @typeName(@TypeOf(H2FrameParser.setEndAfterHeaders)));
         if (@TypeOf(H2FrameParser.setStreamPriority) != CallbackType)
@@ -3190,6 +3192,7 @@ pub const JSH2FrameParser = struct {
             @export(H2FrameParser.read, .{ .name = "H2FrameParserPrototype__read" });
             @export(H2FrameParser.request, .{ .name = "H2FrameParserPrototype__request" });
             @export(H2FrameParser.rstStream, .{ .name = "H2FrameParserPrototype__rstStream" });
+            @export(H2FrameParser.sendTrailers, .{ .name = "H2FrameParserPrototype__sendTrailers" });
             @export(H2FrameParser.setEndAfterHeaders, .{ .name = "H2FrameParserPrototype__setEndAfterHeaders" });
             @export(H2FrameParser.setStreamPriority, .{ .name = "H2FrameParserPrototype__setStreamPriority" });
             @export(H2FrameParser.updateSettings, .{ .name = "H2FrameParserPrototype__updateSettings" });

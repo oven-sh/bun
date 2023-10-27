@@ -1752,19 +1752,21 @@ pub const Subprocess = struct {
         return this.waitWithJSValue(sync, this.this_jsvalue);
     }
 
-    pub fn watch(this: *Subprocess) void {
+    pub fn watch(this: *Subprocess) JSC.Maybe(void) {
         if (WaiterThread.shouldUseWaiterThread()) {
             WaiterThread.append(this);
-            return;
+            return JSC.Maybe(void){ .result = {} };
         }
 
         if (this.poll.poll_ref) |poll| {
             this.flags.reference_count += @as(u30, @intFromBool(!poll.isRegistered()));
-            _ = poll.register(
+            const registration = poll.register(
                 this.globalThis.bunVM().event_loop_handle.?,
                 .process,
                 true,
             );
+
+            return registration;
         } else {
             @panic("Internal Bun error: poll_ref in Subprocess is null unexpectedly. Please file a bug report.");
         }
@@ -1778,32 +1780,46 @@ pub const Subprocess = struct {
         this.onWaitPid(sync, this_jsvalue, PosixSpawn.waitpid(this.pid, if (sync) 0 else std.os.W.NOHANG));
     }
 
-    pub fn onWaitPid(this: *Subprocess, sync: bool, this_jsvalue: JSC.JSValue, waitpid_result: JSC.Maybe(PosixSpawn.WaitPidResult)) void {
+    pub fn onWaitPid(this: *Subprocess, sync: bool, this_jsvalue: JSC.JSValue, waitpid_result_: JSC.Maybe(PosixSpawn.WaitPidResult)) void {
         defer if (sync) this.updateHasPendingActivity();
 
         const pid = this.pid;
 
-        switch (waitpid_result) {
-            .err => |err| {
-                this.waitpid_err = err;
-            },
-            .result => |result| {
-                if (result.pid == pid) {
-                    if (std.os.W.IFEXITED(result.status)) {
-                        this.exit_code = @as(u8, @truncate(std.os.W.EXITSTATUS(result.status)));
+        var waitpid_result = waitpid_result_;
+        while (true) {
+            switch (waitpid_result) {
+                .err => |err| {
+                    this.waitpid_err = err;
+                },
+                .result => |result| {
+                    if (result.pid == pid) {
+                        if (std.os.W.IFEXITED(result.status)) {
+                            this.exit_code = @as(u8, @truncate(std.os.W.EXITSTATUS(result.status)));
+                        }
+
+                        if (std.os.W.IFSIGNALED(result.status)) {
+                            this.signal_code = @as(SignalCode, @enumFromInt(@as(u8, @truncate(std.os.W.TERMSIG(result.status)))));
+                        } else if (std.os.W.IFSTOPPED(result.status)) {
+                            this.signal_code = @as(SignalCode, @enumFromInt(@as(u8, @truncate(std.os.W.STOPSIG(result.status)))));
+                        }
                     }
 
-                    if (std.os.W.IFSIGNALED(result.status)) {
-                        this.signal_code = @as(SignalCode, @enumFromInt(@as(u8, @truncate(std.os.W.TERMSIG(result.status)))));
-                    } else if (std.os.W.IFSTOPPED(result.status)) {
-                        this.signal_code = @as(SignalCode, @enumFromInt(@as(u8, @truncate(std.os.W.STOPSIG(result.status)))));
+                    if (!this.hasExited()) {
+                        switch (this.watch()) {
+                            .result => {},
+                            .err => |err| {
+                                if (err.getErrno() == .SRCH) {
+                                    waitpid_result = PosixSpawn.waitpid(pid, if (sync) 0 else std.os.W.NOHANG);
+                                    continue;
+                                } else {
+                                    // @panic("This shouldn't happen");
+                                }
+                            },
+                        }
                     }
-                }
-
-                if (!this.hasExited()) {
-                    this.watch();
-                }
-            },
+                },
+            }
+            break;
         }
 
         if (!sync and this.hasExited()) {

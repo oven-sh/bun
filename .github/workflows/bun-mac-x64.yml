@@ -102,12 +102,12 @@ jobs:
     strategy:
       matrix:
         include:
-          - cpu: native
-            arch: aarch64
-            tag: bun-darwin-aarch64
-            obj: bun-obj-darwin-aarch64
-            artifact: bun-obj-darwin-aarch64
-            runner: macos-arm64
+          - cpu: haswell
+            arch: x86_64
+            tag: bun-darwin-x64
+            obj: bun-obj-darwin-x64
+            runner: macos-12
+            artifact: bun-obj-darwin-x6
     steps:
       - uses: actions/checkout@v4
       - name: Checkout submodules

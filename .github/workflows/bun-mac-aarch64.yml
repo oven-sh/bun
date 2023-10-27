@@ -272,16 +272,6 @@ jobs:
           name: ${{ matrix.obj }}
           path: ${{ runner.temp }}/release
 
-      - name: Hash submodule versions
-        run: |
-          print_data() {
-            git submodule | grep -v WebKit
-            llvm-config --version
-            rustc --version
-          }
-          echo "sha=$(print_data | sha1sum | cut -c 1-10)" >> $GITHUB_OUTPUT
-        id: submodule-versions
-
       - name: Downloaded submodule dependencies
         uses: actions/download-artifact@v3
         with:
@@ -363,7 +353,7 @@ jobs:
     name: Tests ${{matrix.tag}}
     runs-on: ${{ matrix.runner }}
     needs: [macOS-link]
-    # if: github.event_name == 'pull_request' && github.repository_owner == 'oven-sh'
+    if: github.event_name == 'pull_request' && github.repository_owner == 'oven-sh'
     permissions:
       pull-requests: write
     timeout-minutes: 30

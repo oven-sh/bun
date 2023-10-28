@@ -3605,7 +3605,6 @@ var require_binding = __commonJS({
     }
     Zlib.prototype = {};
     Zlib.prototype.close = function () {
-      console.log("Zlib close");
       if (this.write_in_progress) {
         this.pending_close = true;
         return;

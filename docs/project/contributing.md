@@ -2,7 +2,7 @@ Configuring a development environment for Bun can take 10-30 minutes depending o
 
 If you are using Windows, you must use a WSL environment as Bun does not yet compile on Windows natively.
 
-Before starting, you will need to already have a release build of Bun installed, as we use our bundler to transpile and minify our code.
+Before starting, you will need to already have a release build of Bun installed, as we use our bundler to transpile and minify our code, as well as for code generation scripts.
 
 {% codetabs %}
 
@@ -130,12 +130,12 @@ $ zigup 0.12.0-dev.1297+a9e66ed73
 We last updated Zig on **October 26th, 2023**
 {% /callout %}
 
-## First Build
+## Building Bun
 
 After cloning the repository, run the following command to run the first build. This may take a while as it will clone submodules and build dependencies.
 
 ```bash
-$ bash ./scripts/setup.sh
+$ bun setup
 ```
 
 The binary will be located at `./build/bun-debug`. It is recommended to add this to your `$PATH`. To verify the build worked, let's print the version number on the development build of Bun.
@@ -145,26 +145,27 @@ $ build/bun-debug --version
 bun 1.x.y__dev
 ```
 
-To rebuild, you can simply invoke `ninja`
+To rebuild, you can invoke `bun run build`
 
 ```bash
-$ ninja -C build
+$ bun run build
 ```
 
-Note: `make setup` is just an alias for the following steps:
+These two scripts, `setup` and `build`, are aliases to do roughly the following:
 
 ```bash
-$ ./src/scripts/update-submodules.sh
-$ ./src/scripts/all-dependencies.sh
+$ ./scripts/setup.sh
 $ cmake . -GNinja -B build -DCMAKE_BUILD_TYPE=Debug
-$ ninja -C build
+$ ninja -C build # 'bun run build' only runs this
 ```
+
+Advanced uses can pass CMake flags to customize the build. (TODO: Document variables & how to use custom WebKit, etc)
 
 ## VSCode
 
 VSCode is the recommended IDE for working on Bun, as it has been configured. Once opening, you can run `Extensions: Show Recommended Extensions` to install the recommended extensions for Zig and C++. ZLS is automatically configured.
 
-<!-- ## Code generation scripts
+## Code generation scripts
 
 Bun leverages a lot of code generation scripts.
 
@@ -194,7 +195,7 @@ To run that, run:
 $ make generate-sink
 ```
 
-You probably won't need to run that one much. -->
+You probably won't need to run that one much.
 
 ## Modifying ESM modules
 
@@ -230,18 +231,9 @@ You'll need a very recent version of Valgrind due to DWARF 5 debug symbols. You 
 $ valgrind --fair-sched=try --track-origins=yes bun-debug <args>
 ```
 
-## Updating `WebKit`
-
-The Bun team will occasionally bump the version of WebKit used in Bun. When this happens, you may see errors in `src/bun.js/bindings` during builds. When you see this, install the latest version of `bun-webkit` and re-compile.
-
-```bash
-$ bun install
-$ make cpp
-```
-
 ## Building WebKit locally + Debug mode of JSC
 
-**TODO**: This is out of date. TLDR is pass `-DUSE_DEBUG_JSC=1` or `-DWEBKIT_DIR=...` to cmake
+**TODO**: This is out of date. TLDR is pass `-DUSE_DEBUG_JSC=1` or `-DWEBKIT_DIR=...` to CMake. it will probably need more fiddling. ask @paperdave if you need this.
 
 WebKit is not cloned by default (to save time and disk space). To clone and build WebKit locally, run:
 

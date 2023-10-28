@@ -89,8 +89,6 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
       - uses: ilammy/msvc-dev-cmd@7315a94840631165970262a99c72cfb48a65d25d
         with:
           arch: ${{ matrix.arch }}
@@ -98,7 +96,9 @@ jobs:
         with:
           version: 16.0.6
       - run: choco install -y ninja
-      - run: |
+      - name: Build Dependencies
+        run: |
+          git submodule update --init --recursive --progress --depth=1 --checkout
           Invoke-WebRequest -Uri "https://www.nasm.us/pub/nasm/releasebuilds/2.16.01/win64/nasm-2.16.01-win64.zip" -OutFile nasm.zip
           Expand-Archive nasm.zip (mkdir -Force "nasm")
           $Nasm = (Get-ChildItem "nasm")

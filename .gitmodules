@@ -56,15 +56,15 @@ depth = 1
 shallow = true
 fetchRecurseSubmodules = false
 [submodule "src/deps/c-ares"]
-	path = src/deps/c-ares
-	url = https://github.com/c-ares/c-ares.git
+path = src/deps/c-ares
+url = https://github.com/c-ares/c-ares.git
 [submodule "src/deps/zstd"]
-	path = src/deps/zstd
-	url = https://github.com/facebook/zstd.git
-	ignore = dirty
+path = src/deps/zstd
+url = https://github.com/facebook/zstd.git
+ignore = dirty
 [submodule "src/deps/base64"]
-	path = src/deps/base64
-	url = https://github.com/aklomp/base64.git
-	ignore = dirty
-	depth = 1
-	shallow = true
+path = src/deps/base64
+url = https://github.com/aklomp/base64.git
+ignore = dirty
+depth = 1
+shallow = true

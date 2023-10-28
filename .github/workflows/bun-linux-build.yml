@@ -4,11 +4,6 @@ concurrency:
   group: bun-linux-build-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-  TEST_TAG: bun-test'
-
 on:
   push:
     branches:
@@ -49,16 +44,12 @@ jobs:
             arch: x86_64
             build_arch: amd64
             runner: big-ubuntu
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-4/bun-webkit-linux-amd64-lto.tar.gz"
-            webkit_basename: "bun-webkit-linux-amd64-lto"
             build_machine_arch: x86_64
           - cpu: nehalem
             tag: linux-x64-baseline
             arch: x86_64
             build_arch: amd64
             runner: big-ubuntu
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-oct3-4/bun-webkit-linux-amd64-lto.tar.gz"
-            webkit_basename: "bun-webkit-linux-amd64-lto"
             build_machine_arch: x86_64
 
     steps:
@@ -92,9 +83,14 @@ jobs:
             BUILDARCH=${{matrix.build_arch}}
             BUILD_MACHINE_ARCH=${{matrix.build_machine_arch}}
             CPU_TARGET=${{matrix.cpu}}
-            WEBKIT_URL=${{matrix.webkit_url}}
             GIT_SHA=${{github.sha}}
-            WEBKIT_BASENAME=${{matrix.webkit_basename}}
+
+            SCCACHE_BUCKET=bun
+            SCCACHE_REGION=auto
+            SCCACHE_S3_USE_SSL=true
+            SCCACHE_ENDPOINT=${{ secrets.CACHE_S3_ENDPOINT }}
+            AWS_ACCESS_KEY_ID=${{ secrets.CACHE_S3_ACCESS_KEY_ID }}
+            AWS_SECRET_ACCESS_KEY=${{ secrets.CACHE_S3_SECRET_ACCESS_KEY }}
           platforms: linux/${{matrix.build_arch}}
           target: artifact
           outputs: type=local,dest=${{runner.temp}}/release

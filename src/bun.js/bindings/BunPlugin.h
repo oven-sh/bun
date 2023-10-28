@@ -2,8 +2,8 @@
 
 #include "root.h"
 #include "headers-handwritten.h"
-#include "JavaScriptCore/JSGlobalObject.h"
-#include "JavaScriptCore/Strong.h"
+#include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/Strong.h>
 #include "helpers.h"
 
 extern "C" JSC_DECLARE_HOST_FUNCTION(jsFunctionBunPlugin);

@@ -235,7 +235,10 @@ declare namespace NodeJS {
   interface Require {
     (id: string): any;
     resolve: RequireResolve;
+    cache: Record<string, NodeModule>;
+    main: NodeModule | undefined;
   }
+
   interface ProcessEnv {}
   type Signals =
     | "SIGABRT"

@@ -27,14 +27,15 @@ endif()
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(DEBUG ON)
     set(ZIG_OPTIMIZE "Debug")
-    set(NODE_ENV "development")
     set(bun "bun-debug")
 elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
     set(DEBUG OFF)
     set(ZIG_OPTIMIZE "ReleaseFast")
-    set(NODE_ENV "production")
     set(bun "bun-profile")
 endif()
+
+# --- Node ---
+set(NODE_ENV "production")
 
 # --- LLVM ---
 # This detection is a little overkill, but it ensures that the set LLVM_VERSION matches under
@@ -651,16 +652,6 @@ list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp")
 # COMMENT "Building analytics_schema.zig"
 # )
 # endif()
-
-# --- Runtime.js ---
-#if(NOT NO_CODEGEN)
-#    add_custom_command(
-#        OUTPUT "src/fallback.out.js"
-#        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-#        COMMAND "${ESBUILD}" "--target=esnext" "--bundle" "src/fallback.ts" "--format=iife" "--platform=browser" "--minify" "--outfile=src/fallback.out.js"
-#        DEPENDS "src/fallback.ts"
-#    )
-#endif()
 
 # --- Runtime JS ---
 add_custom_command(

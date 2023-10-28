@@ -130,7 +130,7 @@ The binary will be located at `./build/bun-debug`. It is recommended to add this
 
 ```bash
 $ build/bun-debug --version
-bun 1.x.y__dev
+x.y.z_debug
 ```
 
 To rebuild, you can invoke `bun run build`
@@ -143,17 +143,23 @@ These two scripts, `setup` and `build`, are aliases to do roughly the following:
 
 ```bash
 $ ./scripts/setup.sh
-$ cmake . -GNinja -B build -DCMAKE_BUILD_TYPE=Debug
-$ ninja -C build # 'bun run build' only runs this
+$ cmake -S . -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug
+$ ninja -C build # 'bun run build' runs just this
 ```
 
-Advanced uses can pass CMake flags to customize the build. (TODO: Document variables & how to use custom WebKit, etc)
+Advanced uses can pass CMake flags to customize the build.
 
 ## VSCode
 
 VSCode is the recommended IDE for working on Bun, as it has been configured. Once opening, you can run `Extensions: Show Recommended Extensions` to install the recommended extensions for Zig and C++. ZLS is automatically configured.
 
 ## Code generation scripts
+
+{% callout %}
+
+**Note**: This section is outdated. The code generators are run automatically by ninja, instead of by `make`.
+
+{% /callout %}
 
 Bun leverages a lot of code generation scripts.
 
@@ -194,9 +200,7 @@ Certain modules like `node:fs`, `node:stream`, `bun:sqlite`, and `ws` are implem
 To build a release build of Bun, run:
 
 ```bash
-$ mkdir build-release
-$ cmake . -GNinja -B build-release -DCMAKE_BUILD_TYPE=Release
-$ ninja -C build-release
+$ bun run build:release
 ```
 
 The binary will be located at `./build-release/bun` and `./build-release/bun-profile`.
@@ -221,7 +225,11 @@ $ valgrind --fair-sched=try --track-origins=yes bun-debug <args>
 
 ## Building WebKit locally + Debug mode of JSC
 
+{% callout %}
+
 **TODO**: This is out of date. TLDR is pass `-DUSE_DEBUG_JSC=1` or `-DWEBKIT_DIR=...` to CMake. it will probably need more fiddling. ask @paperdave if you need this.
+
+{% /callout %}
 
 WebKit is not cloned by default (to save time and disk space). To clone and build WebKit locally, run:
 
@@ -283,29 +291,6 @@ If you see an error when compiling `libarchive`, run this:
 ```bash
 $ brew install pkg-config
 ```
-
-<!-- ### missing files on `zig build obj`
-
-If you see an error about missing files on `zig build obj`, make sure you built the headers.
-
-```bash
-$ make headers
-``` -->
-
-<!-- ### cmakeconfig.h not found
-
-If you see an error about `cmakeconfig.h` not being found, this is because the precompiled WebKit did not install properly.
-
-```bash
-$ bun install
-```
-
-Check to see the command installed webkit, and you can manually look for `node_modules/bun-webkit-{platform}-{arch}`:
-
-```bash
-# this should reveal two directories. if not, something went wrong
-$ echo node_modules/bun-webkit*
-``` -->
 
 ### macOS `library not found for -lSystem`
 

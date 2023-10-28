@@ -5,8 +5,6 @@ OUTDIR="$1"
 TAG="$2"
 PKG="$3"
 
-echo "$OUTDIR $TAG $PKG"
-
 if [ -z "$OUTDIR" ]; then
   echo "Missing outdir"
   exit 1
@@ -38,11 +36,11 @@ if [ -f "$OUTDIR/package.json" ]; then
 fi
 
 if [ -f "$OUTDIR/.tag" ]; then
-  read_tag=$(cat "$OUTDIR/.tag")
+  read_tag="$(cat "$OUTDIR/.tag")"
   if [ "$read_tag" == "$TAG" ]; then
     exit 0
   fi
-end
+fi
 
 rm -rf "$OUTDIR"
 

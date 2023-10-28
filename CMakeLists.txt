@@ -178,6 +178,7 @@ endif()
 message(STATUS "C++ Compiler: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} at ${CMAKE_CXX_COMPILER}")
 
 # --- End LLVM ---
+set(SHELL "bash")
 set(SCRIPT_EXTENSION "sh")
 if(WIN32)
     set(SCRIPT_EXTENSION "ps1")
@@ -354,9 +355,8 @@ if(NOT WEBKIT_DIR)
     set(BUN_WEBKIT_PACKAGE_NAME "bun-webkit-${BUN_WEBKIT_PACKAGE_PLATFORM}-${BUN_WEBKIT_PACKAGE_ARCH}${BUN_WEBKIT_PACKAGE_NAME_SUFFIX}")
 
     message(STATUS "Using Pre-built WebKit: ${BUN_WEBKIT_PACKAGE_NAME}")
-    message(STATUS  "${CMAKE_CURRENT_SOURCE_DIR}/scripts/download-webkit.${SCRIPT_EXTENSION}")
     execute_process(
-        COMMAND powershell
+        COMMAND "${SHELL}"
         "${CMAKE_CURRENT_SOURCE_DIR}/scripts/download-webkit.${SCRIPT_EXTENSION}"
         "${BUN_WORKDIR}/bun-webkit"
         "${WEBKIT_TAG}"
@@ -850,13 +850,11 @@ if(NOT MSVC)
         -fno-omit-frame-pointer
     )
     if(NOT WIN32)
-        target_compile_definitions(-fPIC)
+        target_compile_options(${bun} PUBLIC -fPIC)
     endif()
 
     if(NOT APPLE)
-        target_link_options(${bun} PUBLIC
-            -fuse-ld=lld
-        )
+        target_link_options(${bun} PUBLIC -fuse-ld=lld)
     endif()
 
     string(APPEND CMAKE_CXX_FLAGS " -std=c++2a ")

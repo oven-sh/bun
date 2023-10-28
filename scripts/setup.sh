@@ -47,7 +47,7 @@ has_exec "automake" || fail "'automake' is missing"
 has_exec "perl" || fail "'perl' is missing"
 has_exec "ruby" || fail "'ruby' is missing"
 
-rm .vscode/clang++
+rm -f .vscode/clang++
 ln -s "$CXX" .vscode/clang++
 
 printf "All system dependencies OK\n"

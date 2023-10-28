@@ -1,7 +1,7 @@
 name: bun-windows-x64
 
 concurrency:
-  group: bun-macOS-aarch64-${{ github.ref }}
+  group: bun-windows-x64-${{ github.ref }}
   cancel-in-progress: true
 
 on:
@@ -28,7 +28,7 @@ on:
 
 jobs:
   windows-zig:
-    name: macOS Zig Object
+    name: Windows Zig Object
     runs-on: med-ubuntu
     if: github.repository_owner == 'oven-sh'
     strategy:
@@ -66,7 +66,7 @@ jobs:
             BUILD_MACHINE_ARCH=${{ runner.arch == 'X64' && 'x86_64' || 'aarch64' }}
             ARCH=${{ matrix.arch }}
             CPU_TARGET=${{ matrix.cpu }}
-            TRIPLET=${{ matrix.arch }}-windows-x64
+            TRIPLET=${{ matrix.arch }}-windows-msvc
             GIT_SHA=${{ github.sha }}
           platforms: linux/${{ runner.arch == 'X64' && 'amd64' || 'arm64' }}
           target: build_release_obj
@@ -89,6 +89,8 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
       - uses: ilammy/msvc-dev-cmd@7315a94840631165970262a99c72cfb48a65d25d
         with:
           arch: ${{ matrix.arch }}

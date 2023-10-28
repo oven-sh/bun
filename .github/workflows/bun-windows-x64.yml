@@ -1,3 +1,5 @@
+# TODO(@paperdave)
+# this workflow is a work in progress
 name: bun-windows-x64
 
 concurrency:
@@ -5,24 +7,24 @@ concurrency:
   cancel-in-progress: true
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "src/**/*"
-      - "test/**/*"
-      - "packages/bun-usockets/src/**/*"
-      - "build.zig"
-      - "Makefile"
-      - "Dockerfile"
-  pull_request:
-    branches: [main]
-    paths:
-      - "src/**/*"
-      - "test/**/*"
-      - "packages/bun-usockets/src/**/*"
-      - "build.zig"
-      - "Makefile"
-      - "Dockerfile"
+  # push:
+  #   branches: [main]
+  #   paths:
+  #     - "src/**/*"
+  #     - "test/**/*"
+  #     - "packages/bun-usockets/src/**/*"
+  #     - "build.zig"
+  #     - "Makefile"
+  #     - "Dockerfile"
+  # pull_request:
+  #   branches: [main]
+  #   paths:
+  #     - "src/**/*"
+  #     - "test/**/*"
+  #     - "packages/bun-usockets/src/**/*"
+  #     - "build.zig"
+  #     - "Makefile"
+  #     - "Dockerfile"
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
@@ -123,3 +125,35 @@ jobs:
         with:
           name: bun-windows-x64-codegen
           path: build-codegen-win32-x64/
+
+  windows-dependencies:
+    strategy:
+      matrix:
+        include:
+          - runner: windows-latest
+            arch: amd64
+            tag: bun-windows-x64
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@7315a94840631165970262a99c72cfb48a65d25d
+        with:
+          arch: ${{ matrix.arch }}
+      - uses: KyleMayes/install-llvm-action@1a3da29f56261a1e1f937ec88f0856a9b8321d7e
+        with:
+          version: 16.0.6
+      - run: choco install -y ninja
+      - uses: actions/download-artifact@v2
+        with:
+          name: bun-windows-x64-codegen
+          path: build
+      - name: Build Dependencies
+        run: |
+          git submodule update --init --recursive --progress --depth=1 --checkout
+          cd build
+          cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DNO_CODEGEN=1
+      - uses: actions/upload-artifact@v3
+        with:
+          name: bun-deps/
+          path: bun-windows-x64-deps

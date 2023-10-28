@@ -25,7 +25,6 @@ $BUN_BASE_DIR = if ($env:BUN_BASE_DIR) { $env:BUN_BASE_DIR } else { Join-Path $S
 $BUN_DEPS_DIR = if ($env:BUN_DEPS_DIR) { $env:BUN_DEPS_DIR } else { Join-Path $BUN_BASE_DIR 'src\deps' }
 $BUN_DEPS_OUT_DIR = if ($env:BUN_DEPS_OUT_DIR) { $env:BUN_DEPS_OUT_DIR } else { $BUN_DEPS_DIR }
 
-# this compiler detection could be better
 $CPUS = if ($env:CPUS) { $env:CPUS } else { (Get-WmiObject -Class Win32_Processor).NumberOfCores }
 
 $CC = "clang-cl"

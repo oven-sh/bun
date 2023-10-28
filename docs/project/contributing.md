@@ -154,8 +154,8 @@ $ ninja -C build
 Note: `make setup` is just an alias for the following steps:
 
 ```bash
-$ ./src/scripts/update-submodules.sh
-$ ./src/scripts/all-dependencies.sh
+$ ./scripts/update-submodules.sh
+$ ./scripts/all-dependencies.sh
 $ cmake . -GNinja -B build -DCMAKE_BUILD_TYPE=Debug
 $ ninja -C build
 ```

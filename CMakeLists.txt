@@ -4,7 +4,7 @@ cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
 set(Bun_VERSION "1.0.8")
-set(WEBKIT_TAG 67c9ba93323b4a5a95bc4d1efe61166dc6e3e691)
+set(WEBKIT_TAG 46689737b98c78e48d9eb6885f0b3e8365d79310)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -332,7 +332,7 @@ if(NOT WEBKIT_DIR)
     if(USE_DEBUG_JSC)
         set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "-debug")
         set(ASSERT_ENABLED "1")
-    elseif(NOT DEBUG)
+    elseif(NOT DEBUG AND NOT WIN32)
         set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "-lto")
         set(ASSERT_ENABLED "0")
     endif()
@@ -354,8 +354,10 @@ if(NOT WEBKIT_DIR)
     set(BUN_WEBKIT_PACKAGE_NAME "bun-webkit-${BUN_WEBKIT_PACKAGE_PLATFORM}-${BUN_WEBKIT_PACKAGE_ARCH}${BUN_WEBKIT_PACKAGE_NAME_SUFFIX}")
 
     message(STATUS "Using Pre-built WebKit: ${BUN_WEBKIT_PACKAGE_NAME}")
+    message(STATUS  "${CMAKE_CURRENT_SOURCE_DIR}/scripts/download-webkit.${SCRIPT_EXTENSION}")
     execute_process(
-        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/scripts/download-webkit.${SCRIPT_EXTENSION}"
+        COMMAND powershell
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/download-webkit.${SCRIPT_EXTENSION}"
         "${BUN_WORKDIR}/bun-webkit"
         "${WEBKIT_TAG}"
         "${BUN_WEBKIT_PACKAGE_NAME}"
@@ -740,18 +742,29 @@ set_target_properties(${bun} PROPERTIES
 )
 
 if(NOT BUN_CPP_ARCHIVE)
-    string(REPLACE ";" ".o\n  " BUN_OBJECT_LIST "${BUN_SOURCES}.o")
-    string(REPLACE "${BUN_WORKDIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
-    string(REPLACE "${CMAKE_CURRENT_SOURCE_DIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
-
-    write_file("${BUN_WORKDIR}/compile-cpp-only.sh"
-        "#!/usr/bin/env bash\n"
-        "set -e\n"
-        "OBJ_LIST=(\n  ${BUN_OBJECT_LIST}\n)\n"
-        "ninja \${OBJ_LIST[@]}\n"
-        "${AR} rcvs bun-cpp-objects.a \${OBJ_LIST[@]}\n"
-        "echo '-> bun-cpp-objects.a'\n"
-    )
+    if(NOT WIN32)
+        string(REPLACE ";" ".o\n  " BUN_OBJECT_LIST "${BUN_SOURCES}.o")
+        string(REPLACE "${BUN_WORKDIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
+        string(REPLACE "${CMAKE_CURRENT_SOURCE_DIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
+        write_file("${BUN_WORKDIR}/compile-cpp-only.sh"
+            "#!/usr/bin/env bash\n"
+            "set -e\n"
+            "OBJ_LIST=(\n  ${BUN_OBJECT_LIST}\n)\n"
+            "ninja \${OBJ_LIST[@]}\n"
+            "${AR} rcvs bun-cpp-objects.a \${OBJ_LIST[@]}\n"
+            "echo '-> bun-cpp-objects.a'\n"
+        )
+    else()
+        string(REPLACE ";" ".obj\",\n  \"" BUN_OBJECT_LIST "\"${BUN_SOURCES}.obj\"")
+        string(REPLACE "${BUN_WORKDIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
+        string(REPLACE "${CMAKE_CURRENT_SOURCE_DIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
+        write_file("${BUN_WORKDIR}/compile-cpp-only.ps1"
+            "$ErrorActionPreference = \"Stop\"\n"
+            "OBJ_LIST=@(\n  ${BUN_OBJECT_LIST}\n)\n"
+            "ninja @OBJ_LIST\n"
+            "Write-Host \"TODO: AR\"\n"
+        )
+    endif()
 else()
     set_target_properties(${bun} PROPERTIES LINKER_LANGUAGE CXX)
 endif()
@@ -834,9 +847,11 @@ if(NOT MSVC)
         -fvisibility-inlines-hidden
         -fno-rtti
         -ferror-limit=${ERROR_LIMIT}
-        -fPIC
         -fno-omit-frame-pointer
     )
+    if(NOT WIN32)
+        target_compile_definitions(-fPIC)
+    endif()
 
     if(NOT APPLE)
         target_link_options(${bun} PUBLIC

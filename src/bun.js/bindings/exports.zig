@@ -1314,6 +1314,7 @@ pub const ZigConsoleClient = struct {
             Error,
             TypedArray,
             Map,
+            MapIterator,
             Set,
             BigInt,
             Symbol,
@@ -1370,6 +1371,7 @@ pub const ZigConsoleClient = struct {
                     Error: void,
                     TypedArray: void,
                     Map: void,
+                    MapIterator: void,
                     Set: void,
                     BigInt: void,
                     Symbol: void,
@@ -1532,6 +1534,7 @@ pub const ZigConsoleClient = struct {
                         JSValue.JSType.BooleanObject => .Boolean,
                         JSValue.JSType.JSFunction => .Function,
                         JSValue.JSType.JSWeakMap, JSValue.JSType.JSMap => .Map,
+                        JSValue.JSType.JSMapIterator => .MapIterator,
                         JSValue.JSType.JSWeakSet, JSValue.JSType.JSSet => .Set,
                         JSValue.JSType.JSDate => .JSON,
                         JSValue.JSType.JSPromise => .Promise,
@@ -1746,35 +1749,49 @@ pub const ZigConsoleClient = struct {
             this.estimated_line_length += 1;
         }
 
-        pub fn MapIterator(comptime Writer: type, comptime enable_ansi_colors: bool) type {
+        pub fn MapIterator(comptime Writer: type, comptime enable_ansi_colors: bool, comptime isIterator: bool) type {
             return struct {
                 formatter: *ZigConsoleClient.Formatter,
                 writer: Writer,
                 pub fn forEach(_: [*c]JSC.VM, globalObject: [*c]JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                     var this: *@This() = bun.cast(*@This(), ctx orelse return);
-                    const key = JSC.JSObject.getIndex(nextValue, globalObject, 0);
-                    const value = JSC.JSObject.getIndex(nextValue, globalObject, 1);
-                    this.formatter.writeIndent(Writer, this.writer) catch unreachable;
-                    const key_tag = Tag.getAdvanced(key, globalObject, .{ .hide_global = true });
+                    if (!isIterator) {
+                        const key = JSC.JSObject.getIndex(nextValue, globalObject, 0);
+                        const value = JSC.JSObject.getIndex(nextValue, globalObject, 1);
+                        this.formatter.writeIndent(Writer, this.writer) catch unreachable;
+                        const key_tag = Tag.getAdvanced(key, globalObject, .{ .hide_global = true });
 
-                    this.formatter.format(
-                        key_tag,
-                        Writer,
-                        this.writer,
-                        key,
-                        this.formatter.globalThis,
-                        enable_ansi_colors,
-                    );
-                    this.writer.writeAll(": ") catch unreachable;
-                    const value_tag = Tag.getAdvanced(value, globalObject, .{ .hide_global = true });
-                    this.formatter.format(
-                        value_tag,
-                        Writer,
-                        this.writer,
-                        value,
-                        this.formatter.globalThis,
-                        enable_ansi_colors,
-                    );
+                        this.formatter.format(
+                            key_tag,
+                            Writer,
+                            this.writer,
+                            key,
+                            this.formatter.globalThis,
+                            enable_ansi_colors,
+                        );
+                        this.writer.writeAll(": ") catch unreachable;
+                        const value_tag = Tag.getAdvanced(value, globalObject, .{ .hide_global = true });
+                        this.formatter.format(
+                            value_tag,
+                            Writer,
+                            this.writer,
+                            value,
+                            this.formatter.globalThis,
+                            enable_ansi_colors,
+                        );
+                    } else {
+                        this.writer.writeAll("\n") catch unreachable;
+                        this.formatter.writeIndent(Writer, this.writer) catch unreachable;
+                        const tag = Tag.getAdvanced(nextValue, globalObject, .{ .hide_global = true });
+                        this.formatter.format(
+                            tag,
+                            Writer,
+                            this.writer,
+                            nextValue,
+                            this.formatter.globalThis,
+                            enable_ansi_colors,
+                        );
+                    }
                     this.formatter.printComma(Writer, this.writer, enable_ansi_colors) catch unreachable;
                     this.writer.writeAll("\n") catch unreachable;
                 }
@@ -2473,7 +2490,27 @@ pub const ZigConsoleClient = struct {
                         this.depth +|= 1;
                         defer this.indent -|= 1;
                         defer this.depth -|= 1;
-                        var iter = MapIterator(Writer, enable_ansi_colors){
+                        var iter = MapIterator(Writer, enable_ansi_colors, false){
+                            .formatter = this,
+                            .writer = writer_,
+                        };
+                        value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
+                    }
+                    this.writeIndent(Writer, writer_) catch {};
+                    writer.writeAll("}");
+                },
+                .MapIterator => {
+                    const prev_quote_strings = this.quote_strings;
+                    this.quote_strings = true;
+                    defer this.quote_strings = prev_quote_strings;
+
+                    writer.print("MapIterator {{ ", .{});
+                    {
+                        this.indent += 1;
+                        this.depth +|= 1;
+                        defer this.indent -|= 1;
+                        defer this.depth -|= 1;
+                        var iter = MapIterator(Writer, enable_ansi_colors, true){
                             .formatter = this,
                             .writer = writer_,
                         };
@@ -3072,6 +3109,7 @@ pub const ZigConsoleClient = struct {
                 .Error => this.printAs(.Error, Writer, writer, value, result.cell, enable_ansi_colors),
                 .ArrayBuffer, .TypedArray => this.printAs(.TypedArray, Writer, writer, value, result.cell, enable_ansi_colors),
                 .Map => this.printAs(.Map, Writer, writer, value, result.cell, enable_ansi_colors),
+                .MapIterator => this.printAs(.MapIterator, Writer, writer, value, result.cell, enable_ansi_colors),
                 .Set => this.printAs(.Set, Writer, writer, value, result.cell, enable_ansi_colors),
                 .Symbol => this.printAs(.Symbol, Writer, writer, value, result.cell, enable_ansi_colors),
                 .BigInt => this.printAs(.BigInt, Writer, writer, value, result.cell, enable_ansi_colors),

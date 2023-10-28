@@ -153,6 +153,6 @@ x64
 **/*.dir
 **/*.pdb
 
-.webkit-cache
-src/deps/libuv
+/.webkit-cache
+/src/deps/libuv
 /build-*/

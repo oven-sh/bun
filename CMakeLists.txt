@@ -27,10 +27,12 @@ endif()
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(DEBUG ON)
     set(ZIG_OPTIMIZE "Debug")
+    set(NODE_ENV "development")
     set(bun "bun-debug")
 elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
     set(DEBUG OFF)
     set(ZIG_OPTIMIZE "ReleaseFast")
+    set(NODE_ENV "production")
     set(bun "bun-profile")
 endif()
 
@@ -651,14 +653,59 @@ list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp")
 # endif()
 
 # --- Runtime.js ---
-if(NOT NO_CODEGEN)
-    add_custom_command(
-        OUTPUT "src/fallback.out.js"
-        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-        COMMAND "${ESBUILD}" "--target=esnext" "--bundle" "src/fallback.ts" "--format=iife" "--platform=browser" "--minify" "--outfile=src/fallback.out.js"
-        DEPENDS "src/fallback.ts"
-    )
-endif()
+#if(NOT NO_CODEGEN)
+#    add_custom_command(
+#        OUTPUT "src/fallback.out.js"
+#        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+#        COMMAND "${ESBUILD}" "--target=esnext" "--bundle" "src/fallback.ts" "--format=iife" "--platform=browser" "--minify" "--outfile=src/fallback.out.js"
+#        DEPENDS "src/fallback.ts"
+#    )
+#endif()
+
+# --- Runtime JS ---
+add_custom_command(
+    OUTPUT "${BUN_SRC}/runtime.out.js"
+    COMMAND "${ESBUILD}" "--define:process.env.NODE_ENV=\"${NODE_ENV}\"" "--target=esnext" "--bundle" "--format=iife" "--platform=browser" "--global-name=BUN_RUNTIME" "--minify" "--external:/bun:*" "${BUN_SRC}/runtime/index.ts" "--outfile=${BUN_SRC}/runtime.out.js"
+    COMMAND cat ${BUN_SRC}/runtime.footer.js >> ${BUN_SRC}/runtime.out.js
+)
+add_custom_command(
+    OUTPUT "${BUN_SRC}/runtime.out.refresh.js"
+    COMMAND "${ESBUILD}" "--define:process.env.NODE_ENV=\"${NODE_ENV}\"" "--target=esnext" "--bundle" "--format=iife" "--platform=browser" "--global-name=BUN_RUNTIME" "--minify" "--external:/bun:*" "${BUN_SRC}/runtime/index-with-refresh.ts" "--outfile=${BUN_SRC}/runtime.out.refresh.js"
+    COMMAND cat ${BUN_SRC}/runtime.footer.with-refresh.js >> ${BUN_SRC}/runtime.out.refresh.js
+)
+add_custom_command(
+    OUTPUT "${BUN_SRC}/runtime.nodebun.pre.out.js"
+    COMMAND "${ESBUILD}" "--define:process.env.NODE_ENV=\"${NODE_ENV}\"" "--target=esnext" "--bundle" "--format=iife" "--platform=node" "--global-name=BUN_RUNTIME" "--minify" "--external:/bun:*" "${BUN_SRC}/runtime/index-without-hmr.ts" "--outfile=${BUN_SRC}/runtime.nodebun.pre.out.js"
+)
+add_custom_command(
+    OUTPUT "${BUN_SRC}/runtime.node.out.js"
+    COMMAND cat ${BUN_SRC}/runtime.nodebun.pre.out.js ${BUN_SRC}/runtime.footer.node.js > ${BUN_SRC}/runtime.node.out.js
+    DEPENDS "${BUN_SRC}/runtime.nodebun.pre.out.js"
+)
+add_custom_command(
+    OUTPUT "${BUN_SRC}/runtime.bun.out.js"
+    COMMAND cat ${BUN_SRC}/runtime.nodebun.pre.out.js ${BUN_SRC}/runtime.footer.bun.js > ${BUN_SRC}/runtime.bun.out.js
+    DEPENDS "${BUN_SRC}/runtime.nodebun.pre.out.js"
+)
+
+add_custom_target(
+    BUN_JS_RUNTIME
+    DEPENDS "${BUN_SRC}/runtime.out.js"
+    DEPENDS "${BUN_SRC}/runtime.out.refresh.js"
+    DEPENDS "${BUN_SRC}/runtime.node.out.js"
+    DEPENDS "${BUN_SRC}/runtime.bun.out.js"
+)
+
+# --- Fallback Decoder JS ---
+add_custom_command(
+    OUTPUT "${BUN_SRC}/fallback.out.js"
+    COMMAND "${ESBUILD}" "--target=esnext"  "--bundle" "--format=iife" "--platform=browser" "--minify" "${BUN_SRC}/fallback.ts" "--outfile=${BUN_SRC}/fallback.out.js"
+)
+
+add_custom_target(
+    BUN_JS_FALLBACK_DECODER
+    DEPENDS "${BUN_SRC}/fallback.out.js"
+)
 
 # --- Zig Object ---
 file(GLOB ZIG_FILES
@@ -738,6 +785,8 @@ set_target_properties(${bun} PROPERTIES
     C_STANDARD_REQUIRED YES
     VISIBILITY_INLINES_HIDDEN YES
 )
+
+add_dependencies(${bun} BUN_JS_RUNTIME BUN_JS_FALLBACK_DECODER)
 
 if(NOT BUN_CPP_ARCHIVE)
     string(REPLACE ";" ".o\n  " BUN_OBJECT_LIST "${BUN_SOURCES}.o")

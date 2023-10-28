@@ -105,18 +105,6 @@ $ sudo dnf install cargo ccache cmake git golang libtool ninja-build pkg-config 
 
 {% /codetabs %}
 
-<!-- {% details summary="Ubuntu — Unable to locate package esbuild" %}
-
-The `apt install esbuild` command may fail with an `Unable to locate package` error if you are using a Ubuntu mirror that does not contain an exact copy of the original Ubuntu server. Note that the same error may occur if you are not using any mirror but have the Ubuntu Universe enabled in the `sources.list`. In this case, you can install esbuild manually:
-
-```bash
-$ curl -fsSL https://esbuild.github.io/dl/latest | sh
-$ chmod +x ./esbuild
-$ sudo mv ./esbuild /usr/local/bin
-```
-
-{% /details %} -->
-
 ## Install Zig
 
 Zig can be installed either with our npm package [`@oven/zig`](https://www.npmjs.com/package/@oven/zig), or by using [zigup](https://github.com/marler8997/zigup).

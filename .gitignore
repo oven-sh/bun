@@ -110,7 +110,7 @@ misctools/machbench
 *.big
 .eslintcache
 
-bun-webkit
+/bun-webkit
 
 src/deps/c-ares/build
 src/bun.js/bindings-obj
@@ -135,7 +135,6 @@ make-dev-stats.csv
 
 .uuid
 tsconfig.tsbuildinfo
-build-release
 
 *.lib
 *.pdb
@@ -156,3 +155,4 @@ x64
 
 .webkit-cache
 src/deps/libuv
+/build-*/

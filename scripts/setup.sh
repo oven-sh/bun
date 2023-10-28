@@ -44,6 +44,8 @@ has_exec "go" || fail "'go' is missing"
 
 has_exec "pkg-config" || fail "'pkg-config' is missing"
 has_exec "automake" || fail "'automake' is missing"
+has_exec "perl" || fail "'perl' is missing"
+has_exec "ruby" || fail "'ruby' is missing"
 
 rm .vscode/clang++
 ln -s "$CXX" .vscode/clang++

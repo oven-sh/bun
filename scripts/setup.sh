@@ -6,6 +6,8 @@ cd ../
 
 bun i
 
+make all-js
+
 mkdir build
 cmake -B build -S . -DCMAKE_BUILD_TYPE=Debug -G Ninja
-ninja
+ninja -C build

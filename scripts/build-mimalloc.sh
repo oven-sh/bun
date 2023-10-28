@@ -25,4 +25,4 @@ cmake "${CMAKE_FLAGS[@]}" . \
 
 ninja
 
-cp libmimalloc.a $BUN_DEPS_OUT_DIR/libmimalloc.a
+cp libmimalloc.a $BUN_DEPS_OUT_DIR/libmimalloc.o

@@ -1749,13 +1749,13 @@ pub const ZigConsoleClient = struct {
             this.estimated_line_length += 1;
         }
 
-        pub fn MapIterator(comptime Writer: type, comptime enable_ansi_colors: bool, comptime isIterator: bool) type {
+        pub fn MapIterator(comptime Writer: type, comptime enable_ansi_colors: bool, comptime is_iterator: bool) type {
             return struct {
                 formatter: *ZigConsoleClient.Formatter,
                 writer: Writer,
                 pub fn forEach(_: [*c]JSC.VM, globalObject: [*c]JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                     var this: *@This() = bun.cast(*@This(), ctx orelse return);
-                    if (!isIterator) {
+                    if (!is_iterator) {
                         const key = JSC.JSObject.getIndex(nextValue, globalObject, 0);
                         const value = JSC.JSObject.getIndex(nextValue, globalObject, 1);
                         this.formatter.writeIndent(Writer, this.writer) catch unreachable;

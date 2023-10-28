@@ -20,13 +20,23 @@ if (Test-Path $OutDir\.tag) {
 
 Remove-Item $OutDir -ErrorAction SilentlyContinue -Recurse
 $null = mkdir -Force $OutDir
-Write-Host "-- Downloading WebKit"
-if (!(Test-Path $TarPath)) {
-  Invoke-WebRequest $Url -OutFile $TarPath
+try {
+  Write-Host "-- Downloading WebKit"
+  if (!(Test-Path $TarPath)) {
+    try {
+      Invoke-WebRequest $Url -OutFile $TarPath
+    } catch {
+      Write-Error "Failed to fetch WebKit from: $Url"
+      throw $_
+    }
+  }
+
+  Push-Location $CacheDir
+  tar.exe "-xzf" "$PackageName-$Tag.tar.gz" -C (Resolve-Path -Relative $OutDir\..\).replace('\', '/')
+  Pop-Location
+
+  Set-Content -Path (Join-Path $OutDir ".tag") -Value "$Tag"
+} catch {
+  Remove-Item -Force -ErrorAction SilentlyContinue $OutDir
+  throw $_
 }
-
-Push-Location $CacheDir
-tar.exe "-xzf" "$PackageName-$Tag.tar.gz" -C ([IO.Path]::GetRelativePath($CacheDir, $OutDir + "/../").replace('\', '/'))
-Pop-Location
-
-Set-Content -Path (Join-Path $OutDir ".tag") -Value "$Tag"

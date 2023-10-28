@@ -44,7 +44,7 @@ function Build-Dependency {
     Pop-Location
   }
 
-  $DidAnything = $true
+  $Script:DidAnything = $true
 }
 
 Build-Dependency `
@@ -78,6 +78,6 @@ Build-Dependency `
   -Script "libuv" `
   -Outputs @("libuv.lib")
 
-if ($DidAnything -eq $false) {
+if (!($Script:DidAnything)) {
   Write-Host "(run with -Force to rebuild all)"
 }

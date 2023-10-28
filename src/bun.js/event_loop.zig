@@ -11,6 +11,7 @@ const WebCore = JSC.WebCore;
 const Bun = JSC.API.Bun;
 const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
 const typeBaseName = @import("../meta.zig").typeBaseName;
+const AsyncGlobWalkTask = JSC.API.Glob.WalkTask.AsyncGlobWalkTask;
 const CopyFilePromiseTask = WebCore.Blob.Store.CopyFile.CopyFilePromiseTask;
 const AsyncTransformTask = JSC.API.JSTranspiler.TransformTask.AsyncTransformTask;
 const ReadFileTask = WebCore.Blob.Store.ReadFile.ReadFileTask;
@@ -350,6 +351,7 @@ pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
     Microtask,
     MicrotaskForDefaultGlobalObject,
+    AsyncGlobWalkTask,
     AsyncTransformTask,
     ReadFileTask,
     CopyFilePromiseTask,
@@ -688,6 +690,11 @@ pub const EventLoop = struct {
                 .FetchTasklet => {
                     var fetch_task: *Fetch.FetchTasklet = task.get(Fetch.FetchTasklet).?;
                     fetch_task.onProgressUpdate();
+                },
+                @field(Task.Tag, @typeName(AsyncGlobWalkTask)) => {
+                    var globWalkTask: *AsyncGlobWalkTask = task.get(AsyncGlobWalkTask).?;
+                    globWalkTask.*.runFromJS();
+                    globWalkTask.deinit();
                 },
                 @field(Task.Tag, @typeName(AsyncTransformTask)) => {
                     var transform_task: *AsyncTransformTask = task.get(AsyncTransformTask).?;

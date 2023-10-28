@@ -3,14 +3,204 @@
 const std = @import("std");
 const math = std.math;
 const mem = std.mem;
+const bun = @import("root").bun;
+const BunString = @import("./bun.zig").String;
 const expect = std.testing.expect;
+const Allocator = std.mem.Allocator;
+const ArrayList = std.ArrayListUnmanaged;
+const ArrayListManaged = std.ArrayList;
+const CodepointIter = @import("./string_immutable.zig").UnsignedCodepointIterator;
+const Codepoint = u32;
+const DirIterator = @import("./bun.js/node/dir_iterator.zig");
+const Syscall = @import("./bun.js/node/syscall.zig");
+const PathLike = @import("./bun.js/node/types.zig").PathLike;
+const Maybe = @import("./bun.js/node/types.zig").Maybe;
+const Dirent = @import("./bun.js/node/types.zig").Dirent;
+const PathString = @import("./string_types.zig").PathString;
+const ZigString = @import("./bun.js/bindings/bindings.zig").ZigString;
 
-// These store character indices into the glob and path strings.
-path_index: usize = 0,
-glob_index: usize = 0,
-// When we hit a * or **, we store the state for backtracking.
-wildcard: Wildcard = .{},
-globstar: Wildcard = .{},
+pub const GlobWalker = struct {
+    pub const Result = Maybe(void);
+
+    allocator: Allocator = undefined,
+
+    /// not owned by this struct
+    originalPattern: []const u8 = undefined,
+
+    patternComponents: ArrayList(Component) = .{},
+    matchedPaths: ArrayList(BunString) = .{},
+    i: u32 = 0,
+
+    // Invariant: If the underlying StringImpl is ZigString we assume it is
+    // allocated by this struct's allocator and owned by it
+    cwd: BunString = undefined,
+    pathBuf: [bun.MAX_PATH_BYTES]u8 = undefined,
+
+    /// A component is each part of a glob pattern, separated by directory
+    /// separator:
+    /// `src/**/*.ts` -> `src`, `**`, `*.ts`
+    const Component = struct {
+        start: u32,
+        len: u32,
+    };
+
+    pub fn init(this: *GlobWalker, allocator: Allocator, pattern: []const u8) !Maybe(void) {
+        var cwd: BunString = undefined;
+        switch (Syscall.getcwd(&this.pathBuf)) {
+            .err => |err| {
+                return .{ .err = err };
+            },
+            .result => |result| {
+                var copiedCwd = try allocator.alloc(u8, result.len);
+                @memcpy(copiedCwd, result);
+                cwd = BunString.fromBytes(copiedCwd);
+            },
+        }
+        const globWalker = try this.initWithCwd(allocator, pattern, cwd);
+        return .{ .result = globWalker };
+    }
+
+    pub fn initWithCwd(this: *GlobWalker, allocator: Allocator, pattern: []const u8, cwd: BunString) !void {
+        var patternComponents = ArrayList(Component){};
+        errdefer patternComponents.deinit(allocator);
+        try GlobWalker.buildPatternComponents(allocator, &patternComponents, pattern);
+
+        this.patternComponents = patternComponents;
+        this.originalPattern = pattern;
+        this.allocator = allocator;
+        this.cwd = cwd;
+    }
+
+    pub fn deinit(this: *GlobWalker) void {
+        switch (this.cwd.tag) {
+            .ZigString => {
+                const bytes = this.cwd.value.ZigString.full();
+                this.allocator.free(bytes);
+            },
+            .WTFStringImpl => this.cwd.deref(),
+            .Dead, .Empty, .StaticZigString => {},
+        }
+        this.patternComponents.deinit(this.allocator);
+        // TODO: what about freeing the strings inside of here
+        this.matchedPaths.deinit(this.allocator);
+    }
+
+    pub fn walk(this: *GlobWalker) !Maybe(void) {
+        const flags = std.os.O.DIRECTORY | std.os.O.RDONLY;
+        const rootPath = this.cwd.toZigString().sliceZBuf(&this.pathBuf) catch unreachable;
+        const fd = switch (Syscall.open(rootPath, flags, 0)) {
+            .err => |err| return .{
+                .err = err.withPath(rootPath),
+            },
+            .result => |fd_| fd_,
+        };
+        defer {
+            _ = Syscall.close(fd);
+        }
+
+        var dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
+        var iterator = DirIterator.iterate(dir);
+        var entry = iterator.next();
+
+        while (switch (entry) {
+            .err => |err| return .{ .err = err.withPath(rootPath) },
+            .result => |ent| ent,
+        }) |_current| : (entry = iterator.next()) {
+            const current: DirIterator.IteratorResult = _current;
+            std.debug.print("NAME: {s} KIND: {s}\n", .{ current.name.slice(), @tagName(current.kind) });
+        }
+
+        return .{ .result = undefined };
+    }
+
+    pub fn walkImpl(this: *GlobWalker, allocator: Allocator, out: *ArrayList(bun.String)) !void {
+        _ = out;
+        _ = allocator;
+        while (this.i < this.patternComponents.items.len) {
+            const component = this.patternComponents.items[this.i];
+            _ = component;
+        }
+    }
+
+    fn buildPatternComponents(allocator: Allocator, patternComponents: *ArrayList(Component), pattern: []const u8) !void {
+        const isWindows = @import("builtin").os.tag == .windows;
+        var start: u32 = 0;
+
+        const iter = CodepointIter.init(pattern);
+        var cursor = CodepointIter.Cursor{};
+
+        var prevIsBackslash = false;
+        while (iter.next(&cursor)) {
+            const c = cursor.c;
+
+            switch (c) {
+                '\\' => {
+                    if (comptime isWindows) {
+                        const end = cursor.i;
+                        try patternComponents.append(allocator, .{ .start = start, .len = end - start });
+                        start = cursor.i + cursor.width;
+                        continue;
+                    }
+
+                    if (prevIsBackslash) {
+                        prevIsBackslash = false;
+                        continue;
+                    }
+
+                    prevIsBackslash = true;
+                },
+                '/' => {
+                    const end = cursor.i;
+                    try patternComponents.append(allocator, .{ .start = start, .len = end - start });
+                    start = cursor.i + cursor.width;
+                },
+                // TODO: Support other escaping glob syntax
+                else => {},
+            }
+        }
+    }
+};
+
+/// State for matching a glob against a string
+pub const GlobState = struct {
+    // These store character indices into the glob and path strings.
+    path_index: usize = 0,
+    glob_index: usize = 0,
+    // When we hit a * or **, we store the state for backtracking.
+    wildcard: Wildcard = .{},
+    globstar: Wildcard = .{},
+
+    fn skipBraces(self: *GlobState, glob: []const u8, stop_on_comma: bool) BraceState {
+        var braces: u32 = 1;
+        var in_brackets = false;
+        while (self.glob_index < glob.len and braces > 0) : (self.glob_index += 1) {
+            switch (glob[self.glob_index]) {
+                // Skip nested braces
+                '{' => if (!in_brackets) {
+                    braces += 1;
+                },
+                '}' => if (!in_brackets) {
+                    braces -= 1;
+                },
+                ',' => if (stop_on_comma and braces == 1 and !in_brackets) {
+                    self.glob_index += 1;
+                    return .Comma;
+                },
+                '*', '?', '[' => |c| if (!in_brackets) {
+                    if (c == '[')
+                        in_brackets = true;
+                },
+                ']' => in_brackets = false,
+                '\\' => self.glob_index += 1,
+                else => {},
+            }
+        }
+
+        if (braces != 0)
+            return .Invalid;
+        return .EndBrace;
+    }
+};
 
 const Wildcard = struct {
     // Using u32 rather than usize for these results in 10% faster performance.
@@ -20,60 +210,28 @@ const Wildcard = struct {
 
 const BraceState = enum { Invalid, Comma, EndBrace };
 
-fn skipBraces(self: *State, glob: []const u8, stop_on_comma: bool) BraceState {
-    var braces: u32 = 1;
-    var in_brackets = false;
-    while (self.glob_index < glob.len and braces > 0) : (self.glob_index += 1) {
-        switch (glob[self.glob_index]) {
-            // Skip nested braces
-            '{' => if (!in_brackets) {
-                braces += 1;
-            },
-            '}' => if (!in_brackets) {
-                braces -= 1;
-            },
-            ',' => if (stop_on_comma and braces == 1 and !in_brackets) {
-                self.glob_index += 1;
-                return .Comma;
-            },
-            '*', '?', '[' => |c| if (!in_brackets) {
-                if (c == '[')
-                    in_brackets = true;
-            },
-            ']' => in_brackets = false,
-            '\\' => self.glob_index += 1,
-            else => {},
-        }
-    }
-
-    if (braces != 0)
-        return .Invalid;
-    return .EndBrace;
-}
-
-inline fn backtrack(self: *State) void {
+inline fn backtrack(self: *GlobState) void {
     self.glob_index = self.wildcard.glob_index;
     self.path_index = self.wildcard.path_index;
 }
 
-const State = @This();
 const BraceStack = struct {
-    stack: [10]State = undefined,
+    stack: [10]GlobState = undefined,
     len: u32 = 0,
     longest_brace_match: u32 = 0,
 
-    inline fn push(self: *BraceStack, state: *const State) State {
+    inline fn push(self: *BraceStack, state: *const GlobState) GlobState {
         self.stack[self.len] = state.*;
         self.len += 1;
-        return State{
+        return GlobState{
             .path_index = state.path_index,
             .glob_index = state.glob_index + 1,
         };
     }
 
-    inline fn pop(self: *BraceStack, state: *const State) State {
+    inline fn pop(self: *BraceStack, state: *const GlobState) GlobState {
         self.len -= 1;
-        const s = State{
+        const s = GlobState{
             .glob_index = state.glob_index,
             .path_index = self.longest_brace_match,
             // Restore star state if needed later.
@@ -85,7 +243,7 @@ const BraceStack = struct {
         return s;
     }
 
-    inline fn last(self: *const BraceStack) *const State {
+    inline fn last(self: *const BraceStack) *const GlobState {
         return &self.stack[self.len - 1];
     }
 };
@@ -119,7 +277,7 @@ const BraceStack = struct {
 ///     Used to escape any of the special characters above.
 pub fn match(glob: []const u8, path: []const u8) bool {
     // This algorithm is based on https://research.swtch.com/glob
-    var state = State{};
+    var state = GlobState{};
     // Store the state when we see an opening '{' brace in a stack.
     // Up to 10 nested braces are supported.
     var brace_stack = BraceStack{};
@@ -356,7 +514,7 @@ pub fn match(glob: []const u8, path: []const u8) bool {
 
 inline fn isSeparator(c: u8) bool {
     if (comptime @import("builtin").os.tag == .windows) return c == '/' or c == '\\';
-    return c == '/' or c == '\\';
+    return c == '/';
 }
 
 inline fn unescape(c: *u8, glob: []const u8, glob_index: *usize) bool {

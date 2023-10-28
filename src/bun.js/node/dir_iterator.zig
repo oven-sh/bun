@@ -18,7 +18,7 @@ const mem = std.mem;
 const strings = @import("root").bun.strings;
 const Maybe = JSC.Maybe;
 const File = std.fs.File;
-const IteratorResult = struct {
+pub const IteratorResult = struct {
     name: PathString,
     kind: Entry.Kind,
 };

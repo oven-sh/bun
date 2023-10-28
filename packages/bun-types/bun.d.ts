@@ -73,7 +73,9 @@ declare module "bun" {
   export class Glob {
     constructor(pattern: string);
 
-    match(str: string): boolean;
+    match(options?: { cwd?: string }): Promise<Array<string>>;
+    matchSync(options?: { cwd?: string }): Array<string>;
+    matchString(str: string): boolean;
   }
 
   interface TOML {

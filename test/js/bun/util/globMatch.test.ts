@@ -6,55 +6,58 @@ describe("globMatch", () => {
     let glob: Glob;
 
     glob = new Glob("*");
-    expect(glob.match("foo")).toBeTrue();
-    expect(glob.match("lmao.ts")).toBeTrue();
-    expect(glob.match("")).toBeTrue();
-    expect(glob.match("   ")).toBeTrue();
-    expect(glob.match("*")).toBeTrue();
+    expect(glob.matchString("foo")).toBeTrue();
+    expect(glob.matchString("lmao.ts")).toBeTrue();
+    expect(glob.matchString("")).toBeTrue();
+    expect(glob.matchString("   ")).toBeTrue();
+    expect(glob.matchString("*")).toBeTrue();
 
     glob = new Glob("*.ts");
-    expect(glob.match("foo.ts")).toBeTrue();
-    expect(glob.match(".ts")).toBeTrue();
-    expect(glob.match("")).toBeFalse();
-    expect(glob.match("bar.tsx")).toBeFalse();
-    expect(glob.match("foo/bar.ts")).toBeFalse();
-    expect(glob.match("foo/bar/baz.ts")).toBeFalse();
+    expect(glob.matchString("foo.ts")).toBeTrue();
+    expect(glob.matchString(".ts")).toBeTrue();
+    expect(glob.matchString("")).toBeFalse();
+    expect(glob.matchString("bar.tsx")).toBeFalse();
+    expect(glob.matchString("foo/bar.ts")).toBeFalse();
+    expect(glob.matchString("foo/bar/baz.ts")).toBeFalse();
 
     glob = new Glob("src/*/*.ts");
-    expect(glob.match("src/foo/bar.ts")).toBeTrue();
-    expect(glob.match("src/bar.ts")).toBeFalse();
+    expect(glob.matchString("src/foo/bar.ts")).toBeTrue();
+    expect(glob.matchString("src/bar.ts")).toBeFalse();
+
+    glob = new Glob("src/**/hehe.ts");
+    expect(glob.matchString("src/foo/baz/lol/hehe.ts")).toBeTrue();
   });
 
   test("double wildcard", () => {
     let glob: Glob;
 
     glob = new Glob("**");
-    expect(glob.match("")).toBeTrue();
-    expect(glob.match("nice/wow/great/foo.ts")).toBeTrue();
+    expect(glob.matchString("")).toBeTrue();
+    expect(glob.matchString("nice/wow/great/foo.ts")).toBeTrue();
 
     glob = new Glob("foo/**/bar");
-    expect(glob.match("")).toBeFalse();
-    expect(glob.match("foo/lmao/lol/bar")).toBeTrue();
-    expect(glob.match("foo/lmao/lol/haha/wtf/nice/bar")).toBeTrue();
-    expect(glob.match("foo/bar")).toBeTrue();
+    expect(glob.matchString("")).toBeFalse();
+    expect(glob.matchString("foo/lmao/lol/bar")).toBeTrue();
+    expect(glob.matchString("foo/lmao/lol/haha/wtf/nice/bar")).toBeTrue();
+    expect(glob.matchString("foo/bar")).toBeTrue();
 
     glob = new Glob("src/**/*.ts");
-    expect(glob.match("src/foo/bar/baz/nice.ts")).toBeTrue();
+    expect(glob.matchString("src/foo/bar/baz/nice.ts")).toBeTrue();
 
     glob = new Glob("src/foo/*/bar/**/*.ts");
-    expect(glob.match("src/foo/nice/bar/baz/lmao.ts")).toBeTrue();
-    expect(glob.match("src/foo/nice/bar/baz/lmao.ts")).toBeTrue();
+    expect(glob.matchString("src/foo/nice/bar/baz/lmao.ts")).toBeTrue();
+    expect(glob.matchString("src/foo/nice/bar/baz/lmao.ts")).toBeTrue();
   });
 
   test("braces", () => {
     let glob: Glob;
 
     glob = new Glob("index.{ts,tsx,js,jsx}");
-    expect(glob.match("index.ts")).toBeTrue();
-    expect(glob.match("index.tsx")).toBeTrue();
-    expect(glob.match("index.js")).toBeTrue();
-    expect(glob.match("index.jsx")).toBeTrue();
-    expect(glob.match("index.jsxxxxxxxx")).toBeFalse();
+    expect(glob.matchString("index.ts")).toBeTrue();
+    expect(glob.matchString("index.tsx")).toBeTrue();
+    expect(glob.matchString("index.js")).toBeTrue();
+    expect(glob.matchString("index.jsx")).toBeTrue();
+    expect(glob.matchString("index.jsxxxxxxxx")).toBeFalse();
   });
 
   test("invalid input", () => {
@@ -62,7 +65,7 @@ describe("globMatch", () => {
 
     expect(
       returnError(() =>
-        glob.match(
+        glob.matchString(
           // @ts-expect-error
           null,
         ),
@@ -70,7 +73,7 @@ describe("globMatch", () => {
     ).toBeDefined();
     expect(
       returnError(() =>
-        glob.match(
+        glob.matchString(
           // @ts-expect-error
           true,
         ),
@@ -79,7 +82,7 @@ describe("globMatch", () => {
 
     expect(
       returnError(() =>
-        glob.match(
+        glob.matchString(
           // @ts-expect-error
           {},
         ),

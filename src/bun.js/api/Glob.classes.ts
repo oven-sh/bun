@@ -14,6 +14,14 @@ export default [
         fn: "match",
         length: 1,
       },
+      matchSync: {
+        fn: "matchSync",
+        length: 1,
+      },
+      matchString: {
+        fn: "matchString",
+        length: 1,
+      },
     },
   }),
 ];

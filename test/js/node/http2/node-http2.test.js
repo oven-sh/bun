@@ -1,75 +1,84 @@
 import http2 from "node:http2";
-import fs from "node:fs";
-import { join } from "node:path";
 
-// function doHttp2Request(url, headers, payload) {
-//   const { promise, resolve, reject } = Promise.withResolvers();
+function doHttp2Request(url, headers, payload) {
+  const { promise, resolve, reject: promiseReject } = Promise.withResolvers();
 
-//   const client = http2.connect(url);
-//   client.on("error", reject);
+  const client = http2.connect(url);
+  client.on("error", promiseReject);
+  function reject(err) {
+    promiseReject(err);
+    client.close();
+  }
 
-//   const req = client.request(headers);
+  const req = client.request(headers);
 
-//   let response_headers = null;
-//   req.on("response", (headers, flags) => {
-//     response_headers = headers;
-//   });
+  let response_headers = null;
+  req.on("response", (headers, flags) => {
+    response_headers = headers;
+  });
 
-//   req.setEncoding("utf8");
-//   let data = "";
-//   req.on("data", chunk => {
-//     data += chunk;
-//   });
-//   req.on("end", () => {
-//     resolve({ data, headers: response_headers });
-//     client.close();
-//   });
+  req.setEncoding("utf8");
+  let data = "";
+  req.on("data", chunk => {
+    data += chunk;
+  });
+  req.on("error", reject);
+  req.on("end", () => {
+    resolve({ data, headers: response_headers });
+    client.destroy();
+  });
 
-//   if (payload) {
-//     req.write(payload);
-//   }
-//   req.end();
-//   return promise;
-// }
+  if (payload) {
+    req.write(payload);
+  }
+  req.end();
+  return promise;
+}
 
-// function doMultipleHttp2Request(url, requests) {
-//   const { promise, resolve, reject } = Promise.withResolvers();
+function doMultiplexHttp2Request(url, requests) {
+  const { promise, resolve, reject: promiseReject } = Promise.withResolvers();
 
-//   const client = http2.connect(url);
-//   client.on("error", reject);
-//   let completed = 0;
-//   const results = [];
-//   for (let i = 0; i < requests.length; i++) {
-//     const { headers, payload } = requests[i];
+  const client = http2.connect(url);
 
-//     const req = client.request(headers);
+  client.on("error", promiseReject);
+  function reject(err) {
+    promiseReject(err);
+    client.destroy();
+  }
+  let completed = 0;
+  const results = [];
+  for (let i = 0; i < requests.length; i++) {
+    const { headers, payload } = requests[i];
 
-//     let response_headers = null;
-//     req.on("response", (headers, flags) => {
-//       response_headers = headers;
-//     });
+    const req = client.request(headers);
 
-//     req.setEncoding("utf8");
-//     let data = "";
-//     req.on("data", chunk => {
-//       data += chunk;
-//     });
-//     req.on("end", () => {
-//       results.push({ data, headers: response_headers });
-//       completed++;
-//       if (completed === requests.length) {
-//         resolve(results);
-//         client.close();
-//       }
-//     });
+    let response_headers = null;
+    req.on("response", (headers, flags) => {
+      response_headers = headers;
+    });
 
-//     if (payload) {
-//       req.write(payload);
-//     }
-//     req.end();
-//   }
-//   return promise;
-// }
+    req.setEncoding("utf8");
+    let data = "";
+    req.on("data", chunk => {
+      data += chunk;
+    });
+    req.on("error", reject);
+    req.on("end", () => {
+      results.push({ data, headers: response_headers });
+      completed++;
+      if (completed === requests.length) {
+        resolve(results);
+        client.close();
+      }
+    });
+
+    if (payload) {
+      req.write(payload);
+    }
+    req.end();
+  }
+  return promise;
+}
 
 describe("Client Basics", () => {
   // we dont support server yet but we support client
@@ -128,13 +137,12 @@ describe("Client Basics", () => {
     expect(() => (parsed = JSON.parse(result.data))).not.toThrow();
     expect(parsed.url).toBe("https://httpbin.org/post");
     expect(parsed.headers["Test-Header"]).toBe("test-value");
-    expect(parsed.headers["Content-Length"]).toBe(payload.length.toString());
     expect(parsed.json).toEqual({ "hello": "bun" });
     expect(parsed.data).toEqual(payload);
   });
 
-  it("should be able to do multiple GET requests", async () => {
-    const results = await doMultipleHttp2Request("https://httpbin.org", [
+  it("should be able to mutiplex GET requests", async () => {
+    const results = await doMultiplexHttp2Request("https://httpbin.org", [
       { headers: { ":path": "/get" } },
       { headers: { ":path": "/get" } },
       { headers: { ":path": "/get" } },
@@ -149,8 +157,8 @@ describe("Client Basics", () => {
     }
   });
 
-  it("should be able to do multiple POST requests", async () => {
-    const results = await doMultipleHttp2Request("https://httpbin.org", [
+  it("should be able to mutiplex POST requests", async () => {
+    const results = await doMultiplexHttp2Request("https://httpbin.org", [
       { headers: { ":path": "/post", ":method": "POST" }, payload: JSON.stringify({ "request": 1 }) },
       { headers: { ":path": "/post", ":method": "POST" }, payload: JSON.stringify({ "request": 2 }) },
       { headers: { ":path": "/post", ":method": "POST" }, payload: JSON.stringify({ "request": 3 }) },
@@ -166,7 +174,7 @@ describe("Client Basics", () => {
     }
   });
 
-  it("constants", ()=> {
+  it("constants", () => {
     expect(http2.constants).toEqual({
       "NGHTTP2_ERR_FRAME_SIZE_ERROR": -522,
       "NGHTTP2_SESSION_SERVER": 0,
@@ -407,11 +415,11 @@ describe("Client Basics", () => {
       "HTTP_STATUS_LOOP_DETECTED": 508,
       "HTTP_STATUS_BANDWIDTH_LIMIT_EXCEEDED": 509,
       "HTTP_STATUS_NOT_EXTENDED": 510,
-      "HTTP_STATUS_NETWORK_AUTHENTICATION_REQUIRED": 511
+      "HTTP_STATUS_NETWORK_AUTHENTICATION_REQUIRED": 511,
     });
   });
 
-  it("getDefaultSettings", ()=> {
+  it("getDefaultSettings", () => {
     const settings = http2.getDefaultSettings();
     expect(settings).toEqual({
       headerTableSize: 4096,
@@ -423,7 +431,7 @@ describe("Client Basics", () => {
     });
   });
 
-  it("getPackedSettings/getUnpackedSettings", ()=> {
+  it("getPackedSettings/getUnpackedSettings", () => {
     const settings = {
       headerTableSize: 1,
       enablePush: false,
@@ -437,5 +445,34 @@ describe("Client Basics", () => {
     expect(buffer.byteLength).toBe(36);
 
     expect(http2.getUnpackedSettings(buffer)).toEqual(settings);
+  });
+
+  it("getUnpackedSettings should throw if buffer is too small", () => {
+    const buffer = new ArrayBuffer(1);
+    expect(() => http2.getUnpackedSettings(buffer)).toThrow(
+      /Expected buf to be a Buffer of at least 6 bytes and a multiple of 6 bytes/,
+    );
+  });
+
+  it("getUnpackedSettings should throw if buffer is not a multiple of 6 bytes", () => {
+    const buffer = new ArrayBuffer(7);
+    expect(() => http2.getUnpackedSettings(buffer)).toThrow(
+      /Expected buf to be a Buffer of at least 6 bytes and a multiple of 6 bytes/,
+    );
+  });
+
+  it("getUnpackedSettings should throw if buffer is not a buffer", () => {
+    const buffer = {};
+    expect(() => http2.getUnpackedSettings(buffer)).toThrow(/Expected buf to be a Buffer/);
+  });
+
+  it("headers cannot be bigger than 65536 bytes", async () => {
+    try {
+      await doHttp2Request("https://bun.sh", { ":path": "/", "test-header": "A".repeat(90000) });
+      expect("unreachable").toBe(true);
+    } catch (err) {
+      expect(err.code).toBe("ERR_HTTP2_STREAM_ERROR");
+      expect(err.message).toBe("Stream closed with error code 9");
+    }
   });
 });

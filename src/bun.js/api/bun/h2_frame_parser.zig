@@ -225,7 +225,10 @@ pub export fn BUN__HTTP2__getUnpackedSettings(globalObject: *JSC.JSGlobalObject,
     if (data_arg.asArrayBuffer(globalObject)) |array_buffer| {
         var payload = array_buffer.slice();
         const settingByteSize = SettingsPayloadUnit.byteSize;
-        if (payload.len < settingByteSize or payload.len % settingByteSize != 0) return JSC.JSValue.jsUndefined();
+        if (payload.len < settingByteSize or payload.len % settingByteSize != 0) {
+            globalObject.throw("Expected buf to be a Buffer of at least 6 bytes and a multiple of 6 bytes", .{});
+            return .zero;
+        }
 
         var i: usize = 0;
         while (i < payload.len) {
@@ -236,7 +239,7 @@ pub export fn BUN__HTTP2__getUnpackedSettings(globalObject: *JSC.JSGlobalObject,
         }
         return settings.toJS(globalObject);
     } else if (!data_arg.isEmptyOrUndefinedOrNull()) {
-        globalObject.throw("Expected buf must be a buffer", .{});
+        globalObject.throw("Expected buf to be a Buffer", .{});
         return .zero;
     } else {
         return settings.toJS(globalObject);
@@ -557,13 +560,13 @@ pub const H2FrameParser = struct {
     const Stream = struct {
         id: u32 = 0,
         state: enum(u8) {
-            IDLE = 0,
-            RESERVED_LOCAL = 1,
-            RESERVED_REMOTE = 2,
-            OPEN = 3,
-            HALF_CLOSED_LOCAL = 4,
-            HALF_CLOSED_REMOTE = 5,
-            CLOSED = 6,
+            IDLE = 1,
+            RESERVED_LOCAL = 3,
+            RESERVED_REMOTE = 4,
+            OPEN = 2,
+            HALF_CLOSED_LOCAL = 5,
+            HALF_CLOSED_REMOTE = 6,
+            CLOSED = 7,
         } = .IDLE,
         waitForTrailers: bool = false,
         endAfterHeaders: bool = false,
@@ -1604,13 +1607,7 @@ pub const H2FrameParser = struct {
                     if (opaque_data_arg.asArrayBuffer(globalObject)) |array_buffer| {
                         var slice = array_buffer.slice();
                         this.sendGoAway(0, @enumFromInt(errorCode), slice, lastStreamID);
-                        globalObject.throw("Expected lastStreamId to be a number", .{});
-                        return .zero;
-                    }
-                    const id = last_stream_arg.toInt32();
-                    if (id < 0 and id > MAX_STREAM_ID) {
-                        globalObject.throw("Expected lastStreamId to be a number between 1 and 2147483647", .{});
-                        return .zero;
+                        return JSC.JSValue.jsUndefined();
                     }
                 }
             }
@@ -1982,27 +1979,24 @@ pub const H2FrameParser = struct {
         while (iter.next()) |header| {
             if (!header.isObject()) {
                 stream.state = .CLOSED;
-                stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
+                stream.rstCode = @intFromEnum(ErrorCode.COMPRESSION_ERROR);
                 this.dispatchWithExtra(.onStreamError, JSC.JSValue.jsNumber(stream_id), JSC.JSValue.jsNumber(stream.rstCode));
-                globalObject.throwInvalidArguments("Expected header to be an Array of headers", .{});
-                return .zero;
+                return JSC.JSValue.jsUndefined();
             }
             var name = header.get(globalObject, "name") orelse JSC.JSValue.jsUndefined();
             if (!name.isString()) {
                 stream.state = .CLOSED;
-                stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
+                stream.rstCode = @intFromEnum(ErrorCode.COMPRESSION_ERROR);
                 this.dispatchWithExtra(.onStreamError, JSC.JSValue.jsNumber(stream_id), JSC.JSValue.jsNumber(stream.rstCode));
-                globalObject.throwInvalidArguments("Expected header name to be a string", .{});
-                return .zero;
+                return JSC.JSValue.jsUndefined();
             }
 
             var value = header.get(globalObject, "value") orelse JSC.JSValue.jsUndefined();
             if (!value.isString()) {
                 stream.state = .CLOSED;
-                stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
+                stream.rstCode = @intFromEnum(ErrorCode.COMPRESSION_ERROR);
                 this.dispatchWithExtra(.onStreamError, JSC.JSValue.jsNumber(stream_id), JSC.JSValue.jsNumber(stream.rstCode));
-                globalObject.throwInvalidArguments("Expected header value to be a string", .{});
-                return .zero;
+                return JSC.JSValue.jsUndefined();
             }
 
             var never_index = false;
@@ -2021,10 +2015,9 @@ pub const H2FrameParser = struct {
             log("encode header {s} {s}", .{ name_slice.slice(), value_slice.slice() });
             encoded_size += stream.encode(&header_buffer, buffer[encoded_size..], name_slice.slice(), value_slice.slice(), never_index) catch {
                 stream.state = .CLOSED;
-                stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
+                stream.rstCode = @intFromEnum(ErrorCode.COMPRESSION_ERROR);
                 this.dispatchWithExtra(.onStreamError, JSC.JSValue.jsNumber(stream_id), JSC.JSValue.jsNumber(stream.rstCode));
-                globalObject.throw("Failed to encode header", .{});
-                return .zero;
+                return JSC.JSValue.jsUndefined();
             };
         }
         var flags: u8 = @intFromEnum(HeadersFrameFlags.END_HEADERS) | @intFromEnum(HeadersFrameFlags.END_STREAM);
@@ -2040,7 +2033,7 @@ pub const H2FrameParser = struct {
         frame.write(@TypeOf(writer), writer);
         this.write(buffer[0..encoded_size]);
 
-        return JSC.JSValue.jsBoolean(true);
+        return JSC.JSValue.jsUndefined();
     }
     pub fn writeStream(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         JSC.markBinding(@src());
@@ -2139,39 +2132,34 @@ pub const H2FrameParser = struct {
 
         var stream_id: u32 = this.getNextStreamID();
         if (stream_id > MAX_STREAM_ID) {
-            globalObject.throw("Failed to create stream", .{});
-            return .zero;
+            return JSC.JSValue.jsNumber(-1);
         }
 
         const stream = this.handleReceivedStreamID(stream_id) orelse {
-            globalObject.throw("Failed to create stream", .{});
-            return .zero;
+            return JSC.JSValue.jsNumber(-1);
         };
         // TODO: support CONTINUE for more headers if headers are too big
         while (iter.next()) |header| {
             if (!header.isObject()) {
                 stream.state = .CLOSED;
-                stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
+                stream.rstCode = @intFromEnum(ErrorCode.COMPRESSION_ERROR);
                 this.dispatchWithExtra(.onStreamError, JSC.JSValue.jsNumber(stream_id), JSC.JSValue.jsNumber(stream.rstCode));
-                globalObject.throwInvalidArguments("Expected header to be an Array of headers", .{});
-                return .zero;
+                return JSC.JSValue.jsNumber(stream.id);
             }
             var name = header.get(globalObject, "name") orelse JSC.JSValue.jsUndefined();
             if (!name.isString()) {
                 stream.state = .CLOSED;
-                stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
+                stream.rstCode = @intFromEnum(ErrorCode.COMPRESSION_ERROR);
                 this.dispatchWithExtra(.onStreamError, JSC.JSValue.jsNumber(stream_id), JSC.JSValue.jsNumber(stream.rstCode));
-                globalObject.throwInvalidArguments("Expected header name to be a string", .{});
-                return .zero;
+                return JSC.JSValue.jsNumber(stream.id);
             }
 
             var value = header.get(globalObject, "value") orelse JSC.JSValue.jsUndefined();
             if (!value.isString()) {
                 stream.state = .CLOSED;
-                stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
+                stream.rstCode = @intFromEnum(ErrorCode.COMPRESSION_ERROR);
                 this.dispatchWithExtra(.onStreamError, JSC.JSValue.jsNumber(stream_id), JSC.JSValue.jsNumber(stream.rstCode));
-                globalObject.throwInvalidArguments("Expected header value to be a string", .{});
-                return .zero;
+                return JSC.JSValue.jsNumber(stream.id);
             }
 
             var never_index = false;
@@ -2190,10 +2178,9 @@ pub const H2FrameParser = struct {
             log("encode header {s} {s}", .{ name_slice.slice(), value_slice.slice() });
             encoded_size += stream.encode(&header_buffer, buffer[encoded_size..], name_slice.slice(), value_slice.slice(), never_index) catch {
                 stream.state = .CLOSED;
-                stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
+                stream.rstCode = @intFromEnum(ErrorCode.COMPRESSION_ERROR);
                 this.dispatchWithExtra(.onStreamError, JSC.JSValue.jsNumber(stream_id), JSC.JSValue.jsNumber(stream.rstCode));
-                globalObject.throw("Failed to encode header", .{});
-                return .zero;
+                return JSC.JSValue.jsNumber(stream.id);
             };
         }
         var flags: u8 = @intFromEnum(HeadersFrameFlags.END_HEADERS);
@@ -2204,7 +2191,7 @@ pub const H2FrameParser = struct {
         var waitForTrailers: bool = false;
         var signal: ?*JSC.WebCore.AbortSignal = null;
         var end_stream: bool = false;
-        if (args_list.len > 1) {
+        if (args_list.len > 1 and !args_list.ptr[1].isEmptyOrUndefinedOrNull()) {
             const options = args_list.ptr[1];
             if (!options.isObject()) {
                 stream.state = .CLOSED;

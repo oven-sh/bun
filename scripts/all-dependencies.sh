@@ -2,7 +2,6 @@ set -euo pipefail
 source "$(dirname -- "${BASH_SOURCE[0]}")/env.sh"
 FORCE=
 
-
 while getopts "f" opt; do
   case ${opt} in
     f )

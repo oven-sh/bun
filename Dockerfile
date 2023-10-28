@@ -2,6 +2,8 @@
 # environment, or to be used as a base image for other projects.
 #
 # You likely want this image instead: https://hub.docker.com/r/oven/bun
+#
+# TODO: move this file to reduce confusion
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
 ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 

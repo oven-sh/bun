@@ -99,6 +99,10 @@ jobs:
           version: 16.0.6
       - run: choco install -y ninja
       - run: |
+          Invoke-WebRequest -Uri "https://www.nasm.us/pub/nasm/releasebuilds/2.16.01/win64/nasm-2.16.01-win64.zip" -OutFile nasm.zip
+          Expand-Archive nasm.zip (mkdir -Force "nasm")
+          $Nasm = (Get-ChildItem "nasm")
+          $env:Path += ";${Nasm}"
           $env:BUN_DEPS_OUT_DIR = (mkdir -Force "./bun-deps")
           ./scripts/all-dependencies.ps1
       - uses: actions/upload-artifact@v3

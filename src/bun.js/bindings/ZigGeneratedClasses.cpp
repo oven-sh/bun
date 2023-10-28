@@ -11485,10 +11485,18 @@ extern "C" void GlobClass__finalize(void*);
 extern "C" EncodedJSValue GlobPrototype__match(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(GlobPrototype__matchCallback);
 
+extern "C" EncodedJSValue GlobPrototype__matchString(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(GlobPrototype__matchStringCallback);
+
+extern "C" EncodedJSValue GlobPrototype__matchSync(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(GlobPrototype__matchSyncCallback);
+
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSGlobPrototype, JSGlobPrototype::Base);
 
 static const HashTableValue JSGlobPrototypeTableValues[] = {
-    { "match"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, GlobPrototype__matchCallback, 1 } }
+    { "match"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, GlobPrototype__matchCallback, 1 } },
+    { "matchString"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, GlobPrototype__matchStringCallback, 1 } },
+    { "matchSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, GlobPrototype__matchSyncCallback, 1 } }
 };
 
 const ClassInfo JSGlobPrototype::s_info = { "Glob"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSGlobPrototype) };
@@ -11531,6 +11539,62 @@ JSC_DEFINE_HOST_FUNCTION(GlobPrototype__matchCallback, (JSGlobalObject * lexical
 #endif
 
     return GlobPrototype__match(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(GlobPrototype__matchStringCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSGlob* thisObject = jsDynamicCast<JSGlob*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Glob"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return GlobPrototype__matchString(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(GlobPrototype__matchSyncCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSGlob* thisObject = jsDynamicCast<JSGlob*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Glob"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return GlobPrototype__matchSync(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 void JSGlobPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)

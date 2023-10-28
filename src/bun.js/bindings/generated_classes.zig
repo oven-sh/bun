@@ -3203,10 +3203,16 @@ pub const JSGlob = struct {
 
         if (@TypeOf(Glob.match) != CallbackType)
             @compileLog("Expected Glob.match to be a callback but received " ++ @typeName(@TypeOf(Glob.match)));
+        if (@TypeOf(Glob.matchString) != CallbackType)
+            @compileLog("Expected Glob.matchString to be a callback but received " ++ @typeName(@TypeOf(Glob.matchString)));
+        if (@TypeOf(Glob.matchSync) != CallbackType)
+            @compileLog("Expected Glob.matchSync to be a callback but received " ++ @typeName(@TypeOf(Glob.matchSync)));
         if (!JSC.is_bindgen) {
             @export(Glob.constructor, .{ .name = "GlobClass__construct" });
             @export(Glob.finalize, .{ .name = "GlobClass__finalize" });
             @export(Glob.match, .{ .name = "GlobPrototype__match" });
+            @export(Glob.matchString, .{ .name = "GlobPrototype__matchString" });
+            @export(Glob.matchSync, .{ .name = "GlobPrototype__matchSync" });
         }
     }
 };

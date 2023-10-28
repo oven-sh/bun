@@ -1,5 +1,3 @@
-//! From: https://github.com/The-King-of-Toasters/globlin
-
 const std = @import("std");
 const math = std.math;
 const mem = std.mem;
@@ -42,6 +40,30 @@ pub const GlobWalker = struct {
     const Component = struct {
         start: u32,
         len: u32,
+        starKind: StarKind = .None,
+        const StarKind = enum { None, Single, Double };
+
+        // fn detectIfDoubleStar(this: *Component, it: *const CodepointIter) void {
+        // var lenElapsed: u32 = 0;
+        // var cursor = CodepointIter.Cursor {
+        //     .i = this.start,
+        // };
+        // var count = 0;
+        // while (it.next(&cursor)) {
+        //     if (cursor.c == '*') {
+        //         count += 1;
+        //         if (count == 2) {
+        //             if (lenElapsed == this.len) {
+        //                 this.doubleStar = true;
+        //             }
+        //             return;
+        //         }
+        //     } else {
+        //         return;
+        //     }
+        //     lenElapsed += cursor.width;
+        // }
+        // }
     };
 
     pub fn init(this: *GlobWalker, allocator: Allocator, pattern: []const u8) !Maybe(void) {
@@ -65,7 +87,11 @@ pub const GlobWalker = struct {
         errdefer patternComponents.deinit(allocator);
         try GlobWalker.buildPatternComponents(allocator, &patternComponents, pattern);
 
+        // var patternCpy = try allocator.alloc(u8, pattern.len);
+        // @memcpy(patternCpy, pattern);
+
         this.patternComponents = patternComponents;
+        // this.originalPattern = patternCpy;
         this.originalPattern = pattern;
         this.allocator = allocator;
         this.cwd = cwd;
@@ -81,45 +107,90 @@ pub const GlobWalker = struct {
             .Dead, .Empty, .StaticZigString => {},
         }
         this.patternComponents.deinit(this.allocator);
+        // for (this.matchedPaths.items) |*item| {
+        //     switch (item.tag) {
+        //         .ZigString => {
+        //             const slice = item.value.ZigString.full();
+        //             this.allocator.free(slice);
+        //         },
+        //         else => {},
+        //     }
+        // }
         // TODO: what about freeing the strings inside of here
         this.matchedPaths.deinit(this.allocator);
     }
 
     pub fn walk(this: *GlobWalker) !Maybe(void) {
-        const flags = std.os.O.DIRECTORY | std.os.O.RDONLY;
+        if (this.patternComponents.items.len == 0) return .{ .result = undefined };
+
+        // TODO: pathbuf is broken, not stable string
         const rootPath = this.cwd.toZigString().sliceZBuf(&this.pathBuf) catch unreachable;
-        const fd = switch (Syscall.open(rootPath, flags, 0)) {
+        return this.walkDir(0, rootPath);
+    }
+
+    pub fn walkDir(this: *GlobWalker, componentIdx: u32, dirName: [:0]const u8) !Maybe(void) {
+        const flags = std.os.O.DIRECTORY | std.os.O.RDONLY;
+        const fd = switch (Syscall.open(dirName, flags, 0)) {
             .err => |err| return .{
-                .err = err.withPath(rootPath),
+                .err = err.withPath(dirName),
             },
             .result => |fd_| fd_,
         };
         defer {
             _ = Syscall.close(fd);
         }
-
         var dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
         var iterator = DirIterator.iterate(dir);
         var entry = iterator.next();
 
+        const pattern = this.patternComponents.items[componentIdx];
+
         while (switch (entry) {
-            .err => |err| return .{ .err = err.withPath(rootPath) },
+            .err => |err| return .{ .err = err.withPath(dirName) },
             .result => |ent| ent,
         }) |_current| : (entry = iterator.next()) {
             const current: DirIterator.IteratorResult = _current;
-            std.debug.print("NAME: {s} KIND: {s}\n", .{ current.name.slice(), @tagName(current.kind) });
+            const entryName: []const u8 = current.name.slice();
+            switch (current.kind) {
+                .file => {
+                    // A file can only match if this is the last pattern
+                    if (componentIdx != this.patternComponents.items.len - 1) continue;
+                    const matches = match(this.originalPattern[pattern.start .. pattern.start + pattern.len], entryName);
+                    if (matches) {
+                        const ownedName = try ZigString.fromBytes(entryName).toOwnedSlice(this.allocator);
+                        try this.matchedPaths.append(this.allocator, BunString.fromBytes(ownedName));
+                    }
+                },
+                .directory => {
+                    // this.walkDir(, dirName: [:0]const u8)
+                },
+                // TODO
+                .sym_link => {},
+                else => {},
+            }
         }
 
         return .{ .result = undefined };
     }
 
-    pub fn walkImpl(this: *GlobWalker, allocator: Allocator, out: *ArrayList(bun.String)) !void {
-        _ = out;
-        _ = allocator;
-        while (this.i < this.patternComponents.items.len) {
-            const component = this.patternComponents.items[this.i];
-            _ = component;
+    fn addComponent(allocator: Allocator, pattern: []const u8, patternComponents: *ArrayList(Component), component_: Component) !void {
+        if (component_.len == 0) return;
+        var component: Component = component_;
+        // FIXME: this assumes WTF-8/UTF-8/ASCII encoding
+        switch (component.len) {
+            1 => {
+                if (pattern[component.start] == '*') {
+                    component.starKind = .Single;
+                }
+            },
+            2 => {
+                if (pattern[component.start] == '*' and pattern[component.start + 1] == '*') {
+                    component.starKind = .Double;
+                }
+            },
+            else => {},
         }
+        try patternComponents.append(allocator, component);
     }
 
     fn buildPatternComponents(allocator: Allocator, patternComponents: *ArrayList(Component), pattern: []const u8) !void {
@@ -137,7 +208,7 @@ pub const GlobWalker = struct {
                 '\\' => {
                     if (comptime isWindows) {
                         const end = cursor.i;
-                        try patternComponents.append(allocator, .{ .start = start, .len = end - start });
+                        try addComponent(allocator, pattern, patternComponents, .{ .start = start, .len = end - start });
                         start = cursor.i + cursor.width;
                         continue;
                     }
@@ -151,16 +222,20 @@ pub const GlobWalker = struct {
                 },
                 '/' => {
                     const end = cursor.i;
-                    try patternComponents.append(allocator, .{ .start = start, .len = end - start });
+                    try addComponent(allocator, pattern, patternComponents, .{ .start = start, .len = end - start });
                     start = cursor.i + cursor.width;
                 },
                 // TODO: Support other escaping glob syntax
                 else => {},
             }
         }
+
+        const end = cursor.i + cursor.width;
+        try addComponent(allocator, pattern, patternComponents, .{ .start = start, .len = end - start });
     }
 };
 
+// From: https://github.com/The-King-of-Toasters/globlin
 /// State for matching a glob against a string
 pub const GlobState = struct {
     // These store character indices into the glob and path strings.
@@ -200,6 +275,11 @@ pub const GlobState = struct {
             return .Invalid;
         return .EndBrace;
     }
+
+    inline fn backtrack(self: *GlobState) void {
+        self.glob_index = self.wildcard.glob_index;
+        self.path_index = self.wildcard.path_index;
+    }
 };
 
 const Wildcard = struct {
@@ -209,11 +289,6 @@ const Wildcard = struct {
 };
 
 const BraceState = enum { Invalid, Comma, EndBrace };
-
-inline fn backtrack(self: *GlobState) void {
-    self.glob_index = self.wildcard.glob_index;
-    self.path_index = self.wildcard.path_index;
-}
 
 const BraceStack = struct {
     stack: [10]GlobState = undefined,

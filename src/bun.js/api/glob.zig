@@ -49,7 +49,7 @@ const MatchOpts = struct {
             out.cwd = cwdStrOwned;
         }
 
-        return null;
+        return out;
     }
 };
 
@@ -64,8 +64,7 @@ pub const WalkTask = struct {
 
     pub const AsyncGlobWalkTask = JSC.ConcurrentPromiseTask(WalkTask);
 
-    pub fn create(glob: *Glob, globalThis: *JSC.JSGlobalObject, globWalker: *GlobWalker) !*AsyncGlobWalkTask {
-        _ = glob;
+    pub fn create(globalThis: *JSC.JSGlobalObject, globWalker: *GlobWalker) !*AsyncGlobWalkTask {
         var walkTask = try globWalker.allocator.create(WalkTask);
         walkTask.* = .{
             .walker = globWalker,
@@ -88,7 +87,7 @@ pub const WalkTask = struct {
     }
 
     pub fn then(this: *WalkTask, promise: *JSC.JSPromise) void {
-        defer this.deinit();
+        // defer this.deinit();
 
         if (this.err) |err| {
             _ = err;
@@ -97,23 +96,10 @@ pub const WalkTask = struct {
             promise.reject(this.global, errorValue);
             return;
         }
-        const allocator = this.global.bunVM().allocator;
-        var strings = this.walker.matchedPaths;
 
-        const jsStrings: JSC.JSValue = jsStrings: {
-            if (strings.items.len == 0) {
-                break :jsStrings JSC.JSArray.from(this.global, &[_]JSC.JSValue{});
-            }
+        const jsStrings = globWalkResultToJS(this.walker, this.global);
+        this.deinit();
 
-            // Would be nice to have an API to construct JSArray without allocating array first
-            var jsValues = @import("std").ArrayList(JSC.JSValue).init(allocator);
-            defer jsValues.deinit();
-            for (strings.items) |*item| {
-                // FIXME: gracefully handle this error
-                jsValues.append(item.toJS(this.global)) catch @panic("OOM");
-            }
-            break :jsStrings JSC.JSArray.from(this.global, jsValues.items[0..jsValues.items.len]);
-        };
         return promise.resolve(this.global, jsStrings);
     }
 
@@ -122,6 +108,23 @@ pub const WalkTask = struct {
         bun.default_allocator.destroy(this);
     }
 };
+
+fn globWalkResultToJS(globWalk: *GlobWalker, globalThis: *JSGlobalObject) JSValue {
+    // if (globWalk.matchedPaths.items.len >= 0) {
+    if (globWalk.matchedPaths.items.len == 0) {
+        return JSC.JSArray.from(globalThis, &[_]JSC.JSValue{});
+    }
+
+    // Would be nice to construct JSArray without allocating array first
+    var jsValues = @import("std").ArrayList(JSC.JSValue).init(globWalk.allocator);
+    defer jsValues.deinit();
+    for (globWalk.matchedPaths.items) |*item| {
+        // FIXME: gracefully handle this error
+        jsValues.append(item.toJS(globalThis)) catch @panic("OOM");
+        // jsValues.append(.undefined) catch @panic("OOM");
+    }
+    return JSC.JSArray.from(globalThis, jsValues.items[0..jsValues.items.len]);
+}
 
 pub fn constructor(
     globalThis: *JSC.JSGlobalObject,
@@ -202,13 +205,72 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame
         break :globWalker globWalker;
     };
 
-    var task = WalkTask.create(this, globalThis, globWalker) catch {
+    var task = WalkTask.create(globalThis, globWalker) catch {
         globalThis.throw("Out of memory", .{});
         return .undefined;
     };
     task.schedule();
 
     return task.promise.value();
+}
+
+pub fn matchSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    const alloc = getAllocator(globalThis);
+
+    const arguments_ = callframe.arguments(1);
+    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    defer arguments.deinit();
+
+    const globWalkerAllocator = alloc;
+    var globWalker = globWalker: {
+        const matchOpts = MatchOpts.fromJS(globalThis, &arguments, "match", globWalkerAllocator);
+        if (matchOpts != null and matchOpts.?.cwd != null) {
+            var globWalker = alloc.create(GlobWalker) catch {
+                globalThis.throw("Out of memory", .{});
+                return .undefined;
+            };
+
+            globWalker.* = .{};
+            globWalker.initWithCwd(globWalkerAllocator, this.pattern, matchOpts.?.cwd.?) catch {
+                globalThis.throw("Out of memory", .{});
+                return .undefined;
+            };
+            break :globWalker globWalker;
+        }
+        var globWalker = alloc.create(GlobWalker) catch {
+            globalThis.throw("Out of memory", .{});
+            return .undefined;
+        };
+
+        globWalker.* = .{};
+        switch (globWalker.init(globWalkerAllocator, this.pattern) catch {
+            globalThis.throw("Out of memory", .{});
+            return .undefined;
+        }) {
+            .err => |err| {
+                globalThis.throwValue(err.toJSC(globalThis));
+                return JSValue.undefined;
+            },
+            else => {},
+        }
+        break :globWalker globWalker;
+    };
+    defer globWalker.deinit();
+
+    switch (globWalker.walk() catch {
+        globalThis.throw("Out of memory", .{});
+        return .undefined;
+    }) {
+        .err => |err| {
+            globalThis.throwValue(err.toJSC(globalThis));
+            return JSValue.undefined;
+        },
+        .result => {},
+    }
+
+    const matchedPaths = globWalkResultToJS(globWalker, globalThis);
+
+    return matchedPaths;
 }
 
 pub fn matchString(this: *Glob, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {

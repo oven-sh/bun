@@ -115,7 +115,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: |
-          ./scripts/cross-compile/codegen.sh win32 x64
+          curl -fsSL https://github.com/oven-sh/bun/releases/download/bun-v1.0.7/bun-linux-x64.zip > bun.zip
+          unzip bun.zip
+          export PATH="$PWD/bun-linux-x64:$PATH"
+          ./scripts/cross-compile-codegen.sh win32 x64
       - uses: actions/upload-artifact@v3
         with:
           name: build-codegen-win32-x64/

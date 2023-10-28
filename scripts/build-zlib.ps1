@@ -4,7 +4,7 @@ $ErrorActionPreference = 'Stop'  # Setting strict mode, similar to 'set -euo pip
 Push-Location (Join-Path $BUN_DEPS_DIR 'zlib')
 try {
   Run git reset --hard
-  Run git apply (Join-Path $PSScriptRoot "../src/deps/zlib-clangcl.patch")
+  Run git apply -v (Join-Path $PSScriptRoot "../src/deps/zlib-clangcl.patch") --whitespace=fix
 
   Set-Location (mkdir -Force build)
   
@@ -14,4 +14,5 @@ try {
   Copy-Item zlib.lib $BUN_DEPS_OUT_DIR
 
   Write-Host "-> zlib.lib"
-} finally { Pop-Location }
+}
+finally { Pop-Location }

@@ -4,7 +4,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$DidAnything = False;
+$Script:DidAnything = $false;
 
 function Build-Dependency {
   param(
@@ -14,7 +14,7 @@ function Build-Dependency {
 
   $ScriptPath = Join-Path $PSScriptRoot "build-$Script.ps1"
   
-  if(!$Force) {
+  if (!$Force) {
     foreach ($Output in $Outputs) {
       $OutputPath = Join-Path $PSScriptRoot "../src/deps/$Output"
       if (Test-Path $OutputPath) {
@@ -22,7 +22,8 @@ function Build-Dependency {
         return
       }
     }
-  } else {
+  }
+  else {
     Remove-Item $Outputs -ErrorAction SilentlyContinue
   }
 
@@ -39,7 +40,7 @@ function Build-Dependency {
     Pop-Location
   }
 
-  $DidAnything = $true
+  $Script:DidAnything = $true
 }
 
 Build-Dependency `
@@ -73,6 +74,6 @@ Build-Dependency `
   -Script "libuv" `
   -Outputs @("libuv.lib")
 
-if(!$DidAnything) {
+if (!($Script:DidAnything)) {
   Write-Host "(run with -Force to rebuild all)"
 }

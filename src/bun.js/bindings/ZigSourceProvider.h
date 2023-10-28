@@ -10,13 +10,13 @@ class SourceCodeKey;
 class SourceProvider;
 } // namespace JSC
 
-#include "JavaScriptCore/CachedBytecode.h"
-#include "JavaScriptCore/JSGlobalObject.h"
-#include "JavaScriptCore/JSTypeInfo.h"
+#include <JavaScriptCore/CachedBytecode.h>
+#include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/JSTypeInfo.h>
 #include "ZigConsoleClient.h"
-// #include "JavaScriptCore/SourceCodeKey.h"
-#include "JavaScriptCore/SourceProvider.h"
-#include "JavaScriptCore/Structure.h"
+// #include <JavaScriptCore/SourceCodeKey.h>
+#include <JavaScriptCore/SourceProvider.h>
+#include <JavaScriptCore/Structure.h>
 
 namespace Zig {
 

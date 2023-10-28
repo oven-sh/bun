@@ -35,8 +35,8 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs, void*);
 /* Pointer tags are used to indicate a Bun pointer versus a uSockets pointer */
 #define UNSET_BITS_49_UNTIL_64 0x0000FFFFFFFFFFFF
 #define CLEAR_POINTER_TAG(p) ((void *) ((uintptr_t) (p) & UNSET_BITS_49_UNTIL_64))
-#define LIKELY(cond) __builtin_expect((uint64_t)(void*)(cond), 1)
-#define UNLIKELY(cond) __builtin_expect((uint64_t)(void*)(cond), 0)
+#define LIKELY(cond) __builtin_expect((_Bool)(cond), 1)
+#define UNLIKELY(cond) __builtin_expect((_Bool)(cond), 0)
 
 #ifdef LIBUS_USE_EPOLL
 #define GET_READY_POLL(loop, index) (struct us_poll_t *) loop->ready_polls[index].data.ptr

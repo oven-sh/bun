@@ -25,8 +25,8 @@
 #include "JSDOMGlobalObject.h"
 #include "ZigGlobalObject.h"
 #include "NodeConstants.h"
-#include "JavaScriptCore/JSDestructibleObject.h"
-#include "wtf/SignedPtr.h"
+#include <JavaScriptCore/JSDestructibleObject.h>
+#include <wtf/SignedPtr.h>
 
 namespace WebCore {
 using namespace Zig;

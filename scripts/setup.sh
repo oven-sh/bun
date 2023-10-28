@@ -40,9 +40,15 @@ $(
   && (test $(cargo --version | awk '{print $2}' | cut -d. -f2) -gt 57) \
   && has_exec "cargo"
 ) || fail "Rust and Cargo version must be installed (minimum version 1.57)"
+has_exec "go" || fail "'go' is missing"
 
 has_exec "pkg-config" || fail "'pkg-config' is missing"
 has_exec "automake" || fail "'automake' is missing"
+has_exec "perl" || fail "'perl' is missing"
+has_exec "ruby" || fail "'ruby' is missing"
+
+rm .vscode/clang++
+ln -s "$CXX" .vscode/clang++
 
 printf "All system dependencies OK\n"
 printf "C Compiler for dependencies: ${CC}\n"

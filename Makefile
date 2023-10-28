@@ -929,6 +929,9 @@ clone-submodules:
 
 .PHONY: headers
 headers:
+	echo please don't run the headers generator anymore. i don't think it works. 
+	echo if you really need it, run make headers2
+headers2: 
 	rm -f /tmp/build-jsc-headers src/bun.js/bindings/headers.zig
 	touch src/bun.js/bindings/headers.zig
 	$(ZIG) build headers-obj
@@ -1318,7 +1321,7 @@ release-bindings: $(OBJ_DIR) $(OBJ_FILES) $(WEBCORE_OBJ_FILES) $(SQLITE_OBJ_FILE
 # Do not add $(DEBUG_DIR) to this list
 # It will break caching, causing you to have to wait for every .cpp file to rebuild.
 .PHONY: bindings
-bindings: $(DEBUG_OBJ_DIR) $(DEBUG_OBJ_FILES) $(DEBUG_WEBCORE_OBJ_FILES) $(DEBUG_SQLITE_OBJ_FILES) $(DEBUG_NODE_OS_OBJ_FILES) $(DEBUG_BUILTINS_OBJ_FILES) $(DEBUG_IO_FILES) $(DEBUG_MODULES_OBJ_FILES) $(DEBUG_WEBCRYPTO_OBJ_FILES)
+bindings-real: $(DEBUG_OBJ_DIR) $(DEBUG_OBJ_FILES) $(DEBUG_WEBCORE_OBJ_FILES) $(DEBUG_SQLITE_OBJ_FILES) $(DEBUG_NODE_OS_OBJ_FILES) $(DEBUG_BUILTINS_OBJ_FILES) $(DEBUG_IO_FILES) $(DEBUG_MODULES_OBJ_FILES) $(DEBUG_WEBCRYPTO_OBJ_FILES)
 
 .PHONY: jsc-bindings-mac
 jsc-bindings-mac: bindings
@@ -1907,18 +1910,28 @@ vendor-dev: assert-deps submodule npm-install-dev vendor-without-npm
 .PHONY: bun
 bun: 
 	echo makefile is deprecated - use `cmake` / `bun run build`
+	echo 'See https://bun.sh/docs/project/contributing for more details'
 
 cpp:
 	echo makefile is deprecated - use `cmake` / `bun run build`
+	echo 'See https://bun.sh/docs/project/contributing for more details'
 
 zig:
 	echo makefile is deprecated - use `cmake` / `bun run build`
+	echo 'See https://bun.sh/docs/project/contributing for more details'
 
 dev:
 	echo makefile is deprecated - use `cmake` / `bun run build`
+	echo 'See https://bun.sh/docs/project/contributing for more details'
 
 setup:
 	echo makefile is deprecated - use `cmake` / `bun run build`
+	echo 'See https://bun.sh/docs/project/contributing for more details'
+
+bindings:
+	echo makefile is deprecated - use `cmake` / `bun run build`
+	echo 'See https://bun.sh/docs/project/contributing for more details'
 
 help:
 	echo makefile is deprecated - use `cmake` / `bun run build`
+	echo 'See https://bun.sh/docs/project/contributing for more details'

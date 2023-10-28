@@ -4,7 +4,18 @@ $ErrorActionPreference = 'Stop'  # Setting strict mode, similar to 'set -euo pip
 Push-Location (Join-Path $BUN_DEPS_DIR 'zlib')
 try {
   Run git reset --hard
-  Run git apply -v (Join-Path $PSScriptRoot "../src/deps/zlib-clangcl.patch") --whitespace=fix
+  
+  # TODO: make a patch upstream to change the line
+  # `#ifdef _MSC_VER`
+  # to account for clang-cl, which implements `__builtin_ctzl` and `__builtin_expect`
+  $textToReplace = [regex]::Escape("int __inline __builtin_ctzl(unsigned long mask)") + "[^}]*}"
+  $fileContent = Get-Content "deflate.h" -Raw
+  if ($fileContent -match $textToReplace) {
+    Set-Content -Path "deflate.h" -Value ($fileContent -replace $textToReplace, "")
+  }
+  else {
+    throw "Failed to patch deflate.h"
+  }
 
   Set-Location (mkdir -Force build)
   

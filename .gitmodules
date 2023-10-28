@@ -1,4 +1,4 @@
-[submodule "src/bun.js/WebKit"]
+[submodule "src/javascript/jsc/WebKit"]
 path = src/bun.js/WebKit
 url = https://github.com/oven-sh/WebKit.git
 ignore = dirty

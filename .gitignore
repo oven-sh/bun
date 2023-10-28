@@ -155,3 +155,4 @@ x64
 **/*.pdb
 
 .webkit-cache
+src/deps/libuv

@@ -4,7 +4,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$DidAnything = False;
+$DidAnything = $false;
+
+$BUN_BASE_DIR = if ($env:BUN_BASE_DIR) { $env:BUN_BASE_DIR } else { Join-Path $PSScriptRoot '..' }
+$BUN_DEPS_DIR = if ($env:BUN_DEPS_DIR) { $env:BUN_DEPS_DIR } else { Join-Path $BUN_BASE_DIR 'src\deps' }
+$BUN_DEPS_OUT_DIR = if ($env:BUN_DEPS_OUT_DIR) { $env:BUN_DEPS_OUT_DIR } else { $BUN_DEPS_DIR }
 
 function Build-Dependency {
   param(
@@ -14,15 +18,16 @@ function Build-Dependency {
 
   $ScriptPath = Join-Path $PSScriptRoot "build-$Script.ps1"
   
-  if(!$Force) {
+  if (!$Force) {
     foreach ($Output in $Outputs) {
-      $OutputPath = Join-Path $PSScriptRoot "../src/deps/$Output"
+      $OutputPath = Join-Path $BUN_DEPS_OUT_DIR $Output
       if (Test-Path $OutputPath) {
         Write-Host "$Script - already built"
         return
       }
     }
-  } else {
+  }
+  else {
     Remove-Item $Outputs -ErrorAction SilentlyContinue
   }
 
@@ -73,6 +78,6 @@ Build-Dependency `
   -Script "libuv" `
   -Outputs @("libuv.lib")
 
-if(!$DidAnything) {
+if ($DidAnything -eq $false) {
   Write-Host "(run with -Force to rebuild all)"
 }

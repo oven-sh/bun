@@ -121,5 +121,5 @@ jobs:
           ./scripts/cross-compile-codegen.sh win32 x64
       - uses: actions/upload-artifact@v3
         with:
-          name: build-codegen-win32-x64/
-          path: bun-windows-x64-codegen
+          name: bun-windows-x64-codegen
+          path: build-codegen-win32-x64/

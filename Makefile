@@ -1905,11 +1905,8 @@ vendor: assert-deps submodule vendor-without-check
 vendor-dev: assert-deps submodule npm-install-dev vendor-without-npm
 
 .PHONY: bun
-bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release-local
-
-.PHONY: static-hash-table
-static-hash-table:
-	bun src/js/_codegen/static-hash-tables.ts
+bun: 
+	echo makefile is deprecated - use `cmake` / `bun run build`
 
 cpp:
 	echo makefile is deprecated - use `cmake` / `bun run build`

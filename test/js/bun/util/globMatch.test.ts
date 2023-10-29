@@ -43,6 +43,7 @@ describe("globMatch", () => {
 
     glob = new Glob("src/**/*.ts");
     expect(glob.matchString("src/foo/bar/baz/nice.ts")).toBeTrue();
+    expect(glob.matchString("src/nice.ts")).toBeTrue();
 
     glob = new Glob("src/foo/*/bar/**/*.ts");
     expect(glob.matchString("src/foo/nice/bar/baz/lmao.ts")).toBeTrue();

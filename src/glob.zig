@@ -107,15 +107,15 @@ pub const GlobWalker = struct {
             .Dead, .Empty, .StaticZigString => {},
         }
         this.patternComponents.deinit(this.allocator);
-        // for (this.matchedPaths.items) |*item| {
-        //     switch (item.tag) {
-        //         .ZigString => {
-        //             const slice = item.value.ZigString.full();
-        //             this.allocator.free(slice);
-        //         },
-        //         else => {},
-        //     }
-        // }
+        for (this.matchedPaths.items) |*item| {
+            switch (item.tag) {
+                .ZigString => {
+                    const slice = item.value.ZigString.full();
+                    this.allocator.free(slice);
+                },
+                else => {},
+            }
+        }
         // TODO: what about freeing the strings inside of here
         this.matchedPaths.deinit(this.allocator);
     }

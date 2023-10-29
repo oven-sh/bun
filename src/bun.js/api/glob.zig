@@ -87,7 +87,7 @@ pub const WalkTask = struct {
     }
 
     pub fn then(this: *WalkTask, promise: *JSC.JSPromise) void {
-        // defer this.deinit();
+        defer this.deinit();
 
         if (this.err) |err| {
             _ = err;
@@ -98,9 +98,7 @@ pub const WalkTask = struct {
         }
 
         const jsStrings = globWalkResultToJS(this.walker, this.global);
-        this.deinit();
-
-        return promise.resolve(this.global, jsStrings);
+        promise.resolve(this.global, jsStrings);
     }
 
     fn deinit(this: *WalkTask) void {
@@ -115,15 +113,7 @@ fn globWalkResultToJS(globWalk: *GlobWalker, globalThis: *JSGlobalObject) JSValu
         return JSC.JSArray.from(globalThis, &[_]JSC.JSValue{});
     }
 
-    // Would be nice to construct JSArray without allocating array first
-    var jsValues = @import("std").ArrayList(JSC.JSValue).init(globWalk.allocator);
-    defer jsValues.deinit();
-    for (globWalk.matchedPaths.items) |*item| {
-        // FIXME: gracefully handle this error
-        jsValues.append(item.toJS(globalThis)) catch @panic("OOM");
-        // jsValues.append(.undefined) catch @panic("OOM");
-    }
-    return JSC.JSArray.from(globalThis, jsValues.items[0..jsValues.items.len]);
+    return BunString.toJSArray(globalThis, globWalk.matchedPaths.items[0..]);
 }
 
 pub fn constructor(

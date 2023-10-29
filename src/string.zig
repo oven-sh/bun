@@ -460,6 +460,7 @@ pub const String = extern struct {
 
     pub fn createExternal(bytes: []const u8, isLatin1: bool, ctx: ?*anyopaque, callback: ?*const fn (*anyopaque, *anyopaque, u32) callconv(.C) void) String {
         JSC.markBinding(@src());
+        std.debug.assert(bytes.len > 0);
         return BunString__createExternal(bytes.ptr, bytes.len, isLatin1, ctx, callback);
     }
 
@@ -855,17 +856,17 @@ pub const SliceWithUnderlyingString = struct {
     underlying: String,
 
     pub fn toThreadSafe(this: *SliceWithUnderlyingString) void {
-        std.debug.assert(this.underlying.tag == .WTFStringImpl);
+        if (this.underlying.tag == .WTFStringImpl) {
+            var orig = this.underlying.value.WTFStringImpl;
+            this.underlying.toThreadSafe();
+            if (this.underlying.value.WTFStringImpl != orig) {
+                orig.deref();
 
-        var orig = this.underlying.value.WTFStringImpl;
-        this.underlying.toThreadSafe();
-        if (this.underlying.value.WTFStringImpl != orig) {
-            orig.deref();
-
-            if (this.utf8.allocator.get()) |allocator| {
-                if (String.isWTFAllocator(allocator)) {
-                    this.utf8.deinit();
-                    this.utf8 = this.underlying.toUTF8(bun.default_allocator);
+                if (this.utf8.allocator.get()) |allocator| {
+                    if (String.isWTFAllocator(allocator)) {
+                        this.utf8.deinit();
+                        this.utf8 = this.underlying.toUTF8(bun.default_allocator);
+                    }
                 }
             }
         }

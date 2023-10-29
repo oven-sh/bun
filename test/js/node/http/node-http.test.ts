@@ -8,20 +8,25 @@ import {
   Server,
   validateHeaderName,
   validateHeaderValue,
+  ServerResponse,
 } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
 import { createTest } from "node-harness";
 import url from "node:url";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
+import nodefs from "node:fs";
+import { join as joinPath } from "node:path";
+import { unlinkSync } from "node:fs";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll } = createTest(import.meta.path);
 
-function listen(server: Server): Promise<URL> {
+function listen(server: Server, protocol: string = "http"): Promise<URL> {
   return new Promise((resolve, reject) => {
     server.listen({ port: 0 }, (err, hostname, port) => {
       if (err) {
         reject(err);
       } else {
-        resolve(new URL(`http://${hostname}:${port}`));
+        resolve(new URL(`${protocol}://${hostname}:${port}`));
       }
     });
     setTimeout(() => reject("Timed out"), 5000);
@@ -46,7 +51,22 @@ describe("node:http", () => {
         server.close();
       }
     });
-
+    it("is not marked encrypted (#5867)", async () => {
+      try {
+        var server = createServer((req, res) => {
+          expect(req.connection.encrypted).toBe(undefined);
+          res.writeHead(200, { "Content-Type": "text/plain" });
+          res.end("Hello World");
+        });
+        const url = await listen(server);
+        const res = await fetch(new URL("", url));
+        expect(await res.text()).toBe("Hello World");
+      } catch (e) {
+        throw e;
+      } finally {
+        server.close();
+      }
+    });
     it("request & response body streaming (large)", async () => {
       try {
         const bodyBlob = new Blob(["hello world", "hello world".repeat(9000)]);
@@ -110,6 +130,23 @@ describe("node:http", () => {
       expect(listenResponse instanceof Server).toBe(true);
       expect(listenResponse).toBe(server);
       listenResponse.close();
+    });
+  });
+
+  describe("response", () => {
+    test("set-cookie works with getHeader", () => {
+      const res = new ServerResponse({});
+      res.setHeader("Set-Cookie", ["swag=true", "yolo=true"]);
+      expect(res.getHeader("Set-Cookie")).toEqual(["swag=true", "yolo=true"]);
+    });
+    test("set-cookie works with getHeaders", () => {
+      const res = new ServerResponse({});
+      res.setHeader("Set-Cookie", ["swag=true", "yolo=true"]);
+      res.setHeader("test", "test");
+      expect(res.getHeaders()).toEqual({
+        "Set-Cookie": ["swag=true", "yolo=true"],
+        "test": "test",
+      });
     });
   });
 
@@ -905,6 +942,139 @@ describe("node:http", () => {
         done(err);
       } finally {
         server.close();
+      }
+    });
+  });
+
+  test("error event not fired, issue#4651", done => {
+    const server = createServer((req, res) => {
+      res.end();
+    });
+    server.listen({ port: 42069 }, () => {
+      const server2 = createServer((_, res) => {
+        res.end();
+      });
+      server2.on("error", err => {
+        expect(err.code).toBe("EADDRINUSE");
+        done();
+      });
+      server2.listen({ port: 42069 }, () => {});
+    });
+  });
+});
+describe("node https server", async () => {
+  const httpsOptions = {
+    key: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "cert.key")),
+    cert: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "cert.pem")),
+  };
+  const createServer = onRequest => {
+    return new Promise(resolve => {
+      const server = createHttpsServer(httpsOptions, (req, res) => {
+        onRequest(req, res);
+      });
+      listen(server, "https").then(url => {
+        resolve({
+          server,
+          done: () => server.close(),
+          url,
+        });
+      });
+    });
+  };
+  it("is marked encrypted (#5867)", async () => {
+    const { server, url, done } = await createServer(async (req, res) => {
+      expect(req.connection.encrypted).toBe(true);
+      res.end();
+    });
+    try {
+      await fetch(url);
+    } catch (e) {
+      throw e;
+    } finally {
+      done();
+    }
+  });
+});
+
+describe("server.address should be valid IP", () => {
+  it("should return null before listening", done => {
+    const server = createServer((req, res) => {});
+    try {
+      expect(server.address()).toBeNull();
+      done();
+    } catch (err) {
+      done(err);
+    }
+  });
+  it("should return null after close", done => {
+    const server = createServer((req, res) => {});
+    server.listen(0, async (_err, host, port) => {
+      try {
+        expect(server.address()).not.toBeNull();
+        server.close();
+        expect(server.address()).toBeNull();
+        done();
+      } catch (err) {
+        done(err);
+      }
+    });
+  });
+  it("test default hostname, issue#5850", done => {
+    const server = createServer((req, res) => {});
+    server.listen(0, async (_err, host, port) => {
+      try {
+        const { address, family, port } = server.address();
+        expect(port).toBeInteger();
+        expect(port).toBeGreaterThan(0);
+        expect(port).toBeLessThan(65536);
+        expect(["::", "0.0.0.0"]).toContain(address);
+        if (address === "0.0.0.0") {
+          expect(family).toStrictEqual("IPv4");
+        } else {
+          expect(family).toStrictEqual("IPv6");
+        }
+        done();
+      } catch (err) {
+        done(err);
+      } finally {
+        server.close();
+      }
+    });
+  });
+  it.each([["localhost"], ["127.0.0.1"]])("test %s", (hostname, done) => {
+    const server = createServer((req, res) => {});
+    server.listen(0, hostname, async (_err, host, port) => {
+      try {
+        const { address, family } = server.address();
+        expect(port).toBeInteger();
+        expect(port).toBeGreaterThan(0);
+        expect(port).toBeLessThan(65536);
+        expect(["IPv4", "IPv6"]).toContain(family);
+        if (family === "IPv4") {
+          expect(address).toStrictEqual("127.0.0.1");
+        } else {
+          expect(address).toStrictEqual("::1");
+        }
+        done();
+      } catch (err) {
+        done(err);
+      } finally {
+        server.close();
+      }
+    });
+  });
+  it("test unix socket, issue#6413", done => {
+    const socketPath = `${tmpdir()}/bun-server-${Math.random().toString(32)}.sock`;
+    const server = createServer((req, res) => {});
+    server.listen(socketPath, async (_err, host, port) => {
+      try {
+        expect(server.address()).toStrictEqual(socketPath);
+        done();
+      } catch (err) {
+        done(err);
+      } finally {
+        server.close();
+        unlinkSync(socketPath);
       }
     });
   });

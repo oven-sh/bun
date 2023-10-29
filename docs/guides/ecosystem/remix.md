@@ -3,7 +3,7 @@ name: Build an app with Remix and Bun
 ---
 
 {% callout %}
-Remix currently relies on Node.js APIs that Bun does not yet implement. The guide below uses Bun to initialize a project and install dependencies, but it uses Node.js to run the dev server.
+Currently the Remix development server (`remix dev`) relies on Node.js APIs that Bun does not yet implement. The guide below uses Bun to initialize a project and install dependencies, but it uses Node.js to run the dev server.
 {% /callout %}
 
 ---
@@ -18,7 +18,7 @@ $ bun create remix
    dir   Where should we create your new project?
          ./my-app
 
-      ◼  Using basic template See https://remix.run/docs/pages/templates for more
+      ◼  Using basic template See https://remix.run/docs/en/main/guides/templates#templates for more
       ✔  Template copied
 
    git   Initialize a new git repository?
@@ -58,3 +58,21 @@ $ bun run dev
 Open [http://localhost:3000](http://localhost:3000) to see the app. Any changes you make to `app/routes/_index.tsx` will be hot-reloaded in the browser.
 
 {% image src="https://github.com/oven-sh/bun/assets/3084745/c26f1059-a5d4-4c0b-9a88-d9902472fd77" caption="Remix app running on localhost" /%}
+
+---
+
+To build and start your app, run `bun run build` then `bun run start` from the project root.
+
+```sh
+$ bun run build
+ $ remix build
+ info  building... (NODE_ENV=production)
+ info  built (158ms)
+$ bun start
+ $ remix-serve ./build/index.js
+ [remix-serve] http://localhost:3000 (http://192.168.86.237:3000)
+```
+
+---
+
+Read the [Remix docs](https://remix.run/) for more information on how to build apps with Remix.

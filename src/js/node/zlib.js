@@ -43,10 +43,10 @@ var require_common = __commonJS({
     var TYPED_OK =
       typeof Uint8Array !== "undefined" && typeof Uint16Array !== "undefined" && typeof Int32Array !== "undefined";
     function _has(obj, key) {
-      return Object.prototype.hasOwnProperty.call(obj, key);
+      return Object.prototype.hasOwnProperty.$call(obj, key);
     }
     exports.assign = function (obj) {
-      var sources = Array.prototype.slice.call(arguments, 1);
+      var sources = Array.prototype.slice.$call(arguments, 1);
       while (sources.length) {
         var source = sources.shift();
         if (!source) {
@@ -106,7 +106,7 @@ var require_common = __commonJS({
         }
       },
       flattenChunks: function (chunks) {
-        return [].concat.apply([], chunks);
+        return [].concat.$apply([], chunks);
       },
     };
     exports.setTyped = function (on) {
@@ -4111,31 +4111,31 @@ var require_lib = __commonJS({
     }
     function Deflate(opts) {
       if (!(this instanceof Deflate)) return new Deflate(opts);
-      Zlib.call(this, opts, binding.DEFLATE);
+      Zlib.$call(this, opts, binding.DEFLATE);
     }
     function Inflate(opts) {
       if (!(this instanceof Inflate)) return new Inflate(opts);
-      Zlib.call(this, opts, binding.INFLATE);
+      Zlib.$call(this, opts, binding.INFLATE);
     }
     function Gzip(opts) {
       if (!(this instanceof Gzip)) return new Gzip(opts);
-      Zlib.call(this, opts, binding.GZIP);
+      Zlib.$call(this, opts, binding.GZIP);
     }
     function Gunzip(opts) {
       if (!(this instanceof Gunzip)) return new Gunzip(opts);
-      Zlib.call(this, opts, binding.GUNZIP);
+      Zlib.$call(this, opts, binding.GUNZIP);
     }
     function DeflateRaw(opts) {
       if (!(this instanceof DeflateRaw)) return new DeflateRaw(opts);
-      Zlib.call(this, opts, binding.DEFLATERAW);
+      Zlib.$call(this, opts, binding.DEFLATERAW);
     }
     function InflateRaw(opts) {
       if (!(this instanceof InflateRaw)) return new InflateRaw(opts);
-      Zlib.call(this, opts, binding.INFLATERAW);
+      Zlib.$call(this, opts, binding.INFLATERAW);
     }
     function Unzip(opts) {
       if (!(this instanceof Unzip)) return new Unzip(opts);
-      Zlib.call(this, opts, binding.UNZIP);
+      Zlib.$call(this, opts, binding.UNZIP);
     }
     function isValidFlushFlag(flag) {
       return (
@@ -4151,7 +4151,7 @@ var require_lib = __commonJS({
       var _this = this;
       this._opts = opts = opts || {};
       this._chunkSize = opts.chunkSize || exports.Z_DEFAULT_CHUNK;
-      Transform.call(this, opts);
+      Transform.$call(this, opts);
       if (opts.flush && !isValidFlushFlag(opts.flush)) {
         throw new Error("Invalid flush flag: " + opts.flush);
       }

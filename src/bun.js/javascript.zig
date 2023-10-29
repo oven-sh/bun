@@ -58,7 +58,7 @@ const MarkedArrayBuffer = @import("./base.zig").MarkedArrayBuffer;
 const getAllocator = @import("./base.zig").getAllocator;
 const JSValue = @import("root").bun.JSC.JSValue;
 const NewClass = @import("./base.zig").NewClass;
-const Microtask = @import("root").bun.JSC.Microtask;
+
 const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
 const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;
 const JSPrivateDataPtr = @import("root").bun.JSC.JSPrivateDataPtr;
@@ -96,6 +96,7 @@ pub const Buffer = MarkedArrayBuffer;
 const Lock = @import("../lock.zig").Lock;
 const BuildMessage = JSC.BuildMessage;
 const ResolveMessage = JSC.ResolveMessage;
+const Async = bun.Async;
 
 pub const OpaqueCallback = *const fn (current: ?*anyopaque) callconv(.C) void;
 pub fn OpaqueWrap(comptime Context: type, comptime Function: fn (this: *Context) void) OpaqueCallback {
@@ -294,13 +295,8 @@ pub export fn Bun__Process__send(
         return .zero;
     }
     var vm = globalObject.bunVM();
-    if (vm.ipc) |ipc| {
-        const fd = ipc.socket.fd();
-        const success = IPC.serializeJSValueForSubprocess(
-            globalObject,
-            callFrame.argument(0),
-            fd,
-        );
+    if (vm.ipc) |ipc_instance| {
+        const success = ipc_instance.ipc.serializeAndSend(globalObject, callFrame.argument(0));
         return if (success) .undefined else .zero;
     } else {
         globalObject.throw("IPC Socket is no longer open.", .{});
@@ -308,10 +304,15 @@ pub export fn Bun__Process__send(
     }
 }
 
+pub export fn Bun__isBunMain(globalObject: *JSGlobalObject, input_ptr: [*]const u8, input_len: usize) bool {
+    return strings.eql(globalObject.bunVM().main, input_ptr[0..input_len]);
+}
+
 pub export fn Bun__Process__disconnect(
     globalObject: *JSGlobalObject,
     callFrame: *JSC.CallFrame,
 ) JSValue {
+    JSC.markBinding(@src());
     _ = callFrame;
     _ = globalObject;
     return .undefined;
@@ -320,14 +321,20 @@ pub export fn Bun__Process__disconnect(
 /// This function is called on the main thread
 /// The bunVM() call will assert this
 pub export fn Bun__queueTask(global: *JSGlobalObject, task: *JSC.CppTask) void {
+    JSC.markBinding(@src());
+
     global.bunVM().eventLoop().enqueueTask(Task.init(task));
 }
 
 pub export fn Bun__queueTaskWithTimeout(global: *JSGlobalObject, task: *JSC.CppTask, milliseconds: i32) void {
+    JSC.markBinding(@src());
+
     global.bunVM().eventLoop().enqueueTaskWithTimeout(Task.init(task), milliseconds);
 }
 
 pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JSValue) callconv(.C) JSValue {
+    JSC.markBinding(@src());
+
     var jsc_vm = globalObject.bunVM();
     jsc_vm.onUnhandledError(globalObject, value);
     return JSC.JSValue.jsUndefined();
@@ -337,6 +344,8 @@ pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JS
 /// The main difference: we need to allocate the task & wakeup the thread
 /// We can avoid that if we run it from the main thread.
 pub export fn Bun__queueTaskConcurrently(global: *JSGlobalObject, task: *JSC.CppTask) void {
+    JSC.markBinding(@src());
+
     var concurrent = bun.default_allocator.create(JSC.ConcurrentTask) catch unreachable;
     concurrent.* = JSC.ConcurrentTask{
         .task = Task.init(task),
@@ -346,6 +355,8 @@ pub export fn Bun__queueTaskConcurrently(global: *JSGlobalObject, task: *JSC.Cpp
 }
 
 pub export fn Bun__handleRejectedPromise(global: *JSGlobalObject, promise: *JSC.JSPromise) void {
+    JSC.markBinding(@src());
+
     const result = promise.result(global.vm());
     var jsc_vm = global.bunVM();
 
@@ -368,6 +379,14 @@ pub export fn Bun__onDidAppendPlugin(jsc_vm: *VirtualMachine, globalObject: *JSG
     };
     jsc_vm.bundler.linker.plugin_runner = &jsc_vm.plugin_runner.?;
 }
+
+// pub fn getGlobalExitCodeForPipeFailure() u8 {
+//     if (VirtualMachine.is_main_thread_vm) {
+//         return VirtualMachine.get().exit_handler.exit_code;
+//     }
+
+//     return 0;
+// }
 
 pub const ExitHandler = struct {
     exit_code: u8 = 0,
@@ -445,6 +464,8 @@ pub const ImportWatcher = union(enum) {
     }
 };
 
+const PlatformEventLoop = if (Environment.isPosix) uws.Loop else bun.Async.Loop;
+
 /// TODO: rename this to ScriptExecutionContext
 /// This is the shared global state for a single JS instance execution
 /// Today, Bun is one VM per thread, so the name "VirtualMachine" sort of makes sense
@@ -466,7 +487,7 @@ pub const VirtualMachine = struct {
     origin: URL = URL{},
     node_fs: ?*Node.NodeFS = null,
     timer: Bun.Timer = Bun.Timer{},
-    event_loop_handle: ?*uws.Loop = null,
+    event_loop_handle: ?*PlatformEventLoop = null,
     pending_unref_counter: i32 = 0,
     preload: []const string = &[_][]const u8{},
     unhandled_pending_rejection_to_capture: ?*JSC.JSValue = null,
@@ -573,6 +594,14 @@ pub const VirtualMachine = struct {
 
     pub const OnException = fn (*ZigException) void;
 
+    pub fn uwsLoop(this: *const VirtualMachine) *uws.Loop {
+        if (comptime Environment.isPosix) {
+            return this.event_loop_handle.?;
+        }
+
+        return uws.Loop.get();
+    }
+
     pub fn isMainThread(this: *const VirtualMachine) bool {
         return this.worker == null;
     }
@@ -611,9 +640,13 @@ pub const VirtualMachine = struct {
     }
 
     pub fn isEventLoopAlive(vm: *const VirtualMachine) bool {
-        return vm.active_tasks > 0 or
-            vm.event_loop_handle.?.active > 0 or
-            vm.event_loop.tasks.count > 0;
+        return vm.event_loop_handle.?.isActive() or (vm.active_tasks +
+            vm.event_loop.tasks.count +
+            vm.event_loop.immediate_tasks.count + vm.event_loop.next_immediate_tasks.count > 0);
+    }
+
+    pub fn wakeup(this: *VirtualMachine) void {
+        this.eventLoop().wakeup();
     }
 
     const SourceMapHandlerGetter = struct {
@@ -721,6 +754,13 @@ pub const VirtualMachine = struct {
         }
 
         if (map.get("BUN_GARBAGE_COLLECTOR_LEVEL")) |gc_level| {
+            // Reuse this flag for other things to avoid unnecessary hashtable
+            // lookups on start for obscure flags which we do not want others to
+            // depend on.
+            if (map.get("BUN_FEATURE_FLAG_FORCE_WAITER_THREAD") != null) {
+                JSC.Subprocess.WaiterThread.setShouldUseWaiterThread();
+            }
+
             if (strings.eqlComptime(gc_level, "1")) {
                 this.aggressive_garbage_collection = .mild;
             } else if (strings.eqlComptime(gc_level, "2")) {
@@ -867,7 +907,7 @@ pub const VirtualMachine = struct {
         unix: []const u8 = "",
         script_execution_context_id: u32 = 0,
         next_debugger_id: u64 = 1,
-        poll_ref: JSC.PollRef = .{},
+        poll_ref: Async.KeepAlive = .{},
         wait_for_connection: bool = false,
         set_breakpoint_on_first_line: bool = false,
 
@@ -990,6 +1030,10 @@ pub const VirtualMachine = struct {
         this.eventLoop().enqueueTask(task);
     }
 
+    pub inline fn enqueueImmediateTask(this: *VirtualMachine, task: Task) void {
+        this.eventLoop().enqueueImmediateTask(task);
+    }
+
     pub inline fn enqueueTaskConcurrent(this: *VirtualMachine, task: *JSC.ConcurrentTask) void {
         this.eventLoop().enqueueTaskConcurrent(task);
     }
@@ -1023,9 +1067,13 @@ pub const VirtualMachine = struct {
     pub const MacroMap = std.AutoArrayHashMap(i32, js.JSObjectRef);
 
     pub fn enableMacroMode(this: *VirtualMachine) void {
+        JSC.markBinding(@src());
+
         if (!this.has_enabled_macro_mode) {
             this.has_enabled_macro_mode = true;
             this.macro_event_loop.tasks = EventLoop.Queue.init(default_allocator);
+            this.macro_event_loop.immediate_tasks = EventLoop.Queue.init(default_allocator);
+            this.macro_event_loop.next_immediate_tasks = EventLoop.Queue.init(default_allocator);
             this.macro_event_loop.tasks.ensureTotalCapacity(16) catch unreachable;
             this.macro_event_loop.global = this.global;
             this.macro_event_loop.virtual_machine = this;
@@ -1076,6 +1124,7 @@ pub const VirtualMachine = struct {
     pub fn initWithModuleGraph(
         opts: Options,
     ) !*VirtualMachine {
+        JSC.markBinding(@src());
         const allocator = opts.allocator;
         VMHolder.vm = try allocator.create(VirtualMachine);
         var console = try allocator.create(ZigConsoleClient);
@@ -1114,6 +1163,12 @@ pub const VirtualMachine = struct {
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
+            default_allocator,
+        );
+        vm.regular_event_loop.immediate_tasks = EventLoop.Queue.init(
+            default_allocator,
+        );
+        vm.regular_event_loop.next_immediate_tasks = EventLoop.Queue.init(
             default_allocator,
         );
         vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
@@ -1172,6 +1227,7 @@ pub const VirtualMachine = struct {
     };
 
     pub fn init(opts: Options) !*VirtualMachine {
+        JSC.markBinding(@src());
         const allocator = opts.allocator;
         var log: *logger.Log = undefined;
         if (opts.log) |__log| {
@@ -1216,6 +1272,12 @@ pub const VirtualMachine = struct {
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
+            default_allocator,
+        );
+        vm.regular_event_loop.immediate_tasks = EventLoop.Queue.init(
+            default_allocator,
+        );
+        vm.regular_event_loop.next_immediate_tasks = EventLoop.Queue.init(
             default_allocator,
         );
         vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
@@ -1301,6 +1363,7 @@ pub const VirtualMachine = struct {
         worker: *WebWorker,
         opts: Options,
     ) anyerror!*VirtualMachine {
+        JSC.markBinding(@src());
         var log: *logger.Log = undefined;
         const allocator = opts.allocator;
         if (opts.log) |__log| {
@@ -1347,6 +1410,12 @@ pub const VirtualMachine = struct {
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
+            default_allocator,
+        );
+        vm.regular_event_loop.immediate_tasks = EventLoop.Queue.init(
+            default_allocator,
+        );
+        vm.regular_event_loop.next_immediate_tasks = EventLoop.Queue.init(
             default_allocator,
         );
         vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
@@ -1415,6 +1484,7 @@ pub const VirtualMachine = struct {
 
     pub fn refCountedStringWithWasNew(this: *VirtualMachine, new: *bool, input_: []const u8, hash_: ?u32, comptime dupe: bool) *JSC.RefString {
         JSC.markBinding(@src());
+        std.debug.assert(input_.len > 0);
         const hash = hash_ orelse JSC.RefString.computeHash(input_);
         this.ref_strings_mutex.lock();
         defer this.ref_strings_mutex.unlock();
@@ -1443,6 +1513,7 @@ pub const VirtualMachine = struct {
     }
 
     pub fn refCountedString(this: *VirtualMachine, input_: []const u8, hash_: ?u32, comptime dupe: bool) *JSC.RefString {
+        std.debug.assert(input_.len > 0);
         var _was_new = false;
         return this.refCountedStringWithWasNew(&_was_new, input_, hash_, comptime dupe);
     }
@@ -1519,7 +1590,6 @@ pub const VirtualMachine = struct {
 
     fn normalizeSpecifierForResolution(specifier_: []const u8, query_string: *[]const u8) []const u8 {
         var specifier = specifier_;
-        if (strings.hasPrefixComptime(specifier, "file://")) specifier = specifier["file://".len..];
 
         if (strings.indexOfChar(specifier, '?')) |i| {
             query_string.* = specifier[i..];
@@ -1632,20 +1702,6 @@ pub const VirtualMachine = struct {
         jsc_vm.resolved_count += 1;
 
         ret.path = result_path.text;
-    }
-    pub fn queueMicrotaskToEventLoop(
-        globalObject: *JSGlobalObject,
-        microtask: *Microtask,
-    ) void {
-        if (comptime Environment.allow_assert)
-            std.debug.assert(VirtualMachine.isLoaded());
-
-        var vm_ = globalObject.bunVM();
-        if (vm_.global == globalObject) {
-            vm_.enqueueTask(Task.init(@as(*JSC.MicrotaskForDefaultGlobalObject, @ptrCast(microtask))));
-        } else {
-            vm_.enqueueTask(Task.init(microtask));
-        }
     }
 
     pub fn resolveForAPI(
@@ -2031,7 +2087,7 @@ pub const VirtualMachine = struct {
         try this.entry_point.generate(
             this.allocator,
             this.bun_watcher != .none,
-            Fs.PathName.init(entry_path),
+            entry_path,
             main_file_name,
         );
         this.eventLoop().ensureWaker();
@@ -2800,9 +2856,8 @@ pub const VirtualMachine = struct {
 
     pub const IPCInstance = struct {
         globalThis: ?*JSGlobalObject,
-        socket: IPC.Socket,
         uws_context: *uws.SocketContext,
-        ipc_buffer: bun.ByteList,
+        ipc: IPC.IPCData,
 
         pub fn handleIPCMessage(
             this: *IPCInstance,
@@ -2839,6 +2894,10 @@ pub const VirtualMachine = struct {
     };
 
     pub fn initIPCInstance(this: *VirtualMachine, fd: i32) void {
+        if (Environment.isWindows) {
+            Output.prettyWarnln("IPC is not supported on Windows", .{});
+            return;
+        }
         this.event_loop.ensureWaker();
         const context = uws.us_create_socket_context(0, this.event_loop_handle.?, @sizeOf(usize), .{}).?;
         IPC.Socket.configure(context, true, *IPCInstance, IPCInstance.Handlers);
@@ -2852,13 +2911,13 @@ pub const VirtualMachine = struct {
         var instance = bun.default_allocator.create(IPCInstance) catch @panic("OOM");
         instance.* = .{
             .globalThis = this.global,
-            .socket = socket,
             .uws_context = context,
-            .ipc_buffer = bun.ByteList{},
+            .ipc = .{ .socket = socket },
         };
         var ptr = socket.ext(*IPCInstance);
         ptr.?.* = instance;
         this.ipc = instance;
+        instance.ipc.writeVersionPacket();
     }
     comptime {
         if (!JSC.is_bindgen)
@@ -2921,6 +2980,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             }
 
             pub fn enqueue(this: *HotReloadTask) void {
+                JSC.markBinding(@src());
                 if (this.count == 0)
                     return;
 
@@ -3234,3 +3294,5 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
         }
     };
 }
+
+pub export var isBunTest: bool = false;

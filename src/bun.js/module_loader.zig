@@ -56,7 +56,7 @@ const MarkedArrayBuffer = @import("./base.zig").MarkedArrayBuffer;
 const getAllocator = @import("./base.zig").getAllocator;
 const JSValue = @import("root").bun.JSC.JSValue;
 const NewClass = @import("./base.zig").NewClass;
-const Microtask = @import("root").bun.JSC.Microtask;
+
 const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
 const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;
 const JSPrivateDataPtr = @import("root").bun.JSC.JSPrivateDataPtr;
@@ -85,7 +85,7 @@ const PackageManager = @import("../install/install.zig").PackageManager;
 const Install = @import("../install/install.zig");
 const VirtualMachine = JSC.VirtualMachine;
 const Dependency = @import("../install/dependency.zig");
-
+const Async = bun.Async;
 const String = bun.String;
 
 // Setting BUN_OVERRIDE_MODULE_PATH to the path to the bun repo will make it so modules are loaded
@@ -154,21 +154,27 @@ const BunDebugHolder = struct {
     pub var lock: bun.Lock = undefined;
 };
 
-fn dumpSource(specifier: string, printer: anytype) !void {
+/// Dumps the module source to a file in /tmp/bun-debug-src/{filepath}
+///
+/// This can technically fail if concurrent access across processes happens, or permission issues.
+/// Errors here should always be ignored.
+fn dumpSource(specifier: string, printer: anytype) void {
+    if (comptime Environment.isWindows) return;
     if (BunDebugHolder.dir == null) {
-        BunDebugHolder.dir = try std.fs.cwd().makeOpenPathIterable("/tmp/bun-debug-src/", .{});
+        BunDebugHolder.dir = std.fs.cwd().makeOpenPathIterable("/tmp/bun-debug-src/", .{}) catch return;
         BunDebugHolder.lock = bun.Lock.init();
     }
 
     BunDebugHolder.lock.lock();
     defer BunDebugHolder.lock.unlock();
 
+    const dir = BunDebugHolder.dir orelse return;
     if (std.fs.path.dirname(specifier)) |dir_path| {
-        var parent = try BunDebugHolder.dir.?.dir.makeOpenPathIterable(dir_path[1..], .{});
+        var parent = dir.dir.makeOpenPathIterable(dir_path[1..], .{}) catch return;
         defer parent.close();
-        try parent.dir.writeFile(std.fs.path.basename(specifier), printer.ctx.getWritten());
+        parent.dir.writeFile(std.fs.path.basename(specifier), printer.ctx.getWritten()) catch return;
     } else {
-        try BunDebugHolder.dir.?.dir.writeFile(std.fs.path.basename(specifier), printer.ctx.getWritten());
+        dir.dir.writeFile(std.fs.path.basename(specifier), printer.ctx.getWritten()) catch return;
     }
 }
 
@@ -230,7 +236,7 @@ pub const RuntimeTranspilerStore = struct {
         vm: *JSC.VirtualMachine,
         globalThis: *JSC.JSGlobalObject,
         fetcher: Fetcher,
-        poll_ref: JSC.PollRef = .{},
+        poll_ref: Async.KeepAlive = .{},
         generation_number: u32 = 0,
         log: logger.Log,
         parse_error: ?anyerror = null,
@@ -402,6 +408,7 @@ pub const RuntimeTranspilerStore = struct {
                 .file_hash = hash,
                 .macro_remappings = macro_remappings,
                 .jsx = bundler.options.jsx,
+                .emit_decorator_metadata = bundler.options.emit_decorator_metadata,
                 .virtual_source = null,
                 .dont_bundle_twice = true,
                 .allow_commonjs = true,
@@ -544,7 +551,7 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             if (comptime Environment.dump_source) {
-                dumpSource(specifier, &printer) catch {};
+                dumpSource(specifier, &printer);
             }
 
             this.resolved_source = ResolvedSource{
@@ -584,7 +591,7 @@ pub const ModuleLoader = struct {
         arena: bun.ArenaAllocator,
 
         // This is the specific state for making it async
-        poll_ref: JSC.PollRef = .{},
+        poll_ref: Async.KeepAlive = .{},
         any_task: JSC.AnyTask = undefined,
 
         pub const Id = u32;
@@ -686,6 +693,7 @@ pub const ModuleLoader = struct {
                             .onPackageDownloadError = onPackageDownloadError,
                             .progress_bar = true,
                         },
+                        true,
                         PackageManager.Options.LogLevel.default,
                     ) catch unreachable;
                 } else {
@@ -698,6 +706,7 @@ pub const ModuleLoader = struct {
                             .onPackageManifestError = onPackageManifestError,
                             .onPackageDownloadError = onPackageDownloadError,
                         },
+                        true,
                         PackageManager.Options.LogLevel.default_no_progress,
                     ) catch unreachable;
                 }
@@ -1229,7 +1238,7 @@ pub const ModuleLoader = struct {
             }
 
             if (comptime Environment.dump_source) {
-                try dumpSource(specifier, &printer);
+                dumpSource(specifier, &printer);
             }
 
             var commonjs_exports = try bun.default_allocator.alloc(ZigString, parse_result.ast.commonjs_export_names.len);
@@ -1416,17 +1425,18 @@ pub const ModuleLoader = struct {
                 //
                 var should_close_input_file_fd = fd == null;
 
-                var input_file_fd: StoredFileDescriptorType = 0;
+                var input_file_fd: StoredFileDescriptorType = bun.invalid_fd;
                 var parse_options = Bundler.ParseOptions{
                     .allocator = allocator,
                     .path = path,
                     .loader = loader,
-                    .dirname_fd = 0,
+                    .dirname_fd = bun.invalid_fd,
                     .file_descriptor = fd,
                     .file_fd_ptr = &input_file_fd,
                     .file_hash = hash,
                     .macro_remappings = macro_remappings,
                     .jsx = jsc_vm.bundler.options.jsx,
+                    .emit_decorator_metadata = jsc_vm.bundler.options.emit_decorator_metadata,
                     .virtual_source = virtual_source,
                     .dont_bundle_twice = true,
                     .allow_commonjs = true,
@@ -1434,9 +1444,9 @@ pub const ModuleLoader = struct {
                     .set_breakpoint_on_first_line = is_main and jsc_vm.debugger != null and jsc_vm.debugger.?.set_breakpoint_on_first_line and setBreakPointOnFirstLine(),
                 };
                 defer {
-                    if (should_close_input_file_fd and input_file_fd != 0) {
+                    if (should_close_input_file_fd and input_file_fd != bun.invalid_fd) {
                         _ = bun.sys.close(input_file_fd);
-                        input_file_fd = 0;
+                        input_file_fd = bun.invalid_fd;
                     }
                 }
 
@@ -1624,7 +1634,7 @@ pub const ModuleLoader = struct {
                 };
 
                 if (comptime Environment.dump_source) {
-                    try dumpSource(specifier, &printer);
+                    dumpSource(specifier, &printer);
                 }
 
                 var commonjs_exports = try bun.default_allocator.alloc(ZigString, parse_result.ast.commonjs_export_names.len);
@@ -1935,14 +1945,21 @@ pub const ModuleLoader = struct {
             }
         }
 
-        const synchronous_loader = loader orelse
-            // Unknown extensions are to be treated as file loader
-            if (jsc_vm.has_loaded or jsc_vm.is_in_preload)
-            options.Loader.file
-        else
-            // Unless it's potentially the main module
-            // This is important so that "bun run ./foo-i-have-no-extension" works
-            options.Loader.js;
+        const synchronous_loader = loader orelse loader: {
+            if (jsc_vm.has_loaded or jsc_vm.is_in_preload) {
+                // Extensionless files in this context are treated as the JS loader
+                if (path.name.ext.len == 0) {
+                    break :loader options.Loader.tsx;
+                }
+
+                // Unknown extensions are to be treated as file loader
+                break :loader options.Loader.file;
+            } else {
+                // Unless it's potentially the main module
+                // This is important so that "bun run ./foo-i-have-no-extension" works
+                break :loader options.Loader.tsx;
+            }
+        };
 
         var promise: ?*JSC.JSInternalPromise = null;
         ret.* = ErrorableResolvedSource.ok(
@@ -1970,6 +1987,7 @@ pub const ModuleLoader = struct {
                 if (err == error.PluginError) {
                     return null;
                 }
+
                 VirtualMachine.processFetchLog(globalObject, specifier_ptr.*, referrer.*, &log, ret, err);
                 return null;
             },
@@ -2141,7 +2159,7 @@ pub const ModuleLoader = struct {
         const path = Fs.Path.init(specifier);
 
         const loader = if (loader_ != ._none)
-            options.Loader.fromString(@tagName(loader_)).?
+            options.Loader.fromAPI(loader_)
         else
             jsc_vm.bundler.options.loaders.get(path.name.ext) orelse brk: {
                 if (strings.eqlLong(specifier, jsc_vm.main, true)) {
@@ -2160,7 +2178,7 @@ pub const ModuleLoader = struct {
                 referrer_slice.slice(),
                 specifier_ptr.*,
                 path,
-                options.Loader.fromString(@tagName(loader)).?,
+                loader,
                 &log,
                 &virtual_source,
                 ret,

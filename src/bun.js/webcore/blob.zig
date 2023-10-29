@@ -1040,7 +1040,10 @@ pub const Blob = struct {
                     break :brk result;
                 },
                 .err => |err| {
-                    return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                    return JSC.JSPromise.rejectedPromiseValue(
+                        globalThis,
+                        err.withPath(pathlike.path.slice()).toJSC(globalThis),
+                    );
                 },
             }
             unreachable;
@@ -1080,8 +1083,13 @@ pub const Blob = struct {
                             needs_async.* = true;
                             return .zero;
                         }
-
-                        return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                        if (comptime !needs_open) {
+                            return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                        }
+                        return JSC.JSPromise.rejectedPromiseValue(
+                            globalThis,
+                            err.withPath(pathlike.path.slice()).toJSC(globalThis),
+                        );
                     },
                 }
             }
@@ -1110,7 +1118,10 @@ pub const Blob = struct {
                     break :brk result;
                 },
                 .err => |err| {
-                    return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                    return JSC.JSPromise.rejectedPromiseValue(
+                        globalThis,
+                        err.withPath(pathlike.path.slice()).toJSC(globalThis),
+                    );
                 },
             }
             unreachable;
@@ -1145,7 +1156,13 @@ pub const Blob = struct {
                         needs_async.* = true;
                         return .zero;
                     }
-                    return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                    if (comptime !needs_open) {
+                        return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                    }
+                    return JSC.JSPromise.rejectedPromiseValue(
+                        globalThis,
+                        err.withPath(pathlike.path.slice()).toJSC(globalThis),
+                    );
                 },
             }
         }
@@ -1297,7 +1314,38 @@ pub const Blob = struct {
             return .undefined;
         };
 
-        const blob = Blob.findOrCreateFileFromPath(path, globalObject);
+        var blob = Blob.findOrCreateFileFromPath(path, globalObject);
+
+        if (arguments.len >= 2) {
+            const opts = arguments[1];
+
+            if (opts.isObject()) {
+                if (opts.getTruthy(globalObject, "type")) |file_type| {
+                    inner: {
+                        if (file_type.isString()) {
+                            var allocator = bun.default_allocator;
+                            var str = file_type.toSlice(globalObject, bun.default_allocator);
+                            defer str.deinit();
+                            const slice = str.slice();
+                            if (!strings.isAllASCII(slice)) {
+                                break :inner;
+                            }
+                            blob.content_type_was_set = true;
+                            if (vm.mimeType(str.slice())) |entry| {
+                                blob.content_type = entry.value;
+                                break :inner;
+                            }
+                            var content_type_buf = allocator.alloc(u8, slice.len) catch unreachable;
+                            blob.content_type = strings.copyLowercase(slice, content_type_buf);
+                            blob.content_type_allocated = true;
+                        }
+                    }
+                }
+                if (opts.getTruthy(globalObject, "lastModified")) |last_modified| {
+                    blob.last_modified = last_modified.coerce(f64, globalObject);
+                }
+            }
+        }
 
         var ptr = bun.default_allocator.create(Blob) catch unreachable;
         ptr.* = blob;
@@ -2289,7 +2337,7 @@ pub const Blob = struct {
                                 this.source_fd = 0;
                             }
 
-                            this.system_error = errno.toSystemError();
+                            this.system_error = errno.withPath(this.destination_file_store.pathlike.path.slice()).toSystemError();
                             return AsyncIO.asError(errno.errno);
                         },
                     };
@@ -2739,17 +2787,7 @@ pub const Blob = struct {
         value: JSC.JSValue,
         global: *JSGlobalObject,
     ) JSC.JSValue {
-        if (value.isError()) {
-            return JSC.JSPromise.rejectedPromiseValue(global, value);
-        }
-
-        if (value.jsType() == .JSPromise)
-            return value;
-
-        return JSPromise.resolvedPromiseValue(
-            global,
-            value,
-        );
+        return JSC.JSPromise.wrap(global, value);
     }
 
     pub fn getText(
@@ -3013,12 +3051,13 @@ pub const Blob = struct {
             }
         }
 
+        const offset = this.offset +| @as(SizeType, @intCast(relativeStart));
         const len = @as(SizeType, @intCast(@max(relativeEnd -| relativeStart, 0)));
 
         // This copies over the is_all_ascii flag
         // which is okay because this will only be a <= slice
         var blob = this.dupe();
-        blob.offset = @as(SizeType, @intCast(relativeStart));
+        blob.offset = offset;
         blob.size = len;
 
         // infer the content type if it was not specified
@@ -3673,11 +3712,7 @@ pub const Blob = struct {
             if (comptime lifetime != .temporary) this.setIsASCIIFlag(true);
         }
 
-        if (comptime lifetime == .temporary) {
-            return ZigString.init(buf).toJSONObject(global);
-        } else {
-            return ZigString.init(buf).toJSONObject(global);
-        }
+        return ZigString.init(buf).toJSONObject(global);
     }
 
     pub fn toFormDataWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u8, comptime _: Lifetime) JSValue {

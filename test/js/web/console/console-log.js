@@ -58,3 +58,21 @@ infinteLoop.bar = infinteLoop;
 console.log(infinteLoop, "am");
 
 console.log(new Array(4).fill({}));
+const nestedObject = {
+  level1: {
+    level2: {
+      level3: {
+        level4: {
+          level5: {
+            name: "Deeply nested object",
+          },
+        },
+      },
+    },
+  },
+};
+console.log(nestedObject);
+console.dir({ 1: { 2: { 3: 3 } } }, { depth: 0, colors: false }, "Some ignored arg");
+console.dir({ 1: { 2: { 3: 3 } } }, { depth: -1, colors: false }, "Some ignored arg");
+console.dir({ 1: { 2: { 3: 3 } } }, { depth: 1.2, colors: false }, "Some ignored arg");
+console.dir({ 1: { 2: { 3: 3 } } }, { depth: Infinity, colors: false }, "Some ignored arg");

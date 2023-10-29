@@ -29,6 +29,7 @@ int default_is_low_prio_handler(struct us_socket_t *s) {
 unsigned short us_socket_context_timestamp(int ssl, struct us_socket_context_t *context) {
     return context->timestamp;
 }
+int us_internal_raw_root_certs(struct us_cert_string_t** out);
 int us_raw_root_certs(struct us_cert_string_t**out){
     return us_internal_raw_root_certs(out);
 }
@@ -565,10 +566,10 @@ void *us_socket_context_ext(int ssl, struct us_socket_context_t *context) {
 }
 
 
-void us_socket_context_on_handshake(int ssl, struct us_socket_context_t *context, void (*on_handshake)(struct us_socket_context_t *, int success, struct us_bun_verify_error_t verify_error, void* custom_data), void* custom_data) {
+void us_socket_context_on_handshake(int ssl, struct us_socket_context_t *context, void (*on_handshake)(struct us_socket_t *, int success, struct us_bun_verify_error_t verify_error, void* custom_data), void* custom_data) {
 #ifndef LIBUS_NO_SSL
     if (ssl) {
-        us_internal_on_ssl_handshake((struct us_internal_ssl_socket_context_t *) context, on_handshake, custom_data);
+        us_internal_on_ssl_handshake((struct us_internal_ssl_socket_context_t *) context, (us_internal_on_handshake_t)on_handshake, custom_data);
         return;
     }
 #endif

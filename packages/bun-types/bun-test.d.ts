@@ -27,6 +27,38 @@ declare module "bun:test" {
 
   export const mock: {
     <T extends AnyFunction>(Function: T): Mock<T>;
+
+    /**
+     * Replace the module `id` with the return value of `factory`.
+     *
+     * This is useful for mocking modules.
+     *
+     * @param id module ID to mock
+     * @param factory a function returning an object that will be used as the exports of the mocked module
+     *
+     * @example
+     * ## Example
+     * ```ts
+     * import { mock } from "bun:test";
+     *
+     * mock.module("fs/promises", () => {
+     *  return {
+     *    readFile: () => Promise.resolve("hello world"),
+     *  };
+     * });
+     *
+     * import { readFile } from "fs/promises";
+     *
+     * console.log(await readFile("hello.txt", "utf8")); // hello world
+     * ```
+     *
+     * ## More notes
+     *
+     * If the module is already loaded, exports are overwritten with the return
+     * value of `factory`. If the export didn't exist before, it will not be
+     * added to existing import statements. This is due to how ESM works.
+     */
+    module(id: string, factory: () => any): void | Promise<void>;
   };
 
   /**
@@ -114,7 +146,7 @@ declare module "bun:test" {
   export function spyOn<T extends object, K extends keyof T>(
     obj: T,
     methodOrPropertyValue: K,
-  ): Mock<() => T[K]>;
+  ): Mock<T[K] extends AnyFunction ? T[K] : never>;
 
   /**
    * Describes a group of related tests.
@@ -174,18 +206,26 @@ declare module "bun:test" {
      *
      * @param table Array of Arrays with the arguments that are passed into the test fn for each row.
      */
-    each<T extends ReadonlyArray<unknown>>(
+
+    each<T extends Readonly<[any, ...any[]]>>(
       table: ReadonlyArray<T>,
     ): (
       label: string,
-      fn: (...args: T) => void | Promise<unknown>,
+      fn: (...args: [...T]) => void | Promise<unknown>,
+      options?: number | TestOptions,
+    ) => void;
+    each<T extends Array<any>>(
+      table: ReadonlyArray<T>,
+    ): (
+      label: string,
+      fn: (...args: Readonly<T>) => void | Promise<unknown>,
       options?: number | TestOptions,
     ) => void;
     each<T>(
-      table: ReadonlyArray<T>,
+      table: Array<T>,
     ): (
       label: string,
-      fn: (arg: T) => void | Promise<unknown>,
+      fn: (...args: T[]) => void | Promise<unknown>,
       options?: number | TestOptions,
     ) => void;
   };
@@ -419,18 +459,25 @@ declare module "bun:test" {
      *
      * @param table Array of Arrays with the arguments that are passed into the test fn for each row.
      */
-    each<T extends ReadonlyArray<unknown>>(
+    each<T extends Readonly<[any, ...any[]]>>(
       table: ReadonlyArray<T>,
     ): (
       label: string,
-      fn: (...args: T) => void | Promise<unknown>,
+      fn: (...args: [...T]) => void | Promise<unknown>,
+      options?: number | TestOptions,
+    ) => void;
+    each<T extends Array<any>>(
+      table: ReadonlyArray<T>,
+    ): (
+      label: string,
+      fn: (...args: Readonly<T>) => void | Promise<unknown>,
       options?: number | TestOptions,
     ) => void;
     each<T>(
-      table: ReadonlyArray<T>,
+      table: Array<T>,
     ): (
       label: string,
-      fn: (arg: T, done: (err?: unknown) => void) => void | Promise<unknown>,
+      fn: (...args: T[]) => void | Promise<unknown>,
       options?: number | TestOptions,
     ) => void;
   };
@@ -464,13 +511,13 @@ declare module "bun:test" {
    * @param actual the actual value
    */
   export const expect: {
-    (actual?: unknown): Expect;
+    <T = unknown>(actual?: T): Expect<T>;
     any: (
       constructor: ((..._: any[]) => any) | { new (..._: any[]): any },
     ) => Expect;
     anything: () => Expect;
-    stringContaining: (str: string) => Expect;
-    stringMatching: (regex: RegExp | string) => Expect;
+    stringContaining: (str: string) => Expect<string>;
+    stringMatching: <T extends RegExp | string>(regex: T) => Expect<T>;
   };
   /**
    * Asserts that a value matches some criteria.
@@ -967,6 +1014,16 @@ declare module "bun:test" {
      * @param end the end number (exclusive)
      */
     toBeWithin(start: number, end: number): void;
+    /**
+     * Asserts that a value is equal to the expected string, ignoring any whitespace.
+     *
+     * @example
+     * expect(" foo ").toEqualIgnoringWhitespace("foo");
+     * expect("bar").toEqualIgnoringWhitespace(" bar ");
+     *
+     * @param expected the expected string
+     */
+    toEqualIgnoringWhitespace(expected: string): void;
     /**
      * Asserts that a value is a `symbol`.
      *

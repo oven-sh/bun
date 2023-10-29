@@ -3,8 +3,10 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, beforeEach } from
 import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { mkfifo } from "mkfifo";
 import { tmpdir } from "os";
+import { gzipSync } from "zlib";
 import { join } from "path";
 import { gc, withoutAggressiveGC, gcTick } from "harness";
+import net from "net";
 
 const tmp_dir = mkdtempSync(join(realpathSync(tmpdir()), "fetch.test"));
 
@@ -343,6 +345,27 @@ describe("Headers", () => {
     });
     expect(headers.count).toBe(5);
     expect(headers.getAll("set-cookie")).toEqual(["foo=bar; Path=/; HttpOnly"]);
+  });
+
+  it("presence of content-encoding header(issue #5668)", async () => {
+    startServer({
+      fetch(req) {
+        const content = gzipSync(JSON.stringify({ message: "Hello world" }));
+        return new Response(content, {
+          status: 200,
+          headers: {
+            "content-encoding": "gzip",
+            "content-type": "application/json",
+          },
+        });
+      },
+    });
+    const result = await fetch(`http://${server.hostname}:${server.port}/`);
+    const value = result.headers.get("content-encoding");
+    const body = await result.json();
+    expect(value).toBe("gzip");
+    expect(body).toBeDefined();
+    expect(body.message).toBe("Hello world");
   });
 
   it(".getSetCookie() with array", () => {
@@ -1240,6 +1263,16 @@ describe("Request", () => {
     expect(req.signal.aborted).toBe(true);
   });
 
+  it("copies method (#6144)", () => {
+    const request = new Request("http://localhost:1337/test", {
+      method: "POST",
+    });
+    const new_req = new Request(request, {
+      body: JSON.stringify({ message: "Hello world" }),
+    });
+    expect(new_req.method).toBe("POST");
+  });
+
   it("cloned signal", async () => {
     gc();
     const controller = new AbortController();
@@ -1414,4 +1447,372 @@ it("cloned response headers are independent after accessing", () => {
   const cloned = response.clone();
   cloned.headers.set("content-type", "text/plain");
   expect(response.headers.get("content-type")).toBe("text/html; charset=utf-8");
+});
+
+it("should work with http 100 continue", async () => {
+  let server: net.Server | undefined;
+  try {
+    server = net.createServer(socket => {
+      socket.on("data", data => {
+        const lines = data.toString().split("\r\n");
+        for (const line of lines) {
+          if (line.length == 0) {
+            socket.write("HTTP/1.1 100 Continue\r\n\r\n");
+            socket.write("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nHello, World!");
+            break;
+          }
+        }
+      });
+    });
+
+    const { promise: start, resolve } = Promise.withResolvers();
+    server.listen(8080, resolve);
+
+    await start;
+
+    const address = server.address() as net.AddressInfo;
+    const result = await fetch(`http://localhost:${address.port}`).then(r => r.text());
+    expect(result).toBe("Hello, World!");
+  } finally {
+    server?.close();
+  }
+});
+
+it("should work with http 100 continue on the same buffer", async () => {
+  let server: net.Server | undefined;
+  try {
+    server = net.createServer(socket => {
+      socket.on("data", data => {
+        const lines = data.toString().split("\r\n");
+        for (const line of lines) {
+          if (line.length == 0) {
+            socket.write(
+              "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nHello, World!",
+            );
+            break;
+          }
+        }
+      });
+    });
+
+    const { promise: start, resolve } = Promise.withResolvers();
+    server.listen(8080, resolve);
+
+    await start;
+
+    const address = server.address() as net.AddressInfo;
+    const result = await fetch(`http://localhost:${address.port}`).then(r => r.text());
+    expect(result).toBe("Hello, World!");
+  } finally {
+    server?.close();
+  }
+});
+
+describe("should strip headers", () => {
+  it("status code 303", async () => {
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request: Request) {
+        if (request.url.endsWith("/redirect")) {
+          return new Response("hello", {
+            headers: {
+              ...request.headers,
+              "Location": "/redirected",
+            },
+            status: 303,
+          });
+        }
+
+        return new Response("hello", {
+          headers: request.headers,
+        });
+      },
+    });
+
+    const { headers, url, redirected } = await fetch(`http://${server.hostname}:${server.port}/redirect`, {
+      method: "POST",
+      headers: {
+        "I-Am-Here": "yes",
+        "Content-Language": "This should be stripped",
+      },
+    });
+
+    expect(headers.get("I-Am-Here")).toBe("yes");
+    expect(headers.get("Content-Language")).toBeNull();
+    expect(url).toEndWith("/redirected");
+    expect(redirected).toBe(true);
+    server.stop(true);
+  });
+
+  it("cross-origin status code 302", async () => {
+    const server1 = Bun.serve({
+      port: 0,
+      async fetch(request: Request) {
+        if (request.url.endsWith("/redirect")) {
+          return new Response("hello", {
+            headers: {
+              ...request.headers,
+              "Location": `http://${server2.hostname}:${server2.port}/redirected`,
+            },
+            status: 302,
+          });
+        }
+
+        return new Response("hello", {
+          headers: request.headers,
+        });
+      },
+    });
+
+    const server2 = Bun.serve({
+      port: 0,
+      async fetch(request: Request, server) {
+        if (request.url.endsWith("/redirect")) {
+          return new Response("hello", {
+            headers: {
+              ...request.headers,
+              "Location": `http://${server.hostname}:${server.port}/redirected`,
+            },
+            status: 302,
+          });
+        }
+
+        return new Response("hello", {
+          headers: request.headers,
+        });
+      },
+    });
+
+    const { headers, url, redirected } = await fetch(`http://${server1.hostname}:${server1.port}/redirect`, {
+      method: "GET",
+      headers: {
+        "Authorization": "yes",
+      },
+    });
+
+    expect(headers.get("Authorization")).toBeNull();
+    expect(url).toEndWith("/redirected");
+    expect(redirected).toBe(true);
+    server1.stop(true);
+    server2.stop(true);
+  });
+});
+
+it("same-origin status code 302 should not strip headers", async () => {
+  const server = Bun.serve({
+    port: 0,
+    async fetch(request: Request, server) {
+      if (request.url.endsWith("/redirect")) {
+        return new Response("hello", {
+          headers: {
+            ...request.headers,
+            "Location": `http://${server.hostname}:${server.port}/redirected`,
+          },
+          status: 302,
+        });
+      }
+
+      return new Response("hello", {
+        headers: request.headers,
+      });
+    },
+  });
+
+  const { headers, url, redirected } = await fetch(`http://${server.hostname}:${server.port}/redirect`, {
+    method: "GET",
+    headers: {
+      "Authorization": "yes",
+    },
+  });
+
+  expect(headers.get("Authorization")).toEqual("yes");
+  expect(url).toEndWith("/redirected");
+  expect(redirected).toBe(true);
+  server.stop(true);
+});
+
+describe("should handle relative location in the redirect, issue#5635", () => {
+  var server: Server;
+  beforeAll(async () => {
+    server = Bun.serve({
+      port: 0,
+      async fetch(request: Request) {
+        return new Response("Not Found", {
+          status: 404,
+        });
+      },
+    });
+  });
+  afterAll(() => {
+    server.stop(true);
+  });
+
+  it.each([
+    ["/a/b", "/c", "/c"],
+    ["/a/b", "c", "/a/c"],
+    ["/a/b", "/c/d", "/c/d"],
+    ["/a/b", "c/d", "/a/c/d"],
+    ["/a/b", "../c", "/c"],
+    ["/a/b", "../c/d", "/c/d"],
+    ["/a/b", "../../../c", "/c"],
+    // slash
+    ["/a/b/", "/c", "/c"],
+    ["/a/b/", "c", "/a/b/c"],
+    ["/a/b/", "/c/d", "/c/d"],
+    ["/a/b/", "c/d", "/a/b/c/d"],
+    ["/a/b/", "../c", "/a/c"],
+    ["/a/b/", "../c/d", "/a/c/d"],
+    ["/a/b/", "../../../c", "/c"],
+  ])("('%s', '%s')", async (pathname, location, expected) => {
+    server.reload({
+      async fetch(request: Request) {
+        const url = new URL(request.url);
+        if (url.pathname == pathname) {
+          return new Response("redirecting", {
+            headers: {
+              "Location": location,
+            },
+            status: 302,
+          });
+        } else if (url.pathname == expected) {
+          return new Response("Fine.");
+        }
+        return new Response("Not Found", {
+          status: 404,
+        });
+      },
+    });
+
+    const resp = await fetch(`http://${server.hostname}:${server.port}${pathname}`);
+    expect(resp.redirected).toBe(true);
+    expect(new URL(resp.url).pathname).toStrictEqual(expected);
+    expect(resp.status).toBe(200);
+    expect(await resp.text()).toBe("Fine.");
+  });
+});
+
+it("should throw RedirectURLTooLong when location is too long", async () => {
+  const server = Bun.serve({
+    port: 0,
+    async fetch(request: Request) {
+      gc();
+      const url = new URL(request.url);
+      if (url.pathname == "/redirect") {
+        return new Response("redirecting", {
+          headers: {
+            "Location": "B".repeat(8193),
+          },
+          status: 302,
+        });
+      }
+      return new Response("Not Found", {
+        status: 404,
+      });
+    },
+  });
+
+  let err = undefined;
+  try {
+    gc();
+    const resp = await fetch(`http://${server.hostname}:${server.port}/redirect`);
+  } catch (error) {
+    gc();
+    err = error;
+  }
+  expect(err).not.toBeUndefined();
+  expect(err).toBeInstanceOf(Error);
+  expect(err.code).toStrictEqual("RedirectURLTooLong");
+  server.stop(true);
+});
+
+it("304 not modified with missing content-length does not cause a request timeout", async () => {
+  const server = await Bun.listen({
+    socket: {
+      open(socket) {
+        socket.write("HTTP/1.1 304 Not Modified\r\n\r\n");
+        socket.flush();
+        setTimeout(() => {
+          socket.end();
+        }, 9999).unref();
+      },
+      data() {},
+      close() {},
+    },
+    port: 0,
+    hostname: "localhost",
+  });
+
+  const response = await fetch(`http://${server.hostname}:${server.port}/`);
+  expect(response.status).toBe(304);
+  expect(await response.arrayBuffer()).toHaveLength(0);
+  server.stop(true);
+});
+
+it("304 not modified with missing content-length and connection close does not cause a request timeout", async () => {
+  const server = await Bun.listen({
+    socket: {
+      open(socket) {
+        socket.write("HTTP/1.1 304 Not Modified\r\nConnection: close\r\n\r\n");
+        socket.flush();
+        setTimeout(() => {
+          socket.end();
+        }, 9999).unref();
+      },
+      data() {},
+      close() {},
+    },
+    port: 0,
+    hostname: "localhost",
+  });
+
+  const response = await fetch(`http://${server.hostname}:${server.port}/`);
+  expect(response.status).toBe(304);
+  expect(await response.arrayBuffer()).toHaveLength(0);
+  server.stop(true);
+});
+
+it("304 not modified with content-length 0 and connection close does not cause a request timeout", async () => {
+  const server = await Bun.listen({
+    socket: {
+      open(socket) {
+        socket.write("HTTP/1.1 304 Not Modified\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+        socket.flush();
+        setTimeout(() => {
+          socket.end();
+        }, 9999).unref();
+      },
+      data() {},
+      close() {},
+    },
+    port: 0,
+    hostname: "localhost",
+  });
+
+  const response = await fetch(`http://${server.hostname}:${server.port}/`);
+  expect(response.status).toBe(304);
+  expect(await response.arrayBuffer()).toHaveLength(0);
+  server.stop(true);
+});
+
+it("304 not modified with 0 content-length does not cause a request timeout", async () => {
+  const server = await Bun.listen({
+    socket: {
+      open(socket) {
+        socket.write("HTTP/1.1 304 Not Modified\r\nContent-Length: 0\r\n\r\n");
+        socket.flush();
+        setTimeout(() => {
+          socket.end();
+        }, 9999).unref();
+      },
+      data() {},
+      close() {},
+    },
+    port: 0,
+    hostname: "localhost",
+  });
+
+  const response = await fetch(`http://${server.hostname}:${server.port}/`);
+  expect(response.status).toBe(304);
+  expect(await response.arrayBuffer()).toHaveLength(0);
+  server.stop(true);
 });

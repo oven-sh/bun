@@ -183,7 +183,7 @@ const currentFile = import.meta.url;
 Bun.openInEditor(currentFile);
 ```
 
-You can override this via the `debug.editor` setting in your [`bunfig.toml`](/docs/runtime/configuration)
+You can override this via the `debug.editor` setting in your [`bunfig.toml`](/docs/runtime/bunfig)
 
 ```toml-diff#bunfig.toml
 + [debug]
@@ -398,7 +398,7 @@ buf; // => Uint8Array(25)
 compressed; // => Uint8Array(10)
 ```
 
-The second argument supports the same set of configuration options as [`Bun.gzipSync`](#bun.gzipSync).
+The second argument supports the same set of configuration options as [`Bun.gzipSync`](#bungzipsync).
 
 ## `Bun.inflateSync()`
 

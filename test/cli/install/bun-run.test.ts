@@ -14,7 +14,7 @@ beforeEach(async () => {
   );
 });
 afterEach(async () => {
-  await rm(run_dir, { force: true, recursive: true });
+  // await rm(run_dir, { force: true, recursive: true });
 });
 
 for (let withRun of [false, true]) {
@@ -87,38 +87,81 @@ for (let withRun of [false, true]) {
         expect(exitCode).toBe(0);
       });
 
-      it("valid tsconfig.json with invalid extends doesn't crash", async () => {
-        await writeFile(
-          join(run_dir, "package.json"),
-          JSON.stringify({
-            name: "test",
-            version: "0.0.0",
-            scripts: {},
-          }),
-        );
-        await writeFile(
-          join(run_dir, "tsconfig.json"),
-          JSON.stringify(
-            {
-              extends: "!!!bad!!!",
-            },
-            null,
-            2,
-          ),
-        );
-
-        await writeFile(join(run_dir, "index.js"), "console.log('hi')");
-
+      it("--silent omits error messages", async () => {
         const { stdout, stderr, exitCode } = spawnSync({
-          cmd: [bunExe(), "--silent", withRun ? "run" : "", "./index.js"].filter(Boolean),
+          cmd: [bunExe(), "run", "--silent", "bash", "-c", "exit 1"],
           cwd: run_dir,
           env: bunEnv,
         });
 
-        expect(stderr.toString().trim()).toContain("FileNotFound loading tsconfig.json extends");
-        expect(stdout.toString()).toBe("hi\n");
-        expect(exitCode).toBe(0);
+        expect(stderr.toString()).toBe("");
+        expect(stdout.toString()).toBe("");
+        expect(exitCode).toBe(1);
       });
+
+      it("no --silent includes error messages", async () => {
+        const { stdout, stderr, exitCode } = spawnSync({
+          cmd: [bunExe(), "run", "bash", "-c", "exit 1"],
+          cwd: run_dir,
+          env: bunEnv,
+        });
+
+        expect(stderr.toString()).toStartWith('error: "bash" exited with code 1');
+        expect(exitCode).toBe(1);
+      });
+
+      for (let withLogLevel of [true, false]) {
+        it(
+          "valid tsconfig.json with invalid extends doesn't crash" + (withLogLevel ? " (log level debug)" : ""),
+          async () => {
+            await writeFile(
+              join(run_dir, "package.json"),
+              JSON.stringify({
+                name: "test",
+                version: "0.0.0",
+                scripts: {},
+              }),
+            );
+            if (withLogLevel)
+              await writeFile(
+                join(run_dir, "bunfig.toml"),
+                `
+logLevel = "debug"
+          `,
+              );
+
+            await writeFile(
+              join(run_dir, "tsconfig.json"),
+              JSON.stringify(
+                {
+                  extends: "!!!bad!!!",
+                },
+                null,
+                2,
+              ),
+            );
+
+            await writeFile(join(run_dir, "index.js"), "console.log('hi')");
+
+            const { stdout, stderr, exitCode } = spawnSync({
+              // TODO: figure out why -c is necessary here.
+              cmd: [bunExe(), withRun ? "run" : "", "-c=" + join(run_dir, "bunfig.toml"), "./index.js"].filter(Boolean),
+              cwd: run_dir,
+              env: bunEnv,
+            });
+            console.log(run_dir);
+            if (withLogLevel) {
+              expect(stderr.toString().trim()).toContain("FileNotFound loading tsconfig.json extends");
+            } else {
+              expect(stderr.toString().trim()).not.toContain("FileNotFound loading tsconfig.json extends");
+            }
+
+            expect(stdout.toString()).toBe("hi\n");
+            expect(exitCode).toBe(0);
+            await rm(join(run_dir, "bunfig.toml"), { force: true });
+          },
+        );
+      }
 
       it("falling back to index with no package.json", async () => {
         await writeFile(join(run_dir, "index.ts"), "console.log('Hello, world!');");
@@ -269,7 +312,7 @@ for (const entry of await decompress(Buffer.from(buffer))) {
   });
   expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
-  expect(err2).toBe("");
+  if (err2) throw new Error(err2);
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("decompress");
   expect(await readdirSorted(join(run_dir, ".cache", "decompress"))).toEqual(["4.2.1"]);

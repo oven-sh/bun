@@ -592,7 +592,7 @@ pub const PackageJSON = struct {
         // So we cannot free these
         const allocator = bun.fs_allocator;
 
-        const entry = r.caches.fs.readFileWithAllocator(
+        var entry = r.caches.fs.readFileWithAllocator(
             allocator,
             r.fs,
             package_json_path,
@@ -606,12 +606,7 @@ pub const PackageJSON = struct {
 
             return null;
         };
-
-        defer {
-            if (entry.fd != 0) {
-                _ = bun.sys.close(entry.fd);
-            }
-        }
+        defer _ = entry.closeFD();
 
         if (r.debug_logs) |*debug| {
             debug.addNoteFmt("The file \"{s}\" exists", .{package_json_path});
@@ -833,7 +828,15 @@ pub const PackageJSON = struct {
 
                         if (tag == .npm) {
                             const sliced = Semver.SlicedString.init(package_json.version, package_json.version);
-                            if (Dependency.parseWithTag(allocator, String.init(package_json.name, package_json.name), package_json.version, .npm, &sliced, r.log)) |dependency_version| {
+                            if (Dependency.parseWithTag(
+                                allocator,
+                                String.init(package_json.name, package_json.name),
+                                String.Builder.stringHash(package_json.name),
+                                package_json.version,
+                                .npm,
+                                &sliced,
+                                r.log,
+                            )) |dependency_version| {
                                 if (dependency_version.value.npm.version.isExact()) {
                                     if (pm.lockfile.resolve(package_json.name, dependency_version)) |resolved| {
                                         package_json.package_manager_package_id = resolved;
@@ -945,6 +948,7 @@ pub const PackageJSON = struct {
                                 for (group_obj.properties.slice()) |*prop| {
                                     const name_prop = prop.key orelse continue;
                                     const name_str = name_prop.asString(allocator) orelse continue;
+                                    const name_hash = String.Builder.stringHash(name_str);
                                     const name = String.init(name_str, name_str);
                                     const version_value = prop.value orelse continue;
                                     const version_str = version_value.asString(allocator) orelse continue;
@@ -953,6 +957,7 @@ pub const PackageJSON = struct {
                                     if (Dependency.parse(
                                         allocator,
                                         name,
+                                        name_hash,
                                         version_str,
                                         &sliced_str,
                                         r.log,
@@ -960,7 +965,7 @@ pub const PackageJSON = struct {
                                         const dependency = Dependency{
                                             .name = name,
                                             .version = dependency_version,
-                                            .name_hash = String.Builder.stringHash(name_str),
+                                            .name_hash = name_hash,
                                             .behavior = group.behavior,
                                         };
                                         package_json.dependencies.map.putAssumeCapacityContext(

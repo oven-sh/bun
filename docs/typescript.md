@@ -31,7 +31,7 @@ Bun supports things like top-level await, JSX, and extensioned `.ts` imports, wh
     "types": ["bun-types"],
 
     // enable latest features
-    "lib": ["esnext"],
+    "lib": ["ESNext"],
     "module": "esnext",
     "target": "esnext",
 
@@ -45,12 +45,14 @@ Bun supports things like top-level await, JSX, and extensioned `.ts` imports, wh
 
     "jsx": "react-jsx", // support JSX
     "allowJs": true, // allow importing `.js` from `.ts`
-    "esModuleInterop": true, // allow default imports for CommonJS modules
 
     // best practices
     "strict": true,
     "forceConsistentCasingInFileNames": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "composite": true,
+    "downlevelIteration": true,
+    "allowSyntheticDefaultImports": true
   }
 }
 ```

@@ -247,7 +247,7 @@ const CreateOptions = struct {
 const BUN_CREATE_DIR = ".bun-create";
 var home_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 pub const CreateCommand = struct {
-    pub fn exec(ctx: Command.Context, _: []const []const u8) !void {
+    pub fn exec(ctx: Command.Context, example_tag: Example.Tag, template: []const u8) !void {
         @setCold(true);
 
         Global.configureAllocator(.{ .long_running = false });
@@ -269,104 +269,6 @@ pub const CreateCommand = struct {
         };
 
         env_loader.loadProcess();
-
-        var example_tag = Example.Tag.unknown;
-
-        var unsupported_packages = UnsupportedPackages{};
-        const template = brk: {
-            var positional = positionals[0];
-
-            if (!std.fs.path.isAbsolute(positional)) {
-                outer: {
-                    if (env_loader.map.get("BUN_CREATE_DIR")) |home_dir| {
-                        var parts = [_]string{ home_dir, positional };
-                        var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                        home_dir_buf[outdir_path.len] = 0;
-                        var outdir_path_ = home_dir_buf[0..outdir_path.len :0];
-                        std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
-                        if (create_options.verbose) {
-                            Output.prettyErrorln("reading from {s}", .{outdir_path});
-                        }
-                        example_tag = Example.Tag.local_folder;
-                        break :brk outdir_path;
-                    }
-                }
-
-                outer: {
-                    var parts = [_]string{ filesystem.top_level_dir, BUN_CREATE_DIR, positional };
-                    var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                    home_dir_buf[outdir_path.len] = 0;
-                    var outdir_path_ = home_dir_buf[0..outdir_path.len :0];
-                    std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
-                    if (create_options.verbose) {
-                        Output.prettyErrorln("reading from {s}", .{outdir_path});
-                    }
-                    example_tag = Example.Tag.local_folder;
-                    break :brk outdir_path;
-                }
-
-                outer: {
-                    if (env_loader.map.get("HOME")) |home_dir| {
-                        var parts = [_]string{ home_dir, BUN_CREATE_DIR, positional };
-                        var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                        home_dir_buf[outdir_path.len] = 0;
-                        var outdir_path_ = home_dir_buf[0..outdir_path.len :0];
-                        std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
-                        if (create_options.verbose) {
-                            Output.prettyErrorln("reading from {s}", .{outdir_path});
-                        }
-                        example_tag = Example.Tag.local_folder;
-                        break :brk outdir_path;
-                    }
-                }
-
-                if (std.fs.path.isAbsolute(positional)) {
-                    example_tag = Example.Tag.local_folder;
-                    break :brk positional;
-                }
-
-                var repo_begin: usize = std.math.maxInt(usize);
-                // "https://github.com/foo/bar"
-                if (strings.startsWith(positional, "github.com/")) {
-                    repo_begin = "github.com/".len;
-                }
-
-                if (strings.startsWith(positional, "https://github.com/")) {
-                    repo_begin = "https://github.com/".len;
-                }
-
-                if (repo_begin == std.math.maxInt(usize) and positional[0] != '/') {
-                    if (std.mem.indexOfScalar(u8, positional, '/')) |first_slash_index| {
-                        if (std.mem.indexOfScalar(u8, positional, '/')) |last_slash_index| {
-                            if (first_slash_index == last_slash_index and
-                                positional[last_slash_index..].len > 0 and
-                                last_slash_index > 0)
-                            {
-                                repo_begin = 0;
-                            }
-                        }
-                    }
-                }
-
-                if (repo_begin != std.math.maxInt(usize)) {
-                    const remainder = positional[repo_begin..];
-                    if (std.mem.indexOfScalar(u8, remainder, '/')) |i| {
-                        if (i > 0 and remainder[i + 1 ..].len > 0) {
-                            if (std.mem.indexOfScalar(u8, remainder[i + 1 ..], '/')) |last_slash| {
-                                example_tag = Example.Tag.github_repository;
-                                break :brk std.mem.trim(u8, remainder[0 .. i + 1 + last_slash], "# \r\t");
-                            } else {
-                                example_tag = Example.Tag.github_repository;
-                                break :brk std.mem.trim(u8, remainder, "# \r\t");
-                            }
-                        }
-                    }
-                }
-            }
-
-            example_tag = Example.Tag.official;
-            break :brk positional;
-        };
 
         const dirname: string = brk: {
             if (positionals.len == 1) {
@@ -700,7 +602,12 @@ pub const CreateCommand = struct {
         {
             var parent_dir = try std.fs.openDirAbsolute(destination, .{});
             defer parent_dir.close();
-            std.os.linkat(parent_dir.fd, "gitignore", parent_dir.fd, ".gitignore", 0) catch {};
+            if (comptime Environment.isWindows) {
+                try parent_dir.copyFile("gitignore", parent_dir, ".gitignore", .{});
+            } else {
+                std.os.linkat(parent_dir.fd, "gitignore", parent_dir.fd, ".gitignore", 0) catch {};
+            }
+
             std.os.unlinkat(
                 parent_dir.fd,
                 "gitignore",
@@ -753,55 +660,55 @@ pub const CreateCommand = struct {
                     }
                 }
 
-                const Needs = struct {
-                    bun_bun_for_nextjs: bool = false,
-                    bun_macro_relay: bool = false,
-                    bun_macro_relay_dependency: bool = false,
-                    bun_framework_next: bool = false,
-                    react_refresh: bool = false,
-                };
-                var needs = Needs{};
-                var has_relay = false;
-                var has_bun_framework_next = false;
-                var has_react_refresh = false;
-                var has_bun_macro_relay = false;
-                var has_react = false;
-                var has_react_scripts = false;
+                // const Needs = struct {
+                //     bun_bun_for_nextjs: bool = false,
+                //     bun_macro_relay: bool = false,
+                //     bun_macro_relay_dependency: bool = false,
+                //     bun_framework_next: bool = false,
+                //     react_refresh: bool = false,
+                // };
+                // var needs = Needs{};
+                // var has_relay = false;
+                // var has_bun_framework_next = false;
+                // var has_react_refresh = false;
+                // var has_bun_macro_relay = false;
+                // var has_react = false;
+                // var has_react_scripts = false;
 
-                const Prune = struct {
-                    pub const packages = ComptimeStringMap(void, .{
-                        .{ "@parcel/babel-preset", {} },
-                        .{ "@parcel/core", {} },
-                        .{ "@swc/cli", {} },
-                        .{ "@swc/core", {} },
-                        .{ "@webpack/cli", {} },
-                        .{ "react-scripts", {} },
-                        .{ "webpack-cli", {} },
-                        .{ "webpack", {} },
+                // const Prune = struct {
+                //     pub const packages = ComptimeStringMap(void, .{
+                //         .{ "@parcel/babel-preset", {} },
+                //         .{ "@parcel/core", {} },
+                //         .{ "@swc/cli", {} },
+                //         .{ "@swc/core", {} },
+                //         .{ "@webpack/cli", {} },
+                //         .{ "react-scripts", {} },
+                //         .{ "webpack-cli", {} },
+                //         .{ "webpack", {} },
 
-                        // one of cosmic config's imports breaks stuff
-                        .{ "cosmiconfig", {} },
-                    });
-                    pub var prune_count: u16 = 0;
+                //         // one of cosmic config's imports breaks stuff
+                //         .{ "cosmiconfig", {} },
+                //     });
+                //     pub var prune_count: u16 = 0;
 
-                    pub fn prune(list: []js_ast.G.Property) []js_ast.G.Property {
-                        var i: usize = 0;
-                        var out_i: usize = 0;
-                        while (i < list.len) : (i += 1) {
-                            const key = list[i].key.?.data.e_string.data;
+                //     pub fn prune(list: []js_ast.G.Property) []js_ast.G.Property {
+                //         var i: usize = 0;
+                //         var out_i: usize = 0;
+                //         while (i < list.len) : (i += 1) {
+                //             const key = list[i].key.?.data.e_string.data;
 
-                            const do_prune = packages.has(key);
-                            prune_count += @as(u16, @intCast(@intFromBool(do_prune)));
+                //             const do_prune = packages.has(key);
+                //             prune_count += @as(u16, @intCast(@intFromBool(do_prune)));
 
-                            if (!do_prune) {
-                                list[out_i] = list[i];
-                                out_i += 1;
-                            }
-                        }
+                //             if (!do_prune) {
+                //                 list[out_i] = list[i];
+                //                 out_i += 1;
+                //             }
+                //         }
 
-                        return list[0..out_i];
-                    }
-                };
+                //         return list[0..out_i];
+                //     }
+                // };
 
                 var dev_dependencies: ?js_ast.Expr = null;
                 var dependencies: ?js_ast.Expr = null;
@@ -810,20 +717,20 @@ pub const CreateCommand = struct {
                     const property = q.expr;
 
                     if (property.data == .e_object and property.data.e_object.properties.len > 0) {
-                        unsupported_packages.update(property);
+                        // unsupported_packages.update(property);
 
-                        has_react_scripts = has_react_scripts or property.hasAnyPropertyNamed(&.{"react-scripts"});
-                        has_relay = has_relay or property.hasAnyPropertyNamed(&.{ "react-relay", "relay-runtime", "babel-plugin-relay" });
+                        // has_react_scripts = has_react_scripts or property.hasAnyPropertyNamed(&.{"react-scripts"});
+                        // has_relay = has_relay or property.hasAnyPropertyNamed(&.{ "react-relay", "relay-runtime", "babel-plugin-relay" });
 
-                        property.data.e_object.properties = js_ast.G.Property.List.init(Prune.prune(property.data.e_object.properties.slice()));
+                        // property.data.e_object.properties = js_ast.G.Property.List.init(Prune.prune(property.data.e_object.properties.slice()));
                         if (property.data.e_object.properties.len > 0) {
                             has_dependencies = true;
                             dev_dependencies = q.expr;
 
-                            has_bun_framework_next = has_bun_framework_next or property.hasAnyPropertyNamed(&.{"bun-framework-next"});
-                            has_react = has_react or property.hasAnyPropertyNamed(&.{ "react", "react-dom", "react-relay", "@emotion/react" });
-                            has_bun_macro_relay = has_bun_macro_relay or property.hasAnyPropertyNamed(&.{"bun-macro-relay"});
-                            has_react_refresh = has_react_refresh or property.hasAnyPropertyNamed(&.{"react-refresh"});
+                            // has_bun_framework_next = has_bun_framework_next or property.hasAnyPropertyNamed(&.{"bun-framework-next"});
+                            // has_react = has_react or property.hasAnyPropertyNamed(&.{ "react", "react-dom", "react-relay", "@emotion/react" });
+                            // has_bun_macro_relay = has_bun_macro_relay or property.hasAnyPropertyNamed(&.{"bun-macro-relay"});
+                            // has_react_refresh = has_react_refresh or property.hasAnyPropertyNamed(&.{"react-refresh"});
                         }
                     }
                 }
@@ -832,101 +739,102 @@ pub const CreateCommand = struct {
                     const property = q.expr;
 
                     if (property.data == .e_object and property.data.e_object.properties.len > 0) {
-                        unsupported_packages.update(property);
+                        // unsupported_packages.update(property);
 
-                        has_react_scripts = has_react_scripts or property.hasAnyPropertyNamed(&.{"react-scripts"});
-                        has_relay = has_relay or property.hasAnyPropertyNamed(&.{ "react-relay", "relay-runtime", "babel-plugin-relay" });
-                        property.data.e_object.properties = js_ast.G.Property.List.init(Prune.prune(property.data.e_object.properties.slice()));
+                        // has_react_scripts = has_react_scripts or property.hasAnyPropertyNamed(&.{"react-scripts"});
+                        // has_relay = has_relay or property.hasAnyPropertyNamed(&.{ "react-relay", "relay-runtime", "babel-plugin-relay" });
+                        // property.data.e_object.properties = js_ast.G.Property.List.init(Prune.prune(property.data.e_object.properties.slice()));
+                        property.data.e_object.properties = js_ast.G.Property.List.init(property.data.e_object.properties.slice());
 
                         if (property.data.e_object.properties.len > 0) {
                             has_dependencies = true;
                             dependencies = q.expr;
 
-                            if (property.asProperty("next")) |next_q| {
-                                is_nextjs = true;
-                                needs.bun_bun_for_nextjs = true;
+                            // if (property.asProperty("next")) |next_q| {
+                            // is_nextjs = true;
+                            // needs.bun_bun_for_nextjs = true;
 
-                                next_q.expr.data.e_string.data = constStrToU8(target_nextjs_version);
-                            }
+                            // next_q.expr.data.e_string.data = constStrToU8(target_nextjs_version);
+                            // }
 
-                            has_bun_framework_next = has_bun_framework_next or property.hasAnyPropertyNamed(&.{"bun-framework-next"});
-                            has_react = has_react or is_nextjs or property.hasAnyPropertyNamed(&.{ "react", "react-dom", "react-relay", "@emotion/react" });
-                            has_react_refresh = has_react_refresh or property.hasAnyPropertyNamed(&.{"react-refresh"});
-                            has_bun_macro_relay = has_bun_macro_relay or property.hasAnyPropertyNamed(&.{"bun-macro-relay"});
+                            // has_bun_framework_next = has_bun_framework_next or property.hasAnyPropertyNamed(&.{"bun-framework-next"});
+                            // has_react = has_react or is_nextjs or property.hasAnyPropertyNamed(&.{ "react", "react-dom", "react-relay", "@emotion/react" });
+                            // has_react_refresh = has_react_refresh or property.hasAnyPropertyNamed(&.{"react-refresh"});
+                            // has_bun_macro_relay = has_bun_macro_relay or property.hasAnyPropertyNamed(&.{"bun-macro-relay"});
                         }
                     }
                 }
 
-                needs.bun_macro_relay = !has_bun_macro_relay and has_relay;
-                needs.react_refresh = !has_react_refresh and has_react;
-                needs.bun_framework_next = is_nextjs and !has_bun_framework_next;
-                needs.bun_bun_for_nextjs = is_nextjs;
-                needs.bun_macro_relay_dependency = needs.bun_macro_relay;
-                var bun_bun_for_react_scripts = false;
+                // needs.bun_macro_relay = !has_bun_macro_relay and has_relay;
+                // needs.react_refresh = !has_react_refresh and has_react;
+                // needs.bun_framework_next = is_nextjs and !has_bun_framework_next;
+                // needs.bun_bun_for_nextjs = is_nextjs;
+                // needs.bun_macro_relay_dependency = needs.bun_macro_relay;
+                // var bun_bun_for_react_scripts = false;
 
-                var bun_macros_prop: ?js_ast.Expr = null;
-                var bun_prop: ?js_ast.Expr = null;
-                var bun_relay_prop: ?js_ast.Expr = null;
+                // var bun_macros_prop: ?js_ast.Expr = null;
+                // var bun_prop: ?js_ast.Expr = null;
+                // var bun_relay_prop: ?js_ast.Expr = null;
 
-                var needs_bun_prop = needs.bun_macro_relay or has_bun_macro_relay;
-                var needs_bun_macros_prop = needs_bun_prop;
+                // var needs_bun_prop = needs.bun_macro_relay or has_bun_macro_relay;
+                // var needs_bun_macros_prop = needs_bun_prop;
 
-                if (needs_bun_macros_prop) {
-                    if (package_json_expr.asProperty("bun")) |bun_| {
-                        needs_bun_prop = false;
-                        bun_prop = bun_.expr;
-                        if (bun_.expr.asProperty("macros")) |macros_q| {
-                            bun_macros_prop = macros_q.expr;
-                            needs_bun_macros_prop = false;
-                            if (macros_q.expr.asProperty("react-relay")) |react_relay_q| {
-                                bun_relay_prop = react_relay_q.expr;
-                                needs.bun_macro_relay = react_relay_q.expr.asProperty("graphql") == null;
-                            }
+                // if (needs_bun_macros_prop) {
+                //     if (package_json_expr.asProperty("bun")) |bun_| {
+                //         needs_bun_prop = false;
+                //         bun_prop = bun_.expr;
+                //         if (bun_.expr.asProperty("macros")) |macros_q| {
+                //             bun_macros_prop = macros_q.expr;
+                //             needs_bun_macros_prop = false;
+                //             if (macros_q.expr.asProperty("react-relay")) |react_relay_q| {
+                //                 bun_relay_prop = react_relay_q.expr;
+                //                 needs.bun_macro_relay = react_relay_q.expr.asProperty("graphql") == null;
+                //             }
 
-                            if (macros_q.expr.asProperty("babel-plugin-relay/macro")) |react_relay_q| {
-                                bun_relay_prop = react_relay_q.expr;
-                                needs.bun_macro_relay = react_relay_q.expr.asProperty("graphql") == null;
-                            }
-                        }
-                    }
-                }
+                //             if (macros_q.expr.asProperty("babel-plugin-relay/macro")) |react_relay_q| {
+                //                 bun_relay_prop = react_relay_q.expr;
+                //                 needs.bun_macro_relay = react_relay_q.expr.asProperty("graphql") == null;
+                //             }
+                //         }
+                //     }
+                // }
 
-                if (Prune.prune_count > 0) {
-                    Output.prettyErrorln("<r><d>[package.json] Pruned {d} unnecessary packages<r>", .{Prune.prune_count});
-                }
+                // if (Prune.prune_count > 0) {
+                //     Output.prettyErrorln("<r><d>[package.json] Pruned {d} unnecessary packages<r>", .{Prune.prune_count});
+                // }
 
                 // if (create_options.verbose) {
-                if (needs.bun_macro_relay) {
-                    Output.prettyErrorln("<r><d>[package.json] Detected Relay -> added \"bun-macro-relay\"<r>", .{});
-                }
+                // if (needs.bun_macro_relay) {
+                //     Output.prettyErrorln("<r><d>[package.json] Detected Relay -> added \"bun-macro-relay\"<r>", .{});
+                // }
 
-                if (needs.react_refresh) {
-                    Output.prettyErrorln("<r><d>[package.json] Detected React -> added \"react-refresh\"<r>", .{});
-                }
+                // if (needs.react_refresh) {
+                //     Output.prettyErrorln("<r><d>[package.json] Detected React -> added \"react-refresh\"<r>", .{});
+                // }
 
-                if (needs.bun_framework_next) {
-                    Output.prettyErrorln("<r><d>[package.json] Detected Next -> added \"bun-framework-next\"<r>", .{});
-                } else if (is_nextjs) {
-                    Output.prettyErrorln("<r><d>[package.json] Detected Next.js<r>", .{});
-                }
+                // if (needs.bun_framework_next) {
+                //     Output.prettyErrorln("<r><d>[package.json] Detected Next -> added \"bun-framework-next\"<r>", .{});
+                // } else if (is_nextjs) {
+                //     Output.prettyErrorln("<r><d>[package.json] Detected Next.js<r>", .{});
+                // }
 
                 // }
 
-                var needs_to_inject_dev_dependency = needs.react_refresh or needs.bun_macro_relay;
-                var needs_to_inject_dependency = needs.bun_framework_next;
+                // var needs_to_inject_dev_dependency = needs.react_refresh or needs.bun_macro_relay;
+                // var needs_to_inject_dependency = needs.bun_framework_next;
 
-                const dependencies_to_inject_count = @as(usize, @intCast(@intFromBool(needs.bun_framework_next)));
+                // const dependencies_to_inject_count = @as(usize, @intCast(@intFromBool(needs.bun_framework_next)));
 
-                const dev_dependencies_to_inject_count = @as(usize, @intCast(@intFromBool(needs.react_refresh))) +
-                    @as(usize, @intCast(@intFromBool(needs.bun_macro_relay)));
+                // const dev_dependencies_to_inject_count = @as(usize, @intCast(@intFromBool(needs.react_refresh))) +
+                //     @as(usize, @intCast(@intFromBool(needs.bun_macro_relay)));
 
-                const new_properties_count = @as(usize, @intCast(@intFromBool(needs_to_inject_dev_dependency and dev_dependencies == null))) +
-                    @as(usize, @intCast(@intFromBool(needs_to_inject_dependency and dependencies == null))) +
-                    @as(usize, @intCast(@intFromBool(needs_bun_prop)));
+                // const new_properties_count = @as(usize, @intCast(@intFromBool(needs_to_inject_dev_dependency and dev_dependencies == null))) +
+                //     @as(usize, @intCast(@intFromBool(needs_to_inject_dependency and dependencies == null))) +
+                //     @as(usize, @intCast(@intFromBool(needs_bun_prop)));
 
-                if (new_properties_count != 0) {
-                    try properties_list.ensureUnusedCapacity(new_properties_count);
-                }
+                // if (new_properties_count != 0) {
+                //     try properties_list.ensureUnusedCapacity(new_properties_count);
+                // }
 
                 const E = js_ast.E;
 
@@ -1126,31 +1034,31 @@ pub const CreateCommand = struct {
                 InjectionPrefill.bun_macros_relay_object.properties = js_ast.G.Property.List.init(&InjectionPrefill.bun_macros_relay_object_properties);
                 InjectionPrefill.bun_macros_relay_only_object.properties = js_ast.G.Property.List.init(&InjectionPrefill.bun_macros_relay_only_object_properties);
 
-                if (needs_to_inject_dev_dependency and dev_dependencies == null) {
-                    var e_object = try ctx.allocator.create(E.Object);
+                // if (needs_to_inject_dev_dependency and dev_dependencies == null) {
+                //     var e_object = try ctx.allocator.create(E.Object);
 
-                    e_object.* = E.Object{};
+                //     e_object.* = E.Object{};
 
-                    const value = js_ast.Expr{ .data = .{ .e_object = e_object }, .loc = logger.Loc.Empty };
-                    properties_list.appendAssumeCapacity(js_ast.G.Property{
-                        .key = InjectionPrefill.dev_dependencies_key,
-                        .value = value,
-                    });
-                    dev_dependencies = value;
-                }
+                //     const value = js_ast.Expr{ .data = .{ .e_object = e_object }, .loc = logger.Loc.Empty };
+                //     properties_list.appendAssumeCapacity(js_ast.G.Property{
+                //         .key = InjectionPrefill.dev_dependencies_key,
+                //         .value = value,
+                //     });
+                //     dev_dependencies = value;
+                // }
 
-                if (needs_to_inject_dependency and dependencies == null) {
-                    var e_object = try ctx.allocator.create(E.Object);
+                // if (needs_to_inject_dependency and dependencies == null) {
+                //     var e_object = try ctx.allocator.create(E.Object);
 
-                    e_object.* = E.Object{};
+                //     e_object.* = E.Object{};
 
-                    const value = js_ast.Expr{ .data = .{ .e_object = e_object }, .loc = logger.Loc.Empty };
-                    properties_list.appendAssumeCapacity(js_ast.G.Property{
-                        .key = InjectionPrefill.dependencies_key,
-                        .value = value,
-                    });
-                    dependencies = value;
-                }
+                //     const value = js_ast.Expr{ .data = .{ .e_object = e_object }, .loc = logger.Loc.Empty };
+                //     properties_list.appendAssumeCapacity(js_ast.G.Property{
+                //         .key = InjectionPrefill.dependencies_key,
+                //         .value = value,
+                //     });
+                //     dependencies = value;
+                // }
 
                 // inject an object like this, handling each permutation of what may or may not exist:
                 // {
@@ -1162,80 +1070,80 @@ pub const CreateCommand = struct {
                 //        }
                 //    }
                 // }
-                bun_section: {
+                // bun_section: {
 
-                    // "bun.macros.react-relay.graphql"
-                    if (needs.bun_macro_relay and !needs_bun_prop and !needs_bun_macros_prop) {
-                        // "graphql" is the only valid one for now, so anything else in this object is invalid.
-                        bun_relay_prop.?.data.e_object = InjectionPrefill.bun_macros_relay_object.properties.ptr[0].value.?.data.e_object;
-                        needs_bun_macros_prop = false;
-                        needs_bun_prop = false;
-                        needs.bun_macro_relay = false;
-                        break :bun_section;
-                    }
+                // "bun.macros.react-relay.graphql"
+                // if (needs.bun_macro_relay and !needs_bun_prop and !needs_bun_macros_prop) {
+                //     // "graphql" is the only valid one for now, so anything else in this object is invalid.
+                //     bun_relay_prop.?.data.e_object = InjectionPrefill.bun_macros_relay_object.properties.ptr[0].value.?.data.e_object;
+                //     needs_bun_macros_prop = false;
+                //     needs_bun_prop = false;
+                //     needs.bun_macro_relay = false;
+                //     break :bun_section;
+                // }
 
-                    // "bun.macros"
-                    if (needs_bun_macros_prop and !needs_bun_prop) {
-                        var obj = bun_prop.?.data.e_object;
-                        var properties = try std.ArrayList(js_ast.G.Property).initCapacity(
-                            ctx.allocator,
-                            obj.properties.len + InjectionPrefill.bun_macros_relay_object.properties.len,
-                        );
-                        defer obj.properties.update(properties);
+                // "bun.macros"
+                // if (needs_bun_macros_prop and !needs_bun_prop) {
+                //     var obj = bun_prop.?.data.e_object;
+                //     var properties = try std.ArrayList(js_ast.G.Property).initCapacity(
+                //         ctx.allocator,
+                //         obj.properties.len + InjectionPrefill.bun_macros_relay_object.properties.len,
+                //     );
+                //     defer obj.properties.update(properties);
 
-                        try properties.insertSlice(0, obj.properties.slice());
-                        try properties.insertSlice(0, InjectionPrefill.bun_macros_relay_object.properties.slice());
+                //     try properties.insertSlice(0, obj.properties.slice());
+                //     try properties.insertSlice(0, InjectionPrefill.bun_macros_relay_object.properties.slice());
 
-                        needs_bun_macros_prop = false;
-                        needs_bun_prop = false;
-                        needs.bun_macro_relay = false;
-                        break :bun_section;
-                    }
+                //     needs_bun_macros_prop = false;
+                //     needs_bun_prop = false;
+                //     needs.bun_macro_relay = false;
+                //     break :bun_section;
+                // }
 
-                    // "bun"
-                    if (needs_bun_prop) {
-                        try properties_list.append(InjectionPrefill.bun_only_macros_relay_property);
-                        needs_bun_macros_prop = false;
-                        needs_bun_prop = false;
-                        needs.bun_macro_relay = false;
-                        break :bun_section;
-                    }
-                }
+                // "bun"
+                // if (needs_bun_prop) {
+                //     try properties_list.append(InjectionPrefill.bun_only_macros_relay_property);
+                //     needs_bun_macros_prop = false;
+                //     needs_bun_prop = false;
+                //     needs.bun_macro_relay = false;
+                //     break :bun_section;
+                // }
+                // }
 
-                if (needs_to_inject_dependency) {
-                    defer needs_to_inject_dependency = false;
-                    var obj = dependencies.?.data.e_object;
-                    var properties = try std.ArrayList(js_ast.G.Property).initCapacity(
-                        ctx.allocator,
-                        obj.properties.len + dependencies_to_inject_count,
-                    );
-                    try properties.insertSlice(0, obj.properties.slice());
-                    defer obj.properties.update(properties);
-                    if (needs.bun_framework_next) {
-                        properties.appendAssumeCapacity(InjectionPrefill.bun_framework_next_property);
-                        needs.bun_framework_next = false;
-                    }
-                }
+                // if (needs_to_inject_dependency) {
+                //     defer needs_to_inject_dependency = false;
+                //     var obj = dependencies.?.data.e_object;
+                //     var properties = try std.ArrayList(js_ast.G.Property).initCapacity(
+                //         ctx.allocator,
+                //         obj.properties.len + dependencies_to_inject_count,
+                //     );
+                //     try properties.insertSlice(0, obj.properties.slice());
+                //     defer obj.properties.update(properties);
+                //     if (needs.bun_framework_next) {
+                //         properties.appendAssumeCapacity(InjectionPrefill.bun_framework_next_property);
+                //         needs.bun_framework_next = false;
+                //     }
+                // }
 
-                if (needs_to_inject_dev_dependency) {
-                    defer needs_to_inject_dev_dependency = false;
-                    var obj = dev_dependencies.?.data.e_object;
-                    var properties = try std.ArrayList(js_ast.G.Property).initCapacity(
-                        ctx.allocator,
-                        obj.properties.len + dev_dependencies_to_inject_count,
-                    );
-                    try properties.insertSlice(0, obj.properties.slice());
-                    defer obj.properties.update(properties);
-                    if (needs.bun_macro_relay_dependency) {
-                        properties.appendAssumeCapacity(InjectionPrefill.bun_macro_relay_dependency);
-                        needs.bun_macro_relay_dependency = false;
-                    }
+                // if (needs_to_inject_dev_dependency) {
+                //     defer needs_to_inject_dev_dependency = false;
+                //     var obj = dev_dependencies.?.data.e_object;
+                //     var properties = try std.ArrayList(js_ast.G.Property).initCapacity(
+                //         ctx.allocator,
+                //         obj.properties.len + dev_dependencies_to_inject_count,
+                //     );
+                //     try properties.insertSlice(0, obj.properties.slice());
+                //     defer obj.properties.update(properties);
+                //     if (needs.bun_macro_relay_dependency) {
+                //         properties.appendAssumeCapacity(InjectionPrefill.bun_macro_relay_dependency);
+                //         needs.bun_macro_relay_dependency = false;
+                //     }
 
-                    if (needs.react_refresh) {
-                        properties.appendAssumeCapacity(InjectionPrefill.react_refresh_dependency);
-                        needs.react_refresh = false;
-                    }
-                }
+                //     if (needs.react_refresh) {
+                //         properties.appendAssumeCapacity(InjectionPrefill.react_refresh_dependency);
+                //         needs.react_refresh = false;
+                //     }
+                // }
 
                 // this is a little dicey
                 // The idea is:
@@ -1248,89 +1156,89 @@ pub const CreateCommand = struct {
                 // 3. has a src/index.{jsx,tsx,ts,mts,mcjs}
                 // If at any point those expectations are not matched OR the string /src/index.js already exists in the HTML
                 // don't do it!
-                if (has_react_scripts) {
-                    bail: {
-                        var public_index_html_parts = [_]string{ destination, "public/index.html" };
-                        var public_index_html_path = filesystem.absBuf(&public_index_html_parts, &bun_path_buf);
+                // if (has_react_scripts) {
+                //     bail: {
+                //         var public_index_html_parts = [_]string{ destination, "public/index.html" };
+                //         var public_index_html_path = filesystem.absBuf(&public_index_html_parts, &bun_path_buf);
 
-                        const public_index_html_file = std.fs.openFileAbsolute(public_index_html_path, .{ .mode = .read_write }) catch break :bail;
-                        defer public_index_html_file.close();
+                //         const public_index_html_file = std.fs.openFileAbsolute(public_index_html_path, .{ .mode = .read_write }) catch break :bail;
+                //         defer public_index_html_file.close();
 
-                        const file_extensions_to_try = [_]string{ ".tsx", ".ts", ".jsx", ".js", ".mts", ".mcjs" };
+                //         const file_extensions_to_try = [_]string{ ".tsx", ".ts", ".jsx", ".js", ".mts", ".mcjs" };
 
-                        var found_file = false;
-                        var entry_point_path: string = "";
-                        var entry_point_file_parts = [_]string{ destination, "src/index" };
-                        var entry_point_file_path_base = filesystem.absBuf(&entry_point_file_parts, &bun_path_buf);
+                //         var found_file = false;
+                //         var entry_point_path: string = "";
+                //         var entry_point_file_parts = [_]string{ destination, "src/index" };
+                //         var entry_point_file_path_base = filesystem.absBuf(&entry_point_file_parts, &bun_path_buf);
 
-                        for (file_extensions_to_try) |ext| {
-                            bun.copy(u8, bun_path_buf[entry_point_file_path_base.len..], ext);
-                            entry_point_path = bun_path_buf[0 .. entry_point_file_path_base.len + ext.len];
-                            std.fs.accessAbsolute(entry_point_path, .{}) catch continue;
-                            found_file = true;
-                            break;
-                        }
-                        if (!found_file) break :bail;
+                //         for (file_extensions_to_try) |ext| {
+                //             bun.copy(u8, bun_path_buf[entry_point_file_path_base.len..], ext);
+                //             entry_point_path = bun_path_buf[0 .. entry_point_file_path_base.len + ext.len];
+                //             std.fs.accessAbsolute(entry_point_path, .{}) catch continue;
+                //             found_file = true;
+                //             break;
+                //         }
+                //         if (!found_file) break :bail;
 
-                        var public_index_file_contents = public_index_html_file.readToEndAlloc(ctx.allocator, public_index_html_file.getEndPos() catch break :bail) catch break :bail;
+                //         var public_index_file_contents = public_index_html_file.readToEndAlloc(ctx.allocator, public_index_html_file.getEndPos() catch break :bail) catch break :bail;
 
-                        if (std.mem.indexOf(u8, public_index_file_contents, entry_point_path[destination.len..]) != null) {
-                            break :bail;
-                        }
+                //         if (std.mem.indexOf(u8, public_index_file_contents, entry_point_path[destination.len..]) != null) {
+                //             break :bail;
+                //         }
 
-                        var body_closing_tag: usize = std.mem.lastIndexOf(u8, public_index_file_contents, "</body>") orelse break :bail;
+                //         var body_closing_tag: usize = std.mem.lastIndexOf(u8, public_index_file_contents, "</body>") orelse break :bail;
 
-                        var public_index_file_out = std.ArrayList(u8).initCapacity(ctx.allocator, public_index_file_contents.len) catch break :bail;
-                        var html_writer = public_index_file_out.writer();
+                //         var public_index_file_out = std.ArrayList(u8).initCapacity(ctx.allocator, public_index_file_contents.len) catch break :bail;
+                //         var html_writer = public_index_file_out.writer();
 
-                        _ = html_writer.writeAll(public_index_file_contents[0..body_closing_tag]) catch break :bail;
+                //         _ = html_writer.writeAll(public_index_file_contents[0..body_closing_tag]) catch break :bail;
 
-                        create_react_app_entry_point_path = std.fmt.allocPrint(
-                            ctx.allocator,
-                            "./{s}",
+                //         create_react_app_entry_point_path = std.fmt.allocPrint(
+                //             ctx.allocator,
+                //             "./{s}",
 
-                            .{
-                                std.mem.trimLeft(
-                                    u8,
-                                    entry_point_path[destination.len..],
-                                    "/",
-                                ),
-                            },
-                        ) catch break :bail;
+                //             .{
+                //                 std.mem.trimLeft(
+                //                     u8,
+                //                     entry_point_path[destination.len..],
+                //                     "/",
+                //                 ),
+                //             },
+                //         ) catch break :bail;
 
-                        html_writer.print(
-                            "<script type=\"module\" async src=\"/{s}\"></script>\n{s}",
-                            .{
-                                create_react_app_entry_point_path[2..],
-                                public_index_file_contents[body_closing_tag..],
-                            },
-                        ) catch break :bail;
+                //         html_writer.print(
+                //             "<script type=\"module\" async src=\"/{s}\"></script>\n{s}",
+                //             .{
+                //                 create_react_app_entry_point_path[2..],
+                //                 public_index_file_contents[body_closing_tag..],
+                //             },
+                //         ) catch break :bail;
 
-                        var outfile = std.mem.replaceOwned(u8, ctx.allocator, public_index_file_out.items, "%PUBLIC_URL%", "") catch break :bail;
+                //         var outfile = std.mem.replaceOwned(u8, ctx.allocator, public_index_file_out.items, "%PUBLIC_URL%", "") catch break :bail;
 
-                        // don't do this actually
-                        // it completely breaks when there is more than one CSS file loaded
-                        // // bonus: check for an index.css file
-                        // // inject it into the .html file statically if the file exists but isn't already in
-                        // inject_css: {
-                        //     const head_i: usize = std.mem.indexOf(u8, outfile, "<head>") orelse break :inject_css;
-                        //     if (std.mem.indexOf(u8, outfile, "/src/index.css") != null) break :inject_css;
+                //         // don't do this actually
+                //         // it completely breaks when there is more than one CSS file loaded
+                //         // // bonus: check for an index.css file
+                //         // // inject it into the .html file statically if the file exists but isn't already in
+                //         // inject_css: {
+                //         //     const head_i: usize = std.mem.indexOf(u8, outfile, "<head>") orelse break :inject_css;
+                //         //     if (std.mem.indexOf(u8, outfile, "/src/index.css") != null) break :inject_css;
 
-                        //     bun.copy(u8, bun_path_buf[destination.len + "/src/index".len ..], ".css");
-                        //     var index_css_file_path = bun_path_buf[0 .. destination.len + "/src/index.css".len];
-                        //     std.fs.accessAbsolute(index_css_file_path, .{}) catch break :inject_css;
-                        //     var list = std.ArrayList(u8).fromOwnedSlice(ctx.allocator, outfile);
-                        //     list.insertSlice(head_i + "<head>".len, "<link rel=\"stylesheet\" href=\"/src/index.css\">\n") catch break :inject_css;
-                        //     outfile =try list.toOwnedSlice();
-                        // }
+                //         //     bun.copy(u8, bun_path_buf[destination.len + "/src/index".len ..], ".css");
+                //         //     var index_css_file_path = bun_path_buf[0 .. destination.len + "/src/index.css".len];
+                //         //     std.fs.accessAbsolute(index_css_file_path, .{}) catch break :inject_css;
+                //         //     var list = std.ArrayList(u8).fromOwnedSlice(ctx.allocator, outfile);
+                //         //     list.insertSlice(head_i + "<head>".len, "<link rel=\"stylesheet\" href=\"/src/index.css\">\n") catch break :inject_css;
+                //         //     outfile =try list.toOwnedSlice();
+                //         // }
 
-                        public_index_html_file.pwriteAll(outfile, 0) catch break :bail;
-                        std.os.ftruncate(public_index_html_file.handle, outfile.len + 1) catch break :bail;
-                        bun_bun_for_react_scripts = true;
-                        is_create_react_app = true;
-                        Output.prettyln("<r><d>[package.json] Added entry point {s} to public/index.html", .{create_react_app_entry_point_path});
-                    }
-                }
+                //         public_index_html_file.pwriteAll(outfile, 0) catch break :bail;
+                //         std.os.ftruncate(public_index_html_file.handle, outfile.len + 1) catch break :bail;
+                //         bun_bun_for_react_scripts = true;
+                //         is_create_react_app = true;
+                //         Output.prettyln("<r><d>[package.json] Added entry point {s} to public/index.html", .{create_react_app_entry_point_path});
+                //     }
+                // }
 
                 package_json_expr.data.e_object.is_single_line = false;
 
@@ -1396,20 +1304,20 @@ pub const CreateCommand = struct {
                                     const items = tasks.slice();
                                     for (items) |task| {
                                         if (task.asString(ctx.allocator)) |task_entry| {
-                                            if (needs.bun_bun_for_nextjs or bun_bun_for_react_scripts) {
-                                                var iter = std.mem.split(u8, task_entry, " ");
-                                                var last_was_bun = false;
-                                                while (iter.next()) |current| {
-                                                    if (strings.eqlComptime(current, "bun")) {
-                                                        if (last_was_bun) {
-                                                            needs.bun_bun_for_nextjs = false;
-                                                            bun_bun_for_react_scripts = false;
-                                                            break;
-                                                        }
-                                                        last_was_bun = true;
-                                                    }
-                                                }
-                                            }
+                                            // if (needs.bun_bun_for_nextjs or bun_bun_for_react_scripts) {
+                                            //     var iter = std.mem.split(u8, task_entry, " ");
+                                            //     var last_was_bun = false;
+                                            //     while (iter.next()) |current| {
+                                            //         if (strings.eqlComptime(current, "bun")) {
+                                            //             if (last_was_bun) {
+                                            //                 needs.bun_bun_for_nextjs = false;
+                                            //                 bun_bun_for_react_scripts = false;
+                                            //                 break;
+                                            //             }
+                                            //             last_was_bun = true;
+                                            //         }
+                                            //     }
+                                            // }
 
                                             try postinstall_tasks.append(
                                                 ctx.allocator,
@@ -1465,13 +1373,13 @@ pub const CreateCommand = struct {
 
                 std.os.ftruncate(package_json_file.?.handle, written + 1) catch {};
 
-                if (!create_options.skip_install) {
-                    if (needs.bun_bun_for_nextjs) {
-                        try postinstall_tasks.append(ctx.allocator, InjectionPrefill.bun_bun_for_nextjs_task);
-                    } else if (bun_bun_for_react_scripts) {
-                        try postinstall_tasks.append(ctx.allocator, try std.fmt.allocPrint(ctx.allocator, "bun bun {s}", .{create_react_app_entry_point_path}));
-                    }
-                }
+                // if (!create_options.skip_install) {
+                //     if (needs.bun_bun_for_nextjs) {
+                //         try postinstall_tasks.append(ctx.allocator, InjectionPrefill.bun_bun_for_nextjs_task);
+                //     } else if (bun_bun_for_react_scripts) {
+                //         try postinstall_tasks.append(ctx.allocator, try std.fmt.allocPrint(ctx.allocator, "bun bun {s}", .{create_react_app_entry_point_path}));
+                //     }
+                // }
             }
         }
 
@@ -1573,12 +1481,12 @@ pub const CreateCommand = struct {
             Output.flush();
         }
 
-        if (unsupported_packages.@"styled-jsx") {
-            Output.prettyErrorln("\n", .{});
-            unsupported_packages.print();
-            Output.prettyErrorln("\n", .{});
-            Output.flush();
-        }
+        // if (unsupported_packages.@"styled-jsx") {
+        //     Output.prettyErrorln("\n", .{});
+        //     unsupported_packages.print();
+        //     Output.prettyErrorln("\n", .{});
+        //     Output.flush();
+        // }
 
         if (!create_options.skip_git and !create_options.skip_install) {
             Output.pretty(
@@ -1672,6 +1580,109 @@ pub const CreateCommand = struct {
             }
         }
     }
+    pub fn extractInfo(ctx: Command.Context) !struct { example_tag: Example.Tag, template: []const u8 } {
+        var example_tag = Example.Tag.unknown;
+        var filesystem = try fs.FileSystem.init(null);
+
+        var create_options = try CreateOptions.parse(ctx, false);
+        const positionals = create_options.positionals;
+
+        var env_loader: DotEnv.Loader = brk: {
+            var map = try ctx.allocator.create(DotEnv.Map);
+            map.* = DotEnv.Map.init(ctx.allocator);
+
+            break :brk DotEnv.Loader.init(map, ctx.allocator);
+        };
+
+        env_loader.loadProcess();
+
+        // var unsupported_packages = UnsupportedPackages{};
+        const template = brk: {
+            var positional = positionals[0];
+
+            if (!std.fs.path.isAbsolute(positional)) {
+                outer: {
+                    if (env_loader.map.get("BUN_CREATE_DIR")) |home_dir| {
+                        var parts = [_]string{ home_dir, positional };
+                        var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
+                        home_dir_buf[outdir_path.len] = 0;
+                        var outdir_path_ = home_dir_buf[0..outdir_path.len :0];
+                        std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
+                        example_tag = Example.Tag.local_folder;
+                        break :brk outdir_path;
+                    }
+                }
+
+                outer: {
+                    var parts = [_]string{ filesystem.top_level_dir, BUN_CREATE_DIR, positional };
+                    var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
+                    home_dir_buf[outdir_path.len] = 0;
+                    var outdir_path_ = home_dir_buf[0..outdir_path.len :0];
+                    std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
+                    example_tag = Example.Tag.local_folder;
+                    break :brk outdir_path;
+                }
+
+                outer: {
+                    if (env_loader.map.get("HOME")) |home_dir| {
+                        var parts = [_]string{ home_dir, BUN_CREATE_DIR, positional };
+                        var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
+                        home_dir_buf[outdir_path.len] = 0;
+                        var outdir_path_ = home_dir_buf[0..outdir_path.len :0];
+                        std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
+                        example_tag = Example.Tag.local_folder;
+                        break :brk outdir_path;
+                    }
+                }
+
+                if (std.fs.path.isAbsolute(positional)) {
+                    example_tag = Example.Tag.local_folder;
+                    break :brk positional;
+                }
+
+                var repo_begin: usize = std.math.maxInt(usize);
+                // "https://github.com/foo/bar"
+                if (strings.startsWith(positional, "github.com/")) {
+                    repo_begin = "github.com/".len;
+                }
+
+                if (strings.startsWith(positional, "https://github.com/")) {
+                    repo_begin = "https://github.com/".len;
+                }
+
+                if (repo_begin == std.math.maxInt(usize) and positional[0] != '/') {
+                    if (std.mem.indexOfScalar(u8, positional, '/')) |first_slash_index| {
+                        if (std.mem.indexOfScalar(u8, positional, '/')) |last_slash_index| {
+                            if (first_slash_index == last_slash_index and
+                                positional[last_slash_index..].len > 0 and
+                                last_slash_index > 0)
+                            {
+                                repo_begin = 0;
+                            }
+                        }
+                    }
+                }
+
+                if (repo_begin != std.math.maxInt(usize)) {
+                    const remainder = positional[repo_begin..];
+                    if (std.mem.indexOfScalar(u8, remainder, '/')) |i| {
+                        if (i > 0 and remainder[i + 1 ..].len > 0) {
+                            if (std.mem.indexOfScalar(u8, remainder[i + 1 ..], '/')) |last_slash| {
+                                example_tag = Example.Tag.github_repository;
+                                break :brk std.mem.trim(u8, remainder[0 .. i + 1 + last_slash], "# \r\t");
+                            } else {
+                                example_tag = Example.Tag.github_repository;
+                                break :brk std.mem.trim(u8, remainder, "# \r\t");
+                            }
+                        }
+                    }
+                }
+            }
+            example_tag = Example.Tag.official;
+            break :brk positional;
+        };
+        return .{ .example_tag = example_tag, .template = template };
+    }
 };
 const Commands = .{
     &[_]string{""},
@@ -1749,7 +1760,7 @@ pub const Example = struct {
                 folders[1] = std.fs.cwd().openIterableDir(outdir_path, .{}) catch .{ .dir = .{ .fd = bun.fdcast(bun.invalid_fd) } };
             }
 
-            if (env_loader.map.get("HOME")) |home_dir| {
+            if (env_loader.map.get(bun.DotEnv.home_env)) |home_dir| {
                 var parts = [_]string{ home_dir, BUN_CREATE_DIR };
                 var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
                 folders[2] = std.fs.cwd().openIterableDir(outdir_path, .{}) catch .{ .dir = .{ .fd = bun.fdcast(bun.invalid_fd) } };
@@ -1842,17 +1853,17 @@ pub const Example = struct {
 
         if (env_loader.map.get("GITHUB_ACCESS_TOKEN")) |access_token| {
             if (access_token.len > 0) {
-                headers_buf = try std.fmt.allocPrint(ctx.allocator, "Access-TokenBearer {s}", .{access_token});
+                headers_buf = try std.fmt.allocPrint(ctx.allocator, "AuthorizationBearer {s}", .{access_token});
                 try header_entries.append(
                     ctx.allocator,
                     Headers.Kv{
                         .name = Api.StringPointer{
                             .offset = 0,
-                            .length = @as(u32, @intCast("Access-Token".len)),
+                            .length = @as(u32, @intCast("Authorization".len)),
                         },
                         .value = Api.StringPointer{
-                            .offset = @as(u32, @intCast("Access-Token".len)),
-                            .length = @as(u32, @intCast(headers_buf.len - "Access-Token".len)),
+                            .offset = @as(u32, @intCast("Authorization".len)),
+                            .length = @as(u32, @intCast(headers_buf.len - "Authorization".len)),
                         },
                     },
                 );
@@ -2188,7 +2199,7 @@ pub const CreateListExamplesCommand = struct {
 
         Output.prettyln("<r><d>#<r> You can also paste a GitHub repository:\n\n  <b>bun create <cyan>ahfarmer/calculator calc<r>\n\n", .{});
 
-        if (env_loader.map.get("HOME")) |homedir| {
+        if (env_loader.map.get(bun.DotEnv.home_env)) |homedir| {
             Output.prettyln(
                 "<d>This command is completely optional. To add a new local template, create a folder in {s}/.bun-create/. To publish a new template, git clone https://github.com/oven-sh/bun, add a new folder to the \"examples\" folder, and submit a PR.<r>",
                 .{homedir},

@@ -1,4 +1,12 @@
+#pragma once
+
+#include "root.h"
+
+#if !OS(WINDOWS)
 #include <dlfcn.h>
+#else 
+#include <windows.h>
+#endif
 
 typedef int (*lazy_sqlite3_bind_blob_type)(sqlite3_stmt*, int, const void*, int n, void (*)(void*));
 typedef int (*lazy_sqlite3_bind_double_type)(sqlite3_stmt*, int, double);
@@ -71,6 +79,7 @@ typedef int (*lazy_sqlite3_deserialize_type)(
 );
 
 typedef int (*lazy_sqlite3_stmt_readonly_type)(sqlite3_stmt* pStmt);
+typedef int (*lazy_sqlite3_compileoption_used_type)(const char *zOptName);
 
 static lazy_sqlite3_bind_blob_type lazy_sqlite3_bind_blob;
 static lazy_sqlite3_bind_double_type lazy_sqlite3_bind_double;
@@ -112,6 +121,7 @@ static lazy_sqlite3_malloc64_type lazy_sqlite3_malloc64;
 static lazy_sqlite3_serialize_type lazy_sqlite3_serialize;
 static lazy_sqlite3_deserialize_type lazy_sqlite3_deserialize;
 static lazy_sqlite3_stmt_readonly_type lazy_sqlite3_stmt_readonly;
+static lazy_sqlite3_compileoption_used_type lazy_sqlite3_compileoption_used;
 
 #define sqlite3_bind_blob lazy_sqlite3_bind_blob
 #define sqlite3_bind_double lazy_sqlite3_bind_double
@@ -152,16 +162,35 @@ static lazy_sqlite3_stmt_readonly_type lazy_sqlite3_stmt_readonly;
 #define sqlite3_deserialize lazy_sqlite3_deserialize
 #define sqlite3_stmt_readonly lazy_sqlite3_stmt_readonly
 #define sqlite3_column_int64 lazy_sqlite3_column_int64
+#define sqlite3_compileoption_used lazy_sqlite3_compileoption_used;
 
-static void* sqlite3_handle = nullptr;
+#if !OS(WINDOWS)
+#define HMODULE void*
+#else
+static const char* dlerror() { return "Unknown error while loading sqlite"; }
+#define dlsym GetProcAddress
+#endif
+
+#if OS(WINDOWS)
+static const char* sqlite3_lib_path = "sqlite3.dll";
+#elif OS(DARWIN)
 static const char* sqlite3_lib_path = "libsqlite3.dylib";
+#else
+static const char* sqlite3_lib_path = "sqlite3";
+#endif
+
+static HMODULE sqlite3_handle = nullptr;
 
 static int lazyLoadSQLite()
 {
     if (sqlite3_handle)
         return 0;
-
+#if OS(WINDOWS)
+    sqlite3_handle = LoadLibraryA(sqlite3_lib_path);
+#else
     sqlite3_handle = dlopen(sqlite3_lib_path, RTLD_LAZY);
+#endif
+
     if (!sqlite3_handle) {
         return -1;
     }
@@ -204,6 +233,11 @@ static int lazyLoadSQLite()
     lazy_sqlite3_deserialize = (lazy_sqlite3_deserialize_type)dlsym(sqlite3_handle, "sqlite3_deserialize");
     lazy_sqlite3_malloc64 = (lazy_sqlite3_malloc64_type)dlsym(sqlite3_handle, "sqlite3_malloc64");
     lazy_sqlite3_stmt_readonly = (lazy_sqlite3_stmt_readonly_type)dlsym(sqlite3_handle, "sqlite3_stmt_readonly");
+    lazy_sqlite3_compileoption_used = (lazy_sqlite3_compileoption_used_type)dlsym(sqlite3_handle, "sqlite3_compileoption_used");
 
     return 0;
 }
+
+#if OS(WINDOWS)
+#undef dlsym
+#endif

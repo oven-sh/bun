@@ -4,11 +4,6 @@ concurrency:
   group: bun-linux-aarch64-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-  TEST_TAG: bun-test'
-
 on:
   push:
     branches:
@@ -16,6 +11,7 @@ on:
     paths:
       - "src/**/*"
       - "test/**/*"
+      - "packages/bun-usockets/src/**/*"
       - "build.zig"
       - "Makefile"
       - "Dockerfile"
@@ -28,6 +24,7 @@ jobs:
     runs-on: ${{matrix.runner}}
     if: github.repository_owner == 'oven-sh'
     timeout-minutes: 90
+    permissions: write-all
     strategy:
       matrix:
         include:
@@ -36,10 +33,7 @@ jobs:
             arch: aarch64
             build_arch: arm64
             runner: linux-arm64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-aug3-5/bun-webkit-linux-arm64-lto.tar.gz"
-            webkit_basename: "bun-webkit-linux-arm64-lto"
             build_machine_arch: aarch64
-
     steps:
       - uses: actions/checkout@v3
         with:
@@ -71,9 +65,7 @@ jobs:
             BUILDARCH=${{matrix.build_arch}}
             BUILD_MACHINE_ARCH=${{matrix.build_machine_arch}}
             CPU_TARGET=${{matrix.cpu}}
-            WEBKIT_URL=${{matrix.webkit_url}}
             GIT_SHA=${{github.sha}}
-            WEBKIT_BASENAME=${{matrix.webkit_basename}}
           platforms: linux/${{matrix.build_arch}}
           target: artifact
           outputs: type=local,dest=${{runner.temp}}/release
@@ -109,14 +101,6 @@ jobs:
         with:
           name: bun-${{matrix.tag}}
           path: ${{runner.temp}}/release/bun-${{matrix.tag}}.zip
-      - uses: actions/upload-artifact@v3
-        with:
-          name: bun-obj-${{matrix.tag}}
-          path: ${{runner.temp}}/release/bun-obj
-      - uses: actions/upload-artifact@v3
-        with:
-          name: ${{matrix.tag}}-dependencies
-          path: ${{runner.temp}}/release/bun-dependencies
       - name: Release
         id: release
         uses: ncipollo/release-action@v1

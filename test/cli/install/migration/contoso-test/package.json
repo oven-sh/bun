@@ -1,0 +1,17 @@
+{
+  "name": "contoso-real-estate",
+  "version": "1.0.0",
+  "description": "https://github.com/Azure-Samples/contoso-real-estate",
+  "private": true,
+  "author": "Microsoft",
+  "license": "MIT",
+  "workspaces": [
+    "packages/*"
+  ],
+  "devDependencies": {
+    "concurrently": "^7.6.0",
+    "git-commit-msg-linter": "^4.2.1",
+    "prettier": "^2.7.1",
+    "rimraf": "^4.3.1"
+  }
+}

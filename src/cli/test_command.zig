@@ -580,6 +580,7 @@ pub const TestCommand = struct {
         var snapshot_file_buf = std.ArrayList(u8).init(ctx.allocator);
         var snapshot_values = Snapshots.ValuesHashMap.init(ctx.allocator);
         var snapshot_counts = bun.StringHashMap(usize).init(ctx.allocator);
+        JSC.isBunTest = true;
 
         var reporter = try ctx.allocator.create(CommandLineReporter);
         reporter.* = CommandLineReporter{
@@ -669,7 +670,7 @@ pub const TestCommand = struct {
             .dirs_to_scan = Scanner.Fifo.init(ctx.allocator),
             .options = &vm.bundler.options,
             .fs = vm.bundler.fs,
-            .filter_names = ctx.positionals[1..],
+            .filter_names = if (ctx.positionals.len == 0) &[0][]const u8{} else ctx.positionals[1..],
             .results = std.ArrayList(PathString).init(ctx.allocator),
         };
         const dir_to_scan = brk: {
@@ -976,14 +977,18 @@ pub const TestCommand = struct {
                 vm.eventLoop().tick();
 
                 var prev_unhandled_count = vm.unhandled_error_counter;
-                while (vm.active_tasks > 0) {
-                    if (!jest.Jest.runner.?.has_pending_tests) jest.Jest.runner.?.drain();
+                while (vm.active_tasks > 0) : (vm.eventLoop().flushImmediateQueue()) {
+                    if (!jest.Jest.runner.?.has_pending_tests) {
+                        jest.Jest.runner.?.drain();
+                    }
                     vm.eventLoop().tick();
 
                     while (jest.Jest.runner.?.has_pending_tests) {
                         vm.eventLoop().autoTick();
                         if (!jest.Jest.runner.?.has_pending_tests) break;
                         vm.eventLoop().tick();
+                    } else {
+                        vm.eventLoop().tickImmediateTasks();
                     }
 
                     while (prev_unhandled_count < vm.unhandled_error_counter) {
@@ -991,6 +996,9 @@ pub const TestCommand = struct {
                         prev_unhandled_count = vm.unhandled_error_counter;
                     }
                 }
+
+                vm.eventLoop().flushImmediateQueue();
+
                 switch (vm.aggressive_garbage_collection) {
                     .none => {},
                     .mild => {

@@ -1,4 +1,4 @@
-import { define } from "../scripts/class-definitions";
+import { define } from "../../codegen/class-definitions";
 
 export default [
   define({
@@ -44,6 +44,18 @@ export default [
     finalize: true,
     JSType: "0b11101110",
     values: ["testValue"],
+    configurable: false,
+    klass: {},
+    proto: {},
+  }),
+  define({
+    name: "ExpectArrayContaining",
+    construct: false,
+    noConstructor: true,
+    call: true,
+    finalize: true,
+    JSType: "0b11101110",
+    values: ["arrayValue"],
     configurable: false,
     klass: {},
     proto: {},
@@ -332,6 +344,10 @@ export default [
       toBeWithin: {
         fn: "toBeWithin",
         length: 2,
+      },
+      toEqualIgnoringWhitespace: {
+        fn: "toEqualIgnoringWhitespace",
+        length: 1,
       },
       toBeSymbol: {
         fn: "toBeSymbol",

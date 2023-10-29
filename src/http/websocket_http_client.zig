@@ -21,6 +21,9 @@ const ObjectPool = @import("../pool.zig").ObjectPool;
 const WebsocketHeader = @import("./websocket.zig").WebsocketHeader;
 const WebsocketDataFrame = @import("./websocket.zig").WebsocketDataFrame;
 const Opcode = @import("./websocket.zig").Opcode;
+const ZigURL = @import("../url.zig").URL;
+
+const Async = bun.Async;
 
 const log = Output.scoped(.WebSocketClient, false);
 
@@ -54,7 +57,9 @@ const NonUTF8Headers = struct {
 fn buildRequestBody(
     vm: *JSC.VirtualMachine,
     pathname: *const JSC.ZigString,
+    is_https: bool,
     host: *const JSC.ZigString,
+    port: u16,
     client_protocol: *const JSC.ZigString,
     client_protocol_hash: *u64,
     extra_headers: NonUTF8Headers,
@@ -86,22 +91,25 @@ fn buildRequestBody(
         host_.deinit();
     }
 
+    const host_fmt = ZigURL.HostFormatter{
+        .is_https = is_https,
+        .host = host_.slice(),
+        .port = port,
+    };
     const headers_ = static_headers[0 .. 1 + @as(usize, @intFromBool(client_protocol.len > 0))];
     const pico_headers = PicoHTTP.Headers{ .headers = headers_ };
 
     return try std.fmt.allocPrint(
         allocator,
         "GET {s} HTTP/1.1\r\n" ++
-            "Host: {s}\r\n" ++
-            "Pragma: no-cache\r\n" ++
-            "Cache-Control: no-cache\r\n" ++
+            "Host: {any}\r\n" ++
             "Connection: Upgrade\r\n" ++
             "Upgrade: websocket\r\n" ++
             "Sec-WebSocket-Version: 13\r\n" ++
             "{s}" ++
             "{s}" ++
             "\r\n",
-        .{ pathname_.slice(), host_.slice(), pico_headers, extra_headers },
+        .{ pathname_.slice(), host_fmt, pico_headers, extra_headers },
     );
 }
 
@@ -184,7 +192,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         body: std.ArrayListUnmanaged(u8) = .{},
         websocket_protocol: u64 = 0,
         hostname: [:0]const u8 = "",
-        poll_ref: JSC.PollRef = .{},
+        poll_ref: Async.KeepAlive = .{},
 
         pub const name = if (ssl) "WebSocketHTTPSClient" else "WebSocketHTTPClient";
 
@@ -194,7 +202,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
         pub fn register(global: *JSC.JSGlobalObject, loop_: *anyopaque, ctx_: *anyopaque) callconv(.C) void {
             var vm = global.bunVM();
-            var loop = @as(*uws.Loop, @ptrCast(@alignCast(loop_)));
+            var loop: *bun.Async.Loop = @alignCast(@ptrCast(loop_));
             var ctx: *uws.SocketContext = @as(*uws.SocketContext, @ptrCast(ctx_));
 
             if (vm.event_loop_handle) |other| {
@@ -242,7 +250,9 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             var body = buildRequestBody(
                 global.bunVM(),
                 pathname,
+                ssl,
                 host,
+                port,
                 client_protocol,
                 &client_protocol_hash,
                 NonUTF8Headers.init(header_names, header_values, header_count),
@@ -864,7 +874,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         send_buffer: bun.LinearFifo(u8, .Dynamic),
 
         globalThis: *JSC.JSGlobalObject,
-        poll_ref: JSC.PollRef = JSC.PollRef.init(),
+        poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
 
         initial_data_handler: ?*InitialDataHandler = null,
 
@@ -881,11 +891,11 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
             var ctx: *uws.SocketContext = @as(*uws.SocketContext, @ptrCast(ctx_));
 
-            if (vm.event_loop_handle) |other| {
-                std.debug.assert(other == loop);
+            if (comptime Environment.isPosix) {
+                if (vm.event_loop_handle) |other| {
+                    std.debug.assert(other == loop);
+                }
             }
-
-            vm.event_loop_handle = loop;
 
             Socket.configure(
                 ctx,

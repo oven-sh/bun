@@ -1973,11 +1973,6 @@ console.log(resolve.length)
       expectParseError("/x/msuygig", 'Duplicate flag "g" in regular expression');
     });
 
-    it("non-ascii regexp literals", () => {
-      var str = "🔴11 54 / 10,000";
-      expect(str.replace(/[🔵🔴,]+/g, "")).toBe("11 54 / 10000");
-    });
-
     it("identifier escapes", () => {
       expectPrinted_("var _\u0076\u0061\u0072", "var _var");
       expectParseError("var \u0076\u0061\u0072", 'Expected identifier but found "\u0076\u0061\u0072"');
@@ -1988,6 +1983,30 @@ console.log(resolve.length)
 
       // expectParseError("\u200Ca", 'Unexpected "\\u200c"');
       // expectParseError("\u200Da", 'Unexpected "\\u200d"');
+    });
+
+    describe("dead code elimination", () => {
+      const transpilerNoDCE = new Bun.Transpiler({ deadCodeElimination: false });
+      it("should DCE with deadCodeElimination: true or by default", () => {
+        expect(parsed("123", true, false)).toBe("");
+        expect(parsed("[-1, 2n, null]", true, false)).toBe("");
+        expect(parsed("true", true, false)).toBe("");
+        expect(parsed("!0", true, false)).toBe("");
+        expect(parsed('if (!1) "dead";', true, false)).toBe("if (false)");
+        expect(parsed("if (!1) var x = 2;", true, false)).toBe("if (false)\n  var x");
+        expect(parsed("if (undefined) { let y = Math.random(); }", true, false)).toBe("if (undefined) {\n}");
+      });
+      it("should not DCE with deadCodeElimination: false", () => {
+        expect(parsed("123", true, false, transpilerNoDCE)).toBe("123");
+        expect(parsed("[1, 2n, null]", true, false, transpilerNoDCE)).toBe("[1, 2n, null]");
+        expect(parsed("true", true, false, transpilerNoDCE)).toBe("true");
+        expect(parsed("!0", true, false, transpilerNoDCE)).toBe("!0");
+        expect(parsed('if (!1) "dead";', true, false, transpilerNoDCE)).toBe('if (!1)\n  "dead"');
+        expect(parsed("if (!1) var x = 2;", true, false, transpilerNoDCE)).toBe("if (!1)\n  var x = 2");
+        expect(parsed("if (undefined) { let y = Math.random(); }", true, false, transpilerNoDCE)).toBe(
+          "if (undefined) {\n  let y = Math.random();\n}",
+        );
+      });
     });
   });
 

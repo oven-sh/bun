@@ -25,8 +25,8 @@
 
 #pragma once
 
-#include "JavaScriptCore/JSGlobalObject.h"
-#include "JavaScriptCore/TypedArrayController.h"
+#include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/TypedArrayController.h>
 
 namespace WebCore {
 

@@ -5,7 +5,7 @@ import { isatty } from "tty";
 
 test("process.stdin", () => {
   expect(process.stdin).toBeDefined();
-  expect(process.stdout.isTTY).toBe(isatty(0));
+  expect(process.stdin.isTTY).toBe(isatty(0) ? true : undefined);
   expect(process.stdin.on("close", function () {})).toBe(process.stdin);
   expect(process.stdin.once("end", function () {})).toBe(process.stdin);
 });
@@ -66,6 +66,35 @@ test("process.stdin - resume", async () => {
   }
   var text = await new Response(stdout).text();
   expect(text).toBe("RESUMED" + lines.join("\n") + "ENDED");
+});
+
+test("process.stdin - close(#6713)", async () => {
+  const { stdin, stdout } = spawn({
+    cmd: [bunExe(), import.meta.dir + "/process-stdin-echo.js", "close-event"],
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: null,
+    env: {
+      ...process.env,
+      BUN_DEBUG_QUIET_LOGS: "1",
+    },
+  });
+  expect(stdin).toBeDefined();
+  expect(stdout).toBeDefined();
+  var lines = ["Get Emoji", "— All Emojis to ✂️ Copy and 📋 Paste", "👌", ""];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    setTimeout(() => {
+      if (line) {
+        stdin?.write(line + "\n");
+        stdin?.flush();
+      } else {
+        stdin?.end();
+      }
+    }, i * 200);
+  }
+  var text = await new Response(stdout).text();
+  expect(text).toBe(lines.join("\n") + "ENDED-CLOSE");
 });
 
 test("process.stdout", () => {

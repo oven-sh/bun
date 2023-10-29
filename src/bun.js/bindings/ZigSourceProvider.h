@@ -10,13 +10,13 @@ class SourceCodeKey;
 class SourceProvider;
 } // namespace JSC
 
-#include "JavaScriptCore/CachedBytecode.h"
-#include "JavaScriptCore/JSGlobalObject.h"
-#include "JavaScriptCore/JSTypeInfo.h"
+#include <JavaScriptCore/CachedBytecode.h>
+#include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/JSTypeInfo.h>
 #include "ZigConsoleClient.h"
-// #include "JavaScriptCore/SourceCodeKey.h"
-#include "JavaScriptCore/SourceProvider.h"
-#include "JavaScriptCore/Structure.h"
+// #include <JavaScriptCore/SourceCodeKey.h>
+#include <JavaScriptCore/SourceProvider.h>
+#include <JavaScriptCore/Structure.h>
 
 namespace Zig {
 
@@ -69,9 +69,10 @@ public:
 
 private:
     SourceProvider(Zig::GlobalObject* globalObject, ResolvedSource resolvedSource, Ref<WTF::StringImpl>&& sourceImpl,
+        JSC::SourceTaintedOrigin taintedness,
         const SourceOrigin& sourceOrigin, WTF::String&& sourceURL,
         const TextPosition& startPosition, JSC::SourceProviderSourceType sourceType)
-        : Base(sourceOrigin, WTFMove(sourceURL), String(), startPosition, sourceType)
+        : Base(sourceOrigin, WTFMove(sourceURL), String(), taintedness, startPosition, sourceType)
         , m_source(sourceImpl)
     {
 

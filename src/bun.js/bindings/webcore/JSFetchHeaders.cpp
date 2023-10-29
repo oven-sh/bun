@@ -115,7 +115,7 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSFetchHeadersPrototype, JSFetchHeadersProto
 
 using JSFetchHeadersDOMConstructor = JSDOMConstructor<JSFetchHeaders>;
 
-template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSFetchHeadersDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
+template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSFetchHeadersDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     VM& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -245,17 +245,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_getAll, (JSGlobalObject
     return JSValue::encode(array);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_getSetCookie, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(fetchHeadersGetSetCookie, (JSC::JSGlobalObject * lexicalGlobalObject, VM& vm, WebCore::FetchHeaders* impl))
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSFetchHeaders* castedThis = jsDynamicCast<JSFetchHeaders*>(callFrame->thisValue());
-    if (UNLIKELY(!castedThis)) {
-        return JSValue::encode(jsUndefined());
-    }
 
-    auto& impl = castedThis->wrapped();
-    auto values = impl.getSetCookieHeaders();
+    auto values = impl->getSetCookieHeaders();
     unsigned count = values.size();
 
     if (!count) {
@@ -263,18 +257,29 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_getSetCookie, (JSGlobal
     }
 
     JSC::JSArray* array = constructEmptyArray(lexicalGlobalObject, nullptr, count);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
     if (UNLIKELY(!array)) {
         throwOutOfMemoryError(lexicalGlobalObject, scope);
-        return JSValue::encode(jsUndefined());
+        return encodedJSValue();
     }
 
     for (unsigned i = 0; i < count; ++i) {
         array->putDirectIndex(lexicalGlobalObject, i, jsString(vm, values[i]));
-        RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
+        RETURN_IF_EXCEPTION(scope, encodedJSValue());
     }
 
     return JSValue::encode(array);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_getSetCookie, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    JSFetchHeaders* castedThis = jsDynamicCast<JSFetchHeaders*>(callFrame->thisValue());
+    if (UNLIKELY(!castedThis)) {
+        return JSValue::encode(jsUndefined());
+    }
+    auto& impl = castedThis->wrapped();
+    return fetchHeadersGetSetCookie(lexicalGlobalObject, vm, &impl);
 }
 
 /* Hash table for prototype */
@@ -324,7 +329,7 @@ void JSFetchHeaders::finishCreation(VM& vm)
 void JSFetchHeaders::computeMemoryCost()
 {
     m_memoryCost = wrapped().memoryCost();
-    globalObject()->vm().heap.reportExtraMemoryAllocated(m_memoryCost);
+    globalObject()->vm().heap.reportExtraMemoryAllocated(this, m_memoryCost);
 }
 
 JSObject* JSFetchHeaders::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -348,7 +353,7 @@ void JSFetchHeaders::destroy(JSC::JSCell* cell)
     thisObject->JSFetchHeaders::~JSFetchHeaders();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsFetchHeadersConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsFetchHeadersConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -530,7 +535,7 @@ const JSC::ClassInfo FetchHeadersIterator::s_info = { "Headers Iterator"_s, &Bas
 template<>
 const JSC::ClassInfo FetchHeadersIteratorPrototype::s_info = { "Headers Iterator"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(FetchHeadersIteratorPrototype) };
 
-static inline EncodedJSValue jsFetchHeadersPrototypeFunction_entriesCaller(JSGlobalObject*, CallFrame*, JSFetchHeaders* thisObject)
+static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_entriesCaller(JSGlobalObject*, CallFrame*, JSFetchHeaders* thisObject)
 {
     return JSValue::encode(iteratorCreate<FetchHeadersIterator>(*thisObject, IterationKind::Entries));
 }
@@ -540,7 +545,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_entries, (JSC::JSGlobal
     return IDLOperation<JSFetchHeaders>::call<jsFetchHeadersPrototypeFunction_entriesCaller>(*lexicalGlobalObject, *callFrame, "entries");
 }
 
-static inline EncodedJSValue jsFetchHeadersPrototypeFunction_keysCaller(JSGlobalObject*, CallFrame*, JSFetchHeaders* thisObject)
+static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_keysCaller(JSGlobalObject*, CallFrame*, JSFetchHeaders* thisObject)
 {
     return JSValue::encode(iteratorCreate<FetchHeadersIterator>(*thisObject, IterationKind::Keys));
 }
@@ -550,7 +555,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_keys, (JSC::JSGlobalObj
     return IDLOperation<JSFetchHeaders>::call<jsFetchHeadersPrototypeFunction_keysCaller>(*lexicalGlobalObject, *callFrame, "keys");
 }
 
-static inline EncodedJSValue jsFetchHeadersPrototypeFunction_valuesCaller(JSGlobalObject*, CallFrame*, JSFetchHeaders* thisObject)
+static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_valuesCaller(JSGlobalObject*, CallFrame*, JSFetchHeaders* thisObject)
 {
     return JSValue::encode(iteratorCreate<FetchHeadersIterator>(*thisObject, IterationKind::Values));
 }
@@ -560,7 +565,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_values, (JSC::JSGlobalO
     return IDLOperation<JSFetchHeaders>::call<jsFetchHeadersPrototypeFunction_valuesCaller>(*lexicalGlobalObject, *callFrame, "values");
 }
 
-static inline EncodedJSValue jsFetchHeadersPrototypeFunction_forEachCaller(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, JSFetchHeaders* thisObject)
+static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_forEachCaller(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, JSFetchHeaders* thisObject)
 {
     return JSValue::encode(iteratorForEach<FetchHeadersIterator>(*lexicalGlobalObject, *callFrame, *thisObject));
 }
@@ -688,7 +693,6 @@ extern void* _ZTVN7WebCore12FetchHeadersE[];
 
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<FetchHeaders>&& impl)
 {
-
     if constexpr (std::is_polymorphic_v<FetchHeaders>) {
 #if ENABLE(BINDING_INTEGRITY)
         const void* actualVTablePointer = getVTablePointer(impl.ptr());

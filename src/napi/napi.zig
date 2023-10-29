@@ -25,6 +25,7 @@ fn genericFailure() napi_status {
     }
     return .generic_failure;
 }
+const Async = bun.Async;
 
 pub const napi_env = *JSC.JSGlobalObject;
 pub const Ref = opaque {
@@ -309,28 +310,41 @@ pub extern fn napi_create_error(env: napi_env, code: napi_value, msg: napi_value
 pub extern fn napi_create_type_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status;
 pub extern fn napi_create_range_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status;
 pub extern fn napi_typeof(env: napi_env, value: napi_value, result: *napi_valuetype) napi_status;
-pub export fn napi_get_value_double(_: napi_env, value: napi_value, result: *f64) napi_status {
+pub export fn napi_get_value_double(env: napi_env, value: napi_value, result: *f64) napi_status {
     log("napi_get_value_double", .{});
-    result.* = value.asNumber();
+    if (!value.isNumber()) {
+        return .number_expected;
+    }
+    result.* = value.coerceToDouble(env);
     return .ok;
 }
 pub export fn napi_get_value_int32(_: napi_env, value: napi_value, result: *i32) napi_status {
     log("napi_get_value_int32", .{});
+    if (!value.isNumber()) {
+        return .number_expected;
+    }
     result.* = value.to(i32);
     return .ok;
 }
 pub export fn napi_get_value_uint32(_: napi_env, value: napi_value, result: *u32) napi_status {
     log("napi_get_value_uint32", .{});
+    if (!value.isNumber()) {
+        return .number_expected;
+    }
     result.* = value.to(u32);
     return .ok;
 }
 pub export fn napi_get_value_int64(_: napi_env, value: napi_value, result: *i64) napi_status {
     log("napi_get_value_int64", .{});
+    if (!value.isNumber()) {
+        return .number_expected;
+    }
     result.* = value.to(i64);
     return .ok;
 }
 pub export fn napi_get_value_bool(_: napi_env, value: napi_value, result: *bool) napi_status {
     log("napi_get_value_bool", .{});
+
     result.* = value.to(bool);
     return .ok;
 }
@@ -912,7 +926,7 @@ pub const napi_async_work = struct {
     can_deinit: bool = false,
     wait_for_deinit: bool = false,
     scheduled: bool = false,
-    ref: JSC.PollRef = .{},
+    ref: Async.KeepAlive = .{},
     pub const Status = enum(u32) {
         pending = 0,
         started = 1,
@@ -1097,6 +1111,8 @@ pub export fn napi_get_buffer_info(env: napi_env, value: napi_value, data: *[*]u
 extern fn node_api_create_syntax_error(napi_env, napi_value, napi_value, *napi_value) napi_status;
 extern fn node_api_symbol_for(napi_env, [*]const c_char, usize, *napi_value) napi_status;
 extern fn node_api_throw_syntax_error(napi_env, [*]const c_char, [*]const c_char) napi_status;
+extern fn node_api_create_external_string_latin1(napi_env, [*:0]u8, usize, napi_finalize, ?*anyopaque, *JSValue, *bool) napi_status;
+extern fn node_api_create_external_string_utf16(napi_env, [*:0]u16, usize, napi_finalize, ?*anyopaque, *JSValue, *bool) napi_status;
 
 pub export fn napi_create_async_work(
     env: napi_env,
@@ -1210,7 +1226,7 @@ pub const ThreadSafeFunction = struct {
     /// Neither does napi_unref_threadsafe_function mark the thread-safe
     /// functions as able to be destroyed nor does napi_ref_threadsafe_function
     /// prevent it from being destroyed.
-    poll_ref: JSC.PollRef,
+    poll_ref: Async.KeepAlive,
 
     owning_threads: std.AutoArrayHashMapUnmanaged(u64, void) = .{},
     owning_thread_lock: Lock = Lock.init(),
@@ -1413,7 +1429,7 @@ pub export fn napi_create_threadsafe_function(
         .ctx = context,
         .channel = ThreadSafeFunction.Queue.init(max_queue_size, bun.default_allocator),
         .owning_threads = .{},
-        .poll_ref = JSC.PollRef.init(),
+        .poll_ref = Async.KeepAlive.init(),
     };
     function.owning_threads.ensureTotalCapacity(bun.default_allocator, initial_thread_count) catch return genericFailure();
     function.finalizer = .{ .ctx = thread_finalize_data, .fun = thread_finalize_cb };
@@ -1617,5 +1633,7 @@ pub fn fixDeadCodeElimination() void {
     std.mem.doNotOptimizeAway(&node_api_create_syntax_error);
     std.mem.doNotOptimizeAway(&node_api_symbol_for);
     std.mem.doNotOptimizeAway(&node_api_throw_syntax_error);
+    std.mem.doNotOptimizeAway(&node_api_create_external_string_latin1);
+    std.mem.doNotOptimizeAway(&node_api_create_external_string_utf16);
     std.mem.doNotOptimizeAway(&@import("../bun.js/node/buffer.zig").BufferVectorized.fill);
 }

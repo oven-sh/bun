@@ -102,7 +102,7 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBroadcastChannelPrototype, JSBroadcastChan
 
 using JSBroadcastChannelDOMConstructor = JSDOMConstructor<JSBroadcastChannel>;
 
-template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSBroadcastChannelDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
+template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSBroadcastChannelDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     VM& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -193,7 +193,7 @@ JSValue JSBroadcastChannel::getConstructor(VM& vm, const JSGlobalObject* globalO
     return getDOMConstructor<JSBroadcastChannelDOMConstructor, DOMConstructorID::BroadcastChannel>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsBroadcastChannelConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsBroadcastChannelConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -211,7 +211,7 @@ static inline JSValue jsBroadcastChannel_nameGetter(JSGlobalObject& lexicalGloba
     RELEASE_AND_RETURN(throwScope, (toJS<IDLDOMString>(lexicalGlobalObject, throwScope, impl.name())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsBroadcastChannel_name, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsBroadcastChannel_name, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSBroadcastChannel>::get<jsBroadcastChannel_nameGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -222,7 +222,7 @@ static inline JSValue jsBroadcastChannel_onmessageGetter(JSGlobalObject& lexical
     return eventHandlerAttribute(thisObject.wrapped(), eventNames().messageEvent, worldForDOMObject(thisObject));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsBroadcastChannel_onmessage, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsBroadcastChannel_onmessage, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSBroadcastChannel>::get<jsBroadcastChannel_onmessageGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -238,7 +238,7 @@ static inline bool setJSBroadcastChannel_onmessageSetter(JSGlobalObject& lexical
     return true;
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setJSBroadcastChannel_onmessage, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_SETTER(setJSBroadcastChannel_onmessage, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName attributeName))
 {
     return IDLAttribute<JSBroadcastChannel>::set<setJSBroadcastChannel_onmessageSetter>(*lexicalGlobalObject, thisValue, encodedValue, attributeName);
 }
@@ -249,7 +249,7 @@ static inline JSValue jsBroadcastChannel_onmessageerrorGetter(JSGlobalObject& le
     return eventHandlerAttribute(thisObject.wrapped(), eventNames().messageerrorEvent, worldForDOMObject(thisObject));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsBroadcastChannel_onmessageerror, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsBroadcastChannel_onmessageerror, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSBroadcastChannel>::get<jsBroadcastChannel_onmessageerrorGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -265,7 +265,7 @@ static inline bool setJSBroadcastChannel_onmessageerrorSetter(JSGlobalObject& le
     return true;
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setJSBroadcastChannel_onmessageerror, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_SETTER(setJSBroadcastChannel_onmessageerror, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName attributeName))
 {
     return IDLAttribute<JSBroadcastChannel>::set<setJSBroadcastChannel_onmessageerrorSetter>(*lexicalGlobalObject, thisValue, encodedValue, attributeName);
 }

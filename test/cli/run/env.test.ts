@@ -328,16 +328,23 @@ test(".env doesnt crash with 159 bytes", () => {
   );
 });
 
-test(".env with >768 entries", () => {
+test(".env with 50000 entries", () => {
   const dir = tempDirWithFiles("dotenv-many-entries", {
-    ".env": new Array(2000)
+    ".env": new Array(50000)
       .fill(null)
       .map((_, i) => `TEST_VAR${i}=TEST_VAL${i}`)
       .join("\n"),
-    "index.ts": "console.log(process.env.TEST_VAR47);",
+    "index.ts": /* ts */ `
+      for (let i = 0; i < 50000; i++) {
+        if(process.env['TEST_VAR' + i] !== 'TEST_VAL' + i) {
+          throw new Error('TEST_VAR' + i + ' !== TEST_VAL' + i);
+        }
+      }
+      console.log('OK');
+    `,
   });
   const { stdout } = bunRun(`${dir}/index.ts`);
-  expect(stdout).toBe("TEST_VAL47");
+  expect(stdout).toBe("OK");
 });
 
 test(".env space edgecase (issue #411)", () => {
@@ -383,6 +390,16 @@ test(".env with zero length strings", () => {
   });
   const { stdout } = bunRun(`${dir}/index.ts`);
   expect(stdout).toBe("||0|0");
+});
+
+test("process with zero length environment variable", () => {
+  const dir = tempDirWithFiles("process-issue-zerolength", {
+    "index.ts": "console.log(`'${process.env.TEST_ENV_VAR}'`);",
+  });
+  const { stdout } = bunRun(`${dir}/index.ts`, {
+    TEST_ENV_VAR: "",
+  });
+  expect(stdout).toBe("''");
 });
 
 test(".env in a folder doesn't throw an error", () => {

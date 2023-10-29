@@ -664,7 +664,7 @@ pub fn StringEnum(comptime Type: type, comptime Map: anytype, value: []const u8)
 
 pub const Bunfig = @import("./bunfig.zig").Bunfig;
 
-pub const HTTPThead = @import("./http_client_async.zig").HTTPThread;
+pub const HTTPThread = @import("./http_client_async.zig").HTTPThread;
 
 pub const Analytics = @import("./analytics/analytics_thread.zig");
 
@@ -716,7 +716,7 @@ pub fn rangeOfSliceInBuffer(slice: []const u8, buffer: []const u8) ?[2]u32 {
 
 pub const invalid_fd = if (Environment.isWindows)
     // on windows, max usize is the process handle, a very valid fd
-    std.math.maxInt(i32) + 1
+    std.math.maxInt(usize)
 else
     std.math.maxInt(FileDescriptor);
 
@@ -740,9 +740,61 @@ pub const DateTime = @import("./deps/zig-datetime/src/datetime.zig");
 
 pub var start_time: i128 = 0;
 
+pub fn openFileZ(pathZ: [:0]const u8, open_flags: std.fs.File.OpenFlags) !std.fs.File {
+    var flags: Mode = 0;
+    switch (open_flags.mode) {
+        .read_only => flags |= std.os.O.RDONLY,
+        .write_only => flags |= std.os.O.WRONLY,
+        .read_write => flags |= std.os.O.RDWR,
+    }
+
+    const res = try sys.open(pathZ, flags, 0).unwrap();
+    return std.fs.File{ .handle = fdcast(res) };
+}
+
+pub fn openFile(path_: []const u8, open_flags: std.fs.File.OpenFlags) !std.fs.File {
+    if (comptime Environment.isWindows) {
+        var flags: Mode = 0;
+        switch (open_flags.mode) {
+            .read_only => flags |= std.os.O.RDONLY,
+            .write_only => flags |= std.os.O.WRONLY,
+            .read_write => flags |= std.os.O.RDWR,
+        }
+
+        return std.fs.File{ .handle = fdcast(try sys.openA(path_, flags, 0).unwrap()) };
+    }
+
+    return try openFileZ(&try std.os.toPosixPath(path_), open_flags);
+}
+
 pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.IterableDir {
-    const fd = try std.os.openatZ(dir.fd, path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | 0, 0);
-    return std.fs.IterableDir{ .dir = .{ .fd = fd } };
+    if (comptime Environment.isWindows) {
+        const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, true, false).unwrap();
+        return std.fs.IterableDir{ .dir = .{ .fd = fdcast(res) } };
+    } else {
+        const fd = try sys.openat(dir.fd, path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
+        return std.fs.IterableDir{ .dir = .{ .fd = fd } };
+    }
+}
+
+pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.IterableDir {
+    if (comptime Environment.isWindows) {
+        const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, true, false).unwrap();
+        return std.fs.IterableDir{ .dir = .{ .fd = fdcast(res) } };
+    } else {
+        const fd = try sys.openatA(dir.fd, path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
+        return std.fs.IterableDir{ .dir = .{ .fd = fd } };
+    }
+}
+
+pub fn openDirAbsolute(path_: []const u8) !std.fs.Dir {
+    if (comptime Environment.isWindows) {
+        const res = try sys.openDirAtWindowsA(invalid_fd, path_, true, false).unwrap();
+        return std.fs.Dir{ .fd = fdcast(res) };
+    } else {
+        const fd = try sys.openA(path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
+        return std.fs.Dir{ .fd = fd };
+    }
 }
 pub const MimallocArena = @import("./mimalloc_arena.zig").Arena;
 
@@ -750,6 +802,20 @@ pub const MimallocArena = @import("./mimalloc_arena.zig").Arena;
 /// Zig's sliceTo(0) is scalar
 pub fn getenvZ(path_: [:0]const u8) ?[]const u8 {
     if (comptime !Environment.isNative) {
+        return null;
+    }
+
+    if (comptime Environment.isWindows) {
+        // Windows UCRT will fill this in for us
+        for (std.os.environ) |lineZ| {
+            const line = sliceTo(lineZ, 0);
+            const key_end = strings.indexOfCharUsize(line, '=') orelse line.len;
+            const key = line[0..key_end];
+            if (strings.eqlLong(key, path_, true)) {
+                return line[@min(key_end + 1, line.len)..];
+            }
+        }
+
         return null;
     }
 
@@ -1054,12 +1120,33 @@ fn getFdPathViaCWD(fd: std.os.fd_t, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
     return std.os.getcwd(buf);
 }
 
+pub fn getcwd(buf_: []u8) ![]u8 {
+    if (comptime !Environment.isWindows) {
+        return std.os.getcwd(buf_);
+    }
+
+    var temp: [MAX_PATH_BYTES]u8 = undefined;
+    var temp_slice = try std.os.getcwd(&temp);
+    return path.normalizeBuf(temp_slice, buf_, .loose);
+}
+
+pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
+    var temp: [MAX_PATH_BYTES]u8 = undefined;
+    var temp_slice = try getcwd(&temp);
+    return allocator.dupe(u8, temp_slice);
+}
+
 /// Get the absolute path to a file descriptor.
 /// On Linux, when `/proc/self/fd` is not available, this function will attempt to use `fchdir` and `getcwd` to get the path instead.
 pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
     const fd = fdcast(toFD(fd_));
+    if (comptime Environment.isWindows) {
+        var temp: [MAX_PATH_BYTES]u8 = undefined;
+        var temp_slice = try std.os.getFdPath(fd, &temp);
+        return path.normalizeBuf(temp_slice, buf, .loose);
+    }
     if (comptime !Environment.isLinux) {
-        return std.os.getFdPath(fd, buf);
+        return try std.os.getFdPath(fd, buf);
     }
 
     if (needs_proc_self_workaround) {
@@ -1678,6 +1765,10 @@ const WindowsStat = extern struct {
     mtim: std.c.timespec,
     ctim: std.c.timespec,
 
+    pub fn birthtime(_: *const WindowsStat) std.c.timespec {
+        return std.c.timespec{ .tv_nsec = 0, .tv_sec = 0 };
+    }
+
     pub fn mtime(this: *const WindowsStat) std.c.timespec {
         return this.mtim;
     }
@@ -1718,15 +1809,13 @@ pub const win32 = struct {
     pub var STDOUT_FD: FileDescriptor = undefined;
     pub var STDERR_FD: FileDescriptor = undefined;
     pub var STDIN_FD: FileDescriptor = undefined;
-    var argv_: [][*:0]u8 = undefined;
-    var args_buf: [255][*:0]u8 = undefined;
 
     pub inline fn argv() [][*:0]u8 {
-        return argv_;
+        return std.os.argv;
     }
 
     pub inline fn setArgv(new_ptr: [][*:0]u8) void {
-        argv_ = new_ptr;
+        std.os.argv = new_ptr;
     }
 
     pub fn stdio(i: anytype) FileDescriptor {
@@ -1736,47 +1825,6 @@ pub const win32 = struct {
             2 => STDERR_FD,
             else => @panic("Invalid stdio fd"),
         };
-    }
-
-    pub fn populateArgv() void {
-        const kernel32 = windows;
-
-        var wargv_all = kernel32.GetCommandLineW();
-        var num_args: c_int = 0;
-        var start = kernel32.CommandLineToArgvW(wargv_all, &num_args);
-        defer _ = kernel32.LocalFree(@ptrCast(start));
-        var wargv = start[0..@as(usize, @intCast(num_args))];
-        var argv_list = std.ArrayList([*:0]u8).init(default_allocator);
-        argv_list.items = &args_buf;
-        argv_list.capacity = args_buf.len;
-
-        if (wargv.len > args_buf.len) {
-            var ptrs = default_allocator.alloc(?[*]u8, wargv.len + 1) catch unreachable;
-            ptrs[ptrs.len - 1] = null;
-            argv_list.items = @ptrCast(ptrs[0 .. ptrs.len - 1]);
-            argv_list.capacity = argv_list.items.len + 1;
-        }
-
-        const probably_overestimated_length = strings.elementLengthUTF16IntoUTF8([]const u16, sliceTo(wargv_all, 0)) + argv_list.items.len;
-        var buf = default_allocator.alloc(u8, probably_overestimated_length) catch unreachable;
-        var builder = StringBuilder{
-            .cap = probably_overestimated_length,
-            .ptr = buf.ptr,
-            .len = 0,
-        };
-
-        for (wargv) |warg_| {
-            var warg = sliceTo(warg_, 0);
-            argv_list.appendAssumeCapacity(
-                (builder.append16(warg) orelse brk: {
-                    var list = strings.convertUTF16ToUTF8(std.ArrayList(u8).init(default_allocator), []const u16, warg) catch unreachable;
-                    list.append(0) catch unreachable;
-                    break :brk list.items.ptr[0..list.items.len :0];
-                }).ptr,
-            );
-        }
-
-        argv_ = argv_list.items.ptr[0..argv_list.items.len];
     }
 };
 
@@ -1841,3 +1889,104 @@ pub fn fdi32(fd_: anytype) i32 {
 }
 
 pub const OSPathSlice = if (Environment.isWindows) [:0]const u16 else [:0]const u8;
+pub const LazyBoolValue = enum {
+    unknown,
+    no,
+    yes,
+};
+/// Create a lazily computed boolean value.
+/// Getter must be a function that takes a pointer to the parent struct and returns a boolean.
+/// Parent must be a type which contains the field we are getting.
+pub fn LazyBool(comptime Getter: anytype, comptime Parent: type, comptime field: string) type {
+    return struct {
+        value: LazyBoolValue = .unknown,
+        pub fn get(self: *@This()) bool {
+            if (self.value == .unknown) {
+                self.value = switch (Getter(@fieldParentPtr(Parent, field, self))) {
+                    true => .yes,
+                    false => .no,
+                };
+            }
+
+            return self.value == .yes;
+        }
+    };
+}
+
+pub fn serializable(input: anytype) @TypeOf(input) {
+    const T = @TypeOf(input);
+    comptime {
+        if (std.meta.trait.isExtern(T)) {
+            if (@typeInfo(T) == .Union) {
+                @compileError("Extern unions must be serialized with serializableInto");
+            }
+        }
+    }
+    var zeroed: [@sizeOf(T)]u8 align(@alignOf(T)) = comptime brk: {
+        var buf: [@sizeOf(T)]u8 align(@alignOf(T)) = undefined;
+        for (&buf) |*ptr| {
+            ptr.* = 0;
+        }
+        break :brk buf;
+    };
+    const result: *T = @ptrCast(&zeroed);
+
+    inline for (comptime std.meta.fieldNames(T)) |field_name| {
+        @field(result, field_name) = @field(input, field_name);
+    }
+
+    return result.*;
+}
+
+pub inline fn serializableInto(comptime T: type, init: anytype) T {
+    var zeroed: [@sizeOf(T)]u8 align(@alignOf(T)) = comptime brk: {
+        var buf: [@sizeOf(T)]u8 align(@alignOf(T)) = undefined;
+        for (&buf) |*ptr| {
+            ptr.* = 0;
+        }
+        break :brk buf;
+    };
+    const result: *T = @ptrCast(&zeroed);
+
+    inline for (comptime std.meta.fieldNames(@TypeOf(init))) |field_name| {
+        @field(result, field_name) = @field(init, field_name);
+    }
+
+    return result.*;
+}
+
+/// Like std.fs.Dir.makePath except instead of infinite looping on dangling
+/// symlink, it deletes the symlink and tries again.
+pub fn makePath(dir: std.fs.Dir, sub_path: []const u8) !void {
+    if (comptime Environment.isWindows) {
+        @panic("TODO: Windows makePath");
+    }
+    var it = try std.fs.path.componentIterator(sub_path);
+    var component = it.last() orelse return;
+    while (true) {
+        dir.makeDir(component.path) catch |err| switch (err) {
+            error.PathAlreadyExists => {
+                var path_buf2: [MAX_PATH_BYTES * 2]u8 = undefined;
+                copy(u8, &path_buf2, component.path);
+
+                path_buf2[component.path.len] = 0;
+                var path_to_use = path_buf2[0..component.path.len :0];
+                const result = try sys.lstat(path_to_use).unwrap();
+                const is_dir = std.os.S.ISDIR(result.mode);
+                // dangling symlink
+                if (!is_dir) {
+                    dir.deleteTree(component.path) catch {};
+                    continue;
+                }
+            },
+            error.FileNotFound => |e| {
+                component = it.previous() orelse return e;
+                continue;
+            },
+            else => |e| return e,
+        };
+        component = it.next() orelse return;
+    }
+}
+
+pub const Async = @import("async");

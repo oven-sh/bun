@@ -18,7 +18,6 @@ describe("Script", () => {
   describe("runInContext()", () => {
     testRunInContext(
       (code, context, options) => {
-        // @ts-expect-error
         const script = new Script(code, options);
         return script.runInContext(context);
       },
@@ -28,7 +27,6 @@ describe("Script", () => {
   describe("runInNewContext()", () => {
     testRunInContext(
       (code, context, options) => {
-        // @ts-expect-error
         const script = new Script(code, options);
         return script.runInNewContext(context);
       },
@@ -37,7 +35,6 @@ describe("Script", () => {
   });
   describe("runInThisContext()", () => {
     testRunInContext((code, context, options) => {
-      // @ts-expect-error
       const script = new Script(code, options);
       return script.runInThisContext(context);
     });
@@ -101,7 +98,7 @@ function testRunInContext(
     expect(typeof result).toBe("function");
     expect(result()).toBe("bar");
   });
-  test.skip("can throw a syntax error", () => {
+  test("can throw a syntax error", () => {
     const context = createContext({});
     const result = () => fn("!?", context);
     expect(result).toThrow({
@@ -124,8 +121,7 @@ function testRunInContext(
   });
   test("can reject a promise", () => {
     const context = createContext({});
-    const result = fn("Promise.reject(new TypeError('Oops!'));", context);
-    expect(async () => await result).toThrow({
+    expect(async () => await fn("Promise.reject(new TypeError('Oops!'));", context)).toThrow({
       name: "TypeError",
       message: "Oops!",
     });

@@ -286,4 +286,25 @@ describe("bundler", () => {
       stdout: "PASS",
     },
   });
+  // https://github.com/oven-sh/bun/issues/5501
+  itBundled("minify/BunRequireStatement", {
+    files: {
+      "/entry.js": /* js */ `
+        export function test(ident) {
+          return require(ident);
+        }
+
+        test("fs");
+        console.log("PASS");
+      `,
+    },
+    minifyWhitespace: true,
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    target: "bun",
+    backend: "cli",
+    run: {
+      stdout: "PASS",
+    },
+  });
 });

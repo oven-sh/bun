@@ -1,4 +1,4 @@
-import { define } from "../scripts/class-definitions";
+import { define } from "../../codegen/class-definitions";
 
 function generate(name) {
   return define({
@@ -24,6 +24,10 @@ function generate(name) {
         fn: "doStop",
         length: 1,
       },
+      requestIP: {
+        fn: "doRequestIP",
+        length: 1,
+      },
       port: {
         getter: "getPort",
       },
@@ -39,6 +43,10 @@ function generate(name) {
       },
       hostname: {
         getter: "getHostname",
+        cache: true,
+      },
+      address: {
+        getter: "getAddress",
         cache: true,
       },
       protocol: {

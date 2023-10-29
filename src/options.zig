@@ -1197,39 +1197,42 @@ pub fn definesFromTransformOptions(
             );
         }
     }
+    if (framework_env) |framework| {
+        if (framework.behavior != .disable) {
+            var quoted_node_env: string = brk: {
+                if (NODE_ENV) |node_env| {
+                    if (node_env.len > 0) {
+                        if ((strings.startsWithChar(node_env, '"') and strings.endsWithChar(node_env, '"')) or
+                            (strings.startsWithChar(node_env, '\'') and strings.endsWithChar(node_env, '\'')))
+                        {
+                            break :brk node_env;
+                        }
 
-    var quoted_node_env: string = brk: {
-        if (NODE_ENV) |node_env| {
-            if (node_env.len > 0) {
-                if ((strings.startsWithChar(node_env, '"') and strings.endsWithChar(node_env, '"')) or
-                    (strings.startsWithChar(node_env, '\'') and strings.endsWithChar(node_env, '\'')))
-                {
-                    break :brk node_env;
+                        // avoid allocating if we can
+                        if (strings.eqlComptime(node_env, "production")) {
+                            break :brk "\"production\"";
+                        } else if (strings.eqlComptime(node_env, "development")) {
+                            break :brk "\"development\"";
+                        } else if (strings.eqlComptime(node_env, "test")) {
+                            break :brk "\"test\"";
+                        } else {
+                            break :brk try std.fmt.allocPrint(allocator, "\"{s}\"", .{node_env});
+                        }
+                    }
                 }
+                break :brk "\"development\"";
+            };
 
-                // avoid allocating if we can
-                if (strings.eqlComptime(node_env, "production")) {
-                    break :brk "\"production\"";
-                } else if (strings.eqlComptime(node_env, "development")) {
-                    break :brk "\"development\"";
-                } else if (strings.eqlComptime(node_env, "test")) {
-                    break :brk "\"test\"";
-                } else {
-                    break :brk try std.fmt.allocPrint(allocator, "\"{s}\"", .{node_env});
-                }
-            }
+            _ = try user_defines.getOrPutValue(
+                "process.env.NODE_ENV",
+                quoted_node_env,
+            );
+            _ = try user_defines.getOrPutValue(
+                "process.env.BUN_ENV",
+                quoted_node_env,
+            );
         }
-        break :brk "\"development\"";
-    };
-
-    _ = try user_defines.getOrPutValue(
-        "process.env.NODE_ENV",
-        quoted_node_env,
-    );
-    _ = try user_defines.getOrPutValue(
-        "process.env.BUN_ENV",
-        quoted_node_env,
-    );
+    }
 
     if (hmr) {
         try user_defines.put(DefaultUserDefines.HotModuleReloading.Key, DefaultUserDefines.HotModuleReloading.Value);

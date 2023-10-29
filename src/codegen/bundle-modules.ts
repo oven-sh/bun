@@ -8,6 +8,7 @@ import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { builtinModules } from "node:module";
 import { define } from "./replacements";
 import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
+import { parseBuiltinExecutable } from "./BuiltinExecutableMetadata";
 
 const BASE = path.join(import.meta.dir, "../js");
 const debug = process.argv[2] === "--debug=ON";
@@ -207,6 +208,7 @@ if (out.exitCode !== 0) {
 mark("Bundle modules");
 
 const outputs = new Map();
+const executables = new Map();
 
 for (const entrypoint of bundledEntryPoints) {
   const file_path = entrypoint.slice(TMP_DIR.length + 1).replace(/\.ts$/, ".js");
@@ -248,6 +250,7 @@ for (const entrypoint of bundledEntryPoints) {
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   fs.writeFileSync(outputPath, captured);
   outputs.set(file_path.replace(".js", ""), captured);
+  executables.set(file_path.replace(".js", ""), parseBuiltinExecutable(captured));
 }
 
 mark("Postprocesss modules");
@@ -333,9 +336,15 @@ if (!debug) {
     `// clang-format off
 #pragma once
 
+#include <JavaScriptCore/BuiltinExecutableMetadata.h>
+
 namespace Bun {
 namespace InternalModuleRegistryConstants {
-  ${moduleList.map((id, n) => declareASCIILiteral(`${idToEnumName(id)}Code`, outputs.get(id.slice(0, -3)))).join("\n")}
+  ${moduleList
+    .map((id, n) =>
+      declareASCIILiteral(`${idToEnumName(id)}Code`, outputs.get(id.slice(0, -3)), executables.get(id.slice(0, -3))),
+    )
+    .join("\n")}
 }
 }`,
   );
@@ -346,9 +355,15 @@ namespace InternalModuleRegistryConstants {
     `// clang-format off
 #pragma once
 
+#include <JavaScriptCore/BuiltinExecutableMetadata.h>
+
 namespace Bun {
 namespace InternalModuleRegistryConstants {
-  ${moduleList.map((id, n) => `${declareASCIILiteral(`${idToEnumName(id)}Code`, "")}`).join("\n")}
+  ${moduleList
+    .map((id, n) =>
+      declareASCIILiteral(`${idToEnumName(id)}Code`, outputs.get(id.slice(0, -3)), executables.get(id.slice(0, -3))),
+    )
+    .join("\n")}
 }
 }`,
   );

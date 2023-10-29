@@ -92,7 +92,7 @@ $ brew install automake ccache cmake coreutils gnu-sed go libiconv libtool ninja
 ```
 
 ```bash#Ubuntu/Debian
-$ sudo apt install cargo ccache cmake git golang libtool ninja-build pkg-config rustc
+$ sudo apt install cargo ccache cmake git golang libtool ninja-build pkg-config rustc ruby-full
 ```
 
 ```bash#Arch

@@ -138,7 +138,6 @@ if(UNIX)
 else()
     # Windows uses Clang-CL
     # TODO: good configuration in this regard. -G Ninja will pick clang-cl if possible, which should be fine for most users.
-
     find_program(
         STRIP
         NAMES llvm-strip
@@ -180,6 +179,7 @@ message(STATUS "C++ Compiler: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERS
 # --- End LLVM ---
 set(SHELL "bash")
 set(SCRIPT_EXTENSION "sh")
+
 if(WIN32)
     set(SCRIPT_EXTENSION "ps1")
 endif()
@@ -400,7 +400,15 @@ else()
         # -DPTHREAD_JIT_PERMISSIONS_API=1
         # -DUSE_PTHREAD_JIT_PERMISSIONS_API=ON
         # -DENABLE_REMOTE_INSPECTOR=ON
-        message(FATAL_ERROR "TODO: Setting WEBKIT_DIR to the WebKit repository to enable automatic builds. For now you need to run the release script, and point to the packaged directory.")
+        message(STATUS "Using specified WebKit repository: ${WEBKIT_DIR}/WebKitBuild/Release")
+        include_directories(
+            "${WEBKIT_DIR}/WebKitBuild/Release/JavaScriptCore/Headers"
+            "${WEBKIT_DIR}/WebKitBuild/Release/JavaScriptCore/PrivateHeaders"
+            "${WEBKIT_DIR}/WebKitBuild/Release/WTF/Headers"
+            "${WEBKIT_DIR}/WebKitBuild/Release/bmalloc/Headers"
+            "${WEBKIT_DIR}/WebKitBuild/Release/"
+        )
+        set(WEBKIT_LIB_DIR "${WEBKIT_DIR}/WebKitBuild/Release/lib")
     else()
         if(NOT EXISTS "${WEBKIT_DIR}/lib/${libWTF}.${STATIC_LIB_EXT}" OR NOT EXISTS "${WEBKIT_DIR}/lib/${libJavaScriptCore}.${STATIC_LIB_EXT}")
             if(WEBKIT_DIR MATCHES "src/bun.js/WebKit$")
@@ -414,10 +422,10 @@ else()
         set(WEBKIT_LIB_DIR "${WEBKIT_DIR}/lib")
 
         message(STATUS "Using specified WebKit directory: ${WEBKIT_DIR}")
-
-        set(ASSERT_ENABLED "0")
-        message(STATUS "WebKit assertions: OFF")
     endif()
+
+    set(ASSERT_ENABLED "0")
+    message(STATUS "WebKit assertions: OFF")
 endif()
 
 # --- CMake Macros ---
@@ -521,6 +529,7 @@ set(BUN_OBJECT_LUT_SOURCES
 )
 set(BUN_OBJECT_LUT_OUTPUTS "")
 set(BUN_HASH_LUT_GENERATOR "${BUN_CODEGEN_SRC}/create-hash-table.ts")
+
 if(NOT BUN_LINK_ONLY)
     macro(GENERATE_HASH_LUT _input _output _display_name)
         if(NOT NO_CODEGEN)
@@ -533,6 +542,7 @@ if(NOT BUN_LINK_ONLY)
                 COMMENT "Generating ${_display_name}"
             )
         endif()
+
         list(APPEND BUN_OBJECT_LUT_OUTPUTS "${_output}")
 
         # list(APPEND Bun_HEADERS ${_output})
@@ -849,6 +859,7 @@ if(NOT MSVC)
         -ferror-limit=${ERROR_LIMIT}
         -fno-omit-frame-pointer
     )
+
     if(NOT WIN32)
         target_compile_options(${bun} PUBLIC -fPIC)
     endif()

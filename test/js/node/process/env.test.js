@@ -16,9 +16,9 @@ describe("env var tests", () => {
       },
     });
     expect(stderr).toBeDefined();
-    expect(stderr.toString().trim()).toEqual("1\nnew-value")
+    expect(stderr.toString().trim()).toEqual("1\nnew-value");
   });
-    it("can delete a var", () => {
+  it("can delete a var", () => {
     const { stderr } = spawnSync({
       cmd: [bunExe(), import.meta.dir + "/env-fixture.js", "delete"],
       stdout: null,
@@ -30,6 +30,6 @@ describe("env var tests", () => {
       },
     });
     expect(stderr).toBeDefined();
-    expect(stderr.toString().trim()).toEqual("defined-value\nundefined")
+    expect(stderr.toString().trim()).toEqual("defined-value\nundefined");
   });
 });

@@ -146,6 +146,7 @@ inline fn jsSyntheticModule(comptime name: ResolvedSource.Tag, specifier: String
         .source_url = ZigString.init(@tagName(name)),
         .hash = 0,
         .tag = name,
+        .needs_deref = false,
     };
 }
 
@@ -556,7 +557,17 @@ pub const RuntimeTranspilerStore = struct {
 
             this.resolved_source = ResolvedSource{
                 .allocator = null,
-                .source_code = bun.String.createLatin1(printer.ctx.getWritten()),
+                .source_code = brk: {
+                    const written = printer.ctx.getWritten();
+                    const result = bun.String.createLatin1(written);
+
+                    if (written.len > 1024 * 1024 * 2 or vm.smol) {
+                        printer.ctx.buffer.deinit();
+                        source_code_printer.?.* = printer;
+                    }
+
+                    break :brk result;
+                },
                 .specifier = String.create(specifier),
                 .source_url = ZigString.init(path.text),
                 .commonjs_exports = null,
@@ -1364,14 +1375,19 @@ pub const ModuleLoader = struct {
                 if (jsc_vm.parser_arena) |shared| {
                     arena = shared;
                     jsc_vm.parser_arena = null;
-                    _ = arena.reset(.retain_capacity);
                 } else {
-                    arena = bun.ArenaAllocator.init(jsc_vm.allocator);
+                    arena = bun.ArenaAllocator.init(bun.default_allocator);
                 }
                 var give_back_arena = true;
                 defer {
                     if (give_back_arena) {
                         if (jsc_vm.parser_arena == null) {
+                            if (jsc_vm.smol) {
+                                _ = arena.reset(.free_all);
+                            } else {
+                                _ = arena.reset(.{ .retain_with_limit = 8 * 1024 * 1024 });
+                            }
+
                             jsc_vm.parser_arena = arena;
                         } else {
                             arena.deinit();
@@ -1684,7 +1700,17 @@ pub const ModuleLoader = struct {
 
                 return .{
                     .allocator = null,
-                    .source_code = bun.String.createLatin1(printer.ctx.getWritten()),
+                    .source_code = brk: {
+                        const written = printer.ctx.getWritten();
+                        const result = bun.String.createLatin1(written);
+
+                        if (written.len > 1024 * 1024 * 2 or jsc_vm.smol) {
+                            printer.ctx.buffer.deinit();
+                            source_code_printer.* = printer;
+                        }
+
+                        break :brk result;
+                    },
                     .specifier = input_specifier,
                     .source_url = ZigString.init(path.text),
                     .commonjs_exports = if (commonjs_exports.len > 0)
@@ -2034,6 +2060,7 @@ pub const ModuleLoader = struct {
                         .source_url = ZigString.init(bun.asByteSlice(JSC.VirtualMachine.main_file_name)),
                         .hash = 0,
                         .tag = .esm,
+                        .needs_deref = true,
                     };
                 },
 

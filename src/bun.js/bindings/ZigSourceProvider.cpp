@@ -96,7 +96,7 @@ Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, Reso
 {
 
     auto stringImpl = Bun::toWTFString(resolvedSource.source_code);
-    if (!stringImpl.impl()->isStatic() && resolvedSource.source_code.tag == BunStringTag::WTFStringImpl) {
+    if (resolvedSource.needsDeref) {
         resolvedSource.source_code.deref();
     }
     auto sourceURLString = toStringCopy(resolvedSource.source_url);

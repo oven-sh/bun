@@ -205,6 +205,7 @@ pub const ResolvedSource = extern struct {
     allocator: ?*anyopaque = null,
 
     tag: Tag = Tag.javascript,
+    needs_deref: bool = true,
 
     pub const Tag = @import("generated/ResolvedSourceTag.zig").ResolvedSourceTag;
 };

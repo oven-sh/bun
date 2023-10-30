@@ -75,6 +75,7 @@ typedef struct ResolvedSource {
     uint32_t hash;
     void* allocator;
     uint32_t tag;
+    bool needsDeref;
 } ResolvedSource;
 static const uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {

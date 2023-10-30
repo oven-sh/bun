@@ -1115,9 +1115,10 @@ pub const H2FrameParser = struct {
 
         if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
             const payload = content.data;
-            this.dispatch(.onPing, this.handlers.binary_type.toJS(payload, this.handlers.globalObject));
+            const isNotACK = frame.flags & @intFromEnum(PingFrameFlags.ACK) == 0;
+            this.dispatchWithExtra(.onPing, this.handlers.binary_type.toJS(payload, this.handlers.globalObject), JSC.JSValue.jsBoolean(!isNotACK));
             // if is not ACK send response
-            if (frame.flags & @intFromEnum(PingFrameFlags.ACK) == 0) {
+            if (isNotACK) {
                 this.sendPing(true, payload);
             }
             this.readBuffer.reset();

@@ -793,8 +793,8 @@ class ClientHttp2Session extends Http2Session {
       self.emit("remoteSettings", settings);
       self.#remoteSettings = settings;
     },
-    ping(self: ClientHttp2Session, ping: Buffer) {
-      self.emit("ping", ping);
+    ping(self: ClientHttp2Session, ping: Buffer, isACK: boolean) {
+      self.emit("ping", ping, isACK);
     },
     error(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       self.emit("error", new Error(`ERR_HTTP2_SESSION_ERROR: error code ${errorCode}`));
@@ -940,13 +940,25 @@ class ClientHttp2Session extends Http2Session {
     return this[bunHTTP2Socket]?.setTimeout(msecs, callback);
   }
   ping(payload, callback) {
-    if (typeof callback === "function") {
-      this.once("ping", callback);
-    }
     payload = payload || Buffer.alloc(8);
-    if (payload.byteLength !== 8) {
-      throw new Error("ERR_HTTP2_PING_PAYLOAD_SIZE");
+    if (typeof callback === "function") {
+      if (payload.byteLength !== 8) {
+        callback(new Error("ERR_HTTP2_PING_PAYLOAD_SIZE"), 0, payload);
+        return;
+      }
+      const pingStart = Date.now();
+      this.once("ping", (payload, isACK)=> {
+        if(isACK) {
+          callback(null, Date.now() - pingStart, payload);
+        }
+      });
+    } else {
+      if (payload.byteLength !== 8) {
+        throw new Error("ERR_HTTP2_PING_PAYLOAD_SIZE");
+      }
     }
+    
+    
     this.#parser?.ping(payload);
     return this.#parser && this[bunHTTP2Socket] ? true : false;
   }

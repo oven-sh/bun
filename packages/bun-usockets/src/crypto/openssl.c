@@ -44,12 +44,12 @@ void *sni_find(void *sni, const char *hostname);
 #endif
 
 #include "./root_certs.h"
-#include <stdatomic.h>
 static const size_t root_certs_size =
     sizeof(root_certs) / sizeof(root_certs[0]);
 static X509 *root_cert_instances[root_certs_size] = {NULL};
-static atomic_flag root_cert_instances_lock = ATOMIC_FLAG_INIT;
-static atomic_bool root_cert_instances_initialized = 0;
+
+/* These are in root_certs.cpp */
+extern X509_STORE *us_get_default_ca_store();
 
 struct loop_ssl_data {
   char *ssl_read_input, *ssl_read_output;
@@ -644,94 +644,6 @@ void free_ssl_context(SSL_CTX *ssl_context) {
   us_free(password);
 
   SSL_CTX_free(ssl_context);
-}
-
-// This callback is used to avoid the default passphrase callback in OpenSSL
-// which will typically prompt for the passphrase. The prompting is designed
-// for the OpenSSL CLI, but works poorly for this case because it involves
-// synchronous interaction with the controlling terminal, something we never
-// want, and use this function to avoid it.
-int us_no_password_callback(char *buf, int size, int rwflag, void *u) {
-  return 0;
-}
-
-static X509 *
-us_ssl_ctx_get_X509_without_callback_from(struct us_cert_string_t content) {
-  X509 *x = NULL;
-  BIO *in;
-
-  ERR_clear_error(); // clear error stack for SSL_CTX_use_certificate()
-
-  in = BIO_new_mem_buf(content.str, content.len);
-  if (in == NULL) {
-    OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);
-    goto end;
-  }
-
-  x = PEM_read_bio_X509(in, NULL, us_no_password_callback, NULL);
-  if (x == NULL) {
-    OPENSSL_PUT_ERROR(SSL, ERR_R_PEM_LIB);
-    goto end;
-  }
-
-  return x;
-
-end:
-  X509_free(x);
-  BIO_free(in);
-  return NULL;
-}
-
-int us_internal_raw_root_certs(struct us_cert_string_t **out) {
-  *out = root_certs;
-  return root_certs_size;
-}
-
-void us_internal_init_root_certs() {
-  if (atomic_load(&root_cert_instances_initialized) == 1)
-    return;
-
-  while (atomic_flag_test_and_set_explicit(&root_cert_instances_lock,
-                                           memory_order_acquire))
-    ;
-
-  // if some thread already created it after we acquired the lock we skip and
-  // release the lock
-  if (atomic_load(&root_cert_instances_initialized) == 0) {
-    for (size_t i = 0; i < root_certs_size; i++) {
-      root_cert_instances[i] =
-          us_ssl_ctx_get_X509_without_callback_from(root_certs[i]);
-    }
-
-    atomic_store(&root_cert_instances_initialized, 1);
-  }
-
-  atomic_flag_clear_explicit(&root_cert_instances_lock, memory_order_release);
-}
-
-X509_STORE *us_get_default_ca_store() {
-  X509_STORE *store = X509_STORE_new();
-  if (store == NULL) {
-    return NULL;
-  }
-
-  if (!X509_STORE_set_default_paths(store)) {
-    X509_STORE_free(store);
-    return NULL;
-  }
-
-  us_internal_init_root_certs();
-
-  // load all root_cert_instances on the default ca store
-  for (size_t i = 0; i < root_certs_size; i++) {
-    X509 *cert = root_cert_instances[i];
-    if (cert == NULL)
-      continue;
-    X509_up_ref(cert);
-    X509_STORE_add_cert(store, cert);
-  }
-
-  return store;
 }
 
 /* This function should take any options and return SSL_CTX - which has to be

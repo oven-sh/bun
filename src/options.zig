@@ -1174,16 +1174,17 @@ pub fn definesFromTransformOptions(
 
     if (loader) |_loader| {
         if (framework_env) |framework| {
-            _ = try _loader.copyForDefine(
-                defines.RawDefines,
-                &user_defines,
-                defines.UserDefinesArray,
-                &environment_defines,
-                framework.toAPI().defaults,
-                framework.behavior,
-                framework.prefix,
-                allocator,
-            );
+            if (framework.inline_defines)
+                _ = try _loader.copyForDefine(
+                    defines.RawDefines,
+                    &user_defines,
+                    defines.UserDefinesArray,
+                    &environment_defines,
+                    framework.toAPI().defaults,
+                    framework.behavior,
+                    framework.prefix,
+                    allocator,
+                );
         } else {
             _ = try _loader.copyForDefine(
                 defines.RawDefines,
@@ -1198,7 +1199,7 @@ pub fn definesFromTransformOptions(
         }
     }
     if (framework_env) |framework| {
-        if (framework.behavior != .disable) {
+        if (framework.behavior != .disable and framework.inline_defines) {
             var quoted_node_env: string = brk: {
                 if (NODE_ENV) |node_env| {
                     if (node_env.len > 0) {
@@ -1661,7 +1662,8 @@ pub const BundleOptions = struct {
                 // If we're doing SSR, we want all the URLs to be the same as what it would be in the browser
                 // If we're not doing SSR, we want all the import paths to be absolute
                 opts.import_path_format = if (opts.import_path_format == .absolute_url) .absolute_url else .absolute_path;
-                opts.env.behavior = .disable;
+                opts.env.behavior = .load_all;
+                opts.env.inline_defines = false;
                 if (transform.extension_order.len == 0) {
                     // we must also support require'ing .node files
                     opts.extension_order = Defaults.ExtensionOrder ++ &[_][]const u8{".node"};
@@ -2276,6 +2278,7 @@ pub const Env = struct {
     const List = std.MultiArrayList(Entry);
 
     behavior: Api.DotEnvBehavior = Api.DotEnvBehavior.disable,
+    inline_defines: bool = true,
     prefix: string = "",
     defaults: List = List{},
     allocator: std.mem.Allocator = undefined,

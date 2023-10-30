@@ -143,7 +143,7 @@ inline fn jsSyntheticModule(comptime name: ResolvedSource.Tag, specifier: String
         .allocator = null,
         .source_code = bun.String.empty,
         .specifier = specifier,
-        .source_url = ZigString.init(@tagName(name)),
+        .source_url = bun.String.init(@tagName(name)),
         .hash = 0,
         .tag = name,
         .needs_deref = false,
@@ -289,7 +289,7 @@ pub const RuntimeTranspilerStore = struct {
             var log = this.log;
             this.log = logger.Log.init(bun.default_allocator);
             var resolved_source = this.resolved_source;
-            resolved_source.source_url = specifier.toZigString();
+            resolved_source.source_url = specifier.dupeRef();
 
             resolved_source.tag = brk: {
                 if (resolved_source.commonjs_exports_len > 0) {
@@ -482,11 +482,12 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             if (parse_result.already_bundled) {
+                const duped = String.create(specifier);
                 this.resolved_source = ResolvedSource{
                     .allocator = null,
                     .source_code = bun.String.createLatin1(parse_result.source.contents),
-                    .specifier = String.create(specifier),
-                    .source_url = ZigString.init(path.text),
+                    .specifier = duped,
+                    .source_url = if (duped.eqlUTF8(path.text)) duped.dupeRef() else String.init(path.text),
                     .hash = 0,
                 };
                 return;
@@ -555,6 +556,7 @@ pub const RuntimeTranspilerStore = struct {
                 dumpSource(specifier, &printer);
             }
 
+            const duped = String.create(specifier);
             this.resolved_source = ResolvedSource{
                 .allocator = null,
                 .source_code = brk: {
@@ -568,8 +570,8 @@ pub const RuntimeTranspilerStore = struct {
 
                     break :brk result;
                 },
-                .specifier = String.create(specifier),
-                .source_url = ZigString.init(path.text),
+                .specifier = duped,
+                .source_url = if (duped.eqlUTF8(path.text)) duped.dupeRef() else String.create(path.text),
                 .commonjs_exports = null,
                 .commonjs_exports_len = if (parse_result.ast.exports_kind == .cjs)
                     std.math.maxInt(u32)
@@ -1292,7 +1294,7 @@ pub const ModuleLoader = struct {
                 .allocator = null,
                 .source_code = bun.String.createLatin1(printer.ctx.getWritten()),
                 .specifier = String.init(specifier),
-                .source_url = ZigString.init(path.text),
+                .source_url = String.init(path.text),
                 .commonjs_exports = if (commonjs_exports.len > 0)
                     commonjs_exports.ptr
                 else
@@ -1552,7 +1554,7 @@ pub const ModuleLoader = struct {
                         .allocator = null,
                         .source_code = bun.String.create(parse_result.source.contents),
                         .specifier = input_specifier,
-                        .source_url = ZigString.init(path.text),
+                        .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
 
                         .hash = 0,
                         .tag = ResolvedSource.Tag.json_for_object_loader,
@@ -1568,7 +1570,7 @@ pub const ModuleLoader = struct {
                             else => unreachable,
                         },
                         .specifier = input_specifier,
-                        .source_url = ZigString.init(path.text),
+                        .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
                         .hash = 0,
                     };
                 }
@@ -1578,7 +1580,7 @@ pub const ModuleLoader = struct {
                         .allocator = null,
                         .source_code = bun.String.createLatin1(parse_result.source.contents),
                         .specifier = input_specifier,
-                        .source_url = ZigString.init(path.text),
+                        .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
 
                         .hash = 0,
                     };
@@ -1712,7 +1714,7 @@ pub const ModuleLoader = struct {
                         break :brk result;
                     },
                     .specifier = input_specifier,
-                    .source_url = ZigString.init(path.text),
+                    .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
                     .commonjs_exports = if (commonjs_exports.len > 0)
                         commonjs_exports.ptr
                     else
@@ -1766,7 +1768,7 @@ pub const ModuleLoader = struct {
             //         .allocator = if (jsc_vm.has_loaded) &jsc_vm.allocator else null,
             //         .source_code = ZigString.init(jsc_vm.allocator.dupe(u8, parse_result.source.contents) catch unreachable),
             //         .specifier = ZigString.init(specifier),
-            //         .source_url = ZigString.init(path.text),
+            //         .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
             //         .hash = 0,
             //         .tag = ResolvedSource.Tag.wasm,
             //     };
@@ -1791,7 +1793,7 @@ pub const ModuleLoader = struct {
                         .allocator = null,
                         .source_code = bun.String.static(@embedFile("../js/wasi-runner.js")),
                         .specifier = input_specifier,
-                        .source_url = ZigString.init(path.text),
+                        .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
                         .tag = .esm,
                         .hash = 0,
                     };
@@ -1838,7 +1840,7 @@ pub const ModuleLoader = struct {
                     .allocator = &jsc_vm.allocator,
                     .source_code = public_url,
                     .specifier = input_specifier,
-                    .source_url = ZigString.init(path.text),
+                    .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
                     .hash = 0,
                 };
             },
@@ -2045,9 +2047,9 @@ pub const ModuleLoader = struct {
         if (specifier.eqlComptime(Runtime.Runtime.Imports.Name)) {
             return ResolvedSource{
                 .allocator = null,
-                .source_code = bun.String.init(Runtime.Runtime.sourceContentBun()),
-                .specifier = bun.String.init(Runtime.Runtime.Imports.Name),
-                .source_url = ZigString.init(Runtime.Runtime.Imports.Name),
+                .source_code = String.init(Runtime.Runtime.sourceContentBun()),
+                .specifier = specifier,
+                .source_url = String.init(Runtime.Runtime.Imports.Name),
                 .hash = Runtime.Runtime.versionHash(),
             };
         } else if (HardcodedModule.Map.getWithEql(specifier, bun.String.eqlComptime)) |hardcoded| {
@@ -2057,7 +2059,7 @@ pub const ModuleLoader = struct {
                         .allocator = null,
                         .source_code = bun.String.create(jsc_vm.entry_point.source.contents),
                         .specifier = specifier,
-                        .source_url = ZigString.init(bun.asByteSlice(JSC.VirtualMachine.main_file_name)),
+                        .source_url = String.init(bun.asByteSlice(JSC.VirtualMachine.main_file_name)),
                         .hash = 0,
                         .tag = .esm,
                         .needs_deref = true,
@@ -2139,7 +2141,7 @@ pub const ModuleLoader = struct {
                     .allocator = null,
                     .source_code = bun.String.create(entry.source.contents),
                     .specifier = specifier,
-                    .source_url = specifier.toZigString(),
+                    .source_url = specifier.dupeRef(),
                     .hash = 0,
                 };
             }
@@ -2151,8 +2153,9 @@ pub const ModuleLoader = struct {
                     .allocator = null,
                     .source_code = bun.String.static(file.contents),
                     .specifier = specifier,
-                    .source_url = specifier.toZigString(),
+                    .source_url = specifier.dupeRef(),
                     .hash = 0,
+                    .needs_deref = false,
                 };
             }
         }

@@ -36,7 +36,7 @@ describe("files transpiled and loaded don't leak the AST", () => {
 
     expect(stdout.toString().trim()).toEndWith("--pass--");
     expect(exitCode).toBe(0);
-  }, 10000);
+  }, 20000);
 
   test("via import()", () => {
     const { stdout, exitCode } = Bun.spawnSync({
@@ -47,5 +47,30 @@ describe("files transpiled and loaded don't leak the AST", () => {
 
     expect(stdout.toString().trim()).toEndWith("--pass--");
     expect(exitCode).toBe(0);
-  }, 10000);
+  }, 20000);
+});
+
+// These tests are extra slow in debug builds
+describe("files transpiled and loaded don't leak file paths", () => {
+  test("via require()", () => {
+    const { stdout, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "--smol", "run", join(import.meta.dir, "cjs-fixture-leak-small.js")],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+
+    expect(stdout.toString().trim()).toEndWith("--pass--");
+    expect(exitCode).toBe(0);
+  }, 30000);
+
+  test("via import()", () => {
+    const { stdout, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "--smol", "run", join(import.meta.dir, "esm-fixture-leak-small.mjs")],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+
+    expect(stdout.toString().trim()).toEndWith("--pass--");
+    expect(exitCode).toBe(0);
+  }, 30000);
 });

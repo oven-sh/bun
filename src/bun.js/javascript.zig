@@ -1478,7 +1478,7 @@ pub const VirtualMachine = struct {
         return ResolvedSource{
             .source_code = bun.String.init(source.impl),
             .specifier = specifier,
-            .source_url = ZigString.init(source_url),
+            .source_url = bun.String.init(source_url),
             .hash = source.hash,
             .allocator = source,
             .needs_deref = false,

@@ -196,7 +196,7 @@ pub const ResolvedSource = extern struct {
 
     specifier: bun.String = bun.String.empty,
     source_code: bun.String = bun.String.empty,
-    source_url: ZigString = ZigString.Empty,
+    source_url: bun.String = bun.String.empty,
     commonjs_exports: ?[*]ZigString = null,
     commonjs_exports_len: u32 = 0,
 

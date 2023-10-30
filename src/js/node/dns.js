@@ -1,7 +1,7 @@
 // Hardcoded module "node:dns"
 // only resolve4, resolve, lookup, resolve6, resolveSrv, and reverse are implemented.
 const dns = Bun.dns;
-const util = require("node:util");
+const utilPromisifyCustomSymbol = Symbol.for("nodejs.util.promisify.custom");
 
 function getServers() {
   return dns.getServers();
@@ -703,7 +703,7 @@ for (const [method, pMethod] of [
   [resolveTxt,    promises.resolveTxt],
   [resolveNaptr,  promises.resolveNaptr],
 ]) {
-  method[util.promisify.custom] = pMethod
+  method[utilPromisifyCustomSymbol] = pMethod
 }
 
 export default {

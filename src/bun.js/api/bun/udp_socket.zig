@@ -73,17 +73,22 @@ fn parseAddressPort(
     globalObject: *JSC.JSGlobalObject,
     addressValue: JSC.JSValue,
     portValue: JSC.JSValue,
+    allowZeroPort: bool,
     ipv6: *bool,
     storage: *std.os.sockaddr.storage,
 ) []const u8 {
-    const address = init: {
-        if (bun.String.tryFromJS(addressValue, globalObject)) |bunStr| {
-            var zigStr = bunStr.toUTF8(bun.default_allocator);
-            defer zigStr.deinit();
-            break :init zigStr.sliceZ();
-        } else {
-            return "Expected string (peer address)";
+    const addressString = init: {
+        if (addressValue.isString()) {
+            break :init addressValue.getZigString(globalObject);
         }
+        return "Expected string (peer address)";
+    };
+
+    const invalidIpErr = "Invalid IP address";
+
+    var buf: [bun.MAX_PATH_BYTES:0]u8 = undefined;
+    const address = addressString.sliceZBuf(&buf) catch {
+        return invalidIpErr;
     };
 
     const port: u32 = init: {
@@ -95,7 +100,7 @@ fn parseAddressPort(
         }
     };
 
-    if (port == 0) {
+    if (!allowZeroPort and port == 0) {
         return "Expected integer between 1 and 65535 (port)";
     }
 
@@ -115,7 +120,7 @@ fn parseAddressPort(
         return "";
     }
 
-    return "Invalid IP address";
+    return invalidIpErr;
 }
 
 const handlersPairs = .{
@@ -259,7 +264,7 @@ pub const UDPSocket = struct {
             var addrStorage: std.os.sockaddr.storage = undefined;
             const addrValue = bindAddr.toZigString().toJS(globalObject, exception);
             const portValue = JSC.jsNumber(bindPort);
-            const err: []const u8 = parseAddressPort(globalObject, addrValue, portValue, &udpSocket.ipv6, &addrStorage);
+            const err: []const u8 = parseAddressPort(globalObject, addrValue, portValue, true, &udpSocket.ipv6, &addrStorage);
             if (err.len > 0) {
                 exception.* = JSC.toInvalidArguments("{s}", .{err}, globalObject).asObjectRef();
                 return .zero;
@@ -366,7 +371,7 @@ pub const UDPSocket = struct {
         var addrStorage: std.os.sockaddr.storage = undefined;
         var ipv6: bool = false;
 
-        const err: []const u8 = parseAddressPort(globalObject, args.ptr[0], args.ptr[1], &ipv6, &addrStorage);
+        const err: []const u8 = parseAddressPort(globalObject, args.ptr[0], args.ptr[1], false, &ipv6, &addrStorage);
         if (err.len > 0) {
             globalObject.throw("{s}", .{err});
             return .zero;
@@ -407,7 +412,7 @@ pub const UDPSocket = struct {
             if (arguments.len == 3) {
                 var addrStorage: std.os.sockaddr.storage = undefined;
                 var ipv6: bool = undefined;
-                const err: []const u8 = parseAddressPort(globalObject, args.ptr[1], args.ptr[2], &ipv6, &addrStorage);
+                const err: []const u8 = parseAddressPort(globalObject, args.ptr[1], args.ptr[2], false, &ipv6, &addrStorage);
                 if (err.len > 0) {
                     globalObject.throw("{s}", .{err});
                     return .zero;

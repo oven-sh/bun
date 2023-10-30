@@ -61,6 +61,22 @@ const CursorState = struct {
         }
         // this.cp_idx += 1;
     }
+
+    inline fn manualBumpAscii(this: *CursorState, i: u32, nextCp: Codepoint) void {
+        this.cursor.i += i;
+        this.cursor.c = nextCp;
+        this.cursor.width = 1;
+    }
+
+    inline fn manualPeekAscii(this: *CursorState, i: u32, nextCp: Codepoint) CursorState {
+        return .{
+            .cursor = CodepointIterator.Cursor{
+                .i = this.cursor.i + i,
+                .c = nextCp,
+                .width = 1,
+            },
+        };
+    }
 };
 
 pub const GlobWalker = struct {
@@ -495,18 +511,23 @@ pub fn match(glob: []const u8, path: []const u8) bool {
             _ = pu8;
             switch (state.glob_index.cursor.c) {
                 '*' => {
-                    const is_globstar = state.glob_index.cursor.i + state.glob_index.cursor.width < glob.len and
-                        state.glob_index.peek(&glob_iter).cursor.c == '*';
+                    const is_globstar = state.glob_index.cursor.i + 1 < glob.len and glob[state.glob_index.cursor.i + 1] == '*';
+                    // const is_globstar = state.glob_index.cursor.i + state.glob_index.cursor.width < glob.len and
+                    //     state.glob_index.peek(&glob_iter).cursor.c == '*';
                     if (is_globstar) {
                         // Coalesce multiple ** segments into one.
-                        var new_index = state.glob_index.peek(&glob_iter).peek(&glob_iter);
-                        // src/**/lmao.ts
-                        // src/**/**/bar.ts
-                        skipGlobstars(glob, &new_index);
-                        new_index.cursor.i -= 2;
-                        std.debug.assert(glob[new_index.cursor.i] == '*');
-                        new_index.cursor.c = '*';
-                        state.glob_index = new_index;
+                        if (state.glob_index.cursor.i + 2 < glob.len and glob[state.glob_index.cursor.i + 2] == '/') {
+                            // var new_index = state.glob_index.peek(&glob_iter).peek(&glob_iter);
+                            var new_index = state.glob_index.manualPeekAscii(2, '/');
+                            // src/**/lmao.ts
+                            // src/**/**/bar.ts
+                            skipGlobstars(glob, &new_index);
+                            new_index.cursor.i -= 2;
+                            // Cursor should now be at the first asterisk of the **
+                            std.debug.assert(glob[new_index.cursor.i] == '*');
+                            new_index.cursor.c = '*';
+                            state.glob_index = new_index;
+                        }
                     }
 
                     state.wildcard.glob_index = state.glob_index;
@@ -517,7 +538,7 @@ pub fn match(glob: []const u8, path: []const u8) bool {
                     if (is_globstar) {
                         const temp = state.glob_index;
                         // Skip wildcards
-                        state.glob_index = state.glob_index.peek(&glob_iter).peek(&glob_iter);
+                        state.glob_index = state.glob_index.manualPeekAscii(1, '*').peek(&glob_iter);
 
                         if (glob.len == state.glob_index.cursor.i) {
                             // A trailing ** segment without a following separator.
@@ -603,7 +624,7 @@ pub fn match(glob: []const u8, path: []const u8) bool {
                         // If there is a - and the following character is not ],
                         // read the range end character.
                         const high = if (state.glob_index.cursor.i + state.glob_index.cursor.width < glob.len and
-                            state.glob_index.cursor.c == '-' and state.glob_index.peek(&glob_iter).cursor.c != ']')
+                            state.glob_index.cursor.c == '-' and glob[state.glob_index.cursor.i + 1] != ']')
                         blk: {
                             state.glob_index.bump(&glob_iter);
                             var h = state.glob_index.cursor.c;

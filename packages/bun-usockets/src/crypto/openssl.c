@@ -95,9 +95,7 @@ struct us_internal_ssl_socket_context_t {
    * when freed */
   void *sni;
 
-  void (*on_handshake)(struct us_internal_ssl_socket_t *, int success,
-                       struct us_bun_verify_error_t verify_error,
-                       void *custom_data);
+  us_internal_on_handshake_t on_handshake;
   void *handshake_data;
 };
 

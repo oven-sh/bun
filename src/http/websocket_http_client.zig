@@ -206,7 +206,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         body: std.ArrayListUnmanaged(u8) = .{},
         websocket_protocol: u64 = 0,
         hostname: [:0]const u8 = "",
-        poll_ref: JSC.PollRef = .{},
+        poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
         pub const name = if (ssl) "WebSocketHTTPSClient" else "WebSocketHTTPClient";
 
         pub const shim = JSC.Shimmer("Bun", name, @This());

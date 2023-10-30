@@ -26,7 +26,7 @@
 #include "WebCoreJSClientData.h"
 // #include "WindowProxy.h"
 #include "ZigGlobalObject.h"
-#include "wtf/MainThread.h"
+#include <wtf/MainThread.h>
 
 namespace WebCore {
 

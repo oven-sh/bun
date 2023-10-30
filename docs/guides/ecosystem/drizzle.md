@@ -10,7 +10,7 @@ Let's get started by creating a fresh project with `bun init` and installing Dri
 
 ```sh
 $ bun init -y
-$ bun add drizzle
+$ bun add drizzle-orm
 $ bun add -D drizzle-kit
 ```
 
@@ -19,11 +19,11 @@ $ bun add -D drizzle-kit
 Then we'll connect to a SQLite database using the `bun:sqlite` module and create the Drizzle database instance.
 
 ```ts#db.ts
-import { drizzle, BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
+import { drizzle } from "drizzle-orm/bun-sqlite";
 import { Database } from "bun:sqlite";
 
 const sqlite = new Database("sqlite.db");
-export const db: BunSQLiteDatabase = drizzle(sqlite);
+export const db = drizzle(sqlite);
 ```
 
 ---
@@ -34,13 +34,14 @@ To see the database in action, add these lines to `index.ts`.
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 
-const query = sql`select "hello world" as text;`
-console.log(await db.get<string>(query));
+const query = sql`select "hello world" as text`;
+const result = db.get<{ text: string }>(query);
+console.log(result);
 ```
 
 ---
 
-Then run `index.ts` with Bun. Bun wil automatically create `sqlite.db` and execute the query.
+Then run `index.ts` with Bun. Bun will automatically create `sqlite.db` and execute the query.
 
 ```sh
 $ bun run index.ts
@@ -68,7 +69,7 @@ export const movies = sqliteTable("movies", {
 We can use the `drizzle-kit` CLI to generate an initial SQL migration.
 
 ```sh
-$ bunx drizzle-kit migrate:sqlite --schema ./schema.ts
+$ bunx drizzle-kit generate:sqlite --schema ./schema.ts
 ```
 
 ---
@@ -92,11 +93,11 @@ This script creates a new connection to a SQLite database that writes to `sqlite
 ```ts#migrate.ts
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 
-import { drizzle, BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
+import { drizzle } from "drizzle-orm/bun-sqlite";
 import { Database } from "bun:sqlite";
 
 const sqlite = new Database("sqlite.db");
-const db: BunSQLiteDatabase = drizzle(sqlite);
+const db = drizzle(sqlite);
 await migrate(db, { migrationsFolder: "./drizzle" });
 ```
 

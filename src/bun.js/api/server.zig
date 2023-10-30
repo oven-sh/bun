@@ -49,7 +49,6 @@ const MarkedArrayBuffer = @import("../base.zig").MarkedArrayBuffer;
 const getAllocator = @import("../base.zig").getAllocator;
 const JSValue = @import("root").bun.JSC.JSValue;
 
-const Microtask = @import("root").bun.JSC.Microtask;
 const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
 const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;
 const JSPrivateDataPtr = @import("root").bun.JSC.JSPrivateDataPtr;
@@ -90,6 +89,7 @@ const SendfileContext = struct {
 };
 const DateTime = bun.DateTime;
 const linux = std.os.linux;
+const Async = bun.Async;
 
 const BlobFileContentResult = struct {
     data: [:0]const u8,
@@ -4830,7 +4830,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
         listen_callback: JSC.AnyTask = undefined,
         allocator: std.mem.Allocator,
-        poll_ref: JSC.PollRef = .{},
+        poll_ref: Async.KeepAlive = .{},
         temporary_url_buffer: std.ArrayListUnmanaged(u8) = .{},
 
         cached_hostname: bun.String = bun.String.empty,
@@ -5580,7 +5580,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             this.listener = socket;
-            this.vm.event_loop_handle = uws.Loop.get();
+            this.vm.event_loop_handle = Async.Loop.get();
             if (!ssl_enabled_)
                 this.vm.addListeningSocketForWatchMode(@intCast(socket.?.socket().fd()));
         }

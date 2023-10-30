@@ -31,9 +31,9 @@
 
 #include "JSDOMGlobalObject.h"
 
-#include "JavaScriptCore/ArrayBuffer.h"
+#include <JavaScriptCore/ArrayBuffer.h>
 
-#include "JavaScriptCore/JSArrayBuffer.h"
+#include <JavaScriptCore/JSArrayBuffer.h>
 
 extern "C" Zig::GlobalObject* Bun__getDefaultGlobal();
 static inline WebCore::JSDOMGlobalObject* getDefaultGlobal(JSC::JSGlobalObject* lexicalGlobalObject)

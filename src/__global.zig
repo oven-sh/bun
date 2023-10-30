@@ -7,18 +7,7 @@ const StringTypes = @import("./string_types.zig");
 const Mimalloc = @import("root").bun.Mimalloc;
 const bun = @import("root").bun;
 
-pub const build_id = std.fmt.parseInt(u64, std.mem.trim(u8, @embedFile("./build-id"), "\n \r\t"), 10) catch unreachable;
-
-pub const version: if (Environment.isWasm)
-    std.SemanticVersion
-else
-    @import("./install/semver.zig").Version = .{
-    .major = 1,
-    .minor = 0,
-    .patch = build_id,
-};
-
-const version_string = std.fmt.comptimePrint("{d}.{d}.{d}", .{ version.major, version.minor, version.patch });
+const version_string = Environment.version_string;
 
 pub const package_json_version = if (Environment.isDebug)
     version_string ++ "_debug"
@@ -79,7 +68,7 @@ pub fn setThreadName(name: StringTypes.stringZ) void {
 /// Flushes stdout and stderr and exits with the given code.
 pub fn exit(code: u8) noreturn {
     Output.flush();
-    std.os.exit(code);
+    std.c._exit(code);
 }
 
 pub const AllocatorConfiguration = struct {

@@ -53,6 +53,7 @@ const BodyMixin = JSC.WebCore.BodyMixin;
 const Body = JSC.WebCore.Body;
 const Request = JSC.WebCore.Request;
 const Blob = JSC.WebCore.Blob;
+const Async = bun.Async;
 
 const BoringSSL = bun.BoringSSL;
 const X509 = @import("../api/bun/x509.zig");
@@ -782,7 +783,7 @@ pub const Fetch = struct {
         request_headers: Headers = Headers{ .allocator = undefined },
         promise: JSC.JSPromise.Strong,
         concurrent_task: JSC.ConcurrentTask = .{},
-        poll_ref: JSC.PollRef = .{},
+        poll_ref: Async.KeepAlive = .{},
         memory_reporter: *JSC.MemoryReportingAllocator,
         /// For Http Client requests
         /// when Content-Length is provided this represents the whole size of the request

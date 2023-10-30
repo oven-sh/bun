@@ -145,7 +145,7 @@ AsymmetricKeyValueWithDER KeyObject__ParsePublicKeyPEM(const char* key_pem,
     size_t key_pem_len)
 {
     auto bp = BIOPtr(BIO_new_mem_buf(const_cast<char*>(key_pem), key_pem_len));
-    auto result = (AsymmetricKeyValueWithDER) { .key = nullptr, .der_data = nullptr, .der_len = 0 };
+    auto result = AsymmetricKeyValueWithDER { .key = nullptr, .der_data = nullptr, .der_len = 0 };
 
     if (!bp) {
         ERR_clear_error();
@@ -1178,7 +1178,6 @@ JSC::EncodedJSValue KeyObject__createPublicKey(JSC::JSGlobalObject* globalObject
 
 JSC::EncodedJSValue KeyObject__createSecretKey(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-
     JSValue bufferArg = callFrame->uncheckedArgument(0);
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1194,7 +1193,6 @@ JSC::EncodedJSValue KeyObject__createSecretKey(JSC::JSGlobalObject* lexicalGloba
     auto type = bufferArgCell->type();
 
     switch (type) {
-
     case DataViewType:
     case Uint8ArrayType:
     case Uint8ClampedArrayType:
@@ -1232,10 +1230,13 @@ JSC::EncodedJSValue KeyObject__createSecretKey(JSC::JSGlobalObject* lexicalGloba
         auto impl = CryptoKeyHMAC::generateFromBytes(data, byteLength, CryptoAlgorithmIdentifier::HMAC, true, CryptoKeyUsageSign | CryptoKeyUsageVerify).releaseNonNull();
         return JSC::JSValue::encode(JSCryptoKey::create(structure, globalObject, WTFMove(impl)));
     }
-    default:
-        throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "ERR_INVALID_ARG_TYPE: expected Buffer or array-like object"_s));
-        return JSValue::encode(JSC::jsUndefined());
+    default: {
+        break;
     }
+    }
+
+    throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "ERR_INVALID_ARG_TYPE: expected Buffer or array-like object"_s));
+    return JSValue::encode(JSC::jsUndefined());
 }
 
 JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
@@ -2071,8 +2072,8 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
         publicExponentArray[0] = (uint8_t)(publicExponent >> 24);
         publicExponentArray[1] = (uint8_t)(publicExponent >> 16);
         publicExponentArray[2] = (uint8_t)(publicExponent >> 8);
-        publicExponentArray[3] = (uint8_t)publicExponent;           
-        
+        publicExponentArray[3] = (uint8_t)publicExponent;
+
         int modulusLength = modulusLengthJS.toUInt32(lexicalGlobalObject);
         auto returnValue = JSC::JSValue {};
         auto keyPairCallback = [&](CryptoKeyPair&& pair) {
@@ -2107,17 +2108,17 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
         }
         auto namedCurve = namedCurveJS.toWTFString(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, encodedJSValue());
-        if(namedCurve == "P-384"_s || namedCurve == "p384"_s || namedCurve == "secp384r1"_s) {
+        if (namedCurve == "P-384"_s || namedCurve == "p384"_s || namedCurve == "secp384r1"_s) {
             namedCurve = "P-384"_s;
-        } else if(namedCurve == "P-256"_s || namedCurve == "p256"_s || namedCurve == "prime256v1"_s) {
+        } else if (namedCurve == "P-256"_s || namedCurve == "p256"_s || namedCurve == "prime256v1"_s) {
             namedCurve = "P-256"_s;
-        } else if(namedCurve == "P-521"_s || namedCurve == "p521"_s || namedCurve == "secp521r1"_s) {
+        } else if (namedCurve == "P-521"_s || namedCurve == "p521"_s || namedCurve == "secp521r1"_s) {
             namedCurve = "P-521"_s;
-        }else {
+        } else {
             throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "curve not supported"_s));
-            return JSValue::encode(JSC::jsUndefined());    
+            return JSValue::encode(JSC::jsUndefined());
         }
-        
+
         auto result = CryptoKeyEC::generatePair(CryptoAlgorithmIdentifier::ECDSA, namedCurve, true, CryptoKeyUsageSign | CryptoKeyUsageVerify);
         if (result.hasException()) {
             WebCore::propagateException(*lexicalGlobalObject, scope, result.releaseException());
@@ -2190,7 +2191,9 @@ JSC::EncodedJSValue KeyObject__generateKeySync(JSC::JSGlobalObject* lexicalGloba
             throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Invalid length"_s));
             return JSValue::encode(JSC::jsUndefined());
         }
-        return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(result.releaseNonNull())));
+        // TODO(@paperdave 2023-10-19): i removed WTFMove from result.releaseNonNull() as per MSVC compiler error.
+        // We need to evaluate if that is the proper fix here.
+        return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, (result.releaseNonNull())));
     } else if (type_str == "aes"_s) {
         Zig::GlobalObject* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
         auto* structure = zigGlobalObject->JSCryptoKeyStructure();
@@ -2209,7 +2212,9 @@ JSC::EncodedJSValue KeyObject__generateKeySync(JSC::JSGlobalObject* lexicalGloba
             throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Invalid length"_s));
             return JSValue::encode(JSC::jsUndefined());
         }
-        return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(result.releaseNonNull())));
+        // TODO(@paperdave 2023-10-19): i removed WTFMove from result.releaseNonNull() as per MSVC compiler error.
+        // We need to evaluate if that is the proper fix here.
+        return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, (result.releaseNonNull())));
     } else {
         throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "algorithm should be 'aes' or 'hmac'"_s));
         return JSValue::encode(JSC::jsUndefined());
@@ -2281,23 +2286,23 @@ static AsymmetricKeyValue GetInternalAsymmetricKey(WebCore::CryptoKey& key)
     case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:
     case CryptoAlgorithmIdentifier::RSA_OAEP:
     case CryptoAlgorithmIdentifier::RSA_PSS:
-        return (AsymmetricKeyValue) { .key = downcast<WebCore::CryptoKeyRSA>(key).platformKey(), .owned = false };
+        return AsymmetricKeyValue { .key = downcast<WebCore::CryptoKeyRSA>(key).platformKey(), .owned = false };
     case CryptoAlgorithmIdentifier::ECDSA:
     case CryptoAlgorithmIdentifier::ECDH:
-        return (AsymmetricKeyValue) { .key = downcast<WebCore::CryptoKeyEC>(key).platformKey(), .owned = false };
+        return AsymmetricKeyValue { .key = downcast<WebCore::CryptoKeyEC>(key).platformKey(), .owned = false };
     case CryptoAlgorithmIdentifier::Ed25519: {
         const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(key);
         auto keyData = okpKey.exportKey();
         if (okpKey.type() == CryptoKeyType::Private) {
             auto* evp_key = EVP_PKEY_new_raw_private_key(okpKey.namedCurve() == CryptoKeyOKP::NamedCurve::X25519 ? EVP_PKEY_X25519 : EVP_PKEY_ED25519, nullptr, keyData.data(), keyData.size());
-            return (AsymmetricKeyValue) { .key = evp_key, .owned = true };
+            return AsymmetricKeyValue { .key = evp_key, .owned = true };
         } else {
             auto* evp_key = EVP_PKEY_new_raw_public_key(okpKey.namedCurve() == CryptoKeyOKP::NamedCurve::X25519 ? EVP_PKEY_X25519 : EVP_PKEY_ED25519, nullptr, keyData.data(), keyData.size());
-            return (AsymmetricKeyValue) { .key = evp_key, .owned = true };
+            return AsymmetricKeyValue { .key = evp_key, .owned = true };
         }
     }
     default:
-        return (AsymmetricKeyValue) { .key = NULL, .owned = false };
+        return AsymmetricKeyValue { .key = NULL, .owned = false };
     }
 }
 

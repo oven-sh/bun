@@ -198,9 +198,33 @@ export default [
         getter: "getData",
         setter: "setData",
       },
-    },
+    }, finalize: true,
+    construct: true,
+    klass: {},
+  }),
+
+  define({
+    name: "UDPSocket",
+    noConstructor: true,
+    JSType: "0b11101110",
     finalize: true,
     construct: true,
+    proto: {
+      connect: {
+        fn: "connect",
+        length: 2,
+      },
+
+      send: {
+        fn: "send",
+        length: 3,
+      },
+
+      stop: {
+        fn: "stop",
+        length: 0,
+      },
+    },
     klass: {},
   }),
 ];

@@ -43,6 +43,7 @@ pub const API = struct {
     pub const FileSystemRouter = @import("./bun.js/api/filesystem_router.zig").FileSystemRouter;
     pub const MatchedRoute = @import("./bun.js/api/filesystem_router.zig").MatchedRoute;
     pub const TCPSocket = @import("./bun.js/api/bun/socket.zig").TCPSocket;
+    pub const UDPSocket = @import("./bun.js/api/bun/udp_socket.zig").UDPSocket;
     pub const TLSSocket = @import("./bun.js/api/bun/socket.zig").TLSSocket;
     pub const Listener = @import("./bun.js/api/bun/socket.zig").Listener;
 };

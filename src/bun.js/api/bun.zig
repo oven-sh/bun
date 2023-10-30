@@ -39,6 +39,7 @@ pub const BunObject = struct {
     pub const sleepSync = Bun.sleepSync;
     pub const spawn = JSC.wrapStaticMethod(JSC.Subprocess, "spawn", false);
     pub const spawnSync = JSC.wrapStaticMethod(JSC.Subprocess, "spawnSync", false);
+    pub const createUdpSocket = JSC.wrapStaticMethod(JSC.API.UDPSocket, "create", false);
     pub const which = Bun.which;
     pub const write = JSC.WebCore.Blob.writeFile;
     // --- Callbacks ---
@@ -147,6 +148,7 @@ pub const BunObject = struct {
         @export(BunObject.sleepSync, .{ .name = callbackName("sleepSync") });
         @export(BunObject.spawn, .{ .name = callbackName("spawn") });
         @export(BunObject.spawnSync, .{ .name = callbackName("spawnSync") });
+        @export(BunObject.createUdpSocket, .{ .name = callbackName("createUdpSocket") });
         @export(BunObject.which, .{ .name = callbackName("which") });
         @export(BunObject.write, .{ .name = callbackName("write") });
         // -- Callbacks --

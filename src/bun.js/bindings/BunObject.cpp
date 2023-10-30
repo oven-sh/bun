@@ -585,6 +585,7 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     build                                          BunObject_callback_build                                            DontDelete|Function 1
     concatArrayBuffers                             functionConcatTypedArrays                                           DontDelete|Function 1
     connect                                        BunObject_callback_connect                                          DontDelete|Function 1
+    createUdpSocket                                BunObject_callback_createUdpSocket                                  DontDelete|Function 1
     cwd                                            BunObject_getter_wrap_cwd                                           DontEnum|DontDelete|PropertyCallback
     deepEquals                                     functionBunDeepEquals                                               DontDelete|Function 2
     deepMatch                                      functionBunDeepMatch                                                DontDelete|Function 2

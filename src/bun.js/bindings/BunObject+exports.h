@@ -36,6 +36,7 @@
     macro(allocUnsafe) \
     macro(build) \
     macro(connect) \
+    macro(createUdpSocket) \
     macro(deflateSync) \
     macro(file) \
     macro(fs) \

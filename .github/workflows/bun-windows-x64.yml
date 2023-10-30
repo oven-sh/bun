@@ -126,7 +126,7 @@ jobs:
           name: bun-windows-x64-codegen
           path: build-codegen-win32-x64/
 
-  windows-dependencies:
+  windows-cpp:
     strategy:
       matrix:
         include:
@@ -152,8 +152,8 @@ jobs:
         run: |
           git submodule update --init --recursive --progress --depth=1 --checkout
           cd build
-          cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DNO_CODEGEN=1
+          cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DNO_CODEGEN=1 -D
       - uses: actions/upload-artifact@v3
         with:
-          name: bun-deps/
-          path: bun-windows-x64-deps
+          name: all-cpp
+          path: bun-windows-x64-cpp

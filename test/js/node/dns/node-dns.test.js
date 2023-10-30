@@ -425,12 +425,12 @@ describe("uses `dns.promises` implementations for `util.promisify` factory", () 
     "resolveSrv",
     "resolveTxt",
     "resolveNaptr",
-  ])("%s",(method) => {
-    expect(dns[method][util.promisify.custom]).toBe(dns.promises[method]);
+  ])("%s", method => {
+    expect(dns[method][util.promisify.custom]).toBe(dns_promises[method]);
+    expect(dns.promises[method]).toBe(dns_promises[method]);
   });
 
-  it("util.promisify(dns,lookup) acts like dns.promises.lookup", async () => {
-    expect(await util.promisify(dns.lookup)("example.com"))
-      .toEqual(await dns.promises.lookup("example.com"));
+  it("util.promisify(dns.lookup) acts like dns.promises.lookup", async () => {
+    expect(await util.promisify(dns.lookup)("example.com")).toEqual(await dns.promises.lookup("example.com"));
   });
 });

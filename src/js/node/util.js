@@ -1,7 +1,9 @@
 // Hardcoded module "node:util"
 const types = require("node:util/types");
 /** @type {import('node-inspect-extracted')} */
-const utl = require("internal/util/inspect");
+const utl = require("internal/util/inspect/inspect");
+/** @type {import('../internal/util/parse_args/index')} */
+const { parseArgs } = require("internal/util/parse_args/index");
 
 var cjs_exports = {};
 
@@ -67,7 +69,7 @@ function debuglog(set) {
         console.error("%s %d: %s", set, pid, msg);
       };
     } else {
-      debugs[set] = function () {};
+      debugs[set] = function () { };
     }
   }
   return debugs[set];
@@ -270,4 +272,5 @@ export default Object.assign(cjs_exports, {
   isDeepStrictEqual,
   TextDecoder,
   TextEncoder,
+  parseArgs,
 });

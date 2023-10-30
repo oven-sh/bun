@@ -4376,6 +4376,8 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
         width: u3 = 0,
         c: CodePointType = zeroValue,
 
+        pub const ZeroValue = zeroValue;
+
         pub const Cursor = struct {
             i: u32 = 0,
             c: CodePointType = zeroValue,

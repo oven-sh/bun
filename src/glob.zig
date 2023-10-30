@@ -7,8 +7,6 @@ const expect = std.testing.expect;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayListUnmanaged;
 const ArrayListManaged = std.ArrayList;
-const CodepointIter = @import("./string_immutable.zig").UnsignedCodepointIterator;
-const Codepoint = u32;
 const DirIterator = @import("./bun.js/node/dir_iterator.zig");
 const Syscall = @import("./bun.js/node/syscall.zig");
 const PathLike = @import("./bun.js/node/types.zig").PathLike;
@@ -16,6 +14,54 @@ const Maybe = @import("./bun.js/node/types.zig").Maybe;
 const Dirent = @import("./bun.js/node/types.zig").Dirent;
 const PathString = @import("./string_types.zig").PathString;
 const ZigString = @import("./bun.js/bindings/bindings.zig").ZigString;
+
+const foo = std.unicode.Utf8Iterator;
+
+const CodepointIterator = @import("./string_immutable.zig").UnsignedCodepointIterator;
+const Codepoint = u32;
+const Cursor = CodepointIterator.Cursor;
+
+const CursorState = struct {
+    cursor: CodepointIterator.Cursor = .{},
+    /// The index in terms of codepoints
+    // cp_idx: usize,
+
+    fn init(iterator: *const CodepointIterator) CursorState {
+        var this_cursor: CodepointIterator.Cursor = .{};
+        _ = iterator.next(&this_cursor);
+        return .{
+            // .cp_idx = 0,
+            .cursor = this_cursor,
+        };
+    }
+
+    /// Return cursor pos of next codepoint without modifying the current.
+    ///
+    /// NOTE: If there is no next codepoint (cursor is at the last one), then
+    /// the returned cursor will have `c` as zero value and `i` will be >=
+    /// sourceBytes.len
+    fn peek(this: *const CursorState, iterator: *const CodepointIterator) CursorState {
+        var cpy = this.*;
+        // If outside of bounds
+        if (!iterator.next(&cpy.cursor)) {
+            // This will make `i >= sourceBytes.len`
+            cpy.cursor.i += cpy.cursor.width;
+            cpy.cursor.width = 1;
+            cpy.cursor.c = CodepointIterator.ZeroValue;
+        }
+        // cpy.cp_idx += 1;
+        return cpy;
+    }
+
+    fn bump(this: *CursorState, iterator: *const CodepointIterator) void {
+        if (!iterator.next(&this.cursor)) {
+            this.cursor.i += this.cursor.width;
+            this.cursor.width = 1;
+            this.cursor.c = CodepointIterator.ZeroValue;
+        }
+        // this.cp_idx += 1;
+    }
+};
 
 pub const GlobWalker = struct {
     pub const Result = Maybe(void);
@@ -259,8 +305,8 @@ pub const GlobWalker = struct {
         const isWindows = @import("builtin").os.tag == .windows;
         var start: u32 = 0;
 
-        const iter = CodepointIter.init(pattern);
-        var cursor = CodepointIter.Cursor{};
+        const iter = CodepointIterator.init(pattern);
+        var cursor = CodepointIterator.Cursor{};
 
         var prevIsBackslash = false;
         while (iter.next(&cursor)) {
@@ -305,17 +351,24 @@ pub const GlobWalker = struct {
 /// State for matching a glob against a string
 pub const GlobState = struct {
     // These store character indices into the glob and path strings.
-    path_index: usize = 0,
-    glob_index: usize = 0,
+    path_index: CursorState = .{},
+    glob_index: CursorState = .{},
     // When we hit a * or **, we store the state for backtracking.
     wildcard: Wildcard = .{},
     globstar: Wildcard = .{},
 
-    fn skipBraces(self: *GlobState, glob: []const u8, stop_on_comma: bool) BraceState {
+    fn init(glob_iter: *const CodepointIterator, path_iter: *const CodepointIterator) GlobState {
+        var this = GlobState{};
+        this.glob_index = CursorState.init(glob_iter);
+        this.path_index = CursorState.init(path_iter);
+        return this;
+    }
+
+    fn skipBraces(self: *GlobState, glob_iter: *const CodepointIterator, stop_on_comma: bool) BraceState {
         var braces: u32 = 1;
         var in_brackets = false;
-        while (self.glob_index < glob.len and braces > 0) : (self.glob_index += 1) {
-            switch (glob[self.glob_index]) {
+        while (self.glob_index.cursor.i < glob_iter.bytes.len and braces > 0) : (self.glob_index.bump(glob_iter)) {
+            switch (self.glob_index.cursor.c) {
                 // Skip nested braces
                 '{' => if (!in_brackets) {
                     braces += 1;
@@ -324,7 +377,7 @@ pub const GlobState = struct {
                     braces -= 1;
                 },
                 ',' => if (stop_on_comma and braces == 1 and !in_brackets) {
-                    self.glob_index += 1;
+                    self.glob_index.bump(glob_iter);
                     return .Comma;
                 },
                 '*', '?', '[' => |c| if (!in_brackets) {
@@ -332,7 +385,7 @@ pub const GlobState = struct {
                         in_brackets = true;
                 },
                 ']' => in_brackets = false,
-                '\\' => self.glob_index += 1,
+                '\\' => self.glob_index.bump(glob_iter),
                 else => {},
             }
         }
@@ -350,8 +403,8 @@ pub const GlobState = struct {
 
 const Wildcard = struct {
     // Using u32 rather than usize for these results in 10% faster performance.
-    glob_index: u32 = 0,
-    path_index: u32 = 0,
+    glob_index: CursorState = .{},
+    path_index: CursorState = .{},
 };
 
 const BraceState = enum { Invalid, Comma, EndBrace };
@@ -359,14 +412,14 @@ const BraceState = enum { Invalid, Comma, EndBrace };
 const BraceStack = struct {
     stack: [10]GlobState = undefined,
     len: u32 = 0,
-    longest_brace_match: u32 = 0,
+    longest_brace_match: CursorState = .{},
 
-    inline fn push(self: *BraceStack, state: *const GlobState) GlobState {
+    inline fn push(self: *BraceStack, state: *const GlobState, glob_iter: *const CodepointIterator) GlobState {
         self.stack[self.len] = state.*;
         self.len += 1;
         return GlobState{
             .path_index = state.path_index,
-            .glob_index = state.glob_index + 1,
+            .glob_index = state.glob_index.peek(glob_iter),
         };
     }
 
@@ -380,7 +433,7 @@ const BraceStack = struct {
             .globstar = self.stack[self.len].globstar,
         };
         if (self.len == 0)
-            self.longest_brace_match = 0;
+            self.longest_brace_match = .{};
         return s;
     }
 
@@ -417,8 +470,11 @@ const BraceStack = struct {
 /// "\"
 ///     Used to escape any of the special characters above.
 pub fn match(glob: []const u8, path: []const u8) bool {
+    const glob_iter = CodepointIterator.init(glob);
+    const path_iter = CodepointIterator.init(path);
+
     // This algorithm is based on https://research.swtch.com/glob
-    var state = GlobState{};
+    var state = GlobState.init(&glob_iter, &path_iter);
     // Store the state when we see an opening '{' brace in a stack.
     // Up to 10 nested braces are supported.
     var brace_stack = BraceStack{};
@@ -426,45 +482,58 @@ pub fn match(glob: []const u8, path: []const u8) bool {
     // First, check if the pattern is negated with a leading '!' character.
     // Multiple negations can occur.
     var negated = false;
-    while (state.glob_index < glob.len and glob[state.glob_index] == '!') {
+    while (state.glob_index.cursor.i < glob.len and state.glob_index.cursor.c == '!') {
         negated = !negated;
-        state.glob_index += 1;
+        state.glob_index.bump(&glob_iter);
     }
 
-    while (state.glob_index < glob.len or state.path_index < path.len) {
-        if (state.glob_index < glob.len) {
-            switch (glob[state.glob_index]) {
+    while (state.glob_index.cursor.i < glob.len or state.path_index.cursor.i < path.len) {
+        if (state.glob_index.cursor.i < glob.len) {
+            const gu8: u8 = @truncate(state.glob_index.cursor.c);
+            _ = gu8;
+            const pu8: u8 = @truncate(state.path_index.cursor.c);
+            _ = pu8;
+            switch (state.glob_index.cursor.c) {
                 '*' => {
-                    const is_globstar = state.glob_index + 1 < glob.len and
-                        glob[state.glob_index + 1] == '*';
+                    const is_globstar = state.glob_index.cursor.i + state.glob_index.cursor.width < glob.len and
+                        state.glob_index.peek(&glob_iter).cursor.c == '*';
                     if (is_globstar) {
                         // Coalesce multiple ** segments into one.
-                        var index = state.glob_index + 2;
-                        state.glob_index = skipGlobstars(glob, &index) - 2;
+                        var new_index = state.glob_index.peek(&glob_iter).peek(&glob_iter);
+                        // src/**/lmao.ts
+                        // src/**/**/bar.ts
+                        skipGlobstars(glob, &new_index);
+                        new_index.cursor.i -= 2;
+                        std.debug.assert(glob[new_index.cursor.i] == '*');
+                        new_index.cursor.c = '*';
+                        state.glob_index = new_index;
                     }
 
-                    state.wildcard.glob_index = @as(u32, @intCast(state.glob_index));
-                    state.wildcard.path_index = @as(u32, @intCast(state.path_index + 1));
+                    state.wildcard.glob_index = state.glob_index;
+                    state.wildcard.path_index = state.path_index.peek(&path_iter);
 
                     // ** allows path separators, whereas * does not.
                     // However, ** must be a full path component, i.e. a/**/b not a**b.
                     if (is_globstar) {
-                        state.glob_index += 2;
+                        const temp = state.glob_index;
+                        // Skip wildcards
+                        state.glob_index = state.glob_index.peek(&glob_iter).peek(&glob_iter);
 
-                        if (glob.len == state.glob_index) {
+                        if (glob.len == state.glob_index.cursor.i) {
                             // A trailing ** segment without a following separator.
                             state.globstar = state.wildcard;
-                        } else if (glob[state.glob_index] == '/' and
-                            (state.glob_index < 3 or glob[state.glob_index - 3] == '/'))
+                        } else if (state.glob_index.cursor.c == '/' and
+                            (state.glob_index.cursor.i < 3 or
+                            (glob[temp.cursor.i - 1] == '/')))
                         {
                             // Matched a full /**/ segment. If the last character in the path was a separator,
                             // skip the separator in the glob so we search for the next character.
                             // In effect, this makes the whole segment optional so that a/**/b matches a/b.
-                            if (state.path_index == 0 or
-                                (state.path_index < path.len and
-                                isSeparator(path[state.path_index - 1])))
+                            if (state.path_index.cursor.i == 0 or
+                                (state.path_index.cursor.i < path.len and
+                                isSeparator(path[state.path_index.cursor.i - 1])))
                             {
-                                state.glob_index += 1;
+                                state.glob_index.bump(&glob_iter);
                             }
 
                             // The allows_sep flag allows separator characters in ** matches.
@@ -472,75 +541,75 @@ pub fn match(glob: []const u8, path: []const u8) bool {
                             state.globstar = state.wildcard;
                         }
                     } else {
-                        state.glob_index += 1;
+                        state.glob_index = state.glob_index.peek(&glob_iter);
                     }
 
                     // If we are in a * segment and hit a separator,
                     // either jump back to a previous ** or end the wildcard.
-                    if (state.globstar.path_index != state.wildcard.path_index and
-                        state.path_index < path.len and
-                        isSeparator(path[state.path_index]))
+                    if (state.globstar.path_index.cursor.i != state.wildcard.path_index.cursor.i and
+                        state.path_index.cursor.i < path.len and
+                        isSeparator(state.path_index.cursor.c))
                     {
                         // Special case: don't jump back for a / at the end of the glob.
-                        if (state.globstar.path_index > 0 and state.path_index + 1 < path.len) {
+                        if (state.globstar.path_index.cursor.i > 0 and state.path_index.cursor.i + state.path_index.cursor.width < path.len) {
                             state.glob_index = state.globstar.glob_index;
                             state.wildcard.glob_index = state.globstar.glob_index;
                         } else {
-                            state.wildcard.path_index = 0;
+                            state.wildcard.path_index.cursor.i = 0;
                         }
                     }
 
                     // If the next char is a special brace separator,
                     // skip to the end of the braces so we don't try to match it.
                     if (brace_stack.len > 0 and
-                        state.glob_index < glob.len and
-                        (glob[state.glob_index] == ',' or glob[state.glob_index] == '}'))
+                        state.glob_index.cursor.i < glob.len and
+                        (state.glob_index.cursor.c == ',' or state.glob_index.cursor.c == '}'))
                     {
-                        if (state.skipBraces(glob, false) == .Invalid)
+                        if (state.skipBraces(&glob_iter, false) == .Invalid)
                             return false; // invalid pattern!
                     }
 
                     continue;
                 },
-                '?' => if (state.path_index < path.len) {
-                    if (!isSeparator(path[state.path_index])) {
-                        state.glob_index += 1;
-                        state.path_index += 1;
+                '?' => if (state.path_index.cursor.i < path.len) {
+                    if (!isSeparator(state.path_index.cursor.c)) {
+                        state.glob_index.bump(&glob_iter);
+                        state.path_index.bump(&path_iter);
                         continue;
                     }
                 },
-                '[' => if (state.path_index < path.len) {
-                    state.glob_index += 1;
-                    const c = path[state.path_index];
+                '[' => if (state.path_index.cursor.i < path.len) {
+                    state.glob_index.bump(&glob_iter);
+                    const c = state.path_index.cursor.c;
 
                     // Check if the character class is negated.
                     var class_negated = false;
-                    if (state.glob_index < glob.len and
-                        (glob[state.glob_index] == '^' or glob[state.glob_index] == '!'))
+                    if (state.glob_index.cursor.i < glob.len and
+                        (state.glob_index.cursor.c == '^' or state.glob_index.cursor.c == '!'))
                     {
                         class_negated = true;
-                        state.glob_index += 1;
+                        state.glob_index.bump(&glob_iter);
                     }
 
                     // Try each range.
                     var first = true;
                     var is_match = false;
-                    while (state.glob_index < glob.len and (first or glob[state.glob_index] != ']')) {
-                        var low = glob[state.glob_index];
-                        if (!unescape(&low, glob, &state.glob_index))
+                    while (state.glob_index.cursor.i < glob.len and (first or state.glob_index.cursor.c != ']')) {
+                        var low = state.glob_index.cursor.c;
+                        if (!unescape(&low, &glob_iter, &state.glob_index))
                             return false; // Invalid pattern
-                        state.glob_index += 1;
+                        state.glob_index.bump(&glob_iter);
 
                         // If there is a - and the following character is not ],
                         // read the range end character.
-                        const high = if (state.glob_index + 1 < glob.len and
-                            glob[state.glob_index] == '-' and glob[state.glob_index + 1] != ']')
+                        const high = if (state.glob_index.cursor.i + state.glob_index.cursor.width < glob.len and
+                            state.glob_index.cursor.c == '-' and state.glob_index.peek(&glob_iter).cursor.c != ']')
                         blk: {
-                            state.glob_index += 1;
-                            var h = glob[state.glob_index];
-                            if (!unescape(&h, glob, &state.glob_index))
+                            state.glob_index.bump(&glob_iter);
+                            var h = state.glob_index.cursor.c;
+                            if (!unescape(&h, &glob_iter, &state.glob_index))
                                 return false; // Invalid pattern!
-                            state.glob_index += 1;
+                            state.glob_index.bump(&glob_iter);
                             break :blk h;
                         } else low;
 
@@ -548,66 +617,70 @@ pub fn match(glob: []const u8, path: []const u8) bool {
                             is_match = true;
                         first = false;
                     }
-                    if (state.glob_index >= glob.len)
+                    if (state.glob_index.cursor.i >= glob.len)
                         return false; // Invalid pattern!
-                    state.glob_index += 1;
+                    state.glob_index.bump(&glob_iter);
                     if (is_match != class_negated) {
-                        state.path_index += 1;
+                        state.path_index.bump(&path_iter);
                         continue;
                     }
                 },
-                '{' => if (state.path_index < path.len) {
+                '{' => if (state.path_index.cursor.i < path.len) {
                     if (brace_stack.len >= brace_stack.stack.len)
                         return false; // Invalid pattern! Too many nested braces.
 
                     // Push old state to the stack, and reset current state.
-                    state = brace_stack.push(&state);
+                    state = brace_stack.push(&state, &glob_iter);
                     continue;
                 },
                 '}' => if (brace_stack.len > 0) {
                     // If we hit the end of the braces, we matched the last option.
-                    brace_stack.longest_brace_match =
-                        @max(brace_stack.longest_brace_match, @as(u32, @intCast(state.path_index)));
-                    state.glob_index += 1;
+                    brace_stack.longest_brace_match = if (state.path_index.cursor.i >= brace_stack.longest_brace_match.cursor.i)
+                        state.path_index
+                    else
+                        brace_stack.longest_brace_match;
+                    state.glob_index.bump(&glob_iter);
                     state = brace_stack.pop(&state);
                     continue;
                 },
                 ',' => if (brace_stack.len > 0) {
                     // If we hit a comma, we matched one of the options!
                     // But we still need to check the others in case there is a longer match.
-                    brace_stack.longest_brace_match =
-                        @max(brace_stack.longest_brace_match, @as(u32, @intCast(state.path_index)));
+                    brace_stack.longest_brace_match = if (state.path_index.cursor.i >= brace_stack.longest_brace_match.cursor.i)
+                        state.path_index
+                    else
+                        brace_stack.longest_brace_match;
                     state.path_index = brace_stack.last().path_index;
-                    state.glob_index += 1;
+                    state.glob_index.bump(&glob_iter);
                     state.wildcard = Wildcard{};
                     state.globstar = Wildcard{};
                     continue;
                 },
-                else => |c| if (state.path_index < path.len) {
+                else => |c| if (state.path_index.cursor.i < path.len) {
                     var cc = c;
                     // Match escaped characters as literals.
-                    if (!unescape(&cc, glob, &state.glob_index))
+                    if (!unescape(&cc, &glob_iter, &state.glob_index))
                         return false; // Invalid pattern;
 
                     const is_match = if (cc == '/')
-                        isSeparator(path[state.path_index])
+                        isSeparator(state.path_index.cursor.c)
                     else
-                        path[state.path_index] == cc;
+                        state.path_index.cursor.c == cc;
 
                     if (is_match) {
                         if (brace_stack.len > 0 and
-                            state.glob_index > 0 and
-                            glob[state.glob_index - 1] == '}')
+                            state.glob_index.cursor.i > 0 and
+                            glob[state.glob_index.cursor.i - 1] == '}')
                         {
-                            brace_stack.longest_brace_match = @as(u32, @intCast(state.path_index));
+                            brace_stack.longest_brace_match = state.path_index;
                             state = brace_stack.pop(&state);
                         }
-                        state.glob_index += 1;
-                        state.path_index += 1;
+                        state.glob_index.bump(&glob_iter);
+                        state.path_index.bump(&path_iter);
 
                         // If this is not a separator, lock in the previous globstar.
                         if (cc != '/')
-                            state.globstar.path_index = 0;
+                            state.globstar.path_index.cursor.i = 0;
 
                         continue;
                     }
@@ -615,14 +688,14 @@ pub fn match(glob: []const u8, path: []const u8) bool {
             }
         }
         // If we didn't match, restore state to the previous star pattern.
-        if (state.wildcard.path_index > 0 and state.wildcard.path_index <= path.len) {
+        if (state.wildcard.path_index.cursor.i > 0 and state.wildcard.path_index.cursor.i <= path.len) {
             state.backtrack();
             continue;
         }
 
         if (brace_stack.len > 0) {
             // If in braces, find next option and reset path to index where we saw the '{'
-            switch (state.skipBraces(glob, true)) {
+            switch (state.skipBraces(&glob_iter, true)) {
                 .Invalid => return false,
                 .Comma => {
                     state.path_index = brace_stack.last().path_index;
@@ -633,14 +706,14 @@ pub fn match(glob: []const u8, path: []const u8) bool {
 
             // Hit the end. Pop the stack.
             // If we matched a previous option, use that.
-            if (brace_stack.longest_brace_match > 0) {
+            if (brace_stack.longest_brace_match.cursor.i > 0) {
                 state = brace_stack.pop(&state);
                 continue;
             } else {
                 // Didn't match. Restore state, and check if we need to jump back to a star pattern.
                 state = brace_stack.last().*;
                 brace_stack.len -= 1;
-                if (state.wildcard.path_index > 0 and state.wildcard.path_index <= path.len) {
+                if (state.wildcard.path_index.cursor.i > 0 and state.wildcard.path_index.cursor.i <= path.len) {
                     state.backtrack();
                     continue;
                 }
@@ -653,18 +726,18 @@ pub fn match(glob: []const u8, path: []const u8) bool {
     return !negated;
 }
 
-inline fn isSeparator(c: u8) bool {
+inline fn isSeparator(c: Codepoint) bool {
     if (comptime @import("builtin").os.tag == .windows) return c == '/' or c == '\\';
     return c == '/';
 }
 
-inline fn unescape(c: *u8, glob: []const u8, glob_index: *usize) bool {
+inline fn unescape(c: *Codepoint, glob_iter: *const CodepointIterator, glob_index: *CursorState) bool {
     if (c.* == '\\') {
-        glob_index.* += 1;
-        if (glob_index.* >= glob.len)
+        glob_index.bump(glob_iter);
+        if (glob_index.cursor.i >= glob_iter.bytes.len)
             return false; // Invalid pattern!
 
-        c.* = switch (glob[glob_index.*]) {
+        c.* = switch (glob_index.cursor.c) {
             'a' => '\x61',
             'b' => '\x08',
             'n' => '\n',
@@ -677,15 +750,16 @@ inline fn unescape(c: *u8, glob: []const u8, glob_index: *usize) bool {
     return true;
 }
 
-inline fn skipGlobstars(glob: []const u8, glob_index: *usize) usize {
+// src/**/**/foo.ts
+inline fn skipGlobstars(glob: []const u8, glob_index: *CursorState) void {
     // Coalesce multiple ** segments into one.
-    while (glob_index.* + 3 <= glob.len and
-        std.mem.eql(u8, glob[glob_index.*..][0..3], "/**"))
+    while (glob_index.cursor.i + 3 <= glob.len and
+        std.mem.eql(u8, glob[glob_index.cursor.i..][0..3], "/**"))
     {
-        glob_index.* += 3;
+        glob_index.cursor.i += 3;
+        glob_index.cursor.c = '*';
+        glob_index.cursor.width = 1;
     }
-
-    return glob_index.*;
 }
 
 test "basic" {

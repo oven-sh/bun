@@ -62,6 +62,35 @@ describe("globMatch", () => {
     expect(glob.matchString("index.jsxxxxxxxx")).toBeFalse();
   });
 
+  // Most of the potential bugs when dealing with non-ASCII patterns is when the
+  // pattern matching algorithm wants to deal with single chars, for example
+  // using the `[...]` syntax, it tries to match each char in the brackets. With
+  // multi-byte string encodings this will break.
+  test("non ascii", () => {
+    let glob: Glob;
+
+    glob = new Glob("😎/¢£.{ts,tsx,js,jsx}");
+    expect(glob.matchString("😎/¢£.ts")).toBeTrue();
+    expect(glob.matchString("😎/¢£.tsx")).toBeTrue();
+    expect(glob.matchString("😎/¢£.js")).toBeTrue();
+    expect(glob.matchString("😎/¢£.jsx")).toBeTrue();
+    expect(glob.matchString("😎/¢£.jsxxxxxxxx")).toBeFalse();
+
+    glob = new Glob("*é*");
+    expect(glob.matchString("café noir")).toBeTrue();
+    expect(glob.matchString("café noir")).toBeTrue();
+
+    glob = new Glob("caf*noir");
+    expect(glob.matchString("café noir")).toBeTrue();
+    expect(glob.matchString("café noir")).toBeTrue();
+    expect(glob.matchString("cafeenoir")).toBeTrue();
+
+    glob = new Glob("F[ë£a]");
+    expect(glob.matchString("Fë")).toBeTrue();
+    expect(glob.matchString("F£")).toBeTrue();
+    expect(glob.matchString("Fa")).toBeTrue();
+  });
+
   test("invalid input", () => {
     const glob = new Glob("nice");
 

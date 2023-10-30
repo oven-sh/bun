@@ -5,13 +5,27 @@ import { Glob } from "bun";
 group({ name: "async", summary: true }, () => {
   bench("fast-glob", async () => {
     const entries = await fg.glob(["*.zig"], {
-      cwd: "/Users/zackradisic/Code/bun/src",
+      cwd: "src",
     });
   });
 
   bench("Bun.Glob", async () => {
     const entries = await new Glob("*.zig").match({
-      cwd: "/Users/zackradisic/Code/bun/src",
+      cwd: "src",
+    });
+  });
+});
+
+group({ name: "async-recursive", summary: true }, () => {
+  bench("fast-glob", async () => {
+    const entries = await fg.glob(["**/*.ts"], {
+      cwd: "src",
+    });
+  });
+
+  bench("Bun.Glob", async () => {
+    const entries = await new Glob("**/*.ts").match({
+      cwd: "src",
     });
   });
 });
@@ -19,13 +33,13 @@ group({ name: "async", summary: true }, () => {
 group({ name: "sync", summary: true }, () => {
   bench("fast-glob", () => {
     const entries = fg.globSync(["*.zig"], {
-      cwd: "/Users/zackradisic/Code/bun/src",
+      cwd: "src",
     });
   });
 
   bench("Bun.Glob", () => {
     const entries = new Glob("*.zig").matchSync({
-      cwd: "/Users/zackradisic/Code/bun/src",
+      cwd: "src",
     });
   });
 });

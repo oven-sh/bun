@@ -17,6 +17,7 @@ const ZigString = @import("../bindings/bindings.zig").ZigString;
 const Base = @import("../base.zig");
 const JSGlobalObject = @import("../bindings/bindings.zig").JSGlobalObject;
 const getAllocator = Base.getAllocator;
+const ResolvePath = @import("../../resolver/resolve_path.zig");
 
 pub usingnamespace JSC.Codegen.JSGlob;
 
@@ -37,16 +38,49 @@ const MatchOpts = struct {
         };
 
         if (optsObj.get(globalThis, "cwd")) |cwdVal| {
-            var cwdStr: BunString = cwdVal.toBunString(globalThis);
-            // assuming length means byte length here
-            if (cwdStr.length() > bun.MAX_PATH_BYTES) {
+            if (!cwdVal.isString()) {
+                globalThis.throw("{s}: invalid `cwd`, not a string", .{fnName});
+                return null;
+            }
+
+            var cwd_str_raw = cwdVal.toSlice(globalThis, globWalkerAllocator);
+            defer cwd_str_raw.deinit();
+            if (cwd_str_raw.len == 0) {
+                globalThis.throw("{s}: invalid `cwd`, empty string", .{fnName});
+                return null;
+            }
+
+            const cwd_str = cwd_str: {
+                if (ResolvePath.Platform.auto.isAbsolute(cwd_str_raw.slice())) {
+                    // FIXME: this check breaks if input is not all ascii also doesnt work on windows
+                    if (cwd_str_raw.len > 1 and cwd_str_raw.slice()[cwd_str_raw.len - 1] == '/') {
+                        const without_trailing_slash = ZigString.Slice{ .ptr = cwd_str_raw.ptr, .len = cwd_str_raw.len - 1, .allocator = cwd_str_raw.allocator };
+                        const trailing_slash_stripped = without_trailing_slash.clone(globWalkerAllocator) catch {
+                            globalThis.throwOutOfMemory();
+                            return null;
+                        };
+                        break :cwd_str trailing_slash_stripped.ptr[0..trailing_slash_stripped.len];
+                    }
+                    const cwd_str = cwd_str_raw.clone(globWalkerAllocator) catch {
+                        globalThis.throwOutOfMemory();
+                        return null;
+                    };
+                    break :cwd_str cwd_str.ptr[0..cwd_str.len];
+                }
+
+                break :cwd_str ResolvePath.relativeAlloc(globWalkerAllocator, "", cwd_str_raw.slice()) catch {
+                    globalThis.throwOutOfMemory();
+                    return null;
+                };
+            };
+
+            if (cwd_str.len > bun.MAX_PATH_BYTES) {
+                globWalkerAllocator.free(cwd_str);
                 globalThis.throw("{s}: invalid `cwd`, longer than {d} bytes", .{ fnName, bun.MAX_PATH_BYTES });
                 return null;
             }
-            const cwdOwnedSlice = cwdStr.toOwnedSlice(globWalkerAllocator) catch @panic("OOM");
-            const cwdStrOwned = BunString.fromBytes(cwdOwnedSlice);
 
-            out.cwd = cwdStrOwned;
+            out.cwd = BunString.fromBytes(cwd_str);
         }
 
         return out;
@@ -57,9 +91,16 @@ pub const WalkTask = struct {
     walker: *GlobWalker,
     err: ?Err = null,
     global: *JSC.JSGlobalObject,
-    const Err = union(enum) {
+    pub const Err = union(enum) {
         syscall: Syscall.Error,
         unknown: anyerror,
+
+        pub fn toJSC(this: Err, globalThis: *JSGlobalObject) JSValue {
+            return switch (this) {
+                .syscall => |err| err.toJSC(globalThis),
+                .unknown => |err| ZigString.fromBytes(@errorName(err)).toValueGC(globalThis),
+            };
+        }
     };
 
     pub const AsyncGlobWalkTask = JSC.ConcurrentPromiseTask(WalkTask);
@@ -90,10 +131,8 @@ pub const WalkTask = struct {
         defer this.deinit();
 
         if (this.err) |err| {
-            _ = err;
-            // todo: error handling
-            const errorValue = JSC.JSValue.jsUndefined();
-            promise.reject(this.global, errorValue);
+            const errJs = err.toJSC(this.global);
+            promise.reject(this.global, errJs);
             return;
         }
 

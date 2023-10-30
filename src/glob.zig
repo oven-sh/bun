@@ -42,28 +42,6 @@ pub const GlobWalker = struct {
         len: u32,
         starKind: StarKind = .None,
         const StarKind = enum { None, Single, Double };
-
-        // fn detectIfDoubleStar(this: *Component, it: *const CodepointIter) void {
-        // var lenElapsed: u32 = 0;
-        // var cursor = CodepointIter.Cursor {
-        //     .i = this.start,
-        // };
-        // var count = 0;
-        // while (it.next(&cursor)) {
-        //     if (cursor.c == '*') {
-        //         count += 1;
-        //         if (count == 2) {
-        //             if (lenElapsed == this.len) {
-        //                 this.doubleStar = true;
-        //             }
-        //             return;
-        //         }
-        //     } else {
-        //         return;
-        //     }
-        //     lenElapsed += cursor.width;
-        // }
-        // }
     };
 
     pub fn init(this: *GlobWalker, allocator: Allocator, pattern: []const u8) !Maybe(void) {
@@ -128,7 +106,14 @@ pub const GlobWalker = struct {
         return this.walkDir(0, rootPath);
     }
 
-    pub fn walkDir(this: *GlobWalker, componentIdx: u32, dirName: [:0]const u8) !Maybe(void) {
+    /// Invariant: `dirName` should be absolute and not have a trailing directory separator
+    ///
+    /// TODO: Several potential problems with this implementation:
+    /// 1. Might result in crazy amounts of recursion. This logic can be
+    ///    rewritten using while loop and a "worklist" (allocated on stack/heap
+    ///    with std.heap.stackFallback for example)
+    /// 2. Can result in many file descriptors open at once
+    pub fn walkDir(this: *GlobWalker, componentIdx_: u32, dirName: [:0]const u8) !Maybe(void) {
         const flags = std.os.O.DIRECTORY | std.os.O.RDONLY;
         const fd = switch (Syscall.open(dirName, flags, 0)) {
             .err => |err| return .{
@@ -143,7 +128,24 @@ pub const GlobWalker = struct {
         var iterator = DirIterator.iterate(dir);
         var entry = iterator.next();
 
+        const componentIdx = componentIdx: {
+            var real_component_idx = componentIdx_;
+            var pattern = this.patternComponents.items[real_component_idx];
+            if (pattern.starKind == .Double) {
+                // Collapse successive double wildcards
+                while (real_component_idx + 1 < this.patternComponents.items.len and
+                    this.patternComponents.items[real_component_idx + 1].starKind == .Double) : (real_component_idx += 1)
+                {}
+            }
+            break :componentIdx real_component_idx;
+        };
+
         const pattern = this.patternComponents.items[componentIdx];
+        // Since we collapsed successive double wildcards above, this is
+        // guaranteed to not be a double wildcard
+        const nextPattern = if (componentIdx + 1 < this.patternComponents.items.len) this.patternComponents.items[componentIdx + 1] else null;
+        const patternStr = this.originalPattern[pattern.start .. pattern.start + pattern.len];
+        const isLast = componentIdx == this.patternComponents.items.len - 1;
 
         while (switch (entry) {
             .err => |err| return .{ .err = err.withPath(dirName) },
@@ -153,16 +155,68 @@ pub const GlobWalker = struct {
             const entryName: []const u8 = current.name.slice();
             switch (current.kind) {
                 .file => {
-                    // A file can only match if this is the last pattern
-                    if (componentIdx != this.patternComponents.items.len - 1) continue;
-                    const matches = match(this.originalPattern[pattern.start .. pattern.start + pattern.len], entryName);
+                    const matches = matches: {
+                        // A file can only match if:
+                        // a) this is the last pattern, or
+                        // b) it matches the next pattern, provided the current
+                        //    pattern is a double wildcard and the  next pattern is
+                        //    not a double wildcard
+                        //
+                        // Examples:
+                        // a -> `src/foo/index.ts` matches
+                        // b -> `src/**/*.ts` (on 2nd pattern) matches
+                        if (!isLast) break :matches pattern.starKind == .Double and
+                            componentIdx + 1 == this.patternComponents.items.len - 1 and
+                            nextPattern.?.starKind != .Double and
+                            match(this.originalPattern[nextPattern.?.start .. nextPattern.?.start + nextPattern.?.len], entryName);
+
+                        break :matches match(patternStr, entryName);
+                    };
                     if (matches) {
-                        const ownedName = try ZigString.fromBytes(entryName).toOwnedSlice(this.allocator);
-                        try this.matchedPaths.append(this.allocator, BunString.fromBytes(ownedName));
+                        try this.appendMatchedPath(entryName, dirName);
                     }
                 },
                 .directory => {
-                    // this.walkDir(, dirName: [:0]const u8)
+                    // src/**/lmao/*.ts
+                    // src/**/*.ts
+                    const recursion_idx_bump: u32 = recursion_idx_bump: {
+                        // Handle double wildcard `**`, this could possibly
+                        // recurse the pattern to the directory's children
+                        if (pattern.starKind == .Double) {
+                            // Matches pattern after double wildcard, skip wildcard
+                            if (!isLast and match(this.originalPattern[nextPattern.?.start .. nextPattern.?.start + nextPattern.?.len], entryName)) {
+                                break :recursion_idx_bump 1;
+                            }
+
+                            if (isLast) {
+                                // Add this directory
+                                try this.appendMatchedPath(entryName, dirName);
+                            }
+
+                            break :recursion_idx_bump 0;
+                        }
+
+                        const matches = match(patternStr, entryName);
+                        if (matches) {
+                            if (isLast) {
+                                try this.appendMatchedPath(entryName, dirName);
+                                continue;
+                            }
+                            break :recursion_idx_bump 1;
+                        }
+                        continue;
+                    };
+
+                    const entry_name_z = try std.fs.path.joinZ(this.allocator, &[_][]const u8{
+                        dirName[0..dirName.len],
+                        entryName,
+                    });
+                    defer this.allocator.free(entry_name_z);
+
+                    switch (try this.walkDir(componentIdx + recursion_idx_bump, entry_name_z)) {
+                        .err => |err| return .{ .err = err.withPath(entry_name_z) },
+                        else => {},
+                    }
                 },
                 // TODO
                 .sym_link => {},
@@ -171,6 +225,14 @@ pub const GlobWalker = struct {
         }
 
         return .{ .result = undefined };
+    }
+
+    fn appendMatchedPath(this: *GlobWalker, entryName: []const u8, dirName: [:0]const u8) !void {
+        const name = try std.fs.path.join(this.allocator, &[_][]const u8{
+            dirName[0..dirName.len],
+            entryName,
+        });
+        try this.matchedPaths.append(this.allocator, BunString.fromBytes(name));
     }
 
     fn addComponent(allocator: Allocator, pattern: []const u8, patternComponents: *ArrayList(Component), component_: Component) !void {
@@ -221,7 +283,11 @@ pub const GlobWalker = struct {
                     prevIsBackslash = true;
                 },
                 '/' => {
-                    const end = cursor.i;
+                    var end = cursor.i;
+                    // is last char
+                    if (cursor.i + cursor.width == pattern.len) {
+                        end = cursor.i + cursor.width;
+                    }
                     try addComponent(allocator, pattern, patternComponents, .{ .start = start, .len = end - start });
                     start = cursor.i + cursor.width;
                 },

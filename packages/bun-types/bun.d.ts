@@ -70,11 +70,27 @@ declare module "bun" {
     options?: { PATH?: string; cwd?: string },
   ): string | null;
 
+  export interface GlobMatchOptions {
+    /**
+     * The root directory to start matching from. Defaults to `process.cwd()`
+     */
+    cwd?: string;
+  }
+
+  /**
+   * Match files using [glob patterns](https://en.wikipedia.org/wiki/Glob_(programming)).
+   *
+   * @example
+   * ```js
+   * const glob = new Glob("*.{ts,tsx}");
+   * const matchedFilepaths = await glob.match({ cwd: './src' })
+   * ```
+   */
   export class Glob {
     constructor(pattern: string);
 
-    match(options?: { cwd?: string }): Promise<Array<string>>;
-    matchSync(options?: { cwd?: string }): Array<string>;
+    match(options?: GlobMatchOptions): Promise<Array<string>>;
+    matchSync(options?: GlobMatchOptions): Array<string>;
     matchString(str: string): boolean;
   }
 

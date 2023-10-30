@@ -159,7 +159,13 @@ fn parseHandlers(
     }
 }
 
-fn parseBind(globalObject: *JSC.JSGlobalObject, opts: JSC.JSValue, exception: JSC.C.ExceptionRef, udpSocket: *UDPSocket) ?void {
+fn parseBind(
+    globalObject: *JSC.JSGlobalObject,
+    opts: JSC.JSValue,
+    exception: JSC.C.ExceptionRef,
+    bindAddr: *JSC.ZigString.Slice,
+    bindPort: *u16,
+) ?void {
     var addr: JSC.ZigString.Slice = JSC.ZigString.Slice.empty;
 
     if (opts.getTruthy(globalObject, "address")) |hostname| {
@@ -174,8 +180,8 @@ fn parseBind(globalObject: *JSC.JSGlobalObject, opts: JSC.JSValue, exception: JS
         return null;
     }
 
-    udpSocket.bindAddr = addr;
-    udpSocket.bindPort = port_value.toU16();
+    bindAddr.* = addr;
+    bindPort.* = port_value.toU16();
 }
 
 pub const UDPSocket = struct {
@@ -191,8 +197,6 @@ pub const UDPSocket = struct {
     poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
 
     ipv6: bool = false,
-    bindAddr: JSC.ZigString.Slice = JSC.ZigString.Slice.empty,
-    bindPort: u16 = 0,
     connectedAddrStorage: ?std.os.sockaddr.storage = null,
 
     onData: JSC.JSValue = .zero,
@@ -237,20 +241,24 @@ pub const UDPSocket = struct {
             };
         }
 
+        var bindAddr: JSC.ZigString.Slice = JSC.ZigString.Slice.empty;
+        var bindPort: u16 = 0;
+
         if (opts.get(globalObject, "bind")) |bindObj| {
-            parseBind(globalObject, bindObj, exception, &udpSocket) orelse {
+            parseBind(globalObject, bindObj, exception, &bindAddr, &bindPort) orelse {
                 return .zero;
             };
         }
 
-        if (udpSocket.bindAddr.len == 0) {
-            udpSocket.bindAddr = JSC.ZigString.fromUTF8("0.0.0.0").toSlice(bun.default_allocator);
+        if (bindAddr.len == 0) {
+            bindAddr = JSC.ZigString.fromUTF8("0.0.0.0").toSlice(bun.default_allocator);
         }
+        defer bindAddr.deinit();
 
         {
             var addrStorage: std.os.sockaddr.storage = undefined;
-            const addrValue = udpSocket.bindAddr.toZigString().toJS(globalObject, exception);
-            const portValue = JSC.jsNumber(udpSocket.bindPort);
+            const addrValue = bindAddr.toZigString().toJS(globalObject, exception);
+            const portValue = JSC.jsNumber(bindPort);
             const err: []const u8 = parseAddressPort(globalObject, addrValue, portValue, &udpSocket.ipv6, &addrStorage);
             if (err.len > 0) {
                 exception.* = JSC.toInvalidArguments("{s}", .{err}, globalObject).asObjectRef();
@@ -270,8 +278,8 @@ pub const UDPSocket = struct {
             this.receiveBuf,
             onData,
             onDrain,
-            this.bindAddr.sliceZ(),
-            this.bindPort,
+            bindAddr.sliceZ(),
+            bindPort,
             this,
         ).?;
 
@@ -444,6 +452,7 @@ pub const UDPSocket = struct {
             return .zero;
         }
         this.stopped = true;
+        this.unprotectHandlers();
         this.poll_ref.unref(this.vm);
         this.strong_self.clear();
         uws.us_udp_socket_close(this.socket);
@@ -452,8 +461,6 @@ pub const UDPSocket = struct {
 
     pub fn finalize(this: *This) callconv(.C) void {
         this.strong_self.deinit();
-        this.bindAddr.deinit();
-        this.unprotectHandlers();
         // Cast it into a us_poll_t pointer so that we can ask uSockets to free
         // the memory.
         var poll: *uws.Poll = @ptrCast(this.socket);

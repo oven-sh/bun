@@ -331,6 +331,7 @@ pub const RuntimeTranspilerStore = struct {
         pub fn run(this: *TranspilerJob) void {
             var arena = bun.ArenaAllocator.init(bun.default_allocator);
             defer arena.deinit();
+            const allocator = arena.allocator();
 
             defer this.dispatchToMainThread();
             if (this.generation_number != this.vm.transpiler_store.generation_number.load(.Monotonic)) {
@@ -341,13 +342,13 @@ pub const RuntimeTranspilerStore = struct {
             if (ast_memory_store == null) {
                 ast_memory_store = bun.default_allocator.create(js_ast.ASTMemoryAllocator) catch @panic("out of memory!");
                 ast_memory_store.?.* = js_ast.ASTMemoryAllocator{
-                    .allocator = arena.allocator(),
+                    .allocator = allocator,
                     .previous = null,
                 };
             }
 
+            ast_memory_store.?.allocator = allocator;
             ast_memory_store.?.reset();
-            ast_memory_store.?.allocator = arena.allocator();
             ast_memory_store.?.push();
 
             const path = this.path;
@@ -358,7 +359,6 @@ pub const RuntimeTranspilerStore = struct {
             var vm = this.vm;
             var bundler: bun.Bundler = undefined;
             bundler = vm.bundler;
-            var allocator = arena.allocator();
             bundler.setAllocator(allocator);
             bundler.setLog(&this.log);
             bundler.resolver.opts = bundler.options;
@@ -1379,8 +1379,7 @@ pub const ModuleLoader = struct {
                     }
                 }
 
-                // var allocator = arena.allocator();
-                var allocator = bun.default_allocator;
+                var allocator = arena.allocator();
 
                 var fd: ?StoredFileDescriptorType = null;
                 var package_json: ?*PackageJSON = null;

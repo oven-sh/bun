@@ -96,6 +96,9 @@ Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, Reso
 {
 
     auto stringImpl = Bun::toWTFString(resolvedSource.source_code);
+    if (!stringImpl.impl()->isStatic() && resolvedSource.source_code.tag == BunStringTag::WTFStringImpl) {
+        resolvedSource.source_code.deref();
+    }
     auto sourceURLString = toStringCopy(resolvedSource.source_url);
     bool isCodeCoverageEnabled = !!globalObject->vm().controlFlowProfiler();
 
@@ -152,6 +155,9 @@ void SourceProvider::cacheBytecode(const BytecodeCacheGenerator& generator)
     auto update = generator();
     if (update)
         m_cachedBytecode->addGlobalUpdate(*update);
+}
+SourceProvider::~SourceProvider()
+{
 }
 void SourceProvider::commitCachedBytecode()
 {

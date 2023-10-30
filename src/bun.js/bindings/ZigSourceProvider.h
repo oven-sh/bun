@@ -39,13 +39,7 @@ class SourceProvider final : public JSC::SourceProvider {
 
 public:
     static Ref<SourceProvider> create(Zig::GlobalObject*, ResolvedSource resolvedSource, JSC::SourceProviderSourceType sourceType = JSC::SourceProviderSourceType::Module, bool isBuiltIn = false);
-    ~SourceProvider()
-    {
-        freeSourceCode();
-
-        commitCachedBytecode();
-    }
-
+    ~SourceProvider();
     unsigned hash() const override;
     StringView source() const override { return StringView(m_source.get()); }
     RefPtr<JSC::CachedBytecode> cachedBytecode()

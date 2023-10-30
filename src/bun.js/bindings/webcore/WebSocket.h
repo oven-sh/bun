@@ -61,6 +61,7 @@ public:
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const String& protocol);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&);
+    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized);
     ~WebSocket();
 
     enum State {
@@ -138,6 +139,16 @@ public:
         return m_hasPendingActivity.load();
     }
 
+    void setRejectUnauthorized(bool rejectUnauthorized)
+    {
+        m_rejectUnauthorized = rejectUnauthorized;
+    }
+
+    bool rejectUnauthorized() const
+    {
+        return m_rejectUnauthorized;
+    }
+
     void incPendingActivityCount()
     {
         m_pendingActivityCount++;
@@ -209,6 +220,7 @@ private:
     String m_extensions;
     void* m_upgradeClient { nullptr };
     bool m_isSecure { false };
+    bool m_rejectUnauthorized { false };
     AnyWebSocket m_connectedWebSocket { nullptr };
     ConnectedWebSocketKind m_connectedWebSocketKind { ConnectedWebSocketKind::None };
     size_t m_pendingActivityCount { 0 };

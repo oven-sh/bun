@@ -1315,6 +1315,7 @@ pub const ZigConsoleClient = struct {
             TypedArray,
             Map,
             MapIterator,
+            SetIterator,
             Set,
             BigInt,
             Symbol,
@@ -1372,6 +1373,7 @@ pub const ZigConsoleClient = struct {
                     TypedArray: void,
                     Map: void,
                     MapIterator: void,
+                    SetIterator: void,
                     Set: void,
                     BigInt: void,
                     Symbol: void,
@@ -1535,6 +1537,7 @@ pub const ZigConsoleClient = struct {
                         JSValue.JSType.JSFunction => .Function,
                         JSValue.JSType.JSWeakMap, JSValue.JSType.JSMap => .Map,
                         JSValue.JSType.JSMapIterator => .MapIterator,
+                        JSValue.JSType.JSSetIterator => .SetIterator,
                         JSValue.JSType.JSWeakSet, JSValue.JSType.JSSet => .Set,
                         JSValue.JSType.JSDate => .JSON,
                         JSValue.JSType.JSPromise => .Promise,
@@ -1753,6 +1756,7 @@ pub const ZigConsoleClient = struct {
             return struct {
                 formatter: *ZigConsoleClient.Formatter,
                 writer: Writer,
+                count: usize = 0,
                 pub fn forEach(_: [*c]JSC.VM, globalObject: [*c]JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                     var this: *@This() = bun.cast(*@This(), ctx orelse return);
                     if (!is_iterator) {
@@ -1783,6 +1787,7 @@ pub const ZigConsoleClient = struct {
                         this.writer.writeAll("\n") catch unreachable;
                         this.formatter.writeIndent(Writer, this.writer) catch unreachable;
                         const tag = Tag.getAdvanced(nextValue, globalObject, .{ .hide_global = true });
+                        this.count += 1;
                         this.formatter.format(
                             tag,
                             Writer,
@@ -1793,7 +1798,8 @@ pub const ZigConsoleClient = struct {
                         );
                     }
                     this.formatter.printComma(Writer, this.writer, enable_ansi_colors) catch unreachable;
-                    this.writer.writeAll("\n") catch unreachable;
+                    if (!is_iterator)
+                        this.writer.writeAll("\n") catch unreachable;
                 }
             };
         }
@@ -2515,6 +2521,30 @@ pub const ZigConsoleClient = struct {
                             .writer = writer_,
                         };
                         value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
+                        if (iter.count > 0)
+                            writer.writeAll("\n");
+                    }
+                    this.writeIndent(Writer, writer_) catch {};
+                    writer.writeAll("}");
+                },
+                .SetIterator => {
+                    const prev_quote_strings = this.quote_strings;
+                    this.quote_strings = true;
+                    defer this.quote_strings = prev_quote_strings;
+
+                    writer.print("SetIterator {{ ", .{});
+                    {
+                        this.indent += 1;
+                        this.depth +|= 1;
+                        defer this.indent -|= 1;
+                        defer this.depth -|= 1;
+                        var iter = MapIterator(Writer, enable_ansi_colors, true){
+                            .formatter = this,
+                            .writer = writer_,
+                        };
+                        value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
+                        if (iter.count > 0)
+                            writer.writeAll("\n");
                     }
                     this.writeIndent(Writer, writer_) catch {};
                     writer.writeAll("}");
@@ -3110,6 +3140,7 @@ pub const ZigConsoleClient = struct {
                 .ArrayBuffer, .TypedArray => this.printAs(.TypedArray, Writer, writer, value, result.cell, enable_ansi_colors),
                 .Map => this.printAs(.Map, Writer, writer, value, result.cell, enable_ansi_colors),
                 .MapIterator => this.printAs(.MapIterator, Writer, writer, value, result.cell, enable_ansi_colors),
+                .SetIterator => this.printAs(.SetIterator, Writer, writer, value, result.cell, enable_ansi_colors),
                 .Set => this.printAs(.Set, Writer, writer, value, result.cell, enable_ansi_colors),
                 .Symbol => this.printAs(.Symbol, Writer, writer, value, result.cell, enable_ansi_colors),
                 .BigInt => this.printAs(.BigInt, Writer, writer, value, result.cell, enable_ansi_colors),

@@ -41,17 +41,30 @@ pub const is_canary = BuildOptions.is_canary;
 pub const dump_source = isDebug and !isTest;
 pub const base_path = BuildOptions.base_path ++ "/";
 
+pub const version: std.SemanticVersion = BuildOptions.version;
+pub const version_string = std.fmt.comptimePrint("{d}.{d}.{d}", .{ version.major, version.minor, version.patch });
+
 pub inline fn onlyMac() void {
     if (comptime !isMac) {
         unreachable;
     }
 }
+
 pub const OperatingSystem = enum {
     mac,
     linux,
     windows,
     // wAsM is nOt aN oPeRaTiNg SyStEm
     wasm,
+
+    pub fn displayString(self: OperatingSystem) []const u8 {
+        return switch (self) {
+            .mac => "macOS",
+            .linux => "Linux",
+            .windows => "Windows",
+            .wasm => "WASM",
+        };
+    }
 };
 
 pub const os: OperatingSystem = if (isMac)

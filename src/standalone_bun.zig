@@ -568,11 +568,23 @@ pub const StandaloneModuleGraph = struct {
                 if (bun.strings.eqlComptimeIgnoreLen(bun.argv()[0][0..argv0_len], "bun")) {
                     return null;
                 }
+
+                if (comptime Environment.isDebug) {
+                    if (bun.strings.eqlComptimeIgnoreLen(bun.argv()[0][0..argv0_len], "bun-debug")) {
+                        return null;
+                    }
+                }
             }
 
             if (argv0_len == 4) {
                 if (bun.strings.eqlComptimeIgnoreLen(bun.argv()[0][0..argv0_len], "bunx")) {
                     return null;
+                }
+
+                if (comptime Environment.isDebug) {
+                    if (bun.strings.eqlComptimeIgnoreLen(bun.argv()[0][0..argv0_len], "bun-debugx")) {
+                        return null;
+                    }
                 }
             }
         }

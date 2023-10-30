@@ -3,12 +3,12 @@
 #include "root.h"
 #include "ZigGlobalObject.h"
 
-#include "JavaScriptCore/JSFunction.h"
-#include "JavaScriptCore/VM.h"
+#include <JavaScriptCore/JSFunction.h>
+#include <JavaScriptCore/VM.h>
 
 #include "headers-handwritten.h"
 #include "BunClientData.h"
-#include "JavaScriptCore/CallFrame.h"
+#include <JavaScriptCore/CallFrame.h>
 
 namespace WebCore {
 
@@ -62,7 +62,7 @@ public:
     const JSC::SourceCode& source() const { return m_source; }
 
     DECLARE_VISIT_CHILDREN;
-    mutable WriteBarrier<JSC::DirectEvalExecutable> m_cachedDirectExecutable;
+    mutable JSC::WriteBarrier<JSC::DirectEvalExecutable> m_cachedDirectExecutable;
 
 private:
     JSC::SourceCode m_source;

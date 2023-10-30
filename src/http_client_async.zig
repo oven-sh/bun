@@ -724,7 +724,7 @@ pub const HTTPThread = struct {
         Output.Source.configureNamedThread("HTTP Client");
         default_arena = Arena.init() catch unreachable;
         default_allocator = default_arena.allocator();
-        var loop = uws.Loop.create(struct {
+        var loop = bun.uws.Loop.create(struct {
             pub fn wakeup(_: *uws.Loop) callconv(.C) void {
                 http_thread.drainEvents();
             }
@@ -790,7 +790,8 @@ pub const HTTPThread = struct {
     }
 
     fn processEvents_(this: *@This()) void {
-        this.loop.num_polls = @max(2, this.loop.num_polls);
+        if (comptime Environment.isPosix)
+            this.loop.num_polls = @max(2, this.loop.num_polls);
 
         while (true) {
             this.drainEvents();
@@ -1425,10 +1426,10 @@ pub const InternalState = struct {
                 body_out_str.list.expandToCapacity();
             }
             reader.list = body_out_str.list;
-            reader.zlib.next_out = &body_out_str.list.items[initial];
+            reader.zlib.next_out = @ptrCast(&body_out_str.list.items[initial]);
             reader.zlib.avail_out = @as(u32, @truncate(body_out_str.list.capacity - initial));
             // we reset the total out so we can track how much we decompressed this time
-            reader.zlib.total_out = initial;
+            reader.zlib.total_out = @truncate(initial);
         } else {
             reader = try Zlib.ZlibReaderArrayList.initWithOptionsAndListAllocator(
                 buffer,

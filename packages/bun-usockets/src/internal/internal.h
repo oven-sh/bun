@@ -20,7 +20,9 @@
 
 
 #if defined(_MSC_VER)
+#ifndef __cplusplus
 #define alignas(x) __declspec(align(x))
+#endif
 #else
 #include <stdalign.h>
 #endif
@@ -41,6 +43,10 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop, struct 
 /* We have many different eventing implementations */
 #if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
 #include "internal/eventing/epoll_kqueue.h"
+#endif
+
+#ifdef LIBUS_USE_LIBUV
+#include "internal/eventing/libuv.h"
 #endif
 
 /* Poll type and what it polls for */
@@ -126,6 +132,15 @@ struct us_internal_callback_t {
 
 #endif
 
+#if __cplusplus
+extern "C" {
+#endif
+int us_internal_raw_root_certs(struct us_cert_string_t** out);
+
+#if __cplusplus
+}
+#endif
+
 /* Listen sockets are sockets */
 struct us_listen_socket_t {
     alignas(LIBUS_EXT_ALIGNMENT) struct us_socket_t s;
@@ -163,6 +178,7 @@ struct us_socket_context_t {
 
 struct us_internal_ssl_socket_context_t;
 struct us_internal_ssl_socket_t;
+typedef void (*us_internal_on_handshake_t)(struct us_internal_ssl_socket_t *, int success, struct us_bun_verify_error_t verify_error, void* custom_data);
 
 /* SNI functions */
 void us_internal_ssl_socket_context_add_server_name(struct us_internal_ssl_socket_context_t *context, const char *hostname_pattern, struct us_socket_context_options_t options, void *user);
@@ -190,8 +206,8 @@ void us_internal_ssl_socket_context_on_close(struct us_internal_ssl_socket_conte
 void us_internal_ssl_socket_context_on_data(struct us_internal_ssl_socket_context_t *context,
     struct us_internal_ssl_socket_t *(*on_data)(struct us_internal_ssl_socket_t *s, char *data, int length));
 
-void us_internal_ssl_handshake(struct us_internal_ssl_socket_t *s, void (*on_handshake)(struct us_internal_ssl_socket_t *, int success, struct us_bun_verify_error_t verify_error, void* custom_data), void* custom_data);
-void us_internal_on_ssl_handshake(struct us_internal_ssl_socket_context_t * context, void (*on_handshake)(struct us_internal_ssl_socket_t *, int success, struct us_bun_verify_error_t verify_error, void* custom_data), void* custom_data);
+void us_internal_ssl_handshake(struct us_internal_ssl_socket_t *s, us_internal_on_handshake_t on_handshake, void* custom_data);
+void us_internal_on_ssl_handshake(struct us_internal_ssl_socket_context_t * context, us_internal_on_handshake_t on_handshake, void* custom_data);
 
 void us_internal_ssl_socket_context_on_writable(struct us_internal_ssl_socket_context_t *context,
     struct us_internal_ssl_socket_t *(*on_writable)(struct us_internal_ssl_socket_t *s));

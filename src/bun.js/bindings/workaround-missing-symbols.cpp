@@ -1,5 +1,97 @@
+
+#if defined(WIN32)
+
+
+#include <cstdint>
+#include <algorithm>
+#include <sys/stat.h>
+#include <uv.h>
+#include <fcntl.h>
+#include <windows.h>
+#include <string.h>
+#include <cstdlib>
+
+#undef _environ
+#undef environ
+
+// Some libraries need these symbols. Windows makes it 
+extern "C" char** environ = nullptr;
+extern "C" char** _environ = nullptr;
+
+extern "C" int strncasecmp(const char* s1, const char* s2, size_t n)
+{
+    return _strnicmp(s1, s2, n);
+}
+
+extern "C" int fstat64(
+    _In_ int _FileHandle,
+    _Out_ struct _stat64* _Stat)
+{
+
+    return _fstat64(_FileHandle, _Stat);
+}
+
+extern "C" int stat64(
+    _In_z_ char const* _FileName,
+    _Out_ struct _stat64* _Stat)
+{
+    return _stat64(_FileName, _Stat);
+}
+
+extern "C" int kill(int pid, int sig)
+{
+    return uv_kill(pid, sig);
+}
+
+extern "C" int readlink(const char* path, char* buf, size_t bufsize)
+{
+    uv_fs_t req;
+    req.result = 0;
+
+    int len = uv_fs_readlink(uv_default_loop(), &req, path, nullptr);
+    if (req.result < 0) {
+        uv_fs_req_cleanup(&req);
+        return req.result;
+    }
+
+    if (bufsize > req.result)
+        bufsize = req.result;
+
+    size_t outlen = std::min(static_cast<size_t>(len), bufsize);
+    memcpy(buf, req.ptr, outlen);
+    uv_fs_req_cleanup(&req);
+
+    return outlen;
+}
+
+extern "C" int link(const char* oldpath, const char* newpath)
+{
+    uv_fs_t req;
+    int status_code = uv_fs_link(uv_default_loop(), &req, oldpath, newpath, nullptr);
+    uv_fs_req_cleanup(&req);
+    return status_code;
+}
+
+extern "C" char* mkdtemp(char* template_name)
+{
+    uv_fs_t req;
+    int status_code = uv_fs_mkdtemp(uv_default_loop(), &req, template_name, nullptr);
+    
+    if (status_code < 0)
+        return nullptr;
+    size_t outlen = std::min(strlen(req.path), strlen(template_name));
+    memcpy(template_name, req.path, outlen);
+    template_name[outlen] = '\0';
+    uv_fs_req_cleanup(&req);
+    return template_name;
+}
+
+#endif
+
+#if !defined(WIN32)
 #ifndef UNLIKELY
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)
+#endif
 #endif
 
 // if linux

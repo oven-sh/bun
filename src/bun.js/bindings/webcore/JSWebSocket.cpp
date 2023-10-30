@@ -143,7 +143,7 @@ static_assert(WebSocket::OPEN == 1, "OPEN in WebSocket does not match value from
 static_assert(WebSocket::CLOSING == 2, "CLOSING in WebSocket does not match value from IDL");
 static_assert(WebSocket::CLOSED == 3, "CLOSED in WebSocket does not match value from IDL");
 
-static inline EncodedJSValue constructJSWebSocket1(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
+static inline JSC::EncodedJSValue constructJSWebSocket1(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     VM& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -170,7 +170,7 @@ static inline EncodedJSValue constructJSWebSocket1(JSGlobalObject* lexicalGlobal
     return JSValue::encode(jsValue);
 }
 
-static inline EncodedJSValue constructJSWebSocket2(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
+static inline JSC::EncodedJSValue constructJSWebSocket2(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     VM& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -197,7 +197,7 @@ static inline EncodedJSValue constructJSWebSocket2(JSGlobalObject* lexicalGlobal
     return JSValue::encode(jsValue);
 }
 
-static inline EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSValue urlValue, JSValue optionsObjectValue)
+static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSValue urlValue, JSValue optionsObjectValue)
 {
     VM& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -245,7 +245,7 @@ static inline EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalGlobal
     return JSValue::encode(jsValue);
 }
 
-template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWebSocketDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
+template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWebSocketDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     VM& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -357,7 +357,7 @@ JSValue JSWebSocket::getConstructor(VM& vm, const JSGlobalObject* globalObject)
     return getDOMConstructor<JSWebSocketDOMConstructor, DOMConstructorID::WebSocket>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsWebSocketConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsWebSocketConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -375,7 +375,7 @@ static inline JSValue jsWebSocket_URLGetter(JSGlobalObject& lexicalGlobalObject,
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.url())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsWebSocket_URL, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsWebSocket_URL, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSWebSocket>::get<jsWebSocket_URLGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -388,7 +388,7 @@ static inline JSValue jsWebSocket_urlGetter(JSGlobalObject& lexicalGlobalObject,
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.url())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsWebSocket_url, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsWebSocket_url, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSWebSocket>::get<jsWebSocket_urlGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -401,7 +401,7 @@ static inline JSValue jsWebSocket_readyStateGetter(JSGlobalObject& lexicalGlobal
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUnsignedShort>(lexicalGlobalObject, throwScope, impl.readyState())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsWebSocket_readyState, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsWebSocket_readyState, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSWebSocket>::get<jsWebSocket_readyStateGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -414,7 +414,7 @@ static inline JSValue jsWebSocket_bufferedAmountGetter(JSGlobalObject& lexicalGl
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUnsignedLong>(lexicalGlobalObject, throwScope, impl.bufferedAmount())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsWebSocket_bufferedAmount, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsWebSocket_bufferedAmount, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSWebSocket>::get<jsWebSocket_bufferedAmountGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -425,7 +425,7 @@ static inline JSValue jsWebSocket_onopenGetter(JSGlobalObject& lexicalGlobalObje
     return eventHandlerAttribute(thisObject.wrapped(), eventNames().openEvent, worldForDOMObject(thisObject));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsWebSocket_onopen, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsWebSocket_onopen, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSWebSocket>::get<jsWebSocket_onopenGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -440,7 +440,7 @@ static inline bool setJSWebSocket_onopenSetter(JSGlobalObject& lexicalGlobalObje
     return true;
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setJSWebSocket_onopen, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_SETTER(setJSWebSocket_onopen, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName attributeName))
 {
     return IDLAttribute<JSWebSocket>::set<setJSWebSocket_onopenSetter>(*lexicalGlobalObject, thisValue, encodedValue, attributeName);
 }
@@ -451,7 +451,7 @@ static inline JSValue jsWebSocket_onmessageGetter(JSGlobalObject& lexicalGlobalO
     return eventHandlerAttribute(thisObject.wrapped(), eventNames().messageEvent, worldForDOMObject(thisObject));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsWebSocket_onmessage, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsWebSocket_onmessage, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSWebSocket>::get<jsWebSocket_onmessageGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -466,7 +466,7 @@ static inline bool setJSWebSocket_onmessageSetter(JSGlobalObject& lexicalGlobalO
     return true;
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setJSWebSocket_onmessage, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_SETTER(setJSWebSocket_onmessage, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName attributeName))
 {
     return IDLAttribute<JSWebSocket>::set<setJSWebSocket_onmessageSetter>(*lexicalGlobalObject, thisValue, encodedValue, attributeName);
 }
@@ -477,7 +477,7 @@ static inline JSValue jsWebSocket_onerrorGetter(JSGlobalObject& lexicalGlobalObj
     return eventHandlerAttribute(thisObject.wrapped(), eventNames().errorEvent, worldForDOMObject(thisObject));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsWebSocket_onerror, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsWebSocket_onerror, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSWebSocket>::get<jsWebSocket_onerrorGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -492,7 +492,7 @@ static inline bool setJSWebSocket_onerrorSetter(JSGlobalObject& lexicalGlobalObj
     return true;
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setJSWebSocket_onerror, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_SETTER(setJSWebSocket_onerror, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName attributeName))
 {
     return IDLAttribute<JSWebSocket>::set<setJSWebSocket_onerrorSetter>(*lexicalGlobalObject, thisValue, encodedValue, attributeName);
 }
@@ -503,7 +503,7 @@ static inline JSValue jsWebSocket_oncloseGetter(JSGlobalObject& lexicalGlobalObj
     return eventHandlerAttribute(thisObject.wrapped(), eventNames().closeEvent, worldForDOMObject(thisObject));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsWebSocket_onclose, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsWebSocket_onclose, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSWebSocket>::get<jsWebSocket_oncloseGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -518,7 +518,7 @@ static inline bool setJSWebSocket_oncloseSetter(JSGlobalObject& lexicalGlobalObj
     return true;
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setJSWebSocket_onclose, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_SETTER(setJSWebSocket_onclose, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName attributeName))
 {
     return IDLAttribute<JSWebSocket>::set<setJSWebSocket_oncloseSetter>(*lexicalGlobalObject, thisValue, encodedValue, attributeName);
 }
@@ -531,7 +531,7 @@ static inline JSValue jsWebSocket_protocolGetter(JSGlobalObject& lexicalGlobalOb
     RELEASE_AND_RETURN(throwScope, (toJS<IDLNullable<IDLDOMString>>(lexicalGlobalObject, throwScope, impl.protocol())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsWebSocket_protocol, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsWebSocket_protocol, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSWebSocket>::get<jsWebSocket_protocolGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -544,7 +544,7 @@ static inline JSValue jsWebSocket_extensionsGetter(JSGlobalObject& lexicalGlobal
     RELEASE_AND_RETURN(throwScope, (toJS<IDLNullable<IDLDOMString>>(lexicalGlobalObject, throwScope, impl.extensions())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsWebSocket_extensions, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsWebSocket_extensions, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSWebSocket>::get<jsWebSocket_extensionsGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -557,7 +557,7 @@ static inline JSValue jsWebSocket_binaryTypeGetter(JSGlobalObject& lexicalGlobal
     RELEASE_AND_RETURN(throwScope, (toJS<IDLDOMString>(lexicalGlobalObject, throwScope, impl.binaryType())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsWebSocket_binaryType, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsWebSocket_binaryType, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSWebSocket>::get<jsWebSocket_binaryTypeGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -575,7 +575,7 @@ static inline bool setJSWebSocket_binaryTypeSetter(JSGlobalObject& lexicalGlobal
     return true;
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setJSWebSocket_binaryType, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_SETTER(setJSWebSocket_binaryType, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName attributeName))
 {
     return IDLAttribute<JSWebSocket>::set<setJSWebSocket_binaryTypeSetter>(*lexicalGlobalObject, thisValue, encodedValue, attributeName);
 }

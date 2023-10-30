@@ -92,11 +92,11 @@ $ brew install automake ccache cmake coreutils gnu-sed go libiconv libtool ninja
 ```
 
 ```bash#Ubuntu/Debian
-$ sudo apt install cargo ccache cmake git golang libtool ninja-build pkg-config rustc
+$ sudo apt install cargo ccache cmake git golang libtool ninja-build pkg-config rustc ruby-full
 ```
 
 ```bash#Arch
-$ sudo pacman -S base-devel ccache cmake git go libiconv libtool make ninja pkg-config python rust sed unzip
+$ sudo pacman -S base-devel ccache cmake git go libiconv libtool make ninja pkg-config python rust sed unzip ruby
 ```
 
 ```bash#Fedora

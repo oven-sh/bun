@@ -4,7 +4,7 @@ cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
 set(Bun_VERSION "1.0.8")
-set(WEBKIT_TAG 67c9ba93323b4a5a95bc4d1efe61166dc6e3e691)
+set(WEBKIT_TAG 46689737b98c78e48d9eb6885f0b3e8365d79310)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -136,7 +136,21 @@ if(UNIX)
 
     BUN_FIND_LLVM()
 else()
-    # On windows it is expected to use MSVC, and until we get a better build configuration, it is a free-for-all
+    # Windows uses Clang-CL
+    # TODO: good configuration in this regard. -G Ninja will pick clang-cl if possible, which should be fine for most users.
+
+    find_program(
+        STRIP
+        NAMES llvm-strip
+        PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
+        DOC "Path to LLVM ${LLVM_VERSION}'s llvm-strip binary"
+    )
+    find_program(
+        AR
+        NAMES llvm-ar
+        PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
+        DOC "Path to LLVM ${LLVM_VERSION}'s llvm-ar binary"
+    )
 endif()
 
 set(CMAKE_COLOR_DIAGNOSTICS ON)
@@ -164,10 +178,10 @@ endif()
 message(STATUS "C++ Compiler: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} at ${CMAKE_CXX_COMPILER}")
 
 # --- End LLVM ---
-set(DEFAULT_ON_UNLESS_WINDOWS ON)
-
+set(SHELL "bash")
+set(SCRIPT_EXTENSION "sh")
 if(WIN32)
-    set(DEFAULT_ON_UNLESS_WINDOWS OFF)
+    set(SCRIPT_EXTENSION "ps1")
 endif()
 
 set(DEFAULT_ON_UNLESS_APPLE ON)
@@ -193,8 +207,9 @@ option(USE_CUSTOM_CARES "Use Bun's recommended version of c-ares" ON)
 option(USE_CUSTOM_BASE64 "Use Bun's recommended version of libbase64" ON)
 option(USE_CUSTOM_LOLHTML "Use Bun's recommended version of lolhtml" ON)
 option(USE_CUSTOM_TINYCC "Use Bun's recommended version of tinycc" ON)
-option(USE_CUSTOM_LIBUV "Use Bun's recommended version of libuv (Windows only)" OFF)
+option(USE_CUSTOM_LIBUV "Use Bun's recommended version of libuv (Windows only)" ON)
 option(USE_BASELINE_BUILD "Build Bun for baseline (older) CPUs" OFF)
+
 option(USE_DEBUG_JSC "Enable assertions and use a debug build of JavaScriptCore" OFF)
 option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
 
@@ -312,23 +327,19 @@ else()
 endif()
 
 if(NOT WEBKIT_DIR)
-    if(WIN32)
-        message(FATAL_ERROR "Windows does not have prebuilt webkit yet. Please run release-windows.ps1 and pass the path to the built webkit with -DWEBKIT_DIR")
-    endif()
-
     set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "")
     set(ASSERT_ENABLED "0")
 
     if(USE_DEBUG_JSC)
         set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "-debug")
         set(ASSERT_ENABLED "1")
-    elseif(NOT DEBUG)
+    elseif(NOT DEBUG AND NOT WIN32)
         set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "-lto")
         set(ASSERT_ENABLED "0")
     endif()
 
     if(WIN32)
-        set(BUN_WEBKIT_PACKAGE_PLATFORM "win32")
+        set(BUN_WEBKIT_PACKAGE_PLATFORM "windows")
     elseif(APPLE)
         set(BUN_WEBKIT_PACKAGE_PLATFORM "macos")
     else()
@@ -345,11 +356,11 @@ if(NOT WEBKIT_DIR)
 
     message(STATUS "Using Pre-built WebKit: ${BUN_WEBKIT_PACKAGE_NAME}")
     execute_process(
-        COMMAND ${BUN_EXECUTABLE}
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/codegen/download-webkit.ts"
-        "--outdir=${BUN_WORKDIR}/bun-webkit"
-        "--tag=${WEBKIT_TAG}"
-        "--package=${BUN_WEBKIT_PACKAGE_NAME}"
+        COMMAND "${SHELL}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/download-webkit.${SCRIPT_EXTENSION}"
+        "${BUN_WORKDIR}/bun-webkit"
+        "${WEBKIT_TAG}"
+        "${BUN_WEBKIT_PACKAGE_NAME}"
         WORKING_DIRECTORY ${BUN_WORKDIR}
     )
 
@@ -500,28 +511,31 @@ add_custom_command(
 list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/JSSink.cpp")
 
 # --- .lut.h Generator ---
+set(BUN_OBJECT_LUT_SOURCES
+    bun.js/bindings/BunObject.cpp
+    bun.js/bindings/ZigGlobalObject.lut.txt
+    bun.js/bindings/JSBuffer.cpp
+    bun.js/bindings/BunProcess.cpp
+    bun.js/bindings/ProcessBindingConstants.cpp
+    bun.js/bindings/ProcessBindingNatives.cpp
+)
+set(BUN_OBJECT_LUT_OUTPUTS "")
+set(BUN_HASH_LUT_GENERATOR "${BUN_CODEGEN_SRC}/create-hash-table.ts")
 if(NOT BUN_LINK_ONLY)
-    set(BUN_OBJECT_LUT_SOURCES
-        bun.js/bindings/BunObject.cpp
-        bun.js/bindings/ZigGlobalObject.lut.txt
-        bun.js/bindings/JSBuffer.cpp
-        bun.js/bindings/BunProcess.cpp
-        bun.js/bindings/ProcessBindingConstants.cpp
-        bun.js/bindings/ProcessBindingNatives.cpp
-    )
-    set(BUN_HASH_LUT_GENERATOR "${BUN_CODEGEN_SRC}/create-hash-table.ts")
-
     macro(GENERATE_HASH_LUT _input _output _display_name)
-        add_custom_command(
-            OUTPUT ${_output}
-            MAIN_DEPENDENCY ${BUN_HASH_LUT_GENERATOR}
-            DEPENDS ${_input}
-            COMMAND ${BUN_EXECUTABLE} ${BUN_HASH_LUT_GENERATOR} ${_input} ${_output}
-            VERBATIM
-            COMMENT "Generating ${_display_name}"
-        )
+        if(NOT NO_CODEGEN)
+            add_custom_command(
+                OUTPUT ${_output}
+                MAIN_DEPENDENCY ${BUN_HASH_LUT_GENERATOR}
+                DEPENDS ${_input}
+                COMMAND ${BUN_EXECUTABLE} ${BUN_HASH_LUT_GENERATOR} ${_input} ${_output}
+                VERBATIM
+                COMMENT "Generating ${_display_name}"
+            )
+        endif()
+        list(APPEND BUN_OBJECT_LUT_OUTPUTS "${_output}")
 
-        # list(APPEND JavaScriptCore_HEADERS ${_output})
+        # list(APPEND Bun_HEADERS ${_output})
         WEBKIT_ADD_SOURCE_DEPENDENCIES(${_input} ${_output})
     endmacro()
 
@@ -728,18 +742,29 @@ set_target_properties(${bun} PROPERTIES
 )
 
 if(NOT BUN_CPP_ARCHIVE)
-    string(REPLACE ";" ".o\n  " BUN_OBJECT_LIST "${BUN_SOURCES}.o")
-    string(REPLACE "${BUN_WORKDIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
-    string(REPLACE "${CMAKE_CURRENT_SOURCE_DIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
-
-    write_file("${BUN_WORKDIR}/compile-cpp-only.sh"
-        "#!/usr/bin/env bash\n"
-        "set -e\n"
-        "OBJ_LIST=(\n  ${BUN_OBJECT_LIST}\n)\n"
-        "ninja \${OBJ_LIST[@]}\n"
-        "${AR} rcvs bun-cpp-objects.a \${OBJ_LIST[@]}\n"
-        "echo '-> bun-cpp-objects.a'\n"
-    )
+    if(NOT WIN32)
+        string(REPLACE ";" ".o\n  " BUN_OBJECT_LIST "${BUN_SOURCES}.o")
+        string(REPLACE "${BUN_WORKDIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
+        string(REPLACE "${CMAKE_CURRENT_SOURCE_DIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
+        write_file("${BUN_WORKDIR}/compile-cpp-only.sh"
+            "#!/usr/bin/env bash\n"
+            "set -e\n"
+            "OBJ_LIST=(\n  ${BUN_OBJECT_LIST}\n)\n"
+            "ninja \${OBJ_LIST[@]}\n"
+            "${AR} rcvs bun-cpp-objects.a \${OBJ_LIST[@]}\n"
+            "echo '-> bun-cpp-objects.a'\n"
+        )
+    else()
+        string(REPLACE ";" ".obj\",\n  \"" BUN_OBJECT_LIST "\"${BUN_SOURCES}.obj\"")
+        string(REPLACE "${BUN_WORKDIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
+        string(REPLACE "${CMAKE_CURRENT_SOURCE_DIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
+        write_file("${BUN_WORKDIR}/compile-cpp-only.ps1"
+            "$ErrorActionPreference = \"Stop\"\n"
+            "OBJ_LIST=@(\n  ${BUN_OBJECT_LIST}\n)\n"
+            "ninja @OBJ_LIST\n"
+            "Write-Host \"TODO: AR\"\n"
+        )
+    endif()
 else()
     set_target_properties(${bun} PROPERTIES LINKER_LANGUAGE CXX)
 endif()
@@ -822,14 +847,14 @@ if(NOT MSVC)
         -fvisibility-inlines-hidden
         -fno-rtti
         -ferror-limit=${ERROR_LIMIT}
-        -fPIC
         -fno-omit-frame-pointer
     )
+    if(NOT WIN32)
+        target_compile_options(${bun} PUBLIC -fPIC)
+    endif()
 
     if(NOT APPLE)
-        target_link_options(${bun} PUBLIC
-            -fuse-ld=lld
-        )
+        target_link_options(${bun} PUBLIC -fuse-ld=lld)
     endif()
 
     string(APPEND CMAKE_CXX_FLAGS " -std=c++2a ")
@@ -1090,13 +1115,11 @@ endif()
 
 if(WIN32)
     if(USE_CUSTOM_LIBUV)
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/uv.lib")
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libuv.lib")
     else()
         find_package(libuv CONFIG REQUIRED)
         target_link_libraries(${bun} PRIVATE $<IF:$<TARGET_EXISTS:libuv::uv_a>,libuv::uv_a,libuv::uv>)
     endif()
-
-    message(STATUS "Found libuv: ${libuv_LIBRARIES}")
 endif()
 
 if(USE_STATIC_SQLITE)
@@ -1128,17 +1151,7 @@ else()
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/JavaScriptCore.lib")
 
     if(WIN32)
-        string(APPEND CMAKE_CXX_FLAGS
-            " /external:anglebrackets /Gs- /Zi"
-        )
-        string(APPEND CMAKE_FLAGS
-            " /external:anglebrackets /Gs- /Zi"
-        )
         set_target_properties(${bun} PROPERTIES LINK_FLAGS " /SUBSYSTEM:CONSOLE /STACK:4194304,2097152")
-    endif()
-
-    if(DEFINED ENV{VCPKG_ROOT})
-        include_directories($ENV{VCPKG_ROOT}/installed/x64-windows/include)
     endif()
 
     # include_directories(C:/Users/windo/Build/WebKit/WebKitBuild/WTF/DerivedSources)
@@ -1151,6 +1164,6 @@ else()
     target_link_libraries(${bun} PUBLIC winmm ws2_32 bcrypt ntdll kernel32 shell32 shlwapi advapi32 vcruntime ucrt legacy_stdio_definitions)
 endif()
 
-if(NO_CODEGEN)
+if(NO_CODEGEN AND NOT CODEGEN)
     message(STATUS "NO_CODEGEN is ON, a handful of build steps will not run.")
 endif()

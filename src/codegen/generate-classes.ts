@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { resolve } from "path";
+import path from "path";
 import type { Field, ClassDefinition } from "./class-definitions";
 import { writeIfNotChanged } from "./helpers";
 
@@ -16,14 +16,6 @@ function toIdentifier(propertyName) {
 
   return `Identifier::fromString(vm, ${JSON.stringify(propertyName)}_s)`;
 }
-
-const directoriesToSearch = [
-  resolve(`${import.meta.dir}/../bun.js/`),
-  resolve(`${import.meta.dir}/../bun.js/api`),
-  resolve(`${import.meta.dir}/../bun.js/test`),
-  resolve(`${import.meta.dir}/../bun.js/webcore`),
-  resolve(`${import.meta.dir}/../bun.js/node`),
-];
 
 function symbolName(typeName, name) {
   return `${typeName}__${name.replaceAll("@@", "")}`;
@@ -1700,7 +1692,7 @@ pub const StaticCallbackType = fn(*JSC.JSGlobalObject, *JSC.CallFrame) callconv(
 
 const classes = [];
 for (const file of files) {
-  const result = require(file);
+  const result = require(path.resolve(file));
   if (!(result?.default?.length ?? 0)) continue;
   console.log("Found", result.default.length, "classes from", file);
   for (let { name } of result.default) {

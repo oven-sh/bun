@@ -2,7 +2,7 @@ Configuring a development environment for Bun can take 10-30 minutes depending o
 
 If you are using Windows, you must use a WSL environment as Bun does not yet compile on Windows natively.
 
-Before starting, you will need to already have a release build of Bun installed, as we use our bundler to transpile and minify our code.
+Before starting, you will need to already have a release build of Bun installed, as we use our bundler to transpile and minify our code, as well as for code generation scripts.
 
 {% codetabs %}
 
@@ -92,11 +92,11 @@ $ brew install automake ccache cmake coreutils gnu-sed go libiconv libtool ninja
 ```
 
 ```bash#Ubuntu/Debian
-$ sudo apt install cargo ccache cmake git golang libtool ninja-build pkg-config rustc
+$ sudo apt install cargo ccache cmake git golang libtool ninja-build pkg-config rustc ruby-full
 ```
 
 ```bash#Arch
-$ sudo pacman -S base-devel ccache cmake git go libiconv libtool make ninja pkg-config python rust sed unzip
+$ sudo pacman -S base-devel ccache cmake git go libiconv libtool make ninja pkg-config python rust sed unzip ruby
 ```
 
 ```bash#Fedora
@@ -104,18 +104,6 @@ $ sudo dnf install cargo ccache cmake git golang libtool ninja-build pkg-config 
 ```
 
 {% /codetabs %}
-
-<!-- {% details summary="Ubuntu — Unable to locate package esbuild" %}
-
-The `apt install esbuild` command may fail with an `Unable to locate package` error if you are using a Ubuntu mirror that does not contain an exact copy of the original Ubuntu server. Note that the same error may occur if you are not using any mirror but have the Ubuntu Universe enabled in the `sources.list`. In this case, you can install esbuild manually:
-
-```bash
-$ curl -fsSL https://esbuild.github.io/dl/latest | sh
-$ chmod +x ./esbuild
-$ sudo mv ./esbuild /usr/local/bin
-```
-
-{% /details %} -->
 
 ## Install Zig
 
@@ -130,41 +118,48 @@ $ zigup 0.12.0-dev.1297+a9e66ed73
 We last updated Zig on **October 26th, 2023**
 {% /callout %}
 
-## First Build
+## Building Bun
 
 After cloning the repository, run the following command to run the first build. This may take a while as it will clone submodules and build dependencies.
 
 ```bash
-$ bash ./scripts/setup.sh
+$ bun setup
 ```
 
 The binary will be located at `./build/bun-debug`. It is recommended to add this to your `$PATH`. To verify the build worked, let's print the version number on the development build of Bun.
 
 ```bash
 $ build/bun-debug --version
-bun 1.x.y__dev
+x.y.z_debug
 ```
 
-To rebuild, you can simply invoke `ninja`
+To rebuild, you can invoke `bun run build`
 
 ```bash
-$ ninja -C build
+$ bun run build
 ```
 
-Note: `make setup` is just an alias for the following steps:
+These two scripts, `setup` and `build`, are aliases to do roughly the following:
 
 ```bash
-$ ./src/scripts/update-submodules.sh
-$ ./src/scripts/all-dependencies.sh
-$ cmake . -GNinja -B build -DCMAKE_BUILD_TYPE=Debug
-$ ninja -C build
+$ ./scripts/setup.sh
+$ cmake -S . -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug
+$ ninja -C build # 'bun run build' runs just this
 ```
+
+Advanced uses can pass CMake flags to customize the build.
 
 ## VSCode
 
 VSCode is the recommended IDE for working on Bun, as it has been configured. Once opening, you can run `Extensions: Show Recommended Extensions` to install the recommended extensions for Zig and C++. ZLS is automatically configured.
 
-<!-- ## Code generation scripts
+## Code generation scripts
+
+{% callout %}
+
+**Note**: This section is outdated. The code generators are run automatically by ninja, instead of by `make`.
+
+{% /callout %}
 
 Bun leverages a lot of code generation scripts.
 
@@ -194,7 +189,7 @@ To run that, run:
 $ make generate-sink
 ```
 
-You probably won't need to run that one much. -->
+You probably won't need to run that one much.
 
 ## Modifying ESM modules
 
@@ -205,9 +200,7 @@ Certain modules like `node:fs`, `node:stream`, `bun:sqlite`, and `ws` are implem
 To build a release build of Bun, run:
 
 ```bash
-$ mkdir build-release
-$ cmake . -GNinja -B build-release -DCMAKE_BUILD_TYPE=Release
-$ ninja -C build-release
+$ bun run build:release
 ```
 
 The binary will be located at `./build-release/bun` and `./build-release/bun-profile`.
@@ -230,18 +223,13 @@ You'll need a very recent version of Valgrind due to DWARF 5 debug symbols. You 
 $ valgrind --fair-sched=try --track-origins=yes bun-debug <args>
 ```
 
-## Updating `WebKit`
-
-The Bun team will occasionally bump the version of WebKit used in Bun. When this happens, you may see errors in `src/bun.js/bindings` during builds. When you see this, install the latest version of `bun-webkit` and re-compile.
-
-```bash
-$ bun install
-$ make cpp
-```
-
 ## Building WebKit locally + Debug mode of JSC
 
-**TODO**: This is out of date. TLDR is pass `-DUSE_DEBUG_JSC=1` or `-DWEBKIT_DIR=...` to cmake
+{% callout %}
+
+**TODO**: This is out of date. TLDR is pass `-DUSE_DEBUG_JSC=1` or `-DWEBKIT_DIR=...` to CMake. it will probably need more fiddling. ask @paperdave if you need this.
+
+{% /callout %}
 
 WebKit is not cloned by default (to save time and disk space). To clone and build WebKit locally, run:
 
@@ -303,29 +291,6 @@ If you see an error when compiling `libarchive`, run this:
 ```bash
 $ brew install pkg-config
 ```
-
-<!-- ### missing files on `zig build obj`
-
-If you see an error about missing files on `zig build obj`, make sure you built the headers.
-
-```bash
-$ make headers
-``` -->
-
-<!-- ### cmakeconfig.h not found
-
-If you see an error about `cmakeconfig.h` not being found, this is because the precompiled WebKit did not install properly.
-
-```bash
-$ bun install
-```
-
-Check to see the command installed webkit, and you can manually look for `node_modules/bun-webkit-{platform}-{arch}`:
-
-```bash
-# this should reveal two directories. if not, something went wrong
-$ echo node_modules/bun-webkit*
-``` -->
 
 ### macOS `library not found for -lSystem`
 

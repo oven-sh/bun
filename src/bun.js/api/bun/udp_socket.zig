@@ -1,6 +1,7 @@
 const bun = @import("root").bun;
 const std = @import("std");
 const c = @cImport({
+    @cInclude("stdlib.h");
     @cInclude("arpa/inet.h");
 });
 const JSC = @import("root").bun.JSC;
@@ -457,6 +458,8 @@ pub const UDPSocket = struct {
         // the memory.
         var poll: *uws.Poll = @ptrCast(this.socket);
         poll.deinit(this.loop);
+        c.free(this.sendBuf);
+        c.free(this.receiveBuf);
         bun.default_allocator.destroy(this);
     }
 };

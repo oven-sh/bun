@@ -19,6 +19,8 @@ const JSGlobalObject = @import("../bindings/bindings.zig").JSGlobalObject;
 const getAllocator = Base.getAllocator;
 const ResolvePath = @import("../../resolver/resolve_path.zig");
 
+const Arena = std.heap.ArenaAllocator;
+
 pub usingnamespace JSC.Codegen.JSGlob;
 
 pattern: []const u8,
@@ -26,7 +28,7 @@ pattern: []const u8,
 const MatchOpts = struct {
     cwd: ?BunString,
 
-    fn fromJS(globalThis: *JSGlobalObject, arguments: *ArgumentsSlice, fnName: []const u8, globWalkerAllocator: Allocator) ?MatchOpts {
+    fn fromJS(globalThis: *JSGlobalObject, arguments: *ArgumentsSlice, comptime fnName: []const u8, arena: *Arena) ?MatchOpts {
         const optsObj: JSValue = arguments.nextEat() orelse return null;
         if (!optsObj.isObject()) {
             globalThis.throw("{s}: expected first argument to be an object", .{fnName});
@@ -43,8 +45,7 @@ const MatchOpts = struct {
                 return null;
             }
 
-            var cwd_str_raw = cwdVal.toSlice(globalThis, globWalkerAllocator);
-            defer cwd_str_raw.deinit();
+            var cwd_str_raw = cwdVal.toSlice(globalThis, arena.allocator());
             if (cwd_str_raw.len == 0) {
                 globalThis.throw("{s}: invalid `cwd`, empty string", .{fnName});
                 return null;
@@ -55,27 +56,26 @@ const MatchOpts = struct {
                     // FIXME: this check breaks if input is not all ascii also doesnt work on windows
                     if (cwd_str_raw.len > 1 and cwd_str_raw.slice()[cwd_str_raw.len - 1] == '/') {
                         const without_trailing_slash = ZigString.Slice{ .ptr = cwd_str_raw.ptr, .len = cwd_str_raw.len - 1, .allocator = cwd_str_raw.allocator };
-                        const trailing_slash_stripped = without_trailing_slash.clone(globWalkerAllocator) catch {
+                        const trailing_slash_stripped = without_trailing_slash.clone(arena.allocator()) catch {
                             globalThis.throwOutOfMemory();
                             return null;
                         };
                         break :cwd_str trailing_slash_stripped.ptr[0..trailing_slash_stripped.len];
                     }
-                    const cwd_str = cwd_str_raw.clone(globWalkerAllocator) catch {
+                    const cwd_str = cwd_str_raw.clone(arena.allocator()) catch {
                         globalThis.throwOutOfMemory();
                         return null;
                     };
                     break :cwd_str cwd_str.ptr[0..cwd_str.len];
                 }
 
-                break :cwd_str ResolvePath.relativeAlloc(globWalkerAllocator, "", cwd_str_raw.slice()) catch {
+                break :cwd_str ResolvePath.relativeAlloc(arena.allocator(), "", cwd_str_raw.slice()) catch {
                     globalThis.throwOutOfMemory();
                     return null;
                 };
             };
 
             if (cwd_str.len > bun.MAX_PATH_BYTES) {
-                globWalkerAllocator.free(cwd_str);
                 globalThis.throw("{s}: invalid `cwd`, longer than {d} bytes", .{ fnName, bun.MAX_PATH_BYTES });
                 return null;
             }
@@ -89,6 +89,7 @@ const MatchOpts = struct {
 
 pub const WalkTask = struct {
     walker: *GlobWalker,
+    alloc: Allocator,
     err: ?Err = null,
     global: *JSC.JSGlobalObject,
     pub const Err = union(enum) {
@@ -105,13 +106,14 @@ pub const WalkTask = struct {
 
     pub const AsyncGlobWalkTask = JSC.ConcurrentPromiseTask(WalkTask);
 
-    pub fn create(globalThis: *JSC.JSGlobalObject, globWalker: *GlobWalker) !*AsyncGlobWalkTask {
-        var walkTask = try globWalker.allocator.create(WalkTask);
+    pub fn create(globalThis: *JSC.JSGlobalObject, alloc: Allocator, globWalker: *GlobWalker) !*AsyncGlobWalkTask {
+        var walkTask = try alloc.create(WalkTask);
         walkTask.* = .{
             .walker = globWalker,
             .global = globalThis,
+            .alloc = alloc,
         };
-        return try AsyncGlobWalkTask.createOnJSThread(globWalker.allocator, globalThis, walkTask);
+        return try AsyncGlobWalkTask.createOnJSThread(alloc, globalThis, walkTask);
     }
 
     pub fn run(this: *WalkTask) void {
@@ -142,7 +144,7 @@ pub const WalkTask = struct {
 
     fn deinit(this: *WalkTask) void {
         this.walker.deinit();
-        bun.default_allocator.destroy(this);
+        this.alloc.destroy(this);
     }
 };
 
@@ -153,6 +155,49 @@ fn globWalkResultToJS(globWalk: *GlobWalker, globalThis: *JSGlobalObject) JSValu
     }
 
     return BunString.toJSArray(globalThis, globWalk.matchedPaths.items[0..]);
+}
+
+fn makeGlobWalker(
+    this: *Glob,
+    globalThis: *JSGlobalObject,
+    arguments: *ArgumentsSlice,
+    comptime fnName: []const u8,
+    alloc: Allocator,
+    arena_: Arena,
+) ?*GlobWalker {
+    var arena = arena_;
+    const matchOpts = MatchOpts.fromJS(globalThis, arguments, fnName, &arena);
+    if (matchOpts != null and matchOpts.?.cwd != null) {
+        var globWalker = alloc.create(GlobWalker) catch {
+            globalThis.throw("Out of memory", .{});
+            return null;
+        };
+
+        globWalker.* = .{};
+        globWalker.initWithCwd(arena, this.pattern, matchOpts.?.cwd.?) catch {
+            globalThis.throw("Out of memory", .{});
+            return null;
+        };
+        return globWalker;
+    }
+    var globWalker = alloc.create(GlobWalker) catch {
+        globalThis.throw("Out of memory", .{});
+        return null;
+    };
+
+    globWalker.* = .{};
+    switch (globWalker.init(arena, this.pattern) catch {
+        globalThis.throw("Out of memory", .{});
+        return null;
+    }) {
+        .err => |err| {
+            globalThis.throwValue(err.toJSC(globalThis));
+            return null;
+        },
+        else => {},
+    }
+
+    return globWalker;
 }
 
 pub fn constructor(
@@ -199,42 +244,13 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
 
-    const globWalkerAllocator = alloc;
-    var globWalker = globWalker: {
-        const matchOpts = MatchOpts.fromJS(globalThis, &arguments, "match", globWalkerAllocator);
-        if (matchOpts != null and matchOpts.?.cwd != null) {
-            var globWalker = alloc.create(GlobWalker) catch {
-                globalThis.throw("Out of memory", .{});
-                return .undefined;
-            };
-
-            globWalker.* = .{};
-            globWalker.initWithCwd(globWalkerAllocator, this.pattern, matchOpts.?.cwd.?) catch {
-                globalThis.throw("Out of memory", .{});
-                return .undefined;
-            };
-            break :globWalker globWalker;
-        }
-        var globWalker = alloc.create(GlobWalker) catch {
-            globalThis.throw("Out of memory", .{});
-            return .undefined;
-        };
-
-        globWalker.* = .{};
-        switch (globWalker.init(globWalkerAllocator, this.pattern) catch {
-            globalThis.throw("Out of memory", .{});
-            return .undefined;
-        }) {
-            .err => |err| {
-                globalThis.throwValue(err.toJSC(globalThis));
-                return JSValue.undefined;
-            },
-            else => {},
-        }
-        break :globWalker globWalker;
+    const arena = std.heap.ArenaAllocator.init(alloc);
+    var globWalker = this.makeGlobWalker(globalThis, &arguments, "match", alloc, arena) orelse {
+        arena.deinit();
+        return .undefined;
     };
 
-    var task = WalkTask.create(globalThis, globWalker) catch {
+    var task = WalkTask.create(globalThis, alloc, globWalker) catch {
         globalThis.throw("Out of memory", .{});
         return .undefined;
     };
@@ -250,39 +266,10 @@ pub fn matchSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallF
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
 
-    const globWalkerAllocator = alloc;
-    var globWalker = globWalker: {
-        const matchOpts = MatchOpts.fromJS(globalThis, &arguments, "match", globWalkerAllocator);
-        if (matchOpts != null and matchOpts.?.cwd != null) {
-            var globWalker = alloc.create(GlobWalker) catch {
-                globalThis.throw("Out of memory", .{});
-                return .undefined;
-            };
-
-            globWalker.* = .{};
-            globWalker.initWithCwd(globWalkerAllocator, this.pattern, matchOpts.?.cwd.?) catch {
-                globalThis.throw("Out of memory", .{});
-                return .undefined;
-            };
-            break :globWalker globWalker;
-        }
-        var globWalker = alloc.create(GlobWalker) catch {
-            globalThis.throw("Out of memory", .{});
-            return .undefined;
-        };
-
-        globWalker.* = .{};
-        switch (globWalker.init(globWalkerAllocator, this.pattern) catch {
-            globalThis.throw("Out of memory", .{});
-            return .undefined;
-        }) {
-            .err => |err| {
-                globalThis.throwValue(err.toJSC(globalThis));
-                return JSValue.undefined;
-            },
-            else => {},
-        }
-        break :globWalker globWalker;
+    const arena = std.heap.ArenaAllocator.init(alloc);
+    var globWalker = this.makeGlobWalker(globalThis, &arguments, "match", alloc, arena) orelse {
+        arena.deinit();
+        return .undefined;
     };
     defer globWalker.deinit();
 

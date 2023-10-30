@@ -14,6 +14,7 @@ const Maybe = @import("./bun.js/node/types.zig").Maybe;
 const Dirent = @import("./bun.js/node/types.zig").Dirent;
 const PathString = @import("./string_types.zig").PathString;
 const ZigString = @import("./bun.js/bindings/bindings.zig").ZigString;
+const Arena = std.heap.ArenaAllocator;
 
 const foo = std.unicode.Utf8Iterator;
 
@@ -82,7 +83,7 @@ const CursorState = struct {
 pub const GlobWalker = struct {
     pub const Result = Maybe(void);
 
-    allocator: Allocator = undefined,
+    arena: Arena = undefined,
 
     /// not owned by this struct
     originalPattern: []const u8 = undefined,
@@ -91,8 +92,6 @@ pub const GlobWalker = struct {
     matchedPaths: ArrayList(BunString) = .{},
     i: u32 = 0,
 
-    // Invariant: If the underlying StringImpl is ZigString we assume it is
-    // allocated by this struct's allocator and owned by it
     cwd: BunString = undefined,
     pathBuf: [bun.MAX_PATH_BYTES]u8 = undefined,
 
@@ -106,26 +105,29 @@ pub const GlobWalker = struct {
         const StarKind = enum { None, Single, Double };
     };
 
-    pub fn init(this: *GlobWalker, allocator: Allocator, pattern: []const u8) !Maybe(void) {
+    pub fn init(this: *GlobWalker, arena_: Arena, pattern: []const u8) !Maybe(void) {
+        var arena = arena_;
+        errdefer arena.deinit();
         var cwd: BunString = undefined;
         switch (Syscall.getcwd(&this.pathBuf)) {
             .err => |err| {
                 return .{ .err = err };
             },
             .result => |result| {
-                var copiedCwd = try allocator.alloc(u8, result.len);
+                var copiedCwd = try arena.allocator().alloc(u8, result.len);
                 @memcpy(copiedCwd, result);
                 cwd = BunString.fromBytes(copiedCwd);
             },
         }
-        const globWalker = try this.initWithCwd(allocator, pattern, cwd);
+        const globWalker = try this.initWithCwd(arena, pattern, cwd);
         return .{ .result = globWalker };
     }
 
-    pub fn initWithCwd(this: *GlobWalker, allocator: Allocator, pattern: []const u8, cwd: BunString) !void {
+    /// `cwd` should be allocated with the arena
+    pub fn initWithCwd(this: *GlobWalker, arena_: Arena, pattern: []const u8, cwd: BunString) !void {
+        var arena = arena_;
         var patternComponents = ArrayList(Component){};
-        errdefer patternComponents.deinit(allocator);
-        try GlobWalker.buildPatternComponents(allocator, &patternComponents, pattern);
+        try GlobWalker.buildPatternComponents(&arena, &patternComponents, pattern);
 
         // var patternCpy = try allocator.alloc(u8, pattern.len);
         // @memcpy(patternCpy, pattern);
@@ -133,31 +135,12 @@ pub const GlobWalker = struct {
         this.patternComponents = patternComponents;
         // this.originalPattern = patternCpy;
         this.originalPattern = pattern;
-        this.allocator = allocator;
+        this.arena = arena;
         this.cwd = cwd;
     }
 
     pub fn deinit(this: *GlobWalker) void {
-        switch (this.cwd.tag) {
-            .ZigString => {
-                const bytes = this.cwd.value.ZigString.full();
-                this.allocator.free(bytes);
-            },
-            .WTFStringImpl => this.cwd.deref(),
-            .Dead, .Empty, .StaticZigString => {},
-        }
-        this.patternComponents.deinit(this.allocator);
-        for (this.matchedPaths.items) |*item| {
-            switch (item.tag) {
-                .ZigString => {
-                    const slice = item.value.ZigString.full();
-                    this.allocator.free(slice);
-                },
-                else => {},
-            }
-        }
-        // TODO: what about freeing the strings inside of here
-        this.matchedPaths.deinit(this.allocator);
+        this.arena.deinit();
     }
 
     pub fn walk(this: *GlobWalker) !Maybe(void) {
@@ -269,11 +252,10 @@ pub const GlobWalker = struct {
                         continue;
                     };
 
-                    const entry_name_z = try std.fs.path.joinZ(this.allocator, &[_][]const u8{
+                    const entry_name_z = try std.fs.path.joinZ(this.arena.allocator(), &[_][]const u8{
                         dirName[0..dirName.len],
                         entryName,
                     });
-                    defer this.allocator.free(entry_name_z);
 
                     switch (try this.walkDir(componentIdx + recursion_idx_bump, entry_name_z)) {
                         .err => |err| return .{ .err = err.withPath(entry_name_z) },
@@ -290,11 +272,11 @@ pub const GlobWalker = struct {
     }
 
     fn appendMatchedPath(this: *GlobWalker, entryName: []const u8, dirName: [:0]const u8) !void {
-        const name = try std.fs.path.join(this.allocator, &[_][]const u8{
+        const name = try std.fs.path.join(this.arena.allocator(), &[_][]const u8{
             dirName[0..dirName.len],
             entryName,
         });
-        try this.matchedPaths.append(this.allocator, BunString.fromBytes(name));
+        try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(name));
     }
 
     fn addComponent(allocator: Allocator, pattern: []const u8, patternComponents: *ArrayList(Component), component_: Component) !void {
@@ -317,7 +299,7 @@ pub const GlobWalker = struct {
         try patternComponents.append(allocator, component);
     }
 
-    fn buildPatternComponents(allocator: Allocator, patternComponents: *ArrayList(Component), pattern: []const u8) !void {
+    fn buildPatternComponents(arena: *Arena, patternComponents: *ArrayList(Component), pattern: []const u8) !void {
         const isWindows = @import("builtin").os.tag == .windows;
         var start: u32 = 0;
 
@@ -332,7 +314,7 @@ pub const GlobWalker = struct {
                 '\\' => {
                     if (comptime isWindows) {
                         const end = cursor.i;
-                        try addComponent(allocator, pattern, patternComponents, .{ .start = start, .len = end - start });
+                        try addComponent(arena.allocator(), pattern, patternComponents, .{ .start = start, .len = end - start });
                         start = cursor.i + cursor.width;
                         continue;
                     }
@@ -350,7 +332,7 @@ pub const GlobWalker = struct {
                     if (cursor.i + cursor.width == pattern.len) {
                         end = cursor.i + cursor.width;
                     }
-                    try addComponent(allocator, pattern, patternComponents, .{ .start = start, .len = end - start });
+                    try addComponent(arena.allocator(), pattern, patternComponents, .{ .start = start, .len = end - start });
                     start = cursor.i + cursor.width;
                 },
                 // TODO: Support other escaping glob syntax
@@ -359,7 +341,7 @@ pub const GlobWalker = struct {
         }
 
         const end = cursor.i + cursor.width;
-        try addComponent(allocator, pattern, patternComponents, .{ .start = start, .len = end - start });
+        try addComponent(arena.allocator(), pattern, patternComponents, .{ .start = start, .len = end - start });
     }
 };
 

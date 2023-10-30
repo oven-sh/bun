@@ -1037,10 +1037,6 @@ if(USE_CUSTOM_MIMALLOC)
 
     if(WIN32)
         target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/mimalloc-static.lib")
-    elseif(APPLE)
-        # https://github.com/microsoft/mimalloc/issues/512
-        # Linking mimalloc via object file on macOS x64 can cause heap corruption
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc.a")
     else()
         target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc.a")
     endif()

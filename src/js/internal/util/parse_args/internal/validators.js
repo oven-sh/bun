@@ -7,46 +7,40 @@ var __commonJS = (cb, mod) =>
 
 const requireValidators = __commonJS({
   "node_modules/@pkgjs/parseargs/internal/validators.js"(exports) {
-    'use strict';
+    "use strict";
 
     // This file is a proxy of the original file located at:
     // https://github.com/nodejs/node/blob/main/lib/internal/validators.js
     // Every addition or modification to this file must be evaluated
     // during the PR review.
 
-    const {
-      ArrayIsArray,
-      ArrayPrototypeIncludes,
-      ArrayPrototypeJoin,
-    } = require('./primordials');
+    const { ArrayIsArray, ArrayPrototypeIncludes, ArrayPrototypeJoin } = require("./primordials");
 
     const {
-      codes: {
-        ERR_INVALID_ARG_TYPE
-      }
-    } = require('./errors');
+      codes: { ERR_INVALID_ARG_TYPE },
+    } = require("./errors");
 
     function validateString(value, name) {
-      if (typeof value !== 'string') {
-        throw new ERR_INVALID_ARG_TYPE(name, 'String', value);
+      if (typeof value !== "string") {
+        throw new ERR_INVALID_ARG_TYPE(name, "String", value);
       }
     }
 
     function validateUnion(value, name, union) {
       if (!ArrayPrototypeIncludes(union, value)) {
-        throw new ERR_INVALID_ARG_TYPE(name, `('${ArrayPrototypeJoin(union, '|')}')`, value);
+        throw new ERR_INVALID_ARG_TYPE(name, `('${ArrayPrototypeJoin(union, "|")}')`, value);
       }
     }
 
     function validateBoolean(value, name) {
-      if (typeof value !== 'boolean') {
-        throw new ERR_INVALID_ARG_TYPE(name, 'Boolean', value);
+      if (typeof value !== "boolean") {
+        throw new ERR_INVALID_ARG_TYPE(name, "Boolean", value);
       }
     }
 
     function validateArray(value, name) {
       if (!ArrayIsArray(value)) {
-        throw new ERR_INVALID_ARG_TYPE(name, 'Array', value);
+        throw new ERR_INVALID_ARG_TYPE(name, "Array", value);
       }
     }
 
@@ -78,12 +72,12 @@ const requireValidators = __commonJS({
       const allowArray = useDefaultOptions ? false : options.allowArray;
       const allowFunction = useDefaultOptions ? false : options.allowFunction;
       const nullable = useDefaultOptions ? false : options.nullable;
-      if ((!nullable && value === null) ||
+      if (
+        (!nullable && value === null) ||
         (!allowArray && ArrayIsArray(value)) ||
-        (typeof value !== 'object' && (
-          !allowFunction || typeof value !== 'function'
-        ))) {
-        throw new ERR_INVALID_ARG_TYPE(name, 'Object', value);
+        (typeof value !== "object" && (!allowFunction || typeof value !== "function"))
+      ) {
+        throw new ERR_INVALID_ARG_TYPE(name, "Object", value);
       }
     }
 
@@ -94,7 +88,7 @@ const requireValidators = __commonJS({
     exports.validateUnion = validateUnion;
     exports.validateBoolean = validateBoolean;
     exports.validateBooleanArray = validateBooleanArray;
-  }
+  },
 });
 
 export default requireValidators();

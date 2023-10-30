@@ -7,17 +7,14 @@ var __commonJS = (cb, mod) =>
 
 const requireUtil = __commonJS({
   "node_modules/@pkgjs/parseargs/internal/util.js"(exports) {
-    'use strict';
+    "use strict";
 
     // This is a placeholder for util.js in node.js land.
 
-    const {
-      ObjectCreate,
-      ObjectFreeze,
-    } = require('./primordials');
+    const { ObjectCreate, ObjectFreeze } = require("./primordials");
 
     exports.kEmptyObject = ObjectFreeze(ObjectCreate(null));
-  }
+  },
 });
 
 export default requireUtil();

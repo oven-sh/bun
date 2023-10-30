@@ -7,7 +7,7 @@ var __commonJS = (cb, mod) =>
 
 const requireUtils = __commonJS({
   "node_modules/@pkgjs/parseargs/utils.js"(exports) {
-    'use strict';
+    "use strict";
 
     const {
       ArrayPrototypeFind,
@@ -16,11 +16,9 @@ const requireUtils = __commonJS({
       StringPrototypeCharAt,
       StringPrototypeIncludes,
       StringPrototypeStartsWith,
-    } = require('./internal/primordials');
+    } = require("./internal/primordials");
 
-    const {
-      validateObject,
-    } = require('./internal/validators');
+    const { validateObject } = require("./internal/validators");
 
     // These are internal utilities to make the parsing logic easier to read, and
     // add lots of detail for the curious. They are in a separate file to allow
@@ -33,16 +31,14 @@ const requireUtils = __commonJS({
      * Return the named property, but only if it is an own property.
      */
     function objectGetOwn(obj, prop) {
-      if (ObjectHasOwn(obj, prop))
-        return obj[prop];
+      if (ObjectHasOwn(obj, prop)) return obj[prop];
     }
 
     /**
      * Return the named options property, but only if it is an own property.
      */
     function optionsGetOwn(options, longOption, prop) {
-      if (ObjectHasOwn(options, longOption))
-        return objectGetOwn(options[longOption], prop);
+      if (ObjectHasOwn(options, longOption)) return objectGetOwn(options[longOption], prop);
     }
 
     /**
@@ -69,7 +65,7 @@ const requireUtils = __commonJS({
     function isOptionLikeValue(value) {
       if (value == null) return false;
 
-      return value.length > 1 && StringPrototypeCharAt(value, 0) === '-';
+      return value.length > 1 && StringPrototypeCharAt(value, 0) === "-";
     }
 
     /**
@@ -77,9 +73,7 @@ const requireUtils = __commonJS({
      * @example '-f'
      */
     function isLoneShortOption(arg) {
-      return arg.length === 2 &&
-        StringPrototypeCharAt(arg, 0) === '-' &&
-        StringPrototypeCharAt(arg, 1) !== '-';
+      return arg.length === 2 && StringPrototypeCharAt(arg, 0) === "-" && StringPrototypeCharAt(arg, 1) !== "-";
     }
 
     /**
@@ -91,9 +85,7 @@ const requireUtils = __commonJS({
      * isLoneLongOption('--foo=bar') // returns false
      */
     function isLoneLongOption(arg) {
-      return arg.length > 2 &&
-        StringPrototypeStartsWith(arg, '--') &&
-        !StringPrototypeIncludes(arg, '=', 3);
+      return arg.length > 2 && StringPrototypeStartsWith(arg, "--") && !StringPrototypeIncludes(arg, "=", 3);
     }
 
     /**
@@ -103,9 +95,7 @@ const requireUtils = __commonJS({
      * isLongOptionAndValue('--foo=bar') // returns true
      */
     function isLongOptionAndValue(arg) {
-      return arg.length > 2 &&
-        StringPrototypeStartsWith(arg, '--') &&
-        StringPrototypeIncludes(arg, '=', 3);
+      return arg.length > 2 && StringPrototypeStartsWith(arg, "--") && StringPrototypeIncludes(arg, "=", 3);
     }
 
     /**
@@ -132,12 +122,12 @@ const requireUtils = __commonJS({
      */
     function isShortOptionGroup(arg, options) {
       if (arg.length <= 2) return false;
-      if (StringPrototypeCharAt(arg, 0) !== '-') return false;
-      if (StringPrototypeCharAt(arg, 1) === '-') return false;
+      if (StringPrototypeCharAt(arg, 0) !== "-") return false;
+      if (StringPrototypeCharAt(arg, 1) === "-") return false;
 
       const firstShort = StringPrototypeCharAt(arg, 1);
       const longOption = findLongOptionForShort(firstShort, options);
-      return optionsGetOwn(options, longOption, 'type') !== 'string';
+      return optionsGetOwn(options, longOption, "type") !== "string";
     }
 
     /**
@@ -150,15 +140,15 @@ const requireUtils = __commonJS({
      * }) // returns true
      */
     function isShortOptionAndValue(arg, options) {
-      validateObject(options, 'options');
+      validateObject(options, "options");
 
       if (arg.length <= 2) return false;
-      if (StringPrototypeCharAt(arg, 0) !== '-') return false;
-      if (StringPrototypeCharAt(arg, 1) === '-') return false;
+      if (StringPrototypeCharAt(arg, 0) !== "-") return false;
+      if (StringPrototypeCharAt(arg, 1) === "-") return false;
 
       const shortOption = StringPrototypeCharAt(arg, 1);
       const longOption = findLongOptionForShort(shortOption, options);
-      return optionsGetOwn(options, longOption, 'type') === 'string';
+      return optionsGetOwn(options, longOption, "type") === "string";
     }
 
     /**
@@ -171,10 +161,10 @@ const requireUtils = __commonJS({
      * }) // returns 'bar'
      */
     function findLongOptionForShort(shortOption, options) {
-      validateObject(options, 'options');
+      validateObject(options, "options");
       const longOptionEntry = ArrayPrototypeFind(
         ObjectEntries(options),
-        ({ 1: optionConfig }) => objectGetOwn(optionConfig, 'short') === shortOption,
+        ({ 1: optionConfig }) => objectGetOwn(optionConfig, "short") === shortOption,
       );
       return longOptionEntry?.[0] ?? shortOption;
     }
@@ -187,8 +177,7 @@ const requireUtils = __commonJS({
      * @param {object} values - option values returned in `values` by parseArgs
      */
     function useDefaultValueOption(longOption, optionConfig, values) {
-      return objectGetOwn(optionConfig, 'default') !== undefined &&
-        values[longOption] === undefined;
+      return objectGetOwn(optionConfig, "default") !== undefined && values[longOption] === undefined;
     }
 
     exports.findLongOptionForShort = findLongOptionForShort;
@@ -202,7 +191,7 @@ const requireUtils = __commonJS({
     exports.useDefaultValueOption = useDefaultValueOption;
     exports.objectGetOwn = objectGetOwn;
     exports.optionsGetOwn = optionsGetOwn;
-  }
+  },
 });
 
 export default requireUtils();

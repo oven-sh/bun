@@ -69,7 +69,7 @@ function debuglog(set) {
         console.error("%s %d: %s", set, pid, msg);
       };
     } else {
-      debugs[set] = function () { };
+      debugs[set] = function () {};
     }
   }
   return debugs[set];

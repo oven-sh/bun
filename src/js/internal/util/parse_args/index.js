@@ -1,4 +1,3 @@
-
 // TODO: Should these be centralized? They are duplicated lots of times in the `js` folder.
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __commonJS = (cb, mod) =>

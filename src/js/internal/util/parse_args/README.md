@@ -1,7 +1,10 @@
 <!-- omit in toc -->
+
 # parseArgs
 
 Vendored copy of [pkgjs/parseargs](https://github.com/pkgjs/parseargs) with adaptations for Bun.
+
+Copied from commit: https://github.com/pkgjs/parseargs/commit/67749086a6cb216a4896283de200b1f36646afdd
 
 This library provides an as-faithful-as-possible implementation of Node.js's
 [`util.parseArgs`](https://nodejs.org/api/util.html#utilparseargsconfig) function.
@@ -25,38 +28,39 @@ changes:
 
 > Stability: 1 - Experimental
 
-* `config` {Object} Used to provide arguments for parsing and to configure
+- `config` {Object} Used to provide arguments for parsing and to configure
   the parser. `config` supports the following properties:
-  * `args` {string\[]} array of argument strings. **Default:** `process.argv`
+
+  - `args` {string\[]} array of argument strings. **Default:** `process.argv`
     with `execPath` and `filename` removed.
-  * `options` {Object} Used to describe arguments known to the parser.
+  - `options` {Object} Used to describe arguments known to the parser.
     Keys of `options` are the long names of options and values are an
     {Object} accepting the following properties:
-    * `type` {string} Type of argument, which must be either `boolean` or `string`.
-    * `multiple` {boolean} Whether this option can be provided multiple
+    - `type` {string} Type of argument, which must be either `boolean` or `string`.
+    - `multiple` {boolean} Whether this option can be provided multiple
       times. If `true`, all values will be collected in an array. If
       `false`, values for the option are last-wins. **Default:** `false`.
-    * `short` {string} A single character alias for the option.
-    * `default` {string | boolean | string\[] | boolean\[]} The default option
+    - `short` {string} A single character alias for the option.
+    - `default` {string | boolean | string\[] | boolean\[]} The default option
       value when it is not set by args. It must be of the same type as the
       the `type` property. When `multiple` is `true`, it must be an array.
-  * `strict` {boolean} Should an error be thrown when unknown arguments
+  - `strict` {boolean} Should an error be thrown when unknown arguments
     are encountered, or when arguments are passed that do not match the
     `type` configured in `options`.
     **Default:** `true`.
-  * `allowPositionals` {boolean} Whether this command accepts positional
+  - `allowPositionals` {boolean} Whether this command accepts positional
     arguments.
     **Default:** `false` if `strict` is `true`, otherwise `true`.
-  * `tokens` {boolean} Return the parsed tokens. This is useful for extending
+  - `tokens` {boolean} Return the parsed tokens. This is useful for extending
     the built-in behavior, from adding additional checks through to reprocessing
     the tokens in different ways.
     **Default:** `false`.
 
-* Returns: {Object} The parsed command line arguments:
-  * `values` {Object} A mapping of parsed option names with their {string}
+- Returns: {Object} The parsed command line arguments:
+  - `values` {Object} A mapping of parsed option names with their {string}
     or {boolean} values.
-  * `positionals` {string\[]} Positional arguments.
-  * `tokens` {Object\[] | undefined} See [parseArgs tokens](#parseargs-tokens)
+  - `positionals` {string\[]} Positional arguments.
+  - `tokens` {Object\[] | undefined} See [parseArgs tokens](#parseargs-tokens)
     section. Only returned if `config` includes `tokens: true`.
 
 Provides a higher level API for command-line argument parsing than interacting
@@ -64,41 +68,35 @@ with `process.argv` directly. Takes a specification for the expected arguments
 and returns a structured object with the parsed options and positionals.
 
 ```mjs
-import { parseArgs } from 'node:util';
-const args = ['-f', '--bar', 'b'];
+import { parseArgs } from "node:util";
+const args = ["-f", "--bar", "b"];
 const options = {
   foo: {
-    type: 'boolean',
-    short: 'f'
+    type: "boolean",
+    short: "f",
   },
   bar: {
-    type: 'string'
-  }
+    type: "string",
+  },
 };
-const {
-  values,
-  positionals
-} = parseArgs({ args, options });
+const { values, positionals } = parseArgs({ args, options });
 console.log(values, positionals);
 // Prints: [Object: null prototype] { foo: true, bar: 'b' } []
 ```
 
 ```cjs
-const { parseArgs } = require('node:util');
-const args = ['-f', '--bar', 'b'];
+const { parseArgs } = require("node:util");
+const args = ["-f", "--bar", "b"];
 const options = {
   foo: {
-    type: 'boolean',
-    short: 'f'
+    type: "boolean",
+    short: "f",
   },
   bar: {
-    type: 'string'
-  }
+    type: "string",
+  },
 };
-const {
-  values,
-  positionals
-} = parseArgs({ args, options });
+const { values, positionals } = parseArgs({ args, options });
 console.log(values, positionals);
 // Prints: [Object: null prototype] { foo: true, bar: 'b' } []
 ```
@@ -112,20 +110,20 @@ Detailed parse information is available for adding custom behaviours by
 specifying `tokens: true` in the configuration.
 The returned tokens have properties describing:
 
-* all tokens
-  * `kind` {string} One of 'option', 'positional', or 'option-terminator'.
-  * `index` {number} Index of element in `args` containing token. So the
+- all tokens
+  - `kind` {string} One of 'option', 'positional', or 'option-terminator'.
+  - `index` {number} Index of element in `args` containing token. So the
     source argument for a token is `args[token.index]`.
-* option tokens
-  * `name` {string} Long name of option.
-  * `rawName` {string} How option used in args, like `-f` of `--foo`.
-  * `value` {string | undefined} Option value specified in args.
+- option tokens
+  - `name` {string} Long name of option.
+  - `rawName` {string} How option used in args, like `-f` of `--foo`.
+  - `value` {string | undefined} Option value specified in args.
     Undefined for boolean options.
-  * `inlineValue` {boolean | undefined} Whether option value specified inline,
+  - `inlineValue` {boolean | undefined} Whether option value specified inline,
     like `--foo=bar`.
-* positional tokens
-  * `value` {string} The value of the positional argument in args (i.e. `args[index]`).
-* option-terminator token
+- positional tokens
+  - `value` {string} The value of the positional argument in args (i.e. `args[index]`).
+- option-terminator token
 
 The returned tokens are in the order encountered in the input args. Options
 that appear more than once in args produce a token for each use. Short option
@@ -137,21 +135,21 @@ like `--no-color`, the tokens can be reprocessed to change the value stored
 for the negated option.
 
 ```mjs
-import { parseArgs } from 'node:util';
+import { parseArgs } from "node:util";
 
 const options = {
-  'color': { type: 'boolean' },
-  'no-color': { type: 'boolean' },
-  'logfile': { type: 'string' },
-  'no-logfile': { type: 'boolean' },
+  "color": { type: "boolean" },
+  "no-color": { type: "boolean" },
+  "logfile": { type: "string" },
+  "no-logfile": { type: "boolean" },
 };
 const { values, tokens } = parseArgs({ options, tokens: true });
 
 // Reprocess the option tokens and overwrite the returned values.
 tokens
-  .filter((token) => token.kind === 'option')
-  .forEach((token) => {
-    if (token.name.startsWith('no-')) {
+  .filter(token => token.kind === "option")
+  .forEach(token => {
+    if (token.name.startsWith("no-")) {
       // Store foo:false for --no-foo
       const positiveName = token.name.slice(3);
       values[positiveName] = false;
@@ -163,27 +161,27 @@ tokens
   });
 
 const color = values.color;
-const logfile = values.logfile ?? 'default.log';
+const logfile = values.logfile ?? "default.log";
 
 console.log({ logfile, color });
 ```
 
 ```cjs
-const { parseArgs } = require('node:util');
+const { parseArgs } = require("node:util");
 
 const options = {
-  'color': { type: 'boolean' },
-  'no-color': { type: 'boolean' },
-  'logfile': { type: 'string' },
-  'no-logfile': { type: 'boolean' },
+  "color": { type: "boolean" },
+  "no-color": { type: "boolean" },
+  "logfile": { type: "string" },
+  "no-logfile": { type: "boolean" },
 };
 const { values, tokens } = parseArgs({ options, tokens: true });
 
 // Reprocess the option tokens and overwrite the returned values.
 tokens
-  .filter((token) => token.kind === 'option')
-  .forEach((token) => {
-    if (token.name.startsWith('no-')) {
+  .filter(token => token.kind === "option")
+  .forEach(token => {
+    if (token.name.startsWith("no-")) {
       // Store foo:false for --no-foo
       const positiveName = token.name.slice(3);
       values[positiveName] = false;
@@ -195,7 +193,7 @@ tokens
   });
 
 const color = values.color;
-const logfile = values.logfile ?? 'default.log';
+const logfile = values.logfile ?? "default.log";
 
 console.log({ logfile, color });
 ```
@@ -214,23 +212,27 @@ $ node negate.js --no-logfile --logfile=test.log --color --no-color
 { logfile: 'test.log', color: false }
 ```
 
------
+---
 
 <!-- omit in toc -->
-## Table of Contents
-- [`util.parseArgs([config])`](#utilparseargsconfig)
-  - [`parseArgs` `tokens`](#parseargs-tokens)
-- [Scope](#scope)
-- [Version Matchups](#version-matchups)
-- [🚀 Getting Started](#-getting-started)
-- [🙌 Contributing](#-contributing)
-- [💡 `process.mainArgs` Proposal](#-processmainargs-proposal)
-  - [Implementation:](#implementation)
-- [📃 Examples](#-examples)
-- [F.A.Qs](#faqs)
-- [Links \& Resources](#links--resources)
 
------
+## Table of Contents
+
+- [parseArgs](#parseargs)
+  - [`util.parseArgs([config])`](#utilparseargsconfig)
+    - [`parseArgs` `tokens`](#parseargs-tokens)
+  - [Table of Contents](#table-of-contents)
+  - [Scope](#scope)
+  - [Version Matchups](#version-matchups)
+  - [🚀 Getting Started](#-getting-started)
+  - [🙌 Contributing](#-contributing)
+  - [💡 `process.mainArgs` Proposal](#-processmainargs-proposal)
+    - [Implementation:](#implementation)
+  - [📃 Examples](#-examples)
+  - [F.A.Qs](#faqs)
+  - [Links \& Resources](#links--resources)
+
+---
 
 ## Scope
 
@@ -238,17 +240,17 @@ It is already possible to build great arg parsing modules on top of what Node.js
 
 It is exceedingly difficult to provide an API which would both be friendly to these Node.js users while being extensible enough for libraries to build upon. We chose to prioritize these use cases because these are currently not well-served by Node.js' API.
 
-----
+---
 
 ## Version Matchups
 
-| Node.js | @pkgjs/parseArgs | Changes |
-| -- | -- | -- |
-| [v18.11.0](https://nodejs.org/docs/latest-v18.x/api/util.html#utilparseargsconfig) | [0.11.0](https://github.com/pkgjs/parseargs/tree/v0.11.0#utilparseargsconfig) | Add support for default values in input `config`. |
+| Node.js                                                                                                                                                                    | @pkgjs/parseArgs                                                              | Changes                                                                                                      |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| [v18.11.0](https://nodejs.org/docs/latest-v18.x/api/util.html#utilparseargsconfig)                                                                                         | [0.11.0](https://github.com/pkgjs/parseargs/tree/v0.11.0#utilparseargsconfig) | Add support for default values in input `config`.                                                            |
 | [v16.17.0](https://nodejs.org/dist/latest-v16.x/docs/api/util.html#utilparseargsconfig), [v18.7.0](https://nodejs.org/docs/latest-v18.x/api/util.html#utilparseargsconfig) | [0.10.0](https://github.com/pkgjs/parseargs/tree/v0.10.0#utilparseargsconfig) | Add support for returning detailed parse information using `tokens` in input config and returned properties. |
-| [v18.3.0](https://nodejs.org/docs/latest-v18.x/api/util.html#utilparseargsconfig) | [v0.9.1](https://github.com/pkgjs/parseargs/tree/v0.9.1#utilparseargsconfig) |
+| [v18.3.0](https://nodejs.org/docs/latest-v18.x/api/util.html#utilparseargsconfig)                                                                                          | [v0.9.1](https://github.com/pkgjs/parseargs/tree/v0.9.1#utilparseargsconfig)  |
 
-----
+---
 
 ## 🚀 Getting Started
 
@@ -266,7 +268,7 @@ It is exceedingly difficult to provide an API which would both be friendly to th
    npm test
    ```
 
-----
+---
 
 ## 🙌 Contributing
 
@@ -276,7 +278,7 @@ Additionally, reading the [`Examples w/ Output`](#-examples-w-output) section of
 
 This package was implemented using [tape](https://www.npmjs.com/package/tape) as its test harness.
 
-----
+---
 
 ## 💡 `process.mainArgs` Proposal
 
@@ -285,71 +287,80 @@ This package was implemented using [tape](https://www.npmjs.com/package/tape) as
 ### Implementation:
 
 ```javascript
-process.mainArgs = process.argv.slice(process._exec ? 1 : 2)
+process.mainArgs = process.argv.slice(process._exec ? 1 : 2);
 ```
 
-----
+---
 
 ## 📃 Examples
 
 ```js
-const { parseArgs } = require('@pkgjs/parseargs');
+const { parseArgs } = require("@pkgjs/parseargs");
 ```
 
 ```js
-const { parseArgs } = require('@pkgjs/parseargs');
+const { parseArgs } = require("@pkgjs/parseargs");
 // specify the options that may be used
 const options = {
-  foo: { type: 'string'},
-  bar: { type: 'boolean' },
+  foo: { type: "string" },
+  bar: { type: "boolean" },
 };
-const args = ['--foo=a', '--bar'];
+const args = ["--foo=a", "--bar"];
 const { values, positionals } = parseArgs({ args, options });
 // values = { foo: 'a', bar: true }
 // positionals = []
 ```
 
 ```js
-const { parseArgs } = require('@pkgjs/parseargs');
+const { parseArgs } = require("@pkgjs/parseargs");
 // type:string & multiple
 const options = {
   foo: {
-    type: 'string',
+    type: "string",
     multiple: true,
   },
 };
-const args = ['--foo=a', '--foo', 'b'];
+const args = ["--foo=a", "--foo", "b"];
 const { values, positionals } = parseArgs({ args, options });
 // values = { foo: [ 'a', 'b' ] }
 // positionals = []
 ```
 
 ```js
-const { parseArgs } = require('@pkgjs/parseargs');
+const { parseArgs } = require("@pkgjs/parseargs");
 // shorts
 const options = {
   foo: {
-    short: 'f',
-    type: 'boolean'
+    short: "f",
+    type: "boolean",
   },
 };
-const args = ['-f', 'b'];
-const { values, positionals } = parseArgs({ args, options, allowPositionals: true });
+const args = ["-f", "b"];
+const { values, positionals } = parseArgs({
+  args,
+  options,
+  allowPositionals: true,
+});
 // values = { foo: true }
 // positionals = ['b']
 ```
 
 ```js
-const { parseArgs } = require('@pkgjs/parseargs');
+const { parseArgs } = require("@pkgjs/parseargs");
 // unconfigured
 const options = {};
-const args = ['-f', '--foo=a', '--bar', 'b'];
-const { values, positionals } = parseArgs({ strict: false, args, options, allowPositionals: true });
+const args = ["-f", "--foo=a", "--bar", "b"];
+const { values, positionals } = parseArgs({
+  strict: false,
+  args,
+  options,
+  allowPositionals: true,
+});
 // values = { f: true, foo: 'a', bar: true }
 // positionals = ['b']
 ```
 
-----
+---
 
 ## F.A.Qs
 
@@ -363,9 +374,9 @@ const { values, positionals } = parseArgs({ strict: false, args, options, allowP
   - no
 - Does it output generated help when no options match?
   - no
-- Does it generated short usage?  Like: `usage: ls [-ABCFGHLOPRSTUWabcdefghiklmnopqrstuwx1] [file ...]`
+- Does it generated short usage? Like: `usage: ls [-ABCFGHLOPRSTUWabcdefghiklmnopqrstuwx1] [file ...]`
   - no (no usage/help at all)
-- Does the user provide the long usage text?  For each option?  For the whole command?
+- Does the user provide the long usage text? For each option? For the whole command?
   - no
 - Do subcommands (if implemented) have their own usage output?
   - no
@@ -375,23 +386,23 @@ const { values, positionals } = parseArgs({ strict: false, args, options, allowP
   - no
 - Does usage print to stderr or stdout?
   - N/A
-- Does it check types?  (Say, specify that an option is a boolean, number, etc.)
+- Does it check types? (Say, specify that an option is a boolean, number, etc.)
   - no
-- Can an option have more than one type?  (string or false, for example)
+- Can an option have more than one type? (string or false, for example)
   - no
-- Can the user define a type?  (Say, `type: path` to call `path.resolve()` on the argument.)
+- Can the user define a type? (Say, `type: path` to call `path.resolve()` on the argument.)
   - no
 - Does a `--foo=0o22` mean 0, 22, 18, or "0o22"?
   - `"0o22"`
 - Does it coerce types?
   - no
-- Does `--no-foo` coerce to `--foo=false`?  For all options?  Only boolean options?
+- Does `--no-foo` coerce to `--foo=false`? For all options? Only boolean options?
   - no, it sets `{values:{'no-foo': true}}`
-- Is `--foo` the same as `--foo=true`?  Only for known booleans?  Only at the end?
+- Is `--foo` the same as `--foo=true`? Only for known booleans? Only at the end?
   - no, they are not the same. There is no special handling of `true` as a value so it is just another string.
-- Does it read environment variables?  Ie, is `FOO=1 cmd` the same as `cmd --foo=1`?
+- Does it read environment variables? Ie, is `FOO=1 cmd` the same as `cmd --foo=1`?
   - no
-- Do unknown arguments raise an error?  Are they parsed?  Are they treated as positional arguments?
+- Do unknown arguments raise an error? Are they parsed? Are they treated as positional arguments?
   - no, they are parsed, not treated as positionals
 - Does `--` signal the end of options?
   - yes
@@ -413,9 +424,9 @@ const { values, positionals } = parseArgs({ strict: false, args, options, allowP
 
 ## Links & Resources
 
-* [Initial Tooling Issue](https://github.com/nodejs/tooling/issues/19)
-* [Initial Proposal](https://github.com/nodejs/node/pull/35015)
-* [parseArgs Proposal](https://github.com/nodejs/node/pull/42675)
+- [Initial Tooling Issue](https://github.com/nodejs/tooling/issues/19)
+- [Initial Proposal](https://github.com/nodejs/node/pull/35015)
+- [parseArgs Proposal](https://github.com/nodejs/node/pull/42675)
 
 [coverage-image]: https://img.shields.io/nycrc/pkgjs/parseargs
 [coverage-url]: https://github.com/pkgjs/parseargs/blob/main/.nycrc

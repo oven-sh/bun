@@ -30,7 +30,7 @@ describe("Bun.serve()", () => {
     try {
       const proto = options.tls ? "https" : "http";
       const target = `${proto}://localhost:${server.port}/`;
-      const response = await fetch(target);
+      const response = await fetch(target, { tls: { rejectUnauthorized: false } });
       expect(response.text()).resolves.toMatch(url);
     } finally {
       server.stop(true);

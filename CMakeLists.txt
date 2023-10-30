@@ -1042,7 +1042,7 @@ if(USE_CUSTOM_MIMALLOC)
         # Linking mimalloc via object file on macOS x64 can cause heap corruption
         target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc.a")
     else()
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc.o")
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc.a")
     endif()
 else()
     find_package(mimalloc REQUIRED)

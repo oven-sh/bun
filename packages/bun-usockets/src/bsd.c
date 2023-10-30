@@ -241,7 +241,7 @@ void *bsd_create_udp_packet_buffer() {
         b->iov[n].iov_len = LIBUS_UDP_MAX_SIZE;
 
         b->msgvec[n].msg_hdr = (struct msghdr) {
-            .msg_name       = &b->addr,
+            .msg_name       = &b->addr[n],
             .msg_namelen    = sizeof (struct sockaddr_storage),
 
             .msg_iov        = &b->iov[n],

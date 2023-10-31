@@ -1,6 +1,6 @@
 import { run, bench, group } from "mitata";
 import fg from "fast-glob";
-import { Glob } from "bun";
+import { Glob, Transpiler } from "bun";
 
 group({ name: "async", summary: true }, () => {
   bench("fast-glob", async () => {
@@ -39,6 +39,20 @@ group({ name: "sync", summary: true }, () => {
 
   bench("Bun.Glob", () => {
     const entries = new Glob("*.zig").matchSync({
+      cwd: "src",
+    });
+  });
+});
+
+group({ name: "sync-recursive", summary: true }, () => {
+  bench("fast-glob", () => {
+    const entries = fg.globSync(["**/*.zig"], {
+      cwd: "src",
+    });
+  });
+
+  bench("Bun.Glob", () => {
+    const entries = new Glob("**/*.zig").matchSync({
       cwd: "src",
     });
   });

@@ -74,7 +74,13 @@ const MatchOpts = struct {
                     break :cwd_str cwd_str.ptr[0..cwd_str.len];
                 }
 
-                break :cwd_str ResolvePath.relativeAlloc(arena.allocator(), "", cwd_str_raw.slice()) catch {
+                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                const cwd = std.os.getcwd(&path_buf) catch {
+                    globalThis.throw("Failed to get cwd", .{});
+                    return null;
+                };
+
+                break :cwd_str std.fs.path.join(arena.allocator(), &.{ cwd, cwd_str_raw.slice() }) catch {
                     globalThis.throwOutOfMemory();
                     return null;
                 };

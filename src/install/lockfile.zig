@@ -1664,7 +1664,8 @@ pub fn initEmpty(this: *Lockfile, allocator: Allocator) !void {
 pub fn getPackageID(
     this: *Lockfile,
     name_hash: u64,
-    // if it's a peer dependency, a folder, or a symlink
+    // If non-null, attempt to use an existing package
+    // that satisfies this version range.
     version: ?Dependency.Version,
     resolution: *const Resolution,
 ) ?PackageID {

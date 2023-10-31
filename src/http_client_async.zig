@@ -359,9 +359,8 @@ fn NewHTTPContext(comptime ssl: bool) type {
         }
 
         pub fn deinit(this: *@This()) void {
-            if (this.us_socket_context != undefined) {
-                uws.us_socket_context_free(@as(c_int, @intFromBool(ssl)), this.us_socket_context);
-            }
+            this.us_socket_context.deinit(ssl);
+            uws.us_socket_context_free(@as(c_int, @intFromBool(ssl)), this.us_socket_context);
             bun.default_allocator.destroy(this);
         }
 
@@ -369,7 +368,6 @@ fn NewHTTPContext(comptime ssl: bool) type {
             if (!comptime ssl) {
                 unreachable;
             }
-            this.us_socket_context = undefined;
             var opts = client.tls_props.?.asUSockets();
             opts.request_cert = 1;
             opts.reject_unauthorized = 0;
@@ -776,8 +774,11 @@ pub const HTTPThread = struct {
             const needs_own_context = client.tls_props != null and client.tls_props.?.requires_custom_request_ctx;
             if (needs_own_context) {
                 var custom_context = try bun.default_allocator.create(NewHTTPContext(is_ssl));
+                custom_context.initWithClientConfig(client) catch |err| {
+                    bun.default_allocator.destroy(custom_context);
+                    return err;
+                };
                 client.custom_context = custom_context;
-                try custom_context.initWithClientConfig(client);
                 return try custom_context.connect(client, client.url.hostname, client.url.getPortAuto());
             }
         }

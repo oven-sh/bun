@@ -919,7 +919,3 @@ pub const UpgradeCommand = struct {
         }
     }
 };
-
-
-// powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ''
-//

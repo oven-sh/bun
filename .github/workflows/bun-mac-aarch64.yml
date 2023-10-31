@@ -6,6 +6,7 @@ concurrency:
 
 env:
   LLVM_VERSION: 16
+  BUN_DOWNLOAD_URL_BASE: https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/latest
 
 on:
   push:
@@ -74,8 +75,7 @@ jobs:
             CPU_TARGET=${{ matrix.cpu }}
             TRIPLET=${{ matrix.arch }}-macos-none
             GIT_SHA=${{ github.sha }}
-            BUN_DOWNLOAD_URL_BASE=${{ secrets.BUN_DOWNLOAD_URL_BASE }}
-          platforms: linux/${{ runner.arch == 'X64' && 'amd64' || 'arm64' }}
+            platforms: linux/${{ runner.arch == 'X64' && 'amd64' || 'arm64' }}
           target: build_release_obj
           outputs: type=local,dest=${{runner.temp}}/release
 
@@ -255,7 +255,7 @@ jobs:
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
           brew link --overwrite llvm@$LLVM_VERSION
 
-          curl -LO "${{ secrets.BUN_DOWNLOAD_URL_BASE }}/bun-darwin-${{matrix.arch}}.zip"
+          curl -LO "$BUN_DOWNLOAD_URL_BASE/bun-darwin-${{matrix.arch}}.zip"
           unzip bun-darwin-${{matrix.arch}}.zip
           mkdir -p ${{ runner.temp }}/.bun/bin
           mv bun-darwin-${{matrix.arch}}/bun ${{ runner.temp }}/.bun/bin/bun

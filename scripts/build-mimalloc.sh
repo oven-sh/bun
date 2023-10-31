@@ -26,4 +26,4 @@ cmake "${CMAKE_FLAGS[@]}" . \
 ninja
 
 cp libmimalloc.a $BUN_DEPS_OUT_DIR/libmimalloc.a
-cp CMakeFiles/mimalloc-obj.dir/src/static.c.o $BUN_DEPS_OUT_DIR/libmimalloc.a
+cp CMakeFiles/mimalloc-obj.dir/src/static.c.o $BUN_DEPS_OUT_DIR/libmimalloc.o

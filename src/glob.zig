@@ -15,6 +15,7 @@ const Dirent = @import("./bun.js/node/types.zig").Dirent;
 const PathString = @import("./string_types.zig").PathString;
 const ZigString = @import("./bun.js/bindings/bindings.zig").ZigString;
 const Arena = std.heap.ArenaAllocator;
+const GlobAscii = @import("./glob_ascii.zig");
 
 const foo = std.unicode.Utf8Iterator;
 
@@ -73,7 +74,7 @@ const CursorState = struct {
         return .{
             .cursor = CodepointIterator.Cursor{
                 .i = this.cursor.i + i,
-                .c = nextCp,
+                .c = @truncate(nextCp),
                 .width = 1,
             },
         };
@@ -440,6 +441,14 @@ const BraceStack = struct {
     }
 };
 
+pub fn match(glob: []const u8, path: []const u8) bool {
+    if (@import("./string_immutable.zig").isAllASCII(path)) {
+        return GlobAscii.match(glob, path);
+    } else {
+        return match_impl(glob, path);
+    }
+}
+
 /// This function checks returns a boolean value if the pathname `path` matches
 /// the pattern `glob`.
 ///
@@ -467,7 +476,7 @@ const BraceStack = struct {
 ///     Multiple "!" characters negate the pattern multiple times.
 /// "\"
 ///     Used to escape any of the special characters above.
-pub fn match(glob: []const u8, path: []const u8) bool {
+pub fn match_impl(glob: []const u8, path: []const u8) bool {
     const glob_iter = CodepointIterator.init(glob);
     const path_iter = CodepointIterator.init(path);
 
@@ -764,6 +773,8 @@ inline fn skipGlobstars(glob: []const u8, glob_index: *CursorState) void {
         glob_index.cursor.width = 1;
     }
 }
+
+const MatchAscii = struct {};
 
 test "basic" {
     try expect(match("abc", "abc"));

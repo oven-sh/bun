@@ -734,6 +734,7 @@ class ClientHttp2Session extends Http2Session {
   };
   #pendingSettingsAck: boolean = true;
   #remoteSettings: Settings | null = null;
+  #pingCallbacks: Array<[Function, number]> | null = null;
 
   static #Handlers = {
     binaryType: "buffer",
@@ -793,8 +794,18 @@ class ClientHttp2Session extends Http2Session {
       self.emit("remoteSettings", settings);
       self.#remoteSettings = settings;
     },
-    ping(self: ClientHttp2Session, ping: Buffer, isACK: boolean) {
-      self.emit("ping", ping, isACK);
+    ping(self: ClientHttp2Session, payload: Buffer, isACK: boolean) {
+      self.emit("ping", payload);
+      if (isACK) {
+        const callbacks = self.#pingCallbacks;
+        if (callbacks) {
+          const callbackInfo = callbacks.shift();
+          if (callbackInfo) {
+            const [callback, start] = callbackInfo;
+            callback(null, Date.now() - start, payload);
+          }
+        }
+      }
     },
     error(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       self.emit("error", new Error(`ERR_HTTP2_SESSION_ERROR: error code ${errorCode}`));
@@ -941,24 +952,21 @@ class ClientHttp2Session extends Http2Session {
   }
   ping(payload, callback) {
     payload = payload || Buffer.alloc(8);
+
     if (typeof callback === "function") {
       if (payload.byteLength !== 8) {
         callback(new Error("ERR_HTTP2_PING_PAYLOAD_SIZE"), 0, payload);
         return;
       }
-      const pingStart = Date.now();
-      this.once("ping", (payload, isACK)=> {
-        if(isACK) {
-          callback(null, Date.now() - pingStart, payload);
-        }
-      });
-    } else {
-      if (payload.byteLength !== 8) {
-        throw new Error("ERR_HTTP2_PING_PAYLOAD_SIZE");
+      if (!this.#pingCallbacks) {
+        this.#pingCallbacks = [callback, Date.now()];
+      } else {
+        this.#pingCallbacks.push([callback, Date.now()]);
       }
+    } else if (payload.byteLength !== 8) {
+      throw new Error("ERR_HTTP2_PING_PAYLOAD_SIZE");
     }
-    
-    
+
     this.#parser?.ping(payload);
     return this.#parser && this[bunHTTP2Socket] ? true : false;
   }

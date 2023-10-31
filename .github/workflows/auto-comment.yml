@@ -1,0 +1,67 @@
+name: Issue Auto Comment
+on:
+  issues:
+    types:
+      - opened
+      - closed
+      - assigned
+  pull_request_target:
+    types:
+      - opened
+      - closed
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    permissions:
+      issues: write # for actions-cool/issues-helper to update issues
+      pull-requests: write # for actions-cool/issues-helper to update PRs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Auto Comment on Issues Opened
+        uses: wow-actions/auto-comment@v1
+        with:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN}}
+          issuesOpened: |
+            👀 @{{ author }}
+            Thank you for raising an issue. We will investigate into the matter and get back to you as soon as possible.
+            Please make sure you have given us as much context as possible.
+      - name: Auto Comment on Issues Closed
+        uses: wow-actions/auto-comment@v1
+        with:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN}}
+          issuesClosed: |
+            ✅ @{{ author }}
+            <br/>
+            This issue is closed, If you have any questions, you can comment and reply.
+      - name: Auto Comment on Pull Request Opened
+        uses: wow-actions/auto-comment@v1
+        with:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN}}
+          pullRequestOpened: |
+            👍 @{{ author }}
+            <br>
+            Thank you for raising your pull request and contributing to our Community
+            Please make sure you have followed our contributing guidelines. We will review it as soon as possible.
+            If you encounter any problems, please feel free to connect with us.
+      - name: Auto Comment on Pull Request Merged
+        uses: actions-cool/pr-welcome@main
+        if: github.event.pull_request.merged == true
+        with:
+          token: ${{ secrets.GH_TOKEN }}
+          comment: |
+            ❤️ Great PR @${{ github.event.pull_request.user.login }} ❤️
+            <br>
+            The growth of project is inseparable from user feedback and contribution, thanks for your contribution!
+          emoji: 'hooray'
+          pr-emoji: '+1, heart'
+      - name: Remove inactive
+        if: github.event.issue.state == 'open' && github.actor == github.event.issue.user.login
+        uses: actions-cool/issues-helper@v3
+        with:
+          actions: 'remove-labels'
+          token: ${{ secrets.GH_TOKEN }}
+          issue-number: ${{ github.event.issue.number }}
+          labels: 'Inactive'

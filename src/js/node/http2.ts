@@ -952,23 +952,26 @@ class ClientHttp2Session extends Http2Session {
   }
   ping(payload, callback) {
     payload = payload || Buffer.alloc(8);
+    const parser = this.#parser;
+    if (!parser) return false;
+    if (!this[bunHTTP2Socket]) return false;
 
     if (typeof callback === "function") {
       if (payload.byteLength !== 8) {
         callback(new Error("ERR_HTTP2_PING_PAYLOAD_SIZE"), 0, payload);
         return;
       }
-      if (!this.#pingCallbacks) {
-        this.#pingCallbacks = [callback, Date.now()];
-      } else {
+      if (this.#pingCallbacks) {
         this.#pingCallbacks.push([callback, Date.now()]);
+      } else {
+        this.#pingCallbacks = [callback, Date.now()];
       }
     } else if (payload.byteLength !== 8) {
       throw new Error("ERR_HTTP2_PING_PAYLOAD_SIZE");
     }
 
-    this.#parser?.ping(payload);
-    return this.#parser && this[bunHTTP2Socket] ? true : false;
+    parser.ping(payload);
+    return true;
   }
   goaway(errorCode, lastStreamId, opaqueData) {
     return this.#parser?.goaway(errorCode, lastStreamId, opaqueData);

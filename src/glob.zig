@@ -19,8 +19,9 @@ const GlobAscii = @import("./glob_ascii.zig");
 
 const foo = std.unicode.Utf8Iterator;
 
-const CodepointIterator = @import("./string_immutable.zig").UnsignedCodepointIterator;
-const Codepoint = u32;
+const CodepointIterator = @import("./string_immutable.zig").PackedCodepointIterator;
+const Codepoint = CodepointIterator.Cursor.CodePointType;
+// const Codepoint = u32;
 const Cursor = CodepointIterator.Cursor;
 
 const CursorState = struct {
@@ -442,11 +443,11 @@ const BraceStack = struct {
 };
 
 pub fn match(glob: []const u8, path: []const u8) bool {
-    if (@import("./string_immutable.zig").isAllASCII(path)) {
-        return GlobAscii.match(glob, path);
-    } else {
-        return match_impl(glob, path);
-    }
+    // if (@import("./string_immutable.zig").isAllASCII(path)) {
+    //     return GlobAscii.match(glob, path);
+    // } else {
+    return match_impl(glob, path);
+    // }
 }
 
 /// This function checks returns a boolean value if the pathname `path` matches

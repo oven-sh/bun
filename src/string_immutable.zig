@@ -4367,6 +4367,147 @@ pub inline fn utf8ByteSequenceLength(first_byte: u8) u3 {
     };
 }
 
+pub const PackedCodepointIterator = struct {
+    const Iterator = @This();
+    const CodePointType = u32;
+    const zeroValue = 0;
+
+    bytes: []const u8,
+    i: usize,
+    next_width: usize = 0,
+    width: u3 = 0,
+    c: CodePointType = zeroValue,
+
+    pub const ZeroValue = zeroValue;
+
+    pub const Cursor = packed struct {
+        i: u32 = 0,
+        c: u29 = zeroValue,
+        width: u3 = 0,
+        pub const CodePointType = u29;
+    };
+
+    pub fn init(str: string) Iterator {
+        return Iterator{ .bytes = str, .i = 0, .c = zeroValue };
+    }
+
+    pub fn initOffset(str: string, i: usize) Iterator {
+        return Iterator{ .bytes = str, .i = i, .c = zeroValue };
+    }
+
+    pub inline fn next(it: *const Iterator, cursor: *Cursor) bool {
+        const pos: u32 = @as(u32, cursor.width) + cursor.i;
+        if (pos >= it.bytes.len) {
+            return false;
+        }
+
+        const cp_len = wtf8ByteSequenceLength(it.bytes[pos]);
+        const error_char = comptime std.math.minInt(CodePointType);
+
+        const codepoint = @as(
+            CodePointType,
+            switch (cp_len) {
+                0 => return false,
+                1 => it.bytes[pos],
+                else => decodeWTF8RuneTMultibyte(it.bytes[pos..].ptr[0..4], cp_len, CodePointType, error_char),
+            },
+        );
+
+        {
+            @setRuntimeSafety(false);
+            cursor.* = Cursor{
+                .i = pos,
+                .c = if (error_char != codepoint)
+                    @truncate(codepoint)
+                else
+                    unicode_replacement,
+                .width = if (codepoint != error_char) cp_len else 1,
+            };
+        }
+
+        return true;
+    }
+
+    inline fn nextCodepointSlice(it: *Iterator) []const u8 {
+        const bytes = it.bytes;
+        const prev = it.i;
+        const next_ = prev + it.next_width;
+        if (bytes.len <= next_) return "";
+
+        const cp_len = utf8ByteSequenceLength(bytes[next_]);
+        it.next_width = cp_len;
+        it.i = @min(next_, bytes.len);
+
+        const slice = bytes[prev..][0..cp_len];
+        it.width = @as(u3, @intCast(slice.len));
+        return slice;
+    }
+
+    pub fn needsUTF8Decoding(slice: string) bool {
+        var it = Iterator{ .bytes = slice, .i = 0 };
+
+        while (true) {
+            const part = it.nextCodepointSlice();
+            @setRuntimeSafety(false);
+            switch (part.len) {
+                0 => return false,
+                1 => continue,
+                else => return true,
+            }
+        }
+    }
+
+    pub fn scanUntilQuotedValueOrEOF(iter: *Iterator, comptime quote: CodePointType) usize {
+        while (iter.c > -1) {
+            if (!switch (iter.nextCodepoint()) {
+                quote => false,
+                '\\' => brk: {
+                    if (iter.nextCodepoint() == quote) {
+                        continue;
+                    }
+                    break :brk true;
+                },
+                else => true,
+            }) {
+                return iter.i + 1;
+            }
+        }
+
+        return iter.i;
+    }
+
+    pub fn nextCodepoint(it: *Iterator) CodePointType {
+        const slice = it.nextCodepointSlice();
+
+        it.c = switch (slice.len) {
+            0 => zeroValue,
+            1 => @as(CodePointType, @intCast(slice[0])),
+            2 => @as(CodePointType, @intCast(std.unicode.utf8Decode2(slice) catch unreachable)),
+            3 => @as(CodePointType, @intCast(std.unicode.utf8Decode3(slice) catch unreachable)),
+            4 => @as(CodePointType, @intCast(std.unicode.utf8Decode4(slice) catch unreachable)),
+            else => unreachable,
+        };
+
+        return it.c;
+    }
+
+    /// Look ahead at the next n codepoints without advancing the iterator.
+    /// If fewer than n codepoints are available, then return the remainder of the string.
+    pub fn peek(it: *Iterator, n: usize) []const u8 {
+        const original_i = it.i;
+        defer it.i = original_i;
+
+        var end_ix = original_i;
+        var found: usize = 0;
+        while (found < n) : (found += 1) {
+            const next_codepoint = it.nextCodepointSlice() orelse return it.bytes[original_i..];
+            end_ix += next_codepoint.len;
+        }
+
+        return it.bytes[original_i..end_ix];
+    }
+};
+
 pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: comptime_int) type {
     return struct {
         const Iterator = @This();

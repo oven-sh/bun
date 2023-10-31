@@ -1209,15 +1209,7 @@ class ClientRequest extends OutgoingMessage {
   #protocol;
   #method;
   #port;
-  #pfx = null;
-  #ca = null;
-  #key = null;
-  #cert = null;
-  #ciphers = null;
-  #passphrase = null;
-  #secureOptions = null;
-  #servername = null;
-  #rejectUnauthorized;
+  #tls = null;
   #useDefaultPort;
   #joinDuplicateHeaders;
   #maxHeaderSize;
@@ -1273,6 +1265,11 @@ class ClientRequest extends OutgoingMessage {
     callback();
   }
 
+  _ensureTls() {
+    if (this.#tls === null) this.#tls = {};
+    return this.#tls;
+  }
+
   _final(callback) {
     this.#finished = true;
     this[kAbortController] = new AbortController();
@@ -1295,19 +1292,7 @@ class ClientRequest extends OutgoingMessage {
       url = `${this.#protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}${this.#path}`;
     }
     const tls =
-      this.#protocol === "https:"
-        ? {
-            ca: this.#ca,
-            passphrase: this.#passphrase,
-            pfx: this.#pfx,
-            key: this.#key,
-            cert: this.#cert,
-            ciphers: this.#ciphers,
-            secureOptions: this.#secureOptions,
-            rejectUnauthorized: this.#rejectUnauthorized,
-            serverName: this.#servername,
-          }
-        : undefined;
+      this.#protocol === "https:" && this.#tls ? { ...this.#tls, serverName: this.#tls.servername } : undefined;
     try {
       //@ts-ignore
       this.#fetchRequest = fetch(url, {
@@ -1496,44 +1481,44 @@ class ClientRequest extends OutgoingMessage {
     if (options.pfx) {
       throw new Error("pfx is not supported");
     }
-    this.#rejectUnauthorized = options.rejectUnauthorized;
+    if (options.rejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = options.rejectUnauthorized;
     if (options.ca) {
       if (!isValidTLSArray(options.ca))
         throw new TypeError(
           "ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
         );
-      this.#ca = options.ca;
+      this._ensureTls().ca = options.ca;
     }
     if (options.cert) {
       if (!isValidTLSArray(options.cert))
         throw new TypeError(
           "cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
         );
-      this.#cert = options.cert;
+      this._ensureTls().cert = options.cert;
     }
     if (options.key) {
       if (!isValidTLSArray(options.key))
         throw new TypeError(
           "key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
         );
-      this.#key = options.key;
+      this._ensureTls().key = options.key;
     }
     if (options.passphrase) {
       if (typeof options.passphrase !== "string") throw new TypeError("passphrase argument must be a string");
-      this.#passphrase = options.passphrase;
+      this._ensureTls().passphrase = options.passphrase;
     }
     if (options.ciphers) {
       if (typeof options.ciphers !== "string") throw new TypeError("ciphers argument must be a string");
-      this.#ciphers = options.ciphers;
+      this._ensureTls().ciphers = options.ciphers;
     }
     if (options.servername) {
       if (typeof options.servername !== "string") throw new TypeError("servername argument must be a string");
-      this.#servername = options.servername;
+      this._ensureTls().servername = options.servername;
     }
 
     if (options.secureOptions) {
       if (typeof options.secureOptions !== "number") throw new TypeError("secureOptions argument must be a string");
-      this.#secureOptions = options.secureOptions;
+      this._ensureTls().secureOptions = options.secureOptions;
     }
     this.#path = options.path || "/";
     if (cb) {

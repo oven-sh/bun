@@ -329,6 +329,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
         pending_sockets: HiveArray(PooledSocket, pool_size) = HiveArray(PooledSocket, pool_size).init(),
         us_socket_context: *uws.SocketContext,
+        was_allocated: bool = false,
 
         const Context = @This();
         pub const HTTPSocket = uws.NewSocketHandler(ssl);
@@ -358,6 +359,13 @@ fn NewHTTPContext(comptime ssl: bool) type {
             return @as(*BoringSSL.SSL_CTX, @ptrCast(this.us_socket_context.getNativeHandle(true)));
         }
 
+        pub fn deinit(this: *@This()) void {
+            if (this.was_allocated) {
+                uws.us_socket_context_free(@as(c_int, @intFromBool(ssl)), this.us_socket_context);
+            }
+            bun.default_allocator.destroy(this);
+        }
+
         pub fn initWithClientConfig(this: *@This(), client: *HTTPClient) !void {
             if (!comptime ssl) {
                 unreachable;
@@ -370,6 +378,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
             if (socket == null) {
                 return error.FailedToOpenSocket;
             }
+            this.was_allocated = true;
             this.us_socket_context = socket.?;
             this.sslCtx().setup();
 
@@ -1506,7 +1515,7 @@ pub fn deinit(this: *HTTPClient) void {
     }
 
     if (this.custom_context) |custom_context| {
-        bun.default_allocator.destroy(custom_context);
+        custom_context.deinit();
         this.custom_context = null;
     }
 }

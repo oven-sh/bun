@@ -1,5 +1,6 @@
 const Glob = @This();
 const globImpl = @import("../../glob.zig");
+const globImplAscii = @import("../../glob_ascii.zig");
 const GlobWalker = globImpl.GlobWalker;
 const PathLike = @import("../node/types.zig").PathLike;
 const ArgumentsSlice = @import("../node/types.zig").ArgumentsSlice;
@@ -308,5 +309,6 @@ pub fn matchString(this: *Glob, globalThis: *JSC.JSGlobalObject, callframe: *JSC
     var str = str_arg.toSlice(globalThis, alloc);
     defer str.deinit();
 
-    return JSC.JSValue.jsBoolean(globImpl.match(this.pattern, str.slice()));
+    // FIXME: use right function for non-ascii
+    return JSC.JSValue.jsBoolean(globImplAscii.match(this.pattern, str.slice()));
 }

@@ -451,6 +451,7 @@ pub fn match(glob: []const u8, path: []const u8) bool {
 
 inline fn isSeparator(c: u8) bool {
     if (comptime @import("builtin").os.tag == .windows) return c == '/' or c == '\\';
+    return c == '/';
 }
 
 inline fn unescape(c: *u8, glob: []const u8, glob_index: *usize) bool {

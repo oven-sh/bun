@@ -329,7 +329,6 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
         pending_sockets: HiveArray(PooledSocket, pool_size) = HiveArray(PooledSocket, pool_size).init(),
         us_socket_context: *uws.SocketContext,
-        was_allocated: bool = false,
 
         const Context = @This();
         pub const HTTPSocket = uws.NewSocketHandler(ssl);
@@ -360,7 +359,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
         }
 
         pub fn deinit(this: *@This()) void {
-            if (this.was_allocated) {
+            if (this.us_socket_context != undefined) {
                 uws.us_socket_context_free(@as(c_int, @intFromBool(ssl)), this.us_socket_context);
             }
             bun.default_allocator.destroy(this);
@@ -370,7 +369,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
             if (!comptime ssl) {
                 unreachable;
             }
-
+            this.us_socket_context = undefined;
             var opts = client.tls_props.?.asUSockets();
             opts.request_cert = 1;
             opts.reject_unauthorized = 0;
@@ -378,7 +377,6 @@ fn NewHTTPContext(comptime ssl: bool) type {
             if (socket == null) {
                 return error.FailedToOpenSocket;
             }
-            this.was_allocated = true;
             this.us_socket_context = socket.?;
             this.sslCtx().setup();
 

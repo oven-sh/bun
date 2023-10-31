@@ -66,7 +66,7 @@ jobs:
             BUILD_MACHINE_ARCH=${{matrix.build_machine_arch}}
             CPU_TARGET=${{matrix.cpu}}
             GIT_SHA=${{github.sha}}
-            platforms: linux/${{matrix.build_arch}}
+          platforms: linux/${{matrix.build_arch}}
           target: artifact
           outputs: type=local,dest=${{runner.temp}}/release
       - name: Zip

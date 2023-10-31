@@ -75,7 +75,7 @@ jobs:
             CPU_TARGET=${{ matrix.cpu }}
             TRIPLET=${{ matrix.arch }}-macos-none
             GIT_SHA=${{ github.sha }}
-            platforms: linux/${{ runner.arch == 'X64' && 'amd64' || 'arm64' }}
+          platforms: linux/${{ runner.arch == 'X64' && 'amd64' || 'arm64' }}
           target: build_release_obj
           outputs: type=local,dest=${{runner.temp}}/release
 

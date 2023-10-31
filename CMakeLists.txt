@@ -138,7 +138,6 @@ if(UNIX)
 else()
     # Windows uses Clang-CL
     # TODO: good configuration in this regard. -G Ninja will pick clang-cl if possible, which should be fine for most users.
-
     find_program(
         STRIP
         NAMES llvm-strip
@@ -180,6 +179,7 @@ message(STATUS "C++ Compiler: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERS
 # --- End LLVM ---
 set(SHELL "bash")
 set(SCRIPT_EXTENSION "sh")
+
 if(WIN32)
     set(SCRIPT_EXTENSION "ps1")
 endif()
@@ -521,6 +521,7 @@ set(BUN_OBJECT_LUT_SOURCES
 )
 set(BUN_OBJECT_LUT_OUTPUTS "")
 set(BUN_HASH_LUT_GENERATOR "${BUN_CODEGEN_SRC}/create-hash-table.ts")
+
 if(NOT BUN_LINK_ONLY)
     macro(GENERATE_HASH_LUT _input _output _display_name)
         if(NOT NO_CODEGEN)
@@ -533,6 +534,7 @@ if(NOT BUN_LINK_ONLY)
                 COMMENT "Generating ${_display_name}"
             )
         endif()
+
         list(APPEND BUN_OBJECT_LUT_OUTPUTS "${_output}")
 
         # list(APPEND Bun_HEADERS ${_output})
@@ -849,6 +851,7 @@ if(NOT MSVC)
         -ferror-limit=${ERROR_LIMIT}
         -fno-omit-frame-pointer
     )
+
     if(NOT WIN32)
         target_compile_options(${bun} PUBLIC -fPIC)
     endif()
@@ -881,7 +884,12 @@ if(APPLE)
 
     target_link_options(${bun} PUBLIC "-dead_strip")
     target_link_options(${bun} PUBLIC "-dead_strip_dylibs")
-    target_link_options(${bun} PUBLIC "-Wl,-stack_size,0x1200000")
+
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        # bun install will stack overflow on start in debug builds if the stack size isn't at least 12 MB
+        target_link_options(${bun} PUBLIC "-Wl,-stack_size,0x1200000")
+    endif()
+
     target_link_options(${bun} PUBLIC "-exported_symbols_list" "${BUN_SRC}/symbols.txt")
     set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${BUN_SRC}/symbols.txt")
 

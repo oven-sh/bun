@@ -96,10 +96,17 @@ Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, Reso
 {
 
     auto stringImpl = Bun::toWTFString(resolvedSource.source_code);
-    auto sourceURLString = toStringCopy(resolvedSource.source_url);
+    auto sourceURLString = Bun::toWTFString(resolvedSource.source_url);
+
     bool isCodeCoverageEnabled = !!globalObject->vm().controlFlowProfiler();
 
-    bool shouldGenerateCodeCoverage = isCodeCoverageEnabled && !isBuiltin && BunTest__shouldGenerateCodeCoverage(Bun::toString(sourceURLString));
+    bool shouldGenerateCodeCoverage = isCodeCoverageEnabled && !isBuiltin && BunTest__shouldGenerateCodeCoverage(resolvedSource.source_url);
+
+    if (resolvedSource.needsDeref) {
+        resolvedSource.source_code.deref();
+        resolvedSource.specifier.deref();
+        // source_url gets deref'd by the WTF::String above.
+    }
 
     auto provider = adoptRef(*new SourceProvider(
         globalObject->isThreadLocalDefaultGlobalObject ? globalObject : nullptr,
@@ -152,6 +159,9 @@ void SourceProvider::cacheBytecode(const BytecodeCacheGenerator& generator)
     auto update = generator();
     if (update)
         m_cachedBytecode->addGlobalUpdate(*update);
+}
+SourceProvider::~SourceProvider()
+{
 }
 void SourceProvider::commitCachedBytecode()
 {

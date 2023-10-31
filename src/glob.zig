@@ -90,9 +90,9 @@ pub const GlobWalker = struct {
 
     /// not owned by this struct
     pattern: []const u8 = undefined,
-    pattern_is_ascii: bool = false,
 
-    pattern_codepoints: []const u32 = undefined,
+    scratch_pattern_codepoints: ?[]u32 = null,
+    cp_len: u32 = 0,
 
     patternComponents: ArrayList(Component) = .{},
     matchedPaths: ArrayList(BunString) = .{},
@@ -106,8 +106,11 @@ pub const GlobWalker = struct {
     /// `src/**/*.ts` -> `src`, `**`, `*.ts`
     const Component = struct {
         start: u32,
+        // length in codepoints
         len: u32,
         starKind: StarKind = .None,
+        is_ascii: bool = false,
+        unicode: ?[]u32 = null,
         const StarKind = enum { None, Single, Double };
     };
 
@@ -129,30 +132,25 @@ pub const GlobWalker = struct {
         return .{ .result = globWalker };
     }
 
+    pub fn convertUtf8(codepoints: []u32, pattern: []const u8) void {
+        const iter = CodepointIterator.init(pattern);
+        var cursor = Cursor{};
+        var i: u32 = 0;
+        while (iter.next(&cursor)) : (i += 1) {
+            codepoints[i] = @intCast(cursor.c);
+        }
+        std.debug.assert(pattern.len == i);
+    }
+
     /// `cwd` should be allocated with the arena
     pub fn initWithCwd(this: *GlobWalker, arena_: Arena, pattern: []const u8, cwd: BunString) !void {
         var arena = arena_;
 
-        const pattern_is_ascii: bool = isAllAscii(pattern);
-        const pattern_codepoints = pattern_codepoints: {
-            var codepoints = try arena.allocator().alloc(u32, pattern.len);
-            const iter = CodepointIterator.init(pattern);
-            var cursor = Cursor{};
-            var i: u32 = 0;
-            while (iter.next(&cursor)) : (i += 1) {
-                codepoints[i] = @intCast(cursor.c);
-            }
-            std.debug.assert(pattern.len == i);
-            break :pattern_codepoints codepoints;
-        };
-
         var patternComponents = ArrayList(Component){};
-        try GlobWalker.buildPatternComponents(&arena, &patternComponents, pattern_codepoints);
+        try GlobWalker.buildPatternComponents(&arena, &this.cp_len, &patternComponents, pattern);
 
         this.patternComponents = patternComponents;
         this.pattern = pattern;
-        this.pattern_is_ascii = pattern_is_ascii;
-        this.pattern_codepoints = pattern_codepoints;
         this.arena = arena;
         this.cwd = cwd;
     }
@@ -169,9 +167,17 @@ pub const GlobWalker = struct {
         return this.walkDir(0, rootPath);
     }
 
-    fn match(this: *GlobWalker, pattern_start: u32, pattern_end: u32, filepath: []const u8) bool {
-        if (this.pattern_is_ascii and isAllAscii(filepath)) return GlobAscii.match(this.pattern[pattern_start..pattern_end], filepath);
-        return match_impl(this.pattern_codepoints[pattern_start..pattern_end], filepath);
+    fn match(this: *GlobWalker, pattern_component: *const Component, filepath: []const u8) bool {
+        if (pattern_component.is_ascii and isAllAscii(filepath)) return GlobAscii.match(this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len], filepath);
+        var unicode: []const u32 = undefined;
+        if (pattern_component.unicode) |the_unicode| {
+            unicode = the_unicode;
+        } else {
+            var codepoints = this.scratch_pattern_codepoints.?[pattern_component.start .. pattern_component.start + pattern_component.len];
+            GlobWalker.convertUtf8(codepoints, this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len]);
+            unicode = codepoints;
+        }
+        return match_impl(unicode[pattern_component.start .. pattern_component.start + pattern_component.len], filepath);
     }
 
     /// Invariant: `dirName` should be absolute and not have a trailing directory separator
@@ -209,6 +215,9 @@ pub const GlobWalker = struct {
         };
 
         const pattern = this.patternComponents.items[componentIdx];
+        if (!pattern.is_ascii and this.scratch_pattern_codepoints == null) {
+            this.scratch_pattern_codepoints = try this.arena.allocator().alloc(u32, this.cp_len);
+        }
         // Since we collapsed successive double wildcards above, this is
         // guaranteed to not be a double wildcard
         const nextPattern = if (componentIdx + 1 < this.patternComponents.items.len) this.patternComponents.items[componentIdx + 1] else null;
@@ -224,7 +233,7 @@ pub const GlobWalker = struct {
                 .file => {
                     const matches = matches: {
                         // A file can only match if:
-                        // a) this is the last pattern, or
+                        // a this is the last pattern, or
                         // b) it matches the next pattern, provided the current
                         //    pattern is a double wildcard and the  next pattern is
                         //    not a double wildcard
@@ -235,9 +244,9 @@ pub const GlobWalker = struct {
                         if (!isLast) break :matches pattern.starKind == .Double and
                             componentIdx + 1 == this.patternComponents.items.len - 1 and
                             nextPattern.?.starKind != .Double and
-                            this.match(nextPattern.?.start, nextPattern.?.start + nextPattern.?.len, entryName);
+                            this.match(&nextPattern.?, entryName);
 
-                        break :matches this.match(pattern.start, pattern.start + pattern.len, entryName);
+                        break :matches this.match(&pattern, entryName);
                     };
                     if (matches) {
                         try this.appendMatchedPath(entryName, dirName);
@@ -251,7 +260,7 @@ pub const GlobWalker = struct {
                         // recurse the pattern to the directory's children
                         if (pattern.starKind == .Double) {
                             // Matches pattern after double wildcard, skip wildcard
-                            if (!isLast and this.match(nextPattern.?.start, nextPattern.?.start + nextPattern.?.len, entryName)) {
+                            if (!isLast and this.match(&nextPattern.?, entryName)) {
                                 break :recursion_idx_bump 1;
                             }
 
@@ -263,7 +272,7 @@ pub const GlobWalker = struct {
                             break :recursion_idx_bump 0;
                         }
 
-                        const matches = this.match(pattern.start, pattern.start + pattern.len, entryName);
+                        const matches = this.match(&pattern, entryName);
                         if (matches) {
                             if (isLast) {
                                 try this.appendMatchedPath(entryName, dirName);
@@ -301,7 +310,7 @@ pub const GlobWalker = struct {
         try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(name));
     }
 
-    fn addComponent(allocator: Allocator, pattern: []const u32, patternComponents: *ArrayList(Component), component_: Component) !void {
+    fn addComponent(allocator: Allocator, pattern: []const u8, patternComponents: *ArrayList(Component), component_: Component) !void {
         if (component_.len == 0) return;
         var component: Component = component_;
         switch (component.len) {
@@ -317,24 +326,37 @@ pub const GlobWalker = struct {
             },
             else => {},
         }
+        if (component.starKind == .None) {
+            if (isAllAscii(pattern[component.start .. component.start + component.len])) {
+                component.is_ascii = true;
+            }
+        } else {
+            component.is_ascii = true;
+        }
+
         try patternComponents.append(allocator, component);
     }
 
-    fn buildPatternComponents(arena: *Arena, patternComponents: *ArrayList(Component), pattern: []const u32) !void {
+    fn buildPatternComponents(arena: *Arena, out_cp_len: *u32, patternComponents: *ArrayList(Component), pattern: []const u8) !void {
         const isWindows = @import("builtin").os.tag == .windows;
         var start: u32 = 0;
+        var prev_idx: u32 = 0;
+        _ = prev_idx;
 
+        const iter = CodepointIterator.init(pattern);
+        var cursor = CodepointIterator.Cursor{};
+
+        var cp_len: u32 = 0;
         var prevIsBackslash = false;
-        var i: u32 = 0;
-        while (i < pattern.len) : (i += 1) {
-            const c = pattern[i];
+        while (iter.next(&cursor)) : (cp_len += 1) {
+            const c = cursor.c;
 
             switch (c) {
                 '\\' => {
                     if (comptime isWindows) {
-                        const end = i;
+                        const end = cursor.cp_idx;
                         try addComponent(arena.allocator(), pattern, patternComponents, .{ .start = start, .len = end - start });
-                        start = i + 1;
+                        start = cursor.i + cursor.width;
                         continue;
                     }
 
@@ -346,20 +368,22 @@ pub const GlobWalker = struct {
                     prevIsBackslash = true;
                 },
                 '/' => {
-                    var end = i;
-                    // is last char, include directory separator
-                    if (i + 1 >= pattern.len) {
-                        end = i + 1;
+                    var end = cursor.i;
+                    // is last char
+                    if (cursor.i + cursor.width == pattern.len) {
+                        end = cursor.i + cursor.width;
                     }
                     try addComponent(arena.allocator(), pattern, patternComponents, .{ .start = start, .len = end - start });
-                    start = i + 1;
+                    start = cursor.i + cursor.width;
                 },
                 // TODO: Support other escaping glob syntax
                 else => {},
             }
         }
 
-        const end = i;
+        out_cp_len.* = cp_len;
+
+        const end = cursor.i + cursor.width;
         try addComponent(arena.allocator(), pattern, patternComponents, .{ .start = start, .len = end - start });
     }
 };

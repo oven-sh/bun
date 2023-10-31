@@ -19,12 +19,16 @@ const Base = @import("../base.zig");
 const JSGlobalObject = @import("../bindings/bindings.zig").JSGlobalObject;
 const getAllocator = Base.getAllocator;
 const ResolvePath = @import("../../resolver/resolve_path.zig");
+const isAllAscii = @import("../../string_immutable.zig").isAllASCII;
+const CodepointIterator = @import("../../string_immutable.zig").UnsignedCodepointIterator;
 
 const Arena = std.heap.ArenaAllocator;
 
 pub usingnamespace JSC.Codegen.JSGlob;
 
 pattern: []const u8,
+pattern_codepoints: ?std.ArrayList(u32) = null,
+is_ascii: bool,
 
 const MatchOpts = struct {
     cwd: ?BunString,
@@ -222,10 +226,25 @@ pub fn constructor(
 
     var pat_str: []u8 = pat_arg.getZigString(globalThis).toOwnedSlice(globalThis.bunVM().allocator) catch @panic("OOM");
 
+    const all_ascii = isAllAscii(pat_str);
+
     var glob = alloc.create(Glob) catch @panic("OOM");
-    glob.* = .{
-        .pattern = pat_str,
-    };
+    glob.* = .{ .pattern = pat_str, .is_ascii = all_ascii };
+
+    if (!all_ascii) {
+        var codepoints = std.ArrayList(u32).initCapacity(alloc, glob.pattern.len * 2) catch {
+            globalThis.throwOutOfMemory();
+            return null;
+        };
+        errdefer codepoints.deinit();
+
+        convertUtf8(&codepoints, glob.pattern) catch {
+            globalThis.throwOutOfMemory();
+            return null;
+        };
+
+        glob.pattern_codepoints = codepoints;
+    }
 
     return glob;
 }
@@ -290,8 +309,10 @@ pub fn matchSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallF
     return matchedPaths;
 }
 
-pub fn matchString(this: *Glob, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+pub fn matchString(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
     const alloc = getAllocator(globalThis);
+    var arena = Arena.init(alloc);
+    defer arena.deinit();
 
     const arguments_ = callframe.arguments(1);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
@@ -306,9 +327,41 @@ pub fn matchString(this: *Glob, globalThis: *JSC.JSGlobalObject, callframe: *JSC
         return JSC.JSValue.jsUndefined();
     }
 
-    var str = str_arg.toSlice(globalThis, alloc);
+    var str = str_arg.toSlice(globalThis, arena.allocator());
     defer str.deinit();
 
+    if (this.is_ascii and isAllAscii(str.slice())) return JSC.JSValue.jsBoolean(globImplAscii.match(this.pattern, str.slice()));
+
+    const codepoints = codepoints: {
+        if (this.pattern_codepoints) |cp| break :codepoints cp.items[0..];
+
+        var codepoints = std.ArrayList(u32).initCapacity(alloc, this.pattern.len * 2) catch {
+            globalThis.throwOutOfMemory();
+            return .undefined;
+        };
+        errdefer codepoints.deinit();
+
+        convertUtf8(&codepoints, this.pattern) catch {
+            globalThis.throwOutOfMemory();
+            return .undefined;
+        };
+
+        this.pattern_codepoints = codepoints;
+
+        break :codepoints codepoints.items[0..codepoints.items.len];
+    };
+    // const codepoints = this.pattern_codepoints.?.items[0..];
+
     // FIXME: use right function for non-ascii
-    return JSC.JSValue.jsBoolean(globImplAscii.match(this.pattern, str.slice()));
+    return JSC.JSValue.jsBoolean(globImpl.match_impl(codepoints, str.slice()));
+}
+
+pub fn convertUtf8(codepoints: *std.ArrayList(u32), pattern: []const u8) !void {
+    const iter = CodepointIterator.init(pattern);
+    var cursor = CodepointIterator.Cursor{};
+    var i: u32 = 0;
+    while (iter.next(&cursor)) : (i += 1) {
+        try codepoints.append(@intCast(cursor.c));
+    }
+    std.debug.assert(pattern.len == i);
 }

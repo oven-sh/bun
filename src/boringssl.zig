@@ -120,6 +120,54 @@ pub fn ip2String(ip: *boring.ASN1_OCTET_STRING, outIP: *[INET6_ADDRSTRLEN + 1]u8
     return outIP[0..size];
 }
 
+/// checks if a hostname matches a SAN or CN pattern
+pub fn hostmatch(hostname: []const u8, pattern: []const u8) bool {
+    // normalize hostname and pattern
+    var host = hostname;
+    var pat = pattern;
+    if (host[host.len - 1] == '.') {
+        host = host[0 .. host.len - 1];
+    }
+    if (pat[pat.len - 1] == '.') {
+        pat = pat[0 .. pat.len - 1];
+    }
+
+    if (!strings.hasPrefixComptime(pat, "*.")) {
+        // not a wildcard pattern, so the hostnames/IP address must match exactly.
+        return strings.eqlInsensitive(host, pat);
+    } else if (strings.isIPAddress(host)) {
+        // IP address and wildcard pattern.
+        return false;
+    }
+
+    // wildcard pattern.
+    // we know the pattern starts with "*."
+    if (strings.lastIndexOfChar(pat, '.') == 1) {
+        // wildcard must have at least 2 period to be valid.
+        // otherwise we could match too widely.
+        // ex: "*.com"
+        return false;
+    }
+
+    if (strings.indexOfChar(host, '.')) |host_label_end| {
+        return strings.eqlInsensitive(host[host_label_end + 1 .. host.len], pat[2..pat.len]);
+    }
+
+    return false;
+}
+
+test "hostmatch" {
+    try std.testing.expect(hostmatch("sub.bun.sh", "sub.bun.sh"));
+    try std.testing.expect(hostmatch("sub.bun.sh.", "sub.bun.sh"));
+    try std.testing.expect(hostmatch("sub.bun.sh.", "sub.BUN.sh."));
+    try std.testing.expect(!hostmatch("sub.bun.sh", "bun.sh"));
+    try std.testing.expect(hostmatch("sub.bun.sh", "*.bun.sh."));
+    try std.testing.expect(!hostmatch("bun.sh", "*.bun.sh."));
+    try std.testing.expect(hostmatch("127.0.0.1", "127.0.0.1"));
+    try std.testing.expect(!hostmatch("127.0.0.1", "*.0.0.1"));
+    try std.testing.expect(!hostmatch("bun.sh", "*.sh"));
+}
+
 pub fn checkX509ServerIdentity(
     x509: *boring.X509,
     hostname: []const u8,
@@ -170,17 +218,7 @@ pub fn checkX509ServerIdentity(
                                 // ignore empty dns names (should never happen)
                                 if (dnsNameSlice.len > 0) {
                                     if (X509.isSafeAltName(dnsNameSlice, false)) {
-                                        if (dnsNameSlice[0] == '*') {
-                                            dnsNameSlice = dnsNameSlice[1..dnsNameSlice.len];
-                                            var host = hostname;
-                                            if (hostname.len > dnsNameSlice.len) {
-                                                host = hostname[hostname.len - dnsNameSlice.len .. hostname.len];
-                                            }
-                                            if (strings.eql(dnsNameSlice, host)) {
-                                                return true;
-                                            }
-                                        }
-                                        if (strings.eql(dnsNameSlice, hostname)) {
+                                        if (hostmatch(hostname, dnsNameSlice)) {
                                             return true;
                                         }
                                     }
@@ -191,7 +229,32 @@ pub fn checkX509ServerIdentity(
                 }
             }
         }
+    } else if (boring.X509_get_subject_name(x509)) |subject| {
+        // if SAN is not present, check the CN.
+        // get the position of the *last* CN field in the subject name field.
+        var cn_index: c_int = -1;
+        while (true) {
+            const j = boring.X509_NAME_get_index_by_NID(subject, boring.NID_commonName, cn_index);
+            if (j < 0) break;
+            cn_index = j;
+        }
+
+        if (cn_index >= 0) {
+            if (boring.X509_NAME_ENTRY_get_data(boring.X509_NAME_get_entry(subject, cn_index))) |asn1_str| {
+                var peer_cn: ?[*:0]u8 = null;
+                const peerlen = boring.ASN1_STRING_to_UTF8(&peer_cn, asn1_str);
+                if (peer_cn) |cn_ptr| {
+                    defer boring.OPENSSL_free(cn_ptr);
+
+                    var cn: []u8 = cn_ptr[0..@as(usize, @intCast(peerlen))];
+                    if (hostmatch(hostname, cn)) {
+                        return true;
+                    }
+                }
+            }
+        }
     }
+
     return false;
 }
 

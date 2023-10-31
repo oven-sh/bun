@@ -107,7 +107,7 @@ jobs:
             tag: bun-darwin-x64
             obj: bun-obj-darwin-x64
             runner: macos-12
-            artifact: bun-obj-darwin-x6
+            artifact: bun-obj-darwin-x64
     steps:
       - uses: actions/checkout@v4
       - name: Checkout submodules

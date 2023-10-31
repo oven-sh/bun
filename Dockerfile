@@ -16,6 +16,7 @@ ARG BUILD_MACHINE_ARCH=x86_64
 ARG BUILDARCH=amd64
 ARG TRIPLET=${ARCH}-linux-gnu
 ARG GIT_SHA="unknown"
+ARG BUN_DOWNLOAD_URL_BASE
 
 ARG BUN_VERSION="1.0.7"
 ARG NODE_VERSION="20"
@@ -110,7 +111,7 @@ RUN apt-get update -y \
   arm64) variant="aarch64";; \
   *) echo "error: unsupported architecture: $arch"; exit 1 ;; \
   esac \
-  && wget "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-${variant}.zip" \
+  && wget "${BUN_DOWNLOAD_URL_BASE}/bun-linux-${variant}.zip" \
   && unzip bun-linux-${variant}.zip \
   && mv bun-linux-${variant}/bun /usr/bin/bun \
   && ln -s /usr/bin/bun /usr/bin/bunx \

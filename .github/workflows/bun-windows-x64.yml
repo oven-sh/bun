@@ -117,7 +117,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: |
-          curl -fsSL https://github.com/oven-sh/bun/releases/download/bun-v1.0.7/bun-linux-x64.zip > bun.zip
+          curl -fsSL ${{ secrets.BUN_DOWNLOAD_URL_BASE }}/bun-linux-x64.zip > bun.zip
           unzip bun.zip
           export PATH="$PWD/bun-linux-x64:$PATH"
           ./scripts/cross-compile-codegen.sh win32 x64
@@ -152,7 +152,7 @@ jobs:
         run: |
           git submodule update --init --recursive --progress --depth=1 --checkout
           cd build
-          cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DNO_CODEGEN=1
+          cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DNO_CODEGEN=1 -DNO_CONFIGURE_DEPENDS=1
       - uses: actions/upload-artifact@v3
         with:
           name: bun-deps/

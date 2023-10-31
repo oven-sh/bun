@@ -74,6 +74,7 @@ jobs:
             CPU_TARGET=${{ matrix.cpu }}
             TRIPLET=${{ matrix.arch }}-macos-none
             GIT_SHA=${{ github.sha }}
+            BUN_DOWNLOAD_URL_BASE=${{ secrets.BUN_DOWNLOAD_URL_BASE }}
           platforms: linux/${{ runner.arch == 'X64' && 'amd64' || 'arm64' }}
           target: build_release_obj
           outputs: type=local,dest=${{runner.temp}}/release
@@ -210,9 +211,10 @@ jobs:
           cmake -S $SOURCE_DIR -B $OBJ_DIR \
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DBUN_CPP_ONLY=1
+            -DBUN_CPP_ONLY=1 \
+            -DNO_CONFIGURE_DEPENDS
 
-          bash compile-cpp-only.sh
+          bash compile-cpp-only.sh -v
 
       - name: Upload C++
         uses: actions/upload-artifact@v3
@@ -253,7 +255,7 @@ jobs:
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
           brew link --overwrite llvm@$LLVM_VERSION
 
-          curl -LO "https://github.com/oven-sh/bun/releases/download/bun-v1.0.7/bun-darwin-${{matrix.arch}}.zip"
+          curl -LO "${{ secrets.BUN_DOWNLOAD_URL_BASE }}/bun-darwin-${{matrix.arch}}.zip"
           unzip bun-darwin-${{matrix.arch}}.zip
           mkdir -p ${{ runner.temp }}/.bun/bin
           mv bun-darwin-${{matrix.arch}}/bun ${{ runner.temp }}/.bun/bin/bun
@@ -291,8 +293,9 @@ jobs:
             -DBUN_LINK_ONLY=1 \
             -DBUN_ZIG_OBJ="${{ runner.temp }}/release/bun-zig.o" \
             -DBUN_CPP_ARCHIVE="${{ runner.temp }}/bun-cpp-obj/bun-cpp-objects.a" \
-            -DBUN_DEPS_OUT_DIR="${{runner.temp}}/bun-deps"
-          ninja
+            -DBUN_DEPS_OUT_DIR="${{runner.temp}}/bun-deps" \
+            -DNO_CONFIGURE_DEPENDS=1
+          ninja -v
       - name: Zip
         run: |
           cd ${{runner.temp}}/link-build

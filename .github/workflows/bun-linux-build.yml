@@ -84,6 +84,7 @@ jobs:
             BUILD_MACHINE_ARCH=${{matrix.build_machine_arch}}
             CPU_TARGET=${{matrix.cpu}}
             GIT_SHA=${{github.sha}}
+            BUN_DOWNLOAD_URL_BASE=${{ secrets.BUN_DOWNLOAD_URL_BASE }}
 
             SCCACHE_BUCKET=bun
             SCCACHE_REGION=auto

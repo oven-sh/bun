@@ -2787,9 +2787,10 @@ pub const PackageManager = struct {
                 const resolutions: []Resolution = this.lockfile.packages.items(.resolution);
                 switch (index) {
                     .PackageID => |existing_id| {
-                        if (@as(usize, existing_id) < resolutions.len) {
-                            const existing_resolution = resolutions[existing_id];
-                            if (this.resolutionSatisfiesDependency(existing_resolution, version)) {
+                        if (existing_id < resolutions.len) {
+                            const res_tag = resolutions[existing_id].tag;
+                            const ver_tag = version.tag;
+                            if ((res_tag == .npm and ver_tag == .npm) or (res_tag == .git and ver_tag == .git) or (res_tag == .github and ver_tag == .github)) {
                                 successFn(this, dependency_id, existing_id);
                                 return .{
                                     .package = this.lockfile.packages.get(existing_id),
@@ -2799,7 +2800,7 @@ pub const PackageManager = struct {
                     },
                     .PackageIDMultiple => |list| {
                         for (list.items) |existing_id| {
-                            if (@as(usize, existing_id) < resolutions.len) {
+                            if (existing_id < resolutions.len) {
                                 const existing_resolution = resolutions[existing_id];
                                 if (this.resolutionSatisfiesDependency(existing_resolution, version)) {
                                     successFn(this, dependency_id, existing_id);
@@ -2807,6 +2808,17 @@ pub const PackageManager = struct {
                                         .package = this.lockfile.packages.get(existing_id),
                                     };
                                 }
+                            }
+                        }
+
+                        if (list.items[0] < resolutions.len) {
+                            const res_tag = resolutions[list.items[0]].tag;
+                            const ver_tag = version.tag;
+                            if ((res_tag == .npm and ver_tag == .npm) or (res_tag == .git and ver_tag == .git) or (res_tag == .github and ver_tag == .github)) {
+                                successFn(this, dependency_id, list.items[0]);
+                                return .{
+                                    .package = this.lockfile.packages.get(list.items[0]),
+                                };
                             }
                         }
                     },

@@ -1224,3 +1224,30 @@ it("should not accept untrusted certificates", async () => {
 
   server.close();
 });
+it("should accept custom certs when provided", async () => {
+  const server = https.createServer(
+    {
+      key: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "openssl_localhost.key")),
+      cert: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "openssl_localhost.crt")),
+      passphrase: "123123123",
+    },
+    (req, res) => {
+      res.write("Hello from https server");
+      res.end();
+    },
+  );
+  server.listen(0, "localhost");
+  const address = server.address();
+
+  let url_address = address.address;
+  const res = await fetch(`https://localhost:${address.port}`, {
+    tls: {
+      rejectUnauthorized: true,
+      ca: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "openssl_localhost.crt")),
+    },
+  });
+  const t = await res.text();
+  expect(t).toEqual("Hello from https server");
+
+  server.close();
+});

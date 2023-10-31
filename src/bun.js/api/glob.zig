@@ -369,5 +369,4 @@ pub fn convertUtf8(codepoints: *std.ArrayList(u32), pattern: []const u8) !void {
     while (iter.next(&cursor)) : (i += 1) {
         try codepoints.append(@intCast(cursor.c));
     }
-    std.debug.assert(pattern.len == i);
 }

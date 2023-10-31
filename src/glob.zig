@@ -125,10 +125,17 @@ pub const GlobWalker = struct {
         start: u32,
         // length in codepoints
         len: u32,
-        starKind: StarKind = .None,
+        syntax_hint: SyntaxHint = .None,
         is_ascii: bool = false,
         unicode: ?[]u32 = null,
-        const StarKind = enum { None, Single, Double };
+        const SyntaxHint = enum {
+            None,
+            Single,
+            Double,
+            // Uses special fast-path matching for components like: `*.ts`
+            WildcardFilepath,
+            Literal,
+        };
     };
 
     pub fn init(this: *GlobWalker, arena_: Arena, pattern: []const u8) !Maybe(void) {
@@ -195,16 +202,22 @@ pub const GlobWalker = struct {
     }
 
     fn match(this: *GlobWalker, pattern_component: *const Component, filepath: []const u8) bool {
-        if (pattern_component.is_ascii and isAllAscii(filepath)) return GlobAscii.match(this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len], filepath);
-        var unicode: []const u32 = undefined;
-        if (pattern_component.unicode) |the_unicode| {
-            unicode = the_unicode;
-        } else {
-            var codepoints = this.scratch_pattern_codepoints.?[pattern_component.start .. pattern_component.start + pattern_component.len];
-            GlobWalker.convertUtf8(codepoints, this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len]);
-            unicode = codepoints;
+        switch (pattern_component.syntax_hint) {
+            .WildcardFilepath => return matchWildcardFilepath(this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len], filepath),
+            .Literal => return matchWildcardLiteral(this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len], filepath),
+            else => {
+                if (pattern_component.is_ascii and isAllAscii(filepath)) return GlobAscii.match(this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len], filepath);
+                var unicode: []const u32 = undefined;
+                if (pattern_component.unicode) |the_unicode| {
+                    unicode = the_unicode;
+                } else {
+                    var codepoints = this.scratch_pattern_codepoints.?[pattern_component.start .. pattern_component.start + pattern_component.len];
+                    GlobWalker.convertUtf8(codepoints, this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len]);
+                    unicode = codepoints;
+                }
+                return match_impl(unicode[pattern_component.start .. pattern_component.start + pattern_component.len], filepath);
+            },
         }
-        return match_impl(unicode[pattern_component.start .. pattern_component.start + pattern_component.len], filepath);
     }
 
     fn walk2(this: *GlobWalker) !Maybe(void) {
@@ -234,10 +247,10 @@ pub const GlobWalker = struct {
         const component_idx = component_idx: {
             var component_idx = work_item.idx;
             var pattern = this.patternComponents.items[work_item.idx];
-            if (pattern.starKind == .Double) {
+            if (pattern.syntax_hint == .Double) {
                 // Collapse successive double wildcards
                 while (component_idx + 1 < this.patternComponents.items.len and
-                    this.patternComponents.items[component_idx + 1].starKind == .Double) : (component_idx += 1)
+                    this.patternComponents.items[component_idx + 1].syntax_hint == .Double) : (component_idx += 1)
                 {}
             }
             break :component_idx component_idx;
@@ -286,9 +299,9 @@ pub const GlobWalker = struct {
                         // Examples:
                         // a -> `src/foo/index.ts` matches
                         // b -> `src/**/*.ts` (on 2nd pattern) matches
-                        if (!is_last) break :matches pattern.starKind == .Double and
+                        if (!is_last) break :matches pattern.syntax_hint == .Double and
                             component_idx + 1 == this.patternComponents.items.len - 1 and
-                            next_pattern.?.starKind != .Double and
+                            next_pattern.?.syntax_hint != .Double and
                             this.match(&next_pattern.?, entry_name);
 
                         break :matches this.match(&pattern, entry_name);
@@ -303,7 +316,7 @@ pub const GlobWalker = struct {
                     const recursion_idx_bump: u32 = recursion_idx_bump: {
                         // Handle double wildcard `**`, this could possibly
                         // recurse the pattern to the directory's children
-                        if (pattern.starKind == .Double) {
+                        if (pattern.syntax_hint == .Double) {
                             // Matches pattern after double wildcard, skip wildcard
                             if (!is_last and this.match(&next_pattern.?, entry_name)) {
                                 break :recursion_idx_bump 1;
@@ -372,10 +385,10 @@ pub const GlobWalker = struct {
         const componentIdx = componentIdx: {
             var real_component_idx = componentIdx_;
             var pattern = this.patternComponents.items[real_component_idx];
-            if (pattern.starKind == .Double) {
+            if (pattern.syntax_hint == .Double) {
                 // Collapse successive double wildcards
                 while (real_component_idx + 1 < this.patternComponents.items.len and
-                    this.patternComponents.items[real_component_idx + 1].starKind == .Double) : (real_component_idx += 1)
+                    this.patternComponents.items[real_component_idx + 1].syntax_hint == .Double) : (real_component_idx += 1)
                 {}
             }
             break :componentIdx real_component_idx;
@@ -408,9 +421,9 @@ pub const GlobWalker = struct {
                         // Examples:
                         // a -> `src/foo/index.ts` matches
                         // b -> `src/**/*.ts` (on 2nd pattern) matches
-                        if (!isLast) break :matches pattern.starKind == .Double and
+                        if (!isLast) break :matches pattern.syntax_hint == .Double and
                             componentIdx + 1 == this.patternComponents.items.len - 1 and
-                            nextPattern.?.starKind != .Double and
+                            nextPattern.?.syntax_hint != .Double and
                             this.match(&nextPattern.?, entryName);
 
                         break :matches this.match(&pattern, entryName);
@@ -425,7 +438,7 @@ pub const GlobWalker = struct {
                     const recursion_idx_bump: u32 = recursion_idx_bump: {
                         // Handle double wildcard `**`, this could possibly
                         // recurse the pattern to the directory's children
-                        if (pattern.starKind == .Double) {
+                        if (pattern.syntax_hint == .Double) {
                             // Matches pattern after double wildcard, skip wildcard
                             if (!isLast and this.match(&nextPattern.?, entryName)) {
                                 break :recursion_idx_bump 1;
@@ -477,23 +490,76 @@ pub const GlobWalker = struct {
         try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(name));
     }
 
+    fn checkSpecialSyntax(pattern: []const u8) bool {
+        if (pattern.len < 16) {
+            for (pattern[0..]) |c| {
+                switch (c) {
+                    '*', '[', '{', '?', '!' => return true,
+                    else => {},
+                }
+            }
+            return false;
+        }
+
+        const syntax_tokens = comptime [_]u8{ '*', '[', '{', '?', '!' };
+        inline for (syntax_tokens) |tok| {
+            const needles: @Vector(16, u8) = @splat(tok);
+            var i: usize = 0;
+            while (i + 16 <= pattern.len) : (i += 16) {
+                const haystack: @Vector(16, u8) = pattern[i..][0..16].*;
+                const matches = needles == haystack;
+                if (std.simd.countTrues(matches) > 0) return true;
+            }
+        }
+
+        return false;
+    }
+
     fn addComponent(allocator: Allocator, pattern: []const u8, patternComponents: *ArrayList(Component), component_: Component) !void {
         if (component_.len == 0) return;
         var component: Component = component_;
-        switch (component.len) {
-            1 => {
-                if (pattern[component.start] == '*') {
-                    component.starKind = .Single;
+
+        out: {
+            if (!GlobWalker.checkSpecialSyntax(pattern[component.start .. component.start + component.len])) {
+                component.syntax_hint = .Literal;
+                break :out;
+            }
+
+            switch (component.len) {
+                1 => {
+                    if (pattern[component.start] == '*') {
+                        component.syntax_hint = .Single;
+                    }
+                    break :out;
+                },
+                2 => {
+                    if (pattern[component.start] == '*' and pattern[component.start + 1] == '*') {
+                        component.syntax_hint = .Double;
+                        break :out;
+                    }
+                },
+                else => {},
+            }
+
+            out_of_check_wildcard_filepath: {
+                if (component.len > 1 and
+                    pattern[component.start] == '*' and
+                    pattern[component.start + 1] == '.' and
+                    component.start + 2 < pattern.len)
+                {
+                    for (pattern[component.start + 2 ..]) |c| {
+                        switch (c) {
+                            '[', '{', '!', '?' => break :out_of_check_wildcard_filepath,
+                            else => {},
+                        }
+                    }
+                    component.syntax_hint = .WildcardFilepath;
+                    break :out;
                 }
-            },
-            2 => {
-                if (pattern[component.start] == '*' and pattern[component.start + 1] == '*') {
-                    component.starKind = .Double;
-                }
-            },
-            else => {},
+            }
         }
-        if (component.starKind == .None) {
+
+        if (component.syntax_hint != .Single and component.syntax_hint != .Double) {
             if (isAllAscii(pattern[component.start .. component.start + component.len])) {
                 component.is_ascii = true;
             }
@@ -507,8 +573,6 @@ pub const GlobWalker = struct {
     fn buildPatternComponents(arena: *Arena, out_cp_len: *u32, patternComponents: *ArrayList(Component), pattern: []const u8) !void {
         const isWindows = @import("builtin").os.tag == .windows;
         var start: u32 = 0;
-        var prev_idx: u32 = 0;
-        _ = prev_idx;
 
         const iter = CodepointIterator.init(pattern);
         var cursor = CodepointIterator.Cursor{};
@@ -966,6 +1030,17 @@ inline fn skipGlobstars(glob: []const u32, glob_index: *u32) u32 {
 }
 
 const MatchAscii = struct {};
+
+pub fn matchWildcardFilepath(glob: []const u8, path: []const u8) bool {
+    const needle = glob[1..];
+    const needle_len: u32 = @intCast(needle.len);
+    if (path.len < needle_len) return false;
+    return std.mem.eql(u8, needle, path[path.len - needle_len ..]);
+}
+
+pub fn matchWildcardLiteral(literal: []const u8, path: []const u8) bool {
+    return std.mem.eql(u8, literal, path);
+}
 
 // test "basic" {
 //     try expect(match("abc", "abc"));

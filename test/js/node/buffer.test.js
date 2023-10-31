@@ -211,11 +211,29 @@ it("only top level parent propagates from a non-pooled instance", () => {
 });
 
 it("UTF-8 write() & slice()", () => {
-  const testValue = "\u00F6\u65E5\u672C\u8A9E"; // ö日本語
-  const buffer = Buffer.allocUnsafe(32);
-  const size = buffer.write(testValue, 0, "utf8");
-  const slice = buffer.toString("utf8", 0, size);
-  expect(slice).toBe(testValue);
+  {
+    const testValue = "\u00F6\u65E5\u672C\u8A9E"; // ö日本語
+    const buffer = Buffer.allocUnsafe(32);
+    const size = buffer.write(testValue, 0, "utf8");
+    const slice = buffer.toString("utf8", 0, size);
+    expect(slice).toBe(testValue);
+  }
+  {
+    const buffer = Buffer.allocUnsafe(1);
+    buffer.write("\x61");
+    buffer.write("\xFF");
+    expect(buffer).toStrictEqual(Buffer.from([0x61]));
+  }
+  {
+    const buffer = Buffer.alloc(5);
+    buffer.write("\x61\xFF\x62\xFF\x63", "utf8");
+    expect(buffer).toStrictEqual(Buffer.from([0x61, 0xc3, 0xbf, 0x62, 0x00]));
+  }
+  {
+    const buffer = Buffer.alloc(5);
+    buffer.write("\xFF\x61\xFF\x62\xFF", "utf8");
+    expect(buffer).toStrictEqual(Buffer.from([0xc3, 0xbf, 0x61, 0xc3, 0xbf]));
+  }
 });
 
 it("triple slice", () => {
@@ -1423,6 +1441,25 @@ it("read", () => {
 
   data.setUint8(0, 255, false);
   expect(buf.readUInt8(0)).toBe(255);
+  reset();
+
+  data.setUint32(0, 0x55555555, false);
+  data.setUint16(4, 0x5555, false);
+  expect(buf.readUintBE(0, 5)).toBe(366503875925);
+  expect(buf.readUintBE(0, 6)).toBe(93824992236885);
+  reset();
+
+  data.setUint32(0, 0xaaaaaaaa, false);
+  data.setUint16(4, 0xaaaa, false);
+  expect(buf.readUintBE(0, 5)).toBe(733007751850);
+  expect(buf.readUintBE(0, 6)).toBe(187649984473770);
+  reset();
+
+  // issue#6759
+  data.setUint32(0, 0xffffffff, false);
+  data.setUint16(4, 0xffff, false);
+  expect(buf.readUintBE(0, 5)).toBe(1099511627775);
+  expect(buf.readUintBE(0, 6)).toBe(281474976710655);
   reset();
 });
 

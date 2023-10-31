@@ -928,9 +928,11 @@ pub fn getFdPath(fd_: bun.FileDescriptor, out_buffer: *[MAX_PATH_BYTES]u8) Maybe
             const wide_slice = std.os.windows.GetFinalPathNameByHandle(fd, .{}, wide_buf[0..]) catch {
                 return Maybe([]u8){ .err = .{ .errno = @intFromEnum(bun.C.SystemErrno.EBADF) } };
             };
-
             // Trust that Windows gives us valid UTF-16LE.
-            return .{ .result = @constCast(bun.strings.fromWPath(out_buffer, wide_slice)) };
+            var slash_buf: [MAX_PATH_BYTES * 2]u8 = undefined;
+            var slash_str = bun.strings.fromWPath(&slash_buf, wide_slice);
+
+            return .{ .result = bun.path.normalizeStringBuf(slash_str, out_buffer, false, .loose) };
         },
         .macos, .ios, .watchos, .tvos => {
             // On macOS, we can use F.GETPATH fcntl command to query the OS for

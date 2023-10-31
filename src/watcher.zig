@@ -117,7 +117,7 @@ pub const INotify = struct {
         std.debug.assert(!loaded_inotify);
         loaded_inotify = true;
 
-        if (std.os.getenvZ("BUN_INOTIFY_COALESCE_INTERVAL")) |env| {
+        if (bun.getenvZ("BUN_INOTIFY_COALESCE_INTERVAL")) |env| {
             coalesce_interval = std.fmt.parseInt(isize, env, 10) catch 100_000;
         }
 

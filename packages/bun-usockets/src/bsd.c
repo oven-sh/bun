@@ -397,6 +397,32 @@ int bsd_recv(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags) {
     return recv(fd, buf, length, flags);
 }
 
+#if !defined(_WIN32)
+#include <sys/uio.h>
+
+int bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length) {
+    struct iovec chunks[2];
+
+    chunks[0].iov_base = (char *)header;
+    chunks[0].iov_len = header_length;
+    chunks[1].iov_base = (char *)payload;
+    chunks[1].iov_len = payload_length;
+
+    return writev(fd, chunks, 2);
+}
+#else
+int bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length) {
+    int written = bsd_send(fd, header, header_length, 0);
+    if (written == header_length) {
+        int second_write = bsd_send(fd, payload, payload_length, 0);
+        if (second_write > 0) {
+            written += second_write;
+        }
+    }
+    return written;
+}
+#endif
+
 int bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length, int msg_more) {
 
     // MSG_MORE (Linux), MSG_PARTIAL (Windows), TCP_NOPUSH (BSD)

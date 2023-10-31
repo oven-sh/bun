@@ -25,7 +25,7 @@
 #include "URLSearchParams.h"
 
 #include "DOMURL.h"
-#include "wtf/URLParser.h"
+#include <wtf/URLParser.h>
 #include "helpers.h"
 #include "JSURLSearchParams.h"
 

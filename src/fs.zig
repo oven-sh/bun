@@ -110,14 +110,14 @@ pub const FileSystem = struct {
         comptime force: bool,
     ) !*FileSystem {
         const allocator = bun.fs_allocator;
-        var _top_level_dir = top_level_dir orelse (if (Environment.isBrowser) "/project/" else try std.process.getCwdAlloc(allocator));
+        var _top_level_dir = top_level_dir orelse (if (Environment.isBrowser) "/project/" else try bun.getcwdAlloc(allocator));
 
         // Ensure there's a trailing separator in the top level directory
         // This makes path resolution more reliable
-        if (!std.fs.path.isSep(_top_level_dir[_top_level_dir.len - 1])) {
+        if (!bun.path.isSepAny(_top_level_dir[_top_level_dir.len - 1])) {
             const tld = try allocator.alloc(u8, _top_level_dir.len + 1);
             bun.copy(u8, tld, _top_level_dir);
-            tld[tld.len - 1] = std.fs.path.sep;
+            tld[tld.len - 1] = '/';
             // if (!isBrowser) {
             //     allocator.free(_top_level_dir);
             // }
@@ -375,6 +375,8 @@ pub const FileSystem = struct {
 
         pub const Cache = struct {
             symlink: PathString = PathString.empty,
+            /// Too much code expects this to be 0
+            /// don't make it bun.invalid_fd
             fd: StoredFileDescriptorType = 0,
             kind: Kind = .file,
         };
@@ -428,7 +430,7 @@ pub const FileSystem = struct {
         return @call(.always_inline, path_handler.joinStringBuf, .{
             &join_buf,
             parts,
-            .auto,
+            .loose,
         });
     }
 
@@ -436,7 +438,7 @@ pub const FileSystem = struct {
         return @call(.always_inline, path_handler.joinStringBuf, .{
             buf,
             parts,
-            .auto,
+            .loose,
         });
     }
 
@@ -465,7 +467,7 @@ pub const FileSystem = struct {
         const joined = path_handler.joinAbsString(
             f.top_level_dir,
             parts,
-            .auto,
+            .loose,
         );
         return try allocator.dupe(u8, joined);
     }
@@ -474,7 +476,7 @@ pub const FileSystem = struct {
         const joined = path_handler.joinAbsString(
             f.top_level_dir,
             parts,
-            .auto,
+            .loose,
         );
         return try allocator.dupeZ(u8, joined);
     }
@@ -483,12 +485,12 @@ pub const FileSystem = struct {
         return path_handler.joinAbsString(
             f.top_level_dir,
             parts,
-            .auto,
+            .loose,
         );
     }
 
     pub fn absBuf(f: *@This(), parts: anytype, buf: []u8) string {
-        return path_handler.joinAbsStringBuf(f.top_level_dir, buf, parts, .auto);
+        return path_handler.joinAbsStringBuf(f.top_level_dir, buf, parts, .loose);
     }
 
     pub fn joinAlloc(f: *@This(), allocator: std.mem.Allocator, parts: anytype) !string {
@@ -530,11 +532,34 @@ pub const FileSystem = struct {
             else => "/tmp",
         };
 
+        fn platformTempDir() []const u8 {
+            if (comptime Environment.isWindows) {
+                // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw#remarks
+                return bun.getenvZ("TMP") orelse bun.getenvZ("TEMP") orelse brk: {
+                    if (bun.getenvZ("USERPROFILE")) |profile| {
+                        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                        var parts = [_]string{"AppData/Local/Temp"};
+                        var out = bun.path.joinAbsStringBuf(profile, &buf, &parts, .loose);
+                        break :brk bun.default_allocator.dupe(u8, out) catch unreachable;
+                    }
+
+                    return "C:/Windows/Temp";
+                };
+            }
+
+            return PLATFORM_TMP_DIR;
+        }
+
+        pub const Tmpfile = switch (Environment.os) {
+            .windows => TmpfileWindows,
+            else => TmpfilePosix,
+        };
+
         pub var tmpdir_path: []const u8 = undefined;
         pub var tmpdir_path_set = false;
         pub fn tmpdirPath(_: *const @This()) []const u8 {
             if (!tmpdir_path_set) {
-                tmpdir_path = bun.getenvZ("BUN_TMPDIR") orelse bun.getenvZ("TMPDIR") orelse PLATFORM_TMP_DIR;
+                tmpdir_path = bun.getenvZ("BUN_TMPDIR") orelse bun.getenvZ("TMPDIR") orelse platformTempDir();
                 tmpdir_path_set = true;
             }
 
@@ -543,20 +568,18 @@ pub const FileSystem = struct {
 
         pub fn openTmpDir(_: *const RealFS) !std.fs.Dir {
             if (!tmpdir_path_set) {
-                tmpdir_path = bun.getenvZ("BUN_TMPDIR") orelse bun.getenvZ("TMPDIR") orelse PLATFORM_TMP_DIR;
+                tmpdir_path = bun.getenvZ("BUN_TMPDIR") orelse bun.getenvZ("TMPDIR") orelse platformTempDir();
                 tmpdir_path_set = true;
             }
 
-            return (try std.fs.cwd().openIterableDir(tmpdir_path, .{
-                .access_sub_paths = true,
-            })).dir;
+            return try bun.openDirAbsolute(tmpdir_path);
         }
 
         pub fn entriesAt(this: *RealFS, index: allocators.IndexType, generation: bun.Generation) ?*EntriesOption {
             var existing = this.entries.atIndex(index) orelse return null;
             if (existing.* == .entries) {
                 if (existing.entries.generation < generation) {
-                    var handle = std.fs.Dir.openIterableDir(std.fs.cwd(), existing.entries.dir, .{}) catch |err| {
+                    var handle = bun.openDirA(std.fs.cwd(), existing.entries.dir) catch |err| {
                         existing.entries.data.clearAndFree(bun.fs_allocator);
 
                         return this.readDirectoryError(existing.entries.dir, err) catch unreachable;
@@ -601,44 +624,45 @@ pub const FileSystem = struct {
             return file;
         }
 
-        pub const Tmpfile = struct {
+        pub const TmpfilePosix = struct {
             fd: bun.FileDescriptor = bun.invalid_fd,
             dir_fd: bun.FileDescriptor = bun.invalid_fd,
 
-            pub inline fn dir(this: *Tmpfile) std.fs.Dir {
+            pub inline fn dir(this: *TmpfilePosix) std.fs.Dir {
                 return std.fs.Dir{
                     .fd = bun.fdcast(this.dir_fd),
                 };
             }
 
-            pub inline fn file(this: *Tmpfile) std.fs.File {
+            pub inline fn file(this: *TmpfilePosix) std.fs.File {
                 return std.fs.File{
                     .handle = bun.fdcast(this.fd),
                 };
             }
 
-            pub fn close(this: *Tmpfile) void {
+            pub fn close(this: *TmpfilePosix) void {
                 if (this.fd != bun.invalid_fd) _ = bun.sys.close(this.fd);
             }
 
-            pub fn create(this: *Tmpfile, rfs: *RealFS, name: [*:0]const u8) !void {
+            pub fn create(this: *TmpfilePosix, rfs: *RealFS, name: [:0]const u8) !void {
                 var tmpdir_ = try rfs.openTmpDir();
 
                 const flags = std.os.O.CREAT | std.os.O.RDWR | std.os.O.CLOEXEC;
                 this.dir_fd = bun.toFD(tmpdir_.fd);
 
-                this.fd = bun.toFD(try std.os.openatZ(tmpdir_.fd, name, flags, if (comptime Environment.isPosix) std.os.S.IRWXU else 0));
+                const result = try bun.sys.openat(tmpdir_.fd, name, flags, std.os.S.IRWXU).unwrap();
+                this.fd = bun.toFD(result);
             }
 
-            pub fn promote(this: *Tmpfile, from_name: [*:0]const u8, destination_fd: std.os.fd_t, name: [*:0]const u8) !void {
+            pub fn promoteToCWD(this: *TmpfilePosix, from_name: [*:0]const u8, name: [*:0]const u8) !void {
                 std.debug.assert(this.fd != bun.invalid_fd);
                 std.debug.assert(this.dir_fd != bun.invalid_fd);
 
-                try C.moveFileZWithHandle(bun.fdcast(this.fd), bun.fdcast(this.dir_fd), from_name, destination_fd, name);
+                try C.moveFileZWithHandle(bun.fdcast(this.fd), bun.fdcast(this.dir_fd), from_name, std.fs.cwd().fd, name);
                 this.close();
             }
 
-            pub fn closeAndDelete(this: *Tmpfile, name: [*:0]const u8) void {
+            pub fn closeAndDelete(this: *TmpfilePosix, name: [*:0]const u8) void {
                 this.close();
 
                 if (comptime !Environment.isLinux) {
@@ -646,6 +670,61 @@ pub const FileSystem = struct {
 
                     this.dir().deleteFileZ(name) catch {};
                 }
+            }
+        };
+
+        pub const TmpfileWindows = struct {
+            fd: bun.FileDescriptor = bun.invalid_fd,
+            existing_path: []const u8 = "",
+
+            pub inline fn dir(_: *TmpfileWindows) std.fs.Dir {
+                return Fs.FileSystem.instance.tmpdir();
+            }
+
+            pub inline fn file(this: *TmpfileWindows) std.fs.File {
+                return std.fs.File{
+                    .handle = bun.fdcast(this.fd),
+                };
+            }
+
+            pub fn close(this: *TmpfileWindows) void {
+                if (this.fd != bun.invalid_fd) _ = bun.sys.close(this.fd);
+            }
+
+            pub fn create(this: *TmpfileWindows, rfs: *RealFS, name: [:0]const u8) !void {
+                var tmpdir_ = try rfs.openTmpDir();
+
+                const flags = std.os.O.CREAT | std.os.O.WRONLY | std.os.O.CLOEXEC;
+
+                var result = try bun.sys.openat(bun.toFD(tmpdir_.fd), name, flags, 0).unwrap();
+                this.fd = bun.toFD(result);
+                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                const existing_path = try bun.getFdPath(this.fd, &buf);
+                this.existing_path = try bun.default_allocator.dupe(u8, existing_path);
+            }
+
+            pub fn promoteToCWD(this: *TmpfileWindows, from_name: [*:0]const u8, name: [:0]const u8) !void {
+                _ = from_name;
+                var existing_buf: bun.MAX_WPATH = undefined;
+                var new_buf: bun.MAX_WPATH = undefined;
+                this.close();
+                const existing = bun.strings.toExtendedPathNormalized(&new_buf, this.existing_path);
+                const new = if (std.fs.path.isAbsoluteWindows(name))
+                    bun.strings.toExtendedPathNormalized(&existing_buf, name)
+                else
+                    bun.strings.toWPathNormalized(&existing_buf, name);
+                if (comptime Environment.allow_assert) {
+                    debug("moveFileExW({s}, {s})", .{ strings.fmtUTF16(existing), strings.fmtUTF16(new) });
+                }
+
+                if (bun.windows.kernel32.MoveFileExW(existing.ptr, new.ptr, bun.windows.MOVEFILE_COPY_ALLOWED | bun.windows.MOVEFILE_REPLACE_EXISTING | bun.windows.MOVEFILE_WRITE_THROUGH) == bun.windows.FALSE) {
+                    try bun.windows.Win32Error.get().unwrap();
+                }
+            }
+
+            pub fn closeAndDelete(this: *TmpfileWindows, name: [*:0]const u8) void {
+                _ = name;
+                this.close();
             }
         };
 
@@ -832,10 +911,17 @@ pub const FileSystem = struct {
             pub const Map = allocators.BSSMap(EntriesOption, Preallocate.Counts.dir_entry, false, 256, true);
         };
 
-        pub fn openDir(_: *RealFS, unsafe_dir_string: string) std.fs.File.OpenError!std.fs.Dir {
-            const dir = try std.os.open(unsafe_dir_string, std.os.O.DIRECTORY, 0);
+        pub fn openDir(_: *RealFS, unsafe_dir_string: string) !std.fs.Dir {
+            const dirfd = if (Environment.isWindows)
+                bun.sys.openDirAtWindowsA(bun.invalid_fd, unsafe_dir_string, true, true)
+            else
+                bun.sys.openA(
+                    unsafe_dir_string,
+                    std.os.O.DIRECTORY,
+                    0,
+                );
             return std.fs.Dir{
-                .fd = dir,
+                .fd = bun.fdcast(try dirfd.unwrap()),
             };
         }
 
@@ -1392,7 +1478,7 @@ pub const PathName = struct {
         return if (this.dir.len == 0) "./" else this.dir.ptr[0 .. this.dir.len + @as(
             usize,
             @intCast(@intFromBool(
-                this.dir[this.dir.len - 1] != std.fs.path.sep_posix and (@intFromPtr(this.dir.ptr) + this.dir.len + 1) == @intFromPtr(this.base.ptr),
+                !bun.path.isSepAny(this.dir[this.dir.len - 1]) and (@intFromPtr(this.dir.ptr) + this.dir.len + 1) == @intFromPtr(this.base.ptr),
             )),
         )];
     }
@@ -1403,8 +1489,15 @@ pub const PathName = struct {
         var ext: []const u8 = undefined;
         var dir = path;
         var is_absolute = true;
+        const has_disk_designator = path.len > 2 and path[1] == ':' and switch (path[0]) {
+            'a'...'z', 'A'...'Z' => true,
+            else => false,
+        } and bun.path.isSepAny(path[2]);
+        if (has_disk_designator) {
+            path = path[2..];
+        }
 
-        var _i = strings.lastIndexOfChar(path, '/');
+        var _i = bun.path.lastIndexOfSep(path);
         while (_i) |i| {
             // Stop if we found a non-trailing slash
             if (i + 1 != path.len and path.len > i + 1) {
@@ -1417,7 +1510,7 @@ pub const PathName = struct {
             // Ignore trailing slashes
             path = path[0..i];
 
-            _i = strings.lastIndexOfChar(path, '/');
+            _i = bun.path.lastIndexOfSep(path);
         }
 
         // Strip off the extension
@@ -1432,8 +1525,12 @@ pub const PathName = struct {
             dir = &([_]u8{});
         }
 
-        if (base.len > 1 and base[base.len - 1] == '/') {
+        if (base.len > 1 and bun.path.isSepAny(base[base.len - 1])) {
             base = base[0 .. base.len - 1];
+        }
+
+        if (!is_absolute and has_disk_designator) {
+            dir = _path[0 .. dir.len + 2];
         }
 
         return PathName{

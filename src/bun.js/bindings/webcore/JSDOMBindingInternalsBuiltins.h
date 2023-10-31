@@ -30,10 +30,10 @@
 
 // #pragma once
 
-// #include "JavaScriptCore/BuiltinUtils.h"
-// #include "JavaScriptCore/Identifier.h"
-// #include "JavaScriptCore/JSFunction.h"
-// #include "JavaScriptCore/UnlinkedFunctionExecutable.h"
+// #include <JavaScriptCore/BuiltinUtils.h>
+// #include <JavaScriptCore/Identifier.h>
+// #include <JavaScriptCore/JSFunction.h>
+// #include <JavaScriptCore/UnlinkedFunctionExecutable.h>
 
 // namespace JSC {
 // class FunctionExecutable;

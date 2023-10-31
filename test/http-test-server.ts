@@ -163,6 +163,5 @@ export function createServer() {
       return response;
     },
   });
-  const { port, stop } = server;
-  return { server, port, stop };
+  return server;
 }

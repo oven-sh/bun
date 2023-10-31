@@ -244,7 +244,7 @@ void JSSubtleCrypto::destroy(JSC::JSCell* cell)
     thisObject->JSSubtleCrypto::~JSSubtleCrypto();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsSubtleCryptoConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsSubtleCryptoConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -515,7 +515,9 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_exportKeyBody(
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto key = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "key", "SubtleCrypto", "exportKey", "CryptoKey"); });
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.exportKey(WTFMove(format), *key, WTFMove(promise)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) {
+        return impl.exportKey(WTFMove(format), *key, WTFMove(promise));
+    })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_exportKey, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

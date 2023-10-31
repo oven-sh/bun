@@ -778,10 +778,10 @@ class ClientHttp2Session extends Http2Session {
       var stream = self.#streams.get(streamId);
       if (stream) {
         if (stream[bunHTTP2StreamResponded]) {
-          stream.emit("trailers", headers.reduce(reduceToCompatibleHeaders), flags);
+          stream.emit("trailers", headers.reduce(reduceToCompatibleHeaders, {}), flags);
         } else {
           stream[bunHTTP2StreamResponded] = true;
-          stream.emit("response", headers.reduce(reduceToCompatibleHeaders), flags);
+          stream.emit("response", headers.reduce(reduceToCompatibleHeaders, {}), flags);
         }
       }
     },
@@ -994,7 +994,7 @@ class ClientHttp2Session extends Http2Session {
   settings(settings: Settings, callback) {
     this.#pendingSettingsAck = true;
     this.#parser?.settings(settings);
-    if (callback) {
+    if (typeof callback === "function") {
       const start = Date.now();
       this.once("localSettings", () => {
         callback(null, this.#localSettings, Date.now() - start);
@@ -1161,7 +1161,7 @@ class ClientHttp2Session extends Http2Session {
       flat_headers.push({ name: ":scheme", value: protocol });
     }
     if (!authority) {
-      authority = { name: ":authority", value: url.hostname };
+      authority = { name: ":authority", value: url.host };
       flat_headers.push(authority);
     }
 

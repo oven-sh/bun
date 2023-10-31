@@ -970,6 +970,7 @@ pub const H2FrameParser = struct {
             const header = stream.decode(&header_buffer, payload[offset..]) catch break;
             offset += header.next;
             var result = JSValue.createEmptyObject(globalObject, 2);
+            log("header {s} {s}", .{ header.name, header.value });
             const name = JSC.ZigString.fromUTF8(header.name).toValueGC(globalObject);
             const value = JSC.ZigString.fromUTF8(header.value).toValueGC(globalObject);
             result.put(globalObject, JSC.ZigString.static("name"), name);

@@ -2600,7 +2600,7 @@ pub const PackageManager = struct {
         // Was this package already allocated? Let's reuse the existing one.
         if (this.lockfile.getPackageID(
             name_hash,
-            version,
+            if (this.to_update) null else version,
             &.{
                 .tag = .npm,
                 .value = .{

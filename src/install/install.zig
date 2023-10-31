@@ -4840,11 +4840,20 @@ pub const PackageManager = struct {
                 return try std.fs.cwd().makeOpenPathIterable(path, .{});
             }
 
-            if (bun.getenvZ("XDG_CACHE_HOME") orelse bun.getenvZ("HOME")) |home_dir| {
-                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                var parts = [_]string{ ".bun", "install", "global" };
-                var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
-                return try std.fs.cwd().makeOpenPathIterable(path, .{});
+            if (!Environment.isWindows) {
+                if (bun.getenvZ("XDG_CACHE_HOME") orelse bun.getenvZ("HOME")) |home_dir| {
+                    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var parts = [_]string{ ".bun", "install", "global" };
+                    var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
+                    return try std.fs.cwd().makeOpenPathIterable(path, .{});
+                }
+            } else {
+                if (bun.getenvZ("USERPROFILE")) |home_dir| {
+                    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var parts = [_]string{ ".bun", "install", "global" };
+                    var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
+                    return try std.fs.cwd().makeOpenPathIterable(path, .{});
+                }
             }
 
             return error.@"No global directory found";

@@ -247,7 +247,7 @@ void *us_timer_ext(struct us_timer_t *timer) {
          sizeof(uv_timer_t);
 }
 
-void us_timer_close(struct us_timer_t *t) {
+void us_timer_close(struct us_timer_t *t, int fallthrough) {
   struct us_internal_callback_t *cb = (struct us_internal_callback_t *)t;
 
   uv_timer_t *uv_timer = (uv_timer_t *)(cb + 1);

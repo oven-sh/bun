@@ -28,6 +28,7 @@ ARG SCCACHE_S3_USE_SSL
 ARG SCCACHE_ENDPOINT
 ARG AWS_ACCESS_KEY_ID
 ARG AWS_SECRET_ACCESS_KEY
+ARG CANARY=0
 
 FROM bitnami/minideb:bullseye as bun-base
 
@@ -316,6 +317,9 @@ RUN mkdir ${BUN_DIR}/bun-webkit \
 
 FROM bun-base as bun-cpp-objects
 
+ARG BUN_DIR
+ARG CANARY
+
 COPY --from=bun-webkit ${BUN_DIR}/bun-webkit ${BUN_DIR}/bun-webkit
 
 COPY packages ${BUN_DIR}/packages
@@ -328,7 +332,7 @@ ENV CCACHE_DIR=/ccache
 RUN --mount=type=cache,target=/ccache  mkdir ${BUN_DIR}/build \
   && cd ${BUN_DIR}/build \
   && mkdir -p tmp_modules tmp_functions js codegen \
-  && cmake .. -GNinja -DCMAKE_BUILD_TYPE=Release -DBUN_CPP_ONLY=1 -DWEBKIT_DIR=/build/bun/bun-webkit \
+  && cmake .. -GNinja -DCANARY=${CANARY} -DCMAKE_BUILD_TYPE=Release -DBUN_CPP_ONLY=1 -DWEBKIT_DIR=/build/bun/bun-webkit \
   && bash compile-cpp-only.sh
 
 FROM bun-base-with-zig as bun-codegen-for-zig

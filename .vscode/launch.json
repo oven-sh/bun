@@ -7,19 +7,13 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "type": "lldb",
+      "type": "cppvsdbg",
       "request": "launch",
       "name": "bun test [file]",
-      "program": "bun-debug",
+      "program": "${workspaceFolder}/build/bun-debug.exe",
       "args": ["test", "${file}"],
       // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
-      "cwd": "${workspaceFolder}/test",
-      "env": {
-        "FORCE_COLOR": "1",
-        "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
-      },
-      "console": "internalConsole"
+      "cwd": "${workspaceFolder}/test"
     },
     {
       "type": "lldb",

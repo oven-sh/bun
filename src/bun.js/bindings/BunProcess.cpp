@@ -1039,7 +1039,7 @@ static JSValue constructProcessDisconnect(VM& vm, JSObject* processObject)
 
 static JSValue constructPid(VM& vm, JSObject* processObject)
 {
-    return jsNumber(getpid());
+    return jsNumber(_getpid());
 }
 
 static JSValue constructPpid(VM& vm, JSObject* processObject)

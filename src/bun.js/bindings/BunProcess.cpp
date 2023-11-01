@@ -1039,7 +1039,6 @@ static JSValue constructProcessDisconnect(VM& vm, JSObject* processObject)
 
 #if OS(WINDOWS)
 #define getpid _getpid
-#define getppid _getppid
 #endif
 
 static JSValue constructPid(VM& vm, JSObject* processObject)
@@ -1049,7 +1048,11 @@ static JSValue constructPid(VM& vm, JSObject* processObject)
 
 static JSValue constructPpid(VM& vm, JSObject* processObject)
 {
+#if OS(WINDOWS)
+    return jsNumber(0);
+#else
     return jsNumber(getppid());
+#endif
 }
 
 static JSValue constructArgv0(VM& vm, JSObject* processObject)

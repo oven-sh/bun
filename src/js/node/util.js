@@ -40,7 +40,7 @@ function deprecate(fn, msg, code) {
       }
       warned = true;
     }
-    return fn.apply(this, arguments);
+    return fn.$apply(this, arguments);
   }
   return deprecated;
 }
@@ -63,7 +63,7 @@ function debuglog(set) {
     if (debugEnvRegex.test(set)) {
       var pid = process.pid;
       debugs[set] = function () {
-        var msg = format.apply(cjs_exports, arguments);
+        var msg = format.$apply(cjs_exports, arguments);
         console.error("%s %d: %s", set, pid, msg);
       };
     } else {
@@ -125,7 +125,7 @@ function timestamp() {
   return [d.getDate(), months[d.getMonth()], time].join(" ");
 }
 var log = function log() {
-  console.log("%s - %s", timestamp(), format.apply(cjs_exports, arguments));
+  console.log("%s - %s", timestamp(), format.$apply(cjs_exports, arguments));
 };
 var inherits = function inherits(ctor, superCtor) {
   ctor.super_ = superCtor;
@@ -147,8 +147,7 @@ var _extend = function (origin, add) {
   }
   return origin;
 };
-
-var kCustomPromisifiedSymbol = Symbol.for("util.promisify.custom");
+var kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
 var promisify = function promisify(original) {
   if (typeof original !== "function") throw new TypeError('The "original" argument must be of type Function');
   if (kCustomPromisifiedSymbol && original[kCustomPromisifiedSymbol]) {
@@ -182,7 +181,7 @@ var promisify = function promisify(original) {
       }
     });
     try {
-      original.apply(this, args);
+      original.$apply(this, args);
     } catch (err) {
       promiseReject(err);
     }
@@ -213,16 +212,16 @@ function callbackify(original) {
     throw new TypeError('The "original" argument must be of type Function');
   }
   function callbackified() {
-    var args = Array.prototype.slice.call(arguments);
+    var args = Array.prototype.slice.$call(arguments);
     var maybeCb = args.pop();
     if (typeof maybeCb !== "function") {
       throw new TypeError("The last argument must be of type Function");
     }
     var self = this;
     var cb = function () {
-      return maybeCb.apply(self, arguments);
+      return maybeCb.$apply(self, arguments);
     };
-    original.apply(this, args).then(
+    original.$apply(this, args).then(
       function (ret) {
         process.nextTick(cb, null, ret);
       },

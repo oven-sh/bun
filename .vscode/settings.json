@@ -8,43 +8,35 @@
   "search.useIgnoreFiles": true,
   "zig.buildOnSave": false,
   "zig.formattingProvider": "zls",
-  "zig.buildArgs": ["obj", "-Dfor-editor"],
   "zig.buildOption": "build",
   "zig.buildFilePath": "${workspaceFolder}/build.zig",
+  "zig.initialSetupDone": true,
+  "editor.formatOnSave": true,
   "[zig]": {
     "editor.tabSize": 4,
     "editor.useTabStops": false,
-    "editor.defaultFormatter": "ziglang.vscode-zig",
-    "editor.formatOnSave": true
+    "editor.defaultFormatter": "ziglang.vscode-zig"
   },
   "[ts]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode",
-    "editor.formatOnSave": true
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
   "[js]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode",
-    "editor.formatOnSave": true
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
   "zig.zls.enableInlayHints": false,
-  "zig.zls.enabled": true,
   "git.ignoreSubmodules": true,
   "[jsx]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode",
-    "editor.formatOnSave": true
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
   "[tsx]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode",
-    "editor.formatOnSave": true
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
-  "[yaml]": {
-    "editor.formatOnSave": true
-  },
+  "[yaml]": {},
   "[markdown]": {
     "editor.unicodeHighlight.ambiguousCharacters": false,
     "editor.unicodeHighlight.invisibleCharacters": false,
     "diffEditor.ignoreTrimWhitespace": false,
     "editor.defaultFormatter": "esbenp.prettier-vscode",
-    "editor.formatOnSave": true,
     "editor.wordWrap": "on",
     "editor.quickSuggestions": {
       "comments": "off",
@@ -64,8 +56,6 @@
     "**/*.xcscheme": true,
     "**/*.pem": true,
     "**/*.xcodeproj": true,
-    "test/snapshots": true,
-    "test/snapshots-no-hmr": true,
     "src/bun.js/WebKit": true,
     "src/deps/libarchive": true,
     "src/deps/mimalloc": true,
@@ -77,30 +67,25 @@
     "src/deps/lol-html": true,
     "src/deps/c-ares": true,
     "src/deps/tinycc": true,
-    "src/deps/zstd": true,
-    "test/snippets/package-json-exports/_node_modules_copy": true,
-    "src/js/out": true,
-    "packages/bun-uws/fuzzing/seed-corpus/": true,
-    "**/*.dep": true,
-    "**/CMakeFiles": true
+    "src/deps/zstd": true
   },
   "C_Cpp.files.exclude": {
     "**/.vscode": true,
-    "src/bun.js/WebKit/JSTests": true,
-    "src/bun.js/WebKit/Tools": true,
-    "src/bun.js/WebKit/WebDriverTests": true,
-    "src/bun.js/WebKit/WebKit.xcworkspace": true,
-    "src/bun.js/WebKit/WebKitLibraries": true,
-    "src/bun.js/WebKit/Websites": true,
-    "src/bun.js/WebKit/resources": true,
-    "src/bun.js/WebKit/LayoutTests": true,
-    "src/bun.js/WebKit/ManualTests": true,
-    "src/bun.js/WebKit/PerformanceTests": true,
-    "src/bun.js/WebKit/WebKitLegacy": true,
-    "src/bun.js/WebKit/WebCore": true,
-    "src/bun.js/WebKit/WebDriver": true,
-    "src/bun.js/WebKit/WebKitBuild": true,
-    "src/bun.js/WebKit/WebInspectorUI": true
+    "WebKit/JSTests": true,
+    "WebKit/Tools": true,
+    "WebKit/WebDriverTests": true,
+    "WebKit/WebKit.xcworkspace": true,
+    "WebKit/WebKitLibraries": true,
+    "WebKit/Websites": true,
+    "WebKit/resources": true,
+    "WebKit/LayoutTests": true,
+    "WebKit/ManualTests": true,
+    "WebKit/PerformanceTests": true,
+    "WebKit/WebKitLegacy": true,
+    "WebKit/WebCore": true,
+    "WebKit/WebDriver": true,
+    "WebKit/WebKitBuild": true,
+    "WebKit/WebInspectorUI": true
   },
   "[cpp]": {
     "editor.defaultFormatter": "xaver.clang-format"
@@ -191,20 +176,12 @@
     "set": "cpp",
     "__memory": "cpp",
     "memory_resource": "cpp",
-    "resource.h": "c",
-    "sysinfo.h": "c",
     "*.tcc": "cpp",
     "list": "cpp",
     "shared_mutex": "cpp",
     "cinttypes": "cpp",
     "variant": "cpp",
     "sysctl.h": "c",
-    "interface_adresses.h": "c",
-    "interface_addresses.h": "c",
-    "ctype.h": "c",
-    "ethernet.h": "c",
-    "inet.h": "c",
-    "packet.h": "c",
     "queue": "cpp",
     "compare": "cpp",
     "concepts": "cpp",
@@ -220,9 +197,24 @@
     "regex": "cpp",
     "span": "cpp",
     "valarray": "cpp",
-    "codecvt": "cpp"
+    "codecvt": "cpp",
+    "xtr1common": "cpp",
+    "stop_token": "cpp",
+    "xfacet": "cpp",
+    "xhash": "cpp",
+    "xiosbase": "cpp",
+    "xlocale": "cpp",
+    "xlocbuf": "cpp",
+    "xlocinfo": "cpp",
+    "xlocmes": "cpp",
+    "xlocmon": "cpp",
+    "xlocnum": "cpp",
+    "xloctime": "cpp",
+    "xmemory": "cpp",
+    "xstring": "cpp",
+    "xtree": "cpp",
+    "xutility": "cpp"
   },
-  "cmake.configureOnOpen": false,
   "C_Cpp.errorSquiggles": "enabled",
   "eslint.workingDirectories": ["packages/bun-types"],
   "typescript.tsdk": "node_modules/typescript/lib"

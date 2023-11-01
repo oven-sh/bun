@@ -6,6 +6,7 @@ const Fs = @import("../fs.zig");
 const js_ast = bun.JSAst;
 const Bundler = bun.Bundler;
 const strings = bun.strings;
+
 pub const FallbackEntryPoint = struct {
     code_buffer: [8096]u8 = undefined,
     path_buffer: [bun.MAX_PATH_BYTES]u8 = undefined,
@@ -156,6 +157,25 @@ pub const ClientEntryPoint = struct {
     }
 };
 
+const QuoteEscapeFormat = struct {
+    data: []const u8,
+
+    pub fn format(self: QuoteEscapeFormat, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        var i: usize = 0;
+        while (std.mem.indexOfAnyPos(u8, self.data, i, "\"\n\\")) |j| : (i = j + 1) {
+            try writer.writeAll(self.data[i..j]);
+            try writer.writeAll(switch (self.data[j]) {
+                '"' => "\\\"",
+                '\n' => "\\n",
+                '\\' => "\\\\",
+                else => unreachable,
+            });
+        }
+        if (i == self.data.len) return;
+        try writer.writeAll(self.data[i..]);
+    }
+};
+
 pub const ServerEntryPoint = struct {
     source: logger.Source = undefined,
 
@@ -163,29 +183,16 @@ pub const ServerEntryPoint = struct {
         entry: *ServerEntryPoint,
         allocator: std.mem.Allocator,
         is_hot_reload_enabled: bool,
-        original_path: Fs.PathName,
+        path_to_use: string,
         name: string,
     ) !void {
-
-        // This is *extremely* naive.
-        // The basic idea here is this:
-        // --
-        // import * as EntryPoint from 'entry-point';
-        // import boot from 'framework';
-        // boot(EntryPoint);
-        // --
-        // We go through the steps of printing the code -- only to then parse/transpile it because
-        // we want it to go through the linker and the rest of the transpilation process
-
-        const dir_to_use: string = original_path.dirWithTrailingSlash();
-
         const code = brk: {
             if (is_hot_reload_enabled) {
                 break :brk try std.fmt.allocPrint(
                     allocator,
                     \\// @bun
                     \\var hmrSymbol = Symbol.for("BunServerHMR");
-                    \\import * as start from '{s}{s}';
+                    \\import * as start from '{}';
                     \\var entryNamespace = start;
                     \\if (typeof entryNamespace?.then === 'function') {{
                     \\   entryNamespace = entryNamespace.then((entryNamespace) => {{
@@ -211,15 +218,14 @@ pub const ServerEntryPoint = struct {
                     \\
                 ,
                     .{
-                        dir_to_use,
-                        original_path.filename,
+                        QuoteEscapeFormat{ .data = path_to_use },
                     },
                 );
             }
             break :brk try std.fmt.allocPrint(
                 allocator,
                 \\// @bun
-                \\import * as start from '{s}{s}';
+                \\import * as start from "{}";
                 \\var entryNamespace = start;
                 \\if (typeof entryNamespace?.then === 'function') {{
                 \\   entryNamespace = entryNamespace.then((entryNamespace) => {{
@@ -233,8 +239,7 @@ pub const ServerEntryPoint = struct {
                 \\
             ,
                 .{
-                    dir_to_use,
-                    original_path.filename,
+                    QuoteEscapeFormat{ .data = path_to_use },
                 },
             );
         };

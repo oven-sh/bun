@@ -9,8 +9,11 @@
 #endif
 #endif
 
-#include "JavaScriptCore/BuiltinUtils.h"
 #include "root.h"
+
+#include <JavaScriptCore/VM.h>
+#include <JavaScriptCore/Identifier.h>
+#include <JavaScriptCore/BuiltinUtils.h>
 
 namespace WebCore {
 
@@ -140,7 +143,6 @@ using namespace JSC;
     macro(makeDOMException) \
     macro(makeGetterTypeError) \
     macro(makeThisTypeError) \
-    macro(map) \
     macro(method) \
     macro(nextTick) \
     macro(normalize) \
@@ -193,8 +195,6 @@ using namespace JSC;
     macro(resolve) \
     macro(resolveSync) \
     macro(resume) \
-    macro(search) \
-    macro(searchParams) \
     macro(self) \
     macro(sep) \
     macro(setBody) \

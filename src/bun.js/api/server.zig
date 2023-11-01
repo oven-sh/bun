@@ -49,7 +49,6 @@ const MarkedArrayBuffer = @import("../base.zig").MarkedArrayBuffer;
 const getAllocator = @import("../base.zig").getAllocator;
 const JSValue = @import("root").bun.JSC.JSValue;
 
-const Microtask = @import("root").bun.JSC.Microtask;
 const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
 const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;
 const JSPrivateDataPtr = @import("root").bun.JSC.JSPrivateDataPtr;
@@ -90,6 +89,7 @@ const SendfileContext = struct {
 };
 const DateTime = bun.DateTime;
 const linux = std.os.linux;
+const Async = bun.Async;
 
 const BlobFileContentResult = struct {
     data: [:0]const u8,
@@ -4830,7 +4830,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
         listen_callback: JSC.AnyTask = undefined,
         allocator: std.mem.Allocator,
-        poll_ref: JSC.PollRef = .{},
+        poll_ref: Async.KeepAlive = .{},
         temporary_url_buffer: std.ArrayListUnmanaged(u8) = .{},
 
         cached_hostname: bun.String = bun.String.empty,
@@ -5297,6 +5297,37 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             return JSC.JSValue.jsNumber(@as(i32, @intCast(@as(u31, @truncate(this.activeSocketsCount())))));
         }
 
+        pub fn getAddress(this: *ThisServer, globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {
+            switch (this.config.address) {
+                .unix => |unix| {
+                    var value = bun.String.create(bun.sliceTo(@constCast(unix), 0));
+                    defer value.deref();
+                    return value.toJS(globalThis);
+                },
+                .tcp => {
+                    var port: u16 = this.config.address.tcp.port;
+
+                    if (this.listener) |listener| {
+                        port = @intCast(listener.getLocalPort());
+
+                        var buf: [64]u8 = [_]u8{0} ** 64;
+                        var is_ipv6: bool = false;
+
+                        if (listener.socket().localAddressText(&buf, &is_ipv6)) |slice| {
+                            var ip = bun.String.create(slice);
+                            return JSSocketAddress__create(
+                                this.globalThis,
+                                ip.toJS(this.globalThis),
+                                port,
+                                is_ipv6,
+                            );
+                        }
+                    }
+                    return JSValue.jsNull();
+                },
+            }
+        }
+
         pub fn getHostname(this: *ThisServer, globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {
             if (this.cached_hostname.isEmpty()) {
                 if (this.listener) |listener| {
@@ -5549,7 +5580,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             this.listener = socket;
-            this.vm.event_loop_handle = uws.Loop.get();
+            this.vm.event_loop_handle = Async.Loop.get();
             if (!ssl_enabled_)
                 this.vm.addListeningSocketForWatchMode(@intCast(socket.?.socket().fd()));
         }

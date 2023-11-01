@@ -55,9 +55,9 @@
 #include <wtf/Scope.h>
 #include "SerializedScriptValue.h"
 #include "ScriptExecutionContext.h"
-#include "JavaScriptCore/JSMap.h"
-#include "JavaScriptCore/JSModuleLoader.h"
-#include "JavaScriptCore/DeferredWorkTimer.h"
+#include <JavaScriptCore/JSMap.h>
+#include <JavaScriptCore/JSModuleLoader.h>
+#include <JavaScriptCore/DeferredWorkTimer.h>
 #include "MessageEvent.h"
 #include <JavaScriptCore/HashMapImplInlines.h>
 #include "BunWorkerGlobalScope.h"
@@ -411,7 +411,7 @@ extern "C" void WebWorker__dispatchOnline(Worker* worker, Zig::GlobalObject* glo
     worker->dispatchOnline(globalObject);
 }
 
-extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker* worker, BunString message, EncodedJSValue errorValue)
+extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker* worker, BunString message, JSC::EncodedJSValue errorValue)
 {
     JSValue error = JSC::JSValue::decode(errorValue);
     ErrorEvent::Init init;

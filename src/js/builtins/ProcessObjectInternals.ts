@@ -93,6 +93,8 @@ export function getStdinStream(fd) {
   const stream = new ReadStream(fd);
 
   const originalOn = stream.on;
+
+  let stream_destroyed = false;
   stream.on = function (event, listener) {
     // Streams don't generally required to present any data when only
     // `readable` events are present, i.e. `readableFlowing === false`
@@ -106,7 +108,7 @@ export function getStdinStream(fd) {
     if (event === "readable") {
       ref();
     }
-    return originalOn.call(this, event, listener);
+    return originalOn.$call(this, event, listener);
   };
 
   stream.fd = fd;
@@ -114,13 +116,13 @@ export function getStdinStream(fd) {
   const originalPause = stream.pause;
   stream.pause = function () {
     unref();
-    return originalPause.call(this);
+    return originalPause.$call(this);
   };
 
   const originalResume = stream.resume;
   stream.resume = function () {
     ref();
-    return originalResume.call(this);
+    return originalResume.$call(this);
   };
 
   async function internalRead(stream) {
@@ -145,7 +147,11 @@ export function getStdinStream(fd) {
         }
       } else {
         stream.emit("end");
-        stream.pause();
+        if (!stream_destroyed) {
+          stream_destroyed = true;
+          stream.destroy();
+          unref();
+        }
       }
     } catch (err) {
       stream.destroy(err);
@@ -172,10 +178,13 @@ export function getStdinStream(fd) {
   });
 
   stream.on("close", () => {
-    process.nextTick(() => {
-      stream.destroy();
-      unref();
-    });
+    if (!stream_destroyed) {
+      stream_destroyed = true;
+      process.nextTick(() => {
+        stream.destroy();
+        unref();
+      });
+    }
   });
 
   return stream;
@@ -252,6 +261,11 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
       // but allows much quicker checks.
 
       class FixedCircularBuffer {
+        top: number;
+        bottom: number;
+        list: Array<FixedCircularBuffer | undefined>;
+        next: FixedCircularBuffer | null;
+
         constructor() {
           this.bottom = 0;
           this.top = 0;
@@ -283,6 +297,9 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
       }
 
       class FixedQueue {
+        head: FixedCircularBuffer;
+        tail: FixedCircularBuffer;
+
         constructor() {
           this.head = this.tail = new FixedCircularBuffer();
         }
@@ -380,4 +397,9 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
   }
 
   return nextTick;
+}
+
+$getter;
+export function mainModule() {
+  return $requireMap.$get(Bun.main);
 }

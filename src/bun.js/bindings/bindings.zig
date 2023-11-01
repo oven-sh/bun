@@ -2874,7 +2874,7 @@ pub const JSGlobalObject = extern struct {
         return cppFn("deleteModuleRegistryEntry", .{ this, name_ });
     }
 
-    pub fn bunVM_(this: *JSGlobalObject) *anyopaque {
+    fn bunVM_(this: *JSGlobalObject) *anyopaque {
         return cppFn("bunVM", .{this});
     }
 
@@ -4096,9 +4096,10 @@ pub const JSValue = enum(JSValueReprInt) {
         cppFn("getNameProperty", .{ this, global, ret });
     }
 
-    pub fn getName(this: JSValue, global: *JSGlobalObject) ZigString {
-        var ret = ZigString.init("");
-        getNameProperty(this, global, &ret);
+    extern fn JSC__JSValue__getName(JSC.JSValue, *JSC.JSGlobalObject, *bun.String) void;
+    pub fn getName(this: JSValue, global: *JSGlobalObject) bun.String {
+        var ret = bun.String.empty;
+        JSC__JSValue__getName(this, global, &ret);
         return ret;
     }
 
@@ -4935,35 +4936,37 @@ pub const JSValue = enum(JSValueReprInt) {
     pub inline fn deserialize(bytes: []const u8, global: *JSGlobalObject) JSValue {
         return Bun__JSValue__deserialize(global, bytes.ptr, @intCast(bytes.len));
     }
+
+    extern fn Bun__serializeJSValue(global: *JSC.JSGlobalObject, value: JSValue) SerializedScriptValue.External;
+    extern fn Bun__SerializedScriptSlice__free(*anyopaque) void;
+
+    pub const SerializedScriptValue = struct {
+        data: []const u8,
+        handle: *anyopaque,
+
+        const External = extern struct {
+            bytes: ?[*]const u8,
+            size: isize,
+            handle: ?*anyopaque,
+        };
+
+        pub inline fn deinit(self: @This()) void {
+            Bun__SerializedScriptSlice__free(self.handle);
+        }
+    };
+
+    /// Throws a JS exception and returns null if the serialization fails, otherwise returns a SerializedScriptValue.
+    /// Must be freed when you are done with the bytes.
+    pub inline fn serialize(this: JSValue, global: *JSGlobalObject) ?SerializedScriptValue {
+        const value = Bun__serializeJSValue(global, this);
+        return if (value.bytes) |bytes|
+            .{ .data = bytes[0..@intCast(value.size)], .handle = value.handle.? }
+        else
+            null;
+    }
 };
 
 extern "c" fn AsyncContextFrame__withAsyncContextIfNeeded(global: *JSGlobalObject, callback: JSValue) JSValue;
-
-extern "c" fn Microtask__run(*Microtask, *JSGlobalObject) void;
-extern "c" fn Microtask__run_default(*MicrotaskForDefaultGlobalObject, *JSGlobalObject) void;
-
-pub const Microtask = opaque {
-    pub const name = "Zig::JSMicrotaskCallback";
-    pub const namespace = "Zig";
-
-    pub fn run(this: *Microtask, global_object: *JSGlobalObject) void {
-        if (comptime is_bindgen) {
-            return;
-        }
-
-        return Microtask__run(this, global_object);
-    }
-};
-
-pub const MicrotaskForDefaultGlobalObject = opaque {
-    pub fn run(this: *MicrotaskForDefaultGlobalObject, global_object: *JSGlobalObject) void {
-        if (comptime is_bindgen) {
-            return;
-        }
-
-        return Microtask__run_default(this, global_object);
-    }
-};
 
 pub const Exception = extern struct {
     pub const shim = Shimmer("JSC", "Exception", @This());
@@ -5608,7 +5611,7 @@ pub const URLSearchParams = opaque {
     extern fn URLSearchParams__toString(
         self: *URLSearchParams,
         ctx: *anyopaque,
-        callback: *const fn (ctx: *anyopaque, str: *const ZigString) void,
+        callback: *const fn (ctx: *anyopaque, str: *const ZigString) callconv(.C) void,
     ) void;
 
     pub fn toString(
@@ -5620,7 +5623,7 @@ pub const URLSearchParams = opaque {
         JSC.markBinding(@src());
         const Wrap = struct {
             const cb_ = callback;
-            pub fn cb(c: *anyopaque, str: *const ZigString) void {
+            pub fn cb(c: *anyopaque, str: *const ZigString) callconv(.C) void {
                 cb_(
                     bun.cast(*Ctx, c),
                     str.*,

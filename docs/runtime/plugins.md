@@ -221,7 +221,7 @@ console.log(mySvelteComponent.render());
 
 {% note %}
 
-This feature is currently only available at runtime with `Bun.plugin` and not yet supported in the bundler, but you can mimick the behavior using `onResolve` and `onLoad`.
+This feature is currently only available at runtime with `Bun.plugin` and not yet supported in the bundler, but you can mimic the behavior using `onResolve` and `onLoad`.
 
 {% /note %}
 

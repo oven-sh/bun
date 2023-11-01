@@ -451,7 +451,7 @@ pub const PackageVersion = extern struct {
     optional_dependencies: ExternalStringMap = ExternalStringMap{},
 
     /// `"peerDependencies"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#peerdependencies)
-    /// if `optional_peer_dependencies_len` is > 0, then instead of alphabetical, the first N items are optional
+    /// if `non_optional_peer_dependencies_start` is > 0, then instead of alphabetical, the first N items are optional
     peer_dependencies: ExternalStringMap = ExternalStringMap{},
 
     /// `"devDependencies"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#devdependencies)
@@ -466,8 +466,8 @@ pub const PackageVersion = extern struct {
     engines: ExternalStringMap = ExternalStringMap{},
 
     /// `"peerDependenciesMeta"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#peerdependenciesmeta)
-    /// if `optional_peer_dependencies_len` is > 0, then instead of alphabetical, the first N items of `peer_dependencies` are optional
-    optional_peer_dependencies_len: u32 = 0,
+    /// if `non_optional_peer_dependencies_start` is > 0, then instead of alphabetical, the first N items of `peer_dependencies` are optional
+    non_optional_peer_dependencies_start: u32 = 0,
 
     man_dir: ExternalString = ExternalString{},
 
@@ -809,7 +809,7 @@ pub const PackageManifest = struct {
         }
 
         if (this.findByDistTag("latest")) |result| {
-            if (group.satisfies(result.version)) {
+            if (group.satisfies(result.version, this.string_buf)) {
                 if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
                     if (left.version.order(result.version, this.string_buf, this.string_buf) == .eq) {
                         // if prerelease, use latest if semver+tag match range exactly
@@ -822,15 +822,15 @@ pub const PackageManifest = struct {
         }
 
         {
+            // This list is sorted at serialization time.
             const releases = this.pkg.releases.keys.get(this.versions);
             var i = releases.len;
-            // For now, this is the dumb way
+
             while (i > 0) : (i -= 1) {
                 const version = releases[i - 1];
-                const packages = this.pkg.releases.values.get(this.package_versions);
 
-                if (group.satisfies(version)) {
-                    return .{ .version = version, .package = &packages[i - 1] };
+                if (group.satisfies(version, this.string_buf)) {
+                    return .{ .version = version, .package = &this.pkg.releases.values.get(this.package_versions)[i - 1] };
                 }
             }
         }
@@ -840,9 +840,10 @@ pub const PackageManifest = struct {
             var i = prereleases.len;
             while (i > 0) : (i -= 1) {
                 const version = prereleases[i - 1];
-                const packages = this.pkg.prereleases.values.get(this.package_versions);
 
-                if (group.satisfies(version)) {
+                // This list is sorted at serialization time.
+                if (group.satisfies(version, this.string_buf)) {
+                    const packages = this.pkg.prereleases.values.get(this.package_versions);
                     return .{ .version = version, .package = &packages[i - 1] };
                 }
             }
@@ -1336,7 +1337,7 @@ pub const PackageManifest = struct {
                         }
                     }
 
-                    var peer_dependency_len: usize = 0;
+                    var non_optional_peer_dependency_offset: usize = 0;
 
                     inline for (dependency_groups) |pair| {
                         if (prop.value.?.asProperty(comptime pair.prop)) |versioned_deps| {
@@ -1386,17 +1387,17 @@ pub const PackageManifest = struct {
                                             // For optional peer dependencies, we store a length instead of a whole separate array
                                             // To make that work, we have to move optional peer dependencies to the front of the array
                                             //
-                                            if (peer_dependency_len != i) {
+                                            if (non_optional_peer_dependency_offset != i) {
                                                 const current_name = this_names[i];
-                                                this_names[i] = this_names[peer_dependency_len];
-                                                this_names[peer_dependency_len] = current_name;
+                                                this_names[i] = this_names[non_optional_peer_dependency_offset];
+                                                this_names[non_optional_peer_dependency_offset] = current_name;
 
                                                 const current_version = this_versions[i];
-                                                this_versions[i] = this_versions[peer_dependency_len];
-                                                this_versions[peer_dependency_len] = current_version;
-
-                                                peer_dependency_len += 1;
+                                                this_versions[i] = this_versions[non_optional_peer_dependency_offset];
+                                                this_versions[non_optional_peer_dependency_offset] = current_version;
                                             }
+
+                                            non_optional_peer_dependency_offset += 1;
                                         }
 
                                         if (optional_peer_dep_names.items.len == 0) {
@@ -1421,7 +1422,7 @@ pub const PackageManifest = struct {
                                 var version_list = ExternalStringList.init(version_extern_strings, this_versions);
 
                                 if (comptime is_peer) {
-                                    package_version.optional_peer_dependencies_len = @as(u32, @truncate(peer_dependency_len));
+                                    package_version.non_optional_peer_dependencies_start = @as(u32, @truncate(non_optional_peer_dependency_offset));
                                 }
 
                                 if (count > 0 and
@@ -1583,6 +1584,98 @@ pub const PackageManifest = struct {
 
         result.pkg.prereleases.keys = VersionSlice.init(all_semver_versions, all_prerelease_versions);
         result.pkg.prereleases.values = PackageVersionList.init(versioned_packages, all_versioned_package_prereleases);
+
+        const max_versions_count = @max(all_release_versions.len, all_prerelease_versions.len);
+
+        // Sort the list of packages in a deterministic order
+        // Usually, npm will do this for us.
+        // But, not always.
+        // See https://github.com/oven-sh/bun/pull/6611
+        //
+        // The tricky part about this code is we need to sort two different arrays.
+        // To do that, we create a 3rd array, containing indices into the other 2 arrays.
+        // Creating a 3rd array is expensive! But mostly expensive if the size of the integers is large
+        // Most packages don't have > 65,000 versions
+        // So instead of having a hardcoded limit of how many packages we can sort, we ask
+        //    > "How many bytes do we need to store the indices?"
+        // We decide what size of integer to use based on that.
+        const how_many_bytes_to_store_indices = switch (max_versions_count) {
+            // log2(0) == Infinity
+            0 => 0,
+            // log2(1) == 0
+            1 => 1,
+
+            else => std.math.divCeil(usize, std.math.log2_int_ceil(usize, max_versions_count), 8) catch 0,
+        };
+
+        switch (how_many_bytes_to_store_indices) {
+            inline 1...8 => |int_bytes| {
+                const Int = std.meta.Int(.unsigned, int_bytes * 8);
+
+                const ExternVersionSorter = struct {
+                    string_bytes: []const u8,
+                    all_versions: []const Semver.Version,
+                    all_versioned_packages: []const PackageVersion,
+
+                    pub fn isLessThan(this: @This(), left: Int, right: Int) bool {
+                        return this.all_versions[left].order(this.all_versions[right], this.string_bytes, this.string_bytes) == .lt;
+                    }
+                };
+
+                var all_indices = try bun.default_allocator.alloc(Int, max_versions_count);
+                defer bun.default_allocator.free(all_indices);
+                var releases_list = .{ &result.pkg.releases, &result.pkg.prereleases };
+
+                var all_cloned_versions = try bun.default_allocator.alloc(Semver.Version, max_versions_count);
+                defer bun.default_allocator.free(all_cloned_versions);
+
+                var all_cloned_packages = try bun.default_allocator.alloc(PackageVersion, max_versions_count);
+                defer bun.default_allocator.free(all_cloned_packages);
+
+                inline for (0..2) |release_i| {
+                    var release = releases_list[release_i];
+                    var indices = all_indices[0..release.keys.len];
+                    var cloned_packages = all_cloned_packages[0..release.keys.len];
+                    var cloned_versions = all_cloned_versions[0..release.keys.len];
+                    var versioned_packages_ = @constCast(release.values.get(versioned_packages));
+                    var semver_versions_ = @constCast(release.keys.get(all_semver_versions));
+                    @memcpy(cloned_packages, versioned_packages_);
+                    @memcpy(cloned_versions, semver_versions_);
+
+                    for (indices, 0..indices.len) |*dest, i| {
+                        dest.* = @truncate(i);
+                    }
+
+                    var sorter = ExternVersionSorter{
+                        .string_bytes = string_buf,
+                        .all_versions = semver_versions_,
+                        .all_versioned_packages = versioned_packages_,
+                    };
+                    std.sort.block(Int, indices, sorter, ExternVersionSorter.isLessThan);
+
+                    for (indices, versioned_packages_, semver_versions_) |i, *pkg, *version| {
+                        pkg.* = cloned_packages[i];
+                        version.* = cloned_versions[i];
+                    }
+
+                    if (comptime Environment.allow_assert) {
+                        if (cloned_versions.len > 1) {
+                            // Sanity check:
+                            // When reading the versions, we iterate through the
+                            // list backwards to choose the highest matching
+                            // version
+                            const first = semver_versions_[0];
+                            const second = semver_versions_[1];
+                            const order = second.order(first, string_buf, string_buf);
+                            std.debug.assert(order == .gt);
+                        }
+                    }
+                }
+            },
+            else => {
+                std.debug.assert(max_versions_count == 0);
+            },
+        }
 
         if (extern_strings.len + tarball_urls_count > 0) {
             var src = std.mem.sliceAsBytes(all_tarball_url_strings[0 .. all_tarball_url_strings.len - tarball_url_strings.len]);

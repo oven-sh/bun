@@ -1114,6 +1114,49 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
   expect(requested).toBe(0);
 }, 20000);
 
+it("should not save git urls twice", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+  const { exited: exited1 } = spawn({
+    cmd: [bunExe(), "add", "https://github.com/liz3/empty-bun-repo"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  expect(await exited1).toBe(0);
+
+  const package_json_content = await file(join(package_dir, "package.json")).json();
+  expect(package_json_content.dependencies).toEqual({
+    "test-repo": "https://github.com/liz3/empty-bun-repo",
+  });
+
+  const { exited: exited2 } = spawn({
+    cmd: [bunExe(), "add", "https://github.com/liz3/empty-bun-repo"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  expect(await exited2).toBe(0);
+
+  const package_json_content2 = await file(join(package_dir, "package.json")).json();
+  expect(package_json_content2.dependencies).toEqual({
+    "test-repo": "https://github.com/liz3/empty-bun-repo",
+  });
+}, 20000);
+
 it("should prefer optionalDependencies over dependencies of the same name", async () => {
   const urls: string[] = [];
   setHandler(

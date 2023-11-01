@@ -57,10 +57,10 @@ class Debugger {
       const backend = createBackend(executionContextId, refEventLoop, receive);
       return {
         write: message => {
-          send.call(backend, message);
+          send.$call(backend, message);
           return true;
         },
-        close: () => close.call(backend),
+        close: () => close.$call(backend),
       };
     };
     this.#listen();

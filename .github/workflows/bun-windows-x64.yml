@@ -187,6 +187,7 @@ jobs:
       - name: Build C++
         run: |
           $sczip = "sccache-v0.6.0-x86_64-pc-windows-msvc"
+                    
           Invoke-WebRequest -Uri "https://github.com/mozilla/sccache/releases/download/v0.6.0/${sczip}.zip" -OutFile "${sczip}.zip"
           Expand-Archive "${sczip}.zip"
           $env:SCCACHE_BUCKET="bun"
@@ -195,7 +196,7 @@ jobs:
           $env:SCCACHE_ENDPOINT="${{ secrets.CACHE_S3_ENDPOINT }}"
           $env:AWS_ACCESS_KEY_ID="${{ secrets.CACHE_S3_ACCESS_KEY_ID }}"
           $env:AWS_SECRET_ACCESS_KEY="${{ secrets.CACHE_S3_SECRET_ACCESS_KEY }}"
-          $SCCACHE="$PWD/${sczip}/sccache.exe"
+          $SCCACHE="$PWD/${sczip}/${sczip}/sccache.exe"
 
           .\scripts\env.ps1
           .\scripts\update-submodules.ps1

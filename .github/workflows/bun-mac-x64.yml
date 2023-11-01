@@ -6,6 +6,7 @@ concurrency:
 
 env:
   LLVM_VERSION: 16
+  BUN_DOWNLOAD_URL_BASE: https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/latest
 
 on:
   push:
@@ -200,7 +201,7 @@ jobs:
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
           brew link --overwrite llvm@$LLVM_VERSION
 
-          curl -LO "https://github.com/oven-sh/bun/releases/download/bun-v1.0.7/bun-darwin-x64.zip"
+          curl -LO "$BUN_DOWNLOAD_URL_BASE/bun-darwin-x64.zip"
           unzip bun-darwin-x64.zip
           mkdir -p ${{ runner.temp }}/.bun/bin
           mv bun-darwin-x64/bun ${{ runner.temp }}/.bun/bin/bun
@@ -227,9 +228,10 @@ jobs:
           cmake -S $SOURCE_DIR -B $OBJ_DIR \
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DBUN_CPP_ONLY=1
+            -DBUN_CPP_ONLY=1 \
+            -DNO_CONFIGURE_DEPENDS=1
 
-          bash compile-cpp-only.sh
+          bash compile-cpp-only.sh -v
 
       - name: Upload C++
         uses: actions/upload-artifact@v3
@@ -271,7 +273,7 @@ jobs:
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
           brew link --overwrite llvm@$LLVM_VERSION
 
-          curl -LO "https://github.com/oven-sh/bun/releases/download/bun-v1.0.7/bun-darwin-x64.zip"
+          curl -LO "$BUN_DOWNLOAD_URL_BASE/bun-darwin-x64.zip"
           unzip bun-darwin-x64.zip
           mkdir -p ${{ runner.temp }}/.bun/bin
           mv bun-darwin-x64/bun ${{ runner.temp }}/.bun/bin/bun
@@ -309,8 +311,9 @@ jobs:
             -DBUN_LINK_ONLY=1 \
             -DBUN_ZIG_OBJ="${{ runner.temp }}/release/bun-zig.o" \
             -DBUN_CPP_ARCHIVE="${{ runner.temp }}/bun-cpp-obj/bun-cpp-objects.a" \
-            -DBUN_DEPS_OUT_DIR="${{runner.temp}}/bun-deps"
-          ninja
+            -DBUN_DEPS_OUT_DIR="${{runner.temp}}/bun-deps" \
+            -DNO_CONFIGURE_DEPENDS=1
+          ninja -v
       - name: Zip
         run: |
           cd ${{runner.temp}}/link-build

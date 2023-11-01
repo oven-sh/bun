@@ -573,6 +573,7 @@ if(NOT NO_CODEGEN)
         COMMAND ${ZIG_COMPILER} run "${BUN_SRC}/js_lexer/identifier_data.zig"
         VERBATIM
         COMMENT "Building Identifier Cache"
+        DEPENDS_EXPLICIT_ONLY
     )
 endif()
 
@@ -674,12 +675,11 @@ file(GLOB ZIG_FILES
 
 if(NOT BUN_ZIG_OBJ)
     set(BUN_ZIG_OBJ "${BUN_WORKDIR}/CMakeFiles/bun-zig.o")
+else()
+    get_filename_component(BUN_ZIG_OBJ "${BUN_ZIG_OBJ}" REALPATH BASE_DIR "${CMAKE_BINARY_DIR}")
 endif()
 
-get_filename_component(BUN_ZIG_OBJ "${BUN_ZIG_OBJ}" REALPATH BASE_DIR "${CMAKE_BINARY_DIR}")
-
 set(USES_TERMINAL_NOT_IN_CI "")
-
 if(NOT CI)
     set(USES_TERMINAL_NOT_IN_CI "USES_TERMINAL")
 endif()
@@ -711,6 +711,7 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         ${USES_TERMINAL_NOT_IN_CI}
     )
 endif()
+add_custom_target(zig DEPENDS "${BUN_ZIG_OBJ}")
 
 if(WIN32)
     list(APPEND BUN_RAW_SOURCES "${BUN_SRC}/bun.js/bindings/windows/musl-memmem.c")
@@ -752,7 +753,7 @@ if(NOT BUN_CPP_ARCHIVE)
             "#!/usr/bin/env bash\n"
             "set -e\n"
             "OBJ_LIST=(\n  ${BUN_OBJECT_LIST}\n)\n"
-            "ninja \${OBJ_LIST[@]}\n"
+            "ninja \${OBJ_LIST[@]} $@\n"
             "${AR} rcvs bun-cpp-objects.a \${OBJ_LIST[@]}\n"
             "echo '-> bun-cpp-objects.a'\n"
         )

@@ -779,7 +779,7 @@ pub const HTTPThread = struct {
                     if (requested_config.isSame(&other_config)) {
                         // we freee the callers config since we have a existing one
                         requested_config.deinit();
-                        client.tls_props = null;
+                        client.tls_props = other_config;
                         return try custom_ssl_context_map.get(other_config).?.connect(client, client.url.hostname, client.url.getPortAuto());
                     }
                 }

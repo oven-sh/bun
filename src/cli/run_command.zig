@@ -595,11 +595,11 @@ pub const RunCommand = struct {
         }
 
         {
-            var needs_colon = false;
+            var needs_delim = false;
             if (package_json_dir.len > 0) {
-                defer needs_colon = true;
-                if (needs_colon) {
-                    try new_path.append(':');
+                defer needs_delim = true;
+                if (needs_delim) {
+                    try new_path.append(std.fs.path.delimiter);
                 }
                 try new_path.appendSlice(package_json_dir);
             }
@@ -609,19 +609,19 @@ pub const RunCommand = struct {
             // Directories are added to bin_dirs in top-down order
             // That means the parent-most node_modules/.bin will be first
             while (bin_dir_i >= 0) : (bin_dir_i -= 1) {
-                defer needs_colon = true;
-                if (needs_colon) {
-                    try new_path.append(':');
+                defer needs_delim = true;
+                if (needs_delim) {
+                    try new_path.append(std.fs.path.delimiter);
                 }
                 try new_path.appendSlice(bin_dirs[@as(usize, @intCast(bin_dir_i))]);
             }
 
-            if (needs_colon) {
-                try new_path.append(':');
+            if (needs_delim) {
+                try new_path.append(std.fs.path.delimiter);
             }
             try new_path.appendSlice(root_dir_info.abs_path);
-            try new_path.appendSlice("node_modules/.bin");
-            try new_path.append(':');
+            try new_path.appendSlice(bun.pathLiteral("node_modules/.bin"));
+            try new_path.append(std.fs.path.delimiter);
             try new_path.appendSlice(PATH);
         }
 

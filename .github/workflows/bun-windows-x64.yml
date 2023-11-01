@@ -213,7 +213,7 @@ jobs:
       - uses: actions/upload-artifact@v3
         with:
           name: ${{ env.tag }}-cpp
-          path: buildall-cpp-objects.a
+          path: build/all-cpp-objects.a
 
   windows-link:
     name: Link

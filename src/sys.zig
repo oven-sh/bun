@@ -423,11 +423,11 @@ pub fn openatWindows(dirfD: bun.FileDescriptor, path_: []const u16, flags: bun.M
 
     var result: windows.HANDLE = undefined;
 
-    const path = if(bun.strings.hasPrefixComptimeUTF16(path_, ".\\")) path_[2..] else path_;
+    const path = if (bun.strings.hasPrefixComptimeUTF16(path_, ".\\")) path_[2..] else path_;
 
     const path_len_bytes = std.math.cast(u16, path.len * 2) orelse return .{
         .err = .{
-        .errno = @intFromEnum(bun.C.E.NOMEM),
+            .errno = @intFromEnum(bun.C.E.NOMEM),
             .syscall = .open,
         },
     };
@@ -1414,13 +1414,10 @@ pub fn isExecutableFileOSPath(path: bun.OSPathSlice) bool {
     if (comptime Environment.isWindows) {
         var out: windows.DWORD = 8;
         const rc = kernel32.GetBinaryTypeW(path, &out);
-        log("GetBinaryTypeW({}) = {d}", .{ bun.strings.fmtUTF16(path), out });
 
-        if (rc == windows.FALSE) {
-            return false;
-        }
-
-        return switch (out) {
+        const result = if (rc == windows.FALSE)
+            false
+        else switch (out) {
             kernel32.SCS_32BIT_BINARY,
             kernel32.SCS_64BIT_BINARY,
             kernel32.SCS_DOS_BINARY,
@@ -1430,6 +1427,10 @@ pub fn isExecutableFileOSPath(path: bun.OSPathSlice) bool {
             => true,
             else => false,
         };
+
+        log("GetBinaryTypeW({}) = {d}. isExecutable={}", .{ bun.strings.fmtUTF16(path), out, result });
+
+        return result;
     }
 
     @compileError("TODO: isExecutablePath");

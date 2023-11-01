@@ -1,5 +1,6 @@
 const std = @import("std");
 const bun = @import("root").bun;
+
 fn isValid(buf: *[bun.MAX_PATH_BYTES]u8, segment: []const u8, bin: []const u8) ?u16 {
     bun.copy(u8, buf, segment);
     buf[segment.len] = std.fs.path.sep;
@@ -39,7 +40,7 @@ pub fn which(buf: *[bun.MAX_PATH_BYTES]u8, path: []const u8, cwd: []const u8, bi
         }
     }
 
-    var path_iter = std.mem.tokenize(u8, path, ":");
+    var path_iter = std.mem.tokenizeScalar(u8, path, std.fs.path.delimiter);
     while (path_iter.next()) |segment| {
         if (isValid(buf, segment, bin)) |len| {
             return buf[0..len :0];

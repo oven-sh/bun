@@ -1990,3 +1990,17 @@ pub fn makePath(dir: std.fs.Dir, sub_path: []const u8) !void {
 }
 
 pub const Async = @import("async");
+
+/// This is a helper for writing path string literals that are compatible with Windows.
+/// Returns the string as-is on linux, on windows replace `/` with `\`
+pub inline fn pathLiteral(comptime literal: [:0]const u8) *const [literal.len:0]u8 {
+    if (!Environment.isWindows) return literal;
+    return comptime {
+        var buf: [literal.len :0]u8 = undefined;
+        for (literal, 0..) |c, i| {
+            buf[i] = if (c == '/') '\\' else c;
+        }
+        buf[buf.len] = 0;
+        return &buf;
+    };
+}

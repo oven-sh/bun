@@ -95,12 +95,46 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
-      - uses: KyleMayes/install-llvm-action@1a3da29f56261a1e1f937ec88f0856a9b8321d7e
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Clone Submodules
+        run: git submodule update --init --recursive --progress --depth=1 --checkout
+      - name: Hash submodule versions
+        run: |
+          $data = "$(& {
+            git submodule | Where-Object { $_ -notmatch 'WebKit' }
+            clang --version
+            rustc --version
+            Get-Content -Path (Get-ChildItem -Path 'scripts/build*.sh', 'scripts/all-dependencies.sh' | Sort-Object -Property Name).FullName | Out-String
+          })"
+          $hash = ( -join ( `
+            (New-Object -TypeName System.Security.Cryptography.SHA1CryptoServiceProvider) `
+              .ComputeHash([System.Text.Encoding]::UTF8.GetBytes($data)) `
+              | ForEach-Object { $_.ToString("x2") } `
+            ) `
+          ).Substring(0, 10)
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "sha=$sha"
+        id: submodule-versions
+
+      - name: Try fetch dependencies
+        id: cache-deps-restore
+        uses: actions/cache/restore@v3
+        with:
+          path: bun-deps
+          key: bun-deps-${{ env.tag }}-${{ steps.submodule-versions.outputs.sha }}
+
+      - name: Install LLVM ${{ env.LLVM_VERSION }}
+        if: ${{ !steps.cache-deps-restore.outputs.cache-hit }}
+        uses: KyleMayes/install-llvm-action@1a3da29f56261a1e1f937ec88f0856a9b8321d7e
         with:
           version: ${{ env.LLVM_VERSION }}
-      - run: choco install -y ninja
+
+      - name: Install Ninja
+        if: ${{ !steps.cache-deps-restore.outputs.cache-hit }}
+        run: choco install -y ninja
+
       - name: Build Dependencies
+        if: ${{ !steps.cache-deps-restore.outputs.cache-hit }}
         run: |
           git submodule update --init --recursive --progress --depth=1 --checkout
           .\scripts\env.ps1
@@ -110,10 +144,20 @@ jobs:
           $env:Path += ";${Nasm}"
           $env:BUN_DEPS_OUT_DIR = (mkdir -Force "./bun-deps")
           .\scripts/all-dependencies.ps1
-      - uses: actions/upload-artifact@v3
+
+      - name: Upload Dependencies
+        uses: actions/upload-artifact@v3
         with:
           name: bun-deps/
           path: ${{ env.tag }}-deps
+
+      - name: Cache Dependencies
+        if: ${{ !steps.cache-deps-restore.outputs.cache-hit }}
+        id: cache-deps-save
+        uses: actions/cache/save@v3
+        with:
+          path: bun-deps
+          key: ${{ steps.cache-deps-restore.outputs.cache-primary-key }}
 
   windows-codegen:
     name: Codegen

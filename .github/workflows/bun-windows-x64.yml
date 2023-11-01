@@ -35,7 +35,7 @@ on:
 
 jobs:
   windows-zig:
-    name: Windows Zig Object
+    name: Windows Zig Compile
     runs-on: med-ubuntu
     if: github.repository_owner == 'oven-sh'
     strategy:
@@ -63,7 +63,7 @@ jobs:
       - name: Calculate Canary Revision
         id: canary
         run: |
-          echo "canary=$(GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }} bash ./scripts/calculate-canary-revision.sh)" >> $GITHUB_OUTPUT
+          echo "canary_revision=$(GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" bash ./scripts/calculate-canary-revision.sh --raw)" >> $GITHUB_OUTPUT
 
       - name: Compile Zig Object
         uses: docker/build-push-action@v3
@@ -81,7 +81,7 @@ jobs:
             CPU_TARGET=${{ matrix.cpu }}
             TRIPLET=${{ matrix.arch }}-windows-msvc
             GIT_SHA=${{ github.sha }}
-            CANARY=${{ steps.canary.outputs.canary }}
+            CANARY=${{ steps.canary.outputs.canary_revision }}
           platforms: linux/${{ runner.arch == 'X64' && 'amd64' || 'arm64' }}
           target: build_release_obj
           outputs: type=local,dest=${{runner.temp}}/release
@@ -93,6 +93,7 @@ jobs:
           path: ${{runner.temp}}/release/bun-zig.o
 
   windows-dependencies:
+    name: Windows Dependencies
     strategy:
       matrix:
         include:
@@ -125,6 +126,7 @@ jobs:
           path: bun-windows-x64-deps
 
   windows-codegen:
+    name: Windows Generated Code
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -139,6 +141,7 @@ jobs:
           path: build-codegen-win32-x64/
 
   windows-cpp:
+    needs: [windows-codegen]
     strategy:
       matrix:
         include:
@@ -173,6 +176,7 @@ jobs:
           path: bun-windows-x64-cpp
 
   windows-link:
+    name: Windows Link
     needs: [windows-dependencies, windows-codegen, windows-cpp, windows-zig]
     strategy:
       matrix:

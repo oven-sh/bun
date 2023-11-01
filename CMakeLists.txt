@@ -833,7 +833,7 @@ if(NOT BUN_CPP_ARCHIVE)
                 "set -e\n"
                 "OBJ_LIST=(\n  ${BUN_OBJECT_LIST}\n)\n"
                 "ninja \${OBJ_LIST[@]} $@\n"
-                "${AR} rcvs bun-cpp-objects.a \${OBJ_LIST[@]}\n"
+                "\"${AR}\" rcvs bun-cpp-objects.a \${OBJ_LIST[@]}\n"
                 "echo '-> bun-cpp-objects.a'\n"
             )
         else()
@@ -846,7 +846,7 @@ if(NOT BUN_CPP_ARCHIVE)
                 "$ErrorActionPreference = \"Stop\"\n"
                 "$ObjectFiles=@(\n  ${BUN_OBJECT_LIST}\n)\n"
                 "ninja @ObjectFiles @args\n"
-                "${AR} rcvs bun-cpp-objects.a @ObjectFiles\n"
+                "& \"${AR}\" rcvs bun-cpp-objects.a @ObjectFiles\n"
                 "Write-Host '-> bun-cpp-objects.a'\n"
             )
         endif()

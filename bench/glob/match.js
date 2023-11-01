@@ -4,37 +4,41 @@ import { Glob, Transpiler } from "bun";
 
 const normalPattern = "*.ts";
 const recursivePattern = "**/*.ts";
+const nodeModulesPattern = "**/node_modules/**/*.js";
 
-group({ name: "async", summary: true }, () => {
+const benchDot = false;
+const cwd = undefined;
+
+const fgOpts = {
+  cwd,
+  followSymbolicLinks: false,
+  onlyFiles: false,
+  absolute: true,
+};
+
+group({ name: `async pattern="${normalPattern}"`, summary: true }, () => {
   bench("fast-glob", async () => {
-    const entries = await fg.glob([normalPattern], {
-      cwd: "src",
-      followSymbolicLinks: false,
-      onlyFiles: false,
-    });
+    const entries = await fg.glob([normalPattern], fgOpts);
   });
 
   bench("Bun.Glob", async () => {
     const entries = await new Glob(normalPattern).match({
-      cwd: "src",
+      cwd,
     });
   });
 
-  bench("Bun.Glob with dot", async () => {
-    const entries = await new Glob(normalPattern).match({
-      cwd: "src",
-      dot: true,
+  if (benchDot)
+    bench("Bun.Glob with dot", async () => {
+      const entries = await new Glob(normalPattern).match({
+        cwd,
+        dot: true,
+      });
     });
-  });
 });
 
-group({ name: "async-recursive", summary: true }, () => {
+group({ name: `async-recursive pattern="${recursivePattern}"`, summary: true }, () => {
   bench("fast-glob", async () => {
-    const entries = await fg.glob([recursivePattern], {
-      cwd: "src",
-      followSymbolicLinks: false,
-      onlyFiles: false,
-    });
+    const entries = await fg.glob([recursivePattern], fgOpts);
   });
 
   bench("Bun.Glob", async () => {
@@ -43,58 +47,73 @@ group({ name: "async-recursive", summary: true }, () => {
     });
   });
 
-  bench("Bun.Glob with dot", async () => {
-    const entries = await new Glob(recursivePattern).match({
-      cwd: "src",
-      dot: true,
+  if (benchDot)
+    bench("Bun.Glob with dot", async () => {
+      const entries = await new Glob(recursivePattern).match({
+        cwd,
+        dot: true,
+      });
     });
-  });
 });
 
-group({ name: "sync", summary: true }, () => {
+group({ name: `sync pattern="${normalPattern}"`, summary: true }, () => {
   bench("fast-glob", () => {
-    const entries = fg.globSync([normalPattern], {
-      cwd: "src",
-      followSymbolicLinks: false,
-      onlyFiles: false,
-    });
+    const entries = fg.globSync([normalPattern], fgOpts);
   });
 
   bench("Bun.Glob", () => {
     const entries = new Glob(normalPattern).matchSync({
-      cwd: "src",
+      cwd,
     });
   });
 
-  bench("Bun.Glob with dot", () => {
-    const entries = new Glob(normalPattern).matchSync({
-      cwd: "src",
-      dot: true,
+  if (benchDot)
+    bench("Bun.Glob with dot", () => {
+      const entries = new Glob(normalPattern).matchSync({
+        cwd,
+        dot: true,
+      });
     });
-  });
 });
 
-group({ name: "sync-recursive", summary: true }, () => {
+group({ name: `sync-recursive pattern="${recursivePattern}"`, summary: true }, () => {
   bench("fast-glob", () => {
-    const entries = fg.globSync([recursivePattern], {
-      cwd: "src",
-      followSymbolicLinks: false,
-      onlyFiles: false,
-    });
+    const entries = fg.globSync([recursivePattern], fgOpts);
   });
 
   bench("Bun.Glob", () => {
     const entries = new Glob(recursivePattern).matchSync({
-      cwd: "src",
+      cwd,
     });
   });
 
-  bench("Bun.Glob with dot", () => {
-    const entries = new Glob(recursivePattern).matchSync({
-      cwd: "src",
-      dot: true,
+  if (benchDot)
+    bench("Bun.Glob with dot", () => {
+      const entries = new Glob(recursivePattern).matchSync({
+        cwd,
+        dot: true,
+      });
+    });
+});
+
+group({ name: `node_modules pattern="${nodeModulesPattern}"`, summary: true }, () => {
+  bench("fast-glob", async () => {
+    const entries = await fg.glob([nodeModulesPattern], fgOpts);
+  });
+
+  bench("Bun.Glob", async () => {
+    const entries = await new Glob(nodeModulesPattern).match({
+      cwd,
     });
   });
+
+  if (benchDot)
+    bench("Bun.Glob with dot", async () => {
+      const entries = await new Glob(nodeModulesPattern).match({
+        cwd,
+        dot: true,
+      });
+    });
 });
 
 await run({

@@ -300,7 +300,7 @@ pub const GlobWalker = struct {
                 .file => {
                     const matches = matches: {
                         // A file can only match if:
-                        // a this is the last pattern, or
+                        // a) this is the last pattern, or
                         // b) it matches the next pattern, provided the current
                         //    pattern is a double wildcard and the  next pattern is
                         //    not a double wildcard
@@ -322,15 +322,22 @@ pub const GlobWalker = struct {
                 .directory => {
                     if (!dot and entry_name[0] == '.') continue;
 
-                    // src/**/lmao/*.ts
+                    // src/**/lmao/*.js
                     // src/**/*.ts
+                    // src/**/*.ts -> src/bun.ts/lmao.ts
+                    // src/**/*.ts -> src/bun.ts/lmao.ts
                     const recursion_idx_bump: u32 = recursion_idx_bump: {
                         // Handle double wildcard `**`, this could possibly
                         // recurse the pattern to the directory's children
                         if (pattern.syntax_hint == .Double) {
-                            // Matches pattern after double wildcard, skip wildcard
+                            // If it matches pattern after double wildcard, its
+                            // a match, but we also need to keep recursing
+                            // Example: src/**/*.js
+                            // - Matches: src/bun.js/
+                            //            src/bun.js/foo/bar/baz.js
                             if (!is_last and this.match(&next_pattern.?, entry_name)) {
-                                break :recursion_idx_bump 1;
+                                try this.appendMatchedPath(entry_name, dir_path);
+                                break :recursion_idx_bump 0;
                             }
 
                             if (is_last) {

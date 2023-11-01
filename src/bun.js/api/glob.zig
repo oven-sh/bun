@@ -46,7 +46,8 @@ const MatchOpts = struct {
             .dot = false,
         };
 
-        if (optsObj.get(globalThis, "cwd")) |cwdVal| {
+        if (optsObj.get(globalThis, "cwd")) |cwdVal| parse_cwd: {
+            if (cwdVal.isUndefinedOrNull()) break :parse_cwd;
             if (!cwdVal.isString()) {
                 globalThis.throw("{s}: invalid `cwd`, not a string", .{fnName});
                 return null;

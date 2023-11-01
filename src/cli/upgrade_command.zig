@@ -400,10 +400,10 @@ pub const UpgradeCommand = struct {
     const exe_subpath = Version.folder_name ++ std.fs.path.sep_str ++ "bun" ++ exe_suffix;
     const profile_exe_subpath = Version.profile_folder_name ++ std.fs.path.sep_str ++ "bun-profile" ++ exe_suffix;
 
-    const manual_upgrade_command = switch(Environment.os) {
+    const manual_upgrade_command = switch (Environment.os) {
         .linux, .mac => "curl -fsSL https://bun.sh/install | bash",
         .windows => "TODO",
-        else => "TODO"
+        else => "TODO",
     };
 
     pub fn exec(ctx: Command.Context) !void {
@@ -417,7 +417,7 @@ pub const UpgradeCommand = struct {
                 \\  <b>{s}<r>
                 \\
                 \\
-            , .{@errorName(err), manual_upgrade_command});
+            , .{ @errorName(err), manual_upgrade_command });
             Global.exit(1);
         };
     }
@@ -738,13 +738,13 @@ pub const UpgradeCommand = struct {
                 // Check if the versions are the same
                 const target_stat = target_dir.statFile(target_filename) catch |err| {
                     save_dir_.deleteTree(version_name) catch {};
-                    Output.prettyErrorln("<r><red>error:<r> {s} while trying to stat target {s} ", .{@errorName(err), target_filename});
+                    Output.prettyErrorln("<r><red>error:<r> {s} while trying to stat target {s} ", .{ @errorName(err), target_filename });
                     Global.exit(1);
                 };
 
                 const dest_stat = save_dir.statFile(exe) catch |err| {
                     save_dir_.deleteTree(version_name) catch {};
-                    Output.prettyErrorln("<r><red>error:<r> {s} while trying to stat source {s}", .{@errorName(err), exe});
+                    Output.prettyErrorln("<r><red>error:<r> {s} while trying to stat source {s}", .{ @errorName(err), exe });
                     Global.exit(1);
                 };
 
@@ -778,7 +778,7 @@ pub const UpgradeCommand = struct {
                 }
             }
 
-            var outdated_filename: if (Environment.isWindows) ?stringZ else null = null;
+            var outdated_filename: if (Environment.isWindows) ?stringZ else ?void = null;
 
             if (env_loader.map.get("BUN_DRY_RUN") == null) {
                 if (comptime Environment.isWindows) {
@@ -803,7 +803,6 @@ pub const UpgradeCommand = struct {
                     Output.prettyErrorln("<r><red>error:<r> Failed to move new version of Bun due to {s}. You could try the install script instead:\n   curl -fsSL https://bun.sh/install | bash", .{@errorName(err)});
                     Global.exit(1);
                 };
-
             }
 
             // Ensure completions are up to date.
@@ -871,7 +870,7 @@ pub const UpgradeCommand = struct {
             Output.flush();
 
             if (Environment.isWindows) {
-                if(outdated_filename) |to_remove| {
+                if (outdated_filename) |to_remove| {
                     current_executable_buf[target_dir_.len] = '\\';
                     var delete_old_script = try std.fmt.allocPrint(
                         ctx.allocator,
@@ -890,7 +889,7 @@ pub const UpgradeCommand = struct {
                         //
                         // Alternative: we could simply do nothing and leave the `.outdated` file.
                         \\Start-Process powershell.exe -WindowStyle Minimized -ArgumentList "-NoProfile","-ExecutionPolicy","Bypass","-Command",'&{{$ErrorActionPreference=''SilentlyContinue''; Get-Process|Where-Object{{ $_.Path -eq ''{s}'' }}|Wait-Process; Remove-Item -Path ''{s}'' -Force }};'; exit
-                        ,
+                    ,
                         .{
                             destination_executable_,
                             to_remove,

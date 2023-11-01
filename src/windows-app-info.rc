@@ -13,12 +13,12 @@ BEGIN
     BEGIN
         BLOCK "040904b0"
         BEGIN
-            VALUE "FileDescription", "Incredibly fast JavaScript runtime, bundler, test runner, and package manager - all in one\0"
-            VALUE "FileVersion", "@Bun_VERSION_MAJOR@.@Bun_VERSION_MINOR@.@Bun_VERSION_PATCH@\0"
+            VALUE "FileDescription", "Bun\0"
+            VALUE "FileVersion", "@Bun_VERSION_WITH_TAG@\0"
             VALUE "InternalName", "bun\0"
             VALUE "OriginalFilename", "bun.exe\0"
             VALUE "ProductName", "Bun\0"
-            VALUE "ProductVersion", "@Bun_VERSION_MAJOR@.@Bun_VERSION_MINOR@.@Bun_VERSION_PATCH@\0"
+            VALUE "ProductVersion", "@Bun_VERSION_WITH_TAG@\0"
             VALUE "Copyright", "See https://bun.sh/docs/project/licensing"
         END
     END

@@ -1,16 +1,14 @@
 cmake_minimum_required(VERSION 3.22)
-
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
 set(Bun_VERSION "1.0.8")
-set(WEBKIT_TAG bc5fe2f2d6256241fd21641e2fbc38c9d9103bdb)
+set(WEBKIT_TAG 7cd84abfa787e4b96b27c3ef1e28a4eb1aa49aa1)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
 
 # --- Build Type ---
-# This is done at the start simply so this is the first message printed
 if(NOT CMAKE_BUILD_TYPE)
     message(WARNING "No CMAKE_BUILD_TYPE value specified, defaulting to Debug.\nSet a build type with -DCMAKE_BUILD_TYPE=<Debug|Release>")
     set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Choose the type of build (Debug, Release)" FORCE)
@@ -231,7 +229,9 @@ option(USE_BASELINE_BUILD "Build Bun for baseline (older) CPUs" OFF)
 option(USE_DEBUG_JSC "Enable assertions and use a debug build of JavaScriptCore" OFF)
 option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
 
-option(CANARY "Make `bun --revision` report a canary release" OFF)
+if (NOT CANARY)
+    set(CANARY 0)
+endif()
 
 set(ERROR_LIMIT 100 CACHE STRING "Maximum number of errors to show when compiling C++ code")
 
@@ -706,7 +706,7 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         "-Doutput-file=${BUN_ZIG_OBJ}"
         "-Dgenerated-code=${BUN_WORKDIR}/codegen"
         "-Dversion=${Bun_VERSION}"
-        "-Dcanary=$<IF:$<BOOL:${CANARY}>,true,false>"
+        "-Dcanary=${CANARY}"
         "-Doptimize=${ZIG_OPTIMIZE}"
         "-Dcpu=${CPU_TARGET}"
         "-Dtarget=${ZIG_TARGET}"
@@ -741,6 +741,11 @@ else()
 endif()
 
 # -- Windows resources (app icon) --
+if(CANARY GREATER 0)
+    set(Bun_VERSION_WITH_TAG "${Bun_VERSION}-canary.${CANARY}")
+else()
+    set(Bun_VERSION_WITH_TAG "${Bun_VERSION}")
+endif()
 if(WIN32)
     set(BUN_ICO_PATH "${BUN_SRC}/bun.ico")
     configure_file("${BUN_SRC}/windows-app-info.rc" "${BUN_WORKDIR}/CMakeFiles/windows-app-info.rc")
@@ -890,8 +895,8 @@ else()
         -fvisibility-inlines-hidden
         -fno-rtti
         -fno-omit-frame-pointer
-        -std=c++2a
     )
+    string(APPEND CMAKE_CXX_FLAGS " -std=c++2a")
 endif()
 
 if(APPLE)
@@ -911,7 +916,7 @@ if(APPLE)
     target_link_libraries(${bun} PRIVATE "resolv")
 endif()
 
-if(LINUX)
+if(UNIX AND NOT APPLE)
     target_link_options(${bun} PUBLIC
         "-fuse-ld=lld"
         "-static-libstdc++"
@@ -938,7 +943,7 @@ if(LINUX)
         "-Wl,--wrap=fstatat64"
         "-Wl,--wrap=mknod"
         "-Wl,--wrap=mknodat"
-        "-Wl,--wrap=statx "
+        "-Wl,--wrap=statx"
         "-Wl,--compress-debug-sections=zlib"
         "-Bsymbolics-functions"
         "-rdynamic"

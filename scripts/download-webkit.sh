@@ -52,6 +52,6 @@ if [ ! -f "$tar" ]; then
   fi
 fi
 
-tar -xzf "$tar" -C "$(dirname "$OUTDIR")"
+tar -xzf "$tar" -C "$(dirname "$OUTDIR")" || (rm "$tar" && exit 1)
 
 echo "$TAG" > "$OUTDIR/.tag"

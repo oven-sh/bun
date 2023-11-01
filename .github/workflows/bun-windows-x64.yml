@@ -59,6 +59,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # this calculation only needs to be done for the Zig code
+      - name: Calculate Canary Revision
+        id: canary
+        run: |
+          echo "canary=$(GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }} bash ./scripts/calculate-canary-revision.sh)" >> $GITHUB_OUTPUT
+
       - name: Compile Zig Object
         uses: docker/build-push-action@v3
         if: runner.arch == 'X64'
@@ -75,7 +81,7 @@ jobs:
             CPU_TARGET=${{ matrix.cpu }}
             TRIPLET=${{ matrix.arch }}-windows-msvc
             GIT_SHA=${{ github.sha }}
-            CANARY=1
+            CANARY=${{ steps.canary.outputs.canary }}
           platforms: linux/${{ runner.arch == 'X64' && 'amd64' || 'arm64' }}
           target: build_release_obj
           outputs: type=local,dest=${{runner.temp}}/release
@@ -167,7 +173,7 @@ jobs:
           path: bun-windows-x64-cpp
 
   windows-link:
-    dependencies: [windows-dependencies, windows-codegen, windows-cpp, windows-zig]
+    needs: [windows-dependencies, windows-codegen, windows-cpp, windows-zig]
     strategy:
       matrix:
         include:
@@ -214,6 +220,7 @@ jobs:
             -DNO_CONFIGURE_DEPENDS=1 `
             -DCANARY=1 `
             -DBUN_LINK_ONLY=1 `
+            '-DBUN_DEPS_OUT_DIR=../bun-deps' `
             '-DBUN_CPP_ARCHIVE=../bun-cpp/buildall-cpp-objects.a' `
             '-DBUN_ZIG_OBJ=../bun-zig/bun-zig.o'
           ninja -v
@@ -222,4 +229,8 @@ jobs:
         run: |
           mkdir -Force "bun-windows-x64"
           cp -r build/bun.exe bun-windows-x64/bun.exe
+          Compress-Archive bun-windows-x64 bun-windows-x64.zip
       - uses: actions/upload-artifact@v3
+        with:
+          name: bun-windows-x64
+          path: build/bun-windows-x64.zip

@@ -214,7 +214,7 @@ option(USE_DEBUG_JSC "Enable assertions and use a debug build of JavaScriptCore"
 option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
 
 option(CANARY "Make `bun --revision` report a canary release" OFF)
-
+option(USE_STATIC_LIBATOMIC "Use /lib/libatomic.a for linking libatomic(required on arch linux)" OFF)
 set(ERROR_LIMIT 100 CACHE STRING "Maximum number of errors to show when compiling C++ code")
 
 set(ARCH x86_64)
@@ -936,7 +936,12 @@ if(UNIX AND NOT APPLE)
     target_link_libraries(${bun} PRIVATE "pthread")
     target_link_libraries(${bun} PRIVATE "dl")
 
-    target_link_libraries(${bun} PRIVATE "libatomic.a")
+    execute_process(COMMAND cat /etc/os-release COMMAND head -n1 OUTPUT_VARIABLE LINUX_DISTRO)
+    if(USE_STATIC_LIBATOMIC OR ${LINUX_DISTRO} STREQUAL "NAME=\"Arch Linux\"\n")
+        target_link_libraries(${bun} PRIVATE "/lib/libatomic.a")
+    else()
+        target_link_libraries(${bun} PRIVATE "libatomic.a")
+    endif()
 
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicudata.a")
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicui18n.a")

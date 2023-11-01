@@ -92,12 +92,6 @@ jobs:
 
   windows-dependencies:
     name: Dependencies
-    strategy:
-      matrix:
-        include:
-          - runner: windows-latest
-            arch: amd64
-            tag: bun-windows-x64
     runs-on: windows-latest
     timeout-minutes: 90
     steps:

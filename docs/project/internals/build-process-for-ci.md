@@ -35,7 +35,7 @@ ninja ./bun-zig.o
 
 ## C++ Object
 
-Note: if WEBKIT_DIR is not passed, it is automatically downloaded from GitHub releases. This depends on the headers from submodules but not neccecarily the build copies of them, .a files, etc.
+Note: if WEBKIT_DIR is not passed, it is automatically downloaded from GitHub releases. This depends on the headers from submodules but not necessarily the build copies of them, .a files, etc.
 
 ```sh
 cd tmp2

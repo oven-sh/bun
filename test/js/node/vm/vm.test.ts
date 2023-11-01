@@ -39,6 +39,14 @@ describe("Script", () => {
       return script.runInThisContext(context);
     });
   });
+  test("can throw without new", () => {
+    // @ts-ignore
+    const result = () => Script();
+    expect(result).toThrow({
+      name: "TypeError",
+      message: "Class constructor Script cannot be invoked without 'new'",
+    });
+  });
 });
 
 function testRunInContext(

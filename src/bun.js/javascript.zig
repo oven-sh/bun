@@ -492,6 +492,7 @@ pub const VirtualMachine = struct {
     preload: []const string = &[_][]const u8{},
     unhandled_pending_rejection_to_capture: ?*JSC.JSValue = null,
     standalone_module_graph: ?*bun.StandaloneModuleGraph = null,
+    smol: bool = false,
 
     hot_reload: bun.CLI.Command.HotReload = .none,
     jsc: *JSC.VM = undefined,
@@ -1312,6 +1313,7 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.global = vm.global;
         vm.regular_event_loop.virtual_machine = vm;
         vm.jsc = vm.global.vm();
+        vm.smol = opts.smol;
 
         if (source_code_printer == null) {
             var writer = try js_printer.BufferWriter.init(allocator);
@@ -1433,7 +1435,7 @@ pub const VirtualMachine = struct {
 
         vm.bundler.configureLinker();
         try vm.bundler.configureFramework(false);
-
+        vm.smol = opts.smol;
         vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
 
         if (opts.args.serve orelse false) {
@@ -1476,9 +1478,10 @@ pub const VirtualMachine = struct {
         return ResolvedSource{
             .source_code = bun.String.init(source.impl),
             .specifier = specifier,
-            .source_url = ZigString.init(source_url),
+            .source_url = bun.String.init(source_url),
             .hash = source.hash,
             .allocator = source,
+            .needs_deref = false,
         };
     }
 

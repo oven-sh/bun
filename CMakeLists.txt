@@ -4,7 +4,7 @@ cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
 set(Bun_VERSION "1.0.8")
-set(WEBKIT_TAG 2279f7ac96c1b5e6f10948e39af06ac36688931d)
+set(WEBKIT_TAG bc5fe2f2d6256241fd21641e2fbc38c9d9103bdb)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -815,6 +815,7 @@ if(NOT BUN_CPP_ARCHIVE)
             string(REPLACE "${CMAKE_CURRENT_SOURCE_DIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
             write_file("${BUN_WORKDIR}/compile-cpp-only.sh"
                 "#!/usr/bin/env bash\n"
+                "# this file is generated in CMakeLists.txt\n"
                 "set -e\n"
                 "OBJ_LIST=(\n  ${BUN_OBJECT_LIST}\n)\n"
                 "ninja \${OBJ_LIST[@]} $@\n"
@@ -827,6 +828,7 @@ if(NOT BUN_CPP_ARCHIVE)
             string(REPLACE "${BUN_WORKDIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
             string(REPLACE "${CMAKE_CURRENT_SOURCE_DIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
             write_file("${BUN_WORKDIR}/compile-cpp-only.ps1"
+                "# this file is generated in CMakeLists.txt\n"
                 "$ErrorActionPreference = \"Stop\"\n"
                 "$ObjectFiles=@(\n  ${BUN_OBJECT_LIST}\n)\n"
                 "ninja @ObjectFiles @args\n"

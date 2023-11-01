@@ -407,7 +407,7 @@ pub noinline fn openDirAtWindowsA(
     var wbuf: bun.MAX_WPATH = undefined;
     return openDirAtWindows(dirFd, bun.strings.toNTDir(&wbuf, path), iterable, no_follow);
 }
-pub fn openatWindows(dirfD: bun.FileDescriptor, path: []const u16, flags: bun.Mode) Maybe(bun.FileDescriptor) {
+pub fn openatWindows(dirfD: bun.FileDescriptor, path_: []const u16, flags: bun.Mode) Maybe(bun.FileDescriptor) {
     const nonblock = flags & O.NONBLOCK != 0;
 
     var access_mask: w.ULONG = w.READ_CONTROL | w.FILE_WRITE_ATTRIBUTES | w.SYNCHRONIZE;
@@ -423,9 +423,11 @@ pub fn openatWindows(dirfD: bun.FileDescriptor, path: []const u16, flags: bun.Mo
 
     var result: windows.HANDLE = undefined;
 
+    const path = if(bun.strings.hasPrefixComptimeUTF16(path_, ".\\")) path_[2..] else path_;
+
     const path_len_bytes = std.math.cast(u16, path.len * 2) orelse return .{
         .err = .{
-            .errno = @intFromEnum(bun.C.E.NOMEM),
+        .errno = @intFromEnum(bun.C.E.NOMEM),
             .syscall = .open,
         },
     };

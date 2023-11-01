@@ -75,6 +75,13 @@ declare module "bun" {
      * The root directory to start matching from. Defaults to `process.cwd()`
      */
     cwd?: string;
+
+    /**
+     * Allow patterns to match entries that begin with a period (`.`).
+     *
+     * @default false
+     */
+    dot?: boolean;
   }
 
   /**

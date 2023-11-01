@@ -212,8 +212,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "C++ compilation failed" }
       - uses: actions/upload-artifact@v3
         with:
-          name: buildall-cpp-objects.a
-          path: ${{ env.tag }}-cpp
+          name: ${{ env.tag }}-cpp
+          path: buildall-cpp-objects.a
 
   windows-link:
     name: Link

@@ -201,7 +201,7 @@ jobs:
           .\scripts\update-submodules.ps1
           .\scripts\build-libuv.ps1 -CloneOnly $True
           cd build
-          cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DNO_CODEGEN=1 -DNO_CONFIGURE_DEPENDS=1 -DCANARY=1 -DBUN_CPP_ONLY=1 -DCCACHE_PROGRAM=$SCCACHE
+          cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DNO_CODEGEN=1 -DNO_CONFIGURE_DEPENDS=1 -DCANARY=1 -DBUN_CPP_ONLY=1 "-DCCACHE_PROGRAM=${SCCACHE}"
           if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed" }
           .\compile-cpp-only.ps1 -v
           if ($LASTEXITCODE -ne 0) { throw "C++ compilation failed" }

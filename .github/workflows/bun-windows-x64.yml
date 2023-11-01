@@ -190,12 +190,12 @@ jobs:
           Invoke-WebRequest -Uri "https://github.com/mozilla/sccache/releases/download/v0.6.0/${sczip}.zip" -OutFile "${sczip}.zip"
           Expand-Archive "${sczip}.zip"
           $env:PATH += ";$PWD\$sczip"
-          $env:SCCACHE_BUCKET=bun
-          $env:SCCACHE_REGION=auto
-          $env:SCCACHE_S3_USE_SSL=true
-          $env:SCCACHE_ENDPOINT=${{ secrets.CACHE_S3_ENDPOINT }}
-          $env:AWS_ACCESS_KEY_ID=${{ secrets.CACHE_S3_ACCESS_KEY_ID }}
-          $env:AWS_SECRET_ACCESS_KEY=${{ secrets.CACHE_S3_SECRET_ACCESS_KEY }}
+          $env:SCCACHE_BUCKET="bun"
+          $env:SCCACHE_REGION="auto"
+          $env:SCCACHE_S3_USE_SSL="true"
+          $env:SCCACHE_ENDPOINT="${{ secrets.CACHE_S3_ENDPOINT }}"
+          $env:AWS_ACCESS_KEY_ID="${{ secrets.CACHE_S3_ACCESS_KEY_ID }}"
+          $env:AWS_SECRET_ACCESS_KEY="${{ secrets.CACHE_S3_SECRET_ACCESS_KEY }}"
 
           .\scripts\env.ps1
           .\scripts\update-submodules.ps1

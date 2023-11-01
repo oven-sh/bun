@@ -784,9 +784,10 @@ pub const HTTPThread = struct {
                     }
                 }
                 // we need the config so dont free it
-                client.tls_props = null;
                 var custom_context = try bun.default_allocator.create(NewHTTPContext(is_ssl));
                 custom_context.initWithClientConfig(client) catch |err| {
+                    requested_config.deinit();
+                    client.tls_props = null;
                     bun.default_allocator.destroy(custom_context);
                     return err;
                 };
@@ -1517,11 +1518,6 @@ pub fn deinit(this: *HTTPClient) void {
     if (this.proxy_tunnel) |tunnel| {
         tunnel.deinit();
         this.proxy_tunnel = null;
-    }
-
-    if (this.tls_props) |*props| {
-        props.deinit();
-        this.tls_props = null;
     }
 }
 

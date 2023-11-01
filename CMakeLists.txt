@@ -764,39 +764,7 @@ set_target_properties(${bun} PROPERTIES
     VISIBILITY_INLINES_HIDDEN YES
 )
 
-if(NOT BUN_CPP_ARCHIVE)
-    if (BUN_CPP_ONLY)
-        if(NOT WIN32)
-            string(REPLACE ";" ".o\n  " BUN_OBJECT_LIST "${BUN_SOURCES}.o")
-            string(REPLACE "${BUN_WORKDIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
-            string(REPLACE "${CMAKE_CURRENT_SOURCE_DIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
-            write_file("${BUN_WORKDIR}/compile-cpp-only.sh"
-                "#!/usr/bin/env bash\n"
-                "set -e\n"
-                "OBJ_LIST=(\n  ${BUN_OBJECT_LIST}\n)\n"
-                "ninja \${OBJ_LIST[@]}\n"
-                "${AR} rcvs bun-cpp-objects.a \${OBJ_LIST[@]}\n"
-                "echo '-> bun-cpp-objects.a'\n"
-            )
-        else()
-            string(REPLACE ";" ".obj\",\n  \"" BUN_OBJECT_LIST "\"${BUN_SOURCES}.obj\"")
-            string(REPLACE "${BUN_WORKDIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
-            string(REPLACE "${CMAKE_CURRENT_SOURCE_DIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
-            write_file("${BUN_WORKDIR}/compile-cpp-only.ps1"
-                "$ErrorActionPreference = \"Stop\"\n"
-                "$ObjectFiles=@(\n  ${BUN_OBJECT_LIST}\n)\n"
-                "ninja @ObjectFiles\n"
-                "${AR} rcvs bun-cpp-objects.a @ObjectFiles\n"
-                "Write-Host '-> bun-cpp-objects.a'\n"
-            )
-        endif()
-    endif()
-else()
-    set_target_properties(${bun} PROPERTIES LINKER_LANGUAGE CXX)
-endif()
-
 add_compile_definitions(
-
     # TODO: are all of these variables strictly necessary?
     "_HAS_EXCEPTIONS=0"
     "LIBUS_USE_OPENSSL=1"
@@ -837,6 +805,39 @@ include_directories(
     ${WEBKIT_INCLUDE_DIR}
     "${BUN_WORKDIR}/codegen"
 )
+
+# -- BUN_CPP_ONLY Target
+if(NOT BUN_CPP_ARCHIVE)
+    if (BUN_CPP_ONLY)
+        if(NOT WIN32)
+            string(REPLACE ";" ".o\n  " BUN_OBJECT_LIST "${BUN_SOURCES}.o")
+            string(REPLACE "${BUN_WORKDIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
+            string(REPLACE "${CMAKE_CURRENT_SOURCE_DIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
+            write_file("${BUN_WORKDIR}/compile-cpp-only.sh"
+                "#!/usr/bin/env bash\n"
+                "set -e\n"
+                "OBJ_LIST=(\n  ${BUN_OBJECT_LIST}\n)\n"
+                "ninja \${OBJ_LIST[@]} $@\n"
+                "${AR} rcvs bun-cpp-objects.a \${OBJ_LIST[@]}\n"
+                "echo '-> bun-cpp-objects.a'\n"
+            )
+        else()
+            string(REPLACE ";" ".obj\",\n  \"" BUN_OBJECT_LIST "\"${BUN_SOURCES}.obj\"")
+            string(REPLACE "rc.obj" "rc.res" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
+            string(REPLACE "${BUN_WORKDIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
+            string(REPLACE "${CMAKE_CURRENT_SOURCE_DIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
+            write_file("${BUN_WORKDIR}/compile-cpp-only.ps1"
+                "$ErrorActionPreference = \"Stop\"\n"
+                "$ObjectFiles=@(\n  ${BUN_OBJECT_LIST}\n)\n"
+                "ninja @ObjectFiles @args\n"
+                "${AR} rcvs bun-cpp-objects.a @ObjectFiles\n"
+                "Write-Host '-> bun-cpp-objects.a'\n"
+            )
+        endif()
+    endif()
+else()
+    set_target_properties(${bun} PROPERTIES LINKER_LANGUAGE CXX)
+endif()
 
 # --- clang and linker flags ---
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -1172,6 +1173,12 @@ else()
     )
 endif()
 
-if(NO_CODEGEN AND NOT CODEGEN)
-    message(STATUS "NO_CODEGEN is ON, a handful of build steps will not run.")
+if(BUN_LINK_ONLY)
+    message(STATUS "NOTE: BUN_LINK_ONLY is ON, this build config will only link the Bun executable")
+endif()
+if(BUN_CPP_ONLY)
+    message(STATUS "NOTE: BUN_CPP_ONLY is ON, this build will only work with 'compile-cpp-only.${SCRIPT_EXTENSION}'")
+endif()
+if(NO_CODEGEN)
+    message(STATUS "NOTE: NO_CODEGEN is ON, this build expects ./codegen to exist")
 endif()

@@ -6,13 +6,15 @@ export TARGET_ARCH=${2:-x64}
 
 cd "$(dirname "${BASH_SOURCE[0]}")/../"
 
-OUT=$(realpath build-codegen-${TARGET_PLATFORM}-${TARGET_ARCH})
+OUT=build-codegen-${TARGET_PLATFORM}-${TARGET_ARCH}
 
 rm -rf "$OUT"
 mkdir -p "$OUT"
+mkdir -p "$OUT/"{codegen,js,tmp_functions,tmp_modules}
+
+OUT=$(realpath "$OUT")
 
 bun ./src/codegen/bundle-functions.ts --debug=OFF "$OUT" &
-
 bun ./src/codegen/bundle-modules.ts --debug=OFF "$OUT" &
 
 rm -rf "$OUT/tmp_functions"
@@ -36,9 +38,11 @@ LUTS=(
   ./src/bun.js/bindings/ProcessBindingNatives.cpp
 )
 for lut in ${LUTS[@]}; do
-  result=$(basename $lut | sed 's/.lut.txt/.cpp/' | sed 's/.cpp/.h/')
-  echo bun "./src/codegen/create-hash-table.ts" "$lut" "$OUT/codegen/$result"
+  result=$(basename $lut | sed 's/.lut.txt/.cpp/' | sed 's/.cpp/.lut.h/')
+  bun "./src/codegen/create-hash-table.ts" "$lut" "$OUT/codegen/$result" &
 done
+
+bun "./src/codegen/generate-jssink.ts" "$OUT/codegen" &
 
 wait
 

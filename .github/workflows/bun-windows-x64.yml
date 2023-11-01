@@ -107,12 +107,7 @@ jobs:
             rustc --version
             Get-Content -Path (Get-ChildItem -Path 'scripts/build*.sh', 'scripts/all-dependencies.sh' | Sort-Object -Property Name).FullName | Out-String
           })"
-          $hash = ( -join ( `
-            (New-Object -TypeName System.Security.Cryptography.SHA1CryptoServiceProvider) `
-              .ComputeHash([System.Text.Encoding]::UTF8.GetBytes($data)) `
-              | ForEach-Object { $_.ToString("x2") } `
-            ) `
-          ).Substring(0, 10)
+          $hash = ( -join ((New-Object -TypeName System.Security.Cryptography.SHA1CryptoServiceProvider).ComputeHash([System.Text.Encoding]::UTF8.GetBytes($data)) | ForEach-Object { $_.ToString("x2") } )).Substring(0, 10)
           Add-Content -Path $env:GITHUB_OUTPUT -Value "sha=$sha"
         id: submodule-versions
 

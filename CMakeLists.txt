@@ -186,6 +186,13 @@ endif()
 
 set(DEFAULT_ON_UNLESS_APPLE ON)
 
+set(DEFAULT_USE_STATIC_LIBATOMIC ON)
+if(UNIX AND NOT APPLE)
+    execute_process(COMMAND cat /etc/os-release COMMAND head -n1 OUTPUT_VARIABLE LINUX_DISTRO)
+    if(${LINUX_DISTRO} STREQUAL "NAME=\"Arch Linux\"\n")
+        set(DEFAULT_USE_STATIC_LIBATOMIC OFF)
+    endif()
+endif()
 if(APPLE)
     set(DEFAULT_ON_UNLESS_APPLE OFF)
 endif()
@@ -214,7 +221,7 @@ option(USE_DEBUG_JSC "Enable assertions and use a debug build of JavaScriptCore"
 option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
 
 option(CANARY "Make `bun --revision` report a canary release" OFF)
-
+option(USE_STATIC_LIBATOMIC "statically link libatomic, requires the presence of libatomic.a" ${DEFAULT_USE_STATIC_LIBATOMIC})
 set(ERROR_LIMIT 100 CACHE STRING "Maximum number of errors to show when compiling C++ code")
 
 set(ARCH x86_64)
@@ -573,6 +580,7 @@ if(NOT NO_CODEGEN)
         COMMAND ${ZIG_COMPILER} run "${BUN_SRC}/js_lexer/identifier_data.zig"
         VERBATIM
         COMMENT "Building Identifier Cache"
+        DEPENDS_EXPLICIT_ONLY
     )
 endif()
 
@@ -674,12 +682,11 @@ file(GLOB ZIG_FILES
 
 if(NOT BUN_ZIG_OBJ)
     set(BUN_ZIG_OBJ "${BUN_WORKDIR}/CMakeFiles/bun-zig.o")
+else()
+    get_filename_component(BUN_ZIG_OBJ "${BUN_ZIG_OBJ}" REALPATH BASE_DIR "${CMAKE_BINARY_DIR}")
 endif()
 
-get_filename_component(BUN_ZIG_OBJ "${BUN_ZIG_OBJ}" REALPATH BASE_DIR "${CMAKE_BINARY_DIR}")
-
 set(USES_TERMINAL_NOT_IN_CI "")
-
 if(NOT CI)
     set(USES_TERMINAL_NOT_IN_CI "USES_TERMINAL")
 endif()
@@ -711,6 +718,7 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         ${USES_TERMINAL_NOT_IN_CI}
     )
 endif()
+add_custom_target(zig DEPENDS "${BUN_ZIG_OBJ}")
 
 if(WIN32)
     list(APPEND BUN_RAW_SOURCES "${BUN_SRC}/bun.js/bindings/windows/musl-memmem.c")
@@ -752,7 +760,7 @@ if(NOT BUN_CPP_ARCHIVE)
             "#!/usr/bin/env bash\n"
             "set -e\n"
             "OBJ_LIST=(\n  ${BUN_OBJECT_LIST}\n)\n"
-            "ninja \${OBJ_LIST[@]}\n"
+            "ninja \${OBJ_LIST[@]} $@\n"
             "${AR} rcvs bun-cpp-objects.a \${OBJ_LIST[@]}\n"
             "echo '-> bun-cpp-objects.a'\n"
         )
@@ -935,7 +943,11 @@ if(UNIX AND NOT APPLE)
     target_link_libraries(${bun} PRIVATE "pthread")
     target_link_libraries(${bun} PRIVATE "dl")
 
-    target_link_libraries(${bun} PRIVATE "libatomic.a")
+    if(NOT USE_STATIC_LIBATOMIC)
+        target_link_libraries(${bun} PUBLIC "libatomic.so")
+    else()
+        target_link_libraries(${bun} PRIVATE "libatomic.a")
+    endif()
 
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicudata.a")
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicui18n.a")

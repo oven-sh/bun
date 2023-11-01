@@ -484,51 +484,6 @@ JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalO
   `;
 
   for (let name of classes) {
-    const {
-      className,
-      controller,
-      prototypeName,
-      controllerName,
-      controllerPrototypeName,
-      constructor,
-      writableStreamSourcePrototype,
-      writableStreamName,
-    } = names(name);
-    const protopad = `${controller}__close`.length;
-    const padding = `${name}__doClose`.length;
-    templ += `
-/* Source for JS${name}PrototypeTableValues.lut.h
-@begin JS${name}PrototypeTable
-  close      ${`${name}__doClose`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 0
-  flush      ${`${name}__flush`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 1
-  end        ${`${name}__end`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 0
-  start      ${`${name}__start`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 1
-  write      ${`${name}__write`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 1
-  ref        ${`${name}__ref`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 0
-  unref      ${`${name}__unref`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 0
-@end
-*/
-
-
-/* Source for ${controllerPrototypeName}TableValues.lut.h
-@begin ${controllerPrototypeName}Table
-  close        ${`${controller}__close`.padEnd(protopad + 4)}  ReadOnly|DontDelete|Function 0
-  flush        ${`${name}__flush`.padEnd(protopad + 4)}  ReadOnly|DontDelete|Function 1
-  end          ${`${controller}__end`.padEnd(protopad + 4)}  ReadOnly|DontDelete|Function 0
-  start        ${`${name}__start`.padEnd(protopad + 4)}  ReadOnly|DontDelete|Function 1
-  write        ${`${name}__write`.padEnd(protopad + 4)}  ReadOnly|DontDelete|Function 1
-@end
-*/
-
-  `;
-  }
-
-  const footer = `
-} // namespace WebCore
-
-`;
-
-  for (let name of classes) {
     const { className, controller, prototypeName, controllerPrototypeName, constructor, controllerName } = names(name);
     templ += `
 #pragma mark - ${name}
@@ -854,6 +809,10 @@ default:
   }
 }`;
 
+  const footer = `
+} // namespace WebCore
+
+`;
   templ += footer;
 
   for (let name of classes) {
@@ -951,14 +910,55 @@ extern "C" void ${name}__onClose(JSC__JSValue controllerValue, JSC__JSValue reas
   return templ;
 }
 
+function lutInput() {
+  let templ = "";
+  for (let name of classes) {
+    const { controller, controllerPrototypeName } = names(name);
+    const protopad = `${controller}__close`.length;
+    const padding = `${name}__doClose`.length;
+    templ += `
+/* Source for JS${name}PrototypeTableValues.lut.h
+@begin JS${name}PrototypeTable
+    close      ${`${name}__doClose`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 0
+    flush      ${`${name}__flush`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 1
+    end        ${`${name}__end`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 0
+    start      ${`${name}__start`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 1
+    write      ${`${name}__write`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 1
+    ref        ${`${name}__ref`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 0
+    unref      ${`${name}__unref`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 0
+@end
+*/
+
+
+/* Source for ${controllerPrototypeName}TableValues.lut.h
+@begin ${controllerPrototypeName}Table
+    close        ${`${controller}__close`.padEnd(protopad + 4)}  ReadOnly|DontDelete|Function 0
+    flush        ${`${name}__flush`.padEnd(protopad + 4)}  ReadOnly|DontDelete|Function 1
+    end          ${`${controller}__end`.padEnd(protopad + 4)}  ReadOnly|DontDelete|Function 0
+    start        ${`${name}__start`.padEnd(protopad + 4)}  ReadOnly|DontDelete|Function 1
+    write        ${`${name}__write`.padEnd(protopad + 4)}  ReadOnly|DontDelete|Function 1
+@end
+*/
+`;
+  }
+
+  return templ;
+}
+
 const outDir = resolve(process.argv[2]);
 
 await Bun.write(resolve(outDir + "/JSSink.h"), header());
 await Bun.write(resolve(outDir + "/JSSink.cpp"), await implementation());
+await Bun.write(resolve(outDir + "/JSSink.lut.txt"), lutInput());
 
-Bun.spawnSync([
-  process.execPath,
-  join(import.meta.dir, "create-hash-table.ts"),
-  resolve(outDir + "/JSSink.cpp"),
-  join(outDir, "JSSink.lut.h"),
-]);
+Bun.spawnSync(
+  [
+    process.execPath,
+    join(import.meta.dir, "create-hash-table.ts"),
+    resolve(outDir + "/JSSink.lut.txt"),
+    join(outDir, "JSSink.lut.h"),
+  ],
+  {
+    stdio: ["inherit", "inherit", "inherit"],
+  },
+);

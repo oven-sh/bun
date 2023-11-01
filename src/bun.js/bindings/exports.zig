@@ -1876,10 +1876,6 @@ pub const ZigConsoleClient = struct {
                     if (key.eqlComptime("constructor")) return;
                     if (key.eqlComptime("call")) return;
 
-                    if (value.jsType().isFunction()) {
-                        return;
-                    }
-
                     var ctx: *@This() = bun.cast(*@This(), ctx_ptr orelse return);
                     var this = ctx.formatter;
                     var writer_ = ctx.writer;

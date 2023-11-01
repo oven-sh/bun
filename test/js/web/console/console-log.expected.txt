@@ -110,5 +110,5 @@ MapIterator {
 }
 MapIterator { } MapIterator { }
 {
-  foo: 1
+  abc: [Function]
 }

@@ -4244,6 +4244,10 @@ restart:
                 propertyValue = objectToUse->getIfPropertyExists(globalObject, prop);
             }
 
+            if (!object->hasOwnProperty(globalObject, prop)) {
+                return true;
+            }
+
             if (scope.exception())
                 scope.clearException();
 

@@ -11,6 +11,10 @@ env:
   LLVM_VERSION: 16.0.6
   BUN_DOWNLOAD_URL_BASE: https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/latest
 
+  cpu: native
+  arch: x86_64
+  tag: bun-windows-x64
+
 on:
   push:
     branches: [main]
@@ -35,15 +39,9 @@ on:
 
 jobs:
   windows-zig:
-    name: Windows Zig Compile
+    name: Zig Build
     runs-on: med-ubuntu
     if: github.repository_owner == 'oven-sh'
-    strategy:
-      matrix:
-        include:
-          - cpu: native
-            arch: x86_64
-            tag: bun-windows-x64
     steps:
       - uses: actions/checkout@v4
       - name: Setup Docker Buildx
@@ -77,9 +75,9 @@ jobs:
           build-args: |
             BUILDARCH=${{ runner.arch == 'X64' && 'amd64' || 'arm64' }}
             BUILD_MACHINE_ARCH=${{ runner.arch == 'X64' && 'x86_64' || 'aarch64' }}
-            ARCH=${{ matrix.arch }}
-            CPU_TARGET=${{ matrix.cpu }}
-            TRIPLET=${{ matrix.arch }}-windows-msvc
+            ARCH=${{ env.arch }}
+            CPU_TARGET=${{ env.cpu }}
+            TRIPLET=${{ env.arch }}-windows-msvc
             GIT_SHA=${{ github.sha }}
             CANARY=${{ steps.canary.outputs.canary_revision }}
           platforms: linux/${{ runner.arch == 'X64' && 'amd64' || 'arm64' }}
@@ -89,11 +87,11 @@ jobs:
       - name: Upload Zig Object
         uses: actions/upload-artifact@v3
         with:
-          name: ${{ matrix.tag }}-zig
+          name: ${{ env.tag }}-zig
           path: ${{runner.temp}}/release/bun-zig.o
 
   windows-dependencies:
-    name: Windows Dependencies
+    name: Dependencies
     strategy:
       matrix:
         include:
@@ -104,9 +102,6 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
-      - uses: ilammy/msvc-dev-cmd@7315a94840631165970262a99c72cfb48a65d25d
-        with:
-          arch: ${{ matrix.arch }}
       - uses: KyleMayes/install-llvm-action@1a3da29f56261a1e1f937ec88f0856a9b8321d7e
         with:
           version: ${{ env.LLVM_VERSION }}
@@ -114,19 +109,20 @@ jobs:
       - name: Build Dependencies
         run: |
           git submodule update --init --recursive --progress --depth=1 --checkout
+          .\scripts\env.ps1
           Invoke-WebRequest -Uri "https://www.nasm.us/pub/nasm/releasebuilds/2.16.01/win64/nasm-2.16.01-win64.zip" -OutFile nasm.zip
           Expand-Archive nasm.zip (mkdir -Force "nasm")
           $Nasm = (Get-ChildItem "nasm")
           $env:Path += ";${Nasm}"
           $env:BUN_DEPS_OUT_DIR = (mkdir -Force "./bun-deps")
-          ./scripts/all-dependencies.ps1
+          .\scripts/all-dependencies.ps1
       - uses: actions/upload-artifact@v3
         with:
           name: bun-deps/
-          path: bun-windows-x64-deps
+          path: ${{ env.tag }}-deps
 
   windows-codegen:
-    name: Windows Generated Code
+    name: Codegen
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -137,24 +133,16 @@ jobs:
           ./scripts/cross-compile-codegen.sh win32 x64
       - uses: actions/upload-artifact@v3
         with:
-          name: bun-windows-x64-codegen
+          name: ${{ env.tag }}-codegen
           path: build-codegen-win32-x64/
 
   windows-cpp:
+    name: C++ Build
     needs: [windows-codegen]
-    strategy:
-      matrix:
-        include:
-          - runner: windows-latest
-            arch: amd64
-            tag: bun-windows-x64
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
-      - uses: ilammy/msvc-dev-cmd@7315a94840631165970262a99c72cfb48a65d25d
-        with:
-          arch: ${{ matrix.arch }}
       - uses: KyleMayes/install-llvm-action@1a3da29f56261a1e1f937ec88f0856a9b8321d7e
         with:
           version: ${{ env.LLVM_VERSION }}
@@ -162,35 +150,30 @@ jobs:
       - name: Download Codegen
         uses: actions/download-artifact@v2
         with:
-          name: bun-windows-x64-codegen
+          name: ${{ env.tag }}-codegen
           path: build
       - name: Build C++
         run: |
+          .\scripts\env.ps1
           git submodule update --init --recursive --progress --depth=1 --checkout
+          .\scripts\build-libuv.ps1 -CloneOnly $True
           cd build
           cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DNO_CODEGEN=1 -DNO_CONFIGURE_DEPENDS=1 -DCANARY=1 -DBUN_CPP_ONLY=1
+          if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed" }
           .\compile-cpp-only.ps1 -v
+          if ($LASTEXITCODE -ne 0) { throw "C++ compilation failed" }
       - uses: actions/upload-artifact@v3
         with:
           name: buildall-cpp-objects.a
-          path: bun-windows-x64-cpp
+          path: ${{ env.tag }}-cpp
 
   windows-link:
-    name: Windows Link
+    name: Link
     needs: [windows-dependencies, windows-codegen, windows-cpp, windows-zig]
-    strategy:
-      matrix:
-        include:
-          - runner: windows-latest
-            arch: amd64
-            tag: bun-windows-x64
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
-      - uses: ilammy/msvc-dev-cmd@7315a94840631165970262a99c72cfb48a65d25d
-        with:
-          arch: ${{ matrix.arch }}
       - uses: KyleMayes/install-llvm-action@1a3da29f56261a1e1f937ec88f0856a9b8321d7e
         with:
           version: ${{ env.LLVM_VERSION }}
@@ -198,27 +181,28 @@ jobs:
       - name: Download Codegen
         uses: actions/download-artifact@v2
         with:
-          name: bun-windows-x64-codegen
+          name: ${{ env.tag }}-codegen
           path: build
       - name: Download Dependencies
         uses: actions/download-artifact@v2
         with:
-          name: bun-windows-x64-deps
+          name: ${{ env.tag }}-deps
           path: bun-deps
       - name: Download Zig Object
         uses: actions/download-artifact@v2
         with:
-          name: bun-windows-x64-zig
+          name: ${{ env.tag }}-zig
           path: bun-zig
       - name: Download C++ Objects
         uses: actions/download-artifact@v2
         with:
-          name: bun-windows-x64-cpp
+          name: ${{ env.tag }}-cpp
           path: bun-cpp
       - name: Link
         run: |
           git submodule update --init --recursive --progress --depth=1 --checkout
-          cd build
+          .\scripts\env.ps1
+          Set-Location build
           cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release `
             -DNO_CODEGEN=1 `
             -DNO_CONFIGURE_DEPENDS=1 `
@@ -227,14 +211,17 @@ jobs:
             '-DBUN_DEPS_OUT_DIR=../bun-deps' `
             '-DBUN_CPP_ARCHIVE=../bun-cpp/buildall-cpp-objects.a' `
             '-DBUN_ZIG_OBJ=../bun-zig/bun-zig.o'
+          if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed" }
           ninja -v
+          if ($LASTEXITCODE -ne 0) { throw "Link failed!" }
+
       # TODO: code sign?
       - name: Package
         run: |
-          mkdir -Force "bun-windows-x64"
-          cp -r build/bun.exe bun-windows-x64/bun.exe
-          Compress-Archive bun-windows-x64 bun-windows-x64.zip
+          $Dist = mkdir -Force "${{ env.tag }}"
+          cp -r build\bun.exe "$Dist\bun.exe"
+          Compress-Archive $Dist ${{ env.tag }}.zip
       - uses: actions/upload-artifact@v3
         with:
-          name: bun-windows-x64
-          path: build/bun-windows-x64.zip
+          name: ${{ env.tag }}
+          path: build/${{ env.tag }}.zip

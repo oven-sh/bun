@@ -212,6 +212,14 @@ if(DEFINED ENV{CI} OR DEFINED ENV{GITHUB_ACTIONS})
     set(CI ON)
 endif()
 
+set(DEFAULT_USE_STATIC_LIBATOMIC ON)
+if(UNIX AND NOT APPLE)
+    execute_process(COMMAND cat /etc/os-release COMMAND head -n1 OUTPUT_VARIABLE LINUX_DISTRO)
+    if(${LINUX_DISTRO} STREQUAL "NAME=\"Arch Linux\"\n")
+        set(DEFAULT_USE_STATIC_LIBATOMIC OFF)
+    endif()
+endif()
+
 # -- Build Flags --
 option(USE_STATIC_SQLITE "Statically link SQLite?" ${DEFAULT_ON_UNLESS_APPLE})
 option(USE_CUSTOM_ZLIB "Use Bun's recommended version of zlib" ON)
@@ -228,6 +236,7 @@ option(USE_BASELINE_BUILD "Build Bun for baseline (older) CPUs" OFF)
 
 option(USE_DEBUG_JSC "Enable assertions and use a debug build of JavaScriptCore" OFF)
 option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
+option(USE_STATIC_LIBATOMIC "Statically link libatomic, requires the presence of libatomic.a" ${DEFAULT_USE_STATIC_LIBATOMIC})
 
 if (NOT CANARY)
     set(CANARY 0)
@@ -955,7 +964,11 @@ if(UNIX AND NOT APPLE)
     target_link_libraries(${bun} PRIVATE "pthread")
     target_link_libraries(${bun} PRIVATE "dl")
 
-    target_link_libraries(${bun} PRIVATE "libatomic.a")
+    if(NOT USE_STATIC_LIBATOMIC)
+        target_link_libraries(${bun} PUBLIC "libatomic.so")
+    else()
+        target_link_libraries(${bun} PRIVATE "libatomic.a")
+    endif()
 
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicudata.a")
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicui18n.a")

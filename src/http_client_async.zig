@@ -47,6 +47,7 @@ const DeadSocket = opaque {};
 var dead_socket = @as(*DeadSocket, @ptrFromInt(1));
 //TODO: this needs to be freed when Worker Threads are implemented
 var socket_async_http_abort_tracker = std.AutoArrayHashMap(u32, *uws.Socket).init(bun.default_allocator);
+var custom_ssl_context_map = std.AutoArrayHashMap(SSLConfig, *NewHTTPContext(true)).init(bun.default_allocator);
 var async_http_id: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0);
 
 const print_every = 0;
@@ -773,12 +774,23 @@ pub const HTTPThread = struct {
         if (comptime is_ssl) {
             const needs_own_context = client.tls_props != null and client.tls_props.?.requires_custom_request_ctx;
             if (needs_own_context) {
+                var requested_config = client.tls_props.?;
+                for (custom_ssl_context_map.keys()) |other_config| {
+                    if (requested_config.isSame(&other_config)) {
+                        // we freee the callers config since we have a existing one
+                        requested_config.deinit();
+                        client.tls_props = null;
+                        return try custom_ssl_context_map.get(other_config).?.connect(client, client.url.hostname, client.url.getPortAuto());
+                    }
+                }
+                // we need the config so dont free it
+                client.tls_props = null;
                 var custom_context = try bun.default_allocator.create(NewHTTPContext(is_ssl));
                 custom_context.initWithClientConfig(client) catch |err| {
                     bun.default_allocator.destroy(custom_context);
                     return err;
                 };
-                client.custom_context = custom_context;
+                try custom_ssl_context_map.put(requested_config, custom_context);
                 return try custom_context.connect(client, client.url.hostname, client.url.getPortAuto());
             }
         }
@@ -1472,7 +1484,6 @@ signals: Signals = .{},
 async_http_id: u32 = 0,
 hostname: ?[]u8 = null,
 reject_unauthorized: bool = true,
-custom_context: ?*NewHTTPContext(true) = null,
 
 pub fn init(
     allocator: std.mem.Allocator,
@@ -1508,14 +1519,9 @@ pub fn deinit(this: *HTTPClient) void {
         this.proxy_tunnel = null;
     }
 
-    if (this.tls_props) |*tls_props| {
-        tls_props.deinit();
+    if (this.tls_props) |*props| {
+        props.deinit();
         this.tls_props = null;
-    }
-
-    if (this.custom_context) |custom_context| {
-        custom_context.deinit();
-        this.custom_context = null;
     }
 }
 

@@ -259,6 +259,71 @@ pub const ServerConfig = struct {
             return ctx_opts;
         }
 
+        pub fn isSame(thisConfig: *const SSLConfig, otherConfig: *const SSLConfig) bool {
+            { //strings
+                const fields = .{
+                    "server_name",
+                    "key_file_name",
+                    "cert_file_name",
+                    "ca_file_name",
+                    "dh_params_file_name",
+                    "passphrase",
+                    "ssl_ciphers",
+                    "protos",
+                };
+
+                inline for (fields) |field| {
+                    const lhs = @field(thisConfig, field);
+                    const rhs = @field(otherConfig, field);
+                    if (lhs != null and rhs != null) {
+                        if (!stringsEqual(lhs, rhs))
+                            return false;
+                    } else if (lhs != null or rhs != null) {
+                        return false;
+                    }
+                }
+            }
+
+            {
+                //numbers
+                const fields = .{ "secure_options", "request_cert", "reject_unauthorized", "low_memory_mode" };
+
+                inline for (fields) |field| {
+                    const lhs = @field(thisConfig, field);
+                    const rhs = @field(otherConfig, field);
+                    if (lhs != rhs)
+                        return false;
+                }
+            }
+
+            {
+                // complex fields
+                const fields = .{ "key", "ca", "cert" };
+                inline for (fields) |field| {
+                    const lhs_count = @field(thisConfig, field ++ "_count");
+                    const rhs_count = @field(otherConfig, field ++ "_count");
+                    if (lhs_count != rhs_count)
+                        return false;
+                    if (lhs_count > 0) {
+                        const lhs = @field(thisConfig, field);
+                        const rhs = @field(otherConfig, field);
+                        for (0..lhs_count) |i| {
+                            if (!stringsEqual(lhs.?[i], rhs.?[i]))
+                                return false;
+                        }
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        fn stringsEqual(a: [*c]const u8, b: [*c]const u8) bool {
+            const lhs = bun.asByteSlice(a);
+            const rhs = bun.asByteSlice(b);
+            return strings.eqlLong(lhs, rhs, true);
+        }
+
         pub fn deinit(this: *SSLConfig) void {
             const fields = .{
                 "server_name",

@@ -1,9 +1,7 @@
-#pragma once
-
 #include "root.h"
 #include "ZigGlobalObject.h"
 #include "AsyncContextFrame.h"
-#include "JavaScriptCore/InternalFieldTuple.h"
+#include <JavaScriptCore/InternalFieldTuple.h>
 
 using namespace JSC;
 using namespace WebCore;
@@ -64,7 +62,7 @@ void AsyncContextFrame::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(AsyncContextFrame);
 
-extern "C" EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlobalObject* globalObject, EncodedJSValue callback)
+extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlobalObject* globalObject, JSC::EncodedJSValue callback)
 {
     return JSValue::encode(AsyncContextFrame::withAsyncContextIfNeeded(globalObject, JSValue::decode(callback)));
 }

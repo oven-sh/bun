@@ -28,7 +28,6 @@ pub var global_loaded: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0);
 const log = Output.scoped(.NetworkThread, true);
 const Global = @import("root").bun.Global;
 pub fn onStartIOThread(waker: AsyncIO.Waker) void {
-    NetworkThread.address_list_cached = NetworkThread.AddressListCache.init(@import("root").bun.default_allocator);
     AsyncIO.global = AsyncIO.init(1024, 0, waker) catch |err| {
         log: {
             if (comptime Environment.isLinux) {
@@ -164,55 +163,8 @@ pub fn schedule(this: *@This(), batch: Batch) void {
         const one = @as([8]u8, @bitCast(@as(usize, batch.len)));
         _ = std.os.write(this.waker.fd, &one) catch @panic("Failed to write to eventfd");
     } else {
-        this.waker.wake() catch @panic("Failed to wake");
+        this.waker.wake();
     }
-}
-
-const CachedAddressList = struct {
-    address_list: *std.net.AddressList,
-    expire_after: u64,
-    key: u64,
-    index: ?u32 = null,
-    invalidated: bool = false,
-    pub fn hash(name: []const u8, port: u16) u64 {
-        var hasher = std.hash.Wyhash.init(0);
-        hasher.update(name);
-        hasher.update(":");
-        hasher.update(std.mem.asBytes(&port));
-        return hasher.final();
-    }
-
-    pub fn init(key: u64, address_list: *std.net.AddressList, now: u64) CachedAddressList {
-        return CachedAddressList{
-            .address_list = address_list,
-            .expire_after = now + std.time.ms_per_hour,
-            .key = key,
-        };
-    }
-
-    pub fn invalidate(this: *CachedAddressList) void {
-        if (!this.invalidated) {
-            this.invalidated = true;
-            this.address_list.deinit();
-        }
-        _ = address_list_cached.remove(this.key);
-    }
-};
-
-pub const AddressListCache = std.HashMap(u64, CachedAddressList, IdentityContext(u64), 80);
-pub var address_list_cached: AddressListCache = undefined;
-pub fn getAddressList(allocator: std.mem.Allocator, name: []const u8, port: u16) !*std.net.AddressList {
-    // const hash = CachedAddressList.hash(name, port);
-    // const now = @intCast(u64, @max(0, std.time.milliTimestamp()));
-    // if (address_list_cached.getPtr(hash)) |cached| {
-    //     if (cached.expire_after > now) {
-    //         return cached;
-    //     }
-
-    //     cached.address_list.deinit();
-    // }
-
-    return try std.net.getAddressList(allocator, name, port);
 }
 
 pub var has_warmed = false;

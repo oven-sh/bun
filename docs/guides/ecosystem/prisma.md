@@ -1,5 +1,5 @@
 ---
-name: Get started using Prisma
+name: Use Prisma with Bun
 ---
 
 {% callout %}

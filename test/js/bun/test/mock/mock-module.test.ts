@@ -7,9 +7,20 @@
 // - Write test for export {foo} from "./foo"
 // - Write test for import {foo} from "./foo"; export {foo}
 
-import { mock, test, expect, spyOn, Mock } from "bun:test";
+import { expect, mock, spyOn, test } from "bun:test";
 import { fn, iCallFn, variable } from "./mock-module-fixture";
 import * as spyFixture from "./spymodule-fixture";
+
+test("mock.restore", () => {
+  const original = spyFixture.iSpy;
+  spyOn(spyFixture, "iSpy");
+  const mocked = spyFixture.iSpy;
+  expect(spyFixture.iSpy).not.toBe(original);
+  expect(spyFixture.iSpy).not.toHaveBeenCalled();
+  spyFixture.iSpy();
+  mock.restore();
+  expect(spyFixture.iSpy).toBe(original);
+});
 
 test("spyOn", () => {
   spyOn(spyFixture, "iSpy");

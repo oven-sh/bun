@@ -52,10 +52,10 @@ pub fn which(buf: *[bun.MAX_PATH_BYTES]u8, path: []const u8, cwd: []const u8, bi
 test "which" {
     var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
     var realpath = bun.getenvZ("PATH") orelse unreachable;
-    var whichbin = which(&buf, realpath, try std.process.getCwdAlloc(std.heap.c_allocator), "which");
+    var whichbin = which(&buf, realpath, try bun.getcwdAlloc(std.heap.c_allocator), "which");
     try std.testing.expectEqualStrings(whichbin orelse return std.debug.assert(false), "/usr/bin/which");
-    try std.testing.expect(null == which(&buf, realpath, try std.process.getCwdAlloc(std.heap.c_allocator), "baconnnnnn"));
-    try std.testing.expect(null != which(&buf, realpath, try std.process.getCwdAlloc(std.heap.c_allocator), "zig"));
-    try std.testing.expect(null == which(&buf, realpath, try std.process.getCwdAlloc(std.heap.c_allocator), "bin"));
-    try std.testing.expect(null == which(&buf, realpath, try std.process.getCwdAlloc(std.heap.c_allocator), "usr"));
+    try std.testing.expect(null == which(&buf, realpath, try bun.getcwdAlloc(std.heap.c_allocator), "baconnnnnn"));
+    try std.testing.expect(null != which(&buf, realpath, try bun.getcwdAlloc(std.heap.c_allocator), "zig"));
+    try std.testing.expect(null == which(&buf, realpath, try bun.getcwdAlloc(std.heap.c_allocator), "bin"));
+    try std.testing.expect(null == which(&buf, realpath, try bun.getcwdAlloc(std.heap.c_allocator), "usr"));
 }

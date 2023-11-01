@@ -3,8 +3,8 @@
 
 #include "helpers.h"
 
-#include "JavaScriptCore/JSObject.h"
-#include "JavaScriptCore/ObjectConstructor.h"
+#include <JavaScriptCore/JSObject.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include "BunClientData.h"
 using namespace JSC;
 
@@ -17,7 +17,7 @@ namespace Bun {
 
 using namespace WebCore;
 
-JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName propertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -41,7 +41,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalOb
     return JSValue::encode(result);
 }
 
-JSC_DEFINE_CUSTOM_SETTER(jsSetterEnvironmentVariable, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue value, PropertyName propertyName))
+JSC_DEFINE_CUSTOM_SETTER(jsSetterEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
     JSC::JSObject* object = JSValue::decode(thisValue).getObject();
@@ -52,7 +52,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsSetterEnvironmentVariable, (JSGlobalObject * globalOb
     return true;
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName propertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -83,7 +83,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * 
 // In Node.js, the "TZ" environment variable is special.
 // Setting it automatically updates the timezone.
 // We also expose an explicit setTimeZone function in bun:jsc
-JSC_DEFINE_CUSTOM_SETTER(jsTimeZoneEnvironmentVariableSetter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue value, PropertyName propertyName))
+JSC_DEFINE_CUSTOM_SETTER(jsTimeZoneEnvironmentVariableSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
     JSC::JSObject* object = JSValue::decode(thisValue).getObject();

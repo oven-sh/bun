@@ -1,12 +1,12 @@
 #include "InternalModuleRegistry.h"
 
 #include "ZigGlobalObject.h"
-#include "JavaScriptCore/BuiltinUtils.h"
-#include "JavaScriptCore/JSFunction.h"
-#include "JavaScriptCore/LazyProperty.h"
-#include "JavaScriptCore/LazyPropertyInlines.h"
-#include "JavaScriptCore/VMTrapsInlines.h"
-#include "JavaScriptCore/JSModuleLoader.h"
+#include <JavaScriptCore/BuiltinUtils.h>
+#include <JavaScriptCore/JSFunction.h>
+#include <JavaScriptCore/LazyProperty.h>
+#include <JavaScriptCore/LazyPropertyInlines.h>
+#include <JavaScriptCore/VMTrapsInlines.h>
+#include <JavaScriptCore/JSModuleLoader.h>
 
 #include "InternalModuleRegistryConstants.h"
 
@@ -64,7 +64,6 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
     return result;
 
 #if BUN_DEBUG
-#include "../../src/js/out/DebugPath.h"
 #define ASSERT_INTERNAL_MODULE(result, moduleName)                                                        \
     if (!result || !result.isCell() || !jsDynamicCast<JSObject*>(result)) {                               \
         printf("Expected \"%s\" to export a JSObject. Bun is going to crash.", moduleName.utf8().data()); \
@@ -74,23 +73,21 @@ JSValue initializeInternalModuleFromDisk(
     VM& vm,
     WTF::String moduleName,
     WTF::String fileBase,
-    WTF::String fallback,
     WTF::String urlString)
 {
-    WTF::String file = makeString(BUN_DYNAMIC_JS_LOAD_PATH, "modules_dev/"_s, fileBase);
+    WTF::String file = makeString(BUN_DYNAMIC_JS_LOAD_PATH, "/"_s, fileBase);
     if (auto contents = WTF::FileSystemImpl::readEntireFile(file)) {
         auto string = WTF::String::fromUTF8(contents.value());
         INTERNAL_MODULE_REGISTRY_GENERATE_(globalObject, vm, string, moduleName, urlString);
     } else {
-        printf("bun-debug failed to load bundled version of \"%s\" at \"%s\" (was it deleted?)\n"
-               "Please run `make js` to rebundle these builtins.\n",
+        printf("\nFATAL: bun-debug failed to load bundled version of \"%s\" at \"%s\" (was it deleted?)\n"
+               "Please re-compile Bun to continue.\n\n",
             moduleName.utf8().data(), file.utf8().data());
-        // Fallback to embedded source
-        INTERNAL_MODULE_REGISTRY_GENERATE_(globalObject, vm, fallback, moduleName, urlString);
+        CRASH();
     }
 }
 #define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, SOURCE, urlString) \
-    return initializeInternalModuleFromDisk(globalObject, vm, moduleId, filename, SOURCE, urlString)
+    return initializeInternalModuleFromDisk(globalObject, vm, moduleId, filename, urlString)
 #else
 
 #define ASSERT_INTERNAL_MODULE(result, moduleName) \
@@ -149,7 +146,7 @@ JSValue InternalModuleRegistry::requireId(JSGlobalObject* globalObject, VM& vm, 
     return value;
 }
 
-#include "../../../src/js/out/InternalModuleRegistry+createInternalModuleById.h"
+#include "InternalModuleRegistry+createInternalModuleById.h"
 
 // This is called like @getInternalField(@internalModuleRegistry, 1) ?? @createInternalModuleById(1)
 // so we want to write it to the internal field when loaded.

@@ -16389,7 +16389,7 @@ fn NewParser_(
                                         p.log.addError(p.source, expr.loc, "macro threw exception") catch unreachable;
                                     }
                                 } else {
-                                    p.log.addErrorFmt(p.source, expr.loc, p.allocator, "{s} error in macro", .{@errorName(err)}) catch unreachable;
+                                    p.log.addErrorFmt(p.source, expr.loc, p.allocator, "\"{s}\" error in macro", .{@errorName(err)}) catch unreachable;
                                 }
                                 return expr;
                             };
@@ -21037,6 +21037,10 @@ fn NewParser_(
             // operations, so they should all be child scopes and should all be popped
             // by the time we get here.
             p.scopes_in_order.items[scope_index] = null;
+            // Decrement the length so that in code with lots of scopes, we use
+            // less memory and do less work
+            p.scopes_in_order.items.len -= @as(usize, @intFromBool(p.scopes_in_order.items.len == scope_index + 1));
+
             // Remove the last child from the parent scope
             const last = parent.children.len - 1;
             if (comptime Environment.allow_assert) assert(parent.children.ptr[last] == to_flatten);

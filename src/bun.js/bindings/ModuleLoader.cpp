@@ -4,25 +4,23 @@
 #include "ModuleLoader.h"
 
 #include "ZigGlobalObject.h"
-#include "JavaScriptCore/JSCInlines.h"
-#include "JavaScriptCore/JSNativeStdFunction.h"
-#include "JavaScriptCore/JSCJSValueInlines.h"
-#include "JavaScriptCore/JSInternalPromise.h"
-#include "JavaScriptCore/JSInternalFieldObjectImpl.h"
+#include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/JSNativeStdFunction.h>
+#include <JavaScriptCore/JSCJSValueInlines.h>
+#include <JavaScriptCore/JSInternalPromise.h>
+#include <JavaScriptCore/JSInternalFieldObjectImpl.h>
 
 #include "ZigSourceProvider.h"
 
-#include "JavaScriptCore/JSSourceCode.h"
-#include "JavaScriptCore/JSString.h"
-#include "JavaScriptCore/JSValueInternal.h"
-#include "JavaScriptCore/JSVirtualMachineInternal.h"
-#include "JavaScriptCore/ObjectConstructor.h"
-#include "JavaScriptCore/OptionsList.h"
-#include "JavaScriptCore/ParserError.h"
-#include "JavaScriptCore/ScriptExecutable.h"
-#include "JavaScriptCore/SourceOrigin.h"
-#include "JavaScriptCore/StackFrame.h"
-#include "JavaScriptCore/StackVisitor.h"
+#include <JavaScriptCore/JSSourceCode.h>
+#include <JavaScriptCore/JSString.h>
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/OptionsList.h>
+#include <JavaScriptCore/ParserError.h>
+#include <JavaScriptCore/ScriptExecutable.h>
+#include <JavaScriptCore/SourceOrigin.h>
+#include <JavaScriptCore/StackFrame.h>
+#include <JavaScriptCore/StackVisitor.h>
 
 #include "EventEmitter.h"
 #include "JSEventEmitter.h"
@@ -34,7 +32,7 @@
 #include <JavaScriptCore/JSMapInlines.h>
 
 #include "../modules/_NativeModule.h"
-#include "../../js/out/NativeModuleImpl.h"
+#include "NativeModuleImpl.h"
 
 #include "../modules/ObjectModule.h"
 
@@ -66,8 +64,7 @@ static JSC::JSInternalPromise* resolvedInternalPromise(JSC::JSGlobalObject* glob
 }
 
 // Converts an object from InternalModuleRegistry into { ...obj, default: obj }
-static JSC::SyntheticSourceProvider::SyntheticSourceGenerator
-generateInternalModuleSourceCode(JSC::JSGlobalObject* globalObject, InternalModuleRegistry::Field moduleId)
+static JSC::SyntheticSourceProvider::SyntheticSourceGenerator generateInternalModuleSourceCode(JSC::JSGlobalObject* globalObject, InternalModuleRegistry::Field moduleId)
 {
     return [moduleId](JSC::JSGlobalObject* lexicalGlobalObject,
                JSC::Identifier moduleKey,
@@ -81,14 +78,14 @@ generateInternalModuleSourceCode(JSC::JSGlobalObject* globalObject, InternalModu
         if (!object) {
             return;
         }
-        RETURN_IF_EXCEPTION(throwScope, {});
+        RETURN_IF_EXCEPTION(throwScope, void());
 
         JSC::EnsureStillAliveScope stillAlive(object);
 
         PropertyNameArray properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
         object->getPropertyNames(globalObject, properties, DontEnumPropertiesMode::Exclude);
 
-        RETURN_IF_EXCEPTION(throwScope, {});
+        RETURN_IF_EXCEPTION(throwScope, void());
 
         auto len = properties.size() + 1;
         exportNames.reserveCapacity(len);
@@ -386,7 +383,7 @@ static JSValue handleVirtualModuleResult(
 }
 
 extern "C" void Bun__onFulfillAsyncModule(
-    EncodedJSValue promiseValue,
+    JSC::EncodedJSValue promiseValue,
     ErrorableResolvedSource* res,
     BunString* specifier,
     BunString* referrer)
@@ -564,7 +561,7 @@ JSValue fetchCommonJSModule(
     Bun__transpileFile(bunVM, globalObject, specifier, referrer, res, false);
 
     if (res->success && res->result.value.commonJSExportsLen) {
-        target->evaluate(globalObject, Bun::toWTFString(*specifier).isolatedCopy(), res->result.value);
+        target->evaluate(globalObject, Bun::toWTFString(*specifier), res->result.value);
         RETURN_IF_EXCEPTION(scope, {});
         RELEASE_AND_RETURN(scope, target);
     }

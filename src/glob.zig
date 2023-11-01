@@ -8,7 +8,7 @@ const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayListUnmanaged;
 const ArrayListManaged = std.ArrayList;
 const DirIterator = @import("./bun.js/node/dir_iterator.zig");
-const Syscall = @import("./bun.js/node/syscall.zig");
+const Syscall = @import("./sys.zig");
 const PathLike = @import("./bun.js/node/types.zig").PathLike;
 const Maybe = @import("./bun.js/node/types.zig").Maybe;
 const Dirent = @import("./bun.js/node/types.zig").Dirent;
@@ -99,6 +99,7 @@ pub const GlobWalker = struct {
     matchedPaths: ArrayList(BunString) = .{},
     i: u32 = 0,
 
+    dot: bool = false,
     cwd: BunString = undefined,
     pathBuf: [bun.MAX_PATH_BYTES]u8 = undefined,
 
@@ -138,7 +139,7 @@ pub const GlobWalker = struct {
         };
     };
 
-    pub fn init(this: *GlobWalker, arena_: Arena, pattern: []const u8) !Maybe(void) {
+    pub fn init(this: *GlobWalker, arena_: Arena, pattern: []const u8, dot: bool) !Maybe(void) {
         var arena = arena_;
         errdefer arena.deinit();
         var cwd: BunString = undefined;
@@ -152,7 +153,7 @@ pub const GlobWalker = struct {
                 cwd = BunString.fromBytes(copiedCwd);
             },
         }
-        const globWalker = try this.initWithCwd(arena, pattern, cwd);
+        const globWalker = try this.initWithCwd(arena, pattern, cwd, dot);
         return .{ .result = globWalker };
     }
 
@@ -167,7 +168,7 @@ pub const GlobWalker = struct {
     }
 
     /// `cwd` should be allocated with the arena
-    pub fn initWithCwd(this: *GlobWalker, arena_: Arena, pattern: []const u8, cwd: BunString) !void {
+    pub fn initWithCwd(this: *GlobWalker, arena_: Arena, pattern: []const u8, cwd: BunString, dot: bool) !void {
         var arena = arena_;
 
         var patternComponents = ArrayList(Component){};
@@ -177,10 +178,16 @@ pub const GlobWalker = struct {
         this.pattern = pattern;
         this.arena = arena;
         this.cwd = cwd;
+        this.dot = dot;
     }
 
     pub fn deinit(this: *GlobWalker) void {
         this.arena.deinit();
+    }
+
+    pub fn handleSysErrWithPath(this: *GlobWalker, err: Syscall.Error, path_buf: [:0]const u8) Syscall.Error {
+        @memcpy(this.pathBuf[0 .. path_buf.len + 1], @as([]const u8, @ptrCast(path_buf[0 .. path_buf.len + 1])));
+        return err.withPath(this.pathBuf[0 .. path_buf.len + 1]);
     }
 
     pub fn walk(this: *GlobWalker) !Maybe(void) {
@@ -202,6 +209,8 @@ pub const GlobWalker = struct {
     }
 
     fn match(this: *GlobWalker, pattern_component: *const Component, filepath: []const u8) bool {
+        // FIXME: handle utf-16?
+        if (!this.dot and filepath[0] == '.') return false;
         switch (pattern_component.syntax_hint) {
             .WildcardFilepath => return matchWildcardFilepath(this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len], filepath),
             .Literal => return matchWildcardLiteral(this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len], filepath),
@@ -239,6 +248,7 @@ pub const GlobWalker = struct {
     }
 
     pub fn handleDirEntries(this: *GlobWalker, work_item: *const WorkItem, pathBuf: *[bun.MAX_PATH_BYTES]u8) !Maybe(void) {
+        const dot = this.dot;
         @memcpy(pathBuf[0..work_item.path.len], work_item.path);
         pathBuf[work_item.path.len] = 0;
         const dir_path: [:0]const u8 = @ptrCast(pathBuf[0..work_item.path.len]);
@@ -268,21 +278,20 @@ pub const GlobWalker = struct {
         const flags = std.os.O.DIRECTORY | std.os.O.RDONLY;
         const fd = switch (Syscall.open(dir_path, flags, 0)) {
             .err => |err| return .{
-                // FIXME: This is bad
-                .err = err.withPath(dir_path),
+                .err = this.handleSysErrWithPath(err, dir_path),
             },
             .result => |fd_| fd_,
         };
         defer {
-            _ = Syscall.close(fd);
+            // _ = Syscall.close(fd);
+            _ = Syscall.closeAllowingStdoutAndStderr(fd);
         }
         var dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
         var iterator = DirIterator.iterate(dir);
         var entry = iterator.next();
 
         while (switch (entry) {
-            // FIXME: This is bad
-            .err => |err| return .{ .err = err.withPath(dir_path) },
+            .err => |err| return .{ .err = this.handleSysErrWithPath(err, dir_path) },
             .result => |ent| ent,
         }) |_current| : (entry = iterator.next()) {
             const current: DirIterator.IteratorResult = _current;
@@ -311,6 +320,8 @@ pub const GlobWalker = struct {
                     }
                 },
                 .directory => {
+                    if (!dot and entry_name[0] == '.') continue;
+
                     // src/**/lmao/*.ts
                     // src/**/*.ts
                     const recursion_idx_bump: u32 = recursion_idx_bump: {
@@ -502,13 +513,27 @@ pub const GlobWalker = struct {
         }
 
         const syntax_tokens = comptime [_]u8{ '*', '[', '{', '?', '!' };
-        inline for (syntax_tokens) |tok| {
-            const needles: @Vector(16, u8) = @splat(tok);
-            var i: usize = 0;
-            while (i + 16 <= pattern.len) : (i += 16) {
-                const haystack: @Vector(16, u8) = pattern[i..][0..16].*;
-                const matches = needles == haystack;
-                if (std.simd.countTrues(matches) > 0) return true;
+        const needles: [syntax_tokens.len]@Vector(16, u8) = needles: {
+            var needles: [syntax_tokens.len]@Vector(16, u8) = undefined;
+            inline for (syntax_tokens, 0..) |tok, i| {
+                needles[i] = @splat(tok);
+            }
+            break :needles needles;
+        };
+
+        var i: usize = 0;
+        while (i + 16 <= pattern.len) : (i += 16) {
+            const haystack: @Vector(16, u8) = pattern[i..][0..16].*;
+            inline for (needles) |needle| {
+                if (std.simd.firstTrue(needle == haystack) != null) return true;
+            }
+        }
+
+        if (i < pattern.len) {
+            for (pattern[i..]) |c| {
+                inline for (syntax_tokens) |tok| {
+                    if (c == tok) return true;
+                }
             }
         }
 
@@ -991,7 +1016,7 @@ pub fn match_impl(glob: []const u32, path: []const u8) bool {
     return !negated;
 }
 
-inline fn isSeparator(c: Codepoint) bool {
+pub inline fn isSeparator(c: Codepoint) bool {
     if (comptime @import("builtin").os.tag == .windows) return c == '/' or c == '\\';
     return c == '/';
 }

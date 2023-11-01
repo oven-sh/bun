@@ -32,6 +32,7 @@ is_ascii: bool,
 
 const MatchOpts = struct {
     cwd: ?BunString,
+    dot: bool,
 
     fn fromJS(globalThis: *JSGlobalObject, arguments: *ArgumentsSlice, comptime fnName: []const u8, arena: *Arena) ?MatchOpts {
         const optsObj: JSValue = arguments.nextEat() orelse return null;
@@ -42,6 +43,7 @@ const MatchOpts = struct {
 
         var out: MatchOpts = .{
             .cwd = null,
+            .dot = false,
         };
 
         if (optsObj.get(globalThis, "cwd")) |cwdVal| {
@@ -58,8 +60,8 @@ const MatchOpts = struct {
 
             const cwd_str = cwd_str: {
                 if (ResolvePath.Platform.auto.isAbsolute(cwd_str_raw.slice())) {
-                    // FIXME: this check breaks if input is not all ascii also doesnt work on windows
-                    if (cwd_str_raw.len > 1 and cwd_str_raw.slice()[cwd_str_raw.len - 1] == '/') {
+                    // Strip trailing directory separator if it has one
+                    if (cwd_str_raw.len > 1 and globImpl.isSeparator(cwd_str_raw.slice()[cwd_str_raw.len - 1])) {
                         const without_trailing_slash = ZigString.Slice{ .ptr = cwd_str_raw.ptr, .len = cwd_str_raw.len - 1, .allocator = cwd_str_raw.allocator };
                         const trailing_slash_stripped = without_trailing_slash.clone(arena.allocator()) catch {
                             globalThis.throwOutOfMemory();
@@ -92,6 +94,10 @@ const MatchOpts = struct {
             }
 
             out.cwd = BunString.fromBytes(cwd_str);
+        }
+
+        if (optsObj.get(globalThis, "dot")) |dot| {
+            out.dot = if (dot.isBoolean()) dot.asBoolean() else false;
         }
 
         return out;
@@ -185,7 +191,7 @@ fn makeGlobWalker(
         };
 
         globWalker.* = .{};
-        globWalker.initWithCwd(arena, this.pattern, matchOpts.?.cwd.?) catch {
+        globWalker.initWithCwd(arena, this.pattern, matchOpts.?.cwd.?, matchOpts.?.dot) catch {
             globalThis.throw("Out of memory", .{});
             return null;
         };
@@ -197,7 +203,7 @@ fn makeGlobWalker(
     };
 
     globWalker.* = .{};
-    switch (globWalker.init(arena, this.pattern) catch {
+    switch (globWalker.init(arena, this.pattern, false) catch {
         globalThis.throw("Out of memory", .{});
         return null;
     }) {
@@ -356,9 +362,7 @@ pub fn matchString(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.Cal
 
         break :codepoints codepoints.items[0..codepoints.items.len];
     };
-    // const codepoints = this.pattern_codepoints.?.items[0..];
 
-    // FIXME: use right function for non-ascii
     return JSC.JSValue.jsBoolean(globImpl.match_impl(codepoints, str.slice()));
 }
 

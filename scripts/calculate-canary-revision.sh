@@ -1,4 +1,4 @@
-
+#!/usr/bin/env bash
 if [ -z "$GITHUB_TOKEN" ]; then
   echo "GITHUB_TOKEN is not set"
   exit 1

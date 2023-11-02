@@ -2,14 +2,24 @@
 
 ### System Dependencies
 
-- [Visual Studio](https://visualstudio.microsoft.com) with the "Desktop development with C++" workload. You should install Git and CMake from here, if not already installed.
+- [Visual Studio](https://visualstudio.microsoft.com) with the "Desktop Development with C++" workload. You should install Git and CMake from here, if not already installed.
 - Ninja
 - Go
 - Rust
 - NASM
 - Perl
-  - Do not use Strawberry Perl, it includes tools from MSys2 which will break your build.
 - Ruby
+- Node.js (until bun runs stably on windows)
+
+```
+winget install OpenJS.NodeJS.LTS
+```
+
+### Enable Scripts
+
+```ps1
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy Unrestricted
+```
 
 ### Zig
 

@@ -18,12 +18,21 @@ if [ -z "$PKG" ]; then
   exit 1
 fi
 
-mkdir -p "$OUTDIR"
 
 url="https://github.com/oven-sh/WebKit/releases/download/autobuild-$TAG/$PKG.tar.gz"
-tar_dir="$(dirname "$0")/../.webkit-cache"
+
+old_tar_dir="$(dirname "$0")/../.webkit-cache"
+tar_dir="$(dirname "$0")/../.cache"
+if [ -d "$old_tar_dir" ]; then
+  # migration step from the old system
+  mkdir "$tar_dir"
+  mv "$old_tar_dir"/* "$tar_dir"
+  rm -r "$old_tar_dir"
+fi
+
 tar="$tar_dir/$PKG-$TAG.tar.gz"
 
+mkdir -p "$OUTDIR"
 mkdir -p "$tar_dir"
 
 # TODO: Remove this block, future builds may not include a package.json

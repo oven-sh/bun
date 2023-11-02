@@ -265,7 +265,11 @@ pub const RunCommand = struct {
             combined_script = combined_script_buf;
         }
 
-        var argv = [_]string{ shell_bin, "-c", combined_script };
+        var argv = [_]string{
+            shell_bin,
+            if(Environment.isWindows) "/c" else "-c",
+            combined_script,
+        };
 
         if (!silent) {
             Output.prettyErrorln("<r><d><magenta>$<r> <d><b>{s}<r>", .{combined_script});

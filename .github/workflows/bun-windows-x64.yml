@@ -272,4 +272,4 @@ jobs:
       - uses: actions/upload-artifact@v3
         with:
           name: ${{ env.tag }}
-          path: build/${{ env.tag }}.zip
+          path: ${{ env.tag }}.zip

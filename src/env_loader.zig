@@ -916,7 +916,7 @@ pub const Map = struct {
             // Allow var from .env.development or .env.production to be loaded again
             if (!entry.value_ptr.conditional) {
                 // TODO(@paperdave): this crashes on windows. i remember there being a merge conflict with these two implementations. not sure what we should keep
-                if(Environment.isWindows) {
+                if (Environment.isWindows) {
                     try env_map.put(bun.constStrToU8(entry.key_ptr.*), bun.constStrToU8(entry.value_ptr.value));
                 } else {
                     try env_map.putMove(bun.constStrToU8(entry.key_ptr.*), bun.constStrToU8(entry.value_ptr.value));

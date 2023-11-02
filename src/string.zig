@@ -563,6 +563,10 @@ pub const String = extern struct {
         if (self.tag == .Empty)
             return &[_]u8{};
 
+        if (self.tag == .ZigString) {
+            return self.value.ZigString.slice();
+        }
+
         std.debug.assert(self.tag == .WTFStringImpl);
         return self.value.WTFStringImpl.latin1Slice();
     }

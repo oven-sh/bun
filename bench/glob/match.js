@@ -13,7 +13,7 @@ const fgOpts = {
   cwd,
   followSymbolicLinks: false,
   onlyFiles: false,
-  absolute: true,
+  // absolute: true,
 };
 
 group({ name: `async pattern="${normalPattern}"`, summary: true }, () => {

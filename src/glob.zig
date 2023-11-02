@@ -101,8 +101,11 @@ pub const GlobWalker = struct {
     i: u32 = 0,
 
     dot: bool = false,
+    absolute: bool = false,
     cwd: BunString = undefined,
     follow_symlinks: bool = false,
+
+    root_cwd_slice: []const u8 = undefined,
 
     pathBuf: [bun.MAX_PATH_BYTES]u8 = undefined,
 
@@ -142,7 +145,13 @@ pub const GlobWalker = struct {
         };
     };
 
-    pub fn init(this: *GlobWalker, arena_: Arena, pattern: []const u8, dot: bool) !Maybe(void) {
+    pub fn init(
+        this: *GlobWalker,
+        arena_: Arena,
+        pattern: []const u8,
+        dot: bool,
+        absolute: bool,
+    ) !Maybe(void) {
         var arena = arena_;
         errdefer arena.deinit();
         var cwd: BunString = undefined;
@@ -156,7 +165,7 @@ pub const GlobWalker = struct {
                 cwd = BunString.fromBytes(copiedCwd);
             },
         }
-        const globWalker = try this.initWithCwd(arena, pattern, cwd, dot);
+        const globWalker = try this.initWithCwd(arena, pattern, cwd, dot, absolute);
         return .{ .result = globWalker };
     }
 
@@ -169,17 +178,17 @@ pub const GlobWalker = struct {
                 _ = bun.simdutf.convert.utf8.to.utf32.le(pattern, codepoints);
             },
         }
-        // const iter = CodepointIterator.init(pattern);
-        // var cursor = Cursor{};
-        // var i: u32 = 0;
-        // while (iter.next(&cursor)) : (i += 1) {
-        //     codepoints[i] = @intCast(cursor.c);
-        // }
-        // std.debug.assert(pattern.len == i);
     }
 
     /// `cwd` should be allocated with the arena
-    pub fn initWithCwd(this: *GlobWalker, arena_: Arena, pattern: []const u8, cwd: BunString, dot: bool) !void {
+    pub fn initWithCwd(
+        this: *GlobWalker,
+        arena_: Arena,
+        pattern: []const u8,
+        cwd: BunString,
+        dot: bool,
+        absolute: bool,
+    ) !void {
         var arena = arena_;
 
         var patternComponents = ArrayList(Component){};
@@ -190,31 +199,40 @@ pub const GlobWalker = struct {
         this.arena = arena;
         this.cwd = cwd;
         this.dot = dot;
+        this.absolute = absolute;
     }
 
     pub fn deinit(this: *GlobWalker) void {
         this.arena.deinit();
     }
 
-    pub fn handleSysErrWithPath(this: *GlobWalker, err: Syscall.Error, path_buf: [:0]const u8) Syscall.Error {
+    pub fn handleSysErrWithPath(
+        this: *GlobWalker,
+        err: Syscall.Error,
+        path_buf: [:0]const u8,
+    ) Syscall.Error {
         @memcpy(this.pathBuf[0 .. path_buf.len + 1], @as([]const u8, @ptrCast(path_buf[0 .. path_buf.len + 1])));
         return err.withPath(this.pathBuf[0 .. path_buf.len + 1]);
     }
 
     pub fn walk(this: *GlobWalker) !Maybe(void) {
-        return try this.walkImpl();
-    }
-
-    fn walkImpl(this: *GlobWalker) !Maybe(void) {
         if (this.patternComponents.items.len == 0) return .{ .result = undefined };
-        const rootPath = this.cwd.toZigString().slice();
-        try this.workbuf.append(this.arena.allocator(), WorkItem.new(rootPath, 0, .directory));
-
         var path_buf: [bun.MAX_PATH_BYTES]u8 = std.mem.zeroes([bun.MAX_PATH_BYTES]u8);
+
+        // Handle root first
+        {
+            const root_path = this.cwd.toZigString().slice();
+            this.root_cwd_slice = root_path;
+            const root_work_item = WorkItem.new(root_path, 0, .directory);
+            switch (try this.handleDirEntries(&root_work_item, &path_buf, true)) {
+                .err => |err| return .{ .err = err },
+                else => {},
+            }
+        }
 
         while (this.workbuf.items.len > 0) {
             const work_item: WorkItem = this.workbuf.pop();
-            switch (try this.handleDirEntries(&work_item, &path_buf)) {
+            switch (try this.handleDirEntries(&work_item, &path_buf, false)) {
                 .err => |err| return .{ .err = err },
                 else => {},
             }
@@ -223,13 +241,17 @@ pub const GlobWalker = struct {
         return .{ .result = undefined };
     }
 
-    pub fn handleDirEntries(this: *GlobWalker, work_item: *const WorkItem, pathBuf: *[bun.MAX_PATH_BYTES]u8) !Maybe(void) {
+    pub fn handleDirEntries(
+        this: *GlobWalker,
+        work_item: *const WorkItem,
+        pathBuf: *[bun.MAX_PATH_BYTES]u8,
+        comptime in_root: bool,
+    ) !Maybe(void) {
         const dot = this.dot;
 
         @memcpy(pathBuf[0..work_item.path.len], work_item.path);
         pathBuf[work_item.path.len] = 0;
         const dir_path: [:0]const u8 = @ptrCast(pathBuf[0..work_item.path.len]);
-        // std.debug.print("DIR PATH: {s}\n", .{dir_path[0..dir_path.len]});
 
         const component_idx = component_idx: {
             var component_idx = work_item.idx;
@@ -283,7 +305,7 @@ pub const GlobWalker = struct {
                 .file => {
                     const matches = this.matchPatternFile(entry_name, component_idx, is_last, &pattern, next_pattern);
                     if (matches) {
-                        try this.appendMatchedPath(entry_name, dir_path);
+                        try this.appendMatchedPath(entry_name, dir_path, in_root);
                     }
                 },
                 .directory => {
@@ -305,7 +327,7 @@ pub const GlobWalker = struct {
                                 // double wildcard recursion to the directory's
                                 // children
                                 if (component_idx + 1 == this.patternComponents.items.len - 1) {
-                                    try this.appendMatchedPath(entry_name, dir_path);
+                                    try this.appendMatchedPath(entry_name, dir_path, in_root);
                                     break :recursion_idx_bump 0;
                                 }
 
@@ -320,7 +342,7 @@ pub const GlobWalker = struct {
 
                             if (is_last) {
                                 // Add this directory
-                                try this.appendMatchedPath(entry_name, dir_path);
+                                try this.appendMatchedPath(entry_name, dir_path, in_root);
                             }
 
                             break :recursion_idx_bump 0;
@@ -329,7 +351,7 @@ pub const GlobWalker = struct {
                         const matches = this.matchPatternImpl(&pattern, entry_name);
                         if (matches) {
                             if (is_last) {
-                                try this.appendMatchedPath(entry_name, dir_path);
+                                try this.appendMatchedPath(entry_name, dir_path, in_root);
                                 continue;
                             }
                             break :recursion_idx_bump 1;
@@ -337,10 +359,12 @@ pub const GlobWalker = struct {
                         continue;
                     };
 
-                    const subdir_entry_name = try std.fs.path.join(this.arena.allocator(), &[_][]const u8{
+                    const subdir_parts: []const []const u8 = &[_][]const u8{
                         dir_path[0..dir_path.len],
                         entry_name,
-                    });
+                    };
+
+                    const subdir_entry_name = try std.fs.path.join(this.arena.allocator(), subdir_parts);
 
                     try this.workbuf.append(this.arena.allocator(), WorkItem.new(subdir_entry_name, component_idx + recursion_idx_bump, .directory));
                 },
@@ -352,7 +376,7 @@ pub const GlobWalker = struct {
                     // If following symlinks is not enabled, the default behaviour is to use the same matching strategy used for files:
                     const matches = this.matchPatternFile(entry_name, component_idx, is_last, &pattern, next_pattern);
                     if (matches) {
-                        try this.appendMatchedPath(entry_name, dir_path);
+                        try this.appendMatchedPath(entry_name, dir_path, in_root);
                     }
                 },
                 else => {},
@@ -371,7 +395,14 @@ pub const GlobWalker = struct {
     /// Examples:
     /// a -> `src/foo/index.ts` matches
     /// b -> `src/**/*.ts` (on 2nd pattern) matches
-    fn matchPatternFile(this: *GlobWalker, entry_name: []const u8, component_idx: u32, is_last: bool, pattern: *Component, next_pattern: ?*Component) bool {
+    fn matchPatternFile(
+        this: *GlobWalker,
+        entry_name: []const u8,
+        component_idx: u32,
+        is_last: bool,
+        pattern: *Component,
+        next_pattern: ?*Component,
+    ) bool {
         // Handle case a)
         if (!is_last) return pattern.syntax_hint == .Double and
             component_idx + 1 == this.patternComponents.items.len - 1 and
@@ -382,7 +413,11 @@ pub const GlobWalker = struct {
         return this.matchPatternImpl(pattern, entry_name);
     }
 
-    fn matchPatternImpl(this: *GlobWalker, pattern_component: *Component, filepath: []const u8) bool {
+    fn matchPatternImpl(
+        this: *GlobWalker,
+        pattern_component: *Component,
+        filepath: []const u8,
+    ) bool {
         // FIXME: handle utf-16?
         if (!this.dot and GlobWalker.startsWithDot(filepath)) return false;
         switch (pattern_component.syntax_hint) {
@@ -405,10 +440,16 @@ pub const GlobWalker = struct {
         // windows filepaths are utf-16 so GlobAscii.match won't work
         if (comptime !isWindows) {
             if (pattern_component.is_ascii and isAllAscii(filepath))
-                return GlobAscii.match(this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len], filepath);
+                return GlobAscii.match(
+                    this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len],
+                    filepath,
+                );
         }
         const codepoints = this.componentStringUnicode(pattern_component);
-        return match_impl(codepoints[pattern_component.start .. pattern_component.start + pattern_component.len], filepath);
+        return match_impl(
+            codepoints[pattern_component.start .. pattern_component.start + pattern_component.len],
+            filepath,
+        );
     }
 
     fn componentStringUnicode(this: *GlobWalker, pattern_component: *Component) []const u32 {
@@ -429,15 +470,26 @@ pub const GlobWalker = struct {
         }
 
         var codepoints = this.scratch_pattern_codepoints.?[pattern_component.start .. pattern_component.start + pattern_component.len];
-        GlobWalker.convertUtf8ToCodepoints(codepoints, this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len]);
+        GlobWalker.convertUtf8ToCodepoints(
+            codepoints,
+            this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len],
+        );
         pattern_component.unicode = codepoints;
         return codepoints;
     }
 
-    fn appendMatchedPath(this: *GlobWalker, entryName: []const u8, dirName: [:0]const u8) !void {
+    fn appendMatchedPath(this: *GlobWalker, entry_name: []const u8, dir_name_: [:0]const u8, comptime in_root: bool) !void {
+        if (comptime in_root) {
+            if (!this.absolute) {
+                const cloned = try this.arena.allocator().dupe(u8, entry_name);
+                try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(cloned));
+                return;
+            }
+        }
+        const dir_name = if (!this.absolute) dir_name_[this.root_cwd_slice.len + 1 .. dir_name_.len] else dir_name_[0..dir_name_.len];
         const name = try std.fs.path.join(this.arena.allocator(), &[_][]const u8{
-            dirName[0..dirName.len],
-            entryName,
+            dir_name,
+            entry_name,
         });
         try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(name));
     }

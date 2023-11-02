@@ -82,6 +82,13 @@ declare module "bun" {
      * @default false
      */
     dot?: boolean;
+
+    /**
+     * Return the absolute path for entries.
+     *
+     * @default false
+     */
+    absolute?: boolean;
   }
 
   /**

@@ -33,6 +33,7 @@ is_ascii: bool,
 const MatchOpts = struct {
     cwd: ?BunString,
     dot: bool,
+    absolute: bool,
 
     fn fromJS(globalThis: *JSGlobalObject, arguments: *ArgumentsSlice, comptime fnName: []const u8, arena: *Arena) ?MatchOpts {
         const optsObj: JSValue = arguments.nextEat() orelse return null;
@@ -44,7 +45,16 @@ const MatchOpts = struct {
         var out: MatchOpts = .{
             .cwd = null,
             .dot = false,
+            .absolute = false,
         };
+
+        if (optsObj.get(globalThis, "absolute")) |absoluteVal| parse_absolute: {
+            if (absoluteVal.isUndefinedOrNull()) {
+                out.absolute = false;
+                break :parse_absolute;
+            }
+            out.absolute = if (absoluteVal.isBoolean()) absoluteVal.asBoolean() else false;
+        }
 
         if (optsObj.get(globalThis, "cwd")) |cwdVal| parse_cwd: {
             if (cwdVal.isUndefinedOrNull()) break :parse_cwd;
@@ -69,12 +79,15 @@ const MatchOpts = struct {
                 }
 
                 var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
                 const cwd = std.os.getcwd(&path_buf) catch {
                     globalThis.throw("Failed to get cwd", .{});
                     return null;
                 };
 
-                break :cwd_str std.fs.path.join(arena.allocator(), &.{ cwd, cwd_str_raw.slice() }) catch {
+                const cwd_str = ResolvePath.joinStringBuf(&path_buf2, &[_][]const u8{ cwd, cwd_str_raw.slice() }, .auto);
+
+                break :cwd_str arena.allocator().dupe(u8, cwd_str) catch {
                     globalThis.throwOutOfMemory();
                     return null;
                 };
@@ -183,7 +196,7 @@ fn makeGlobWalker(
         };
 
         globWalker.* = .{};
-        globWalker.initWithCwd(arena, this.pattern, matchOpts.?.cwd.?, matchOpts.?.dot) catch {
+        globWalker.initWithCwd(arena, this.pattern, matchOpts.?.cwd.?, matchOpts.?.dot, matchOpts.?.absolute) catch {
             globalThis.throw("Out of memory", .{});
             return null;
         };
@@ -195,7 +208,7 @@ fn makeGlobWalker(
     };
 
     globWalker.* = .{};
-    switch (globWalker.init(arena, this.pattern, false) catch {
+    switch (globWalker.init(arena, this.pattern, false, false) catch {
         globalThis.throw("Out of memory", .{});
         return null;
     }) {

@@ -10,7 +10,7 @@ describe("globwalk", async () => {
     const fgFilepths = await fg.glob(pattern, {
       followSymbolicLinks: false,
       onlyFiles: false,
-      absolute: true,
+      // absolute: true,
     });
 
     expect(filepaths.length).toEqual(fgFilepths.length);
@@ -30,7 +30,7 @@ describe("globwalk", async () => {
     const fgFilepths = await fg.glob(pattern, {
       followSymbolicLinks: false,
       onlyFiles: false,
-      absolute: true,
+      // absolute: true,
     });
 
     // console.log("FILEPATHS", filepaths.length, fgFilepths.length);
@@ -49,7 +49,7 @@ describe("globwalk", async () => {
     const fgFilepths = await fg.glob(pattern, {
       followSymbolicLinks: false,
       onlyFiles: false,
-      absolute: true,
+      // absolute: true,
     });
 
     expect(filepaths.length).toEqual(fgFilepths.length);

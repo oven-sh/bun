@@ -1914,6 +1914,22 @@ describe("expect()", () => {
     expect(1).not.toBe("1");
     expect("hello test").toBe("hello test");
     expect("hello test").not.toBe("hello test2");
+
+    expect(() => {
+      expect("🟢🟢🟢").toBe("🔴🔴🔴");
+    }).toThrow("🔴🔴🔴");
+    expect(() => {
+      expect(String("🟢🟢🟢")).toBe(String("🔴🔴🔴"));
+    }).toThrow("🔴🔴🔴");
+    expect(() => {
+      expect(new String("🟢🟢🟢")).toBe(String("🔴🔴🔴"));
+    }).toThrow("🔴🔴🔴");
+    expect(() => {
+      expect(String("🟢🟢🟢")).toBe(new String("🔴🔴🔴"));
+    }).toThrow("🔴🔴🔴");
+    expect(() => {
+      expect(new String("🟢🟢🟢")).toBe(new String("🔴🔴🔴"));
+    }).toThrow("🔴🔴🔴");
   });
 
   test("toHaveLength()", () => {

@@ -4543,7 +4543,11 @@ pub const JSValue = enum(JSValueReprInt) {
     };
 
     pub fn determineDiffMethod(this: JSValue, other: JSValue, global: *JSGlobalObject) DiffMethod {
-        if ((this.isString() and other.isString()) or (this.isBuffer(global) and other.isBuffer(global))) return .character;
+        if ((this.isString() and other.isString())) {
+            if (this.toString(global).is8Bit() and other.toString(global).is8Bit()) return .character;
+            return .none;
+        }
+        if (this.isBuffer(global) and other.isBuffer(global)) return .character;
         if ((this.isRegExp() and other.isObject()) or (this.isObject() and other.isRegExp())) return .character;
         if (this.isObject() and other.isObject()) return .line;
 

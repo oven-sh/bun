@@ -1,9 +1,9 @@
 #pragma once
 #include "root.h"
-#include "JavaScriptCore/JSInternalFieldObjectImpl.h"
-#include "JavaScriptCore/JSInternalFieldObjectImplInlines.h"
+#include <JavaScriptCore/JSInternalFieldObjectImpl.h>
+#include <JavaScriptCore/JSInternalFieldObjectImplInlines.h>
 #include "BunClientData.h"
-#include "../../../src/js/out/InternalModuleRegistry+numberOfModules.h"
+#include "InternalModuleRegistry+numberOfModules.h"
 
 namespace Bun {
 using namespace JSC;
@@ -16,19 +16,21 @@ using namespace JSC;
 // - some are written in JS (src/js, there is a readme file that explain those files more.
 // - others are native code (src/bun.js/modules), see _NativeModule.h in there.
 class InternalModuleRegistry : public JSInternalFieldObjectImpl<BUN_INTERNAL_MODULE_COUNT> {
-protected:
-    JS_EXPORT_PRIVATE InternalModuleRegistry(VM&, Structure*);
-    DECLARE_DEFAULT_FINISH_CREATION;
-    DECLARE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE);
-
 public:
     using Base = JSInternalFieldObjectImpl<BUN_INTERNAL_MODULE_COUNT>;
 
     DECLARE_EXPORT_INFO;
 
+    static size_t allocationSize(Checked<size_t> inlineCapacity)
+    {
+        ASSERT_UNUSED(inlineCapacity, inlineCapacity == 0U);
+        return sizeof(InternalModuleRegistry);
+    }
+
     enum Field : uint8_t {
-#include "../../../src/js/out/InternalModuleRegistry+enum.h"
+#include "InternalModuleRegistry+enum.h"
     };
+
     const WriteBarrier<Unknown>& internalField(Field field) const { return Base::internalField(static_cast<uint32_t>(field)); }
     WriteBarrier<Unknown>& internalField(Field field) { return Base::internalField(static_cast<uint32_t>(field)); }
 
@@ -52,8 +54,11 @@ public:
 
     static JSC_DECLARE_HOST_FUNCTION(jsCreateInternalModuleById);
 
-protected:
+private:
+    JS_EXPORT_PRIVATE InternalModuleRegistry(VM&, Structure*);
+    DECLARE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE);
     JSValue createInternalModuleById(JSGlobalObject* globalObject, VM& vm, Field id);
+    void finishCreation(VM&);
 };
 
 } // namespace Bun

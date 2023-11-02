@@ -10,6 +10,8 @@ import {
   validateHeaderValue,
   ServerResponse,
 } from "node:http";
+
+import https from "node:https";
 import { createServer as createHttpsServer } from "node:https";
 import { createTest } from "node-harness";
 import url from "node:url";
@@ -17,6 +19,7 @@ import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import nodefs from "node:fs";
 import { join as joinPath } from "node:path";
+import { unlinkSync } from "node:fs";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll } = createTest(import.meta.path);
 
 function listen(server: Server, protocol: string = "http"): Promise<URL> {
@@ -986,11 +989,130 @@ describe("node https server", async () => {
       res.end();
     });
     try {
-      await fetch(url);
+      await fetch(url, { tls: { rejectUnauthorized: false } });
     } catch (e) {
       throw e;
     } finally {
       done();
     }
   });
+});
+
+describe("server.address should be valid IP", () => {
+  it("should return null before listening", done => {
+    const server = createServer((req, res) => {});
+    try {
+      expect(server.address()).toBeNull();
+      done();
+    } catch (err) {
+      done(err);
+    }
+  });
+  it("should return null after close", done => {
+    const server = createServer((req, res) => {});
+    server.listen(0, async (_err, host, port) => {
+      try {
+        expect(server.address()).not.toBeNull();
+        server.close();
+        expect(server.address()).toBeNull();
+        done();
+      } catch (err) {
+        done(err);
+      }
+    });
+  });
+  it("test default hostname, issue#5850", done => {
+    const server = createServer((req, res) => {});
+    server.listen(0, async (_err, host, port) => {
+      try {
+        const { address, family, port } = server.address();
+        expect(port).toBeInteger();
+        expect(port).toBeGreaterThan(0);
+        expect(port).toBeLessThan(65536);
+        expect(["::", "0.0.0.0"]).toContain(address);
+        if (address === "0.0.0.0") {
+          expect(family).toStrictEqual("IPv4");
+        } else {
+          expect(family).toStrictEqual("IPv6");
+        }
+        done();
+      } catch (err) {
+        done(err);
+      } finally {
+        server.close();
+      }
+    });
+  });
+  it.each([["localhost"], ["127.0.0.1"]])("test %s", (hostname, done) => {
+    const server = createServer((req, res) => {});
+    server.listen(0, hostname, async (_err, host, port) => {
+      try {
+        const { address, family } = server.address();
+        expect(port).toBeInteger();
+        expect(port).toBeGreaterThan(0);
+        expect(port).toBeLessThan(65536);
+        expect(["IPv4", "IPv6"]).toContain(family);
+        if (family === "IPv4") {
+          expect(address).toStrictEqual("127.0.0.1");
+        } else {
+          expect(address).toStrictEqual("::1");
+        }
+        done();
+      } catch (err) {
+        done(err);
+      } finally {
+        server.close();
+      }
+    });
+  });
+  it("test unix socket, issue#6413", done => {
+    const socketPath = `${tmpdir()}/bun-server-${Math.random().toString(32)}.sock`;
+    const server = createServer((req, res) => {});
+    server.listen(socketPath, async (_err, host, port) => {
+      try {
+        expect(server.address()).toStrictEqual(socketPath);
+        done();
+      } catch (err) {
+        done(err);
+      } finally {
+        server.close();
+        unlinkSync(socketPath);
+      }
+    });
+  });
+});
+
+it("should not accept untrusted certificates", async () => {
+  const server = https.createServer(
+    {
+      key: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "openssl.key")),
+      cert: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "openssl.crt")),
+      passphrase: "123123123",
+    },
+    (req, res) => {
+      res.write("Hello from https server");
+      res.end();
+    },
+  );
+  server.listen(0, "127.0.0.1");
+  const address = server.address();
+
+  try {
+    let url_address = address.address;
+    if (address.family === "IPv6") {
+      url_address = `[${url_address}]`;
+    }
+    const res = await fetch(`https://${url_address}:${address.port}`, {
+      tls: {
+        rejectUnauthorized: true,
+      },
+    });
+    await res.text();
+    expect(true).toBe("unreacheable");
+  } catch (err) {
+    expect(err.code).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+    expect(err.message).toBe("unable to verify the first certificate");
+  }
+
+  server.close();
 });

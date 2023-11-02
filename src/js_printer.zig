@@ -981,6 +981,7 @@ fn NewPrinter(
                     p.print("void 0");
                 }
             } else {
+                p.printSpaceBeforeIdentifier();
                 p.addSourceMapping(loc);
                 p.print("undefined");
             }

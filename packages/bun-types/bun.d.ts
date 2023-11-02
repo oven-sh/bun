@@ -1871,6 +1871,15 @@ declare module "bun" {
     port?: string | number;
 
     /**
+     * If the `SO_REUSEPORT` flag should be set.
+     *
+     * This allows multiple processes to bind to the same port, which is useful for load balancing.
+     *
+     * @default false
+     */
+    reusePort?: boolean;
+
+    /**
      * What hostname should the server listen on?
      *
      * @default
@@ -4068,7 +4077,7 @@ declare module "bun" {
    * Spawn a new process
    *
    * ```js
-   * const {stdout} = Bun.spawn(["echo", "hello"]));
+   * const {stdout} = Bun.spawn(["echo", "hello"]);
    * const text = await readableStreamToText(stdout);
    * console.log(text); // "hello\n"
    * ```
@@ -4130,7 +4139,7 @@ declare module "bun" {
    * Synchronously spawn a new process
    *
    * ```js
-   * const {stdout} = Bun.spawnSync(["echo", "hello"]));
+   * const {stdout} = Bun.spawnSync(["echo", "hello"]);
    * console.log(stdout.toString()); // "hello\n"
    * ```
    *

@@ -156,7 +156,7 @@ void JSReadableStreamBYOBRequest::destroy(JSC::JSCell* cell)
     thisObject->JSReadableStreamBYOBRequest::~JSReadableStreamBYOBRequest();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamBYOBRequestConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamBYOBRequestConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);

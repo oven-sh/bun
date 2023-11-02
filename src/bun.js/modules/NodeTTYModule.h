@@ -1,6 +1,10 @@
 #include "JSBuffer.h"
 #include "_NativeModule.h"
 
+#if OS(WINDOWS)
+#include <uv.h>
+#endif
+
 namespace Zig {
 using namespace WebCore;
 
@@ -15,7 +19,20 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionTty_isatty, (JSGlobalObject * globalObject,
   int fd = callFrame->argument(0).toInt32(globalObject);
   RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-  return JSValue::encode(jsBoolean(isatty(fd)));
+  #if !OS(WINDOWS)
+  bool isTTY = isatty(fd);
+  #else 
+  bool isTTY = false;
+  switch (uv_guess_handle(fd)) {
+    case UV_TTY:
+      isTTY = true;
+      break;
+    default: 
+      break;
+  }
+  #endif
+
+  return JSValue::encode(jsBoolean(isTTY));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNotImplementedYet,

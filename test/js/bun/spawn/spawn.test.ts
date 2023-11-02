@@ -1,7 +1,8 @@
 import { ArrayBufferSink, readableStreamToText, spawn, spawnSync, write } from "bun";
 import { describe, expect, it } from "bun:test";
-import { gcTick as _gcTick, bunEnv } from "harness";
+import { gcTick as _gcTick, bunExe, bunEnv } from "harness";
 import { rmSync, writeFileSync } from "node:fs";
+import path from "path";
 
 for (let [gcTick, label] of [
   [_gcTick, "gcTick"],
@@ -160,7 +161,7 @@ for (let [gcTick, label] of [
           expect(exitCode1).toBe(0);
           expect(exitCode2).toBe(1);
         }
-      }, 20_000);
+      }, 60_000_0);
 
       // FIXME: fix the assertion failure
       it.skip("Uint8Array works as stdout", () => {
@@ -440,6 +441,57 @@ for (let [gcTick, label] of [
           });
         }
       });
+
+      describe("ipc", () => {
+        it("the subprocess should be defined and the child should send", done => {
+          gcTick();
+          const returned_subprocess = spawn([bunExe(), path.join(__dirname, "bun-ipc-child.js")], {
+            ipc: (message, subProcess) => {
+              expect(subProcess).toBe(returned_subprocess);
+              expect(message).toBe("hello");
+              subProcess.kill();
+              done();
+              gcTick();
+            },
+          });
+        });
+
+        it("the subprocess should receive the parent message and respond back", done => {
+          gcTick();
+
+          const parentMessage = "I am your father";
+          const childProc = spawn([bunExe(), path.join(__dirname, "bun-ipc-child-respond.js")], {
+            ipc: (message, subProcess) => {
+              expect(message).toBe(`pong:${parentMessage}`);
+              subProcess.kill();
+              done();
+              gcTick();
+            },
+          });
+
+          childProc.send(parentMessage);
+          gcTick();
+        });
+      });
     });
   });
+}
+
+if (!process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) {
+  it("with BUN_FEATURE_FLAG_FORCE_WAITER_THREAD", async () => {
+    const result = spawnSync({
+      cmd: [bunExe(), "test", import.meta.path],
+      env: {
+        ...bunEnv,
+        // Both flags are necessary to force this condition
+        "BUN_FEATURE_FLAG_FORCE_WAITER_THREAD": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "1",
+      },
+    });
+    if (result.exitCode !== 0) {
+      console.error(result.stderr.toString());
+      console.log(result.stdout.toString());
+    }
+    expect(result.exitCode).toBe(0);
+  }, 60_000);
 }

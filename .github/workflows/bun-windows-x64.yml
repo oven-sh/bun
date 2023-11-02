@@ -100,6 +100,7 @@ jobs:
       - name: Clone Submodules
         run: .\scripts\update-submodules.ps1
       - name: Hash submodule versions
+        shell: pwsh
         run: |
           $data = "$(& {
             git submodule | Where-Object { $_ -notmatch 'WebKit' }
@@ -108,7 +109,7 @@ jobs:
             Get-Content -Path (Get-ChildItem -Path 'scripts/build*.sh', 'scripts/all-dependencies.sh' | Sort-Object -Property Name).FullName | Out-String
           })"
           $hash = ( -join ((New-Object -TypeName System.Security.Cryptography.SHA1CryptoServiceProvider).ComputeHash([System.Text.Encoding]::UTF8.GetBytes($data)) | ForEach-Object { $_.ToString("x2") } )).Substring(0, 10)
-          Add-Content -Path $env:GITHUB_OUTPUT -Value "sha=$sha"
+          echo "sha=${hash}" >> $env:GITHUB_OUTPUT
         id: submodule-versions
 
       - name: Try fetch dependencies

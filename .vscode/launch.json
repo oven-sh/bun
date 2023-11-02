@@ -7,6 +7,15 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "(Windows) Launch",
+      "type": "lldb",
+      "request": "launch",
+      "program": "bun-debug.exe",
+      "args": ["run", "esbuild"],
+      "cwd": "C:\\dev\\test",
+      "console": "integratedTerminal",
+    },
+    {
       "type": "cppvsdbg",
       "request": "launch",
       "name": "bun test [file]",

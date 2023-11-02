@@ -267,7 +267,7 @@ pub const RunCommand = struct {
 
         var argv = [_]string{
             shell_bin,
-            if(Environment.isWindows) "/c" else "-c",
+            if (Environment.isWindows) "/c" else "-c",
             combined_script,
         };
 
@@ -599,6 +599,7 @@ pub const RunCommand = struct {
         }
 
         {
+            @breakpoint();
             var needs_delim = false;
             if (package_json_dir.len > 0) {
                 defer needs_delim = true;

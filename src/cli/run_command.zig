@@ -1042,7 +1042,6 @@ pub const RunCommand = struct {
                                 }
                                 Output.prettyln(" <d>  {s}<r>\n", .{entry.value_ptr.*});
                             }
-
                             Output.prettyln("\n<d>{d} scripts<r>", .{scripts.count()});
 
                             Output.flush();

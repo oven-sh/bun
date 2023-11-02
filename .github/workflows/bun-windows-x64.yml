@@ -213,7 +213,7 @@ jobs:
       - uses: actions/upload-artifact@v3
         with:
           name: ${{ env.tag }}-cpp
-          path: build/all-cpp-objects.a
+          path: build/bun-cpp-objects.a
 
   windows-link:
     name: Link
@@ -257,7 +257,7 @@ jobs:
             -DCANARY=1 `
             -DBUN_LINK_ONLY=1 `
             '-DBUN_DEPS_OUT_DIR=../bun-deps' `
-            '-DBUN_CPP_ARCHIVE=../bun-cpp/buildall-cpp-objects.a' `
+            '-DBUN_CPP_ARCHIVE=../bun-cpp/build/bun-cpp-objects.a' `
             '-DBUN_ZIG_OBJ=../bun-zig/bun-zig.o'
           if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed" }
           ninja -v

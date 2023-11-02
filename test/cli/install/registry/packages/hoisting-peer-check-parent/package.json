@@ -1,0 +1,43 @@
+{
+	"name": "hoisting-peer-check-parent",
+	"versions": {
+		"1.0.0": {
+			"name": "hoisting-peer-check-parent",
+			"version": "1.0.0",
+			"dependencies": {
+				"hoisting-peer-check-child": "1.0.0",
+				"no-deps": "2.0.0"
+			},
+			"_id": "hoisting-peer-check-parent@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-nSEaQ/+8/Xx7T1dW+m5sVl2J3airA2IyJZj13h1dPouhc3RIAKrS/yWkRpSnNXWQC0vMxcX/zWsHpFH7QfIt0w==",
+				"shasum": "c139700fc027d6e1f00a064aff56771787e78e20",
+				"tarball": "http://localhost:4873/hoisting-peer-check-parent/-/hoisting-peer-check-parent-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:10.170Z",
+		"created": "2023-11-01T22:05:10.170Z",
+		"1.0.0": "2023-11-01T22:05:10.170Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"hoisting-peer-check-parent-1.0.0.tgz": {
+			"shasum": "c139700fc027d6e1f00a064aff56771787e78e20",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-ce7c72819027d5a0",
+	"_id": "hoisting-peer-check-parent",
+	"readme": "ERROR: No README data found!"
+}

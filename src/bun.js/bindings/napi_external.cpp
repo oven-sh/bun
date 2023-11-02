@@ -12,7 +12,7 @@ NapiExternal::~NapiExternal()
 
 void NapiExternal::destroy(JSC::JSCell* cell)
 {
-    jsCast<NapiExternal*>(cell)->~NapiExternal();
+    static_cast<NapiExternal*>(cell)->~NapiExternal();
 }
 
 const ClassInfo NapiExternal::s_info = { "External"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NapiExternal) };

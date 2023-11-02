@@ -20,7 +20,7 @@ const GlobAscii = @import("./glob_ascii.zig");
 const bun = @import("./bun.zig");
 const C = @import("./c.zig");
 
-const foo = std.unicode.Utf8Iterator;
+const isWindows = @import("builtin").os.tag == .windows;
 
 const CodepointIterator = @import("./string_immutable.zig").PackedCodepointIterator;
 const Codepoint = CodepointIterator.Cursor.CodePointType;
@@ -160,14 +160,22 @@ pub const GlobWalker = struct {
         return .{ .result = globWalker };
     }
 
-    pub fn convertUtf8(codepoints: []u32, pattern: []const u8) void {
-        const iter = CodepointIterator.init(pattern);
-        var cursor = Cursor{};
-        var i: u32 = 0;
-        while (iter.next(&cursor)) : (i += 1) {
-            codepoints[i] = @intCast(cursor.c);
+    pub fn convertUtf8ToCodepoints(codepoints: []u32, pattern: []const u8) void {
+        switch (comptime @import("builtin").target.cpu.arch.endian()) {
+            .Big => {
+                _ = bun.simdutf.convert.utf8.to.utf32.be(pattern, codepoints);
+            },
+            .Little => {
+                _ = bun.simdutf.convert.utf8.to.utf32.le(pattern, codepoints);
+            },
         }
-        std.debug.assert(pattern.len == i);
+        // const iter = CodepointIterator.init(pattern);
+        // var cursor = Cursor{};
+        // var i: u32 = 0;
+        // while (iter.next(&cursor)) : (i += 1) {
+        //     codepoints[i] = @intCast(cursor.c);
+        // }
+        // std.debug.assert(pattern.len == i);
     }
 
     /// `cwd` should be allocated with the arena
@@ -175,7 +183,7 @@ pub const GlobWalker = struct {
         var arena = arena_;
 
         var patternComponents = ArrayList(Component){};
-        try GlobWalker.buildPatternComponents(&arena, &this.cp_len, &patternComponents, pattern);
+        try GlobWalker.buildPatternComponents(&arena, &patternComponents, pattern, &this.cp_len, &this.scratch_pattern_codepoints);
 
         this.patternComponents = patternComponents;
         this.pattern = pattern;
@@ -217,6 +225,7 @@ pub const GlobWalker = struct {
 
     pub fn handleDirEntries(this: *GlobWalker, work_item: *const WorkItem, pathBuf: *[bun.MAX_PATH_BYTES]u8) !Maybe(void) {
         const dot = this.dot;
+
         @memcpy(pathBuf[0..work_item.path.len], work_item.path);
         pathBuf[work_item.path.len] = 0;
         const dir_path: [:0]const u8 = @ptrCast(pathBuf[0..work_item.path.len]);
@@ -234,13 +243,18 @@ pub const GlobWalker = struct {
             break :component_idx component_idx;
         };
 
-        const pattern = this.patternComponents.items[component_idx];
-        if (!pattern.is_ascii and this.scratch_pattern_codepoints == null) {
-            this.scratch_pattern_codepoints = try this.arena.allocator().alloc(u32, this.cp_len);
+        var pattern = this.patternComponents.items[component_idx];
+        // On windows we convert the codepoint buffer upfront so no need for
+        // these checks
+        if (comptime !isWindows) {
+            if (!pattern.is_ascii and this.scratch_pattern_codepoints == null) {
+                this.scratch_pattern_codepoints = try this.arena.allocator().alloc(u32, this.cp_len);
+            }
         }
+
         // Since we collapsed successive double wildcards above, this is
         // guaranteed to not be a double wildcard
-        const next_pattern: ?*const Component = if (component_idx + 1 < this.patternComponents.items.len) &this.patternComponents.items[component_idx + 1] else null;
+        const next_pattern: ?*Component = if (component_idx + 1 < this.patternComponents.items.len) &this.patternComponents.items[component_idx + 1] else null;
         const is_last = component_idx == this.patternComponents.items.len - 1;
 
         const flags = std.os.O.DIRECTORY | std.os.O.RDONLY;
@@ -273,7 +287,7 @@ pub const GlobWalker = struct {
                     }
                 },
                 .directory => {
-                    if (!dot and entry_name[0] == '.') continue;
+                    if (!dot and GlobWalker.startsWithDot(entry_name)) continue;
 
                     // `recursion_idx_bump` is the component idx to offset to start at
                     // when handling this directory's contents
@@ -357,7 +371,7 @@ pub const GlobWalker = struct {
     /// Examples:
     /// a -> `src/foo/index.ts` matches
     /// b -> `src/**/*.ts` (on 2nd pattern) matches
-    fn matchPatternFile(this: *GlobWalker, entry_name: []const u8, component_idx: u32, is_last: bool, pattern: *const Component, next_pattern: ?*const Component) bool {
+    fn matchPatternFile(this: *GlobWalker, entry_name: []const u8, component_idx: u32, is_last: bool, pattern: *Component, next_pattern: ?*Component) bool {
         // Handle case a)
         if (!is_last) return pattern.syntax_hint == .Double and
             component_idx + 1 == this.patternComponents.items.len - 1 and
@@ -368,26 +382,56 @@ pub const GlobWalker = struct {
         return this.matchPatternImpl(pattern, entry_name);
     }
 
-    fn matchPatternImpl(this: *GlobWalker, pattern_component: *const Component, filepath: []const u8) bool {
+    fn matchPatternImpl(this: *GlobWalker, pattern_component: *Component, filepath: []const u8) bool {
         // FIXME: handle utf-16?
-        if (!this.dot and filepath[0] == '.') return false;
+        if (!this.dot and GlobWalker.startsWithDot(filepath)) return false;
         switch (pattern_component.syntax_hint) {
             .Double, .Single => return true,
-            .WildcardFilepath => return matchWildcardFilepath(this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len], filepath),
-            .Literal => return matchWildcardLiteral(this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len], filepath),
+            .WildcardFilepath => return if (comptime !isWindows)
+                matchWildcardFilepath(this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len], filepath)
+            else
+                this.matchPatternSlow(pattern_component, filepath),
+            .Literal => return if (comptime !isWindows)
+                matchWildcardLiteral(this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len], filepath)
+            else
+                this.matchPatternSlow(pattern_component, filepath),
             else => {
-                if (pattern_component.is_ascii and isAllAscii(filepath)) return GlobAscii.match(this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len], filepath);
-                var unicode: []const u32 = undefined;
-                if (pattern_component.unicode) |the_unicode| {
-                    unicode = the_unicode;
-                } else {
-                    var codepoints = this.scratch_pattern_codepoints.?[pattern_component.start .. pattern_component.start + pattern_component.len];
-                    GlobWalker.convertUtf8(codepoints, this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len]);
-                    unicode = codepoints;
-                }
-                return match_impl(unicode[pattern_component.start .. pattern_component.start + pattern_component.len], filepath);
+                return this.matchPatternSlow(pattern_component, filepath);
             },
         }
+    }
+
+    fn matchPatternSlow(this: *GlobWalker, pattern_component: *Component, filepath: []const u8) bool {
+        // windows filepaths are utf-16 so GlobAscii.match won't work
+        if (comptime !isWindows) {
+            if (pattern_component.is_ascii and isAllAscii(filepath))
+                return GlobAscii.match(this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len], filepath);
+        }
+        const codepoints = this.componentStringUnicode(pattern_component);
+        return match_impl(codepoints[pattern_component.start .. pattern_component.start + pattern_component.len], filepath);
+    }
+
+    fn componentStringUnicode(this: *GlobWalker, pattern_component: *Component) []const u32 {
+        if (comptime isWindows) {
+            return this.componentStringUnicodeWindows(pattern_component);
+        } else {
+            return this.componentStringUnicodePosix(pattern_component);
+        }
+    }
+
+    fn componentStringUnicodeWindows(this: *GlobWalker, pattern_component: *Component) []const u32 {
+        return this.scratch_pattern_codepoints.?[pattern_component.start .. pattern_component.start + pattern_component.len];
+    }
+
+    fn componentStringUnicodePosix(this: *GlobWalker, pattern_component: *Component) []const u32 {
+        if (pattern_component.unicode) |the_unicode| {
+            return the_unicode;
+        }
+
+        var codepoints = this.scratch_pattern_codepoints.?[pattern_component.start .. pattern_component.start + pattern_component.len];
+        GlobWalker.convertUtf8ToCodepoints(codepoints, this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len]);
+        pattern_component.unicode = codepoints;
+        return codepoints;
     }
 
     fn appendMatchedPath(this: *GlobWalker, entryName: []const u8, dirName: [:0]const u8) !void {
@@ -396,6 +440,14 @@ pub const GlobWalker = struct {
             entryName,
         });
         try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(name));
+    }
+
+    inline fn startsWithDot(filepath: []const u8) bool {
+        if (comptime !isWindows) {
+            return filepath[0] == '.';
+        } else {
+            return std.unicode.utf16DecodeSurrogatePair(&filepath[0..2]) == '.' catch false;
+        }
     }
 
     fn checkSpecialSyntax(pattern: []const u8) bool {
@@ -492,8 +544,7 @@ pub const GlobWalker = struct {
         try patternComponents.append(allocator, component);
     }
 
-    fn buildPatternComponents(arena: *Arena, out_cp_len: *u32, patternComponents: *ArrayList(Component), pattern: []const u8) !void {
-        const isWindows = @import("builtin").os.tag == .windows;
+    fn buildPatternComponents(arena: *Arena, patternComponents: *ArrayList(Component), pattern: []const u8, out_cp_len: *u32, out_pattern_cp: *?[]u32) !void {
         var start: u32 = 0;
 
         const iter = CodepointIterator.init(pattern);
@@ -535,6 +586,12 @@ pub const GlobWalker = struct {
         }
 
         out_cp_len.* = cp_len;
+
+        if (comptime isWindows) {
+            var codepoints = try arena.allocator().alloc(u32, cp_len);
+            GlobWalker.convertUtf8ToCodepoints(codepoints, pattern);
+            out_pattern_cp.* = codepoints;
+        }
 
         const end = cursor.i + cursor.width;
         try addComponent(arena.allocator(), pattern, patternComponents, .{ .start = start, .len = end - start });

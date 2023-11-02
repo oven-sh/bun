@@ -61,15 +61,6 @@ const MatchOpts = struct {
 
             const cwd_str = cwd_str: {
                 if (ResolvePath.Platform.auto.isAbsolute(cwd_str_raw.slice())) {
-                    // Strip trailing directory separator if it has one
-                    if (cwd_str_raw.len > 1 and globImpl.isSeparator(cwd_str_raw.slice()[cwd_str_raw.len - 1])) {
-                        const without_trailing_slash = ZigString.Slice{ .ptr = cwd_str_raw.ptr, .len = cwd_str_raw.len - 1, .allocator = cwd_str_raw.allocator };
-                        const trailing_slash_stripped = without_trailing_slash.clone(arena.allocator()) catch {
-                            globalThis.throwOutOfMemory();
-                            return null;
-                        };
-                        break :cwd_str trailing_slash_stripped.ptr[0..trailing_slash_stripped.len];
-                    }
                     const cwd_str = cwd_str_raw.clone(arena.allocator()) catch {
                         globalThis.throwOutOfMemory();
                         return null;

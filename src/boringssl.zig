@@ -121,7 +121,11 @@ pub fn ip2String(ip: *boring.ASN1_OCTET_STRING, outIP: *[INET6_ADDRSTRLEN + 1]u8
 }
 
 /// checks if a hostname matches a SAN or CN pattern
-pub fn hostmatch(hostname: []const u8, pattern: []const u8) bool {
+pub fn hostmatch(hostname: []const u8, pattern: []const u8, comptime allow_ip: bool) bool {
+    if (hostname.len == 0 or pattern.len == 0) {
+        return false;
+    }
+
     // normalize hostname and pattern
     var host = hostname;
     var pat = pattern;
@@ -132,10 +136,13 @@ pub fn hostmatch(hostname: []const u8, pattern: []const u8) bool {
         pat = pat[0 .. pat.len - 1];
     }
 
+    const is_ip = strings.isIPAddress(host);
+    if (!allow_ip and is_ip) return false;
+
     if (!strings.hasPrefixComptime(pat, "*.")) {
         // not a wildcard pattern, so the hostnames/IP address must match exactly.
         return strings.eqlInsensitive(host, pat);
-    } else if (strings.isIPAddress(host)) {
+    } else if (is_ip) {
         // IP address and wildcard pattern.
         return false;
     }
@@ -157,15 +164,20 @@ pub fn hostmatch(hostname: []const u8, pattern: []const u8) bool {
 }
 
 test "hostmatch" {
-    try std.testing.expect(hostmatch("sub.bun.sh", "sub.bun.sh"));
-    try std.testing.expect(hostmatch("sub.bun.sh.", "sub.bun.sh"));
-    try std.testing.expect(hostmatch("sub.bun.sh.", "sub.BUN.sh."));
-    try std.testing.expect(!hostmatch("sub.bun.sh", "bun.sh"));
-    try std.testing.expect(hostmatch("sub.bun.sh", "*.bun.sh."));
-    try std.testing.expect(!hostmatch("bun.sh", "*.bun.sh."));
-    try std.testing.expect(hostmatch("127.0.0.1", "127.0.0.1"));
-    try std.testing.expect(!hostmatch("127.0.0.1", "*.0.0.1"));
-    try std.testing.expect(!hostmatch("bun.sh", "*.sh"));
+    try std.testing.expect(hostmatch("sub.bun.sh", "sub.bun.sh", true));
+    try std.testing.expect(hostmatch("sub.bun.sh.", "sub.bun.sh", true));
+    try std.testing.expect(hostmatch("sub.bun.sh.", "sub.BUN.sh.", true));
+    try std.testing.expect(!hostmatch("sub.bun.sh", "bun.sh", true));
+    try std.testing.expect(hostmatch("sub.bun.sh", "*.bun.sh.", true));
+    try std.testing.expect(!hostmatch("bun.sh", "*.bun.sh.", true));
+    try std.testing.expect(hostmatch("127.0.0.1", "127.0.0.1", true));
+    try std.testing.expect(!hostmatch("127.0.0.1", "*.0.0.1", true));
+    try std.testing.expect(!hostmatch("bun.sh", "*.sh", true));
+    try std.testing.expect(!hostmatch("127.0.0.1", "127.0.0.1", false));
+    try std.testing.expect(hostmatch("sub.bun.sh", "sub.bun.sh", false));
+    try std.testing.expect(hostmatch("sub.bun.sh", "*.bun.sh", false));
+    try std.testing.expect(!hostmatch("sub.bun.sh", "bun.sh", false));
+    try std.testing.expect(!hostmatch("sub1.sub2.bun.sh", "*.bun.sh", false));
 }
 
 pub fn checkX509ServerIdentity(
@@ -218,7 +230,7 @@ pub fn checkX509ServerIdentity(
                                 // ignore empty dns names (should never happen)
                                 if (dnsNameSlice.len > 0) {
                                     if (X509.isSafeAltName(dnsNameSlice, false)) {
-                                        if (hostmatch(hostname, dnsNameSlice)) {
+                                        if (hostmatch(hostname, dnsNameSlice, false)) {
                                             return true;
                                         }
                                     }
@@ -247,7 +259,7 @@ pub fn checkX509ServerIdentity(
                     defer boring.OPENSSL_free(cn_ptr);
 
                     var cn: []u8 = cn_ptr[0..@as(usize, @intCast(peerlen))];
-                    if (hostmatch(hostname, cn)) {
+                    if (hostmatch(hostname, cn, true)) {
                         return true;
                     }
                 }

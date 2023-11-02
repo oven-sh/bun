@@ -50,10 +50,6 @@ endif()
 # If the user passes -DLLVM_PREFIX, most of this logic is skipped, but we still warn if invalid.
 set(LLVM_VERSION 16)
 
-if(MSVC AND NOT IGNORE_UNSUPPORTED_MSVC)
-  message(FATAL_ERROR "Bun does not support building with MSVC. Please use `cmake -G Ninja` with LLVM ${LLVM_VERSION} and Ninja.")
-endif()
-
 macro(BUN_FIND_LLVM)
     find_program(
         _LLVM_CXX_PATH
@@ -173,6 +169,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
 project(Bun VERSION "${Bun_VERSION}")
+
+#if(MSVC)
+#  message(FATAL_ERROR "Bun does not support building with MSVC. Please use `cmake -G Ninja` with LLVM ${LLVM_VERSION} and Ninja.")
+#endif()
 
 # More effort to prevent using the wrong C++ compiler
 if(UNIX)
@@ -1011,6 +1011,18 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32)
         POST_BUILD
         COMMAND ${STRIP} -s -x -S -o ${BUN_WORKDIR}/bun ${BUN_WORKDIR}/${bun}
         COMMENT "Stripping Symbols"
+    )
+endif()
+
+if(WIN32)
+    # Kill all instances of bun before linking.
+    add_custom_command(
+        TARGET ${bun}
+        PRE_BUILD
+        COMMAND
+        "powershell"
+        "/C"
+        "Stop-Process -Name '${bun}' -Force -ErrorAction SilentlyContinue; exit 0"
     )
 endif()
 

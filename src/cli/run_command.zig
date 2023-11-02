@@ -599,7 +599,6 @@ pub const RunCommand = struct {
         }
 
         {
-            @breakpoint();
             var needs_delim = false;
             if (package_json_dir.len > 0) {
                 defer needs_delim = true;
@@ -1136,10 +1135,10 @@ pub const RunCommand = struct {
         const PATH = this_bundler.env.map.get("PATH") orelse "";
         var path_for_which = PATH;
         if (comptime bin_dirs_only) {
-            path_for_which = "";
-
             if (ORIGINAL_PATH.len < PATH.len) {
                 path_for_which = PATH[0 .. PATH.len - (ORIGINAL_PATH.len + 1)];
+            } else {
+                path_for_which = "";
             }
         }
 

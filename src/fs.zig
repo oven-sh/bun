@@ -34,7 +34,7 @@ pub const Preallocate = struct {
 };
 
 pub const FileSystem = struct {
-    top_level_dir: string = "/",
+    top_level_dir: string = if (Environment.isWindows) "C:\\" else "/",
 
     // used on subsequent updates
     top_level_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
@@ -106,29 +106,27 @@ pub const FileSystem = struct {
     }
 
     pub fn initWithForce(
-        top_level_dir: ?string,
+        top_level_dir_: ?string,
         comptime force: bool,
     ) !*FileSystem {
         const allocator = bun.fs_allocator;
-        var _top_level_dir = top_level_dir orelse (if (Environment.isBrowser) "/project/" else try bun.getcwdAlloc(allocator));
+        var top_level_dir = top_level_dir_ orelse (if (Environment.isBrowser) "/project/" else try bun.getcwdAlloc(allocator));
 
         // Ensure there's a trailing separator in the top level directory
         // This makes path resolution more reliable
-        if (!bun.path.isSepAny(_top_level_dir[_top_level_dir.len - 1])) {
-            const tld = try allocator.alloc(u8, _top_level_dir.len + 1);
-            bun.copy(u8, tld, _top_level_dir);
-            tld[tld.len - 1] = '/';
-            // if (!isBrowser) {
-            //     allocator.free(_top_level_dir);
-            // }
-            _top_level_dir = tld;
+        if (!bun.path.isSepAny(top_level_dir[top_level_dir.len - 1])) {
+            const tld = try allocator.alloc(u8, top_level_dir.len + 1);
+            bun.copy(u8, tld, top_level_dir);
+            tld[tld.len - 1] = std.fs.path.sep;
+            allocator.free(top_level_dir);
+            top_level_dir = tld;
         }
 
         if (!instance_loaded or force) {
             instance = FileSystem{
-                .top_level_dir = _top_level_dir,
+                .top_level_dir = top_level_dir,
                 .fs = Implementation.init(
-                    _top_level_dir,
+                    top_level_dir,
                 ),
                 // must always use default_allocator since the other allocators may not be threadsafe when an element resizes
                 .dirname_store = DirnameStore.init(bun.default_allocator),

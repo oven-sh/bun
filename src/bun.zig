@@ -1052,7 +1052,6 @@ pub const fs = @import("./fs.zig");
 pub const Bundler = bundler.Bundler;
 pub const bundler = @import("./bundler.zig");
 pub const which = @import("./which.zig").which;
-pub const is_executable_fileZ = @import("./which.zig").is_executable_file;
 pub const js_parser = @import("./js_parser.zig");
 pub const js_printer = @import("./js_printer.zig");
 pub const js_lexer = @import("./js_lexer.zig");
@@ -1121,13 +1120,7 @@ fn getFdPathViaCWD(fd: std.os.fd_t, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
 }
 
 pub fn getcwd(buf_: []u8) ![]u8 {
-    if (comptime !Environment.isWindows) {
-        return std.os.getcwd(buf_);
-    }
-
-    var temp: [MAX_PATH_BYTES]u8 = undefined;
-    var temp_slice = try std.os.getcwd(&temp);
-    return path.normalizeBuf(temp_slice, buf_, .loose);
+    return std.os.getcwd(buf_);
 }
 
 pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
@@ -1140,11 +1133,6 @@ pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
 /// On Linux, when `/proc/self/fd` is not available, this function will attempt to use `fchdir` and `getcwd` to get the path instead.
 pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
     const fd = fdcast(toFD(fd_));
-    if (comptime Environment.isWindows) {
-        var temp: [MAX_PATH_BYTES]u8 = undefined;
-        var temp_slice = try std.os.getFdPath(fd, &temp);
-        return path.normalizeBuf(temp_slice, buf, .loose);
-    }
     if (comptime !Environment.isLinux) {
         return try std.os.getFdPath(fd, buf);
     }

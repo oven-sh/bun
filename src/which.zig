@@ -2,19 +2,26 @@ const std = @import("std");
 const bun = @import("root").bun;
 
 fn isValid(buf: *[bun.MAX_PATH_BYTES]u8, segment: []const u8, bin: []const u8) ?u16 {
-    bun.copy(u8, buf, segment);
+    @memcpy(buf[0..segment.len], segment);
     buf[segment.len] = std.fs.path.sep;
-    bun.copy(u8, buf[segment.len + 1 ..], bin);
-    buf[segment.len + 1 + bin.len ..][0] = 0;
-    const filepath = buf[0 .. segment.len + 1 + bin.len :0];
-    if (!checkPath(filepath)) return null;
-    return @as(u16, @intCast(filepath.len));
-}
+    @memcpy(buf[segment.len + 1 .. segment.len + 1 + bin.len], bin);
 
-pub extern "C" fn is_executable_file(path: [*:0]const u8) bool;
-fn checkPath(filepath: [:0]const u8) bool {
-    bun.JSC.markBinding(@src());
-    return bun.sys.isExecutableFilePath(filepath);
+    if (!bun.Environment.isWindows) {
+        buf[segment.len + 1 + bin.len] = 0;
+        const filepath = buf[0 .. segment.len + 1 + bin.len :0];
+        if (!bun.sys.isExecutableFilePath(filepath)) return null;
+        return @as(u16, @intCast(filepath.len));
+    } else {
+        buf[segment.len + 1 + bin.len] = '.';
+        inline for (.{ "cmd", "exe", "bat" }) |ext| {
+            @memcpy(buf[segment.len + 1 + bin.len + 1 .. segment.len + 1 + bin.len + 1 + ext.len], ext);
+            buf[segment.len + 1 + bin.len + 1 + ext.len] = 0;
+            const filepath = buf[0 .. segment.len + 1 + bin.len + 1 + ext.len :0];
+            if (bun.sys.isExecutableFilePath(filepath))
+                return @as(u16, @intCast(filepath.len));
+        }
+        return null;
+    }
 }
 
 // Like /usr/bin/which but without needing to exec a child process
@@ -27,7 +34,7 @@ pub fn which(buf: *[bun.MAX_PATH_BYTES]u8, path: []const u8, cwd: []const u8, bi
         bun.copy(u8, buf, bin);
         buf[bin.len] = 0;
         var binZ: [:0]u8 = buf[0..bin.len :0];
-        if (checkPath(binZ)) return binZ;
+        if (bun.sys.isExecutableFilePath(binZ)) return binZ;
 
         // note that directories are often executable
         // TODO: should we return null here? What about the case where ytou have

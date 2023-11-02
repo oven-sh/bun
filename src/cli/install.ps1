@@ -4,6 +4,8 @@ param(
   [string]$Version = "canary"
 );
 
+$ErrorActionPreference = "Stop"
+
 # filter out 32 bit and arm
 if ($env:PROCESSOR_ARCHITECTURE -ne "AMD64") {
   Write-Output "Install Failed:"
@@ -23,12 +25,10 @@ elseif ($Version -eq "latest") {
   $Version = "canary"
 }
 
-Write-Warning "Bun for Windows is currently experimental.`nFor a more stable experience, please install Bun within WSL (https://bun.sh/docs/installation)`n`n"
-
 $BunRoot = if ($env:BUN_INSTALL) { $env:BUN_INSTALL } else { "${Home}\.bun" }
 $BunBin = mkdir -Force "${BunRoot}\bin"
 
-$Target = "bun-windows-64"
+$Target = "bun-windows-x64"
 $BaseURL = "https://github.com/oven-sh/bun/releases"
 $URL = "$BaseURL/$(if ($Version -eq "latest") { "latest/download" } else { "download/$Version" })/$Target.zip"
 
@@ -41,15 +41,12 @@ $DisplayVersion = $(
   else { "Bun tag='${Version}'" }
 )
 
-try {
-  Invoke-WebRequest $URL -OutFile $ZipPath
-}
-catch {
-  Write-Output "Install Failed:"
-  if ($_.ErrorDetails.Message -like "Not Found") {
-    Write-Output "${DisplayVersion} is not available for Windows x64`n"
-    exit 1
-  }
+$null = mkdir -Force $BunBin
+Remove-Item -Force $ZipPath -ErrorAction SilentlyContinue
+curl.exe "-#SfLo" "$ZipPath" "$URL" 
+if ($LASTEXITCODE -ne 0) {
+  Write-Output "Install Failed - could not download $URL"
+  Write-Output "The command 'curl.exe $URL -o $ZipPath' exited with code ${LASTEXITCODE}`n"
   exit 1
 }
 if (!(Test-Path $ZipPath)) {
@@ -57,29 +54,59 @@ if (!(Test-Path $ZipPath)) {
   Write-Output "The file '$ZipPath' does not exist. Did an antivirus delete it?`n"
   exit 1
 }
-Expand-Archive $ZipPath $BunBin -Force
-if (!(Test-Path "${BunBin}\$Target\bun.exe")) {
+try {
+  $lastProgressPreference = $global:ProgressPreference
+  $global:ProgressPreference = 'SilentlyContinue';
+  Expand-Archive "$ZipPath" "$BunBin" -Force
+  $global:ProgressPreference = $lastProgressPreference
+  if (!(Test-Path "${BunBin}\$Target\bun.exe")) {
+    throw "The file '${BunBin}\$Target\bun.exe' does not exist. Did an antivirus delete it?`n"
+  }
+} catch {
   Write-Output "Install Failed - could not unzip $ZipPath"
-  Write-Output "The file '${BunBin}\$Target\bun.exe' does not exist. Did an antivirus delete it?`n"
+  Write-Error $_
   exit 1
 }
-Move-Item "${BunBin}\$Target\bun.exe" "${BunBin}\bun\bun.exe" -Force
+Move-Item "${BunBin}\$Target\bun.exe" "${BunBin}\bun.exe" -Force
 
 Remove-Item "${BunBin}\$Target" -Recurse -Force
 Remove-Item $ZipPath -Force
 
-$BunRevision = "$(& "${BunBin}\bun\bun.exe" --revision)"
+$BunRevision = "$(& "${BunBin}\bun.exe" --revision)"
 
 if ($LASTEXITCODE -ne 0) {
   Write-Output "Install Failed - could not verify bun.exe"
-  Write-Output "The command '${BunBin}\bun\bun.exe --revision' exited with code ${LASTEXITCODE}`n"
+  Write-Output "The command '${BunBin}\bun.exe --revision' exited with code ${LASTEXITCODE}`n"
   exit 1
 }
 
+$C_RESET = [char]27 + "[0m"
+$C_GREEN = [char]27 + "[1;32m"
+
+Write-Output "${C_GREEN}Bun was installed successfully to ${BunBin}\bun.exe!${C_RESET}`n" 
+
+Write-Warning "Bun for Windows is currently experimental.`nFor a more stable experience, please install Bun within WSL (https://bun.sh/docs/installation)`n`n"
+
+$hasExistingOther = $false;
+try {
+  $existing = Get-Command bun -ErrorAction
+  if ($existing.Source -ne "${BunBin}\bun.exe") {
+    Write-Warning "Note: Another bun.exe is already in %PATH% at $($existing.Source)`nTyping 'bun' in your terminal will not use what was just installed."
+    $hasExistingOther = $true;
+  }
+} catch {}
+
 $User = [System.EnvironmentVariableTarget]::User
-$Path = [System.Environment]::GetEnvironmentVariable('Path', $User)
-if (!(";${Path};".ToLower() -like "*;${BinDir};*".ToLower())) {
-  [System.Environment]::SetEnvironmentVariable('Path', "${Path};${BinDir}", $User)
-  $Env:Path += ";${BinDir}"
+$Path = [System.Environment]::GetEnvironmentVariable('Path', $User) -split ';'
+if ($Path -notcontains $BunBin) {
+  $env:Path = ($Path -join ';') + ";${BunBin}"
+  [System.Environment]::SetEnvironmentVariable('Path', "${env:Path}", $User)
 }
-Write-Output "Bun ${BunRevision} was successfully installed to ${BunRoot}!"
+
+if(!$hasExistingOther) {
+  if((Get-Command -ErrorAction SilentlyContinue bun) -eq $null) {
+    Write-Output "To get started, restart your terminal session, then type ``bun```n"
+  } else {
+    Write-Output "Type ``bun`` in your terminal to get started`n"
+  }
+}

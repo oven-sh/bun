@@ -1382,11 +1382,7 @@ pub fn existsOSPath(path: bun.OSPathSlice) bool {
     }
 
     if (comptime Environment.isWindows) {
-        const rc = kernel32.GetFileAttributesW(path) != windows.INVALID_FILE_ATTRIBUTES;
-        if (rc == windows.FALSE) {
-            return false;
-        }
-        return true;
+        return kernel32.GetFileAttributesW(path.ptr) != windows.INVALID_FILE_ATTRIBUTES;
     }
 
     @compileError("TODO: existsOSPath");
@@ -1400,19 +1396,21 @@ pub fn exists(path: []const u8) bool {
     if (comptime Environment.isWindows) {
         var wbuf: bun.MAX_WPATH = undefined;
         const path_to_use = bun.strings.toWPath(&wbuf, path);
-        return kernel32.GetFileAttributesW(path_to_use.ptr) != os.windows.INVALID_FILE_ATTRIBUTES;
+        return kernel32.GetFileAttributesW(path_to_use.ptr) != windows.INVALID_FILE_ATTRIBUTES;
     }
 
     @compileError("TODO: existsOSPath");
 }
 
+pub extern "C" fn is_executable_file(path: [*:0]const u8) bool;
+
 pub fn isExecutableFileOSPath(path: bun.OSPathSlice) bool {
     if (comptime Environment.isPosix) {
-        return bun.is_executable_fileZ(path);
+        return is_executable_file(path);
     }
 
     if (comptime Environment.isWindows) {
-        var out: windows.DWORD = 8;
+        var out: windows.DWORD = undefined;
         const rc = kernel32.GetBinaryTypeW(path, &out);
 
         const result = if (rc == windows.FALSE)
@@ -1440,9 +1438,9 @@ pub fn isExecutableFilePath(path: anytype) bool {
     const Type = @TypeOf(path);
     if (comptime Environment.isPosix) {
         switch (Type) {
-            *[*:0]const u8, *[*:0]u8, [*:0]const u8, [*:0]u8 => return bun.is_executable_fileZ(path),
-            [:0]const u8, [:0]u8 => return bun.is_executable_fileZ(path.ptr),
-            []const u8, []u8 => return bun.is_executable_fileZ(
+            *[*:0]const u8, *[*:0]u8, [*:0]const u8, [*:0]u8 => return is_executable_file(path),
+            [:0]const u8, [:0]u8 => return is_executable_file(path.ptr),
+            []const u8, []u8 => return is_executable_file(
                 &(std.os.toPosixPath(path) catch return false),
             ),
             else => @compileError("TODO: isExecutableFilePath"),
@@ -1451,7 +1449,7 @@ pub fn isExecutableFilePath(path: anytype) bool {
 
     if (comptime Environment.isWindows) {
         var buf: [(bun.MAX_PATH_BYTES / 2) + 1]u16 = undefined;
-        return isExecutableFileOSPath(bun.strings.toWPath(&buf, path));
+        return isExecutableFilePath(bun.strings.toWPath(&buf, path));
     }
 
     @compileError("TODO: isExecutablePath");

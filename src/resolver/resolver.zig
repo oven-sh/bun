@@ -3662,8 +3662,6 @@ pub const Resolver = struct {
         var rfs: *Fs.FileSystem.RealFS = &r.fs.fs;
         var entries = _entries.entries;
 
-        std.debug.print("abs_path={s}\n", .{path});
-
         info.* = DirInfo{
             .abs_path = path,
             // .abs_real_path = path,

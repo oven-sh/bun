@@ -896,8 +896,6 @@ pub const UpgradeCommand = struct {
                         },
                     );
 
-                    std.debug.print("Delete old script: {s}\n", .{delete_old_script});
-
                     var delete_argv = [_]string{
                         "powershell.exe",
                         "-NoProfile",

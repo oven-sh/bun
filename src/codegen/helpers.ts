@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { isAscii } from "buffer";
+import { BuiltinExecutableMetadata } from "./BuiltinExecutableMetadata";
 
 // MSVC has a max of 16k characters per string literal
 // Combining string literals didn't support constexpr apparently
@@ -21,10 +22,12 @@ export function fmtCPPString(str: string, nullTerminated: boolean = true) {
   return [chars, normalized.length + (nullTerminated ? 1 : 0)];
 }
 
-export function declareASCIILiteral(name: string, value: string) {
+export function declareASCIILiteral(name: string, value: string, metadata: BuiltinExecutableMetadata) {
   const [chars, count] = fmtCPPString(value);
   return `static constexpr const char ${name}Bytes[${count}] = ${chars};
-static constexpr ASCIILiteral ${name} = ASCIILiteral::fromLiteralUnsafe(${name}Bytes);`;
+static constexpr ASCIILiteral ${name} = ASCIILiteral::fromLiteralUnsafe(${name}Bytes);
+static const JSC::BuiltinExecutableMetadata ${name}BuiltinExecutableMetadata = ${metadata.toCpp()};
+`;
 }
 
 export function cap(str: string) {

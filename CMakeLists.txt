@@ -407,7 +407,15 @@ else()
         # -DPTHREAD_JIT_PERMISSIONS_API=1
         # -DUSE_PTHREAD_JIT_PERMISSIONS_API=ON
         # -DENABLE_REMOTE_INSPECTOR=ON
-        message(FATAL_ERROR "TODO: Setting WEBKIT_DIR to the WebKit repository to enable automatic builds. For now you need to run the release script, and point to the packaged directory.")
+        message(STATUS "Using specified WebKit repository: ${WEBKIT_DIR}/WebKitBuild/Release")
+        include_directories(
+            "${WEBKIT_DIR}/WebKitBuild/Release/JavaScriptCore/Headers"
+            "${WEBKIT_DIR}/WebKitBuild/Release/JavaScriptCore/PrivateHeaders"
+            "${WEBKIT_DIR}/WebKitBuild/Release/WTF/Headers"
+            "${WEBKIT_DIR}/WebKitBuild/Release/bmalloc/Headers"
+            "${WEBKIT_DIR}/WebKitBuild/Release/"
+        )
+        set(WEBKIT_LIB_DIR "${WEBKIT_DIR}/WebKitBuild/Release/lib")
     else()
         if(NOT EXISTS "${WEBKIT_DIR}/lib/${libWTF}.${STATIC_LIB_EXT}" OR NOT EXISTS "${WEBKIT_DIR}/lib/${libJavaScriptCore}.${STATIC_LIB_EXT}")
             if(WEBKIT_DIR MATCHES "src/bun.js/WebKit$")
@@ -421,10 +429,10 @@ else()
         set(WEBKIT_LIB_DIR "${WEBKIT_DIR}/lib")
 
         message(STATUS "Using specified WebKit directory: ${WEBKIT_DIR}")
-
-        set(ASSERT_ENABLED "0")
-        message(STATUS "WebKit assertions: OFF")
     endif()
+
+    set(ASSERT_ENABLED "0")
+    message(STATUS "WebKit assertions: OFF")
 endif()
 
 # --- CMake Macros ---

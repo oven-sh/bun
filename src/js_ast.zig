@@ -1669,6 +1669,9 @@ pub const E = struct {
         /// key is the key prop like <ListItem key="foo">
         key: ?ExprNodeIndex = null,
 
+        /// index of key used to keep parsing and visiting in the same order
+        key_index: i32 = -1,
+
         flags: Flags.JSXElement.Bitset = Flags.JSXElement.Bitset{},
 
         close_tag_loc: logger.Loc = logger.Loc.Empty,

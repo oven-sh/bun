@@ -14132,6 +14132,7 @@ fn NewParser_(
             var previous_string_with_backslash_loc = logger.Loc{};
             var properties = G.Property.List{};
             var key_prop: ?ExprNodeIndex = null;
+            var key_prop_i: i32 = -1;
             var flags = Flags.JSXElement.Bitset{};
             var start_tag: ?ExprNodeIndex = null;
             var can_be_inlined = false;
@@ -14144,7 +14145,6 @@ fn NewParser_(
 
                 var spread_loc: logger.Loc = logger.Loc.Empty;
                 var props = ListManaged(G.Property).init(p.allocator);
-                var key_prop_i: i32 = -1;
                 var spread_prop_i: i32 = -1;
                 var i: i32 = 0;
                 parse_attributes: while (true) {
@@ -14310,6 +14310,7 @@ fn NewParser_(
                     .tag = start_tag,
                     .properties = properties,
                     .key = key_prop,
+                    .key_index = key_prop_i,
                     .flags = flags,
                     .close_tag_loc = close_tag_loc,
                 }, loc);
@@ -14385,6 +14386,7 @@ fn NewParser_(
                             .children = ExprNodeList.fromList(children),
                             .properties = properties,
                             .key = key_prop,
+                            .key_index = key_prop_i,
                             .flags = flags,
                             .close_tag_loc = end_tag.range.loc,
                         }, loc);
@@ -14915,6 +14917,12 @@ fn NewParser_(
 
                             const jsx_props = e_.properties.slice();
                             for (jsx_props, 0..) |property, i| {
+                                // make sure key is visited in the same order it was parsed
+                                if (i == e_.key_index and e_.key != null) {
+                                    e_.key = p.visitExpr(e_.key.?);
+                                    e_.key_index = -1;
+                                }
+
                                 if (property.kind != .spread) {
                                     e_.properties.ptr[i].key = p.visitExpr(e_.properties.ptr[i].key.?);
                                 }
@@ -14928,8 +14936,12 @@ fn NewParser_(
                                 }
                             }
 
-                            if (e_.key) |key| {
-                                e_.key = p.visitExpr(key);
+                            // when the only prop is the key
+                            if (e_.key_index != -1 and e_.key != null) {
+                                if (comptime Environment.allow_assert) {
+                                    std.debug.assert(e_.key_index == 0);
+                                }
+                                e_.key = p.visitExpr(e_.key.?);
                             }
 
                             const runtime = if (p.options.jsx.runtime == .automatic and !e_.flags.contains(.is_key_before_rest)) options.JSX.Runtime.automatic else options.JSX.Runtime.classic;

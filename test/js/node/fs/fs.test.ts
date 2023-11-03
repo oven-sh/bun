@@ -1930,6 +1930,22 @@ describe("utimesSync", () => {
     expect(finalStats.mtime).toEqual(prevModifiedTime);
     expect(finalStats.atime).toEqual(prevAccessTime);
   });
+
+  it("utimesSync keeps milliseconds correctly", () => {
+    const path = `${tmpdir()}/bun-fs-read-5-${Date.now()}.txt`;
+    fs.writeFileSync(path, "bun");
+
+    const atime = new Date();
+    const mtime = new Date();
+
+    atime.setMilliseconds(123);
+    mtime.setMilliseconds(123);
+
+    fs.utimesSync(path, atime, mtime);
+
+    expect(fs.statSync(path).atime.valueOf()).toBe(atime.getTime());
+    expect(fs.statSync(path).mtime.valueOf()).toBe(mtime.getTime());
+  });
 });
 
 it("createReadStream on a large file emits readable event correctly", () => {

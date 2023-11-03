@@ -18,8 +18,42 @@ const URL = @import("../../url.zig").URL;
 const Shimmer = @import("../bindings/shimmer.zig").Shimmer;
 const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 const meta = bun.meta;
-/// Time in seconds. Not nanos!
-pub const TimeLike = c_int;
+pub const TimeLike = struct {
+    seconds: c_int,
+    nanos: c_int,
+
+    pub fn fromMillseconds(milliseconds: f64) TimeLike {
+        return TimeLike{
+            .seconds = @truncate(@as(i64, @intFromFloat(milliseconds / @as(f64, std.time.ms_per_s)))),
+            .nanos = @truncate(@mod(@as(i64, @intFromFloat(milliseconds * @as(f64, std.time.ns_per_ms))), std.time.ns_per_s)),
+        };
+    }
+
+    // Node.js docs:
+    // > Values can be either numbers representing Unix epoch time in seconds, Dates, or a numeric string like '123456789.0'.
+    // > If the value can not be converted to a number, or is NaN, Infinity, or -Infinity, an Error will be thrown.
+    pub fn fromJS(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue, _: JSC.C.ExceptionRef) ?TimeLike {
+        if (value.jsType() == .JSDate) {
+            const milliseconds = value.getUnixTimestamp();
+            if (!std.math.isFinite(milliseconds)) {
+                return null;
+            }
+
+            return TimeLike.fromMillseconds(milliseconds);
+        }
+
+        if (!value.isNumber() and !value.isString()) {
+            return null;
+        }
+
+        const seconds = value.coerce(f64, globalThis);
+        if (!std.math.isFinite(seconds)) {
+            return null;
+        }
+
+        return TimeLike.fromMillseconds(seconds / 1000);
+    }
+};
 const Mode = bun.Mode;
 const heap_allocator = bun.default_allocator;
 pub fn DeclEnum(comptime T: type) type {
@@ -1103,31 +1137,6 @@ pub fn fileDescriptorFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, excepti
     }
 
     return @as(bun.FileDescriptor, @intCast(fd));
-}
-
-// Node.js docs:
-// > Values can be either numbers representing Unix epoch time in seconds, Dates, or a numeric string like '123456789.0'.
-// > If the value can not be converted to a number, or is NaN, Infinity, or -Infinity, an Error will be thrown.
-pub fn timeLikeFromJS(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue, _: JSC.C.ExceptionRef) ?TimeLike {
-    if (value.jsType() == .JSDate) {
-        const milliseconds = value.getUnixTimestamp();
-        if (!std.math.isFinite(milliseconds)) {
-            return null;
-        }
-
-        return @as(TimeLike, @truncate(@as(i64, @intFromFloat(milliseconds / @as(f64, std.time.ms_per_s)))));
-    }
-
-    if (!value.isNumber() and !value.isString()) {
-        return null;
-    }
-
-    const seconds = value.coerce(f64, globalThis);
-    if (!std.math.isFinite(seconds)) {
-        return null;
-    }
-
-    return @as(TimeLike, @truncate(@as(i64, @intFromFloat(seconds))));
 }
 
 pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Mode {

@@ -1430,9 +1430,7 @@ public:
         bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, JSC::AbstractSlotVisitor& visitor, const char** reason) final
         {
             auto* controller = JSC::jsCast<JSGlob*>(handle.slot()->asCell());
-            bool hasPending = JSGlob::hasPendingActivity(controller->wrapped());
-            printf("Has pending activity %d\n", hasPending);
-            if (hasPending) {
+            if (JSGlob::hasPendingActivity(controller->wrapped())) {
                 if (UNLIKELY(reason))
                     *reason = "has pending activity";
                 return true;

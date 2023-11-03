@@ -991,28 +991,6 @@ pub const PosixLoop = extern struct {
     pub fn run(this: *PosixLoop) void {
         us_loop_run(this);
     }
-
-    // extern fn uws_loop_defer(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque) callconv(.C) void)) void;
-
-    // extern fn uws_get_loop() *Loop;
-    // extern fn us_create_loop(
-    //     hint: ?*anyopaque,
-    //     wakeup_cb: ?*const fn (*Loop) callconv(.C) void,
-    //     pre_cb: ?*const fn (*Loop) callconv(.C) void,
-    //     post_cb: ?*const fn (*Loop) callconv(.C) void,
-    //     ext_size: c_uint,
-    // ) ?*Loop;
-    // extern fn us_loop_free(loop: ?*Loop) void;
-    // extern fn us_loop_ext(loop: ?*Loop) ?*anyopaque;
-    // extern fn us_loop_run(loop: ?*Loop) void;
-    // extern fn us_loop_run_bun_tick(loop: ?*Loop, timouetMs: i64, ?*anyopaque) void;
-    // extern fn us_wakeup_loop(loop: ?*Loop) void;
-    // extern fn us_loop_integrate(loop: ?*Loop) void;
-    // extern fn us_loop_iteration_number(loop: ?*Loop) c_longlong;
-    // extern fn uws_loop_addPostHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
-    // extern fn uws_loop_removePostHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
-    // extern fn uws_loop_addPreHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
-    // extern fn uws_loop_removePreHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
 };
 const uintmax_t = c_ulong;
 extern fn uws_loop_defer(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque) callconv(.C) void)) void;

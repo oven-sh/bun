@@ -438,6 +438,7 @@ RUN cmake .. \
   -DNO_CONFIGURE_DEPENDS=1 \
   -DCANARY="${CANARY}" \
   && ninja \
+  && ./bun --revision \
   && mkdir -p /build/out \
   && mv bun bun-profile /build/out \
   && rm -rf ${BUN_DIR} ${BUN_DEPS_OUT_DIR}

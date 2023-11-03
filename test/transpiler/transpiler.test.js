@@ -1192,6 +1192,44 @@ export default <>hi</>
     expect(fragment.includes("var JSXFrag = foo.frag,")).toBe(true);
   });
 
+  it("JSX keys", () => {
+    var bun = new Bun.Transpiler({
+      loader: "jsx",
+      define: {
+        "process.env.NODE_ENV": JSON.stringify("development"),
+      },
+    });
+
+    expect(bun.transformSync("console.log(<div key={() => {}} points={() => {}}></div>);")).toBe(
+      `console.log(jsxDEV("div", {
+  points: () => {
+  }
+}, () => {
+}, false, undefined, this));
+`,
+    );
+
+    expect(bun.transformSync("console.log(<div points={() => {}} key={() => {}}></div>);")).toBe(
+      `console.log(jsxDEV("div", {
+  points: () => {
+  }
+}, () => {
+}, false, undefined, this));
+`,
+    );
+
+    expect(bun.transformSync("console.log(<div key={() => {}}></div>);")).toBe(
+      `console.log(jsxDEV("div", {}, () => {
+}, false, undefined, this));
+`,
+    );
+
+    expect(bun.transformSync("console.log(<div></div>);")).toBe(
+      `console.log(jsxDEV("div", {}, undefined, false, undefined, this));
+`,
+    );
+  });
+
   it.todo("JSX", () => {
     var bun = new Bun.Transpiler({
       loader: "jsx",

@@ -1047,6 +1047,7 @@ pub fn isMissingIOUring() bool {
 pub const CLI = @import("./cli.zig");
 
 pub const PackageManager = @import("./install/install.zig").PackageManager;
+pub const RunCommand = @import("./cli/run_command.zig").RunCommand;
 
 pub const fs = @import("./fs.zig");
 pub const Bundler = bundler.Bundler;

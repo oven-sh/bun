@@ -1852,7 +1852,7 @@ pub const PackageManager = struct {
     peer_dependencies: std.fifo.LinearFifo(DependencyID, .Dynamic) = std.fifo.LinearFifo(DependencyID, .Dynamic).init(default_allocator),
 
     uws_event_loop: *uws.Loop,
-    file_poll_store: JSC.FilePoll.Store,
+    file_poll_store: bun.Async.FilePoll.Store,
 
     // name hash from alias package name -> aliased package dependency version info
     known_npm_aliases: NpmAliasMap = .{},
@@ -1923,7 +1923,7 @@ pub const PackageManager = struct {
     pub fn sleep(this: *PackageManager) void {
         if (this.wait_count.swap(0, .Monotonic) > 0) return;
         Output.flush();
-        this.waiter.wait();
+        _ = this.waiter.wait() catch 0;
     }
 
     const DependencyToEnqueue = union(enum) {
@@ -5931,12 +5931,11 @@ pub const PackageManager = struct {
             .resolve_tasks = TaskChannel.init(),
             .lockfile = undefined,
             .root_package_json_file = package_json_file,
-            // .waiter = Waiter.fromUWSLoop(uws.Loop.get()),
-            .waiter = if (Environment.isPosix) try Waker.init(ctx.allocator) else bun.uws.Loop.get(),
+            .waiter = Waiter.fromUWSLoop(uws.Loop.get()),
             .workspaces = workspaces,
             // .progress
             .uws_event_loop = uws.Loop.get(),
-            .file_poll_store = JSC.FilePoll.Store.init(ctx.allocator),
+            .file_poll_store = bun.Async.FilePoll.Store.init(ctx.allocator),
         };
         manager.lockfile = try ctx.allocator.create(Lockfile);
 
@@ -6013,10 +6012,9 @@ pub const PackageManager = struct {
             .resolve_tasks = TaskChannel.init(),
             .lockfile = undefined,
             .root_package_json_file = undefined,
-            // .waiter = Waiter.fromUWSLoop(uws.Loop.get()),
+            .waiter = Waiter.fromUWSLoop(uws.Loop.get()),
             .uws_event_loop = uws.Loop.get(),
-            .file_poll_store = JSC.FilePoll.Store.init(allocator),
-            .waiter = if (Environment.isPosix) try Waker.init(allocator) else bun.uws.Loop.get(),
+            .file_poll_store = bun.Async.FilePoll.Store.init(allocator),
             .workspaces = std.StringArrayHashMap(Semver.Version).init(allocator),
         };
         manager.lockfile = try allocator.create(Lockfile);

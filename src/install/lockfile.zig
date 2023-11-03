@@ -176,7 +176,7 @@ pub const Scripts = struct {
             }
 
             while (manager.pending_tasks > 0) {
-                manager.uws_event_loop.tick(null);
+                manager.uws_event_loop.tick();
             }
         }
     }

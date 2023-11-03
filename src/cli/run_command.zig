@@ -1,4 +1,5 @@
 const bun = @import("root").bun;
+const Async = bun.Async;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -237,10 +238,10 @@ pub const RunCommand = struct {
         finished_fds: u8 = 0,
 
         output_buffer: bun.ByteList,
-        pid_poll: *JSC.FilePoll,
+        pid_poll: *Async.FilePoll,
         waitpid_result: ?PosixSpawn.WaitPidResult,
-        stdout_poll: *JSC.FilePoll,
-        stderr_poll: *JSC.FilePoll,
+        stdout_poll: *Async.FilePoll,
+        stderr_poll: *Async.FilePoll,
         package_manager: *PackageManager,
 
         /// A "nothing" struct that lets us reuse the same pointer
@@ -265,18 +266,18 @@ pub const RunCommand = struct {
                 .package_manager = manager,
                 .waitpid_result = null,
                 .output_buffer = .{},
-                .pid_poll = JSC.FilePoll.initWithPackageManager(
+                .pid_poll = Async.FilePoll.initWithPackageManager(
                     manager,
                     pid_fd,
                     .{},
                     @as(*PidPollData, @ptrCast(this)),
                 ),
-                .stdout_poll = JSC.FilePoll.initWithPackageManager(manager, stdout_fd, .{}, this),
-                .stderr_poll = JSC.FilePoll.initWithPackageManager(manager, stderr_fd, .{}, this),
+                .stdout_poll = Async.FilePoll.initWithPackageManager(manager, stdout_fd, .{}, this),
+                .stderr_poll = Async.FilePoll.initWithPackageManager(manager, stderr_fd, .{}, this),
             };
 
-            try this.stdout_poll.register(manager.uws_event_loop, .readable, false).throw();
-            try this.stderr_poll.register(manager.uws_event_loop, .readable, false).throw();
+            _ = try this.stdout_poll.register(manager.uws_event_loop, .readable, false).unwrap();
+            _ = try this.stderr_poll.register(manager.uws_event_loop, .readable, false).unwrap();
 
             switch (this.pid_poll.register(
                 manager.uws_event_loop,

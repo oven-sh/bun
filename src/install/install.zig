@@ -2812,7 +2812,8 @@ pub const PackageManager = struct {
                                 ) catch unreachable;
                                 successFn(this, dependency_id, existing_id);
                                 return .{
-                                    .package = existing_package,
+                                     // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
+                                    .package = this.lockfile.packages.get(existing_id),
                                 };
                             }
                         }
@@ -2834,7 +2835,8 @@ pub const PackageManager = struct {
                             const res_tag = resolutions[list.items[0]].tag;
                             const ver_tag = version.tag;
                             if ((res_tag == .npm and ver_tag == .npm) or (res_tag == .git and ver_tag == .git) or (res_tag == .github and ver_tag == .github)) {
-                                const existing_package = this.lockfile.packages.get(list.items[0]);
+                                const existing_package_id = list.items[0];
+                                const existing_package = this.lockfile.packages.get(existing_package_id);
                                 this.log.addWarningFmt(
                                     null,
                                     logger.Loc.Empty,
@@ -2847,7 +2849,8 @@ pub const PackageManager = struct {
                                 ) catch unreachable;
                                 successFn(this, dependency_id, list.items[0]);
                                 return .{
-                                    .package = existing_package,
+                                     // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
+                                    .package = this.lockfile.packages.get(existing_package_id),
                                 };
                             }
                         }

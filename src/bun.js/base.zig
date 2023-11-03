@@ -23,7 +23,6 @@ const uws = @import("root").bun.uws;
 const Body = WebCore.Body;
 const TaggedPointerTypes = @import("../tagged_pointer.zig");
 const TaggedPointerUnion = TaggedPointerTypes.TaggedPointerUnion;
-const PackageManager = @import("../install/install.zig").PackageManager;
 
 pub const ExceptionValueRef = [*c]js.JSValueRef;
 pub const JSValueRef = js.JSValueRef;

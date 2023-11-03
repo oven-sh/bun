@@ -1,0 +1,42 @@
+{
+	"name": "one-fixed-dep-with-types",
+	"versions": {
+		"1.0.0": {
+			"name": "one-fixed-dep-with-types",
+			"version": "1.0.0",
+			"dependencies": {
+				"is-number": "1.0.0"
+			},
+			"_id": "one-fixed-dep-with-types@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-q2SotnIygZUd2tLffuXtJPEX3kZpTDok6v9/q5Z09HMVYvZunyyjduQ1ZZKra4piHeKaQ5iIWPva/xmWH7kElA==",
+				"shasum": "164d8c165d2790da62ccf816aae48c1f688ddf77",
+				"tarball": "http://localhost:4873/one-fixed-dep-with-types/-/one-fixed-dep-with-types-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:26.097Z",
+		"created": "2023-11-01T22:05:26.097Z",
+		"1.0.0": "2023-11-01T22:05:26.097Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"one-fixed-dep-with-types-1.0.0.tgz": {
+			"shasum": "164d8c165d2790da62ccf816aae48c1f688ddf77",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-da4672cdd0cec087",
+	"_id": "one-fixed-dep-with-types",
+	"readme": "ERROR: No README data found!"
+}

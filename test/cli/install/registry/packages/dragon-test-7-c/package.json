@@ -1,0 +1,77 @@
+{
+	"name": "dragon-test-7-c",
+	"versions": {
+		"1.0.0": {
+			"name": "dragon-test-7-c",
+			"version": "1.0.0",
+			"_id": "dragon-test-7-c@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-F8nrzOlIvLkFZnvhz5hgwtfIR9YcY6QAqcXE4I5LFKoW41xEUJZFyUJfnw7Rt2vX1Gzwz12s17S+Q27sQq/2Mg==",
+				"shasum": "93588453cedfd18d002dc6d666cd2bccd01206af",
+				"tarball": "http://localhost:4873/dragon-test-7-c/-/dragon-test-7-c-1.0.0.tgz"
+			},
+			"contributors": []
+		},
+		"2.0.0": {
+			"name": "dragon-test-7-c",
+			"version": "2.0.0",
+			"_id": "dragon-test-7-c@2.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-n6oyjVGBvGUAxhfcsMjNM+J2iq7FuSlS7bAcyqQHyuSrSPbR56je6PFSdnAa3sr1R0dHg1Nz9l54NK9PITuUSg==",
+				"shasum": "f188fe6d6d2f8381b48759c71e25dcbc0b91b25f",
+				"tarball": "http://localhost:4873/dragon-test-7-c/-/dragon-test-7-c-2.0.0.tgz"
+			},
+			"contributors": []
+		},
+		"3.0.0": {
+			"name": "dragon-test-7-c",
+			"version": "3.0.0",
+			"_id": "dragon-test-7-c@3.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-ALgxp1+KIvM1MJp1B7njXPBUXVvnKXdCoVE87KjK0hbik8linGILNMl/tkmqG7NhbhvJPJsacl4ceHsq9oG83Q==",
+				"shasum": "415aa15fae74bbe2a131ec0db5c4b5122188e01e",
+				"tarball": "http://localhost:4873/dragon-test-7-c/-/dragon-test-7-c-3.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:05.578Z",
+		"created": "2023-11-01T22:05:04.949Z",
+		"1.0.0": "2023-11-01T22:05:04.949Z",
+		"2.0.0": "2023-11-01T22:05:05.264Z",
+		"3.0.0": "2023-11-01T22:05:05.578Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "3.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"dragon-test-7-c-1.0.0.tgz": {
+			"shasum": "93588453cedfd18d002dc6d666cd2bccd01206af",
+			"version": "1.0.0"
+		},
+		"dragon-test-7-c-2.0.0.tgz": {
+			"shasum": "f188fe6d6d2f8381b48759c71e25dcbc0b91b25f",
+			"version": "2.0.0"
+		},
+		"dragon-test-7-c-3.0.0.tgz": {
+			"shasum": "415aa15fae74bbe2a131ec0db5c4b5122188e01e",
+			"version": "3.0.0"
+		}
+	},
+	"_rev": "9-34a54e84e2778285",
+	"_id": "dragon-test-7-c",
+	"readme": "ERROR: No README data found!"
+}

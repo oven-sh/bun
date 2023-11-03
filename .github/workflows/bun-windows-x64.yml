@@ -261,8 +261,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed" }
           ninja -v
           if ($LASTEXITCODE -ne 0) { throw "Link failed!" }
-
-      # TODO: code sign?
       - name: Package
         run: |
           $Dist = mkdir -Force "${{ env.tag }}"
@@ -272,3 +270,39 @@ jobs:
         with:
           name: ${{ env.tag }}
           path: ${{ env.tag }}.zip
+      - name: Release
+        id: release
+        uses: ncipollo/release-action@v1
+        if: |
+          github.repository_owner == 'oven-sh'
+          && github.ref == 'refs/heads/main'
+        with:
+          prerelease: true
+          body: "This canary release of Bun corresponds to the commit [${{ github.sha }}]"
+          allowUpdates: true
+          replacesArtifacts: true
+          generateReleaseNotes: true
+          artifactErrorsFailBuild: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+          name: "Canary (${{github.sha}})"
+          tag: "canary"
+          artifacts: "${{env.tag}}.zip"
+      - uses: sarisia/actions-status-discord@v1
+        if: failure() && github.repository_owner == 'oven-sh' && github.event_name == 'pull_request'
+        with:
+          title: ""
+          webhook: ${{ secrets.DISCORD_WEBHOOK }}
+          status: ${{ job.status }}
+          noprefix: true
+          nocontext: true
+          description: |
+            Pull Request
+            ### [${{github.event.pull_request.title}}](https://github.com/oven-sh/bun/pull/${{github.event.number}})
+
+            @${{ github.actor }}
+
+            Build failed on ${{ env.tag }}:
+
+            **[View build output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}})**
+
+            [Commit ${{github.sha}}](https://github.com/oven-sh/bun/commits/${{github.sha}})

@@ -251,7 +251,13 @@ pub const RunCommand = struct {
         if (passthrough.len > 0) {
             var combined_script_len = script.len;
             for (passthrough) |p| {
-                combined_script_len += p.len + 1;
+                // Only warp the arguments that contains space.
+                if (strings.containsChar(p, ' ')) {
+                    // To reserve space for double quotes.
+                    combined_script_len += p.len + 3;
+                } else {
+                    combined_script_len += p.len + 1;
+                }
             }
             var combined_script_buf = try allocator.alloc(u8, combined_script_len);
             bun.copy(u8, combined_script_buf, script);
@@ -259,8 +265,15 @@ pub const RunCommand = struct {
             for (passthrough) |part| {
                 var p = part;
                 remaining_script_buf[0] = ' ';
-                bun.copy(u8, remaining_script_buf[1..], p);
-                remaining_script_buf = remaining_script_buf[p.len + 1 ..];
+                if (strings.containsChar(p, ' ')) {
+                    remaining_script_buf[1] = '"';
+                    bun.copy(u8, remaining_script_buf[2..], p);
+                    remaining_script_buf[p.len + 2] = '"';
+                    remaining_script_buf = remaining_script_buf[p.len + 3 ..];
+                } else {
+                    bun.copy(u8, remaining_script_buf[1..], p);
+                    remaining_script_buf = remaining_script_buf[p.len + 1 ..];
+                }
             }
             combined_script = combined_script_buf;
         }

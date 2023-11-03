@@ -1449,7 +1449,7 @@ pub fn isExecutableFilePath(path: anytype) bool {
 
     if (comptime Environment.isWindows) {
         var buf: [(bun.MAX_PATH_BYTES / 2) + 1]u16 = undefined;
-        return isExecutableFilePath(bun.strings.toWPath(&buf, path));
+        return isExecutableFileOSPath(bun.strings.toWPath(&buf, path));
     }
 
     @compileError("TODO: isExecutablePath");

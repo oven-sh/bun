@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { bunExe } from "harness";
+import { bunExe, bunEnv } from "harness";
 
 test("bun init works", () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "bun-init-X"));
@@ -10,6 +10,7 @@ test("bun init works", () => {
     cmd: [bunExe(), "init", "-y"],
     cwd: temp,
     stdio: ["ignore", "inherit", "inherit"],
+    env: bunEnv,
   });
 
   const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));

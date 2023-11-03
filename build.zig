@@ -336,7 +336,10 @@ pub fn build_(b: *Build) !void {
         }
 
         const is_canary, const canary_revision = if (b.option(u32, "canary", "Treat this as a canary build")) |rev|
-            .{ true, rev }
+            if (rev == 0)
+                .{ false, 0 }
+            else
+                .{ true, rev }
         else
             .{ false, 0 };
         break :brk .{

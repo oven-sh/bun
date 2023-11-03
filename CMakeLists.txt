@@ -876,10 +876,19 @@ if(NOT CI AND NOT WIN32)
     target_compile_options(${bun} PRIVATE -fdiagnostics-color=always)
 endif()
 
-target_compile_options(${bun} PUBLIC
-    -march=${CPU_TARGET}
-    -ferror-limit=${ERROR_LIMIT}
-)
+if(NOT CPU_TARGET STREQUAL "native")
+    # passing -march=native to clang will break older systems
+    # by default on x64, CPU_TARGET is set to "haswell" or "nehalem" depending on baseline
+    # on arm, this argument will not be passed.
+    target_compile_options(${bun} PUBLIC "-march=${CPU_TARGET}")
+else()
+    if (APPLE AND ARCH STREQUAL "aarch64")
+        # On arm macOS, we can set it to a minimum of the M1 cpu set. this might be the default already.
+        target_compile_options(${bun} PUBLIC "-mcpu=apple-m1")
+    endif()
+endif()
+
+target_compile_options(${bun} PUBLIC -ferror-limit=${ERROR_LIMIT})
 
 if(WIN32)
     add_compile_definitions(

@@ -37,7 +37,7 @@ const MatchOpts = struct {
 
     fn fromJS(globalThis: *JSGlobalObject, arguments: *ArgumentsSlice, comptime fnName: []const u8, arena: *Arena) ?MatchOpts {
         const optsObj: JSValue = arguments.nextEat() orelse return null;
-        if (!optsObj.isObject()) {
+        if (!optsObj.isObject() or optsObj.isUndefinedOrNull()) {
             globalThis.throw("{s}: expected first argument to be an object", .{fnName});
             return null;
         }
@@ -48,11 +48,7 @@ const MatchOpts = struct {
             .absolute = false,
         };
 
-        if (optsObj.get(globalThis, "absolute")) |absoluteVal| parse_absolute: {
-            if (absoluteVal.isUndefinedOrNull()) {
-                out.absolute = false;
-                break :parse_absolute;
-            }
+        if (optsObj.getTruthy(globalThis, "absolute")) |absoluteVal| {
             out.absolute = if (absoluteVal.isBoolean()) absoluteVal.asBoolean() else false;
         }
 
@@ -101,7 +97,7 @@ const MatchOpts = struct {
             out.cwd = BunString.fromBytes(cwd_str);
         }
 
-        if (optsObj.get(globalThis, "dot")) |dot| {
+        if (optsObj.getTruthy(globalThis, "dot")) |dot| {
             out.dot = if (dot.isBoolean()) dot.asBoolean() else false;
         }
 
@@ -368,7 +364,7 @@ pub fn matchString(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.Cal
         break :codepoints codepoints.items[0..codepoints.items.len];
     };
 
-    return JSC.JSValue.jsBoolean(globImpl.match_impl(codepoints, str.slice()));
+    return JSC.JSValue.jsBoolean(globImpl.matchImpl(codepoints, str.slice()));
 }
 
 pub fn convertUtf8(codepoints: *std.ArrayList(u32), pattern: []const u8) !void {

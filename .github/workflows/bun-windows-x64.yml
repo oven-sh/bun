@@ -216,10 +216,13 @@ jobs:
           .\scripts\build-libuv.ps1 -CloneOnly $True
           cd build
           # "-DCCACHE_PROGRAM=${SCCACHE}"
-          cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DNO_CODEGEN=1 \
-            -DNO_CONFIGURE_DEPENDS=1 \
-            -DCANARY=${{ env.canary == 'true' && '1' || '0' }} \
+          # TODO(@paperdave): pass the proper revision of canary here. without it,
+          # the properties window will display the wrong version.
+          # not really a big deal for time being. should be resolved before release
+          cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release `
+            -DNO_CODEGEN=1 `
+            -DNO_CONFIGURE_DEPENDS=1 `
+            -DCANARY=${{ env.canary == 'true' && '1' || '0' }} `
             -DBUN_CPP_ONLY=1
           if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed" }
           .\compile-cpp-only.ps1 -v

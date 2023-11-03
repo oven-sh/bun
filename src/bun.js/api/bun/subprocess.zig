@@ -1782,7 +1782,7 @@ pub const Subprocess = struct {
     }
 
     pub fn onWaitPid(this: *Subprocess, sync: bool, this_jsvalue: JSC.JSValue, waitpid_result_: JSC.Maybe(PosixSpawn.WaitPidResult)) void {
-        if(Environment.isWindows) {
+        if (Environment.isWindows) {
             @panic("windows doesnt support subprocess yet. haha");
         }
         defer if (sync) this.updateHasPendingActivity();

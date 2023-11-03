@@ -4834,7 +4834,7 @@ pub const PackageManager = struct {
         explicit_global_directory: string = "",
         /// destination directory to link bins into
         // must be a variable due to global installs and bunx
-        bin_path: stringZ = "node_modules/.bin",
+        bin_path: stringZ = bun.pathLiteral("node_modules/.bin"),
 
         lockfile_path: stringZ = Lockfile.default_filename,
         did_override_default_scope: bool = false,
@@ -4932,11 +4932,20 @@ pub const PackageManager = struct {
                 return try std.fs.cwd().makeOpenPathIterable(path, .{});
             }
 
-            if (bun.getenvZ("XDG_CACHE_HOME") orelse bun.getenvZ("HOME")) |home_dir| {
-                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                var parts = [_]string{ ".bun", "install", "global" };
-                var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
-                return try std.fs.cwd().makeOpenPathIterable(path, .{});
+            if (!Environment.isWindows) {
+                if (bun.getenvZ("XDG_CACHE_HOME") orelse bun.getenvZ("HOME")) |home_dir| {
+                    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var parts = [_]string{ ".bun", "install", "global" };
+                    var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
+                    return try std.fs.cwd().makeOpenPathIterable(path, .{});
+                }
+            } else {
+                if (bun.getenvZ("USERPROFILE")) |home_dir| {
+                    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var parts = [_]string{ ".bun", "install", "global" };
+                    var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
+                    return try std.fs.cwd().makeOpenPathIterable(path, .{});
+                }
             }
 
             return error.@"No global directory found";

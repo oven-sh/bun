@@ -17,6 +17,7 @@ ARG BUILDARCH=amd64
 ARG TRIPLET=${ARCH}-linux-gnu
 ARG GIT_SHA="unknown"
 ARG BUN_DOWNLOAD_URL_BASE="https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/latest"
+ARG CANARY=0
 
 ARG BUN_VERSION="1.0.7"
 ARG NODE_VERSION="20"
@@ -318,6 +319,8 @@ RUN mkdir ${BUN_DIR}/bun-webkit \
 
 FROM bun-base as bun-cpp-objects
 
+ARG CANARY
+
 COPY --from=bun-webkit ${BUN_DIR}/bun-webkit ${BUN_DIR}/bun-webkit
 
 COPY packages ${BUN_DIR}/packages
@@ -330,7 +333,7 @@ ENV CCACHE_DIR=/ccache
 RUN --mount=type=cache,target=/ccache  mkdir ${BUN_DIR}/build \
   && cd ${BUN_DIR}/build \
   && mkdir -p tmp_modules tmp_functions js codegen \
-  && cmake .. -GNinja -DCMAKE_BUILD_TYPE=Release -DBUN_CPP_ONLY=1 -DWEBKIT_DIR=/build/bun/bun-webkit \
+  && cmake .. -GNinja -DCMAKE_BUILD_TYPE=Release -DBUN_CPP_ONLY=1 -DWEBKIT_DIR=/build/bun/bun-webkit -DCANARY=${CANARY} \
   && bash compile-cpp-only.sh
 
 FROM bun-base-with-zig as bun-codegen-for-zig
@@ -355,6 +358,7 @@ ARG ZIG_PATH
 ARG TRIPLET
 ARG GIT_SHA
 ARG CPU_TARGET
+ARG CANARY=0
 
 COPY *.zig package.json CMakeLists.txt ${BUN_DIR}/
 COPY completions ${BUN_DIR}/completions
@@ -380,8 +384,8 @@ RUN mkdir -p build \
   -DNO_CONFIGURE_DEPENDS=1 \
   -DNO_CODEGEN=1 \
   -DBUN_ZIG_OBJ="/tmp/bun-zig.o" \
-  && ONLY_ZIG=1 ninja "/tmp/bun-zig.o" \
-  && echo "-> /tmp/bun-zig.o"
+  -DCANARY="${CANARY}" \
+  && ONLY_ZIG=1 ninja "/tmp/bun-zig.o"
 
 FROM scratch as build_release_obj
 
@@ -393,6 +397,8 @@ COPY --from=bun-compile-zig-obj /tmp/bun-zig.o /
 FROM bun-base as bun-link
 
 ARG CPU_TARGET
+ARG CANARY
+
 ENV CPU_TARGET=${CPU_TARGET}
 
 WORKDIR $BUN_DIR
@@ -428,6 +434,9 @@ RUN cmake .. \
   -DBUN_CPP_ARCHIVE="${BUN_DIR}/build/bun-cpp-objects.a" \
   -DWEBKIT_DIR="${BUN_DIR}/bun-webkit" \
   -DBUN_DEPS_OUT_DIR="${BUN_DEPS_OUT_DIR}" \
+  -DCPU_TARGET="${CPU_TARGET}" \
+  -DNO_CONFIGURE_DEPENDS=1 \
+  -DCANARY="${CANARY}" \
   && ninja \
   && mkdir -p /build/out \
   && mv bun bun-profile /build/out \

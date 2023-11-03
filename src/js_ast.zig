@@ -1667,7 +1667,7 @@ pub const E = struct {
         children: ExprNodeList = ExprNodeList{},
 
         // needed to make sure parse and visit happen in the same order
-        original_key_prop_i: i32 = -1,
+        key_prop_index: i32 = -1,
 
         flags: Flags.JSXElement.Bitset = Flags.JSXElement.Bitset{},
 

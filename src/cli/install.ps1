@@ -73,17 +73,21 @@ Remove-Item "${BunBin}\$Target" -Recurse -Force
 Remove-Item $ZipPath -Force
 
 $BunRevision = "$(& "${BunBin}\bun.exe" --revision)"
-
 if ($LASTEXITCODE -ne 0) {
   Write-Output "Install Failed - could not verify bun.exe"
   Write-Output "The command '${BunBin}\bun.exe --revision' exited with code ${LASTEXITCODE}`n"
   exit 1
 }
+$DisplayVersion = if ($BunRevision -like "*-canary.*") {
+  "${BunRevision}"
+} else {
+  "$(& "${BunBin}\bun.exe" --version)"
+}
 
 $C_RESET = [char]27 + "[0m"
 $C_GREEN = [char]27 + "[1;32m"
 
-Write-Output "${C_GREEN}Bun was installed successfully to ${BunBin}\bun.exe!${C_RESET}`n" 
+Write-Output "${C_GREEN}Bun ${DisplayVersion} was installed successfully to ${BunBin}\bun.exe!${C_RESET}`n" 
 
 Write-Warning "Bun for Windows is currently experimental.`nFor a more stable experience, please install Bun within WSL (https://bun.sh/docs/installation)`n`n"
 

@@ -14131,7 +14131,7 @@ fn NewParser_(
 
             var previous_string_with_backslash_loc = logger.Loc{};
             var properties = G.Property.List{};
-            var key_prop: ?ExprNodeIndex = null;
+            var key_prop: ?G.Property = null;
             var key_prop_i: i32 = -1;
             var flags = Flags.JSXElement.Bitset{};
             var start_tag: ?ExprNodeIndex = null;
@@ -14166,8 +14166,6 @@ fn NewParser_(
                                 }
 
                                 key_prop_i = i;
-                                key_prop = try p.parseJSXPropValueIdentifier(&previous_string_with_backslash_loc);
-                                continue;
                             }
 
                             can_be_inlined = can_be_inlined and special_prop != .ref;
@@ -14185,7 +14183,12 @@ fn NewParser_(
                                 value = try p.parseJSXPropValueIdentifier(&previous_string_with_backslash_loc);
                             }
 
-                            try props.append(G.Property{ .key = prop_name, .value = value });
+                            if (special_prop == .key) {
+                                // defer appending key prop
+                                key_prop = G.Property{ .key = prop_name, .value = value };
+                            } else {
+                                try props.append(G.Property{ .key = prop_name, .value = value });
+                            }
                         },
                         .t_open_brace => {
                             defer i += 1;
@@ -14268,6 +14271,9 @@ fn NewParser_(
                     try p.log.addWarning(p.source, spread_loc, "\"key\" prop before a {...spread} is deprecated in JSX. Falling back to classic runtime.");
                     p.has_classic_runtime_warned = true;
                 }
+                if (key_prop) |_key_prop| {
+                    try props.append(_key_prop);
+                }
                 properties = G.Property.List.fromList(props);
             }
 
@@ -14309,8 +14315,7 @@ fn NewParser_(
                 return p.newExpr(E.JSXElement{
                     .tag = start_tag,
                     .properties = properties,
-                    .key = key_prop,
-                    .key_index = key_prop_i,
+                    .original_key_prop_i = key_prop_i,
                     .flags = flags,
                     .close_tag_loc = close_tag_loc,
                 }, loc);
@@ -14385,8 +14390,7 @@ fn NewParser_(
                             .tag = end_tag.data.asExpr(),
                             .children = ExprNodeList.fromList(children),
                             .properties = properties,
-                            .key = key_prop,
-                            .key_index = key_prop_i,
+                            .original_key_prop_i = key_prop_i,
                             .flags = flags,
                             .close_tag_loc = end_tag.range.loc,
                         }, loc);
@@ -14916,11 +14920,11 @@ fn NewParser_(
                             };
 
                             const jsx_props = e_.properties.slice();
+                            const last = jsx_props.len - 1;
                             for (jsx_props, 0..) |property, i| {
                                 // make sure key is visited in the same order it was parsed
-                                if (i == e_.key_index and e_.key != null) {
-                                    e_.key = p.visitExpr(e_.key.?);
-                                    e_.key_index = -1;
+                                if (i == e_.original_key_prop_i) {
+                                    e_.properties.ptr[last].key = p.visitExpr(e_.properties.ptr[last].key.?);
                                 }
 
                                 if (property.kind != .spread) {
@@ -14934,14 +14938,6 @@ fn NewParser_(
                                 if (property.initializer != null) {
                                     e_.properties.ptr[i].initializer = p.visitExpr(e_.properties.ptr[i].initializer.?);
                                 }
-                            }
-
-                            // when the only prop is the key
-                            if (e_.key_index != -1 and e_.key != null) {
-                                if (comptime Environment.allow_assert) {
-                                    std.debug.assert(e_.key_index == 0);
-                                }
-                                e_.key = p.visitExpr(e_.key.?);
                             }
 
                             const runtime = if (p.options.jsx.runtime == .automatic and !e_.flags.contains(.is_key_before_rest)) options.JSX.Runtime.automatic else options.JSX.Runtime.classic;
@@ -14976,13 +14972,10 @@ fn NewParser_(
                                     var i: usize = 2;
                                     args[0] = tag;
 
-                                    const num_props = e_.properties.len + @intFromBool(e_.key != null);
+                                    const num_props = e_.properties.len;
                                     if (num_props > 0) {
                                         var props = p.allocator.alloc(G.Property, num_props) catch unreachable;
                                         bun.copy(G.Property, props, e_.properties.slice());
-                                        if (e_.key) |key| {
-                                            props[props.len - 1] = G.Property{ .key = Expr{ .loc = key.loc, .data = keyExprData }, .value = key };
-                                        }
                                         args[1] = p.newExpr(E.Object{ .properties = G.Property.List.init(props) }, expr.loc);
                                     } else {
                                         args[1] = p.newExpr(E.Null{}, expr.loc);
@@ -15009,7 +15002,7 @@ fn NewParser_(
                                 .automatic => {
                                     // --- These must be done in all cases --
                                     const allocator = p.allocator;
-                                    var props = e_.properties.list();
+                                    var props: std.ArrayListUnmanaged(G.Property) = e_.properties.list();
                                     // arguments needs to be like
                                     // {
                                     //    ...props,
@@ -15044,6 +15037,11 @@ fn NewParser_(
                                     const is_static_jsx = e_.children.len > 1;
 
                                     // if (p.options.jsx.development) {
+                                    const maybe_key_key: ?ExprNodeIndex = if (e_.original_key_prop_i != -1) brk: {
+                                        var _key = props.items[props.items.len - 1].key;
+                                        props.items.len -= 1;
+                                        break :brk _key;
+                                    } else null;
                                     switch (e_.children.len) {
                                         0 => {},
                                         1 => {
@@ -15077,27 +15075,27 @@ fn NewParser_(
                                         //     _owner: null
                                         // };
                                         //
-                                        const key = if (e_.key) |key_| brk: {
+                                        const key = if (maybe_key_key) |key_key| brk: {
                                             // key: void 0 === key ? null : "" + key,
-                                            break :brk switch (key_.data) {
-                                                .e_string => break :brk key_,
-                                                .e_undefined, .e_null => p.newExpr(E.Null{}, key_.loc),
+                                            break :brk switch (key_key.data) {
+                                                .e_string => break :brk key_key,
+                                                .e_undefined, .e_null => p.newExpr(E.Null{}, key_key.loc),
                                                 else => p.newExpr(E.If{
                                                     .test_ = p.newExpr(E.Binary{
-                                                        .left = p.newExpr(E.Undefined{}, key_.loc),
+                                                        .left = p.newExpr(E.Undefined{}, key_key.loc),
                                                         .op = Op.Code.bin_strict_eq,
-                                                        .right = key_,
-                                                    }, key_.loc),
-                                                    .yes = p.newExpr(E.Null{}, key_.loc),
+                                                        .right = key_key,
+                                                    }, key_key.loc),
+                                                    .yes = p.newExpr(E.Null{}, key_key.loc),
                                                     .no = p.newExpr(
                                                         E.Binary{
                                                             .op = Op.Code.bin_add,
-                                                            .left = p.newExpr(&E.String.empty, key_.loc),
-                                                            .right = key_,
+                                                            .left = p.newExpr(&E.String.empty, key_key.loc),
+                                                            .right = key_key,
                                                         },
-                                                        key_.loc,
+                                                        key_key.loc,
                                                     ),
-                                                }, key_.loc),
+                                                }, key_key.loc),
                                             };
                                         } else p.newExpr(E.Null{}, expr.loc);
                                         var jsx_element = p.allocator.alloc(G.Property, 6) catch unreachable;
@@ -15195,14 +15193,14 @@ fn NewParser_(
                                         // Either:
                                         // jsxDEV(type, arguments, key, isStaticChildren, source, self)
                                         // jsx(type, arguments, key)
-                                        const args = p.allocator.alloc(Expr, if (p.options.jsx.development) @as(usize, 6) else @as(usize, 2) + @as(usize, @intFromBool(e_.key != null))) catch unreachable;
+                                        const args = p.allocator.alloc(Expr, if (p.options.jsx.development) @as(usize, 6) else @as(usize, 2) + @as(usize, @intFromBool(maybe_key_key != null))) catch unreachable;
                                         args[0] = tag;
 
                                         args[1] = p.newExpr(E.Object{
                                             .properties = G.Property.List.fromList(props),
                                         }, expr.loc);
 
-                                        if (e_.key) |key| {
+                                        if (maybe_key_key) |key| {
                                             args[2] = key;
                                         } else if (p.options.jsx.development) {
                                             // if (maybeKey !== undefined)

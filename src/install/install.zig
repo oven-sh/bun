@@ -2792,7 +2792,7 @@ pub const PackageManager = struct {
                             if (this.resolutionSatisfiesDependency(existing_resolution, version)) {
                                 successFn(this, dependency_id, existing_id);
                                 return .{
-                                     // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
+                                    // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
                                     .package = this.lockfile.packages.get(existing_id),
                                 };
                             }
@@ -2813,7 +2813,7 @@ pub const PackageManager = struct {
                                 ) catch unreachable;
                                 successFn(this, dependency_id, existing_id);
                                 return .{
-                                     // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
+                                    // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
                                     .package = this.lockfile.packages.get(existing_id),
                                 };
                             }
@@ -2850,7 +2850,7 @@ pub const PackageManager = struct {
                                 ) catch unreachable;
                                 successFn(this, dependency_id, list.items[0]);
                                 return .{
-                                     // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
+                                    // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
                                     .package = this.lockfile.packages.get(existing_package_id),
                                 };
                             }

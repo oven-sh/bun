@@ -1767,6 +1767,7 @@ void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC__JSGlobalObject* global,
 
 void JSC__VM__collectAsync(JSC__VM* vm)
 {
+    JSC::JSLockHolder lock(*vm);
     vm->heap.collectAsync();
 }
 

@@ -708,14 +708,43 @@ pub const Blob = struct {
     ) JSC.JSValue {
         const destination_type = std.meta.activeTag(destination_blob.store.?.data);
 
-        // Writing an empty string to a file is a no-op
         if (source_blob.store == null) {
-            destination_blob.detach();
-            return JSC.JSPromise.resolvedPromiseValue(ctx.ptr(), JSC.JSValue.jsNumber(0));
+            return switch (destination_type) {
+                .file => {
+                    // when writing empty blob to file, we just create an empty file
+                    var write_file_promise = bun.default_allocator.create(WriteFilePromise) catch unreachable;
+                    write_file_promise.* = .{
+                        .globalThis = ctx.ptr(),
+                    };
+
+                    // This blob should be freed, but i don't know how to do it :(
+                    const blob = Blob.initWithStore(Store.init(&[_]u8{}, bun.default_allocator) catch unreachable, undefined);
+                    var file_copier = Store.WriteFile.create(
+                        bun.default_allocator,
+                        destination_blob.*,
+                        blob,
+                        *WriteFilePromise,
+                        write_file_promise,
+                        WriteFilePromise.run,
+                    ) catch unreachable;
+                    var task = Store.WriteFile.WriteFileTask.createOnJSThread(bun.default_allocator, ctx.ptr(), file_copier) catch unreachable;
+
+                    // Defer promise creation until we're just about to schedule the task
+                    var promise = JSC.JSPromise.create(ctx.ptr());
+                    const promise_value = promise.asValue(ctx);
+                    write_file_promise.promise.strong.set(ctx, promise_value);
+                    promise_value.ensureStillAlive();
+                    task.schedule();
+                    return promise_value;
+                },
+                else => {
+                    destination_blob.detach();
+                    return JSC.JSPromise.resolvedPromiseValue(ctx.ptr(), JSC.JSValue.jsNumber(0));
+                },
+            };
         }
 
         const source_type = std.meta.activeTag(source_blob.store.?.data);
-
         if (destination_type == .file and source_type == .bytes) {
             var write_file_promise = bun.default_allocator.create(WriteFilePromise) catch unreachable;
             write_file_promise.* = .{

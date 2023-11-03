@@ -19,6 +19,20 @@ it("Bun.write blob", async () => {
   await gcTick();
 });
 
+describe("Bun.write Response", () => {
+  it("non empty response", async () => {
+    const response = new Response("hello world");
+    expect(await Bun.write("/tmp/non-empty-response.test.txt", response)).toBe(11);
+    expect(await Bun.file("/tmp/non-empty-response.test.txt").text()).toBe("hello world");
+  });
+
+  it("empty response", async () => {
+    const response = new Response("");
+    expect(await Bun.write("/tmp/empty-response.test.txt", response)).toBe(0);
+    expect(await Bun.file("/tmp/empty-response.test.txt").text()).toBe("");
+  });
+});
+
 describe("large file", () => {
   const fixtures = [
     [

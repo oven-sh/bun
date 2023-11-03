@@ -1,3 +1,5 @@
+#ifndef WIN32
+
 #include <spawn.h>
 #include <signal.h>
 
@@ -16,3 +18,5 @@ extern "C" int posix_spawnattr_reset_signals(posix_spawnattr_t* attr)
 
     return 0;
 }
+
+#endif

@@ -767,7 +767,56 @@ pub const Version = extern struct {
         pre: ExternalString = ExternalString{},
         build: ExternalString = ExternalString{},
 
+        pub fn orderPre(lhs: Tag, rhs: Tag, lhs_buf: []const u8, rhs_buf: []const u8) std.math.Order {
+            const lhs_str = lhs.pre.slice(lhs_buf);
+            const rhs_str = rhs.pre.slice(rhs_buf);
+
+            // 1. split each by '.', iterating through each one looking for integers
+            // 2. compare as integers, or if not possible compare as string
+            // 3. whichever is greater is the greater one
+            //
+            // 1.0.0-canary.0.0.0.0.0.0 < 1.0.0-canary.0.0.0.0.0.1
+
+            var lhs_itr = strings.split(lhs_str, ".");
+            var rhs_itr = strings.split(rhs_str, ".");
+
+            while (true) {
+                var lhs_part = lhs_itr.next();
+                var rhs_part = rhs_itr.next();
+
+                if (lhs_part == null and rhs_part == null) return .eq;
+
+                // not having a prerelease part is greater than having one
+                if (lhs_part == null) return .gt;
+                if (rhs_part == null) return .lt;
+
+                const lhs_uint: ?u32 = std.fmt.parseUnsigned(u32, lhs_part.?, 10) catch null;
+                const rhs_uint: ?u32 = std.fmt.parseUnsigned(u32, rhs_part.?, 10) catch null;
+
+                if (lhs_uint == null or rhs_uint == null) {
+                    switch (strings.order(lhs_part.?, rhs_part.?)) {
+                        .eq => {
+                            // continue to the next part
+                            continue;
+                        },
+                        else => |not_equal| return not_equal,
+                    }
+                }
+
+                switch (std.math.order(lhs_uint.?, rhs_uint.?)) {
+                    .eq => continue,
+                    else => |not_equal| return not_equal,
+                }
+            }
+
+            unreachable;
+        }
+
         pub fn order(lhs: Tag, rhs: Tag, lhs_buf: []const u8, rhs_buf: []const u8) std.math.Order {
+            if (!lhs.pre.isEmpty() and !rhs.pre.isEmpty()) {
+                return lhs.orderPre(rhs, lhs_buf, rhs_buf);
+            }
+
             const pre_order = lhs.pre.order(&rhs.pre, lhs_buf, rhs_buf);
             if (pre_order != .eq) return pre_order;
 
@@ -1300,7 +1349,7 @@ pub const Range = struct {
         }
     };
 
-    pub fn satisfies(this: Range, version: Version) bool {
+    pub fn satisfies(this: Range, version: Version, string_buf: string) bool {
         const has_left = this.hasLeft();
         const has_right = this.hasRight();
 
@@ -1344,6 +1393,75 @@ pub const Range = struct {
             return false;
         }
 
+        if (version.tag.hasPre() and this.left.version.tag.hasPre()) {
+            // make sure strings leading up to first number are the same
+            const lhs_str = this.left.version.tag.pre.slice(string_buf);
+
+            const rhs_str = if (this.right.version.tag.hasPre()) this.right.version.tag.pre.slice(string_buf) else null;
+            const has_rhs_pre = rhs_str != null;
+            const ver_str = version.tag.pre.slice(string_buf);
+
+            var lhs_itr = strings.split(lhs_str, ".");
+            var rhs_itr = if (has_rhs_pre) strings.split(rhs_str.?, ".") else null;
+            var ver_itr = strings.split(ver_str, ".");
+
+            while (true) {
+                const lhs_part = lhs_itr.next();
+                const rhs_part = if (has_rhs_pre) rhs_itr.?.next() else null;
+                const ver_part = ver_itr.next();
+
+                // it's a match
+                if (lhs_part == null and ver_part == null and rhs_part == null) return true;
+
+                // parts do not have equal length
+                if (lhs_part == null or ver_part == null) return false;
+                if (Environment.allow_assert) {
+                    if (has_rhs_pre) {
+                        std.debug.assert(rhs_part != null);
+                    }
+                }
+
+                const lhs_uint = std.fmt.parseUnsigned(u32, lhs_part.?, 10) catch null;
+                const rhs_uint = if (has_rhs_pre) std.fmt.parseUnsigned(u32, rhs_part.?, 10) catch null else null;
+                const ver_uint = std.fmt.parseUnsigned(u32, ver_part.?, 10) catch null;
+
+                if (lhs_uint != null and ver_uint != null) {
+                    if (has_rhs_pre and rhs_uint == null) return false;
+
+                    if (lhs_uint.? <= ver_uint.?) {
+                        if (!has_rhs_pre) continue;
+
+                        if (ver_uint.? <= rhs_uint.?) {
+                            // between lhs and rhs
+                            continue;
+                        }
+
+                        // is not between lhs and rhs.
+                        return false;
+                    }
+
+                    // falls below lhs
+                    return false;
+                }
+
+                if (lhs_uint != null or ver_uint != null) return false;
+                if (Environment.allow_assert) {
+                    if (has_rhs_pre) {
+                        std.debug.assert(rhs_uint == null);
+                    }
+                }
+
+                if (!strings.eqlLong(lhs_part.?, ver_part.?, true)) return false;
+                if (Environment.allow_assert) {
+                    if (has_rhs_pre) {
+                        std.debug.assert(strings.eqlLong(ver_part.?, rhs_part.?, true));
+                    }
+                }
+
+                // continue to next part
+            }
+        }
+
         return true;
     }
 };
@@ -1375,8 +1493,8 @@ pub const Query = struct {
         // OR
         next: ?*List = null,
 
-        pub fn satisfies(this: *const List, version: Version) bool {
-            return this.head.satisfies(version) or (this.next orelse return false).satisfies(version);
+        pub fn satisfies(this: *const List, version: Version, string_buf: string) bool {
+            return this.head.satisfies(version, string_buf) or (this.next orelse return false).satisfies(version, string_buf);
         }
 
         pub fn eql(lhs: *const List, rhs: *const List) bool {
@@ -1501,8 +1619,8 @@ pub const Query = struct {
             self.tail = new_tail;
         }
 
-        pub inline fn satisfies(this: *const Group, version: Version) bool {
-            return this.head.satisfies(version);
+        pub inline fn satisfies(this: *const Group, version: Version, string_buf: string) bool {
+            return this.head.satisfies(version, string_buf);
         }
     };
 
@@ -1515,8 +1633,8 @@ pub const Query = struct {
         return lhs_next.eql(rhs_next);
     }
 
-    pub fn satisfies(this: *const Query, version: Version) bool {
-        return this.range.satisfies(version) and (this.next orelse return true).satisfies(version);
+    pub fn satisfies(this: *const Query, version: Version, string_buf: string) bool {
+        return this.range.satisfies(version, string_buf) and (this.next orelse return true).satisfies(version, string_buf);
     }
 
     const Token = struct {

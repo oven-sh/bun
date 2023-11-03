@@ -206,7 +206,7 @@ class Worker extends EventEmitter {
   #performance;
 
   // this is used by wt.Worker.terminate();
-  // either is the exit code if exited, a promise resolving to the exit code, or undefined if we havent sent .terminate() yet
+  // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
   #onExitPromise: Promise<number> | number | undefined = undefined;
 
   constructor(filename: string, options: NodeWorkerOptions = {}) {

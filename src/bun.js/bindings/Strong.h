@@ -1,7 +1,7 @@
 #pragma once
 
 #include "root.h"
-#include "JavaScriptCore/Strong.h"
+#include <JavaScriptCore/Strong.h>
 
 namespace Bun {
 

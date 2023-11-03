@@ -10,6 +10,7 @@ pub const LPCVOID = windows.LPCVOID;
 pub const LPWSTR = windows.LPWSTR;
 pub const LPCWSTR = windows.LPCWSTR;
 pub const LPSTR = windows.LPSTR;
+pub const WCHAR = windows.WCHAR;
 pub const LPCSTR = windows.LPCSTR;
 pub const FALSE = windows.FALSE;
 pub const TRUE = windows.TRUE;
@@ -22,6 +23,10 @@ pub const UNICODE_STRING = windows.UNICODE_STRING;
 pub const NTSTATUS = windows.NTSTATUS;
 pub const NT_SUCCESS = windows.NT_SUCCESS;
 pub const STATUS_SUCCESS = windows.STATUS_SUCCESS;
+pub const MOVEFILE_COPY_ALLOWED = 0x2;
+pub const MOVEFILE_REPLACE_EXISTING = 0x1;
+pub const MOVEFILE_WRITE_THROUGH = 0x8;
+
 pub const DUPLICATE_SAME_ACCESS = windows.DUPLICATE_SAME_ACCESS;
 pub const OBJECT_ATTRIBUTES = windows.OBJECT_ATTRIBUTES;
 pub const kernel32 = windows.kernel32;
@@ -52,6 +57,8 @@ pub const ntdll = windows.ntdll;
 pub usingnamespace ntdll;
 pub const user32 = windows.user32;
 pub const advapi32 = windows.advapi32;
+
+pub const INVALID_FILE_ATTRIBUTES = -1;
 
 const std = @import("std");
 pub const HANDLE = win32.HANDLE;
@@ -95,10 +102,10 @@ pub const SCS_POSIX_BINARY = 4;
 /// The current directory is shared by all threads of the process: If one thread changes the current directory, it affects all threads in the process. Multithreaded applications and shared library code should avoid calling the SetCurrentDirectory function due to the risk of affecting relative path calculations being performed by other threads. Conversely, multithreaded applications and shared library code should avoid using relative paths so that they are unaffected by changes to the current directory performed by other threads.
 ///
 /// Note that the current directory for a process is locked while the process is executing. This will prevent the directory from being deleted, moved, or renamed.
-pub extern "kernel32" fn SetCurrentDirectory(
+pub extern "kernel32" fn SetCurrentDirectoryW(
     lpPathName: win32.LPCWSTR,
 ) callconv(windows.WINAPI) win32.BOOL;
-
+pub const SetCurrentDirectory = SetCurrentDirectoryW;
 pub extern "ntdll" fn RtlNtStatusToDosError(win32.NTSTATUS) callconv(windows.WINAPI) Win32Error;
 
 const SystemErrno = bun.C.SystemErrno;
@@ -2907,6 +2914,13 @@ pub const Win32Error = enum(u16) {
         return @enumFromInt(@intFromEnum(bun.windows.kernel32.GetLastError()));
     }
 
+    pub fn unwrap(this: @This()) !void {
+        if (this == .SUCCESS) return;
+        if (this.toSystemErrno()) |err| {
+            return err.toError();
+        }
+    }
+
     pub fn toSystemErrno(this: Win32Error) ?SystemErrno {
         return SystemErrno.init(this);
     }
@@ -2915,3 +2929,34 @@ pub const Win32Error = enum(u16) {
         return RtlNtStatusToDosError(status);
     }
 };
+
+pub const libuv = @import("./deps/libuv.zig");
+
+pub extern fn GetProcAddress(
+    ptr: ?*anyopaque,
+    [*:0]const u16,
+) ?*anyopaque;
+
+pub fn GetProcAddressA(
+    ptr: ?*anyopaque,
+    utf8: [:0]const u8,
+) ?*anyopaque {
+    var wbuf: [2048]u16 = undefined;
+    return GetProcAddress(ptr, bun.strings.toWPath(&wbuf, utf8).ptr);
+}
+
+pub extern fn LoadLibraryA(
+    [*:0]const u8,
+) ?*anyopaque;
+
+pub extern "kernel32" fn CreateHardLinkW(
+    newFileName: [*:0]const u16,
+    existingFileName: [*:0]const u16,
+    securityAttributes: ?*win32.SECURITY_ATTRIBUTES,
+) win32.BOOL;
+
+pub extern "kernel32" fn CopyFileW(
+    source: [*:0]const u16,
+    dest: [*:0]const u16,
+    bFailIfExists: win32.BOOL,
+) win32.BOOL;

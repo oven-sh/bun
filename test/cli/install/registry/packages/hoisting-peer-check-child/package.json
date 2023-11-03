@@ -1,0 +1,42 @@
+{
+	"name": "hoisting-peer-check-child",
+	"versions": {
+		"1.0.0": {
+			"name": "hoisting-peer-check-child",
+			"version": "1.0.0",
+			"peerDependencies": {
+				"no-deps": "2.0.0"
+			},
+			"_id": "hoisting-peer-check-child@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-itfobzDksazuzGizJwgmJlIiYdOlu6pL1LcErkOqXWM8+P5AVy3Ci0fbXjxxz5nwHaYCWLqPEfJSLUKMzj6cmw==",
+				"shasum": "5a7a7b3a7c883dffe9b3763ed0a889b8a762892c",
+				"tarball": "http://localhost:4873/hoisting-peer-check-child/-/hoisting-peer-check-child-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:09.884Z",
+		"created": "2023-11-01T22:05:09.884Z",
+		"1.0.0": "2023-11-01T22:05:09.884Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"hoisting-peer-check-child-1.0.0.tgz": {
+			"shasum": "5a7a7b3a7c883dffe9b3763ed0a889b8a762892c",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-56d52f5dd5fda6f1",
+	"_id": "hoisting-peer-check-child",
+	"readme": "ERROR: No README data found!"
+}

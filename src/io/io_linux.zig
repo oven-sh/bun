@@ -997,10 +997,9 @@ pub const Waker = struct {
         };
     }
 
-    pub fn wait(this: Waker) !u64 {
+    pub fn wait(this: Waker) void {
         var bytes: usize = 0;
         _ = std.os.read(this.fd, @as(*[8]u8, @ptrCast(&bytes))) catch 0;
-        return @as(u64, @intCast(bytes));
     }
 
     pub fn wake(this: *const Waker) void {

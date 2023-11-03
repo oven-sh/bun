@@ -19,6 +19,7 @@ const Arena = std.heap.ArenaAllocator;
 const GlobAscii = @import("./glob_ascii.zig");
 const bun = @import("./bun.zig");
 const C = @import("./c.zig");
+const ResolvePath = @import("./resolver/resolve_path.zig");
 
 const isWindows = @import("builtin").os.tag == .windows;
 
@@ -141,8 +142,10 @@ pub const GlobWalker = struct {
             None,
             Single,
             Double,
-            // Uses special fast-path matching for components like: `*.ts`
+            /// Uses special fast-path matching for components like: `*.ts`
             WildcardFilepath,
+            /// Uses special fast-patch matching for literal components e.g.
+            /// "node_modules", becomes memcmp
             Literal,
         };
     };
@@ -217,8 +220,8 @@ pub const GlobWalker = struct {
         return err.withPath(this.pathBuf[0 .. path_buf.len + 1]);
     }
 
-    pub fn walk(this: *GlobWalker) !Maybe(void) {
-        if (this.patternComponents.items.len == 0) return .{ .result = undefined };
+    pub fn walk(this: *GlobWalker) !Maybe(u0) {
+        if (this.patternComponents.items.len == 0) return .{ .result = 0 };
         var path_buf: [bun.MAX_PATH_BYTES]u8 = std.mem.zeroes([bun.MAX_PATH_BYTES]u8);
 
         // Handle root first
@@ -240,7 +243,7 @@ pub const GlobWalker = struct {
             }
         }
 
-        return .{ .result = undefined };
+        return .{ .result = 0 };
     }
 
     pub fn handleDirEntries(
@@ -359,7 +362,7 @@ pub const GlobWalker = struct {
                         entry_name,
                     };
 
-                    const subdir_entry_name = try std.fs.path.join(this.arena.allocator(), subdir_parts);
+                    const subdir_entry_name = try this.arena.allocator().dupe(u8, ResolvePath.join(subdir_parts, .auto));
 
                     try this.workbuf.append(this.arena.allocator(), WorkItem.new(subdir_entry_name, component_idx + recursion_idx_bump, .directory));
                 },
@@ -414,20 +417,18 @@ pub const GlobWalker = struct {
         filepath: []const u8,
     ) bool {
         if (!this.dot and GlobWalker.startsWithDot(filepath)) return false;
-        switch (pattern_component.syntax_hint) {
-            .Double, .Single => return true,
-            .WildcardFilepath => return if (comptime !isWindows)
+        return switch (pattern_component.syntax_hint) {
+            .Double, .Single => true,
+            .WildcardFilepath => if (comptime !isWindows)
                 matchWildcardFilepath(this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len], filepath)
             else
                 this.matchPatternSlow(pattern_component, filepath),
-            .Literal => return if (comptime !isWindows)
+            .Literal => if (comptime !isWindows)
                 matchWildcardLiteral(this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len], filepath)
             else
                 this.matchPatternSlow(pattern_component, filepath),
-            else => {
-                return this.matchPatternSlow(pattern_component, filepath);
-            },
-        }
+            else => this.matchPatternSlow(pattern_component, filepath),
+        };
     }
 
     fn matchPatternSlow(this: *GlobWalker, pattern_component: *Component, filepath: []const u8) bool {

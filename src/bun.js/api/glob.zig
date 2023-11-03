@@ -75,10 +75,14 @@ const MatchOpts = struct {
                 }
 
                 var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const cwd = std.os.getcwd(&path_buf) catch {
-                    globalThis.throw("Failed to get cwd", .{});
-                    return null;
+                var path_buf2: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
+                const cwd = switch (bun.sys.getcwd((&path_buf))) {
+                    .result => |cwd| cwd,
+                    .err => |err| {
+                        const errJs = err.toJSC(globalThis);
+                        globalThis.throwValue(errJs);
+                        return null;
+                    },
                 };
 
                 const cwd_str = ResolvePath.joinStringBuf(&path_buf2, &[_][]const u8{ cwd, cwd_str_raw.slice() }, .auto);

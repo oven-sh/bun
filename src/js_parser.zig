@@ -14928,7 +14928,6 @@ fn NewParser_(
                                 // make sure key is visited in the same order it was parsed
                                 if (i == e_.original_key_prop_i) {
                                     const last = e_.properties.len - 1;
-                                    e_.properties.ptr[last].key = p.visitExpr(e_.properties.ptr[last].key.?);
                                     if (e_.properties.ptr[last].value != null) {
                                         e_.properties.ptr[last].value = p.visitExpr(e_.properties.ptr[last].value.?);
                                     }
@@ -15044,10 +15043,10 @@ fn NewParser_(
                                     const is_static_jsx = e_.children.len > 1;
 
                                     // if (p.options.jsx.development) {
-                                    const maybe_key_key: ?ExprNodeIndex = if (e_.original_key_prop_i != -1) brk: {
-                                        var _key = props.items[props.items.len - 1].key;
+                                    const maybe_key_value: ?ExprNodeIndex = if (e_.original_key_prop_i != -1) brk: {
+                                        var value = props.items[props.items.len - 1].value;
                                         props.items.len -= 1;
-                                        break :brk _key;
+                                        break :brk value;
                                     } else null;
                                     switch (e_.children.len) {
                                         0 => {},
@@ -15082,27 +15081,27 @@ fn NewParser_(
                                         //     _owner: null
                                         // };
                                         //
-                                        const key = if (maybe_key_key) |key_key| brk: {
+                                        const key = if (maybe_key_value) |key_value| brk: {
                                             // key: void 0 === key ? null : "" + key,
-                                            break :brk switch (key_key.data) {
-                                                .e_string => break :brk key_key,
-                                                .e_undefined, .e_null => p.newExpr(E.Null{}, key_key.loc),
+                                            break :brk switch (key_value.data) {
+                                                .e_string => break :brk key_value,
+                                                .e_undefined, .e_null => p.newExpr(E.Null{}, key_value.loc),
                                                 else => p.newExpr(E.If{
                                                     .test_ = p.newExpr(E.Binary{
-                                                        .left = p.newExpr(E.Undefined{}, key_key.loc),
+                                                        .left = p.newExpr(E.Undefined{}, key_value.loc),
                                                         .op = Op.Code.bin_strict_eq,
-                                                        .right = key_key,
-                                                    }, key_key.loc),
-                                                    .yes = p.newExpr(E.Null{}, key_key.loc),
+                                                        .right = key_value,
+                                                    }, key_value.loc),
+                                                    .yes = p.newExpr(E.Null{}, key_value.loc),
                                                     .no = p.newExpr(
                                                         E.Binary{
                                                             .op = Op.Code.bin_add,
-                                                            .left = p.newExpr(&E.String.empty, key_key.loc),
-                                                            .right = key_key,
+                                                            .left = p.newExpr(&E.String.empty, key_value.loc),
+                                                            .right = key_value,
                                                         },
-                                                        key_key.loc,
+                                                        key_value.loc,
                                                     ),
-                                                }, key_key.loc),
+                                                }, key_value.loc),
                                             };
                                         } else p.newExpr(E.Null{}, expr.loc);
                                         var jsx_element = p.allocator.alloc(G.Property, 6) catch unreachable;
@@ -15200,14 +15199,14 @@ fn NewParser_(
                                         // Either:
                                         // jsxDEV(type, arguments, key, isStaticChildren, source, self)
                                         // jsx(type, arguments, key)
-                                        const args = p.allocator.alloc(Expr, if (p.options.jsx.development) @as(usize, 6) else @as(usize, 2) + @as(usize, @intFromBool(maybe_key_key != null))) catch unreachable;
+                                        const args = p.allocator.alloc(Expr, if (p.options.jsx.development) @as(usize, 6) else @as(usize, 2) + @as(usize, @intFromBool(maybe_key_value != null))) catch unreachable;
                                         args[0] = tag;
 
                                         args[1] = p.newExpr(E.Object{
                                             .properties = G.Property.List.fromList(props),
                                         }, expr.loc);
 
-                                        if (maybe_key_key) |key| {
+                                        if (maybe_key_value) |key| {
                                             args[2] = key;
                                         } else if (p.options.jsx.development) {
                                             // if (maybeKey !== undefined)

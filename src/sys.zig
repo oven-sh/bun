@@ -1410,7 +1410,7 @@ pub fn isExecutableFileOSPath(path: bun.OSPathSlice) bool {
     }
 
     if (comptime Environment.isWindows) {
-        var out: windows.DWORD = undefined;
+        var out: windows.DWORD = 0;
         const rc = kernel32.GetBinaryTypeW(path, &out);
 
         const result = if (rc == windows.FALSE)

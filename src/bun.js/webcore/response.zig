@@ -1623,7 +1623,7 @@ pub const Fetch = struct {
             hostname: ?[]u8 = null,
             memory_reporter: *JSC.MemoryReportingAllocator,
             check_server_identity: JSC.Strong = .{},
-            ssl_config: ?SSLConfig = null,
+            ssl_config: ?*SSLConfig = null,
         };
 
         pub fn queue(
@@ -1778,7 +1778,7 @@ pub const Fetch = struct {
         // Custom Hostname
         var hostname: ?[]u8 = null;
 
-        var ssl_config: ?SSLConfig = null;
+        var ssl_config: ?*SSLConfig = null;
 
         var url_proxy_buffer: []const u8 = undefined;
         var is_file_url = false;
@@ -1934,7 +1934,13 @@ pub const Fetch = struct {
                         if (options.get(ctx, "tls")) |tls| {
                             if (!tls.isEmptyOrUndefinedOrNull() and tls.isObject()) {
                                 if (SSLConfig.inJS(globalThis, tls, exception)) |config| {
-                                    ssl_config = config;
+                                    if (ssl_config) |existing_conf| {
+                                        existing_conf.deinit();
+                                        bun.default_allocator.destroy(existing_conf);
+                                        ssl_config = null;
+                                    }
+                                    ssl_config = bun.default_allocator.create(SSLConfig) catch @panic("out of memory!");
+                                    ssl_config.?.* = config;
                                 }
                                 if (tls.get(ctx, "rejectUnauthorized")) |reject| {
                                     if (reject.isBoolean()) {
@@ -1957,8 +1963,9 @@ pub const Fetch = struct {
                                 if (href.tag == .Dead) {
                                     const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "fetch() proxy URL is invalid", .{}, ctx);
                                     // clean hostname and tls props if any
-                                    if (ssl_config) |*conf| {
+                                    if (ssl_config) |conf| {
                                         conf.deinit();
+                                        bun.default_allocator.destroy(conf);
                                     }
                                     if (hostname) |hn| {
                                         bun.default_allocator.free(hn);
@@ -2004,8 +2011,9 @@ pub const Fetch = struct {
             if (str.isEmpty()) {
                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, ctx);
                 // clean hostname and tls props if any
-                if (ssl_config) |*conf| {
+                if (ssl_config) |conf| {
                     conf.deinit();
+                    bun.default_allocator.destroy(conf);
                 }
                 if (hostname) |hn| {
                     bun.default_allocator.free(hn);
@@ -2029,8 +2037,9 @@ pub const Fetch = struct {
 
             url = ZigURL.fromString(allocator, str) catch {
                 // clean hostname and tls props if any
-                if (ssl_config) |*conf| {
+                if (ssl_config) |conf| {
                     conf.deinit();
+                    bun.default_allocator.destroy(conf);
                 }
                 if (hostname) |hn| {
                     bun.default_allocator.free(hn);
@@ -2137,12 +2146,14 @@ pub const Fetch = struct {
 
                         if (options.get(ctx, "tls")) |tls| {
                             if (!tls.isEmptyOrUndefinedOrNull() and tls.isObject()) {
-                                if (ssl_config) |*conf| {
+                                if (ssl_config) |conf| {
                                     conf.deinit();
+                                    bun.default_allocator.destroy(conf);
                                     ssl_config = null;
                                 }
                                 if (SSLConfig.inJS(globalThis, tls, exception)) |config| {
-                                    ssl_config = config;
+                                    ssl_config = bun.default_allocator.create(SSLConfig) catch @panic("out of memory!");
+                                    ssl_config.?.* = config;
                                 }
                                 if (tls.get(ctx, "rejectUnauthorized")) |reject| {
                                     if (reject.isBoolean()) {
@@ -2171,8 +2182,9 @@ pub const Fetch = struct {
                                         hostname = null;
                                     }
 
-                                    if (ssl_config) |*conf| {
+                                    if (ssl_config) |conf| {
                                         conf.deinit();
+                                        bun.default_allocator.destroy(conf);
                                     }
                                     allocator.free(url_proxy_buffer);
                                     free_memory_reporter = true;

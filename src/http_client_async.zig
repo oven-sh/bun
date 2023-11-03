@@ -47,7 +47,7 @@ const DeadSocket = opaque {};
 var dead_socket = @as(*DeadSocket, @ptrFromInt(1));
 //TODO: this needs to be freed when Worker Threads are implemented
 var socket_async_http_abort_tracker = std.AutoArrayHashMap(u32, *uws.Socket).init(bun.default_allocator);
-var custom_ssl_context_map = std.AutoArrayHashMap(SSLConfig, *NewHTTPContext(true)).init(bun.default_allocator);
+var custom_ssl_context_map = std.AutoArrayHashMap(*SSLConfig, *NewHTTPContext(true)).init(bun.default_allocator);
 var async_http_id: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0);
 
 const print_every = 0;
@@ -776,9 +776,10 @@ pub const HTTPThread = struct {
             if (needs_own_context) {
                 var requested_config = client.tls_props.?;
                 for (custom_ssl_context_map.keys()) |other_config| {
-                    if (requested_config.isSame(&other_config)) {
+                    if (requested_config.isSame(other_config)) {
                         // we freee the callers config since we have a existing one
                         requested_config.deinit();
+                        bun.default_allocator.destroy(requested_config);
                         client.tls_props = other_config;
                         return try custom_ssl_context_map.get(other_config).?.connect(client, client.url.hostname, client.url.getPortAuto());
                     }
@@ -1468,7 +1469,7 @@ disable_keepalive: bool = false,
 disable_decompression: bool = false,
 state: InternalState = .{},
 
-tls_props: ?SSLConfig = null,
+tls_props: ?*SSLConfig = null,
 result_callback: HTTPClientResult.Callback = undefined,
 
 /// Some HTTP servers (such as npm) report Last-Modified times but ignore If-Modified-Since.

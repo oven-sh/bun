@@ -118,7 +118,6 @@ pub const FileSystem = struct {
             const tld = try allocator.alloc(u8, top_level_dir.len + 1);
             bun.copy(u8, tld, top_level_dir);
             tld[tld.len - 1] = std.fs.path.sep;
-            allocator.free(top_level_dir);
             top_level_dir = tld;
         }
 

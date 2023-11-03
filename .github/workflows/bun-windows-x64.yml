@@ -12,6 +12,7 @@ env:
   cpu: native
   arch: x86_64
   tag: bun-windows-x64
+  canary: ${{ github.event.inputs.is-canary }}
 
 on:
   push:
@@ -34,11 +35,17 @@ on:
       - "Dockerfile"
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
+    inputs:
+      is-canary:
+        type: boolean
+        description: Is Canary Build?
+        default: true
 
 jobs:
   windows-zig:
     name: Zig Build
     runs-on: med-ubuntu
+    timeout-minutes: 60
     if: github.repository_owner == 'oven-sh'
     steps:
       - uses: actions/checkout@v4
@@ -57,6 +64,7 @@ jobs:
 
       # this calculation only needs to be done for the Zig code
       - name: Calculate Canary Revision
+        if: ${{ env.canary == 'true' }}
         id: canary
         run: |
           echo "canary_revision=$(GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" bash ./scripts/calculate-canary-revision.sh --raw)" >> $GITHUB_OUTPUT
@@ -77,7 +85,7 @@ jobs:
             CPU_TARGET=${{ env.cpu }}
             TRIPLET=${{ env.arch }}-windows-msvc
             GIT_SHA=${{ github.sha }}
-            CANARY=${{ steps.canary.outputs.canary_revision }}
+            CANARY=${{ env.canary == 'true' && steps.canary.outputs.canary_revision || '0' }}
           platforms: linux/${{ runner.arch == 'X64' && 'amd64' || 'arm64' }}
           target: build_release_obj
           outputs: type=local,dest=${{runner.temp}}/release
@@ -91,7 +99,7 @@ jobs:
   windows-dependencies:
     name: Dependencies
     runs-on: windows-latest
-    timeout-minutes: 90
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -155,6 +163,8 @@ jobs:
   windows-codegen:
     name: Codegen
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.repository_owner == 'oven-sh'
     steps:
       - uses: actions/checkout@v4
       - run: |
@@ -171,6 +181,7 @@ jobs:
     name: C++ Build
     needs: [windows-codegen]
     runs-on: windows-latest
+    if: github.repository_owner == 'oven-sh'
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -205,7 +216,11 @@ jobs:
           .\scripts\build-libuv.ps1 -CloneOnly $True
           cd build
           # "-DCCACHE_PROGRAM=${SCCACHE}"
-          cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DNO_CODEGEN=1 -DNO_CONFIGURE_DEPENDS=1 -DCANARY=1 -DBUN_CPP_ONLY=1
+          cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DNO_CODEGEN=1 \
+            -DNO_CONFIGURE_DEPENDS=1 \
+            -DCANARY=${{ env.canary == 'true' && '1' || '0' }} \
+            -DBUN_CPP_ONLY=1
           if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed" }
           .\compile-cpp-only.ps1 -v
           if ($LASTEXITCODE -ne 0) { throw "C++ compilation failed" }
@@ -218,7 +233,9 @@ jobs:
     name: Link
     needs: [windows-dependencies, windows-codegen, windows-cpp, windows-zig]
     runs-on: windows-latest
-    timeout-minutes: 90
+    if: github.repository_owner == 'oven-sh'
+    timeout-minutes: 30
+    permissions: write-all
     steps:
       - uses: actions/checkout@v4
       - uses: KyleMayes/install-llvm-action@1a3da29f56261a1e1f937ec88f0856a9b8321d7e

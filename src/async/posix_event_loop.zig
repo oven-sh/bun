@@ -449,13 +449,21 @@ pub const FilePoll = struct {
         return !this.flags.contains(.disable) and this.isActive();
     }
 
+    pub inline fn canDisableKeepingProcessAlive(this: *const FilePoll) bool {
+        return !this.flags.contains(.disable) and this.flags.contains(.has_incremented_poll_count);
+    }
+
     /// Make calling ref() on this poll into a no-op.
     pub fn disableKeepingProcessAlive(this: *FilePoll, vm: *JSC.VirtualMachine) void {
-        if (this.flags.contains(.disable))
+        if (!this.flags.contains(.disable))
             return;
         this.flags.insert(.disable);
 
         vm.event_loop_handle.?.active -= @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
+    }
+
+    pub inline fn canEnableKeepingProcessAlive(this: *const FilePoll) bool {
+        return this.flags.contains(.disable) and this.flags.contains(.has_incremented_poll_count);
     }
 
     pub fn enableKeepingProcessAlive(this: *FilePoll, vm: *JSC.VirtualMachine) void {

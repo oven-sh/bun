@@ -63,7 +63,8 @@ pub const Subprocess = struct {
     pub const Flags = packed struct(u32) {
         is_sync: bool = false,
         killed: bool = false,
-        reference_count: u30 = 0,
+        has_user_ref: bool = true,
+        reference_count: u29 = 0,
     };
 
     pub const SignalCode = bun.SignalCode;
@@ -128,27 +129,29 @@ pub const Subprocess = struct {
 
     pub fn ref(this: *Subprocess) void {
         var vm = this.globalThis.bunVM();
-        switch (this.poll) {
-            .poll_ref => if (this.poll.poll_ref) |poll| {
-                this.flags.reference_count += @as(u30, @intFromBool(!poll.isRegistered()));
-                poll.enableKeepingProcessAlive(vm);
-            },
+        if (!this.flags.has_user_ref) {
+            this.flags.has_user_ref = true;
+            switch (this.poll) {
+                .poll_ref => if (this.poll.poll_ref) |poll| {
+                    this.flags.reference_count += 1;
+                    poll.enableKeepingProcessAlive(vm);
+                },
+                .wait_thread => |*wait_thread| {
+                    wait_thread.poll_ref.ref(vm);
+                },
+            }
 
-            .wait_thread => |*wait_thread| {
-                wait_thread.poll_ref.ref(vm);
-            },
-        }
+            if (!this.hasCalledGetter(.stdin)) {
+                this.stdin.ref();
+            }
 
-        if (!this.hasCalledGetter(.stdin)) {
-            this.stdin.ref();
-        }
+            if (!this.hasCalledGetter(.stdout)) {
+                this.stdout.ref();
+            }
 
-        if (!this.hasCalledGetter(.stdout)) {
-            this.stdout.ref();
-        }
-
-        if (!this.hasCalledGetter(.stderr)) {
-            this.stdout.ref();
+            if (!this.hasCalledGetter(.stderr)) {
+                this.stdout.ref();
+            }
         }
     }
 
@@ -156,25 +159,28 @@ pub const Subprocess = struct {
     pub fn unref(this: *Subprocess) void {
         var vm = this.globalThis.bunVM();
 
-        switch (this.poll) {
-            .poll_ref => if (this.poll.poll_ref) |poll| {
-                this.flags.reference_count -= @as(u30, @intFromBool(poll.isRegistered()));
-                poll.disableKeepingProcessAlive(vm);
-            },
-            .wait_thread => |*wait_thread| {
-                wait_thread.poll_ref.unref(vm);
-            },
-        }
-        if (!this.hasCalledGetter(.stdin)) {
-            this.stdin.unref();
-        }
+        if (this.flags.has_user_ref) {
+            this.flags.has_user_ref = false;
+            switch (this.poll) {
+                .poll_ref => if (this.poll.poll_ref) |poll| {
+                    this.flags.reference_count -= 1;
+                    poll.disableKeepingProcessAlive(vm);
+                },
+                .wait_thread => |*wait_thread| {
+                    wait_thread.poll_ref.unref(vm);
+                },
+            }
+            if (!this.hasCalledGetter(.stdin)) {
+                this.stdin.unref();
+            }
 
-        if (!this.hasCalledGetter(.stdout)) {
-            this.stdout.unref();
-        }
+            if (!this.hasCalledGetter(.stdout)) {
+                this.stdout.unref();
+            }
 
-        if (!this.hasCalledGetter(.stderr)) {
-            this.stdout.unref();
+            if (!this.hasCalledGetter(.stderr)) {
+                this.stdout.unref();
+            }
         }
     }
 
@@ -1075,7 +1081,8 @@ pub const Subprocess = struct {
     pub fn finalize(this: *Subprocess) callconv(.C) void {
         std.debug.assert(!this.hasPendingActivity());
         this.finalizeSync();
-        log("Finalize", .{});
+        log("Finalize, reference_count={d}", .{this.flags.reference_count});
+        std.debug.assert(this.flags.reference_count == 0);
         bun.default_allocator.destroy(this);
     }
 
@@ -1590,6 +1597,7 @@ pub const Subprocess = struct {
             .ipc_callback = if (ipc_callback != .zero) JSC.Strong.create(ipc_callback, globalThis) else undefined,
             .flags = .{
                 .is_sync = is_sync,
+                .reference_count = @intFromBool(!is_sync),
             },
         };
         if (ipc_mode != .none) {
@@ -1760,7 +1768,7 @@ pub const Subprocess = struct {
         }
 
         if (this.poll.poll_ref) |poll| {
-            this.flags.reference_count += @as(u30, @intFromBool(!poll.isRegistered()));
+            this.flags.reference_count += @intFromBool(!poll.isRegistered());
             const registration = poll.register(
                 this.globalThis.bunVM().event_loop_handle.?,
                 .process,
@@ -1834,7 +1842,7 @@ pub const Subprocess = struct {
                 .poll_ref => |poll_| {
                     if (poll_) |poll| {
                         this.poll.poll_ref = null;
-                        this.flags.reference_count -= @as(u30, @intFromBool(poll.isRegistered()));
+                        this.flags.reference_count -= @intFromBool(poll.isRegistered());
                         poll.deinitWithVM(vm);
                     }
                 },
@@ -1869,6 +1877,8 @@ pub const Subprocess = struct {
                         self.process.unref();
                         self.process.flags.reference_count -= 1;
                         self.process.updateHasPendingActivity();
+                        log("Free after exit, reference_count={d}", .{self.process.flags.reference_count});
+                        std.debug.assert(self.process.flags.reference_count == 0);
                         bun.default_allocator.destroy(self);
                     }
                 };

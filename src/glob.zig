@@ -403,7 +403,7 @@ pub const GlobWalker = struct {
     ) bool {
         // Handle case a)
         if (!is_last) return pattern.syntax_hint == .Double and
-            component_idx + 1 == this.patternComponents.items.len - 1 and
+            component_idx + 1 == this.patternComponents.items.len -| 1 and
             next_pattern.?.syntax_hint != .Double and
             this.matchPatternImpl(next_pattern.?, entry_name);
 

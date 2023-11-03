@@ -3210,6 +3210,7 @@ pub const JSGlob = struct {
         if (!JSC.is_bindgen) {
             @export(Glob.constructor, .{ .name = "GlobClass__construct" });
             @export(Glob.finalize, .{ .name = "GlobClass__finalize" });
+            @export(Glob.hasPendingActivity, .{ .name = "Glob__hasPendingActivity" });
             @export(Glob.match, .{ .name = "GlobPrototype__match" });
             @export(Glob.matchString, .{ .name = "GlobPrototype__matchString" });
             @export(Glob.matchSync, .{ .name = "GlobPrototype__matchSync" });

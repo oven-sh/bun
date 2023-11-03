@@ -11666,6 +11666,12 @@ extern "C" EncodedJSValue Glob__getConstructor(Zig::GlobalObject* globalObject)
     return JSValue::encode(globalObject->JSGlobConstructor());
 }
 
+extern "C" bool Glob__hasPendingActivity(void* ptr);
+bool JSGlob::hasPendingActivity(void* ctx)
+{
+    return Glob__hasPendingActivity(ctx);
+}
+
 JSGlob::~JSGlob()
 {
     if (m_ctx) {
@@ -11747,6 +11753,39 @@ extern "C" EncodedJSValue Glob__create(Zig::GlobalObject* globalObject, void* pt
 
     return JSValue::encode(instance);
 }
+
+template<typename Visitor>
+void JSGlob::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSGlob* thisObject = jsCast<JSGlob*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_CHILDREN(JSGlob);
+
+template<typename Visitor>
+void JSGlob::visitAdditionalChildren(Visitor& visitor)
+{
+    JSGlob* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+
+    visitor.addOpaqueRoot(this->wrapped());
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSGlob);
+
+template<typename Visitor>
+void JSGlob::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSGlob* thisObject = jsCast<JSGlob*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSGlob);
 class JSHTMLRewriterPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;

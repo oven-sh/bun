@@ -59,6 +59,19 @@ describe("globwalk", async () => {
       expect(bunfilepaths.has(filepath)).toBeTrue();
     }
   });
+
+  test("pattern persists", async () => {
+    const promise = (async () => {
+      const glob = new Glob("**/node_modules/**/*.js");
+      const result = glob.match();
+      Bun.gc(true);
+      const result2 = await result;
+      return result2;
+    })();
+    Bun.gc(true);
+    const values = await promise;
+    Bun.gc(true);
+  });
 });
 
 function returnError(cb: () => any): Error | undefined {

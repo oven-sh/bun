@@ -29,6 +29,7 @@ pub usingnamespace JSC.Codegen.JSGlob;
 pattern: []const u8,
 pattern_codepoints: ?std.ArrayList(u32) = null,
 is_ascii: bool,
+has_pending_activity: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
 
 const MatchOpts = struct {
     cwd: ?BunString,
@@ -114,6 +115,8 @@ pub const WalkTask = struct {
     alloc: Allocator,
     err: ?Err = null,
     global: *JSC.JSGlobalObject,
+    has_pending_activity: *std.atomic.Atomic(bool),
+
     pub const Err = union(enum) {
         syscall: Syscall.Error,
         unknown: anyerror,
@@ -128,17 +131,24 @@ pub const WalkTask = struct {
 
     pub const AsyncGlobWalkTask = JSC.ConcurrentPromiseTask(WalkTask);
 
-    pub fn create(globalThis: *JSC.JSGlobalObject, alloc: Allocator, globWalker: *GlobWalker) !*AsyncGlobWalkTask {
+    pub fn create(
+        globalThis: *JSC.JSGlobalObject,
+        alloc: Allocator,
+        globWalker: *GlobWalker,
+        has_pending_activity: *std.atomic.Atomic(bool),
+    ) !*AsyncGlobWalkTask {
         var walkTask = try alloc.create(WalkTask);
         walkTask.* = .{
             .walker = globWalker,
             .global = globalThis,
             .alloc = alloc,
+            .has_pending_activity = has_pending_activity,
         };
         return try AsyncGlobWalkTask.createOnJSThread(alloc, globalThis, walkTask);
     }
 
     pub fn run(this: *WalkTask) void {
+        defer updateHasPendingActivityFlag(this.has_pending_activity, false);
         const result = this.walker.walk() catch |err| {
             this.err = .{ .unknown = err };
             return;
@@ -274,6 +284,16 @@ pub fn finalize(
     alloc.destroy(this);
 }
 
+pub fn hasPendingActivity(this: *Glob) callconv(.C) bool {
+    @fence(.SeqCst);
+    return this.has_pending_activity.load(.SeqCst);
+}
+
+fn updateHasPendingActivityFlag(has_pending_activity: *std.atomic.Atomic(bool), value: bool) void {
+    @fence(.SeqCst);
+    has_pending_activity.store(value, .SeqCst);
+}
+
 pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
     const alloc = getAllocator(globalThis);
 
@@ -287,7 +307,9 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame
         return .undefined;
     };
 
-    var task = WalkTask.create(globalThis, alloc, globWalker) catch {
+    updateHasPendingActivityFlag(&this.has_pending_activity, true);
+    var task = WalkTask.create(globalThis, alloc, globWalker, &this.has_pending_activity) catch {
+        updateHasPendingActivityFlag(&this.has_pending_activity, false);
         globalThis.throw("Out of memory", .{});
         return .undefined;
     };

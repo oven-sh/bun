@@ -1416,9 +1416,42 @@ public:
         : Base(vm, structure)
     {
         m_ctx = sinkPtr;
+        m_weakThis = JSC::Weak<JSGlob>(this, getOwner());
     }
 
     void finishCreation(JSC::VM&);
+
+    JSC::Weak<JSGlob> m_weakThis;
+
+    static bool hasPendingActivity(void* ctx);
+
+    class Owner final : public JSC::WeakHandleOwner {
+    public:
+        bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, JSC::AbstractSlotVisitor& visitor, const char** reason) final
+        {
+            auto* controller = JSC::jsCast<JSGlob*>(handle.slot()->asCell());
+            bool hasPending = JSGlob::hasPendingActivity(controller->wrapped());
+            printf("Has pending activity %d\n", hasPending);
+            if (hasPending) {
+                if (UNLIKELY(reason))
+                    *reason = "has pending activity";
+                return true;
+            }
+
+            return visitor.containsOpaqueRoot(context);
+        }
+        void finalize(JSC::Handle<JSC::Unknown>, void* context) final {}
+    };
+
+    static JSC::WeakHandleOwner* getOwner()
+    {
+        static NeverDestroyed<Owner> m_owner;
+        return &m_owner.get();
+    }
+
+    DECLARE_VISIT_CHILDREN;
+    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 };
 
 class JSHTMLRewriter final : public JSC::JSDestructibleObject {

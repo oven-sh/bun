@@ -11,11 +11,15 @@
 - Ruby
 - Node.js (until bun runs stably on windows)
 
+<!--
+TODO: missing the rest of the things
 ```
 winget install OpenJS.NodeJS.LTS
-```
+``` -->
 
 ### Enable Scripts
+
+By default, scripts are blocked.
 
 ```ps1
 Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy Unrestricted

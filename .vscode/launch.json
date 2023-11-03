@@ -13,7 +13,13 @@
       "program": "bun-debug",
       "args": ["test", "${file}"],
       // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
-      "cwd": "${workspaceFolder}/test"
+      "cwd": "${workspaceFolder}/test",
+      "env": {
+        "FORCE_COLOR": "1",
+        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
+      },
+      "console": "internalConsole"
     },
     {
       "type": "lldb",
@@ -331,16 +337,6 @@
       "args": ["abc"],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole"
-    },
-    {
-      "name": "Windows Run Current File",
-      "type": "cppvsdbg",
-      "request": "launch",
-      "program": "bun-debug.exe",
-      "args": ["run", "${file}"],
-      "cwd": "${fileDirname}",
-      "console": "internalConsole",
-      "preLaunchTask": "Rebuild Debug"
-    },
+    }
   ]
 }

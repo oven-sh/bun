@@ -87,15 +87,16 @@ $DisplayVersion = if ($BunRevision -like "*-canary.*") {
 $C_RESET = [char]27 + "[0m"
 $C_GREEN = [char]27 + "[1;32m"
 
-Write-Output "${C_GREEN}Bun ${DisplayVersion} was installed successfully to ${BunBin}\bun.exe!${C_RESET}`n" 
+Write-Output "${C_GREEN}Bun ${DisplayVersion} was installed successfully!${C_RESET}"
+Write-Output "The binary is located at ${BunBin}\bun.exe`n"
 
-Write-Warning "Bun for Windows is currently experimental.`nFor a more stable experience, please install Bun within WSL (https://bun.sh/docs/installation)`n`n"
+Write-Warning "Bun for Windows is currently experimental.`nFor a more stable experience, please install Bun within WSL:`nhttps://bun.sh/docs/installation`n"
 
 $hasExistingOther = $false;
 try {
   $existing = Get-Command bun -ErrorAction
   if ($existing.Source -ne "${BunBin}\bun.exe") {
-    Write-Warning "Note: Another bun.exe is already in %PATH% at $($existing.Source)`nTyping 'bun' in your terminal will not use what was just installed."
+    Write-Warning "Note: Another bun.exe is already in %PATH% at $($existing.Source)`nTyping 'bun' in your terminal will not use what was just installed.`n"
     $hasExistingOther = $true;
   }
 } catch {}

@@ -1,5 +1,3 @@
-# TODO(@paperdave)
-# this workflow is a work in progress
 name: bun-windows-x64
 
 concurrency:

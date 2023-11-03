@@ -14919,12 +14919,19 @@ fn NewParser_(
                                 }
                             };
 
-                            const jsx_props = e_.properties.slice();
-                            const last = jsx_props.len - 1;
+                            const jsx_props = brk: {
+                                const slice = e_.properties.slice();
+                                if (e_.original_key_prop_i != -1) break :brk slice[0 .. slice.len - 1];
+                                break :brk slice;
+                            };
                             for (jsx_props, 0..) |property, i| {
                                 // make sure key is visited in the same order it was parsed
                                 if (i == e_.original_key_prop_i) {
+                                    const last = e_.properties.len - 1;
                                     e_.properties.ptr[last].key = p.visitExpr(e_.properties.ptr[last].key.?);
+                                    if (e_.properties.ptr[last].value != null) {
+                                        e_.properties.ptr[last].value = p.visitExpr(e_.properties.ptr[last].value.?);
+                                    }
                                 }
 
                                 if (property.kind != .spread) {

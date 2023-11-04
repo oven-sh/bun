@@ -251,7 +251,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|arm")
 endif()
 
 if(NOT CPU_TARGET)
-    if(ENV{CPU_TARGET})
+    if(DEFINED ENV{CPU_TARGET})
         set(CPU_TARGET $ENV{CPU_TARGET})
     else()
         set(CPU_TARGET "native" CACHE STRING "CPU target for the compiler" FORCE)

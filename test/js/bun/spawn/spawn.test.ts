@@ -520,6 +520,7 @@ describe("spawn unref and kill should not hang", () => {
         stdin: "ignore",
       });
       proc.unref();
+      await proc.exited;
     }
 
     expect().pass();
@@ -534,6 +535,7 @@ describe("spawn unref and kill should not hang", () => {
       });
       proc.kill();
       proc.unref();
+      await proc.exited;
     }
 
     expect().pass();
@@ -548,6 +550,7 @@ describe("spawn unref and kill should not hang", () => {
       });
       proc.unref();
       proc.kill();
+      await proc.exited;
     }
 
     expect().pass();
@@ -563,6 +566,7 @@ describe("spawn unref and kill should not hang", () => {
       Bun.sleep(0.1);
       proc.unref();
       proc.kill();
+      await proc.exited;
     }
   });
   it("kill and unref after sleep", async () => {
@@ -576,6 +580,7 @@ describe("spawn unref and kill should not hang", () => {
       Bun.sleep(0.1);
       proc.kill();
       proc.unref();
+      await proc.exited;
     }
   });
 });

@@ -67,6 +67,7 @@ pub const Request = struct {
 
     headers: ?*FetchHeaders = null,
     signal: ?*AbortSignal = null,
+    signal_js_ref: ?JSC.JSValue = null,
     body: *BodyValueRef,
     method: Method = Method.GET,
     request_context: JSC.API.AnyRequestContext = JSC.API.AnyRequestContext.Null,
@@ -237,8 +238,14 @@ pub const Request = struct {
 
     pub fn getSignal(this: *Request, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         // Already have an C++ instance
+        if (this.signal_js_ref) |ref| {
+            return ref;
+        }
         if (this.signal) |signal| {
-            return signal.toJS(globalThis);
+            var s = signal.toJS(globalThis);
+            s.protect();
+            this.signal_js_ref = s;
+            return s;
         } else {
             //Lazy create default signal
             const js_signal = AbortSignal.create(globalThis);
@@ -276,6 +283,10 @@ pub const Request = struct {
         if (this.signal) |signal| {
             _ = signal.unref();
             this.signal = null;
+        }
+        if (this.signal_js_ref) |ref| {
+            ref.unprotect();
+            this.signal_js_ref = null;
         }
     }
 

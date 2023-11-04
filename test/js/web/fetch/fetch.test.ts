@@ -320,6 +320,55 @@ describe("AbortSignal", () => {
       expect(ex.name).toBe("AbortError");
     }
   });
+
+  it("server abort signal called (#4517)", async done => {
+    const server = await Bun.serve({
+      port: 0,
+      fetch(req) {
+        const { readable, writable } = new TransformStream();
+        const encoder = new TextEncoder();
+        const writer = writable.getWriter();
+
+        setInterval(() => {
+          const bytes = encoder.encode("Hello!\n");
+          const bytesWritten = bytes.length;
+          writer.write(bytes);
+          const bytes_needed = 4096 - (bytesWritten % 4096);
+          const BACKSPACE = 8;
+          writer.write(new Uint8Array(bytes_needed).fill(BACKSPACE));
+        }, 1000);
+        let count = 0;
+        const check = () => {
+          count++;
+          if (count == 2) {
+            server.stop(true);
+            done();
+          }
+        };
+        req.signal.addEventListener("abort", ev => {
+          expect(ev.target?.reason?.message).toEqual("The user aborted a request");
+          check();
+        });
+        req.signal.onabort = ev => {
+          expect(ev.target?.reason?.message).toEqual("The user aborted a request");
+          check();
+        };
+
+        return new Response(readable, {
+          headers: {
+            "Content-Type": "text/event-stream",
+          },
+        });
+      },
+    });
+    try {
+      const controller = new AbortController();
+      const signal = controller.signal;
+      setTimeout(() => controller.abort(), 4000);
+
+      const request = await fetch(`http://${server.hostname}:${server.port}`, { signal });
+    } catch {}
+  });
 });
 
 describe("Headers", () => {

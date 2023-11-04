@@ -563,7 +563,7 @@ describe("spawn unref and kill should not hang", () => {
         stderr: "ignore",
         stdin: "ignore",
       });
-      Bun.sleep(0.1);
+      await Bun.sleep(1);
       proc.unref();
       proc.kill();
       await proc.exited;
@@ -578,7 +578,7 @@ describe("spawn unref and kill should not hang", () => {
         stderr: "ignore",
         stdin: "ignore",
       });
-      Bun.sleep(0.1);
+      await Bun.sleep(1);
       proc.kill();
       proc.unref();
       await proc.exited;

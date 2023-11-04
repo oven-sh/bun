@@ -436,7 +436,7 @@ const Scanner = struct {
 
         // In this particular case, we don't actually care about non-ascii latin1 characters.
         // so we skip the ascii check
-        const slice = if (test_name_str.is8Bit()) test_name_str.latin1() else brk: {
+        const slice = brk: {
             zig_slice = test_name_str.toUTF8(bun.default_allocator);
             break :brk zig_slice.slice();
         };

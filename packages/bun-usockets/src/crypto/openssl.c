@@ -329,7 +329,7 @@ ssl_on_close(struct us_internal_ssl_socket_t *s, int code, void *reason) {
 
 struct us_internal_ssl_socket_t *
 ssl_on_end(struct us_internal_ssl_socket_t *s) {
-  if (&s->s && s->pending_handshake) {
+  if (s && s->pending_handshake) {
     s->pending_handshake = 0;
   }
   // whatever state we are in, a TCP FIN is always an answered shutdown
@@ -812,8 +812,8 @@ int add_ca_cert_to_ctx_store(SSL_CTX *ctx, const char *content,
 
   int count = 0;
 
-  while (x = PEM_read_bio_X509(in, NULL, SSL_CTX_get_default_passwd_cb(ctx),
-                               SSL_CTX_get_default_passwd_cb_userdata(ctx))) {
+  while ((x = PEM_read_bio_X509(in, NULL, SSL_CTX_get_default_passwd_cb(ctx),
+                                SSL_CTX_get_default_passwd_cb_userdata(ctx)))) {
 
     X509_STORE_add_cert(store, x);
 

@@ -2788,11 +2788,32 @@ pub const PackageManager = struct {
                 switch (index) {
                     .PackageID => |existing_id| {
                         if (existing_id < resolutions.len) {
+                            const existing_resolution = resolutions[existing_id];
+                            if (this.resolutionSatisfiesDependency(existing_resolution, version)) {
+                                successFn(this, dependency_id, existing_id);
+                                return .{
+                                    // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
+                                    .package = this.lockfile.packages.get(existing_id),
+                                };
+                            }
+
                             const res_tag = resolutions[existing_id].tag;
                             const ver_tag = version.tag;
                             if ((res_tag == .npm and ver_tag == .npm) or (res_tag == .git and ver_tag == .git) or (res_tag == .github and ver_tag == .github)) {
+                                const existing_package = this.lockfile.packages.get(existing_id);
+                                this.log.addWarningFmt(
+                                    null,
+                                    logger.Loc.Empty,
+                                    this.allocator,
+                                    "incorrect peer dependency \"{}@{}\"",
+                                    .{
+                                        existing_package.name.fmt(this.lockfile.buffers.string_bytes.items),
+                                        existing_package.resolution.fmt(this.lockfile.buffers.string_bytes.items),
+                                    },
+                                ) catch unreachable;
                                 successFn(this, dependency_id, existing_id);
                                 return .{
+                                    // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
                                     .package = this.lockfile.packages.get(existing_id),
                                 };
                             }
@@ -2815,9 +2836,22 @@ pub const PackageManager = struct {
                             const res_tag = resolutions[list.items[0]].tag;
                             const ver_tag = version.tag;
                             if ((res_tag == .npm and ver_tag == .npm) or (res_tag == .git and ver_tag == .git) or (res_tag == .github and ver_tag == .github)) {
+                                const existing_package_id = list.items[0];
+                                const existing_package = this.lockfile.packages.get(existing_package_id);
+                                this.log.addWarningFmt(
+                                    null,
+                                    logger.Loc.Empty,
+                                    this.allocator,
+                                    "incorrect peer dependency \"{}@{}\"",
+                                    .{
+                                        existing_package.name.fmt(this.lockfile.buffers.string_bytes.items),
+                                        existing_package.resolution.fmt(this.lockfile.buffers.string_bytes.items),
+                                    },
+                                ) catch unreachable;
                                 successFn(this, dependency_id, list.items[0]);
                                 return .{
-                                    .package = this.lockfile.packages.get(list.items[0]),
+                                    // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
+                                    .package = this.lockfile.packages.get(existing_package_id),
                                 };
                             }
                         }
@@ -4834,7 +4868,7 @@ pub const PackageManager = struct {
         explicit_global_directory: string = "",
         /// destination directory to link bins into
         // must be a variable due to global installs and bunx
-        bin_path: stringZ = "node_modules/.bin",
+        bin_path: stringZ = bun.pathLiteral("node_modules/.bin"),
 
         lockfile_path: stringZ = Lockfile.default_filename,
         did_override_default_scope: bool = false,
@@ -4932,11 +4966,20 @@ pub const PackageManager = struct {
                 return try std.fs.cwd().makeOpenPathIterable(path, .{});
             }
 
-            if (bun.getenvZ("XDG_CACHE_HOME") orelse bun.getenvZ("HOME")) |home_dir| {
-                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                var parts = [_]string{ ".bun", "install", "global" };
-                var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
-                return try std.fs.cwd().makeOpenPathIterable(path, .{});
+            if (!Environment.isWindows) {
+                if (bun.getenvZ("XDG_CACHE_HOME") orelse bun.getenvZ("HOME")) |home_dir| {
+                    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var parts = [_]string{ ".bun", "install", "global" };
+                    var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
+                    return try std.fs.cwd().makeOpenPathIterable(path, .{});
+                }
+            } else {
+                if (bun.getenvZ("USERPROFILE")) |home_dir| {
+                    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var parts = [_]string{ ".bun", "install", "global" };
+                    var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
+                    return try std.fs.cwd().makeOpenPathIterable(path, .{});
+                }
             }
 
             return error.@"No global directory found";

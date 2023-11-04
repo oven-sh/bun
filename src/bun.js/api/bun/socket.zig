@@ -929,7 +929,7 @@ pub const Listener = struct {
             exception.* = err.toErrorInstance(globalObject).asObjectRef();
             return .zero;
         };
-        
+
         var connection: Listener.UnixOrHost = if (port) |port_| .{
             .host = .{ .host = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice(), .port = port_ },
         } else .{

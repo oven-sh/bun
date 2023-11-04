@@ -1909,29 +1909,29 @@ vendor-dev: assert-deps submodule npm-install-dev vendor-without-npm
 
 .PHONY: bun
 bun: 
-	echo makefile is deprecated - use `cmake` / `bun run build`
-	echo 'See https://bun.sh/docs/project/contributing for more details'
+	@echo 'makefile is deprecated - use `cmake` / `bun run build`'
+	@echo 'See https://bun.sh/docs/project/contributing for more details'
 
 cpp:
-	echo makefile is deprecated - use `cmake` / `bun run build`
-	echo 'See https://bun.sh/docs/project/contributing for more details'
+	@echo 'makefile is deprecated - use `cmake` / `bun run build`'
+	@echo 'See https://bun.sh/docs/project/contributing for more details'
 
 zig:
-	echo makefile is deprecated - use `cmake` / `bun run build`
-	echo 'See https://bun.sh/docs/project/contributing for more details'
+	@echo 'makefile is deprecated - use `cmake` / `bun run build`'
+	@echo 'See https://bun.sh/docs/project/contributing for more details'
 
 dev:
-	echo makefile is deprecated - use `cmake` / `bun run build`
-	echo 'See https://bun.sh/docs/project/contributing for more details'
+	@echo 'makefile is deprecated - use `cmake` / `bun run build`'
+	@echo 'See https://bun.sh/docs/project/contributing for more details'
 
 setup:
-	echo makefile is deprecated - use `cmake` / `bun run build`
-	echo 'See https://bun.sh/docs/project/contributing for more details'
+	@echo 'makefile is deprecated - use `cmake` / `bun run build`'
+	@echo 'See https://bun.sh/docs/project/contributing for more details'
 
 bindings:
-	echo makefile is deprecated - use `cmake` / `bun run build`
-	echo 'See https://bun.sh/docs/project/contributing for more details'
+	@echo 'makefile is deprecated - use `cmake` / `bun run build`'
+	@echo 'See https://bun.sh/docs/project/contributing for more details'
 
 help:
-	echo makefile is deprecated - use `cmake` / `bun run build`
-	echo 'See https://bun.sh/docs/project/contributing for more details'
+	@echo 'makefile is deprecated - use `cmake` / `bun run build`'
+	@echo 'See https://bun.sh/docs/project/contributing for more details'

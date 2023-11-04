@@ -10,7 +10,7 @@ if ($env:VSINSTALLDIR -eq $null) {
   if ($vsDir -eq $null) {
       throw "Visual Studio directory not found."
   } 
-  Push-Location $vsDir
+  Push-Location $vsDir.FullName
   try {
     . (Join-Path -Path $vsDir.FullName -ChildPath "Common7\Tools\Launch-VsDevShell.ps1") -Arch amd64 -HostArch amd64
   } finally { Pop-Location }

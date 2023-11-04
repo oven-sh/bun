@@ -372,6 +372,12 @@ pub const Loader = struct {
                 var key = env[0..i];
                 var value = env[i + 1 ..];
                 if (key.len > 0) {
+                    if (Environment.isWindows) {
+                        if (strings.eqlCaseInsensitiveASCIIICheckLength(key, "Path")) {
+                            this.map.put("PATH", value) catch unreachable;
+                        }
+                    }
+                    // std.debug.print("environ '{s}' = '{s}'\n", .{ key, value });
                     this.map.put(key, value) catch unreachable;
                 }
             } else {

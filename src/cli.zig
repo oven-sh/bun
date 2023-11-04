@@ -1765,6 +1765,9 @@ pub const Command = struct {
                 std.fs.path.basename(file_path),
                 @errorName(err),
             });
+            if (@errorReturnTrace()) |trace| {
+                std.debug.dumpStackTrace(trace.*);
+            }
             Global.exit(1);
         };
         return true;

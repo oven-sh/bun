@@ -1382,7 +1382,11 @@ pub fn existsOSPath(path: bun.OSPathSlice) bool {
     }
 
     if (comptime Environment.isWindows) {
-        return kernel32.GetFileAttributesW(path.ptr) != windows.INVALID_FILE_ATTRIBUTES;
+        const result = kernel32.GetFileAttributesW(path.ptr);
+        if (Environment.isDebug) {
+            log("GetFileAttributesW({}) = {d}", .{ bun.strings.fmtUTF16(path), result });
+        }
+        return result != windows.INVALID_FILE_ATTRIBUTES;
     }
 
     @compileError("TODO: existsOSPath");

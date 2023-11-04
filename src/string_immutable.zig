@@ -4948,3 +4948,31 @@ pub fn concatIfNeeded(
     }
     std.debug.assert(remain.len == 0);
 }
+
+pub fn convertUTF8toUTF16InBuffer(
+    buf: []u16,
+    input: []const u8,
+) []const u16 {
+    if (!Environment.enableSIMD) {
+        @panic("TODO: non-SIMD convertUTF8toUTF16");
+    }
+    const result = bun.simdutf.convert.utf8.to.utf16.with_errors.le(input, buf);
+    switch (result.status) {
+        .success => return buf[0..result.count],
+        else => @panic("TODO: handle error in convertUTF8toUTF16"),
+    }
+}
+
+pub fn convertUTF16toUTF8InBuffer(
+    buf: []u8,
+    input: []const u16,
+) ![]const u8 {
+    if (!Environment.enableSIMD) {
+        @panic("TODO: non-SIMD convertUTF16toUTF8InBuffer");
+    }
+    const result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(input, buf);
+    switch (result.status) {
+        .success => return buf[0..result.count],
+        else => @panic("TODO: handle error in convertUTF16toUTF8InBuffer"),
+    }
+}

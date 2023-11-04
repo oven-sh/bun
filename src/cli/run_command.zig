@@ -363,12 +363,21 @@ pub const RunCommand = struct {
                         if (std.os.S.ISDIR(stat.mode)) {
                             if (!silent)
                                 Output.prettyErrorln("<r><red>error<r>: Failed to run directory \"<b>{s}<r>\"\n", .{executable});
+                            if (@errorReturnTrace()) |trace| {
+                                std.debug.dumpStackTrace(trace.*);
+                            }
                             Global.exit(1);
                         }
                     }
                 }
             }
             Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to error <b>{s}<r>", .{ std.fs.path.basename(executable), @errorName(err) });
+            if (@errorReturnTrace()) |trace| {
+                std.debug.dumpStackTrace(trace.*);
+            }
+            if (Environment.isDebug) {
+                Output.prettyErrorln("Full path: <b>{s}<r>", .{executable});
+            }
             Global.exit(1);
         };
         switch (result) {
@@ -903,6 +912,9 @@ pub const RunCommand = struct {
                     script_name_to_search,
                     @errorName(err),
                 });
+                if (@errorReturnTrace()) |trace| {
+                    std.debug.dumpStackTrace(trace.*);
+                }
                 Global.exit(1);
             };
             return true;
@@ -1006,6 +1018,9 @@ pub const RunCommand = struct {
                             std.fs.path.basename(file_path),
                             @errorName(err),
                         });
+                        if (@errorReturnTrace()) |trace| {
+                            std.debug.dumpStackTrace(trace.*);
+                        }
                         Global.exit(1);
                     };
 
@@ -1115,6 +1130,9 @@ pub const RunCommand = struct {
                                     std.fs.path.basename(script_name_to_search),
                                     @errorName(err),
                                 });
+                                if (@errorReturnTrace()) |trace| {
+                                    std.debug.dumpStackTrace(trace.*);
+                                }
                                 Global.exit(1);
                             };
                         }

@@ -5201,9 +5201,10 @@ pub fn hasTrustedDependency(this: *Lockfile, name: []const u8) bool {
     if (this.hasTrustedDependencies()) {
         const hash = @as(u32, @truncate(String.Builder.stringHash(name)));
         return this.trusted_dependencies.contains(hash);
-    } else {
-        return default_trusted_dependencies.has(name);
     }
+
+    // always search through default trusted dependencies
+    return default_trusted_dependencies.has(name);
 }
 
 pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep: Dependency, res: ?PackageID) !void {

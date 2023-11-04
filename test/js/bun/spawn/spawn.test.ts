@@ -495,3 +495,87 @@ if (!process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) {
     expect(result.exitCode).toBe(0);
   }, 60_000);
 }
+
+describe("spawn unref and kill should not hang", () => {
+  it("kill and await exited", async () => {
+    for (let i = 0; i < 10; i++) {
+      const proc = spawn({
+        cmd: ["sleep", "0"],
+        stdout: "ignore",
+        stderr: "ignore",
+        stdin: "ignore",
+      });
+      proc.kill();
+      await proc.exited;
+    }
+
+    expect().pass();
+  });
+  it("unref", async () => {
+    for (let i = 0; i < 100; i++) {
+      const proc = spawn({
+        cmd: ["sleep", "0"],
+        stdout: "ignore",
+        stderr: "ignore",
+        stdin: "ignore",
+      });
+      proc.unref();
+    }
+
+    expect().pass();
+  });
+  it("kill and unref", async () => {
+    for (let i = 0; i < 100; i++) {
+      const proc = spawn({
+        cmd: ["sleep", "0"],
+        stdout: "ignore",
+        stderr: "ignore",
+        stdin: "ignore",
+      });
+      proc.kill();
+      proc.unref();
+    }
+
+    expect().pass();
+  });
+  it("unref and kill", async () => {
+    for (let i = 0; i < 100; i++) {
+      const proc = spawn({
+        cmd: ["sleep", "0"],
+        stdout: "ignore",
+        stderr: "ignore",
+        stdin: "ignore",
+      });
+      proc.unref();
+      proc.kill();
+    }
+
+    expect().pass();
+  });
+  it("unref and kill after sleep", async () => {
+    for (let i = 0; i < 100; i++) {
+      const proc = spawn({
+        cmd: ["sleep", "0"],
+        stdout: "ignore",
+        stderr: "ignore",
+        stdin: "ignore",
+      });
+      Bun.sleep(0.1);
+      proc.unref();
+      proc.kill();
+    }
+  });
+  it("kill and unref after sleep", async () => {
+    for (let i = 0; i < 100; i++) {
+      const proc = spawn({
+        cmd: ["sleep", "0"],
+        stdout: "ignore",
+        stderr: "ignore",
+        stdin: "ignore",
+      });
+      Bun.sleep(0.1);
+      proc.kill();
+      proc.unref();
+    }
+  });
+});

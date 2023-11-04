@@ -340,7 +340,10 @@ const Socket = (function (InternalSocket) {
       if (socket instanceof Socket) {
         this.#socket = socket;
       }
-      signal?.once("abort", () => this.destroy());
+
+      if (signal) {
+        signal.addEventListener("abort", () => this.destroy());
+      }
       this.once("connect", () => this.emit("ready"));
     }
 

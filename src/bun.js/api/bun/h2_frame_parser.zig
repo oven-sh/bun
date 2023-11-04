@@ -1218,7 +1218,7 @@ pub const H2FrameParser = struct {
                 offset += 5;
             }
             this.decodeHeaderBlock(payload[offset .. payload.len - padding], stream, frame.flags);
-            stream.isWaitingMoreHeaders = frame.flags & @intFromEnum(HeadersFrameFlags.END_HEADERS) != 0;
+            stream.isWaitingMoreHeaders = frame.flags & @intFromEnum(HeadersFrameFlags.END_HEADERS) == 0;
             if (frame.flags & @intFromEnum(HeadersFrameFlags.END_STREAM) != 0) {
                 if (stream.isWaitingMoreHeaders) {
                     stream.state = .HALF_CLOSED_REMOTE;
@@ -2273,6 +2273,13 @@ pub const H2FrameParser = struct {
 
             if (options.get(globalObject, "signal")) |signal_arg| {
                 if (signal_arg.as(JSC.WebCore.AbortSignal)) |signal_| {
+                    if(signal_.aborted()) {
+                        stream.state = .CLOSED;
+                        stream.rstCode = @intFromEnum(ErrorCode.CANCEL);
+                        this.dispatchWithExtra(.onStreamError, JSC.JSValue.jsNumber(stream_id), JSC.JSValue.jsNumber(stream.rstCode));
+                        globalObject.throw("Request aborted before start", .{});
+                        return .zero;
+                    }
                     signal = signal_;
                 }
             }

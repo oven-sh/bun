@@ -4,9 +4,9 @@ const { hideFromStack, throwNotImplemented } = require("$shared");
 
 const tls = require("node:tls");
 const net = require("node:net");
-type Socket = typeof net.Socket;
 type Http2ConnectOptions = { settings?: Settings; protocol?: "https:" | "http:"; createConnection?: Function };
 const TLSSocket = tls.TLSSocket;
+const Socket = net.Socket;
 const EventEmitter = require("node:events");
 const { Duplex } = require("node:stream");
 const { H2FrameParser, getPackedSettings, getUnpackedSettings } = $lazy("internal/http2");
@@ -453,6 +453,21 @@ function assertSession(session) {
   }
 }
 
+function reduceToCompatileTrailerHeaders(obj: any, currentValue: any) {
+  let { name, value } = currentValue;
+  // invalid or malformed header
+  if (name.startsWith(":")) throw new Error("Invalid tariler header");
+  const lastValue = obj[name];
+  if (typeof lastValue === "string" || typeof lastValue === "number") {
+    obj[name] = [obj[name], value];
+  } else if (Array.isArray(lastValue)) {
+    obj[name].push(value);
+  } else {
+    obj[name] = value;
+  }
+  return obj;
+}
+
 function reduceToCompatibleHeaders(obj: any, currentValue: any) {
   let { name, value } = currentValue;
   if (name === constants.HTTP2_HEADER_STATUS) {
@@ -535,13 +550,17 @@ class ClientHttp2Stream extends Duplex {
       }
     }
 
-    Object.keys(headers).forEach(key => {
+    const keys = Object.keys(headers);
+    for (let key of keys) {
       //@ts-ignore
       if (key === sensitiveHeaders) {
-        return;
+        continue;
       }
+      // no pseudo headers are allowed in trailer headers
       if (key.startsWith(":")) {
-        assertPseudoHeader(key);
+        const error = new TypeError(`"${key}" is an invalid pseudoheader or is used incorrectly`);
+        error.code = "ERR_HTTP2_INVALID_PSEUDOHEADER";
+        throw error;
       }
 
       const value = headers[key];
@@ -553,8 +572,7 @@ class ClientHttp2Stream extends Duplex {
       } else {
         flat_headers.push({ name: key, value: value?.toString() });
       }
-    });
-
+    }
     session[bunHTTP2Native]?.sendTrailers(this.#id, flat_headers);
     this.#sentTrailers = headers;
   }
@@ -700,7 +718,7 @@ function emitWantTrailersNT(streams, streamId) {
   }
 }
 
-function emitStreamErrorNT(self, streams, streamId, error) {
+function emitStreamErrorNT(self, streams, streamId, error, destroy) {
   const stream = streams.get(streamId);
   const error_instance = streamErrorFromCode(error);
   if (stream) {
@@ -710,6 +728,7 @@ function emitStreamErrorNT(self, streams, streamId, error) {
     stream.rstCode = error;
     stream.emit("error", error_instance);
     self.emit("sessionError", error_instance);
+    if (destroy) stream.destroy(error_instance);
   }
   self.emit("streamError", error_instance);
 }
@@ -758,6 +777,7 @@ class ClientHttp2Session extends Http2Session {
       }
       if (self.#connecions === 0 && self.#closed) {
         self[bunHTTP2Socket]?.end();
+        self[bunHTTP2Socket] = null;
         self.#parser?.detach();
         self.#parser = null;
         self.emit("close");
@@ -778,7 +798,11 @@ class ClientHttp2Session extends Http2Session {
       var stream = self.#streams.get(streamId);
       if (stream) {
         if (stream[bunHTTP2StreamResponded]) {
-          stream.emit("trailers", headers.reduce(reduceToCompatibleHeaders, {}), flags);
+          try {
+            stream.emit("trailers", headers.reduce(reduceToCompatileTrailerHeaders, {}), flags);
+          } catch {
+            process.nextTick(emitStreamErrorNT, self, self.#streams, streamId, constants.NGHTTP2_PROTOCOL_ERROR, true);
+          }
         } else {
           stream[bunHTTP2StreamResponded] = true;
           stream.emit("response", headers.reduce(reduceToCompatibleHeaders, {}), flags);
@@ -810,6 +834,7 @@ class ClientHttp2Session extends Http2Session {
     error(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       self.emit("error", new Error(`ERR_HTTP2_SESSION_ERROR: error code ${errorCode}`));
       self[bunHTTP2Socket]?.end();
+      self[bunHTTP2Socket] = null;
       self.#parser?.detach();
       self.#parser = null;
     },
@@ -833,11 +858,13 @@ class ClientHttp2Session extends Http2Session {
         }
       }
       self[bunHTTP2Socket]?.end();
+      self[bunHTTP2Socket] = null;
       self.#parser?.detach();
       self.#parser = null;
     },
     end(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       self[bunHTTP2Socket]?.end();
+      self[bunHTTP2Socket] = null;
       self.#parser.detach();
       self.#parser = null;
     },
@@ -869,9 +896,14 @@ class ClientHttp2Session extends Http2Session {
   #onConnect() {
     this.#closed = false;
     const socket = this[bunHTTP2Socket] as TLSSocket;
-    if (socket.alpnProtocol !== "h2") {
-      socket.end();
-      this.emit("error", new Error("h2 is not supported"));
+    // check if h2 is supported only for TLSSocket or Socket
+    if (socket instanceof Socket) {
+      if (socket.alpnProtocol !== "h2") {
+        socket.end();
+        const error = new Error("ERR_HTTP2_ERROR: h2 is not supported");
+        error.code = "ERR_HTTP2_ERROR";
+        this.emit("error", error);
+      }
     }
     this.#originSet.add(socket.remoteAddress as string);
     this.emit("origin", this.#originSet);
@@ -891,12 +923,13 @@ class ClientHttp2Session extends Http2Session {
   #onClose() {
     this.#parser?.detach();
     this.#parser = null;
-    this.emit("close");
     this[bunHTTP2Socket] = null;
+    this.emit("close");
   }
   #onError(error: Error) {
     this.#parser?.detach();
     this.#parser = null;
+    this[bunHTTP2Socket] = null;
     this.emit("error", error);
   }
   #onTimeout() {
@@ -984,7 +1017,7 @@ class ClientHttp2Session extends Http2Session {
     const socket = this[bunHTTP2Socket];
     if (!socket) return null;
     if (this.#socket_proxy) return this.#socket_proxy;
-    this.#socket_proxy = new Proxy(socket, proxySocketHandler);
+    this.#socket_proxy = new Proxy(this, proxySocketHandler);
     return this.#socket_proxy;
   }
   get state() {
@@ -1064,18 +1097,24 @@ class ClientHttp2Session extends Http2Session {
   // If specified, the callback function is registered as a handler for the 'close' event.
   close(callback: Function) {
     this.#closed = true;
+
     if (typeof callback === "function") {
       this.on("close", callback);
+    }
+    if (this.#connecions === 0) {
+      this[bunHTTP2Socket]?.end();
+      this[bunHTTP2Socket] = null;
+      this.#parser?.detach();
+      this.#parser = null;
+      this.emit("close");
     }
   }
 
   destroy(error: Error, code: number) {
     const socket = this[bunHTTP2Socket];
     if (!socket) return;
-    this.goaway(code || constants.NGHTTP2_INTERNAL_ERROR, 0, Buffer.alloc(0));
-    this.#parser?.detach();
+    this.goaway(code || constants.NGHTTP2_FLAG_NONE, 0, Buffer.alloc(0));
     socket.end();
-    this.#parser = null;
     this[bunHTTP2Socket] = null;
     // this should not be needed since RST + GOAWAY should be sent
     for (let [_, stream] of this.#streams) {
@@ -1084,7 +1123,6 @@ class ClientHttp2Session extends Http2Session {
       }
       stream[bunHTTP2Session] = null;
       stream.emit("close");
-      stream.end();
     }
 
     if (error) {
@@ -1114,13 +1152,24 @@ class ClientHttp2Session extends Http2Session {
         sensitiveNames[sensitives[i]] = true;
       }
     }
+    const url = this.#url;
 
-    Object.keys(headers).forEach(key => {
+    const keys = Object.keys(headers);
+    for (let key of keys) {
       //@ts-ignore
       if (key === sensitiveHeaders) {
-        return;
+        continue;
       }
-      if (key.startsWith(":")) {
+      // only allowed for responses
+      if (key === constants.HTTP2_HEADER_STATUS) {
+        const error = new TypeError(
+          `"${constants.HTTP2_HEADER_STATUS}" is an invalid pseudoheader or is used incorrectly`,
+        );
+        error.code = "ERR_HTTP2_INVALID_PSEUDOHEADER";
+        throw error;
+      }
+      const is_pseudo_header = key.startsWith(":");
+      if (is_pseudo_header) {
         assertPseudoHeader(key);
       }
       switch (key) {
@@ -1139,14 +1188,22 @@ class ClientHttp2Session extends Http2Session {
       if (Array.isArray(value)) {
         assertSingleValueHeader(key);
         for (let i = 0; i < value.length; i++) {
-          flat_headers.push({ name: key, value: value[i]?.toString(), neverIndex: sensitiveNames[key] || false });
+          const header = { name: key, value: value[i]?.toString(), neverIndex: sensitiveNames[key] || false };
+          if (is_pseudo_header) {
+            flat_headers.unshift(header);
+          } else {
+            flat_headers.push(header);
+          }
         }
       } else {
-        flat_headers.push({ name: key, value: value?.toString() });
+        const header = { name: key, value: value?.toString() };
+        if (is_pseudo_header) {
+          flat_headers.unshift(header);
+        } else {
+          flat_headers.push(header);
+        }
       }
-    });
-
-    const url = this.#url;
+    }
     if (!has_scheme) {
       let protocol: string = options?.protocol || "https";
       switch (url.protocol) {
@@ -1158,16 +1215,16 @@ class ClientHttp2Session extends Http2Session {
           break;
       }
 
-      flat_headers.push({ name: ":scheme", value: protocol });
+      flat_headers.unshift({ name: ":scheme", value: protocol });
     }
     if (!authority) {
       authority = { name: ":authority", value: url.host };
-      flat_headers.push(authority);
+      flat_headers.unshift(authority);
     }
 
     if (!method) {
       method = "GET";
-      flat_headers.push({ name: ":method", value: method });
+      flat_headers.unshift({ name: ":method", value: method });
     }
 
     if (NoPayloadMethods.has(method.toUpperCase())) {

@@ -90,8 +90,6 @@ pub const Subprocess = struct {
     }
 
     pub fn hasPendingActivityNonThreadsafe(this: *const Subprocess) bool {
-        Output.debug("yooo", .{});
-
         if (this.flags.waiting_for_onexit) {
             return true;
         }
@@ -1772,8 +1770,6 @@ pub const Subprocess = struct {
         }
 
         if (this.poll.poll_ref) |poll| {
-            Output.debug("watching {d} & {}", .{ this.pid, !poll.isRegistered() });
-            // this.flags.reference_count += @intFromBool(!poll.isRegistered());
             const registration = poll.register(
                 this.globalThis.bunVM().event_loop_handle.?,
                 .process,

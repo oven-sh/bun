@@ -455,7 +455,7 @@ pub const FilePoll = struct {
 
     /// Make calling ref() on this poll into a no-op.
     pub fn disableKeepingProcessAlive(this: *FilePoll, vm: *JSC.VirtualMachine) void {
-        if (!this.flags.contains(.disable))
+        if (this.flags.contains(.disable))
             return;
         this.flags.insert(.disable);
 

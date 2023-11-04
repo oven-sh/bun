@@ -89,6 +89,21 @@ declare module "bun" {
      * @default false
      */
     absolute?: boolean;
+
+    /**
+     * Indicates whether to traverse descendants of symbolic link directories.
+     *
+     * @default false
+     */
+    followSymlinks?: boolean;
+
+    /**
+     * Throw an error when symbolic link is broken if `true` or safely
+     * return `lstat` call if `false`.
+     *
+     * @default false
+     */
+    throwErrorOnBrokenSymlink?: boolean;
   }
 
   /**

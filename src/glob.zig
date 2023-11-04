@@ -7,7 +7,8 @@ const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayListUnmanaged;
 const ArrayListManaged = std.ArrayList;
 const DirIterator = @import("./bun.js/node/dir_iterator.zig");
-const Syscall = @import("./sys.zig");
+const bun = @import("./bun.zig");
+const Syscall = bun.sys;
 const PathLike = @import("./bun.js/node/types.zig").PathLike;
 const Maybe = @import("./bun.js/node/types.zig").Maybe;
 const Dirent = @import("./bun.js/node/types.zig").Dirent;
@@ -17,9 +18,9 @@ const isAllAscii = @import("./string_immutable.zig").isAllASCII;
 const EntryKind = @import("./bun.js/node/types.zig").Dirent.Kind;
 const Arena = std.heap.ArenaAllocator;
 const GlobAscii = @import("./glob_ascii.zig");
-const bun = @import("./bun.zig");
 const C = @import("./c.zig");
 const ResolvePath = @import("./resolver/resolve_path.zig");
+const eqlComptime = @import("./string_immutable.zig").eqlComptime;
 
 const isWindows = @import("builtin").os.tag == .windows;
 
@@ -105,8 +106,10 @@ pub const GlobWalker = struct {
 
     dot: bool = false,
     absolute: bool = false,
+    /// Absolute path of cwd
     cwd: BunString = undefined,
     follow_symlinks: bool = false,
+    error_on_broken_symlinks: bool = false,
 
     root_cwd_slice: []const u8 = undefined,
 
@@ -117,13 +120,28 @@ pub const GlobWalker = struct {
     const WorkItem = struct {
         path: []const u8,
         idx: u32,
-        kind: EntryKind,
+        kind: Kind,
+        entry_start: u32 = 0,
 
-        pub fn new(path: []const u8, idx: u32, kind: EntryKind) WorkItem {
+        const Kind = enum {
+            directory,
+            symlink,
+        };
+
+        fn new(path: []const u8, idx: u32, kind: Kind) WorkItem {
             return .{
                 .path = path,
                 .idx = idx,
                 .kind = kind,
+            };
+        }
+
+        fn newSymlink(path: []const u8, idx: u32, entry_start: u32) WorkItem {
+            return .{
+                .path = path,
+                .idx = idx,
+                .kind = .symlink,
+                .entry_start = entry_start,
             };
         }
     };
@@ -156,6 +174,8 @@ pub const GlobWalker = struct {
         pattern: []const u8,
         dot: bool,
         absolute: bool,
+        follow_symlinks: bool,
+        error_on_broken_symlinks: bool,
     ) !Maybe(void) {
         var arena = arena_;
         errdefer arena.deinit();
@@ -170,7 +190,15 @@ pub const GlobWalker = struct {
                 cwd = BunString.fromBytes(copiedCwd);
             },
         }
-        const globWalker = try this.initWithCwd(arena, pattern, cwd, dot, absolute);
+        const globWalker = try this.initWithCwd(
+            arena,
+            pattern,
+            cwd,
+            dot,
+            absolute,
+            follow_symlinks,
+            error_on_broken_symlinks,
+        );
         return .{ .result = globWalker };
     }
 
@@ -193,6 +221,8 @@ pub const GlobWalker = struct {
         cwd: BunString,
         dot: bool,
         absolute: bool,
+        follow_symlinks: bool,
+        error_on_broken_symlinks: bool,
     ) !void {
         var arena = arena_;
 
@@ -205,6 +235,8 @@ pub const GlobWalker = struct {
         this.cwd = cwd;
         this.dot = dot;
         this.absolute = absolute;
+        this.follow_symlinks = follow_symlinks;
+        this.error_on_broken_symlinks = error_on_broken_symlinks;
     }
 
     pub fn deinit(this: *GlobWalker) void {
@@ -237,13 +269,137 @@ pub const GlobWalker = struct {
 
         while (this.workbuf.items.len > 0) {
             const work_item: WorkItem = this.workbuf.pop();
-            switch (try this.handleDirEntries(&work_item, &path_buf, false)) {
-                .err => |err| return .{ .err = err },
-                else => {},
+            switch (work_item.kind) {
+                .directory => switch (try this.handleDirEntries(&work_item, &path_buf, false)) {
+                    .err => |err| return .{ .err = err },
+                    else => {},
+                },
+                .symlink => switch (try this.handleSymlink(&work_item, &path_buf)) {
+                    .err => |err| return .{ .err = err },
+                    else => {},
+                },
             }
         }
 
         return .{ .result = 0 };
+    }
+
+    pub fn handleSymlink(
+        this: *GlobWalker,
+        work_item: *const WorkItem,
+        pathBuf: *[bun.MAX_PATH_BYTES]u8,
+    ) !Maybe(u0) {
+        // FIXME: Option on struct
+        const only_files = false;
+        @memcpy(pathBuf[0..work_item.path.len], work_item.path);
+        pathBuf[work_item.path.len] = 0;
+        const symlink_full_path_z: [:0]const u8 = pathBuf[0..work_item.path.len :0];
+        const entry_name = symlink_full_path_z[work_item.entry_start..symlink_full_path_z.len];
+
+        const component_idx = this.collapseSuccessiveDoubleWildcards(work_item.idx);
+        var pattern = this.patternComponents.items[component_idx];
+        // Since we collapsed successive double wildcards above, this is
+        // guaranteed to not be a double wildcard
+        const next_pattern: ?*Component = if (component_idx + 1 < this.patternComponents.items.len) &this.patternComponents.items[component_idx + 1] else null;
+        const is_last = component_idx == this.patternComponents.items.len - 1;
+
+        const kind: EntryKind = kind: {
+            const stat_result = switch (Syscall.stat(symlink_full_path_z)) {
+                .err => |err| {
+                    if (this.error_on_broken_symlinks) return .{ .err = this.handleSysErrWithPath(err, symlink_full_path_z) };
+                    // Broken symlink
+                    if (!only_files) {
+                        // (See case A and B in the comment for `matchPatternFile()`)
+                        // When we encounter a symlink we call the catch all
+                        // matching function: `matchPatternImpl()` to see if we can avoid following the symlink.
+                        // So for case A, we just need to check if the pattern is the last pattern.
+                        if (is_last or
+                            (pattern.syntax_hint == .Double and
+                            component_idx + 1 == this.patternComponents.items.len -| 1 and
+                            next_pattern.?.syntax_hint != .Double and
+                            this.matchPatternImpl(next_pattern.?, entry_name)))
+                        {
+                            try this.appendMatchedPathSymlink(symlink_full_path_z);
+                        }
+                    }
+                    return .{ .result = 0 };
+                },
+                .result => |stat| stat,
+            };
+
+            if (comptime bun.Environment.isPosix) {
+                const m = stat_result.mode & std.os.S.IFMT;
+                switch (m) {
+                    std.os.S.IFDIR => break :kind .directory,
+                    std.os.S.IFLNK => break :kind .sym_link,
+                    std.os.S.IFREG => break :kind .file,
+                    else => {},
+                }
+            } else if (comptime bun.Environment.isWindows) {
+                @panic("TODO!");
+            } else {
+                // wasm?
+                @panic("TODO");
+            }
+
+            return .{ .result = 0 };
+        };
+
+        switch (kind) {
+            .file => {
+                if (is_last) {
+                    try this.appendMatchedPathSymlink(symlink_full_path_z);
+                } else {
+                    if (pattern.syntax_hint == .Double and
+                        component_idx + 1 == this.patternComponents.items.len -| 1 and
+                        next_pattern.?.syntax_hint != .Double and
+                        this.matchPatternImpl(next_pattern.?, entry_name))
+                    {
+                        try this.appendMatchedPathSymlink(symlink_full_path_z);
+                    }
+                }
+            },
+            .directory => {
+                var add_dir: bool = false;
+                // TODO this function calls `matchPatternImpl(pattern,
+                // entry_name)` which is redundant because we already called
+                // that when we first encountered the symlink
+                const recursion_idx_bump_ = this.matchPatternDir(&pattern, next_pattern, entry_name, component_idx, is_last, &add_dir);
+
+                if (add_dir and !only_files) {
+                    try this.appendMatchedPathSymlink(symlink_full_path_z);
+                }
+
+                const recursion_idx_bump = recursion_idx_bump_ orelse return .{ .result = 0 };
+
+                try this.workbuf.append(
+                    this.arena.allocator(),
+                    WorkItem.new(work_item.path, component_idx + recursion_idx_bump, .directory),
+                );
+            },
+            .sym_link => {
+                // try this.workbuf.append(
+                //     this.arena.allocator(),
+                //     WorkItem.newSymlink(, idx: u32, entry_start: u32)
+                // );
+                @panic("TODO");
+            },
+            else => {},
+        }
+
+        return .{ .result = 0 };
+    }
+
+    fn collapseSuccessiveDoubleWildcards(this: *GlobWalker, idx: u32) u32 {
+        var component_idx = idx;
+        var pattern = this.patternComponents.items[idx];
+        if (pattern.syntax_hint == .Double) {
+            // Collapse successive double wildcards
+            while (component_idx + 1 < this.patternComponents.items.len and
+                this.patternComponents.items[component_idx + 1].syntax_hint == .Double) : (component_idx += 1)
+            {}
+        }
+        return component_idx;
     }
 
     pub fn handleDirEntries(
@@ -252,23 +408,17 @@ pub const GlobWalker = struct {
         pathBuf: *[bun.MAX_PATH_BYTES]u8,
         comptime in_root: bool,
     ) !Maybe(void) {
+        // FIXME: Option on struct
+        const only_files = false;
         const dot = this.dot;
+        _ = dot;
 
+        // TODO Optimization: On posix systems filepaths are already null byte terminated so we can skip this if thats the case
         @memcpy(pathBuf[0..work_item.path.len], work_item.path);
         pathBuf[work_item.path.len] = 0;
-        const dir_path: [:0]const u8 = @ptrCast(pathBuf[0..work_item.path.len]);
+        const dir_path: [:0]const u8 = pathBuf[0..work_item.path.len :0];
 
-        const component_idx = component_idx: {
-            var component_idx = work_item.idx;
-            var pattern = this.patternComponents.items[work_item.idx];
-            if (pattern.syntax_hint == .Double) {
-                // Collapse successive double wildcards
-                while (component_idx + 1 < this.patternComponents.items.len and
-                    this.patternComponents.items[component_idx + 1].syntax_hint == .Double) : (component_idx += 1)
-                {}
-            }
-            break :component_idx component_idx;
-        };
+        const component_idx = this.collapseSuccessiveDoubleWildcards(work_item.idx);
 
         var pattern = this.patternComponents.items[component_idx];
 
@@ -307,55 +457,14 @@ pub const GlobWalker = struct {
                     }
                 },
                 .directory => {
-                    if (!dot and GlobWalker.startsWithDot(entry_name)) continue;
+                    var add_dir: bool = false;
+                    const recursion_idx_bump_ = this.matchPatternDir(&pattern, next_pattern, entry_name, component_idx, is_last, &add_dir);
 
-                    // `recursion_idx_bump` is the component idx to offset to start at
-                    // when handling this directory's contents
-                    const recursion_idx_bump: u32 = recursion_idx_bump: {
-                        // Handle double wildcard `**`, this could possibly
-                        // propagate the `**` to the directory's children
-                        if (pattern.syntax_hint == .Double) {
-                            // Stop the double wildcard if it matches the pattern afer it
-                            // Example: src/**/*.js
-                            // - Matches: src/bun.js/
-                            //            src/bun.js/foo/bar/baz.js
-                            if (!is_last and this.matchPatternImpl(next_pattern.?, entry_name)) {
-                                // But if the next pattern is the last
-                                // component, it should match and propagate the
-                                // double wildcard recursion to the directory's
-                                // children
-                                if (component_idx + 1 == this.patternComponents.items.len - 1) {
-                                    try this.appendMatchedPath(entry_name, dir_path, in_root);
-                                    break :recursion_idx_bump 0;
-                                }
+                    if (add_dir and !only_files) {
+                        try this.appendMatchedPath(entry_name, dir_path, in_root);
+                    }
 
-                                // In the normal case skip over the next pattern
-                                // since we matched it, example:
-                                // BEFORE: src/**/node_modules/**/*.js
-                                //              ^
-                                //  AFTER: src/**/node_modules/**/*.js
-                                //                             ^
-                                break :recursion_idx_bump 2;
-                            }
-
-                            if (is_last) {
-                                // Add this directory
-                                try this.appendMatchedPath(entry_name, dir_path, in_root);
-                            }
-
-                            break :recursion_idx_bump 0;
-                        }
-
-                        const matches = this.matchPatternImpl(&pattern, entry_name);
-                        if (matches) {
-                            if (is_last) {
-                                try this.appendMatchedPath(entry_name, dir_path, in_root);
-                                continue;
-                            }
-                            break :recursion_idx_bump 1;
-                        }
-                        continue;
-                    };
+                    const recursion_idx_bump = recursion_idx_bump_ orelse continue;
 
                     const subdir_parts: []const []const u8 = &[_][]const u8{
                         dir_path[0..dir_path.len],
@@ -364,14 +473,37 @@ pub const GlobWalker = struct {
 
                     const subdir_entry_name = try this.arena.allocator().dupe(u8, ResolvePath.join(subdir_parts, .auto));
 
-                    try this.workbuf.append(this.arena.allocator(), WorkItem.new(subdir_entry_name, component_idx + recursion_idx_bump, .directory));
+                    try this.workbuf.append(
+                        this.arena.allocator(),
+                        WorkItem.new(subdir_entry_name, component_idx + recursion_idx_bump, .directory),
+                    );
                 },
                 .sym_link => {
                     if (this.follow_symlinks) {
-                        @panic("TODO");
+                        // Following a symlink requires additional syscalls, so
+                        // we first try it against our "catch-all" pattern match
+                        // function
+                        const matches = this.matchPatternImpl(&pattern, entry_name);
+                        if (!matches) continue;
+
+                        const subdir_parts: []const []const u8 = &[_][]const u8{
+                            dir_path[0..dir_path.len],
+                            entry_name,
+                        };
+                        const entry_start: u32 = @intCast(if (dir_path.len == 0) 0 else dir_path.len + 1);
+
+                        const subdir_entry_name = try this.arena.allocator().dupe(u8, ResolvePath.join(subdir_parts, .auto));
+
+                        try this.workbuf.append(
+                            this.arena.allocator(),
+                            WorkItem.newSymlink(subdir_entry_name, component_idx, entry_start),
+                        );
+
+                        continue;
                     }
 
-                    // If following symlinks is not enabled, the default behaviour is to use the same matching strategy used for files:
+                    if (only_files) continue;
+
                     const matches = this.matchPatternFile(entry_name, component_idx, is_last, &pattern, next_pattern);
                     if (matches) {
                         try this.appendMatchedPath(entry_name, dir_path, in_root);
@@ -384,10 +516,71 @@ pub const GlobWalker = struct {
         return .{ .result = undefined };
     }
 
+    fn matchPatternDir(
+        this: *GlobWalker,
+        pattern: *Component,
+        next_pattern: ?*Component,
+        entry_name: []const u8,
+        component_idx: u32,
+        is_last: bool,
+        add: *bool,
+    ) ?u32 {
+        if (!this.dot and GlobWalker.startsWithDot(entry_name)) return null;
+
+        const only_files = false;
+        _ = only_files;
+        // `recursion_idx_bump` is the component idx to offset to start at
+        // when handling this directory's contents
+
+        // Handle double wildcard `**`, this could possibly
+        // propagate the `**` to the directory's children
+        if (pattern.syntax_hint == .Double) {
+            // Stop the double wildcard if it matches the pattern afer it
+            // Example: src/**/*.js
+            // - Matches: src/bun.js/
+            //            src/bun.js/foo/bar/baz.js
+            if (!is_last and this.matchPatternImpl(next_pattern.?, entry_name)) {
+                // But if the next pattern is the last
+                // component, it should match and propagate the
+                // double wildcard recursion to the directory's
+                // children
+                if (component_idx + 1 == this.patternComponents.items.len - 1) {
+                    add.* = true;
+                    return 0;
+                }
+
+                // In the normal case skip over the next pattern
+                // since we matched it, example:
+                // BEFORE: src/**/node_modules/**/*.js
+                //              ^
+                //  AFTER: src/**/node_modules/**/*.js
+                //                             ^
+                return 2;
+            }
+
+            if (is_last) {
+                add.* = true;
+            }
+
+            return 0;
+        }
+
+        const matches = this.matchPatternImpl(pattern, entry_name);
+        if (matches) {
+            if (is_last) {
+                add.* = true;
+                return null;
+            }
+            return 1;
+        }
+
+        return null;
+    }
+
     /// A file can only match if:
-    /// a) this is the last pattern, or
+    /// a) it matches against the the last pattern, or
     /// b) it matches the next pattern, provided the current
-    ///    pattern is a double wildcard and the  next pattern is
+    ///    pattern is a double wildcard and the next pattern is
     ///    not a double wildcard
     ///
     /// Examples:
@@ -473,7 +666,12 @@ pub const GlobWalker = struct {
         return codepoints;
     }
 
-    fn appendMatchedPath(this: *GlobWalker, entry_name: []const u8, dir_name_: [:0]const u8, comptime in_root: bool) !void {
+    fn appendMatchedPath(
+        this: *GlobWalker,
+        entry_name: []const u8,
+        dir_name_: [:0]const u8,
+        in_root: bool,
+    ) !void {
         if (comptime in_root) {
             if (!this.absolute) {
                 const cloned = try this.arena.allocator().dupe(u8, entry_name);
@@ -486,6 +684,12 @@ pub const GlobWalker = struct {
             dir_name,
             entry_name,
         });
+        try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(name));
+    }
+
+    fn appendMatchedPathSymlink(this: *GlobWalker, symlink_full_path: []const u8) !void {
+        const name_slice = if (!this.absolute) symlink_full_path[this.root_cwd_slice.len + 1 .. symlink_full_path.len] else symlink_full_path[0..];
+        const name = try this.arena.allocator().dupe(u8, name_slice);
         try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(name));
     }
 

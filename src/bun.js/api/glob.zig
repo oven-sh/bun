@@ -35,6 +35,8 @@ const MatchOpts = struct {
     cwd: ?BunString,
     dot: bool,
     absolute: bool,
+    follow_symlinks: bool,
+    error_on_broken_symlinks: bool,
 
     fn fromJS(globalThis: *JSGlobalObject, arguments: *ArgumentsSlice, comptime fnName: []const u8, arena: *Arena) ?MatchOpts {
         const optsObj: JSValue = arguments.nextEat() orelse return null;
@@ -47,7 +49,17 @@ const MatchOpts = struct {
             .cwd = null,
             .dot = false,
             .absolute = false,
+            .follow_symlinks = false,
+            .error_on_broken_symlinks = false,
         };
+
+        if (optsObj.getTruthy(globalThis, "throwErrorOnBrokenSymlink")) |error_on_broken| {
+            out.error_on_broken_symlinks = if (error_on_broken.isBoolean()) error_on_broken.asBoolean() else false;
+        }
+
+        if (optsObj.getTruthy(globalThis, "followSymlinks")) |followSymlinksVal| {
+            out.follow_symlinks = if (followSymlinksVal.isBoolean()) followSymlinksVal.asBoolean() else false;
+        }
 
         if (optsObj.getTruthy(globalThis, "absolute")) |absoluteVal| {
             out.absolute = if (absoluteVal.isBoolean()) absoluteVal.asBoolean() else false;
@@ -199,14 +211,35 @@ fn makeGlobWalker(
 ) ?*GlobWalker {
     var arena = arena_;
     const matchOpts = MatchOpts.fromJS(globalThis, arguments, fnName, &arena);
-    if (matchOpts != null and matchOpts.?.cwd != null) {
+    var cwd: ?BunString = null;
+    var dot = false;
+    var absolute = false;
+    var follow_symlinks = false;
+    var error_on_broken_symlinks = false;
+    if (matchOpts) |opts| {
+        cwd = opts.cwd;
+        dot = opts.dot;
+        absolute = opts.absolute;
+        follow_symlinks = opts.follow_symlinks;
+        error_on_broken_symlinks = opts.error_on_broken_symlinks;
+    }
+
+    if (cwd != null) {
         var globWalker = alloc.create(GlobWalker) catch {
             globalThis.throw("Out of memory", .{});
             return null;
         };
 
         globWalker.* = .{};
-        globWalker.initWithCwd(arena, this.pattern, matchOpts.?.cwd.?, matchOpts.?.dot, matchOpts.?.absolute) catch {
+        globWalker.initWithCwd(
+            arena,
+            this.pattern,
+            cwd.?,
+            dot,
+            absolute,
+            follow_symlinks,
+            error_on_broken_symlinks,
+        ) catch {
             globalThis.throw("Out of memory", .{});
             return null;
         };
@@ -218,7 +251,14 @@ fn makeGlobWalker(
     };
 
     globWalker.* = .{};
-    switch (globWalker.init(arena, this.pattern, false, false) catch {
+    switch (globWalker.init(
+        arena,
+        this.pattern,
+        dot,
+        absolute,
+        follow_symlinks,
+        error_on_broken_symlinks,
+    ) catch {
         globalThis.throw("Out of memory", .{});
         return null;
     }) {

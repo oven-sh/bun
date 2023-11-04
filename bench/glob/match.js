@@ -1,19 +1,26 @@
 import { run, bench, group } from "mitata";
 import fg from "fast-glob";
-import { Glob, Transpiler } from "bun";
+import { fdir } from "fdir";
+import { Glob } from "bun";
 
 const normalPattern = "*.ts";
 const recursivePattern = "**/*.ts";
 const nodeModulesPattern = "**/node_modules/**/*.js";
 
-const benchDot = false;
+const benchFdir = false;
 const cwd = undefined;
+
+const bunOpts = {
+  cwd,
+  followSymlinks: false,
+  absolute: true,
+};
 
 const fgOpts = {
   cwd,
   followSymbolicLinks: false,
   onlyFiles: false,
-  // absolute: true,
+  absolute: true,
 };
 
 group({ name: `async pattern="${normalPattern}"`, summary: true }, () => {
@@ -22,17 +29,12 @@ group({ name: `async pattern="${normalPattern}"`, summary: true }, () => {
   });
 
   bench("Bun.Glob", async () => {
-    const entries = await new Glob(normalPattern).match({
-      cwd,
-    });
+    const entries = await new Glob(normalPattern).match(bunOpts);
   });
 
-  if (benchDot)
-    bench("Bun.Glob with dot", async () => {
-      const entries = await new Glob(normalPattern).match({
-        cwd,
-        dot: true,
-      });
+  if (benchFdir)
+    bench("fdir", async () => {
+      const entries = await new fdir().withFullPaths().glob(normalPattern).crawl(process.cwd()).withPromise();
     });
 });
 
@@ -42,17 +44,12 @@ group({ name: `async-recursive pattern="${recursivePattern}"`, summary: true }, 
   });
 
   bench("Bun.Glob", async () => {
-    const entries = await new Glob(recursivePattern).match({
-      cwd: "src",
-    });
+    const entries = await new Glob(recursivePattern).match(bunOpts);
   });
 
-  if (benchDot)
-    bench("Bun.Glob with dot", async () => {
-      const entries = await new Glob(recursivePattern).match({
-        cwd,
-        dot: true,
-      });
+  if (benchFdir)
+    bench("fdir", async () => {
+      const entries = await new fdir().withFullPaths().glob(recursivePattern).crawl(process.cwd()).withPromise();
     });
 });
 
@@ -62,17 +59,12 @@ group({ name: `sync pattern="${normalPattern}"`, summary: true }, () => {
   });
 
   bench("Bun.Glob", () => {
-    const entries = new Glob(normalPattern).matchSync({
-      cwd,
-    });
+    const entries = new Glob(normalPattern).matchSync(bunOpts);
   });
 
-  if (benchDot)
-    bench("Bun.Glob with dot", () => {
-      const entries = new Glob(normalPattern).matchSync({
-        cwd,
-        dot: true,
-      });
+  if (benchFdir)
+    bench("fdir", async () => {
+      const entries = new fdir().withFullPaths().glob(normalPattern).crawl(process.cwd()).sync();
     });
 });
 
@@ -82,17 +74,12 @@ group({ name: `sync-recursive pattern="${recursivePattern}"`, summary: true }, (
   });
 
   bench("Bun.Glob", () => {
-    const entries = new Glob(recursivePattern).matchSync({
-      cwd,
-    });
+    const entries = new Glob(recursivePattern).matchSync(bunOpts);
   });
 
-  if (benchDot)
-    bench("Bun.Glob with dot", () => {
-      const entries = new Glob(recursivePattern).matchSync({
-        cwd,
-        dot: true,
-      });
+  if (benchFdir)
+    bench("fdir", async () => {
+      const entries = new fdir().withFullPaths().glob(recursivePattern).crawl(process.cwd()).sync();
     });
 });
 
@@ -102,17 +89,12 @@ group({ name: `node_modules pattern="${nodeModulesPattern}"`, summary: true }, (
   });
 
   bench("Bun.Glob", async () => {
-    const entries = await new Glob(nodeModulesPattern).match({
-      cwd,
-    });
+    const entries = await new Glob(nodeModulesPattern).match(bunOpts);
   });
 
-  if (benchDot)
-    bench("Bun.Glob with dot", async () => {
-      const entries = await new Glob(nodeModulesPattern).match({
-        cwd,
-        dot: true,
-      });
+  if (benchFdir)
+    bench("fdir", async () => {
+      const entries = await new fdir().withFullPaths().glob(nodeModulesPattern).crawl(process.cwd()).withPromise();
     });
 });
 

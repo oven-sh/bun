@@ -60,10 +60,10 @@ pub const Subprocess = struct {
     ipc: IPC.IPCData,
     flags: Flags = .{},
 
-    pub const Flags = packed struct(u32) {
+    pub const Flags = packed struct(u3) {
         is_sync: bool = false,
         killed: bool = false,
-        reference_count: u30 = 0,
+        waiting_for_onexit: bool = false,
     };
 
     pub const SignalCode = bun.SignalCode;
@@ -89,11 +89,7 @@ pub const Subprocess = struct {
     }
 
     pub fn hasPendingActivityNonThreadsafe(this: *const Subprocess) bool {
-        if (this.poll == .wait_thread and this.poll.wait_thread.ref_count.load(.Monotonic) > 0) {
-            return true;
-        }
-
-        if (this.flags.reference_count > 0) {
+        if (this.flags.waiting_for_onexit) {
             return true;
         }
 
@@ -108,13 +104,20 @@ pub const Subprocess = struct {
                 }
             }
         }
+        if (this.poll == .wait_thread and this.poll.wait_thread.ref_count.load(.Monotonic) > 0) {
+            return true;
+        }
 
         return false;
     }
 
     pub fn updateHasPendingActivity(this: *Subprocess) void {
         @fence(.SeqCst);
-
+        if (Environment.isDebug) {
+            log("updateHasPendingActivity: real: {}", .{
+                this.hasPendingActivityNonThreadsafe(),
+            });
+        }
         this.has_pending_activity.store(
             this.hasPendingActivityNonThreadsafe(),
             .Monotonic,
@@ -123,17 +126,22 @@ pub const Subprocess = struct {
 
     pub fn hasPendingActivity(this: *Subprocess) callconv(.C) bool {
         @fence(.Acquire);
+        if (Environment.isDebug) {
+            log("hasPendingActivity: {} (real: {})", .{
+                this.has_pending_activity.load(.Acquire),
+                this.hasPendingActivityNonThreadsafe(),
+            });
+        }
         return this.has_pending_activity.load(.Acquire);
     }
 
     pub fn ref(this: *Subprocess) void {
         var vm = this.globalThis.bunVM();
+
         switch (this.poll) {
             .poll_ref => if (this.poll.poll_ref) |poll| {
-                this.flags.reference_count += @as(u30, @intFromBool(!poll.isRegistered()));
-                poll.enableKeepingProcessAlive(vm);
+                poll.ref(vm);
             },
-
             .wait_thread => |*wait_thread| {
                 wait_thread.poll_ref.ref(vm);
             },
@@ -153,13 +161,16 @@ pub const Subprocess = struct {
     }
 
     /// This disables the keeping process alive flag on the poll and also in the stdin, stdout, and stderr
-    pub fn unref(this: *Subprocess) void {
+    pub fn unref(this: *Subprocess, comptime deactivate_poll_ref: bool) void {
         var vm = this.globalThis.bunVM();
 
         switch (this.poll) {
             .poll_ref => if (this.poll.poll_ref) |poll| {
-                this.flags.reference_count -= @as(u30, @intFromBool(poll.isRegistered()));
-                poll.disableKeepingProcessAlive(vm);
+                if (deactivate_poll_ref) {
+                    poll.disableKeepingProcessAlive(vm);
+                } else {
+                    poll.unref(vm);
+                }
             },
             .wait_thread => |*wait_thread| {
                 wait_thread.poll_ref.unref(vm);
@@ -479,7 +490,7 @@ pub const Subprocess = struct {
     }
 
     pub fn doUnref(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
-        this.unref();
+        this.unref(false);
         return JSC.JSValue.jsUndefined();
     }
 
@@ -1615,7 +1626,6 @@ pub const Subprocess = struct {
             if (!WaiterThread.shouldUseWaiterThread()) {
                 var poll = Async.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
                 subprocess.poll = .{ .poll_ref = poll };
-                subprocess.flags.reference_count += 1;
                 switch (subprocess.poll.poll_ref.?.register(
                     jsc_vm.event_loop_handle.?,
                     .process,
@@ -1682,7 +1692,6 @@ pub const Subprocess = struct {
         if (!WaiterThread.shouldUseWaiterThread()) {
             var poll = Async.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
             subprocess.poll = .{ .poll_ref = poll };
-            subprocess.flags.reference_count += 1;
             switch (subprocess.poll.poll_ref.?.register(
                 jsc_vm.event_loop_handle.?,
                 .process,
@@ -1745,7 +1754,6 @@ pub const Subprocess = struct {
     ) void {
         std.debug.assert(this.flags.is_sync);
 
-        defer this.flags.reference_count -= 1;
         this.wait(this.flags.is_sync);
     }
 
@@ -1760,7 +1768,6 @@ pub const Subprocess = struct {
         }
 
         if (this.poll.poll_ref) |poll| {
-            this.flags.reference_count += @as(u30, @intFromBool(!poll.isRegistered()));
             const registration = poll.register(
                 this.globalThis.bunVM().event_loop_handle.?,
                 .process,
@@ -1834,7 +1841,6 @@ pub const Subprocess = struct {
                 .poll_ref => |poll_| {
                     if (poll_) |poll| {
                         this.poll.poll_ref = null;
-                        this.flags.reference_count -= @as(u30, @intFromBool(poll.isRegistered()));
                         poll.deinitWithVM(vm);
                     }
                 },
@@ -1858,7 +1864,7 @@ pub const Subprocess = struct {
 
         if (this.hasExited()) {
             {
-                this.flags.reference_count += 1;
+                this.flags.waiting_for_onexit = true;
 
                 const Holder = struct {
                     process: *Subprocess,
@@ -1866,8 +1872,8 @@ pub const Subprocess = struct {
 
                     pub fn unref(self: *@This()) void {
                         // this calls disableKeepingProcessAlive on pool_ref and stdin, stdout, stderr
-                        self.process.unref();
-                        self.process.flags.reference_count -= 1;
+                        self.process.flags.waiting_for_onexit = false;
+                        self.process.unref(true);
                         self.process.updateHasPendingActivity();
                         bun.default_allocator.destroy(self);
                     }

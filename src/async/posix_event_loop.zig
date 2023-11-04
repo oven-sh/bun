@@ -237,7 +237,10 @@ pub const FilePoll = struct {
 
     pub fn onUpdate(poll: *FilePoll, loop: *Loop, size_or_offset: i64) void {
         if (poll.flags.contains(.one_shot) and !poll.flags.contains(.needs_rearm)) {
-            if (poll.flags.contains(.has_incremented_poll_count)) poll.deactivate(loop);
+            if (poll.flags.contains(.has_incremented_poll_count)) {
+                loop.active -|= @as(u32, @intFromBool(!poll.flags.contains(.disable)));
+                poll.flags.remove(.has_incremented_poll_count);
+            }
             poll.flags.insert(.needs_rearm);
         }
         var ptr = poll.owner;
@@ -449,6 +452,10 @@ pub const FilePoll = struct {
         return !this.flags.contains(.disable) and this.isActive();
     }
 
+    pub inline fn canDisableKeepingProcessAlive(this: *const FilePoll) bool {
+        return !this.flags.contains(.disable) and this.flags.contains(.has_incremented_poll_count);
+    }
+
     /// Make calling ref() on this poll into a no-op.
     pub fn disableKeepingProcessAlive(this: *FilePoll, vm: *JSC.VirtualMachine) void {
         if (this.flags.contains(.disable))
@@ -456,6 +463,10 @@ pub const FilePoll = struct {
         this.flags.insert(.disable);
 
         vm.event_loop_handle.?.active -= @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
+    }
+
+    pub inline fn canEnableKeepingProcessAlive(this: *const FilePoll) bool {
+        return this.flags.contains(.disable) and this.flags.contains(.has_incremented_poll_count);
     }
 
     pub fn enableKeepingProcessAlive(this: *FilePoll, vm: *JSC.VirtualMachine) void {
@@ -525,7 +536,7 @@ pub const FilePoll = struct {
 
     /// Allow a poll to keep the process alive.
     pub fn ref(this: *FilePoll, vm: *JSC.VirtualMachine) void {
-        if (this.canRef())
+        if (!this.canRef())
             return;
         log("ref", .{});
         this.activate(vm.event_loop_handle.?);

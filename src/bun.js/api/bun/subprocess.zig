@@ -1754,7 +1754,6 @@ pub const Subprocess = struct {
     ) void {
         std.debug.assert(this.flags.is_sync);
 
-        // defer this.flags.reference_count -= 1;
         this.wait(this.flags.is_sync);
     }
 
@@ -1842,7 +1841,6 @@ pub const Subprocess = struct {
                 .poll_ref => |poll_| {
                     if (poll_) |poll| {
                         this.poll.poll_ref = null;
-                        // this.flags.reference_count -= @intFromBool(poll.isRegistered());
                         poll.deinitWithVM(vm);
                     }
                 },

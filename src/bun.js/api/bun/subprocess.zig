@@ -168,6 +168,8 @@ pub const Subprocess = struct {
             .poll_ref => if (this.poll.poll_ref) |poll| {
                 if (deactivate_poll_ref) {
                     poll.disableKeepingProcessAlive(vm);
+                } else {
+                    poll.unref(vm);
                 }
             },
             .wait_thread => |*wait_thread| {

@@ -940,6 +940,10 @@ pub const PosixLoop = extern struct {
         us_loop_run_bun_tick(this, 0);
     }
 
+    pub fn tickWithoutIdle(this: *PosixLoop) void {
+        us_loop_run_bun_tick(this, std.math.maxInt(i64));
+    }
+
     pub fn tickWithTimeout(this: *PosixLoop, timeoutMs: i64) void {
         us_loop_run_bun_tick(this, timeoutMs);
     }
@@ -2416,6 +2420,10 @@ pub const UVLoop = extern struct {
         us_loop_run(this);
     }
 
+    pub fn tickWithoutIdle(this: *UVLoop) void {
+        us_loop_pump(this);
+    }
+
     pub fn create(comptime Handler: anytype) *UVLoop {
         return us_create_loop(
             null,
@@ -2481,6 +2489,7 @@ extern fn us_create_loop(
 extern fn us_loop_free(loop: ?*Loop) void;
 extern fn us_loop_ext(loop: ?*Loop) ?*anyopaque;
 extern fn us_loop_run(loop: ?*Loop) void;
+extern fn us_loop_pump(loop: ?*Loop) void;
 extern fn us_wakeup_loop(loop: ?*Loop) void;
 extern fn us_loop_integrate(loop: ?*Loop) void;
 extern fn us_loop_iteration_number(loop: ?*Loop) c_longlong;

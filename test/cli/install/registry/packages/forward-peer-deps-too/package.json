@@ -1,0 +1,45 @@
+{
+	"name": "forward-peer-deps-too",
+	"versions": {
+		"1.0.0": {
+			"name": "forward-peer-deps-too",
+			"version": "1.0.0",
+			"dependencies": {
+				"peer-deps": "1.0.0"
+			},
+			"peerDependencies": {
+				"no-deps": "*"
+			},
+			"_id": "forward-peer-deps-too@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-ItRSI5lJZA/U50cRIK1cwbBlamPQuqc+Tw8dFlJ4Zcj9wy2RHcY2NvyW8+y/rb2AVjCMskZdsnGYtAaE4RvOBg==",
+				"shasum": "ec772520cba496daedfad27384f11806d429a205",
+				"tarball": "http://localhost:4873/forward-peer-deps-too/-/forward-peer-deps-too-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:08.428Z",
+		"created": "2023-11-01T22:05:08.428Z",
+		"1.0.0": "2023-11-01T22:05:08.428Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"forward-peer-deps-too-1.0.0.tgz": {
+			"shasum": "ec772520cba496daedfad27384f11806d429a205",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-a0338b9bbc987560",
+	"_id": "forward-peer-deps-too",
+	"readme": "ERROR: No README data found!"
+}

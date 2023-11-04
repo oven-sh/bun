@@ -4267,7 +4267,6 @@ pub const PackageManager = struct {
         return CacheDir{ .is_node_modules = true, .path = Fs.FileSystem.instance.abs(&fallback_parts) };
     }
 
-    /// fn tick(
     pub fn runTasks(
         manager: *PackageManager,
         comptime ExtractCompletionContext: type,

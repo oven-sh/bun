@@ -113,12 +113,15 @@ scripts: Scripts = .{},
 workspace_paths: NameHashMap = .{},
 workspace_versions: VersionHashMap = .{},
 
-has_trusted_dependencies: bool = false,
 trusted_dependencies: NameHashSet = .{},
 overrides: OverrideMap = .{},
 
 const Stream = std.io.FixedBufferStream([]u8);
 pub const default_filename = "bun.lockb";
+
+pub fn hasTrustedDependencies(this: *const Lockfile) bool {
+    return this.trusted_dependencies.count() > 0;
+}
 
 pub const Scripts = struct {
     const MAX_PARALLEL_PROCESSES = 10;
@@ -889,7 +892,6 @@ pub fn cleanWithLogger(
     }
     new.trusted_dependencies = old_trusted_dependencies;
     new.scripts = old_scripts;
-    new.has_trusted_dependencies = old.has_trusted_dependencies;
 
     return new;
 }
@@ -3954,7 +3956,6 @@ pub const Package = extern struct {
                             };
                             lockfile.trusted_dependencies.putAssumeCapacity(@as(u32, @truncate(String.Builder.stringHash(name))), {});
                         }
-                        lockfile.has_trusted_dependencies = true;
                     },
                     else => {
                         log.addErrorFmt(&source, q.loc, allocator,
@@ -5197,7 +5198,7 @@ const default_trusted_dependencies = brk: {
 };
 
 pub fn hasTrustedDependency(this: *Lockfile, name: []const u8) bool {
-    if (this.has_trusted_dependencies) {
+    if (this.hasTrustedDependencies()) {
         const hash = @as(u32, @truncate(String.Builder.stringHash(name)));
         return this.trusted_dependencies.contains(hash);
     } else {

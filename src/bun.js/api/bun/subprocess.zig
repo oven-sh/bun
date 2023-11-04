@@ -60,8 +60,7 @@ pub const Subprocess = struct {
     ipc: IPC.IPCData,
     flags: Flags = .{},
 
-    pub const Flags = struct {
-        // pub const Flags = packed struct(u32) {
+    pub const Flags = packed struct(u3) {
         is_sync: bool = false,
         killed: bool = false,
         waiting_for_onexit: bool = false,

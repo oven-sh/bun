@@ -1,4 +1,4 @@
-import type { CryptoHashInterface, DigestEncoding, Hash } from 'bun';
+import type { CryptoHashInterface, DigestEncoding, Hash, SupportedCryptoAlgorithms, CryptoHasher as BunCryptoHasher } from 'bun';
 import nodecrypto from 'node:crypto';
 import os from 'node:os';
 import md4, { type Md4 } from 'js-md4';
@@ -69,20 +69,48 @@ abstract class BaseHash<T> implements CryptoHashInterface<T> {
         }
         return encodingOrHashInto;
     }
-    static hash(data: StringOrBuffer, encoding?: DigestEncoding): string;
-    static hash(data: StringOrBuffer, hashInto?: TypedArray): TypedArray;
-    static hash(data: StringOrBuffer, encodingOrHashInto?: DigestEncoding | TypedArray): string | TypedArray { return '' };
     static readonly byteLength: number;
     abstract readonly byteLength: number;
+}
+
+export class CryptoHasher extends BaseHash<CryptoHasher> implements BunCryptoHasher {
+    constructor(algorithm: SupportedCryptoAlgorithms) {
+        super(algorithm);
+        this.algorithm = algorithm;
+        this.byteLength = nodecrypto.createHash(algorithm).digest().byteLength;
+    }
+    #state: StringOrBuffer[] = [];
+    byteLength: number;
+    algorithm: SupportedCryptoAlgorithms;
+    static algorithms: SupportedCryptoAlgorithms[] = nodecrypto.getHashes() as SupportedCryptoAlgorithms[];
+
+    override update(data: StringOrBuffer): CryptoHasher {
+        this.#state.push(data);
+        return super.update(data);
+    }
+
+    static hash(algo: SupportedCryptoAlgorithms, data: StringOrBuffer, encoding?: DigestEncoding | undefined): string;
+    static hash(algo: SupportedCryptoAlgorithms, data: StringOrBuffer, hashInto?: TypedArray | undefined): TypedArray;
+    static hash(algo: SupportedCryptoAlgorithms, data: StringOrBuffer, encodingOrHashInto?: TypedArray | DigestEncoding | undefined): string | TypedArray {
+        const instance = new this(algo); instance.update(data);
+        return instance.digest(encodingOrHashInto as DigestEncoding & TypedArray);
+    }
+
+    copy(): BunCryptoHasher {
+        const copy = new CryptoHasher(this.algorithm);
+        copy.#state = this.#state.slice();
+        for (const state of this.#state) copy.update(state);
+        return copy;
+    }
 }
 
 export class SHA1 extends BaseHash<SHA1> {
     constructor() { super('sha1'); }
     static override readonly byteLength = 20;
     override readonly byteLength = 20;
-    static override hash(data: StringOrBuffer, encoding?: DigestEncoding): string;
-    static override hash(data: StringOrBuffer, hashInto?: TypedArray): TypedArray;
-    static override hash(data: StringOrBuffer, encodingOrHashInto?: DigestEncoding | TypedArray): string | TypedArray {
+    static hash(data: StringOrBuffer, encoding?: DigestEncoding): string;
+    static hash(data: StringOrBuffer, hashInto?: TypedArray): TypedArray;
+    static hash(data: StringOrBuffer, encodingOrHashInto?: DigestEncoding | TypedArray): string | TypedArray {
         const instance = new this(); instance.update(data);
         return instance.digest(encodingOrHashInto as DigestEncoding & TypedArray);
     }
@@ -110,9 +138,9 @@ export class MD4 extends BaseHash<MD4> {
     } 
     static override readonly byteLength = 16;
     override readonly byteLength = 16;
-    static override hash(data: StringOrBuffer, encoding?: DigestEncoding): string;
-    static override hash(data: StringOrBuffer, hashInto?: TypedArray): TypedArray;
-    static override hash(data: StringOrBuffer, encodingOrHashInto?: DigestEncoding | TypedArray): string | TypedArray {
+    static hash(data: StringOrBuffer, encoding?: DigestEncoding): string;
+    static hash(data: StringOrBuffer, hashInto?: TypedArray): TypedArray;
+    static hash(data: StringOrBuffer, encodingOrHashInto?: DigestEncoding | TypedArray): string | TypedArray {
         const instance = new this(); instance.update(data);
         return instance.digest(encodingOrHashInto as DigestEncoding & TypedArray);
     }
@@ -121,9 +149,9 @@ export class MD5 extends BaseHash<MD5> {
     constructor() { super('md5'); }
     static override readonly byteLength = 16;
     override readonly byteLength = 16;
-    static override hash(data: StringOrBuffer, encoding?: DigestEncoding): string;
-    static override hash(data: StringOrBuffer, hashInto?: TypedArray): TypedArray;
-    static override hash(data: StringOrBuffer, encodingOrHashInto?: DigestEncoding | TypedArray): string | TypedArray {
+    static hash(data: StringOrBuffer, encoding?: DigestEncoding): string;
+    static hash(data: StringOrBuffer, hashInto?: TypedArray): TypedArray;
+    static hash(data: StringOrBuffer, encodingOrHashInto?: DigestEncoding | TypedArray): string | TypedArray {
         const instance = new this(); instance.update(data);
         return instance.digest(encodingOrHashInto as DigestEncoding & TypedArray);
     }
@@ -132,9 +160,9 @@ export class SHA224 extends BaseHash<SHA224> {
     constructor() { super('sha224'); }
     static override readonly byteLength = 28;
     override readonly byteLength = 28;
-    static override hash(data: StringOrBuffer, encoding?: DigestEncoding): string;
-    static override hash(data: StringOrBuffer, hashInto?: TypedArray): TypedArray;
-    static override hash(data: StringOrBuffer, encodingOrHashInto?: DigestEncoding | TypedArray): string | TypedArray {
+    static hash(data: StringOrBuffer, encoding?: DigestEncoding): string;
+    static hash(data: StringOrBuffer, hashInto?: TypedArray): TypedArray;
+    static hash(data: StringOrBuffer, encodingOrHashInto?: DigestEncoding | TypedArray): string | TypedArray {
         const instance = new this(); instance.update(data);
         return instance.digest(encodingOrHashInto as DigestEncoding & TypedArray);
     }
@@ -143,9 +171,9 @@ export class SHA512 extends BaseHash<SHA512> {
     constructor() { super('sha512'); }
     static override readonly byteLength = 64;
     override readonly byteLength = 64;
-    static override hash(data: StringOrBuffer, encoding?: DigestEncoding): string;
-    static override hash(data: StringOrBuffer, hashInto?: TypedArray): TypedArray;
-    static override hash(data: StringOrBuffer, encodingOrHashInto?: DigestEncoding | TypedArray): string | TypedArray {
+    static hash(data: StringOrBuffer, encoding?: DigestEncoding): string;
+    static hash(data: StringOrBuffer, hashInto?: TypedArray): TypedArray;
+    static hash(data: StringOrBuffer, encodingOrHashInto?: DigestEncoding | TypedArray): string | TypedArray {
         const instance = new this(); instance.update(data);
         return instance.digest(encodingOrHashInto as DigestEncoding & TypedArray);
     }
@@ -154,9 +182,9 @@ export class SHA384 extends BaseHash<SHA384> {
     constructor() { super('sha384'); }
     static override readonly byteLength = 48;
     override readonly byteLength = 48;
-    static override hash(data: StringOrBuffer, encoding?: DigestEncoding): string;
-    static override hash(data: StringOrBuffer, hashInto?: TypedArray): TypedArray;
-    static override hash(data: StringOrBuffer, encodingOrHashInto?: DigestEncoding | TypedArray): string | TypedArray {
+    static hash(data: StringOrBuffer, encoding?: DigestEncoding): string;
+    static hash(data: StringOrBuffer, hashInto?: TypedArray): TypedArray;
+    static hash(data: StringOrBuffer, encodingOrHashInto?: DigestEncoding | TypedArray): string | TypedArray {
         const instance = new this(); instance.update(data);
         return instance.digest(encodingOrHashInto as DigestEncoding & TypedArray);
     }
@@ -165,9 +193,9 @@ export class SHA256 extends BaseHash<SHA256> {
     constructor() { super('sha256'); }
     static override readonly byteLength = 32;
     override readonly byteLength = 32;
-    static override hash(data: StringOrBuffer, encoding?: DigestEncoding): string;
-    static override hash(data: StringOrBuffer, hashInto?: TypedArray): TypedArray;
-    static override hash(data: StringOrBuffer, encodingOrHashInto?: DigestEncoding | TypedArray): string | TypedArray {
+    static hash(data: StringOrBuffer, encoding?: DigestEncoding): string;
+    static hash(data: StringOrBuffer, hashInto?: TypedArray): TypedArray;
+    static hash(data: StringOrBuffer, encodingOrHashInto?: DigestEncoding | TypedArray): string | TypedArray {
         const instance = new this(); instance.update(data);
         return instance.digest(encodingOrHashInto as DigestEncoding & TypedArray);
     }
@@ -176,9 +204,9 @@ export class SHA512_256 extends BaseHash<SHA512_256> {
     constructor() { super('sha512-256'); }
     static override readonly byteLength = 32;
     override readonly byteLength = 32;
-    static override hash(data: StringOrBuffer, encoding?: DigestEncoding): string;
-    static override hash(data: StringOrBuffer, hashInto?: TypedArray): TypedArray;
-    static override hash(data: StringOrBuffer, encodingOrHashInto?: DigestEncoding | TypedArray): string | TypedArray {
+    static hash(data: StringOrBuffer, encoding?: DigestEncoding): string;
+    static hash(data: StringOrBuffer, hashInto?: TypedArray): TypedArray;
+    static hash(data: StringOrBuffer, encodingOrHashInto?: DigestEncoding | TypedArray): string | TypedArray {
         const instance = new this(); instance.update(data);
         return instance.digest(encodingOrHashInto as DigestEncoding & TypedArray);
     }

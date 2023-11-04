@@ -10,8 +10,6 @@ import * as ffi from './modules/ffi.js';
 globalThis.Bun = bun as typeof bun & {
     // TODO: Missing polyfills
     build: typeof import('bun').build;
-    CryptoHashInterface: typeof import('bun').CryptoHashInterface;
-    CryptoHasher: typeof import('bun').CryptoHasher;
     FileSystemRouter: typeof import('bun').FileSystemRouter;
 };
 

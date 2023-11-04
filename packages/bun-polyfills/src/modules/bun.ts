@@ -1,6 +1,7 @@
 import type {
     BunPlugin, PluginConstraints, PluginBuilder, OnLoadCallback, OnResolveCallback, HeapSnapshot, Password,
-    EditorOptions, SpawnOptions, Subprocess, SyncSubprocess, FileBlob as BunFileBlob, ArrayBufferView, Hash
+    EditorOptions, SpawnOptions, Subprocess, SyncSubprocess, FileBlob as BunFileBlob, ArrayBufferView, Hash,
+    CryptoHashInterface as BunCryptoHashInterface,
 } from 'bun';
 import { TextDecoderStream } from 'node:stream/web';
 import { NotImplementedError, type SystemError } from '../utils/errors.js';
@@ -8,11 +9,11 @@ import { isArrayBufferView, isFileBlob, isOptions } from '../utils/misc.js';
 import dnsPolyfill from './bun/dns.js';
 import { FileSink } from './bun/filesink.js';
 import {
-    bunHash, bunHashProto,
+    bunHash, bunHashProto, CryptoHasher as CryptoHasherPolyfill,
     MD4 as MD4Polyfill, MD5 as MD5Polyfill,
     SHA1 as SHA1Polyfill, SHA224 as SHA224Polyfill,
     SHA256 as SHA256Polyfill, SHA384 as SHA384Polyfill,
-    SHA512 as SHA512Polyfill, SHA512_256 as SHA512_256Polyfill
+    SHA512 as SHA512Polyfill, SHA512_256 as SHA512_256Polyfill,
 } from './bun/hashes.js';
 import { ArrayBufferSink as ArrayBufferSinkPolyfill } from './bun/arraybuffersink.js';
 import { FileBlob, NodeJSStreamFileBlob } from './bun/fileblob.js';
@@ -28,6 +29,7 @@ import path from 'node:path';
 import util from 'node:util';
 import zlib from 'node:zlib';
 import streams from 'node:stream';
+import nodecrypto from 'node:crypto';
 import workers from 'node:worker_threads';
 import chp, { type ChildProcess, type StdioOptions, type SpawnSyncReturns } from 'node:child_process';
 import { fileURLToPath as fileURLToPathNode, pathToFileURL as pathToFileURLNode } from 'node:url';
@@ -44,7 +46,7 @@ export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satis
 
 //? These are automatically updated on build by tools/updateversions.ts, do not edit manually.
 export const version = '1.0.4' satisfies typeof Bun.version;
-export const revision = '195cee203a0679622673e84e5ca80074cb4a589e' satisfies typeof Bun.revision;
+export const revision = 'f6d40d9c9c922bbd66671b22e1af156a9f9bf917' satisfies typeof Bun.revision;
 
 export const gc = (globalThis.gc ? (() => (globalThis.gc!(), process.memoryUsage().heapUsed)) : (() => {
     const err = new Error('[bun-polyfills] Garbage collection polyfills are only available when Node.js is ran with the --expose-gc flag.');
@@ -93,6 +95,10 @@ export const SHA512 = SHA512Polyfill satisfies typeof Bun.SHA512;
 export const SHA384 = SHA384Polyfill satisfies typeof Bun.SHA384;
 export const SHA256 = SHA256Polyfill satisfies typeof Bun.SHA256;
 export const SHA512_256 = SHA512_256Polyfill satisfies typeof Bun.SHA512_256;
+
+export const CryptoHasher = CryptoHasherPolyfill satisfies typeof Bun.CryptoHasher;
+// This only exists as a type, but is declared as a value in bun-types.
+export const CryptoHashInterface = undefined as unknown as typeof BunCryptoHashInterface<any>;
 
 export const indexOfLine = ((data, offset) => {
     if (data instanceof ArrayBuffer || data instanceof SharedArrayBuffer) data = new Uint8Array(data);

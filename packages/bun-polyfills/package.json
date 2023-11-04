@@ -16,6 +16,7 @@
     "@types/node": "^20.8.6",
     "@types/set-cookie-parser": "^2.4.5",
     "@types/which": "^3.0.0",
+    "@types/ws": "^8.5.8",
     "bun-types": "^1.0.6",
     "copyfiles": "^2.4.1",
     "tsx": "^3.14.0",
@@ -30,12 +31,15 @@
     "bun-wasm": "link:bun-wasm",
     "chalk": "^5.3.0",
     "expect": "^29.7.0",
+    "isomorphic-ws": "^5.0.0",
     "js-md4": "^0.3.2",
     "koffi": "^2.6.3",
     "mmap-utils": "^1.0.0",
     "open-editor": "^4.1.1",
     "set-cookie-parser": "^2.6.0",
     "supports-color": "^9.4.0",
-    "which": "^4.0.0"
+    "uWebSockets.js": "uNetworking/uWebSockets.js#v20.33.0",
+    "which": "^4.0.0",
+    "ws": "^8.14.2"
   }
 }

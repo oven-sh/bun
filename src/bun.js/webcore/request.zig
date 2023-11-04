@@ -250,6 +250,8 @@ pub const Request = struct {
             //Lazy create default signal
             const js_signal = AbortSignal.create(globalThis);
             js_signal.ensureStillAlive();
+            js_signal.protect();
+            this.signal_js_ref = js_signal;
             if (AbortSignal.fromJS(js_signal)) |signal| {
                 this.signal = signal.ref();
             }

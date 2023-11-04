@@ -1,0 +1,43 @@
+{
+	"name": "no-deps-nested-postinstall",
+	"versions": {
+		"1.0.0": {
+			"name": "no-deps-nested-postinstall",
+			"version": "1.0.0",
+			"scripts": {
+				"my-own-script": "node scripts/postinstall",
+				"postinstall": "run my-own-script"
+			},
+			"_id": "no-deps-nested-postinstall@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-zOKGmNMz1rzy9GWuywPS7PSK7vs/mss0wnr4TPEeu6iOd4Pk7NwJtaDferQ8G3TDZf88EmoTb5Nex8QGxnO7/A==",
+				"shasum": "81410430a0288b330b49c8a1989387e678522ec1",
+				"tarball": "http://localhost:4873/no-deps-nested-postinstall/-/no-deps-nested-postinstall-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:20.041Z",
+		"created": "2023-11-01T22:05:20.041Z",
+		"1.0.0": "2023-11-01T22:05:20.041Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"no-deps-nested-postinstall-1.0.0.tgz": {
+			"shasum": "81410430a0288b330b49c8a1989387e678522ec1",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-252b034a30f2ec81",
+	"_id": "no-deps-nested-postinstall",
+	"readme": "ERROR: No README data found!"
+}

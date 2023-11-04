@@ -1,20 +1,18 @@
+#include "root.h"
 #include "wtf-bindings.h"
 
-#include "wtf/StackTrace.h"
-#include "wtf/dtoa.h"
-#include <termios.h>
+#include <wtf/StackTrace.h>
+#include <wtf/dtoa.h>
+#include <atomic>
+
+#if OS(WINDOWS)
+#include <uv.h>
+#endif
+
+#if !OS(WINDOWS)
 #include <stdatomic.h>
 
-extern "C" double WTF__parseDouble(const LChar* string, size_t length, size_t* position)
-{
-    return WTF::parseDouble(string, length, *position);
-}
-
-extern "C" void WTF__copyLCharsFromUCharSource(LChar* destination, const UChar* source, size_t length)
-{
-    WTF::StringImpl::copyCharacters(destination, source, length);
-}
-
+#include <termios.h>
 static int orig_termios_fd = -1;
 static struct termios orig_termios;
 static _Atomic int orig_termios_spinlock;
@@ -94,9 +92,11 @@ static void uv__tty_make_raw(struct termios* tio)
 #endif /* #ifdef __sun */
 }
 
-extern "C" int
-Bun__ttySetMode(int fd, int mode)
+#endif
+
+extern "C" int Bun__ttySetMode(int fd, int mode)
 {
+#if !OS(WINDOWS)
     struct termios tmp;
     int expected;
     int rc;
@@ -160,6 +160,20 @@ Bun__ttySetMode(int fd, int mode)
         current_tty_mode = mode;
 
     return rc;
+#else
+    return 0;
+
+#endif
+}
+
+extern "C" double WTF__parseDouble(const LChar* string, size_t length, size_t* position)
+{
+    return WTF::parseDouble(string, length, *position);
+}
+
+extern "C" void WTF__copyLCharsFromUCharSource(LChar* destination, const UChar* source, size_t length)
+{
+    WTF::StringImpl::copyCharacters(destination, source, length);
 }
 
 extern "C" void Bun__crashReportWrite(void* ctx, const char* message, size_t length);

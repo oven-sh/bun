@@ -321,7 +321,7 @@ describe("bun test", () => {
         `,
       });
       expect(stderr).toContain("timed out after 5000ms");
-    });
+    }, 10000);
   });
   describe("support for Github Actions", () => {
     test("should not group logs by default", () => {

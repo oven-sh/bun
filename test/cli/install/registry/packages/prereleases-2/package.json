@@ -1,0 +1,290 @@
+{
+	"name": "prereleases-2",
+	"versions": {
+		"1.0.0-next.0": {
+			"name": "prereleases-2",
+			"version": "1.0.0-next.0",
+			"_id": "prereleases-2@1.0.0-next.0",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-F6M5IsCb5swGgy38E8GPkypyYtLxmlo8jE2BWeURd+GrmVAO58GzcPDlJLOnJE/RLbJIF4bGR54f6Dt0tUc/4w==",
+				"shasum": "327d163d697f75906010f5546864024076224cdf",
+				"tarball": "http://localhost:4873/prereleases-2/-/prereleases-2-1.0.0-next.0.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.0-next.1": {
+			"name": "prereleases-2",
+			"version": "1.0.0-next.1",
+			"_id": "prereleases-2@1.0.0-next.1",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-KWcIe/57Kz8EsY0CQAf2d6WgIcUrGARl0XZMeRktXkX0GLeUCDXSUeCgBvbpTHYlGFNmdiA5S/qv7wps4Hb8oQ==",
+				"shasum": "eabbf2f73b75737f44ff8c3b08c62461bddeea01",
+				"tarball": "http://localhost:4873/prereleases-2/-/prereleases-2-1.0.0-next.1.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.0-next.3": {
+			"name": "prereleases-2",
+			"version": "1.0.0-next.3",
+			"_id": "prereleases-2@1.0.0-next.3",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-ORGrBZd1bFEzZAESpqAkVUKjc01HgOpCIcfpzt7IgkGEtBei/RweslbzrCvbH8DNAN5Wrd56cfdYf8Nsb5aWTQ==",
+				"shasum": "0572fb7f40429808365b7cc39448a5ba2dcb17a9",
+				"tarball": "http://localhost:4873/prereleases-2/-/prereleases-2-1.0.0-next.3.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.0-next.7": {
+			"name": "prereleases-2",
+			"version": "1.0.0-next.7",
+			"_id": "prereleases-2@1.0.0-next.7",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-V6EFdPXlK9qy1ZawkOfD+wKQdCajpLdUn+iHxM4KSSmtUNcT97wB+IyBw8TtlO2OSnKSpvliuHHoldxLLXVKmw==",
+				"shasum": "dc644f341cb32dab031cca06ce8670a8cd386854",
+				"tarball": "http://localhost:4873/prereleases-2/-/prereleases-2-1.0.0-next.7.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.0-next.9": {
+			"name": "prereleases-2",
+			"version": "1.0.0-next.9",
+			"_id": "prereleases-2@1.0.0-next.9",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-hk8ovcKbromI9Nc5T9PDOwylZXkfblZfHi9fF0eegxrkD43vS0EoG/T8e+qgjIUvuNwjZZ8RhYD9UBJxaZ8UTQ==",
+				"shasum": "ac5c8cd6ceb5b77a05372cc16f6695c6d64bc5fe",
+				"tarball": "http://localhost:4873/prereleases-2/-/prereleases-2-1.0.0-next.9.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.0-next.11": {
+			"name": "prereleases-2",
+			"version": "1.0.0-next.11",
+			"_id": "prereleases-2@1.0.0-next.11",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-aasbP1PqPKBrbi6zPZCtfJ05DIeqaqKtgr4/ELvfDlO8h2OxkhO6botGLjmW9S2R4+zzGOjQ7Ww2t5XvtvRyMQ==",
+				"shasum": "45a3a924bc6dff2788b04d0a7d7e16767c8e7a96",
+				"tarball": "http://localhost:4873/prereleases-2/-/prereleases-2-1.0.0-next.11.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.0-next.12": {
+			"name": "prereleases-2",
+			"version": "1.0.0-next.12",
+			"_id": "prereleases-2@1.0.0-next.12",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-CrmACMS3ijI7o/fHL+HsUD108CTc+BD1pTyFomD0NyWP++MU8f/xvpK0V/uRIVStSDh4/jjgPZ6JlWFOyFBm4g==",
+				"shasum": "a4007cf89a941009c2cae134c084ddf268510517",
+				"tarball": "http://localhost:4873/prereleases-2/-/prereleases-2-1.0.0-next.12.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.0-next.15": {
+			"name": "prereleases-2",
+			"version": "1.0.0-next.15",
+			"_id": "prereleases-2@1.0.0-next.15",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-7kBLK6tEGhLypdgOhV0wIuW3O+WSvvTyifmLf8NRiZ1Jv6gZ8lThBKoMrBHn2K8QJve/NbrsscQE3lBVKXp4XQ==",
+				"shasum": "6975e4b5a75386266119e53ff8403e93819e0c67",
+				"tarball": "http://localhost:4873/prereleases-2/-/prereleases-2-1.0.0-next.15.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.0-next.17": {
+			"name": "prereleases-2",
+			"version": "1.0.0-next.17",
+			"_id": "prereleases-2@1.0.0-next.17",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-Ja8OaTJk97sTD0kXff7Ff71jmoYr7s97/MRpSFtXzV+qUYTiCZw+ei4uZQmxaIAJcClX2XfyM4ESo3m9je2QVA==",
+				"shasum": "0f417fd15d82976924b6e10e0e96c88da9dcff4d",
+				"tarball": "http://localhost:4873/prereleases-2/-/prereleases-2-1.0.0-next.17.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.0-next.18": {
+			"name": "prereleases-2",
+			"version": "1.0.0-next.18",
+			"_id": "prereleases-2@1.0.0-next.18",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-Tjn4K/HCIdYxC+L+ehePdE9uA4X+6YvzkHGELpSNazSlwJCt0NPDfWw9ZYXs7U6kb9KXlR59R0Z2cP+d/qd9bA==",
+				"shasum": "e98d315c4a41c5e1481f3c337fa89322d720d9be",
+				"tarball": "http://localhost:4873/prereleases-2/-/prereleases-2-1.0.0-next.18.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.0-next.19": {
+			"name": "prereleases-2",
+			"version": "1.0.0-next.19",
+			"_id": "prereleases-2@1.0.0-next.19",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-rwS5kICsEPfn8Rq+Z3snJtXSlEr0t+cAja4JIexq9GiiZdKUY1MlHAPr2JffIr0LBp3bsdeg3VPjPcP2Mo75Hg==",
+				"shasum": "020343d78a3d702b490b962cbc149e5454d15286",
+				"tarball": "http://localhost:4873/prereleases-2/-/prereleases-2-1.0.0-next.19.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.0-next.20": {
+			"name": "prereleases-2",
+			"version": "1.0.0-next.20",
+			"_id": "prereleases-2@1.0.0-next.20",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-qoS+66Kf6iXku/O3Xx1phTnBl+qibMOHlTmf5MbsixKRKcRZltYYsJeAdrmotdYO29T5lGqYuANSHGv97ouA/w==",
+				"shasum": "cea100c106c507545eb0c7a5a6a25e92dd813059",
+				"tarball": "http://localhost:4873/prereleases-2/-/prereleases-2-1.0.0-next.20.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.0-next.21": {
+			"name": "prereleases-2",
+			"version": "1.0.0-next.21",
+			"_id": "prereleases-2@1.0.0-next.21",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-3Cocw8VvKAn0g88//ggsPrymZKQ+ooEj7Bt/GC32hZKqkag4Co95R7xpYv4rX34qosrmV4BIeKxK11Q6K29RVw==",
+				"shasum": "81a1dd9ccd3e982b573cdbcbb4900f601de9e2b0",
+				"tarball": "http://localhost:4873/prereleases-2/-/prereleases-2-1.0.0-next.21.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.0-next.23": {
+			"name": "prereleases-2",
+			"version": "1.0.0-next.23",
+			"_id": "prereleases-2@1.0.0-next.23",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-nrNUMR4lWRgUAGDWXGLlVTWQcaR4A7hkaxI/7rEwIJnW4T5fDS1yYmvjUWMkBjWHu8TJ0bTt9NMUdYqYopns1A==",
+				"shasum": "6ec3e2b9d8fdbf37b5f700d204f3f96d377b31c9",
+				"tarball": "http://localhost:4873/prereleases-2/-/prereleases-2-1.0.0-next.23.tgz"
+			},
+			"contributors": []
+		},
+		"0.5.0": {
+			"name": "prereleases-2",
+			"version": "0.5.0",
+			"_id": "prereleases-2@0.5.0",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-qfxTQjQi3yZC9UZimWrAyMWCb2O0JFlPMnnLBTSIxiUkD+RSCjsjv+rGgXHi/bWp/waFEE/L4IwN7BCO08+zCg==",
+				"shasum": "620c63e997def3b233075dcb32ee5b7094b5442d",
+				"tarball": "http://localhost:4873/prereleases-2/-/prereleases-2-0.5.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-02T19:08:33.101Z",
+		"created": "2023-11-02T19:07:07.617Z",
+		"1.0.0-next.0": "2023-11-02T19:07:07.617Z",
+		"1.0.0-next.1": "2023-11-02T19:07:13.738Z",
+		"1.0.0-next.3": "2023-11-02T19:07:19.907Z",
+		"1.0.0-next.7": "2023-11-02T19:07:24.590Z",
+		"1.0.0-next.9": "2023-11-02T19:07:29.439Z",
+		"1.0.0-next.11": "2023-11-02T19:07:37.325Z",
+		"1.0.0-next.12": "2023-11-02T19:07:42.905Z",
+		"1.0.0-next.15": "2023-11-02T19:07:47.755Z",
+		"1.0.0-next.17": "2023-11-02T19:07:52.320Z",
+		"1.0.0-next.18": "2023-11-02T19:08:02.315Z",
+		"1.0.0-next.19": "2023-11-02T19:08:07.441Z",
+		"1.0.0-next.20": "2023-11-02T19:08:14.471Z",
+		"1.0.0-next.21": "2023-11-02T19:08:17.531Z",
+		"1.0.0-next.23": "2023-11-02T19:08:21.822Z",
+		"0.5.0": "2023-11-02T19:08:33.101Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "0.5.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"prereleases-2-1.0.0-next.0.tgz": {
+			"shasum": "327d163d697f75906010f5546864024076224cdf",
+			"version": "1.0.0-next.0"
+		},
+		"prereleases-2-1.0.0-next.1.tgz": {
+			"shasum": "eabbf2f73b75737f44ff8c3b08c62461bddeea01",
+			"version": "1.0.0-next.1"
+		},
+		"prereleases-2-1.0.0-next.3.tgz": {
+			"shasum": "0572fb7f40429808365b7cc39448a5ba2dcb17a9",
+			"version": "1.0.0-next.3"
+		},
+		"prereleases-2-1.0.0-next.7.tgz": {
+			"shasum": "dc644f341cb32dab031cca06ce8670a8cd386854",
+			"version": "1.0.0-next.7"
+		},
+		"prereleases-2-1.0.0-next.9.tgz": {
+			"shasum": "ac5c8cd6ceb5b77a05372cc16f6695c6d64bc5fe",
+			"version": "1.0.0-next.9"
+		},
+		"prereleases-2-1.0.0-next.11.tgz": {
+			"shasum": "45a3a924bc6dff2788b04d0a7d7e16767c8e7a96",
+			"version": "1.0.0-next.11"
+		},
+		"prereleases-2-1.0.0-next.12.tgz": {
+			"shasum": "a4007cf89a941009c2cae134c084ddf268510517",
+			"version": "1.0.0-next.12"
+		},
+		"prereleases-2-1.0.0-next.15.tgz": {
+			"shasum": "6975e4b5a75386266119e53ff8403e93819e0c67",
+			"version": "1.0.0-next.15"
+		},
+		"prereleases-2-1.0.0-next.17.tgz": {
+			"shasum": "0f417fd15d82976924b6e10e0e96c88da9dcff4d",
+			"version": "1.0.0-next.17"
+		},
+		"prereleases-2-1.0.0-next.18.tgz": {
+			"shasum": "e98d315c4a41c5e1481f3c337fa89322d720d9be",
+			"version": "1.0.0-next.18"
+		},
+		"prereleases-2-1.0.0-next.19.tgz": {
+			"shasum": "020343d78a3d702b490b962cbc149e5454d15286",
+			"version": "1.0.0-next.19"
+		},
+		"prereleases-2-1.0.0-next.20.tgz": {
+			"shasum": "cea100c106c507545eb0c7a5a6a25e92dd813059",
+			"version": "1.0.0-next.20"
+		},
+		"prereleases-2-1.0.0-next.21.tgz": {
+			"shasum": "81a1dd9ccd3e982b573cdbcbb4900f601de9e2b0",
+			"version": "1.0.0-next.21"
+		},
+		"prereleases-2-1.0.0-next.23.tgz": {
+			"shasum": "6ec3e2b9d8fdbf37b5f700d204f3f96d377b31c9",
+			"version": "1.0.0-next.23"
+		},
+		"prereleases-2-0.5.0.tgz": {
+			"shasum": "620c63e997def3b233075dcb32ee5b7094b5442d",
+			"version": "0.5.0"
+		}
+	},
+	"_rev": "",
+	"_id": "prereleases-2",
+	"readme": "ERROR: No README data found!"
+}

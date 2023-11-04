@@ -35,8 +35,8 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs, void*);
 /* Pointer tags are used to indicate a Bun pointer versus a uSockets pointer */
 #define UNSET_BITS_49_UNTIL_64 0x0000FFFFFFFFFFFF
 #define CLEAR_POINTER_TAG(p) ((void *) ((uintptr_t) (p) & UNSET_BITS_49_UNTIL_64))
-#define LIKELY(cond) __builtin_expect((uint64_t)(void*)(cond), 1)
-#define UNLIKELY(cond) __builtin_expect((uint64_t)(void*)(cond), 0)
+#define LIKELY(cond) __builtin_expect((_Bool)(cond), 1)
+#define UNLIKELY(cond) __builtin_expect((_Bool)(cond), 0)
 
 #ifdef LIBUS_USE_EPOLL
 #define GET_READY_POLL(loop, index) (struct us_poll_t *) loop->ready_polls[index].data.ptr
@@ -194,6 +194,9 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs, void* tickC
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
     if (timeoutMs > 0) {
+        if (timeoutMs == INT64_MAX) {
+            timeoutMs = 0;
+        }
         loop->num_ready_polls = epoll_wait(loop->fd, loop->ready_polls, 1024, (int)timeoutMs);
     } else {
         loop->num_ready_polls = epoll_wait(loop->fd, loop->ready_polls, 1024, -1);
@@ -201,8 +204,10 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs, void* tickC
 #else
     if (timeoutMs > 0) {
         struct timespec ts = {0, 0};
-        ts.tv_sec = timeoutMs / 1000;
-        ts.tv_nsec = (timeoutMs % 1000) * 1000000;
+        if (timeoutMs != INT64_MAX) {
+            ts.tv_sec = timeoutMs / 1000;
+            ts.tv_nsec = (timeoutMs % 1000) * 1000000;
+        }
         loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, &ts);
     } else {
         loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, NULL);

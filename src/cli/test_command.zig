@@ -436,7 +436,7 @@ const Scanner = struct {
 
         // In this particular case, we don't actually care about non-ascii latin1 characters.
         // so we skip the ascii check
-        const slice = if (test_name_str.is8Bit()) test_name_str.latin1() else brk: {
+        const slice = brk: {
             zig_slice = test_name_str.toUTF8(bun.default_allocator);
             break :brk zig_slice.slice();
         };
@@ -580,6 +580,7 @@ pub const TestCommand = struct {
         var snapshot_file_buf = std.ArrayList(u8).init(ctx.allocator);
         var snapshot_values = Snapshots.ValuesHashMap.init(ctx.allocator);
         var snapshot_counts = bun.StringHashMap(usize).init(ctx.allocator);
+        JSC.isBunTest = true;
 
         var reporter = try ctx.allocator.create(CommandLineReporter);
         reporter.* = CommandLineReporter{
@@ -976,14 +977,18 @@ pub const TestCommand = struct {
                 vm.eventLoop().tick();
 
                 var prev_unhandled_count = vm.unhandled_error_counter;
-                while (vm.active_tasks > 0) {
-                    if (!jest.Jest.runner.?.has_pending_tests) jest.Jest.runner.?.drain();
+                while (vm.active_tasks > 0) : (vm.eventLoop().flushImmediateQueue()) {
+                    if (!jest.Jest.runner.?.has_pending_tests) {
+                        jest.Jest.runner.?.drain();
+                    }
                     vm.eventLoop().tick();
 
                     while (jest.Jest.runner.?.has_pending_tests) {
                         vm.eventLoop().autoTick();
                         if (!jest.Jest.runner.?.has_pending_tests) break;
                         vm.eventLoop().tick();
+                    } else {
+                        vm.eventLoop().tickImmediateTasks();
                     }
 
                     while (prev_unhandled_count < vm.unhandled_error_counter) {
@@ -991,6 +996,9 @@ pub const TestCommand = struct {
                         prev_unhandled_count = vm.unhandled_error_counter;
                     }
                 }
+
+                vm.eventLoop().flushImmediateQueue();
+
                 switch (vm.aggressive_garbage_collection) {
                     .none => {},
                     .mild => {

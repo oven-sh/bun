@@ -152,7 +152,7 @@ void JSTransformStream::destroy(JSC::JSCell* cell)
     thisObject->JSTransformStream::~JSTransformStream();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsTransformStreamConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsTransformStreamConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);

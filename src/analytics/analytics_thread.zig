@@ -332,7 +332,7 @@ pub const GenerateHeader = struct {
                 "IOPlatformExpertDevice",
             };
 
-            const result = try std.ChildProcess.exec(.{
+            const result = try std.ChildProcess.run(.{
                 .allocator = default_allocator,
                 .cwd = Fs.FileSystem.instance.top_level_dir,
                 .argv = std.mem.span(&cmds),

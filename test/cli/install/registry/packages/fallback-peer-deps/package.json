@@ -1,0 +1,45 @@
+{
+	"name": "fallback-peer-deps",
+	"versions": {
+		"1.0.0": {
+			"name": "fallback-peer-deps",
+			"version": "1.0.0",
+			"dependencies": {
+				"no-deps": "2.0.0"
+			},
+			"peerDependencies": {
+				"no-deps": "*"
+			},
+			"_id": "fallback-peer-deps@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-pyaG9Q608Sk+kHsL6jJsLmbDr3TsVhJ9fZMROEWHmRhjmsa2KqgImK+2242aSseQYHM7+EQ8NLWNQXmaZ9sA6w==",
+				"shasum": "7a535746f79113da58eb743f9d6dff501b95837e",
+				"tarball": "http://localhost:4873/fallback-peer-deps/-/fallback-peer-deps-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:07.857Z",
+		"created": "2023-11-01T22:05:07.857Z",
+		"1.0.0": "2023-11-01T22:05:07.857Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"fallback-peer-deps-1.0.0.tgz": {
+			"shasum": "7a535746f79113da58eb743f9d6dff501b95837e",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-00f106b6d39187fd",
+	"_id": "fallback-peer-deps",
+	"readme": "ERROR: No README data found!"
+}

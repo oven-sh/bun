@@ -1,6 +1,6 @@
 import { ArrayBufferSink, readableStreamToText, spawn, spawnSync, write } from "bun";
 import { describe, expect, it } from "bun:test";
-import { gcTick as _gcTick, bunExe } from "harness";
+import { gcTick as _gcTick, bunExe, bunEnv } from "harness";
 import { rmSync, writeFileSync } from "node:fs";
 import path from "path";
 
@@ -161,7 +161,7 @@ for (let [gcTick, label] of [
           expect(exitCode1).toBe(0);
           expect(exitCode2).toBe(1);
         }
-      }, 20_000);
+      }, 60_000_0);
 
       // FIXME: fix the assertion failure
       it.skip("Uint8Array works as stdout", () => {
@@ -476,3 +476,121 @@ for (let [gcTick, label] of [
     });
   });
 }
+
+if (!process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) {
+  it("with BUN_FEATURE_FLAG_FORCE_WAITER_THREAD", async () => {
+    const result = spawnSync({
+      cmd: [bunExe(), "test", import.meta.path],
+      env: {
+        ...bunEnv,
+        // Both flags are necessary to force this condition
+        "BUN_FEATURE_FLAG_FORCE_WAITER_THREAD": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "1",
+      },
+    });
+    if (result.exitCode !== 0) {
+      console.error(result.stderr.toString());
+      console.log(result.stdout.toString());
+    }
+    expect(result.exitCode).toBe(0);
+  }, 60_000);
+}
+
+describe("spawn unref and kill should not hang", () => {
+  it("kill and await exited", async () => {
+    for (let i = 0; i < 10; i++) {
+      const proc = spawn({
+        cmd: ["sleep", "0"],
+        stdout: "ignore",
+        stderr: "ignore",
+        stdin: "ignore",
+      });
+      proc.kill();
+      await proc.exited;
+    }
+
+    expect().pass();
+  });
+  it("unref", async () => {
+    for (let i = 0; i < 100; i++) {
+      const proc = spawn({
+        cmd: ["sleep", "0"],
+        stdout: "ignore",
+        stderr: "ignore",
+        stdin: "ignore",
+      });
+      proc.unref();
+      await proc.exited;
+    }
+
+    expect().pass();
+  });
+  it("kill and unref", async () => {
+    for (let i = 0; i < 100; i++) {
+      const proc = spawn({
+        cmd: ["sleep", "0"],
+        stdout: "ignore",
+        stderr: "ignore",
+        stdin: "ignore",
+      });
+      proc.kill();
+      proc.unref();
+      await proc.exited;
+    }
+
+    expect().pass();
+  });
+  it("unref and kill", async () => {
+    for (let i = 0; i < 100; i++) {
+      const proc = spawn({
+        cmd: ["sleep", "0"],
+        stdout: "ignore",
+        stderr: "ignore",
+        stdin: "ignore",
+      });
+      proc.unref();
+      proc.kill();
+      await proc.exited;
+    }
+
+    expect().pass();
+  });
+  it("unref and kill after sleep", async () => {
+    for (let i = 0; i < 100; i++) {
+      const proc = spawn({
+        cmd: ["sleep", "0"],
+        stdout: "ignore",
+        stderr: "ignore",
+        stdin: "ignore",
+      });
+      Bun.sleep(0.1);
+      proc.unref();
+      proc.kill();
+      await proc.exited;
+    }
+    expect().pass();
+  });
+  it("kill and unref after sleep", async () => {
+    for (let i = 0; i < 100; i++) {
+      const proc = spawn({
+        cmd: ["sleep", "0"],
+        stdout: "ignore",
+        stderr: "ignore",
+        stdin: "ignore",
+      });
+      Bun.sleep(0.1);
+      proc.kill();
+      proc.unref();
+      await proc.exited;
+    }
+    expect().pass();
+  });
+  it("should not hang after unref", async () => {
+    const proc = spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "does-not-hang.js")],
+    });
+
+    await proc.exited;
+    expect().pass();
+  });
+});

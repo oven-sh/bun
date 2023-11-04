@@ -153,6 +153,12 @@ struct us_socket_context_options_t {
     int ssl_prefer_low_memory_usage; /* Todo: rename to prefer_low_memory_usage and apply for TCP as well */
 };
 
+struct us_bun_verify_error_t {
+    long error;
+    const char* code;
+    const char* reason;
+};
+
 struct us_socket_events_t {
     struct us_socket_t *(*on_open)(struct us_socket_t *, int is_client, char *ip, int ip_length);
     struct us_socket_t *(*on_data)(struct us_socket_t *, char *data, int length);
@@ -166,11 +172,6 @@ struct us_socket_events_t {
     void (*on_handshake)(struct us_socket_t*, int success, struct us_bun_verify_error_t verify_error, void* custom_data);
 };
 
-struct us_bun_verify_error_t {
-    long error;
-    const char* code;
-    const char* reason;
-};
 
 struct us_bun_socket_context_options_t {
     const char *key_file_name;
@@ -231,7 +232,7 @@ void us_socket_context_on_long_timeout(int ssl, struct us_socket_context_t *cont
 void us_socket_context_on_connect_error(int ssl, struct us_socket_context_t *context,
     struct us_socket_t *(*on_connect_error)(struct us_socket_t *s, int code));
 
-void us_socket_context_on_handshake(int ssl, struct us_socket_context_t *context, void (*on_handshake)(struct us_socket_context_t *, int success, struct us_bun_verify_error_t verify_error, void* custom_data), void* custom_data);
+void us_socket_context_on_handshake(int ssl, struct us_socket_context_t *context, void (*on_handshake)(struct us_socket_t *, int success, struct us_bun_verify_error_t verify_error, void* custom_data), void* custom_data);
 
 /* Emitted when a socket has been half-closed */
 void us_socket_context_on_end(int ssl, struct us_socket_context_t *context, struct us_socket_t *(*on_end)(struct us_socket_t *s));
@@ -343,6 +344,9 @@ void *us_socket_get_native_handle(int ssl, struct us_socket_t *s);
  * Will call the on_writable callback of active socket context on failure to write everything off in one go.
  * Set hint msg_more if you have more immediate data to write. */
 int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length, int msg_more);
+
+/* Special path for non-SSL sockets. Used to send header and payload in one go. Works like us_socket_write. */
+int us_socket_write2(int ssl, struct us_socket_t *s, const char *header, int header_length, const char *payload, int payload_length);
 
 /* Set a low precision, high performance timer on a socket. A socket can only have one single active timer
  * at any given point in time. Will remove any such pre set timer */

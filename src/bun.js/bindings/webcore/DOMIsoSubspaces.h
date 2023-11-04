@@ -3,8 +3,8 @@
 
 #include "root.h"
 
-#include "wtf/FastMalloc.h"
-#include "wtf/Noncopyable.h"
+#include <wtf/FastMalloc.h>
+#include <wtf/Noncopyable.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -36,6 +36,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForNodeVMScript;
     std::unique_ptr<IsoSubspace> m_subspaceForCommonJSModuleRecord;
     std::unique_ptr<IsoSubspace> m_subspaceForJSMockImplementation;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSModuleMock;
     std::unique_ptr<IsoSubspace> m_subspaceForJSMockFunction;
     std::unique_ptr<IsoSubspace> m_subspaceForAsyncContextFrame;
     std::unique_ptr<IsoSubspace> m_subspaceForMockWithImplementationCleanupData;

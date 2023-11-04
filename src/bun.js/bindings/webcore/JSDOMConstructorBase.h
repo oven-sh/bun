@@ -20,7 +20,7 @@
 #pragma once
 
 #include "JSDOMGlobalObject.h"
-#include "JavaScriptCore/InternalFunction.h"
+#include <JavaScriptCore/InternalFunction.h>
 
 #include "ZigGlobalObject.h"
 

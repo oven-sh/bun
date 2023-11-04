@@ -1666,8 +1666,8 @@ pub const E = struct {
         /// JSX element children <div>{this_is_a_child_element}</div>
         children: ExprNodeList = ExprNodeList{},
 
-        /// key is the key prop like <ListItem key="foo">
-        key: ?ExprNodeIndex = null,
+        // needed to make sure parse and visit happen in the same order
+        key_prop_index: i32 = -1,
 
         flags: Flags.JSXElement.Bitset = Flags.JSXElement.Bitset{},
 

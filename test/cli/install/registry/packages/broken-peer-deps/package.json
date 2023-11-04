@@ -1,0 +1,42 @@
+{
+	"name": "broken-peer-deps",
+	"versions": {
+		"1.0.0": {
+			"name": "broken-peer-deps",
+			"version": "1.0.0",
+			"dependencies": {
+				"peer-deps": "1.0.0"
+			},
+			"_id": "broken-peer-deps@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-7+IFJM+Jw3P1+gKULI3cXYNaSWYZJp3fiWe9c5FxLFJbOHNX8gOllsSsm21ydPWzb0NZ0P4NN9CmPLBcSJhPdg==",
+				"shasum": "721d08a1fe5728e7e2dbd1a6872b4ae07b2dbd94",
+				"tarball": "http://localhost:4873/broken-peer-deps/-/broken-peer-deps-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:00.272Z",
+		"created": "2023-11-01T22:05:00.272Z",
+		"1.0.0": "2023-11-01T22:05:00.272Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"broken-peer-deps-1.0.0.tgz": {
+			"shasum": "721d08a1fe5728e7e2dbd1a6872b4ae07b2dbd94",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-2f7481c882a8d7b0",
+	"_id": "broken-peer-deps",
+	"readme": "ERROR: No README data found!"
+}

@@ -568,6 +568,7 @@ describe("spawn unref and kill should not hang", () => {
       proc.kill();
       await proc.exited;
     }
+    expect().pass();
   });
   it("kill and unref after sleep", async () => {
     for (let i = 0; i < 100; i++) {
@@ -582,5 +583,14 @@ describe("spawn unref and kill should not hang", () => {
       proc.unref();
       await proc.exited;
     }
+    expect().pass();
+  });
+  it("should not hang after unref", async () => {
+    const proc = spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "does-not-hang.js")],
+    });
+
+    await proc.exited;
+    expect().pass();
   });
 });

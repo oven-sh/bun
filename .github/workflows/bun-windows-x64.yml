@@ -12,7 +12,9 @@ env:
   cpu: native
   arch: x86_64
   tag: bun-windows-x64
-  canary: ${{ github.event.inputs.is-canary == false && 'false' || 'true' }}
+  # TODO: wire this up to workflow_dispatch.
+  # github's expression syntax makes this hard to set a default to true
+  canary: true
 
 on:
   push:
@@ -35,11 +37,11 @@ on:
       - "Dockerfile"
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
-    inputs:
-      is-canary:
-        type: boolean
-        description: Is Canary Build?
-        default: true
+    # inputs:
+    #   is-canary:
+    #     type: boolean
+    #     description: Is Canary Build?
+    #     default: true
 
 jobs:
   windows-zig:

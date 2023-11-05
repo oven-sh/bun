@@ -6,14 +6,30 @@ export TARGET_ARCH=${2:-x64}
 
 cd "$(dirname "${BASH_SOURCE[0]}")/../"
 
-OUT=$(realpath build-codegen-${TARGET_PLATFORM}-${TARGET_ARCH})
+OUT=build-codegen-${TARGET_PLATFORM}-${TARGET_ARCH}
 
 rm -rf "$OUT"
 mkdir -p "$OUT"
+mkdir -p "$OUT/"{codegen,js,tmp_functions,tmp_modules}
 
-bun ./src/codegen/bundle-functions.ts --debug=OFF "$OUT" &
+OUT=$(realpath "$OUT")
 
-bun ./src/codegen/bundle-modules.ts --debug=OFF "$OUT" &
+task() {
+  echo '$ '"$@"
+  "$@"
+  if [ "$?" != "0" ]; then
+    # some scripts are flaky, run them again
+    echo "!!! retrying"
+    "$@"
+    if [ "$?" != "0" ]; then
+      echo "!!! failed"
+      exit 1
+    fi
+  fi
+}
+
+task bun ./src/codegen/bundle-functions.ts --debug=OFF "$OUT"
+task bun ./src/codegen/bundle-modules.ts --debug=OFF "$OUT"
 
 rm -rf "$OUT/tmp_functions"
 rm -rf "$OUT/tmp_modules"
@@ -25,7 +41,7 @@ CLASSES=(
   ./src/bun.js/webcore/*.classes.ts
   ./src/bun.js/node/*.classes.ts
 )
-bun "./src/codegen/generate-classes.ts" ${CLASSES[@]} "$OUT/codegen" &
+task bun "./src/codegen/generate-classes.ts" ${CLASSES[@]} "$OUT/codegen"
 
 LUTS=(
   ./src/bun.js/bindings/BunObject.cpp
@@ -36,9 +52,11 @@ LUTS=(
   ./src/bun.js/bindings/ProcessBindingNatives.cpp
 )
 for lut in ${LUTS[@]}; do
-  result=$(basename $lut | sed 's/.lut.txt/.cpp/' | sed 's/.cpp/.h/')
-  echo bun "./src/codegen/create-hash-table.ts" "$lut" "$OUT/codegen/$result"
+  result=$(basename $lut | sed 's/.lut.txt/.cpp/' | sed 's/.cpp/.lut.h/')
+  task bun "./src/codegen/create-hash-table.ts" "$lut" "$OUT/codegen/$result"
 done
+
+task bun "./src/codegen/generate-jssink.ts" "$OUT/codegen"
 
 wait
 

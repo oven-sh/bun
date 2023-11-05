@@ -452,11 +452,7 @@ static String computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObje
     // We need to sourcemap it if it's a GlobalObject.
     if (globalObject == lexicalGlobalObject) {
         size_t framesCount = stackTrace.size();
-#if OS(WINDOWS) // MSVC workaround
-        ZigStackFrame* remappedFrames = new ZigStackFrame[framesCount];
-#else
         ZigStackFrame remappedFrames[framesCount];
-#endif
         for (int i = 0; i < framesCount; i++) {
             memset(remappedFrames + i, 0, sizeof(ZigStackFrame));
             remappedFrames[i].source_url = Bun::toString(lexicalGlobalObject, stackTrace.at(i).sourceURL());
@@ -484,9 +480,6 @@ static String computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObje
                 callSite->setLineNumber(lineNumber);
             }
         }
-#if OS(WINDOWS) // MSVC workaround
-        delete remappedFrames;
-#endif
     }
 
     globalObject->formatStackTrace(vm, lexicalGlobalObject, errorObject, callSites, prepareStackTrace);

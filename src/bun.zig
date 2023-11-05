@@ -1052,7 +1052,6 @@ pub const fs = @import("./fs.zig");
 pub const Bundler = bundler.Bundler;
 pub const bundler = @import("./bundler.zig");
 pub const which = @import("./which.zig").which;
-pub const is_executable_fileZ = @import("./which.zig").is_executable_file;
 pub const js_parser = @import("./js_parser.zig");
 pub const js_printer = @import("./js_printer.zig");
 pub const js_lexer = @import("./js_lexer.zig");
@@ -1140,11 +1139,13 @@ pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
 /// On Linux, when `/proc/self/fd` is not available, this function will attempt to use `fchdir` and `getcwd` to get the path instead.
 pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
     const fd = fdcast(toFD(fd_));
+
     if (comptime Environment.isWindows) {
         var temp: [MAX_PATH_BYTES]u8 = undefined;
         var temp_slice = try std.os.getFdPath(fd, &temp);
         return path.normalizeBuf(temp_slice, buf, .loose);
     }
+
     if (comptime !Environment.isLinux) {
         return try std.os.getFdPath(fd, buf);
     }
@@ -1990,3 +1991,17 @@ pub fn makePath(dir: std.fs.Dir, sub_path: []const u8) !void {
 }
 
 pub const Async = @import("async");
+
+/// This is a helper for writing path string literals that are compatible with Windows.
+/// Returns the string as-is on linux, on windows replace `/` with `\`
+pub inline fn pathLiteral(comptime literal: anytype) *const [literal.len:0]u8 {
+    if (!Environment.isWindows) return literal;
+    return comptime {
+        var buf: [literal.len:0]u8 = undefined;
+        for (literal, 0..) |c, i| {
+            buf[i] = if (c == '/') '\\' else c;
+        }
+        buf[buf.len] = 0;
+        return &buf;
+    };
+}

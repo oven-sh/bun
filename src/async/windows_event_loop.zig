@@ -183,6 +183,8 @@ pub const FilePoll = struct {
         this.deinitWithVM(vm);
     }
 
+    pub const deinitForceUnregister = deinit;
+
     pub fn unregister(this: *FilePoll, loop: *Loop) bool {
         _ = loop;
         uv.uv_unref(@ptrFromInt(this.fd));

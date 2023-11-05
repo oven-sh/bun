@@ -1,4 +1,4 @@
-import { define } from "../scripts/class-definitions";
+import { define } from "../../codegen/class-definitions";
 
 export default [
   define({
@@ -48,6 +48,9 @@ export default [
     klass: {},
     JSType: "0b11101110",
     proto: {
+      canvas: {
+        getter: "getCanvas",
+      },
       strokeStyle: {
         getter: "getStrokeStyle",
         setter: "setStrokeStyle",

@@ -3753,21 +3753,6 @@ pub const Timer = struct {
         return TimerObject.init(globalThis, id, .setTimeout, interval, wrappedCallback, arguments);
     }
 
-    pub fn setImmediate(
-        globalThis: *JSGlobalObject,
-        callback: JSValue,
-        arguments: JSValue,
-    ) callconv(.C) JSValue {
-        JSC.markBinding(@src());
-        const id = globalThis.bunVM().timer.last_id;
-        globalThis.bunVM().timer.last_id +%= 1;
-
-        const wrappedCallback = callback.withAsyncContextIfNeeded(globalThis);
-        Timer.set(id, globalThis, wrappedCallback, 0, arguments, false) catch return .undefined;
-
-        return TimerObject.init(globalThis, id, .setImmediate, 0, wrappedCallback, arguments);
-    }
-
     pub fn setInterval(
         globalThis: *JSGlobalObject,
         callback: JSValue,

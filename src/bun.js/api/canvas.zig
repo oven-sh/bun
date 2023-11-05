@@ -1,5 +1,6 @@
 const std = @import("std");
 const bun = @import("root").bun;
+const Environment = bun.Environment;
 const strings = bun.strings;
 const string = bun.string;
 const Output = bun.Output;
@@ -20,6 +21,447 @@ var initializeSDL = std.once(struct {
         _ = c.SDL_Init(c.SDL_INIT_VIDEO);
     }
 }.call);
+
+pub const CSS = struct {
+    pub const UnitType = enum(u8) {
+        unknown,
+        number,
+        integer,
+        percentage,
+        em,
+        ex,
+        px,
+        cm,
+        mm,
+        in,
+        pt,
+        pc,
+        deg,
+        rad,
+        grad,
+        ms,
+        s,
+        hz,
+        khz,
+        dimension,
+        string,
+        uri,
+        ident,
+        attr,
+        rgbcolor,
+
+        vw,
+        vh,
+        vmin,
+        vmax,
+        vb,
+        vi,
+        svw,
+        svh,
+        svmin,
+        svmax,
+        svb,
+        svi,
+        lvw,
+        lvh,
+        lvmin,
+        lvmax,
+        lvb,
+        lvi,
+        dvw,
+        dvh,
+        dvmin,
+        dvmax,
+        dvb,
+        dvi,
+
+        // first_viewport_unit_type = UnitType.vw,
+        // last_viewport_unit_type = UnitType.dvi,
+
+        cqw,
+        cqh,
+        cqi,
+        cqb,
+        cqmin,
+        cqmax,
+
+        dppx,
+        x,
+        dpi,
+        dpcm,
+        fr,
+        q,
+        lh,
+        rlh,
+
+        custom_ident,
+
+        turn,
+        rem,
+        rex,
+        cap,
+        rcap,
+        ch,
+        rch,
+        ic,
+        ric,
+
+        counter_name,
+
+        calc,
+        calc_percentage_with_number,
+        calc_percentage_with_length,
+
+        font_family,
+
+        unresolved_color,
+
+        property_id,
+        value_id,
+
+        // This value is used to handle quirky margins in reflow roots (body, td, and th) like WinIE.
+        // The basic idea is that a stylesheet can use the value __qem (for quirky em) instead of em.
+        // When the quirky value is used, if you're in quirks mode, the margin will collapse away
+        // inside a table cell. This quirk is specified in the HTML spec but our impl is different.
+        quirky_em,
+
+        // Note that CSSValue allocates 7 bits for m_primitiveUnitType, so there can be no value here > 127.
+    };
+
+    pub fn ParserFastPaths(comptime T: type) type {
+        const CharType = T;
+        const StrType = []const T;
+
+        return struct {
+            pub fn parseHexColor(hex: StrType) ?Color {
+                if (hex.len != 3 and hex.len != 4 and hex.len != 6 and hex.len != 8) return null;
+                var value: u32 = 0;
+                for (hex) |digit| {
+                    if (!strings.isASCIIHexDigit(CharType, digit)) return null;
+                    const hex_value = strings.toASCIIHexValue(CharType, digit);
+                    value <<= 4;
+                    value |= hex_value;
+
+                    // #abc -> #aabbcc
+                    // #abcd -> #ddaabbcc
+                    if (hex.len == 3 or hex.len == 4) {
+                        value <<= 4;
+                        value |= hex_value;
+                    }
+                }
+
+                return switch (hex.len) {
+                    3, 6 => Color.argb(value | 0xff000000),
+                    4, 8 => Color.rgba(value),
+                    else => unreachable,
+                };
+            }
+
+            pub fn parseNumericColor(str: StrType) ?Color {
+                if (str.len >= 4 and str[0] == '#') {
+                    if (parseHexColor(str[1..])) |color| {
+                        return color;
+                    }
+                }
+
+                // assume strict == true, no-quirks mode
+
+                // if (!strict and (str.len == 3 or str.len == 6)) {
+                //     if (parseHexColor(str)) |color| {
+                //         return color;
+                //     }
+                // }
+
+                var expect = UnitType.unknown;
+
+                if (mightBeRGBA(str)) {
+                    var remain = str[5..];
+                    const red = parseColorIntOrPercentage(&remain, ',', &expect) orelse return null;
+                    const green = parseColorIntOrPercentage(&remain, ',', &expect) orelse return null;
+                    const blue = parseColorIntOrPercentage(&remain, ',', &expect) orelse return null;
+                    const alpha = parseAlphaValue(&remain, ')') orelse return null;
+                    if (remain.len != 0) {
+                        return null;
+                    }
+
+                    return Color.fromRGBA(red, green, blue, alpha);
+                }
+
+                if (mightBeRGB(str)) {
+                    var remain = str[4..];
+                    const red = parseColorIntOrPercentage(&remain, ',', &expect) orelse return null;
+                    const green = parseColorIntOrPercentage(&remain, ',', &expect) orelse return null;
+                    const blue = parseColorIntOrPercentage(&remain, ')', &expect) orelse return null;
+                    if (remain.len != 0) {
+                        return null;
+                    }
+
+                    return Color.fromRGBA(red, green, blue, 255);
+                }
+
+                return null;
+            }
+
+            fn parseColorIntOrPercentage(_remain: *StrType, terminator: u8, expect: *UnitType) ?u8 {
+                var remain = _remain.*;
+
+                var local_value: f64 = 0;
+                var negative = false;
+                while (remain.len != 0 and strings.isASCIIWhitespace(CharType, remain[0])) {
+                    remain = remain[1..];
+                }
+
+                if (remain.len != 0 and remain[0] == '-') {
+                    negative = true;
+                    remain = remain[1..];
+                }
+
+                if (remain.len == 0 or !strings.isASCIIDigit(CharType, remain[0])) {
+                    return null;
+                }
+
+                while (remain.len != 0 and strings.isASCIIDigit(CharType, remain[0])) {
+                    const new_value: f64 = local_value * @as(f64, 10) + @as(f64, @floatFromInt(remain[0] - '0'));
+                    remain = remain[1..];
+                    if (new_value >= @as(f64, 255)) {
+                        // Clamp values at 255.
+                        local_value = 255;
+                        while (remain.len != 0 and strings.isASCIIDigit(CharType, remain[0])) {
+                            remain = remain[1..];
+                        }
+                        break;
+                    }
+
+                    local_value = new_value;
+                }
+
+                if (remain.len == 0) {
+                    return null;
+                }
+
+                if (expect.* == .number and (remain[0] == '.' or remain[0] == '%')) {
+                    return null;
+                }
+
+                if (remain[0] == '.') {
+                    // We already parsed the integral part, try to parse
+                    // the fraction part of the percentage value.
+                    var percentage: f64 = 0;
+                    const num_characters_parsed = parseDouble(remain, '%', &percentage);
+                    if (num_characters_parsed == 0) {
+                        return null;
+                    }
+                    remain = remain[num_characters_parsed..];
+                    if (remain[0] != '%') {
+                        return null;
+                    }
+                    local_value += percentage;
+                }
+
+                if (expect.* == .percentage and remain[0] != '%') {
+                    return null;
+                }
+
+                if (remain[0] == '%') {
+                    expect.* = .percentage;
+                    local_value = local_value / 100 * 255;
+                    if (local_value > 255) {
+                        local_value = 255;
+                    }
+                    remain = remain[1..];
+                } else {
+                    expect.* = .number;
+                }
+
+                while (remain.len != 0 and strings.isASCIIWhitespace(CharType, remain[0])) {
+                    remain = remain[1..];
+                }
+
+                if (remain.len == 0) {
+                    return null;
+                } else {
+                    if (remain[0] != terminator) {
+                        return null;
+                    }
+                    remain = remain[1..];
+                }
+
+                _remain.* = remain;
+
+                if (comptime Environment.allow_assert) {
+                    std.debug.assert(local_value <= 255);
+                }
+
+                // convertPrescaledSRGBAFloatToSRGBAByte(local_value)
+                return if (negative) 0 else std.math.clamp(@as(u8, @intFromFloat(@round(local_value))), 0, 255);
+            }
+
+            fn parseAlphaValue(_remain: *StrType, terminator: u8) ?u8 {
+                var remain = _remain.*;
+                defer _remain.* = remain;
+
+                while (remain.len != 0 and strings.isASCIIWhitespace(CharType, remain[0])) {
+                    remain = remain[1..];
+                }
+
+                var negative = false;
+
+                if (remain.len != 0 and remain[0] == '-') {
+                    negative = true;
+                    remain = remain[1..];
+                }
+
+                if (remain.len < 2) {
+                    return null;
+                }
+
+                if (remain[remain.len - 1] != terminator or !strings.isASCIIDigit(CharType, remain[remain.len - 2])) {
+                    return null;
+                }
+
+                if (remain[0] != '0' and remain[0] != '1' and remain[0] != '.') {
+                    if (checkForValidDouble(remain, terminator) != 0) {
+                        remain = remain[remain.len..];
+                        return if (negative) 0 else 255;
+                    }
+
+                    return null;
+                }
+
+                if (remain.len == 2 and remain[0] != '.') {
+                    const result: u8 = if (!negative and remain[0] == '1') 255 else 0;
+                    remain = remain[remain.len..];
+                    return result;
+                }
+
+                if (isTenthAlpha(remain[1..])) {
+                    const tenth_alpha_values = &[_]u8{ 0, 26, 51, 77, 102, 128, 153, 179, 204, 230 };
+                    const result: u8 = if (negative) 0 else tenth_alpha_values[remain[remain.len - 2] - '0'];
+                    remain = remain[remain.len..];
+                    return result;
+                }
+
+                var alpha: f64 = 0;
+                if (parseDouble(remain, terminator, &alpha) == 0) {
+                    return null;
+                }
+
+                remain = remain[remain.len..];
+
+                // convertFloatToAlpha<u8>(alpha)
+                return if (negative) 0 else std.math.clamp(@as(u8, @intFromFloat(@round(alpha * 255))), 0, 255);
+            }
+
+            fn isTenthAlpha(str: StrType) bool {
+                // "X.X"
+                if (str.len == 3 and str[0] == '0' and str[1] == '.' and strings.isASCIIDigit(CharType, str[2])) {
+                    return true;
+                }
+
+                // ".X"
+                if (str.len == 2 and str[0] == '.' and strings.isASCIIDigit(CharType, str[1])) {
+                    return true;
+                }
+
+                return false;
+            }
+
+            fn parseDouble(str: StrType, terminator: u8, value: *f64) usize {
+                const length = checkForValidDouble(str, terminator);
+                if (length == 0) {
+                    return 0;
+                }
+
+                var position: usize = 0;
+                var local_value: f64 = 0;
+
+                // The consumed characters here are guaranteed to be
+                // ASCII digits with or without a decimal mark
+                while (position < length) : (position += 1) {
+                    if (str[position] == '.') {
+                        break;
+                    }
+
+                    local_value = local_value * @as(f64, 10) + @as(f64, @floatFromInt(str[position] - '0'));
+                }
+
+                position += 1;
+                if (position == length) {
+                    value.* = local_value;
+                    return length;
+                }
+
+                var fraction: f64 = 0;
+                var scale: f64 = 1;
+
+                var max_scale: f64 = 1_000_000;
+                while (position < length and scale < max_scale) {
+                    fraction = fraction * @as(f64, 10) + @as(f64, @floatFromInt(str[position] - '0'));
+                    position += 1;
+                    scale *= 10;
+                }
+
+                value.* = local_value + fraction / scale;
+                return length;
+            }
+
+            fn checkForValidDouble(str: StrType, terminator: u8) usize {
+                if (str.len < 1) {
+                    return 0;
+                }
+
+                var decimal_mark_seen = false;
+                var processed_length: usize = 0;
+
+                for (str, 0..) |digit, i| {
+                    if (digit == terminator) {
+                        processed_length = i;
+                        break;
+                    }
+
+                    if (!strings.isASCIIDigit(CharType, digit)) {
+                        if (!decimal_mark_seen and digit == '.') {
+                            decimal_mark_seen = true;
+                        } else {
+                            return 0;
+                        }
+                    }
+                }
+
+                if (decimal_mark_seen and processed_length == 1) {
+                    return 0;
+                }
+
+                return processed_length;
+            }
+
+            fn mightBeRGBA(str: StrType) bool {
+                if (str.len < 5) return false;
+                return str[4] == '(' and
+                    strings.isASCIIAlphaCaselessEqual(CharType, str[0], 'r') and
+                    strings.isASCIIAlphaCaselessEqual(CharType, str[1], 'g') and
+                    strings.isASCIIAlphaCaselessEqual(CharType, str[2], 'b') and
+                    strings.isASCIIAlphaCaselessEqual(CharType, str[3], 'a');
+            }
+
+            fn mightBeRGB(str: StrType) bool {
+                if (str.len < 4) return false;
+                return str[3] == '(' and
+                    strings.isASCIIAlphaCaselessEqual(CharType, str[0], 'r') and
+                    strings.isASCIIAlphaCaselessEqual(CharType, str[1], 'g') and
+                    strings.isASCIIAlphaCaselessEqual(CharType, str[2], 'b');
+            }
+
+            pub fn parseSimpleColor(str: StrType) ?Color {
+                if (parseNumericColor(str)) |color| {
+                    return color;
+                }
+
+                return null;
+            }
+        };
+    }
+};
 
 const Color = union(enum) {
     rgba: u32,
@@ -46,25 +488,6 @@ const Color = union(enum) {
         };
     }
 
-    fn shift(this: Color, comptime p: @TypeOf(.enum_literal)) u5 {
-        return switch (this) {
-            .rgba => switch (p) {
-                .r => 24,
-                .g => 16,
-                .b => 8,
-                .a => 0,
-                else => @compileError("must be r, g, b, or a"),
-            },
-            .argb => switch (p) {
-                .a => 24,
-                .r => 16,
-                .g => 8,
-                .b => 0,
-                else => @compileError("must be r, g, b, or a"),
-            },
-        };
-    }
-
     pub fn b(this: Color) u8 {
         return switch (this) {
             .rgba => |color| @truncate(color >> 8),
@@ -86,8 +509,17 @@ const Color = union(enum) {
         return .{ .argb = color };
     }
 
-    pub fn rgb(color: u32) Color {
-        return .{ .argb = 0xff000000 | color };
+    pub fn fromRGBA(red: u8, green: u8, blue: u8, alpha: u8) Color {
+        var value: u32 = 0;
+        value <<= 4;
+        value |= red;
+        value <<= 4;
+        value |= blue;
+        value <<= 4;
+        value |= green;
+        value <<= 4;
+        value |= alpha;
+        return rgba(value);
     }
 
     pub fn fromJS(value: JSValue, global: *JSGlobalObject) ?Color {
@@ -96,48 +528,14 @@ const Color = union(enum) {
                 return color;
             }
 
-            const length = str.length();
-            if (length >= 4 and str.hasPrefixComptime("#")) brk: {
-                const hex_length = length - 1;
-                if (hex_length != 3 and hex_length != 4 and hex_length != 6 and hex_length != 8) break :brk;
-                if (str.is8Bit()) {
-                    var hex = str.byteSlice()[1..];
-                    var hex_value: u32 = 0;
-                    for (hex) |digit| {
-                        if (!std.ascii.isHex(digit)) break :brk;
-                        hex_value <<= 4;
-                        hex_value |= if (digit < 'A') digit - '0' else (digit - 'A' + 10) & 0xf;
-                    }
-                    switch (hex_length) {
-                        3 => {
-                            std.debug.print("TODO: hex colors with 3 digits\n", .{});
-                            break :brk;
-                        },
-                        4 => {
-                            std.debug.print("TODO: hex colors with 4 digits\n", .{});
-                            break :brk;
-                        },
-                        6 => return rgb(hex_value),
-                        8 => return rgba(hex_value),
-                        else => unreachable,
-                    }
-                }
+            if (str.is8Bit()) {
+                return CSS.ParserFastPaths(u8).parseSimpleColor(str.byteSlice());
             }
 
-            if (str.hasPrefixComptime("rgba(")) {
-                // parse rgba color
-            }
-
-            // assume never in quirks mode
-            // if (str.hasPrefixComptime("rgb(")) {}
-
+            return CSS.ParserFastPaths(u16).parseSimpleColor(str.utf16());
         }
 
         return null;
-    }
-
-    pub fn maybeRGB(comptime T: type, characters: []T) bool {
-        _ = characters;
     }
 
     pub const Names = bun.ComptimeStringMap(Color, .{
@@ -318,33 +716,12 @@ pub const Canvas = struct {
     window: *c.SDL_Window = undefined,
     renderer: *c.SDL_Renderer = undefined,
 
-    fps: struct {
-        pub const max_ticks = 100;
-        ticks: [max_ticks]f64 = .{0} ** max_ticks,
-        index: usize = 0,
-        sum: f64 = 0,
-
-        pub fn get(this: *@This(), tick: f64) f64 {
-            this.sum -= this.ticks[this.index];
-            this.sum += tick;
-            this.ticks[this.index] = tick;
-            this.index += 1;
-            if (this.index == max_ticks) {
-                this.index = 0;
-            }
-
-            return this.sum / @as(f64, @floatFromInt(max_ticks));
-        }
-    },
-
     pub fn constructor(global: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) ?*Canvas {
         log("Canvas.constructor", .{});
 
         const args = callFrame.arguments(5).slice();
 
-        var canvas = Canvas{
-            .fps = .{},
-        };
+        var canvas = Canvas{};
 
         switch (args.len) {
             0, 1 => {},
@@ -439,12 +816,8 @@ pub const Canvas = struct {
         }
 
         const current_time: f64 = @floatFromInt(global.bunVM().origin_timer.read());
-        const fps = canvas.fps.get(current_time - canvas.previous_time);
         const delta = (current_time - canvas.previous_time) / @as(f64, 1000000000.0);
         canvas.previous_time = current_time;
-
-        var buf: [1000:0]u8 = undefined;
-        c.SDL_SetWindowTitle(canvas.window, std.fmt.bufPrintZ(&buf, "fps: {d}", .{fps}) catch unreachable);
 
         const res = callback.call(global, &[_]JSValue{JSValue.jsNumber(delta)});
         if (res.isException(global.vm())) {
@@ -542,7 +915,7 @@ pub const Canvas = struct {
             return .zero;
         }
 
-        const context = CanvasRenderingContext2D.create(this.window, this.renderer) orelse {
+        const context = CanvasRenderingContext2D.create(this) orelse {
             global.throw("Failed to create 2d rendering context", .{});
             return .zero;
         };
@@ -640,7 +1013,7 @@ pub const CanvasRenderingContext2D = struct {
     const log = Output.scoped(.CanvasRenderingContext2D, false);
     pub usingnamespace JSC.Codegen.JSCanvasRenderingContext2D;
 
-    window: *c.SDL_Window,
+    canvas: *Canvas,
     renderer: *c.SDL_Renderer,
 
     stroke_style: JSValue = .undefined,
@@ -648,16 +1021,16 @@ pub const CanvasRenderingContext2D = struct {
     fill_style: JSValue = .undefined,
     cached_fill_color: ?Color = null,
 
-    const clear_color = Color.rgb(0xffffff);
-    const default_color = Color.rgba(0x000000ff);
+    const clear_color = Color.rgba(0xffffffff);
+    const default_color = Color.rgba(0xaaaaaaaa);
 
-    pub fn create(window: *c.SDL_Window, renderer: *c.SDL_Renderer) ?*CanvasRenderingContext2D {
+    pub fn create(canvas: *Canvas) ?*CanvasRenderingContext2D {
         log("create", .{});
 
         var context = bun.default_allocator.create(CanvasRenderingContext2D) catch unreachable;
         context.* = CanvasRenderingContext2D{
-            .window = window,
-            .renderer = renderer,
+            .canvas = canvas,
+            .renderer = canvas.renderer,
         };
 
         return context;
@@ -693,6 +1066,10 @@ pub const CanvasRenderingContext2D = struct {
         this.fill_style = value;
         this.cached_fill_color = null;
         return true;
+    }
+
+    pub fn getCanvas(this: *CanvasRenderingContext2D, global: *JSGlobalObject) callconv(.C) JSValue {
+        return this.canvas.toJS(global);
     }
 
     pub fn clearRect(this: *CanvasRenderingContext2D, global: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {

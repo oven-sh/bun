@@ -33,6 +33,7 @@
     macro("node:string_decoder"_s, NodeStringDecoder) \
     macro("node:util/types"_s, NodeUtilTypes)  \
     macro("utf-8-validate"_s, UTF8Validate) \
+    macro("bun:canvas"_s, BunCanvas) \
 
 #if ASSERT_ENABLED
 

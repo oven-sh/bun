@@ -2076,6 +2076,7 @@ pub const ModuleLoader = struct {
                 .@"node:util/types" => return jsSyntheticModule(.@"node:util/types", specifier),
                 .@"node:constants" => return jsSyntheticModule(.@"node:constants", specifier),
                 .@"bun:jsc" => return jsSyntheticModule(.@"bun:jsc", specifier),
+                .@"bun:canvas" => return jsSyntheticModule(.@"bun:canvas", specifier),
 
                 // These are defined in src/js/*
                 .@"bun:ffi" => return jsSyntheticModule(.@"bun:ffi", specifier),
@@ -2251,6 +2252,7 @@ pub const HardcodedModule = enum {
     bun,
     @"bun:ffi",
     @"bun:jsc",
+    @"bun:canvas",
     @"bun:main",
     @"bun:sqlite",
     @"detect-libc",
@@ -2324,6 +2326,7 @@ pub const HardcodedModule = enum {
             .{ "bun", HardcodedModule.bun },
             .{ "bun:ffi", HardcodedModule.@"bun:ffi" },
             .{ "bun:jsc", HardcodedModule.@"bun:jsc" },
+            .{ "bun:canvas", HardcodedModule.@"bun:canvas" },
             .{ "bun:main", HardcodedModule.@"bun:main" },
             .{ "bun:sqlite", HardcodedModule.@"bun:sqlite" },
             .{ "detect-libc", HardcodedModule.@"detect-libc" },
@@ -2535,6 +2538,7 @@ pub const HardcodedModule = enum {
             .{ "bun", .{ .path = "bun", .tag = .bun } },
             .{ "bun:ffi", .{ .path = "bun:ffi" } },
             .{ "bun:jsc", .{ .path = "bun:jsc" } },
+            .{ "bun:canvas", .{ .path = "bun:canvas" } },
             .{ "bun:sqlite", .{ .path = "bun:sqlite" } },
             .{ "bun:wrap", .{ .path = "bun:wrap" } },
             .{ "ffi", .{ .path = "bun:ffi" } },

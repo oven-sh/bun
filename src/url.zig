@@ -841,7 +841,7 @@ pub const PercentEncoding = struct {
             switch (input[i]) {
                 '%' => {
                     if (comptime fault_tolerant) {
-                        if (!(i + 3 <= input.len and strings.isASCIIHexDigit(input[i + 1]) and strings.isASCIIHexDigit(input[i + 2]))) {
+                        if (!(i + 3 <= input.len and strings.isASCIIHexDigit(u8, input[i + 1]) and strings.isASCIIHexDigit(u8, input[i + 2]))) {
                             // i do not feel good about this
                             // create-react-app's public/index.html uses %PUBLIC_URL% in various tags
                             // This is an invalid %-encoded string, intended to be swapped out at build time by webpack-html-plugin
@@ -858,11 +858,11 @@ pub const PercentEncoding = struct {
                             return error.DecodingError;
                         }
                     } else {
-                        if (!(i + 3 <= input.len and strings.isASCIIHexDigit(input[i + 1]) and strings.isASCIIHexDigit(input[i + 2])))
+                        if (!(i + 3 <= input.len and strings.isASCIIHexDigit(u8, input[i + 1]) and strings.isASCIIHexDigit(u8, input[i + 2])))
                             return error.DecodingError;
                     }
 
-                    try writer.writeByte((strings.toASCIIHexValue(input[i + 1]) << 4) | strings.toASCIIHexValue(input[i + 2]));
+                    try writer.writeByte((strings.toASCIIHexValue(u8, input[i + 1]) << 4) | strings.toASCIIHexValue(u8, input[i + 2]));
                     i += 3;
                     written += 1;
                     continue;

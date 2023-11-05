@@ -4442,16 +4442,38 @@ pub const StringArrayByIndexSorter = struct {
     }
 };
 
-pub fn isASCIIHexDigit(c: u8) bool {
-    return std.ascii.isHex(c);
+pub fn toASCIILowerUnchecked(comptime T: type, character: T) T {
+    return character | 0x20;
 }
 
-pub fn toASCIIHexValue(character: u8) u8 {
-    if (comptime Environment.allow_assert) std.debug.assert(isASCIIHexDigit(character));
+pub fn isASCIIDigit(comptime T: type, character: T) bool {
+    return character >= '0' and character <= '9';
+}
+
+pub fn isASCIIHexDigit(comptime T: type, digit: T) bool {
+    return (digit >= '0' and digit <= '9') or (toASCIILowerUnchecked(T, digit) >= 'a' and toASCIILowerUnchecked(T, digit) <= 'f');
+}
+
+pub fn toASCIIHexValue(comptime T: type, _character: T) u8 {
+    if (comptime Environment.allow_assert) {
+        std.debug.assert(isASCIIHexDigit(T, _character));
+    }
+    const character: u8 = @intCast(_character);
     return switch (character) {
         0...('A' - 1) => character - '0',
         else => (character - 'A' + 10) & 0xF,
     };
+}
+
+pub fn isASCIIWhitespace(comptime T: type, character: T) bool {
+    return character == ' ' or character == '\n' or character == '\t' or character == '\r' or character == 0x0C;
+}
+
+pub fn isASCIIAlphaCaselessEqual(comptime T: type, character: T, expectedASCIILowercaseLetter: u8) bool {
+    if (comptime Environment.allow_assert) {
+        std.debug.assert(toASCIILowerUnchecked(T, expectedASCIILowercaseLetter) == expectedASCIILowercaseLetter);
+    }
+    return toASCIILowerUnchecked(T, character) == expectedASCIILowercaseLetter;
 }
 
 pub inline fn utf8ByteSequenceLength(first_byte: u8) u3 {

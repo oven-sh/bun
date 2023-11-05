@@ -32,8 +32,6 @@ pub const API = struct {
     pub const JSBundler = @import("./bun.js/api/JSBundler.zig").JSBundler;
     pub const BuildArtifact = @import("./bun.js/api/JSBundler.zig").BuildArtifact;
     pub const JSTranspiler = @import("./bun.js/api/JSTranspiler.zig");
-    pub const Canvas = @import("./bun.js/api/canvas.zig").Canvas;
-    pub const CanvasRenderingContext2D = @import("./bun.js/api/canvas.zig").CanvasRenderingContext2D;
     pub const HTTPServer = @import("./bun.js/api/server.zig").HTTPServer;
     pub const ServerConfig = @import("./bun.js/api/server.zig").ServerConfig;
     pub const ServerWebSocket = @import("./bun.js/api/server.zig").ServerWebSocket;
@@ -47,6 +45,8 @@ pub const API = struct {
     pub const TCPSocket = @import("./bun.js/api/bun/socket.zig").TCPSocket;
     pub const TLSSocket = @import("./bun.js/api/bun/socket.zig").TLSSocket;
     pub const Listener = @import("./bun.js/api/bun/socket.zig").Listener;
+    pub const Canvas = @import("./bun.js/api/canvas.zig").Canvas;
+    pub const CanvasRenderingContext2D = @import("./bun.js/api/canvas.zig").CanvasRenderingContext2D;
 };
 pub const DNS = @import("./bun.js/api/bun/dns_resolver.zig");
 pub const FFI = @import("./bun.js/api/ffi.zig").FFI;

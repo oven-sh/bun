@@ -177,17 +177,17 @@ WTF_MAKE_ISO_ALLOCATED_IMPL(NapiRef);
 static uint32_t getPropertyAttributes(napi_property_attributes attributes)
 {
     uint32_t result = 0;
-    if (!(attributes & napi_key_configurable)) {
+    if (!(static_cast<unsigned>(attributes) & static_cast<unsigned>(napi_key_configurable))) {
         result |= JSC::PropertyAttribute::DontDelete;
     }
 
-    if (!(attributes & napi_key_enumerable)) {
+    if (!(static_cast<unsigned>(attributes) & static_cast<unsigned>(napi_key_enumerable))) {
         result |= JSC::PropertyAttribute::DontEnum;
     }
 
-    if (!(attributes & napi_key_writable)) {
-        // result |= JSC::PropertyAttribute::ReadOnly;
-    }
+    // if (!(attributes & napi_key_writable)) {
+    //     // result |= JSC::PropertyAttribute::ReadOnly;
+    // }
 
     return result;
 }
@@ -822,38 +822,39 @@ extern "C" napi_status napi_get_cb_info(
     }
 
     if (data != nullptr) {
-        JSC::JSValue callee = JSC::JSValue(callFrame->jsCallee());
-        auto getData = [&](JSC::JSValue value) -> void* {
-            if (Zig::JSFFIFunction* ffiFunction = JSC::jsDynamicCast<Zig::JSFFIFunction*>(value)) {
-                return ffiFunction->dataPtr;
-            } else if (auto* proto = JSC::jsDynamicCast<NapiPrototype*>(value)) {
-                NapiRef* ref = proto->napiRef;
-                if (ref) {
-                    return ref->data;
+        if (!callFrame->callee().isNativeCallee()) {
+            JSC::JSValue callee = JSC::JSValue(callFrame->jsCallee());
+
+            auto getData = [&](JSC::JSValue value) -> void* {
+                if (Zig::JSFFIFunction* ffiFunction = JSC::jsDynamicCast<Zig::JSFFIFunction*>(value)) {
+                    return ffiFunction->dataPtr;
+                } else if (auto* proto = JSC::jsDynamicCast<NapiPrototype*>(value)) {
+                    NapiRef* ref = proto->napiRef;
+                    if (ref) {
+                        return ref->data;
+                    }
+                } else if (auto* klass = JSC::jsDynamicCast<NapiClass*>(value)) {
+                    void* local = klass->dataPtr;
+                    if (local) {
+                        return local;
+                    }
+
+                    if (auto* ref = klass->napiRef) {
+                        return ref->data;
+                    }
+                } else if (auto* proto = JSC::jsDynamicCast<Bun::NapiExternal*>(thisValue)) {
+                    return proto->value();
                 }
-            } else if (auto* klass = JSC::jsDynamicCast<NapiClass*>(value)) {
-                void* local = klass->dataPtr;
-                if (local) {
-                    return local;
-                }
 
-                if (auto* ref = klass->napiRef) {
-                    return ref->data;
-                }
-            } else if (auto* proto = JSC::jsDynamicCast<Bun::NapiExternal*>(thisValue)) {
-                return proto->value();
-            }
+                return nullptr;
+            };
 
-            return nullptr;
-        };
-
-        void* dataPtr = getData(callee);
-
-        if (!dataPtr) {
-            dataPtr = getData(thisValue);
+            // https://github.com/nodejs/node/blob/1936160c31afc9780e4365de033789f39b7cbc0c/src/js_native_api_v8.cc#L853
+            // It only relies on the callee, not on the this value.
+            *data = getData(callee);
+        } else {
+            *data = nullptr;
         }
-
-        *data = dataPtr;
     }
 
     return napi_ok;

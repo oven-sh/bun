@@ -2424,6 +2424,11 @@ pub const UVLoop = extern struct {
         us_wakeup_loop(this);
     }
 
+    pub fn init() void {
+        _ = uws_get_loop_with_native(bun.windows.libuv.Loop.get());
+    }
+    extern fn uws_get_loop_with_native(*anyopaque) *UVLoop;
+
     pub const wake = wakeup;
 
     pub fn tickWithTimeout(this: *UVLoop, _: i64) void {

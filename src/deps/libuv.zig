@@ -526,10 +526,8 @@ pub const Loop = extern struct {
         this.active_handles -= 1;
     }
 
-    pub fn init() *Loop {
-        var this = get();
+    pub fn init() void {
         uv_replace_allocator(
-            this,
             @ptrCast(&bun.Mimalloc.mi_malloc),
             @ptrCast(&bun.Mimalloc.mi_realloc),
             @ptrCast(&bun.Mimalloc.mi_calloc),

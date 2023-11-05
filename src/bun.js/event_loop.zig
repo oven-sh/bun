@@ -1240,7 +1240,8 @@ pub const EventLoop = struct {
         if (this.virtual_machine.event_loop_handle == null) {
             // Ensure the uWS loop is created first on windows
             if (comptime Environment.isWindows) {
-                this.uws_loop = bun.uws.Loop.get();
+                bun.windows.libuv.Loop.init();
+                this.uws_loop = bun.uws.Loop.init();
                 this.virtual_machine.event_loop_handle = bun.Async.Loop.get();
             } else {
                 this.virtual_machine.event_loop_handle = bun.Async.Loop.get();

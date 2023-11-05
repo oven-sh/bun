@@ -343,6 +343,20 @@ pub const BunxCommand = struct {
 
         const passthrough = passthrough_list.items;
 
+        // Try to find the bin in the root package.json first
+        if (getBinPathFromRootPackageJSON(&this_bundler, initial_bin_name)) |bin_path| {
+            const out = bun.asByteSlice(bin_path);
+            _ = try Run.runBinary(
+                ctx,
+                try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
+                this_bundler.fs.top_level_dir,
+                this_bundler.env,
+                passthrough,
+            );
+            // we are done!
+            Global.exit(0);
+        } else |_| {}
+
         if (update_request.version.literal.isEmpty() or update_request.version.tag != .dist_tag) {
             var destination_: ?[:0]const u8 = null;
 
@@ -358,8 +372,8 @@ pub const BunxCommand = struct {
 
             // Similar to "npx":
             //
-            //  1. Try the bin locally from root package.json, then in the current node_modules and then we try the bin in the global cache
-            if (getBinPathFromRootPackageJSON(&this_bundler, initial_bin_name) catch destination_ orelse bun.which(
+            //  1. Try the bin in the current node_modules and then we try the bin in the global cache
+            if (destination_ orelse bun.which(
                 &path_buf,
                 bunx_cache_dir,
                 this_bundler.fs.top_level_dir,

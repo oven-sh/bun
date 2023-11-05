@@ -61,7 +61,7 @@ public:
     void call(JSC::JSGlobalObject* globalObject, void* data);
 };
 
-class NapiRef : public RefCounted<NapiRef>, public CanMakeWeakPtr<NapiRef> {
+class NapiRef {
     WTF_MAKE_ISO_ALLOCATED(NapiRef);
 
 public:

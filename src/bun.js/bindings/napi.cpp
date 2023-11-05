@@ -823,44 +823,37 @@ extern "C" napi_status napi_get_cb_info(
 
     if (data != nullptr) {
         JSC::JSValue callee = JSC::JSValue(callFrame->jsCallee());
+        auto getData = [&](JSC::JSValue value) -> void* {
+            if (Zig::JSFFIFunction* ffiFunction = JSC::jsDynamicCast<Zig::JSFFIFunction*>(value)) {
+                return ffiFunction->dataPtr;
+            } else if (auto* proto = JSC::jsDynamicCast<NapiPrototype*>(value)) {
+                NapiRef* ref = proto->napiRef;
+                if (ref) {
+                    return ref->data;
+                }
+            } else if (auto* klass = JSC::jsDynamicCast<NapiClass*>(value)) {
+                void* local = klass->dataPtr;
+                if (local) {
+                    return local;
+                }
 
-        if (Zig::JSFFIFunction* ffiFunction = JSC::jsDynamicCast<Zig::JSFFIFunction*>(callee)) {
-            *data = ffiFunction->dataPtr;
-        } else if (auto* proto = JSC::jsDynamicCast<NapiPrototype*>(callee)) {
-            NapiRef* ref = proto->napiRef;
-            if (ref) {
-                *data = ref->data;
-            }
-        } else if (auto* proto = JSC::jsDynamicCast<NapiClass*>(callee)) {
-            void* local = proto->dataPtr;
-            if (!local) {
-                NapiRef* ref = nullptr;
-                if (ref) {
-                    *data = ref->data;
+                if (auto* ref = klass->napiRef) {
+                    return ref->data;
                 }
-            } else {
-                *data = local;
+            } else if (auto* proto = JSC::jsDynamicCast<Bun::NapiExternal*>(thisValue)) {
+                return proto->value();
             }
-        } else if (auto* proto = JSC::jsDynamicCast<NapiPrototype*>(thisValue)) {
-            NapiRef* ref = proto->napiRef;
-            if (ref) {
-                *data = ref->data;
-            }
-        } else if (auto* proto = JSC::jsDynamicCast<NapiClass*>(thisValue)) {
-            void* local = proto->dataPtr;
-            if (!local) {
-                NapiRef* ref = nullptr;
-                if (ref) {
-                    *data = ref->data;
-                }
-            } else {
-                *data = local;
-            }
-        } else if (auto* proto = JSC::jsDynamicCast<Bun::NapiExternal*>(thisValue)) {
-            *data = proto->value();
-        } else {
-            *data = nullptr;
+
+            return nullptr;
+        };
+
+        void* dataPtr = getData(callee);
+
+        if (!dataPtr) {
+            dataPtr = getData(thisValue);
         }
+
+        *data = dataPtr;
     }
 
     return napi_ok;
@@ -1026,13 +1019,16 @@ extern "C" napi_status napi_reference_ref(napi_env env, napi_ref ref,
 
 extern "C" napi_status napi_delete_reference(napi_env env, napi_ref ref)
 {
+    if (!ref)
+        return napi_invalid_arg;
     NapiRef* napiRef = toJS(ref);
-    napiRef->~NapiRef();
+    delete napiRef;
     return napi_ok;
 }
 
 extern "C" void napi_delete_reference_internal(napi_ref ref)
 {
+    ASSERT(ref);
     NapiRef* napiRef = toJS(ref);
     delete napiRef;
 }

@@ -910,6 +910,16 @@ pub const PosixLoop = extern struct {
         return this.active > 0;
     }
 
+    // This exists as a method so that we can stick a debugger in here
+    pub fn addActive(this: *PosixLoop, value: u32) void {
+        this.active +|= value;
+    }
+
+    // This exists as a method so that we can stick a debugger in here
+    pub fn subActive(this: *PosixLoop, value: u32) void {
+        this.active -|= value;
+    }
+
     pub fn unrefCount(this: *PosixLoop, count: i32) void {
         log("unref x {d}", .{count});
         this.num_polls -|= count;

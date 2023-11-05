@@ -32,8 +32,7 @@ pub const KeepAlive = struct {
             return;
 
         this.status = .inactive;
-        loop.num_polls -= 1;
-        loop.active -|= 1;
+        loop.subActive(1);
     }
 
     /// Only intended to be used from EventLoop.Pollable
@@ -42,8 +41,7 @@ pub const KeepAlive = struct {
             return;
 
         this.status = .active;
-        loop.num_polls += 1;
-        loop.active += 1;
+        loop.addActive(1);
     }
 
     pub fn init() KeepAlive {
@@ -55,7 +53,7 @@ pub const KeepAlive = struct {
         if (this.status != .active)
             return;
         this.status = .inactive;
-        vm.event_loop_handle.?.unref();
+        vm.event_loop_handle.?.subActive(1);
     }
 
     /// From another thread, Prevent a poll from keeping the process alive.
@@ -159,17 +157,17 @@ pub const FilePoll = struct {
         poll.flags = flags;
     }
 
-    pub fn onKQueueEvent(poll: *FilePoll, loop: *Loop, kqueue_event: *const std.os.system.kevent64_s) void {
+    pub fn onKQueueEvent(poll: *FilePoll, _: *Loop, kqueue_event: *const std.os.system.kevent64_s) void {
         if (KQueueGenerationNumber != u0)
             std.debug.assert(poll.generation_number == kqueue_event.ext[0]);
 
         poll.updateFlags(Flags.fromKQueueEvent(kqueue_event.*));
-        poll.onUpdate(loop, kqueue_event.data);
+        poll.onUpdate(kqueue_event.data);
     }
 
-    pub fn onEpollEvent(poll: *FilePoll, loop: *Loop, epoll_event: *std.os.linux.epoll_event) void {
+    pub fn onEpollEvent(poll: *FilePoll, _: *Loop, epoll_event: *std.os.linux.epoll_event) void {
         poll.updateFlags(Flags.fromEpollEvent(epoll_event.*));
-        poll.onUpdate(loop, 0);
+        poll.onUpdate(0);
     }
 
     pub fn clearEvent(poll: *FilePoll, flag: Flags) void {
@@ -213,9 +211,7 @@ pub const FilePoll = struct {
     }
 
     fn deinitPossiblyDefer(this: *FilePoll, vm: *JSC.VirtualMachine, loop: *Loop, polls: *FilePoll.Store, force_unregister: bool) void {
-        if (this.isRegistered()) {
-            _ = this.unregister(loop, force_unregister);
-        }
+        _ = this.unregister(loop, force_unregister);
 
         this.owner = Deactivated.owner;
         const was_ever_registered = this.flags.contains(.was_ever_registered);
@@ -235,14 +231,11 @@ pub const FilePoll = struct {
 
     const kqueue_or_epoll = if (Environment.isMac) "kevent" else "epoll";
 
-    pub fn onUpdate(poll: *FilePoll, loop: *Loop, size_or_offset: i64) void {
+    pub fn onUpdate(poll: *FilePoll, size_or_offset: i64) void {
         if (poll.flags.contains(.one_shot) and !poll.flags.contains(.needs_rearm)) {
-            if (poll.flags.contains(.has_incremented_poll_count)) {
-                loop.active -|= @as(u32, @intFromBool(!poll.flags.contains(.disable)));
-                poll.flags.remove(.has_incremented_poll_count);
-            }
             poll.flags.insert(.needs_rearm);
         }
+
         var ptr = poll.owner;
         switch (ptr.tag()) {
             @field(Owner.Tag, "FIFO") => {
@@ -310,8 +303,10 @@ pub const FilePoll = struct {
         needs_rearm,
 
         has_incremented_poll_count,
+        has_incremented_active_count,
+        closed,
 
-        disable,
+        keeps_event_loop_alive,
 
         nonblocking,
 
@@ -448,53 +443,48 @@ pub const FilePoll = struct {
         return !this.flags.contains(.needs_rearm) and (this.flags.contains(.poll_readable) or this.flags.contains(.poll_writable) or this.flags.contains(.poll_process));
     }
 
-    pub inline fn isKeepingProcessAlive(this: *const FilePoll) bool {
-        return !this.flags.contains(.disable) and this.isActive();
-    }
-
-    pub inline fn canDisableKeepingProcessAlive(this: *const FilePoll) bool {
-        return !this.flags.contains(.disable) and this.flags.contains(.has_incremented_poll_count);
-    }
-
-    /// Make calling ref() on this poll into a no-op.
+    /// This decrements the active counter if it was previously incremented
+    /// "active" controls whether or not the event loop should potentially idle
     pub fn disableKeepingProcessAlive(this: *FilePoll, vm: *JSC.VirtualMachine) void {
-        if (this.flags.contains(.disable))
-            return;
-        this.flags.insert(.disable);
-
-        vm.event_loop_handle.?.active -= @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
+        vm.event_loop_handle.?.subActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_active_count))));
+        this.flags.remove(.keeps_event_loop_alive);
+        this.flags.remove(.has_incremented_active_count);
     }
 
     pub inline fn canEnableKeepingProcessAlive(this: *const FilePoll) bool {
-        return this.flags.contains(.disable) and this.flags.contains(.has_incremented_poll_count);
+        return this.flags.contains(.keeps_event_loop_alive) and this.flags.contains(.has_incremented_poll_count);
     }
 
     pub fn enableKeepingProcessAlive(this: *FilePoll, vm: *JSC.VirtualMachine) void {
-        if (!this.flags.contains(.disable))
+        if (this.flags.contains(.closed))
             return;
-        this.flags.remove(.disable);
 
-        vm.event_loop_handle.?.active += @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
-    }
-
-    pub fn canActivate(this: *const FilePoll) bool {
-        return !this.flags.contains(.has_incremented_poll_count);
+        vm.event_loop_handle.?.addActive(@as(u32, @intFromBool(!this.flags.contains(.has_incremented_active_count))));
+        this.flags.insert(.keeps_event_loop_alive);
+        this.flags.insert(.has_incremented_active_count);
     }
 
     /// Only intended to be used from EventLoop.Pollable
-    pub fn deactivate(this: *FilePoll, loop: *Loop) void {
-        std.debug.assert(this.flags.contains(.has_incremented_poll_count));
+    fn deactivate(this: *FilePoll, loop: *Loop) void {
         loop.num_polls -= @as(i32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
-        loop.active -|= @as(u32, @intFromBool(!this.flags.contains(.disable) and this.flags.contains(.has_incremented_poll_count)));
-
         this.flags.remove(.has_incremented_poll_count);
+
+        loop.subActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_active_count))));
+        this.flags.remove(.keeps_event_loop_alive);
+        this.flags.remove(.has_incremented_active_count);
     }
 
     /// Only intended to be used from EventLoop.Pollable
-    pub fn activate(this: *FilePoll, loop: *Loop) void {
+    fn activate(this: *FilePoll, loop: *Loop) void {
+        this.flags.remove(.closed);
+
         loop.num_polls += @as(i32, @intFromBool(!this.flags.contains(.has_incremented_poll_count)));
-        loop.active += @as(u32, @intFromBool(!this.flags.contains(.disable) and !this.flags.contains(.has_incremented_poll_count)));
         this.flags.insert(.has_incremented_poll_count);
+
+        if (this.flags.contains(.keeps_event_loop_alive)) {
+            loop.addActive(@as(u32, @intFromBool(!this.flags.contains(.has_incremented_active_count))));
+            this.flags.insert(.has_incremented_active_count);
+        }
     }
 
     pub fn init(vm: *JSC.VirtualMachine, fd: bun.FileDescriptor, flags: Flags.Struct, comptime Type: type, owner: *Type) *FilePoll {
@@ -515,31 +505,26 @@ pub const FilePoll = struct {
         return poll;
     }
 
-    pub inline fn canRef(this: *const FilePoll) bool {
-        if (this.flags.contains(.disable))
-            return false;
-
-        return !this.flags.contains(.has_incremented_poll_count);
-    }
-
-    pub inline fn canUnref(this: *const FilePoll) bool {
-        return this.flags.contains(.has_incremented_poll_count);
-    }
-
     /// Prevent a poll from keeping the process alive.
     pub fn unref(this: *FilePoll, vm: *JSC.VirtualMachine) void {
-        if (!this.canUnref())
-            return;
         log("unref", .{});
-        this.deactivate(vm.event_loop_handle.?);
+        this.disableKeepingProcessAlive(vm);
     }
 
     /// Allow a poll to keep the process alive.
     pub fn ref(this: *FilePoll, vm: *JSC.VirtualMachine) void {
-        if (!this.canRef())
+        if (this.flags.contains(.closed))
             return;
+
         log("ref", .{});
-        this.activate(vm.event_loop_handle.?);
+
+        this.enableKeepingProcessAlive(vm);
+    }
+
+    pub fn onEnded(this: *FilePoll, vm: *JSC.VirtualMachine) void {
+        this.flags.remove(.keeps_event_loop_alive);
+        this.flags.insert(.closed);
+        this.deactivate(vm.event_loop_handle.?);
     }
 
     pub fn onTick(loop: *Loop, tagged_pointer: ?*anyopaque) callconv(.C) void {
@@ -611,6 +596,7 @@ pub const FilePoll = struct {
             );
             this.flags.insert(.was_ever_registered);
             if (JSC.Maybe(void).errnoSys(ctl, .epoll_ctl)) |errno| {
+                this.deactivate(loop);
                 return errno;
             }
         } else if (comptime Environment.isMac) {
@@ -697,6 +683,7 @@ pub const FilePoll = struct {
             const errno = std.c.getErrno(rc);
 
             if (errno != .SUCCESS) {
+                this.deactivate(loop);
                 return JSC.Maybe(void){
                     .err = bun.sys.Error.fromCode(errno, .kqueue),
                 };
@@ -704,8 +691,7 @@ pub const FilePoll = struct {
         } else {
             bun.todo(@src(), {});
         }
-        if (this.canActivate())
-            this.activate(loop);
+        this.activate(loop);
         this.flags.insert(switch (flag) {
             .readable => .poll_readable,
             .process => if (comptime Environment.isLinux) .poll_readable else .poll_process,
@@ -725,7 +711,10 @@ pub const FilePoll = struct {
     }
 
     pub fn unregisterWithFd(this: *FilePoll, loop: *Loop, fd: bun.UFileDescriptor, force_unregister: bool) JSC.Maybe(void) {
+        defer this.deactivate(loop);
+
         if (!(this.flags.contains(.poll_readable) or this.flags.contains(.poll_writable) or this.flags.contains(.poll_process) or this.flags.contains(.poll_machport))) {
+
             // no-op
             return JSC.Maybe(void).success;
         }
@@ -853,8 +842,6 @@ pub const FilePoll = struct {
         this.flags.remove(.poll_writable);
         this.flags.remove(.poll_process);
         this.flags.remove(.poll_machport);
-        if (this.isActive())
-            this.deactivate(loop);
 
         return JSC.Maybe(void).success;
     }

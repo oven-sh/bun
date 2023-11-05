@@ -99,7 +99,7 @@ pub const Subprocess = struct {
 
         if (this.poll == .poll_ref) {
             if (this.poll.poll_ref) |poll| {
-                if (poll.isRegistered()) {
+                if (poll.isActive() or poll.isRegistered()) {
                     return true;
                 }
             }
@@ -113,8 +113,9 @@ pub const Subprocess = struct {
 
     pub fn updateHasPendingActivity(this: *Subprocess) void {
         @fence(.SeqCst);
-        if (Environment.isDebug) {
-            log("updateHasPendingActivity: real: {}", .{
+        if (comptime Environment.isDebug) {
+            log("updateHasPendingActivity() {any} -> {any}", .{
+                this.has_pending_activity.value,
                 this.hasPendingActivityNonThreadsafe(),
             });
         }
@@ -126,12 +127,6 @@ pub const Subprocess = struct {
 
     pub fn hasPendingActivity(this: *Subprocess) callconv(.C) bool {
         @fence(.Acquire);
-        if (Environment.isDebug) {
-            log("hasPendingActivity: {} (real: {})", .{
-                this.has_pending_activity.load(.Acquire),
-                this.hasPendingActivityNonThreadsafe(),
-            });
-        }
         return this.has_pending_activity.load(.Acquire);
     }
 
@@ -167,7 +162,7 @@ pub const Subprocess = struct {
         switch (this.poll) {
             .poll_ref => if (this.poll.poll_ref) |poll| {
                 if (deactivate_poll_ref) {
-                    poll.disableKeepingProcessAlive(vm);
+                    poll.onEnded(vm);
                 } else {
                     poll.unref(vm);
                 }
@@ -419,11 +414,11 @@ pub const Subprocess = struct {
     }
 
     pub fn hasKilled(this: *const Subprocess) bool {
-        return this.flags.killed or this.exit_code != null;
+        return this.exit_code != null or this.signal_code != null;
     }
 
     pub fn tryKill(this: *Subprocess, sig: i32) JSC.Node.Maybe(void) {
-        if (this.hasKilled()) {
+        if (this.hasExited()) {
             return .{ .result = {} };
         }
 
@@ -462,7 +457,6 @@ pub const Subprocess = struct {
             }
         }
 
-        this.flags.killed = true;
         return .{ .result = {} };
     }
 
@@ -1094,8 +1088,17 @@ pub const Subprocess = struct {
         this: *Subprocess,
         globalThis: *JSGlobalObject,
     ) callconv(.C) JSValue {
-        if (this.exit_code) |code| {
-            return JSC.JSPromise.resolvedPromiseValue(globalThis, JSC.JSValue.jsNumber(code));
+        if (this.hasExited()) {
+            const waitpid_error = this.waitpid_err;
+            if (this.exit_code) |code| {
+                return JSC.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(code));
+            } else if (waitpid_error) |err| {
+                return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+            } else if (this.signal_code != null) {
+                return JSC.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(128 +% @intFromEnum(this.signal_code.?)));
+            } else {
+                @panic("Subprocess.getExited() has exited but has no exit code or signal code. This is a bug.");
+            }
         }
 
         if (!this.exit_promise.has()) {
@@ -1147,7 +1150,6 @@ pub const Subprocess = struct {
             globalThis.throwTODO("spawn() is not yet implemented on Windows");
             return .zero;
         }
-
         var arena = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var allocator = arena.allocator();
@@ -1631,7 +1633,9 @@ pub const Subprocess = struct {
                     .process,
                     true,
                 )) {
-                    .result => {},
+                    .result => {
+                        subprocess.poll.poll_ref.?.enableKeepingProcessAlive(jsc_vm);
+                    },
                     .err => |err| {
                         if (err.getErrno() != .SRCH) {
                             @panic("This shouldn't happen");
@@ -1697,7 +1701,9 @@ pub const Subprocess = struct {
                 .process,
                 true,
             )) {
-                .result => {},
+                .result => {
+                    subprocess.poll.poll_ref.?.enableKeepingProcessAlive(jsc_vm);
+                },
                 .err => |err| {
                     if (err.getErrno() != .SRCH) {
                         @panic("This shouldn't happen");
@@ -1797,6 +1803,7 @@ pub const Subprocess = struct {
         const pid = this.pid;
 
         var waitpid_result = waitpid_result_;
+
         while (true) {
             switch (waitpid_result) {
                 .err => |err| {
@@ -1808,9 +1815,16 @@ pub const Subprocess = struct {
                             this.exit_code = @as(u8, @truncate(std.os.W.EXITSTATUS(result.status)));
                         }
 
+                        // True if the process terminated due to receipt of a signal.
                         if (std.os.W.IFSIGNALED(result.status)) {
                             this.signal_code = @as(SignalCode, @enumFromInt(@as(u8, @truncate(std.os.W.TERMSIG(result.status)))));
-                        } else if (std.os.W.IFSTOPPED(result.status)) {
+                        } else if (
+                        // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/waitpid.2.html
+                        // True if the process has not terminated, but has stopped and can
+                        // be restarted.  This macro can be true only if the wait call spec-ified specified
+                        // ified the WUNTRACED option or if the child process is being
+                        // traced (see ptrace(2)).
+                        std.os.W.IFSTOPPED(result.status)) {
                             this.signal_code = @as(SignalCode, @enumFromInt(@as(u8, @truncate(std.os.W.STOPSIG(result.status)))));
                         }
                     }
@@ -1853,12 +1867,59 @@ pub const Subprocess = struct {
         }
     }
 
+    fn runOnExit(this: *Subprocess, globalThis: *JSC.JSGlobalObject, this_jsvalue: JSC.JSValue) void {
+        const waitpid_error = this.waitpid_err;
+        this.waitpid_err = null;
+
+        if (this.exit_promise.trySwap()) |promise| {
+            if (this.exit_code) |code| {
+                promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(code));
+            } else if (waitpid_error) |err| {
+                promise.asAnyPromise().?.reject(globalThis, err.toJSC(globalThis));
+            } else if (this.signal_code != null) {
+                promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(128 +% @intFromEnum(this.signal_code.?)));
+            } else {
+                // crash in debug mode
+                if (comptime Environment.allow_assert)
+                    unreachable;
+            }
+        }
+
+        if (this.on_exit_callback.trySwap()) |callback| {
+            const waitpid_value: JSValue =
+                if (waitpid_error) |err|
+                err.toJSC(globalThis)
+            else
+                JSC.JSValue.jsUndefined();
+
+            const this_value = if (this_jsvalue.isEmptyOrUndefinedOrNull()) JSC.JSValue.jsUndefined() else this_jsvalue;
+            this_value.ensureStillAlive();
+
+            const args = [_]JSValue{
+                this_value,
+                this.getExitCode(globalThis),
+                this.getSignalCode(globalThis),
+                waitpid_value,
+            };
+
+            const result = callback.callWithThis(
+                globalThis,
+                this_value,
+                &args,
+            );
+
+            if (result.isAnyError()) {
+                globalThis.bunVM().onUnhandledError(globalThis, result);
+            }
+        }
+    }
+
     fn onExit(
         this: *Subprocess,
         globalThis: *JSC.JSGlobalObject,
         this_jsvalue: JSC.JSValue,
     ) void {
-        log("onExit {d}, code={d}", .{ this.pid, if (this.exit_code) |e| @as(i32, @intCast(e)) else -1 });
+        log("onExit({d}) = {d}, \"{s}\"", .{ this.pid, if (this.exit_code) |e| @as(i32, @intCast(e)) else -1, if (this.signal_code) |code| @tagName(code) else "" });
         defer this.updateHasPendingActivity();
         this_jsvalue.ensureStillAlive();
 
@@ -1889,53 +1950,7 @@ pub const Subprocess = struct {
                 this.globalThis.bunVM().enqueueTask(JSC.Task.init(&holder.task));
             }
 
-            if (this.exit_promise.trySwap()) |promise| {
-                const waitpid_error = this.waitpid_err;
-                this.waitpid_err = null;
-
-                if (this.exit_code) |code| {
-                    promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(code));
-                } else if (this.signal_code != null) {
-                    promise.asAnyPromise().?.resolve(globalThis, this.getSignalCode(globalThis));
-                } else if (waitpid_error) |err| {
-                    promise.asAnyPromise().?.reject(globalThis, err.toJSC(globalThis));
-                } else {
-                    // crash in debug mode
-                    if (comptime Environment.allow_assert)
-                        unreachable;
-                }
-            }
-        }
-
-        if (this.on_exit_callback.trySwap()) |callback| {
-            const waitpid_error = this.waitpid_err;
-            this.waitpid_err = null;
-
-            const waitpid_value: JSValue =
-                if (waitpid_error) |err|
-                err.toJSC(globalThis)
-            else
-                JSC.JSValue.jsUndefined();
-
-            const this_value = if (this_jsvalue.isEmptyOrUndefinedOrNull()) JSC.JSValue.jsUndefined() else this_jsvalue;
-            this_value.ensureStillAlive();
-
-            const args = [_]JSValue{
-                this_value,
-                this.getExitCode(globalThis),
-                this.getSignalCode(globalThis),
-                waitpid_value,
-            };
-
-            const result = callback.callWithThis(
-                globalThis,
-                this_value,
-                &args,
-            );
-
-            if (result.isAnyError()) {
-                globalThis.bunVM().onUnhandledError(globalThis, result);
-            }
+            this.runOnExit(globalThis, this_jsvalue);
         }
     }
 

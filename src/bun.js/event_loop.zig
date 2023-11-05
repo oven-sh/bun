@@ -1242,7 +1242,7 @@ pub const EventLoop = struct {
             if (comptime Environment.isWindows) {
                 bun.windows.libuv.Loop.init();
                 this.uws_loop = bun.uws.Loop.init();
-                this.virtual_machine.event_loop_handle = bun.Async.Loop.get();
+                this.virtual_machine.event_loop_handle = this.uws_loop;
             } else {
                 this.virtual_machine.event_loop_handle = bun.Async.Loop.get();
             }

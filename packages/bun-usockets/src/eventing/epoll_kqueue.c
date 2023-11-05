@@ -179,10 +179,10 @@ void bun_on_tick_after(void* ctx);
 
 
 void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs, void* tickCallbackContext) {
-    us_loop_integrate(loop);
-
     if (loop->num_polls == 0)
         return;
+
+    us_loop_integrate(loop);
 
     if (tickCallbackContext) {
         bun_on_tick_before(tickCallbackContext);

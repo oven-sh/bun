@@ -500,7 +500,7 @@ describe("spawn unref and kill should not hang", () => {
   it("kill and await exited", async () => {
     for (let i = 0; i < 10; i++) {
       const proc = spawn({
-        cmd: ["sleep", "0"],
+        cmd: ["sleep", "0.001"],
         stdout: "ignore",
         stderr: "ignore",
         stdin: "ignore",
@@ -514,7 +514,7 @@ describe("spawn unref and kill should not hang", () => {
   it("unref", async () => {
     for (let i = 0; i < 100; i++) {
       const proc = spawn({
-        cmd: ["sleep", "0"],
+        cmd: ["sleep", "0.001"],
         stdout: "ignore",
         stderr: "ignore",
         stdin: "ignore",
@@ -528,7 +528,7 @@ describe("spawn unref and kill should not hang", () => {
   it("kill and unref", async () => {
     for (let i = 0; i < 100; i++) {
       const proc = spawn({
-        cmd: ["sleep", "0"],
+        cmd: ["sleep", "0.001"],
         stdout: "ignore",
         stderr: "ignore",
         stdin: "ignore",
@@ -543,7 +543,7 @@ describe("spawn unref and kill should not hang", () => {
   it("unref and kill", async () => {
     for (let i = 0; i < 100; i++) {
       const proc = spawn({
-        cmd: ["sleep", "0"],
+        cmd: ["sleep", "0.001"],
         stdout: "ignore",
         stderr: "ignore",
         stdin: "ignore",
@@ -555,36 +555,7 @@ describe("spawn unref and kill should not hang", () => {
 
     expect().pass();
   });
-  it("unref and kill after sleep", async () => {
-    for (let i = 0; i < 100; i++) {
-      const proc = spawn({
-        cmd: ["sleep", "0"],
-        stdout: "ignore",
-        stderr: "ignore",
-        stdin: "ignore",
-      });
-      await Bun.sleep(1);
-      proc.unref();
-      proc.kill();
-      await proc.exited;
-    }
-    expect().pass();
-  });
-  it("kill and unref after sleep", async () => {
-    for (let i = 0; i < 100; i++) {
-      const proc = spawn({
-        cmd: ["sleep", "0"],
-        stdout: "ignore",
-        stderr: "ignore",
-        stdin: "ignore",
-      });
-      await Bun.sleep(1);
-      proc.kill();
-      proc.unref();
-      await proc.exited;
-    }
-    expect().pass();
-  });
+
   it("should not hang after unref", async () => {
     const proc = spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "does-not-hang.js")],
@@ -593,4 +564,73 @@ describe("spawn unref and kill should not hang", () => {
     await proc.exited;
     expect().pass();
   });
+});
+
+async function runTest(sleep: string, order = ["sleep", "kill", "unref", "exited"]) {
+  console.log("running", order.join(","));
+  for (let i = 0; i < 100; i++) {
+    const proc = spawn({
+      cmd: ["sleep", sleep],
+      stdout: "ignore",
+      stderr: "ignore",
+      stdin: "ignore",
+    });
+    for (let action of order) {
+      switch (action) {
+        case "sleep": {
+          await Bun.sleep(1);
+          break;
+        }
+
+        case "kill": {
+          proc.kill();
+          break;
+        }
+
+        case "unref": {
+          proc.unref();
+          break;
+        }
+
+        case "exited": {
+          expect(await proc.exited).toBeNumber();
+          break;
+        }
+
+        default: {
+          throw new Error("unknown action");
+        }
+      }
+    }
+  }
+  expect().pass();
+}
+
+describe("should not hang", () => {
+  for (let sleep of ["0.001", "0"]) {
+    describe("sleep " + sleep, () => {
+      for (let order of [
+        ["sleep", "kill", "unref", "exited"],
+        ["sleep", "unref", "kill", "exited"],
+        ["kill", "sleep", "unref", "exited"],
+        ["kill", "unref", "sleep", "exited"],
+        ["unref", "sleep", "kill", "exited"],
+        ["unref", "kill", "sleep", "exited"],
+        ["exited", "sleep", "kill", "unref"],
+        ["exited", "sleep", "unref", "kill"],
+        ["exited", "kill", "sleep", "unref"],
+        ["exited", "kill", "unref", "sleep"],
+        ["exited", "unref", "sleep", "kill"],
+        ["exited", "unref", "kill", "sleep"],
+        ["unref", "exited"],
+        ["exited", "unref"],
+        ["kill", "exited"],
+        ["exited"],
+      ]) {
+        const name = order.join(",");
+        const fn = runTest.bind(undefined, sleep, order);
+        it(name, fn);
+      }
+    });
+  }
 });

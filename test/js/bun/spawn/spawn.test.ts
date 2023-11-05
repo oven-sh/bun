@@ -634,3 +634,21 @@ describe("should not hang", () => {
     });
   }
 });
+
+it("#3480", async () => {
+  try {
+    var server = Bun.serve({
+      port: 0,
+      fetch: (req, res) => {
+        const aha = Bun.spawnSync(["echo", "1"], {});
+        return new Response("Hello world!");
+      },
+    });
+
+    const response = await fetch("http://" + server.hostname + ":" + server.port);
+    expect(await response.text()).toBe("Hello world!");
+    expect(response.ok);
+  } finally {
+    server.stop(true);
+  }
+});

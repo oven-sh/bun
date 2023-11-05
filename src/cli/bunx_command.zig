@@ -141,6 +141,48 @@ pub const BunxCommand = struct {
         };
     }
 
+    fn getBinPathFromRootPackageJSON(bundler: *bun.Bundler, package_name: []const u8) ![]const u8 {
+        const subpath_z: [:0]const u8 = "package.json";
+        const target_package_json_fd = try std.os.openZ(subpath_z, std.os.O.RDONLY, 0);
+        const target_package_json = std.fs.File{ .handle = target_package_json_fd };
+        defer target_package_json.close();
+
+        const package_json_contents = try target_package_json.readToEndAlloc(bundler.allocator, std.math.maxInt(u32));
+        const source = bun.logger.Source.initPathString(bun.span(subpath_z), package_json_contents);
+
+        bun.JSAst.Expr.Data.Store.create(default_allocator);
+        bun.JSAst.Stmt.Data.Store.create(default_allocator);
+
+        const expr = try bun.JSON.ParseJSONUTF8(&source, bundler.log, bundler.allocator);
+
+        // choose the first package that fits
+        if (expr.get("bin")) |bin_expr| {
+            switch (bin_expr.data) {
+                .e_object => |object| {
+                    if (object.get(package_name)) |sub_bin_expr| {
+                        if (sub_bin_expr.asString(bundler.allocator)) |bin_path| {
+                            return bin_path;
+                        }
+                    }
+                },
+                .e_string => {
+                    if (expr.get("name")) |name_expr| {
+                        if (name_expr.asString(bundler.allocator)) |name| {
+                            if (std.mem.eql(u8, name, package_name)) {
+                                if (bin_expr.asString(bundler.allocator)) |bin_path| {
+                                    return bin_path;
+                                }
+                            }
+                        }
+                    }
+                },
+                else => {},
+            }
+        }
+
+        return error.NoBinFound;
+    }
+
     fn exit_with_usage() noreturn {
         Output.prettyErrorln(
             \\usage<r><d>:<r> <cyan>bunx <r><d>[<r><blue>--bun<r><d>]<r><cyan> package<r><d>[@version] [...flags or arguments to pass through]<r>
@@ -316,8 +358,8 @@ pub const BunxCommand = struct {
 
             // Similar to "npx":
             //
-            //  1. Try the bin in the current node_modules and then we try the bin in the global cache
-            if (destination_ orelse bun.which(
+            //  1. Try the bin locally from root package.json, then in the current node_modules and then we try the bin in the global cache
+            if (getBinPathFromRootPackageJSON(&this_bundler, initial_bin_name) catch destination_ orelse bun.which(
                 &path_buf,
                 bunx_cache_dir,
                 this_bundler.fs.top_level_dir,

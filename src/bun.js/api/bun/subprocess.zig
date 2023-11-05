@@ -1633,7 +1633,9 @@ pub const Subprocess = struct {
                     .process,
                     true,
                 )) {
-                    .result => {},
+                    .result => {
+                        subprocess.poll.poll_ref.?.enableKeepingProcessAlive(jsc_vm);
+                    },
                     .err => |err| {
                         if (err.getErrno() != .SRCH) {
                             @panic("This shouldn't happen");
@@ -1699,7 +1701,9 @@ pub const Subprocess = struct {
                 .process,
                 true,
             )) {
-                .result => {},
+                .result => {
+                    subprocess.poll.poll_ref.?.enableKeepingProcessAlive(jsc_vm);
+                },
                 .err => |err| {
                     if (err.getErrno() != .SRCH) {
                         @panic("This shouldn't happen");

@@ -32,8 +32,7 @@ pub const KeepAlive = struct {
             return;
 
         this.status = .inactive;
-        loop.num_polls -= 1;
-        loop.active -|= 1;
+        loop.subActive(1);
     }
 
     /// Only intended to be used from EventLoop.Pollable
@@ -42,8 +41,7 @@ pub const KeepAlive = struct {
             return;
 
         this.status = .active;
-        loop.num_polls += 1;
-        loop.active += 1;
+        loop.addActive(1);
     }
 
     pub fn init() KeepAlive {
@@ -55,7 +53,7 @@ pub const KeepAlive = struct {
         if (this.status != .active)
             return;
         this.status = .inactive;
-        vm.event_loop_handle.?.unref();
+        vm.event_loop_handle.?.subActive(1);
     }
 
     /// From another thread, Prevent a poll from keeping the process alive.
@@ -213,7 +211,6 @@ pub const FilePoll = struct {
     }
 
     fn deinitPossiblyDefer(this: *FilePoll, vm: *JSC.VirtualMachine, loop: *Loop, polls: *FilePoll.Store, force_unregister: bool) void {
-        this.flags.remove(.keeps_event_loop_alive);
         _ = this.unregister(loop, force_unregister);
 
         this.owner = Deactivated.owner;
@@ -446,17 +443,10 @@ pub const FilePoll = struct {
         return !this.flags.contains(.needs_rearm) and (this.flags.contains(.poll_readable) or this.flags.contains(.poll_writable) or this.flags.contains(.poll_process));
     }
 
-    pub inline fn isKeepingProcessAlive(this: *const FilePoll) bool {
-        return this.flags.contains(.keeps_event_loop_alive) and this.isActive();
-    }
-
-    pub inline fn canDisableKeepingProcessAlive(this: *const FilePoll) bool {
-        return this.flags.contains(.keeps_event_loop_alive) and this.flags.contains(.has_incremented_poll_count);
-    }
-
-    /// Make calling ref() on this poll into a no-op.
+    /// This decrements the active counter if it was previously incremented
+    /// "active" controls whether or not the event loop should potentially idle
     pub fn disableKeepingProcessAlive(this: *FilePoll, vm: *JSC.VirtualMachine) void {
-        vm.event_loop_handle.?.active -= @as(u32, @intFromBool(this.flags.contains(.has_incremented_active_count)));
+        vm.event_loop_handle.?.subActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_active_count))));
         this.flags.remove(.keeps_event_loop_alive);
         this.flags.remove(.has_incremented_active_count);
     }
@@ -466,7 +456,10 @@ pub const FilePoll = struct {
     }
 
     pub fn enableKeepingProcessAlive(this: *FilePoll, vm: *JSC.VirtualMachine) void {
-        vm.event_loop_handle.?.active += @as(u32, @intFromBool(!this.flags.contains(.has_incremented_active_count)));
+        if (this.flags.contains(.closed))
+            return;
+
+        vm.event_loop_handle.?.addActive(@as(u32, @intFromBool(!this.flags.contains(.has_incremented_active_count))));
         this.flags.insert(.keeps_event_loop_alive);
         this.flags.insert(.has_incremented_active_count);
     }
@@ -476,10 +469,9 @@ pub const FilePoll = struct {
         loop.num_polls -= @as(i32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
         this.flags.remove(.has_incremented_poll_count);
 
-        if (!this.flags.contains(.keeps_event_loop_alive)) {
-            loop.active -|= @as(u32, @intFromBool(this.flags.contains(.has_incremented_active_count)));
-            this.flags.remove(.has_incremented_active_count);
-        }
+        loop.subActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_active_count))));
+        this.flags.remove(.keeps_event_loop_alive);
+        this.flags.remove(.has_incremented_active_count);
     }
 
     /// Only intended to be used from EventLoop.Pollable
@@ -490,7 +482,7 @@ pub const FilePoll = struct {
         this.flags.insert(.has_incremented_poll_count);
 
         if (this.flags.contains(.keeps_event_loop_alive)) {
-            loop.active +|= @as(u32, @intFromBool(this.flags.contains(.has_incremented_active_count)));
+            loop.addActive(@as(u32, @intFromBool(!this.flags.contains(.has_incremented_active_count))));
             this.flags.insert(.has_incremented_active_count);
         }
     }

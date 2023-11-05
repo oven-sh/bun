@@ -1015,11 +1015,12 @@ pub const EventLoop = struct {
         if (loop.isActive()) {
             this.processGCTimer();
             loop.tick();
-            this.flushImmediateQueue();
-            ctx.onAfterEventLoop();
         } else {
-            this.flushImmediateQueue();
+            loop.tickWithoutIdle();
         }
+
+        this.flushImmediateQueue();
+        ctx.onAfterEventLoop();
     }
 
     pub fn autoTickWithTimeout(this: *EventLoop, timeoutMs: i64) void {
@@ -1046,11 +1047,12 @@ pub const EventLoop = struct {
         if (loop.isActive()) {
             this.processGCTimer();
             loop.tickWithTimeout(timeoutMs);
-            this.flushImmediateQueue();
-            ctx.onAfterEventLoop();
         } else {
-            this.flushImmediateQueue();
+            loop.tickWithoutIdle();
         }
+
+        this.flushImmediateQueue();
+        ctx.onAfterEventLoop();
     }
 
     pub fn flushImmediateQueue(this: *EventLoop) void {
@@ -1121,11 +1123,12 @@ pub const EventLoop = struct {
         if (loop.isActive()) {
             this.processGCTimer();
             loop.tick();
-            this.flushImmediateQueue();
-            ctx.onAfterEventLoop();
         } else {
-            this.flushImmediateQueue();
+            loop.tickWithoutIdle();
         }
+
+        this.flushImmediateQueue();
+        ctx.onAfterEventLoop();
     }
 
     pub fn processGCTimer(this: *EventLoop) void {

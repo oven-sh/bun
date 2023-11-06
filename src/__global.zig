@@ -143,6 +143,9 @@ pub fn notimpl() noreturn {
 // Make sure we always print any leftover
 pub fn crash() noreturn {
     @setCold(true);
+    if (Environment.isDebug) {
+        @panic("Global.crash()");
+    }
     Global.exit(1);
 }
 

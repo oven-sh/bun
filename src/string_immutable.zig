@@ -997,14 +997,14 @@ pub inline fn eqlComptimeCheckLenWithType(comptime Type: type, a: []const Type, 
     return eqlComptimeCheckLenWithKnownType(comptime Type, a, if (@typeInfo(@TypeOf(b)) != .Pointer) &b else b, comptime check_len);
 }
 
-pub fn eqlCaseInsensitiveASCIIIgnoreLength(
+pub inline fn eqlCaseInsensitiveASCIIIgnoreLength(
     a: string,
     b: string,
 ) bool {
     return eqlCaseInsensitiveASCII(a, b, false);
 }
 
-pub fn eqlCaseInsensitiveASCIIICheckLength(
+pub inline fn eqlCaseInsensitiveASCIIICheckLength(
     a: string,
     b: string,
 ) bool {
@@ -1014,7 +1014,6 @@ pub fn eqlCaseInsensitiveASCIIICheckLength(
 pub fn eqlCaseInsensitiveASCII(a: string, b: string, comptime check_len: bool) bool {
     if (comptime check_len) {
         if (a.len != b.len) return false;
-
         if (a.len == 0) return true;
     }
 

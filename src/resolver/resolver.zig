@@ -49,7 +49,11 @@ const DotEnv = @import("../env_loader.zig");
 
 pub fn isPackagePath(path: string) bool {
     // this could probably be flattened into something more optimized
-    return path.len > 0 and path[0] != '/' and !strings.startsWith(path, "./") and !strings.startsWith(path, "../") and !strings.eql(path, ".") and !strings.eql(path, "..");
+    return !std.fs.path.isAbsolute(path) and
+        !strings.startsWith(path, "./") and
+        !strings.startsWith(path, "../") and
+        !strings.eql(path, ".") and
+        !strings.eql(path, "..");
 }
 
 pub const SideEffectsData = struct {
@@ -556,6 +560,8 @@ pub const Resolver = struct {
     }
 
     pub inline fn usePackageManager(self: *const ThisResolver) bool {
+        // TODO: enable auto-install on Windows
+        if (Environment.isWindows) return false;
         return self.opts.global_cache.isEnabled();
     }
 

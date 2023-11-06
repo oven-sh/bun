@@ -22,6 +22,7 @@ const allocators = @import("./allocators.zig");
 
 pub const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
 pub const PathBuffer = [bun.MAX_PATH_BYTES]u8;
+pub const WPathBuffer = [bun.MAX_PATH_BYTES / 2]u16;
 pub const debug = Output.scoped(.fs, true);
 
 // pub const FilesystemImplementation = @import("fs_impl.zig");

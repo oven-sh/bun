@@ -372,11 +372,6 @@ pub const Loader = struct {
                 var key = env[0..i];
                 var value = env[i + 1 ..];
                 if (key.len > 0) {
-                    if (Environment.isWindows) {
-                        if (strings.eqlCaseInsensitiveASCIIICheckLength(key, "Path")) {
-                            this.map.put("PATH", value) catch unreachable;
-                        }
-                    }
                     // std.debug.print("environ '{s}' = '{s}'\n", .{ key, value });
                     this.map.put(key, value) catch unreachable;
                 }
@@ -890,7 +885,11 @@ pub const Map = struct {
         value: string,
         conditional: bool,
     };
-    const HashTable = bun.StringArrayHashMap(HashTableValue);
+    // On Windows, environment variables are case-insensitive. So we use a case-insensitive hash map.
+    // An issue with this exact implementation is unicode characters can technically appear in these
+    // keys, and we use a simple toLowercase function that only applies to ascii, so this will make
+    // some strings collide.
+    const HashTable = (if (Environment.isWindows) bun.CaseInsensitiveASCIIStringArrayHashMap else bun.StringArrayHashMap)(HashTableValue);
 
     map: HashTable,
 

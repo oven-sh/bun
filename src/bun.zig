@@ -882,6 +882,46 @@ pub const StringArrayHashMapContext = struct {
     };
 };
 
+pub const CaseInsensitiveASCIIStringContext = struct {
+    pub fn hash(_: @This(), str_: []const u8) u32 {
+        var str = str_;
+        var wyhash = std.hash.Wyhash.init(0);
+        var buf: [1024]u8 = undefined;
+        while (str.len > 0) {
+            const length = @min(str.len, buf.len);
+            wyhash.update(strings.copyLowercase(str[0..length], &buf));
+            str = str[length..];
+        }
+        return @truncate(wyhash.final());
+    }
+
+    pub fn eql(_: @This(), a: []const u8, b: []const u8, _: usize) bool {
+        return strings.eqlCaseInsensitiveASCIIICheckLength(a, b);
+    }
+
+    pub fn pre(input: []const u8) Prehashed {
+        return Prehashed{
+            .value = @This().hash(.{}, input),
+            .input = input,
+        };
+    }
+
+    pub const Prehashed = struct {
+        value: u32,
+        input: []const u8,
+
+        pub fn hash(this: @This(), s: []const u8) u32 {
+            if (s.ptr == this.input.ptr and s.len == this.input.len)
+                return this.value;
+            return CaseInsensitiveASCIIStringContext.hash(.{}, s);
+        }
+
+        pub fn eql(_: @This(), a: []const u8, b: []const u8) bool {
+            return strings.eqlCaseInsensitiveASCIIICheckLength(a, b);
+        }
+    };
+};
+
 pub const StringHashMapContext = struct {
     pub fn hash(_: @This(), s: []const u8) u64 {
         return std.hash.Wyhash.hash(0, s);
@@ -939,6 +979,10 @@ pub const StringHashMapContext = struct {
 
 pub fn StringArrayHashMap(comptime Type: type) type {
     return std.ArrayHashMap([]const u8, Type, StringArrayHashMapContext, true);
+}
+
+pub fn CaseInsensitiveASCIIStringArrayHashMap(comptime Type: type) type {
+    return std.ArrayHashMap([]const u8, Type, CaseInsensitiveASCIIStringContext, true);
 }
 
 pub fn StringArrayHashMapUnmanaged(comptime Type: type) type {

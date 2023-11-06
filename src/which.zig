@@ -1,7 +1,7 @@
 const std = @import("std");
 const bun = @import("root").bun;
 
-fn isValid(buf: *[bun.MAX_PATH_BYTES]u8, segment: []const u8, bin: []const u8) ?u16 {
+fn isValid(buf: *bun.fs.PathBuffer, segment: []const u8, bin: []const u8) ?u16 {
     bun.copy(u8, buf, segment);
     buf[segment.len] = std.fs.path.sep;
     bun.copy(u8, buf[segment.len + 1 ..], bin);
@@ -13,10 +13,9 @@ fn isValid(buf: *[bun.MAX_PATH_BYTES]u8, segment: []const u8, bin: []const u8) ?
 
 // Like /usr/bin/which but without needing to exec a child process
 // Remember to resolve the symlink if necessary
-pub fn which(buf: *[bun.MAX_PATH_BYTES]u8, path: []const u8, cwd: []const u8, bin: []const u8) ?[:0]const u8 {
+pub fn which(buf: *bun.fs.PathBuffer, path: []const u8, cwd: []const u8, bin: []const u8) ?[:0]const u8 {
     if (bun.Environment.os == .windows) {
-        // this is bad
-        var convert_buf: [bun.MAX_PATH_BYTES / 2]u16 = undefined;
+        var convert_buf: bun.fs.WPathBuffer = undefined;
         const result = whichW(&convert_buf, path, cwd, bin) orelse return null;
         const result_converted = bun.strings.convertUTF16toUTF8InBuffer(buf, result) catch unreachable;
         buf[result_converted.len] = 0;
@@ -122,7 +121,7 @@ pub fn whichW(buf: *[bun.MAX_PATH_BYTES / 2]u16, path: []const u8, cwd: []const 
 }
 
 test "which" {
-    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var buf: bun.fs.PathBuffer = undefined;
     var realpath = bun.getenvZ("PATH") orelse unreachable;
     var whichbin = which(&buf, realpath, try bun.getcwdAlloc(std.heap.c_allocator), "which");
     try std.testing.expectEqualStrings(whichbin orelse return std.debug.assert(false), "/usr/bin/which");

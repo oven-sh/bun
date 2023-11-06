@@ -1414,25 +1414,30 @@ pub fn isExecutableFileOSPath(path: bun.OSPathSlice) bool {
     }
 
     if (comptime Environment.isWindows) {
-        var out: windows.DWORD = 0;
-        const rc = kernel32.GetBinaryTypeW(path, &out);
+        // Rationale: `GetBinaryTypeW` does not work on .cmd files.
+        // Windows does not have executable permission like posix does, instead we
+        // can just look at the file extension to determine executable status.
+        @compileError("Do not use isExecutableFilePath on Windows");
 
-        const result = if (rc == windows.FALSE)
-            false
-        else switch (out) {
-            kernel32.SCS_32BIT_BINARY,
-            kernel32.SCS_64BIT_BINARY,
-            kernel32.SCS_DOS_BINARY,
-            kernel32.SCS_OS216_BINARY,
-            kernel32.SCS_PIF_BINARY,
-            kernel32.SCS_POSIX_BINARY,
-            => true,
-            else => false,
-        };
+        // var out: windows.DWORD = 0;
+        // const rc = kernel32.GetBinaryTypeW(path, &out);
 
-        log("GetBinaryTypeW({}) = {d}. isExecutable={}", .{ bun.strings.fmtUTF16(path), out, result });
+        // const result = if (rc == windows.FALSE)
+        //     false
+        // else switch (out) {
+        //     kernel32.SCS_32BIT_BINARY,
+        //     kernel32.SCS_64BIT_BINARY,
+        //     kernel32.SCS_DOS_BINARY,
+        //     kernel32.SCS_OS216_BINARY,
+        //     kernel32.SCS_PIF_BINARY,
+        //     kernel32.SCS_POSIX_BINARY,
+        //     => true,
+        //     else => false,
+        // };
 
-        return result;
+        // log("GetBinaryTypeW({}) = {d}. isExecutable={}", .{ bun.strings.fmtUTF16(path), out, result });
+
+        // return result;
     }
 
     @compileError("TODO: isExecutablePath");

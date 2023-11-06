@@ -2,7 +2,9 @@
 const EventEmitter = require("node:events");
 const { isTypedArray } = require("node:util/types");
 const { Duplex, Readable, Writable } = require("node:stream");
-const { getHeader, setHeader } = $lazy("http");
+const { getHeader, setHeader, assignHeaders: assignHeadersFast } = $lazy("http");
+
+const GlobalPromise = globalThis.Promise;
 
 const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
 /**
@@ -480,6 +482,7 @@ class Server extends EventEmitter {
 
     const ResponseClass = this.#options.ServerResponse || ServerResponse;
     const RequestClass = this.#options.IncomingMessage || IncomingMessage;
+    let isHTTPS = false;
 
     try {
       const tls = this.#tls;
@@ -506,10 +509,16 @@ class Server extends EventEmitter {
             ws.data.drain(ws);
           },
         },
+        // Be very careful not to access (web) Request object
+        // properties:
+        // - request.url
+        // - request.headers
+        //
+        // We want to avoid triggering the getter for these properties because
+        // that will cause the data to be cloned twice, which costs memory & performance.
         fetch(req, _server) {
           var pendingResponse;
           var pendingError;
-          var rejectFunction, resolveFunction;
           var reject = err => {
             if (pendingError) return;
             pendingError = err;
@@ -522,15 +531,21 @@ class Server extends EventEmitter {
             if (resolveFunction) resolveFunction(resp);
           };
 
+          const prevIsNextIncomingMessageHTTPS = isNextIncomingMessageHTTPS;
+          isNextIncomingMessageHTTPS = isHTTPS;
           const http_req = new RequestClass(req);
+          isNextIncomingMessageHTTPS = prevIsNextIncomingMessageHTTPS;
+
+          const upgrade = http_req.headers.upgrade;
+
           const http_res = new ResponseClass({ reply, req: http_req });
 
           http_req.socket[kInternalSocketData] = [_server, http_res, req];
 
-          http_req.once("error", err => reject(err));
-          http_res.once("error", err => reject(err));
+          const rejectFn = err => reject(err);
+          http_req.once("error", rejectFn);
+          http_res.once("error", rejectFn);
 
-          const upgrade = req.headers.get("upgrade");
           if (upgrade) {
             server.emit("upgrade", http_req, http_req.socket, kEmptyBuffer);
           } else {
@@ -545,12 +560,11 @@ class Server extends EventEmitter {
             return pendingResponse;
           }
 
-          return new Promise((resolve, reject) => {
-            resolveFunction = resolve;
-            rejectFunction = reject;
-          });
+          var { promise, resolve: resolveFunction, reject: rejectFunction } = $newPromiseCapability(GlobalPromise);
+          return promise;
         },
       });
+      isHTTPS = this.#server.protocol === "https";
       setTimeout(emitListeningNextTick, 1, this, onListen, null, this.#server.hostname, this.#server.port);
     } catch (err) {
       server.emit("error", err);
@@ -561,16 +575,56 @@ class Server extends EventEmitter {
   setTimeout(msecs, callback) {}
 }
 
-function assignHeaders(object, req) {
-  var headers = req.headers.toJSON();
-  const rawHeaders = $newArrayWithSize(req.headers.count * 2);
+function assignHeadersSlow(object, req) {
+  const headers = req.headers;
+  var outHeaders = Object.create(null);
+  const rawHeaders: string[] = [];
   var i = 0;
-  for (const key in headers) {
-    rawHeaders[i++] = key;
-    rawHeaders[i++] = headers[key];
+  for (let key in headers) {
+    var originalKey = key;
+    var value = headers[originalKey];
+
+    key = key.toLowerCase();
+
+    if (key !== "set-cookie") {
+      value = String(value);
+      $putByValDirect(rawHeaders, i++, originalKey);
+      $putByValDirect(rawHeaders, i++, value);
+      outHeaders[key] = value;
+    } else {
+      if ($isJSArray(value)) {
+        outHeaders[key] = value.slice();
+
+        for (let entry of value) {
+          $putByValDirect(rawHeaders, i++, originalKey);
+          $putByValDirect(rawHeaders, i++, entry);
+        }
+      } else {
+        value = String(value);
+        outHeaders[key] = [value];
+        $putByValDirect(rawHeaders, i++, originalKey);
+        $putByValDirect(rawHeaders, i++, value);
+      }
+    }
   }
-  object.headers = headers;
+  object.headers = outHeaders;
   object.rawHeaders = rawHeaders;
+}
+// This is the prototype for the req.headers object.
+// It must not be exposed
+const kEmptyObjectInternal = Object.create(null);
+
+function assignHeaders(object, req) {
+  // This fast path is an 8% speedup for a "hello world" node:http server, and a 7% speedup for a "hello world" express server
+  const tuple = assignHeadersFast(req, kEmptyObjectInternal, object);
+  if (tuple !== null) {
+    object.headers = $getInternalField(tuple, 0);
+    object.rawHeaders = $getInternalField(tuple, 1);
+    return true;
+  } else {
+    assignHeadersSlow(object, req);
+    return false;
+  }
 }
 function destroyBodyStreamNT(bodyStream) {
   bodyStream.destroy();
@@ -582,42 +636,56 @@ function getDefaultHTTPSAgent() {
   return (_defaultHTTPSAgent ??= new Agent({ defaultPort: 443, protocol: "https:" }));
 }
 
+function requestHasNoBody(method, req) {
+  if ("GET" === method || "HEAD" === method || "TRACE" === method || "CONNECT" === method || "OPTIONS" === method)
+    return true;
+  const headers = req?.headers;
+  const contentLength = headers?.["content-length"];
+  if (!parseInt(contentLength, 10)) return true;
+
+  return false;
+}
+
+// This lets us skip some URL parsing
+var isNextIncomingMessageHTTPS = false;
+
 class IncomingMessage extends Readable {
-  method: string;
+  method: string | null = null;
   complete: boolean;
 
   constructor(req, defaultIncomingOpts) {
-    const method = req.method;
-
     super();
-
-    const url = new URL(req.url);
 
     var { type = "request", [kInternalRequest]: nodeReq } = defaultIncomingOpts || {};
 
-    this.#noBody =
-      type === "request" // TODO: Add logic for checking for body on response
-        ? "GET" === method ||
-          "HEAD" === method ||
-          "TRACE" === method ||
-          "CONNECT" === method ||
-          "OPTIONS" === method ||
-          (parseInt(req.headers.get("Content-Length") || "") || 0) === 0
-        : false;
-
     this.#req = req;
-    this.method = method;
     this.#type = type;
-    this.complete = !!this.#noBody;
 
     this.#bodyStream = undefined;
-    const socket = new FakeSocket();
-    if (url.protocol === "https:") socket.encrypted = true;
-    this.#fakeSocket = socket;
 
-    this.url = url.pathname + url.search;
     this.req = nodeReq;
-    assignHeaders(this, req);
+
+    if (isNextIncomingMessageHTTPS) {
+      // Creating a new Duplex is expensive.
+      // We can skip it if the request is not HTTPS.
+      const socket = new FakeSocket();
+      this.#fakeSocket = socket;
+      socket.encrypted = true;
+      isNextIncomingMessageHTTPS = false;
+    }
+
+    if (!assignHeaders(this, req)) {
+      this.#fakeSocket = req;
+      const reqUrl = String(req?.url || "");
+      this.url = reqUrl;
+    }
+
+    this.#noBody =
+      type === "request" // TODO: Add logic for checking for body on response
+        ? requestHasNoBody(this.method, this)
+        : false;
+
+    this.complete = !!this.#noBody;
   }
 
   headers;
@@ -625,7 +693,7 @@ class IncomingMessage extends Readable {
   _consuming = false;
   _dumped = false;
   #bodyStream: ReadableStreamDefaultReader | undefined;
-  #fakeSocket: FakeSocket | undefined;
+  #fakeSocket: FakeSocket | undefined = undefined;
   #noBody = false;
   #aborted = false;
   #req;
@@ -639,7 +707,7 @@ class IncomingMessage extends Readable {
       return;
     }
 
-    const contentLength = this.#req.headers.get("content-length");
+    const contentLength = this.headers["content-length"];
     const length = contentLength ? parseInt(contentLength, 10) : 0;
     if (length === 0) {
       this.#noBody = true;
@@ -696,7 +764,7 @@ class IncomingMessage extends Readable {
   }
 
   get connection() {
-    return this.#fakeSocket;
+    return (this.#fakeSocket ??= new FakeSocket());
   }
 
   get statusCode() {
@@ -1302,10 +1370,13 @@ class ClientRequest extends OutgoingMessage {
         decompress: false,
       })
         .then(response => {
+          const prevIsHTTPS = isNextIncomingMessageHTTPS;
+          isNextIncomingMessageHTTPS = response.url.startsWith("https:");
           var res = (this.#res = new IncomingMessage(response, {
             type: "response",
             [kInternalRequest]: this,
           }));
+          isNextIncomingMessageHTTPS = prevIsHTTPS;
           this.emit("response", res);
         })
         .catch(err => {

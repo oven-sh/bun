@@ -435,7 +435,7 @@ pub const GlobWalker = struct {
                 const new_dir_path = ResolvePath.join(
                     &[_][]const u8{ (dir_path.*[0..dir_path.len]), "../" },
                     .auto,
-                    false,
+                    // false,
                     // true,
                 );
                 @memcpy(path_buf[0..new_dir_path.len], new_dir_path);

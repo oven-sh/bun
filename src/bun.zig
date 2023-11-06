@@ -2049,3 +2049,18 @@ pub inline fn pathLiteral(comptime literal: anytype) *const [literal.len:0]u8 {
         return &buf;
     };
 }
+
+noinline fn outOfMemoryPanic() noreturn {
+    // In the future, we should print jsc + mimalloc heap statistics
+    @panic("Bun ran out of memory!");
+}
+
+inline fn new(comptime T: type, t: T) *T {
+    var ptr = default_allocator.create(T) catch outOfMemoryPanic();
+    ptr.* = t;
+    return ptr;
+}
+
+inline fn delete(t: anytype) void {
+    default_allocator.destroy(@TypeOf(t));
+}

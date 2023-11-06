@@ -107,17 +107,18 @@ static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
         res->writeHeader(std::string_view("set-cookie", 10), std::string_view(value.is8Bit() ? reinterpret_cast<const char*>(value.characters8()) : value.utf8().data(), value.length()));
     }
 
-    for (auto& header : internalHeaders.commonHeaders()) {
+    for (const auto& header : internalHeaders.commonHeaders()) {
         const auto& name = WebCore::httpHeaderNameString(header.key);
-        auto& value = header.value;
+        const auto& value = header.value;
+
         res->writeHeader(
             std::string_view(name.is8Bit() ? reinterpret_cast<const char*>(name.characters8()) : name.utf8().data(), name.length()),
             std::string_view(value.is8Bit() ? reinterpret_cast<const char*>(value.characters8()) : value.utf8().data(), value.length()));
     }
 
     for (auto& header : internalHeaders.uncommonHeaders()) {
-        auto& name = header.key;
-        auto& value = header.value;
+        const auto& name = header.key;
+        const auto& value = header.value;
         res->writeHeader(
             std::string_view(name.is8Bit() ? reinterpret_cast<const char*>(name.characters8()) : name.utf8().data(), name.length()),
             std::string_view(value.is8Bit() ? reinterpret_cast<const char*>(value.characters8()) : value.utf8().data(), value.length()));
@@ -1193,10 +1194,13 @@ void WebCore__FetchHeaders__copyTo(WebCore__FetchHeaders* headers, StringPointer
 void WebCore__FetchHeaders__count(WebCore__FetchHeaders* headers, uint32_t* count, uint32_t* buf_len)
 {
     auto iter = headers->createIterator();
-    uint32_t i = 0;
+    size_t i = 0;
     for (auto pair = iter.next(); pair; pair = iter.next()) {
-        i += pair->key.length();
-        i += pair->value.length();
+        // UTF8 byteLength is not strictly necessary here
+        // They should always be ASCII.
+        // However, we can still do this out of an abundance of caution
+        i += BunString::utf8ByteLength(pair->key);
+        i += BunString::utf8ByteLength(pair->value);
     }
 
     *count = headers->size();

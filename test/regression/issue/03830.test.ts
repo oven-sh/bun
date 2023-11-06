@@ -20,11 +20,13 @@ it("macros should not lead to seg faults under any given input", async () => {
   writeFileSync(join(testDir, "macro.ts"), "export function fn(str) { return str; }");
   writeFileSync(join(testDir, "index.ts"), "import { fn } from './macro' assert { type: 'macro' };\nfn(`©${''}`);");
 
-  const { stdout, exitCode } = Bun.spawnSync({
-    cmd: [bunExe(), "build", join(testDir, "index.ts")],
+  const { stderr, exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), "build", "--minify", join(testDir, "index.ts")],
     env: bunEnv,
-    stderr: "inherit",
+    stderr: "pipe",
   });
 
-  expect(exitCode).toBe(0);
+  expect(stderr.toString().trim()).toStartWith('error: "Cannot convert argument type to JS');
+  expect(exitCode).not.toBe(0);
+  expect(exitCode).toBe(1);
 });

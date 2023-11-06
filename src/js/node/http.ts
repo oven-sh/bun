@@ -665,6 +665,12 @@ class IncomingMessage extends Readable {
 
     this.req = nodeReq;
 
+    if (!assignHeaders(this, req)) {
+      this.#fakeSocket = req;
+      const reqUrl = String(req?.url || "");
+      this.url = reqUrl;
+    }
+
     if (isNextIncomingMessageHTTPS) {
       // Creating a new Duplex is expensive.
       // We can skip it if the request is not HTTPS.
@@ -672,12 +678,6 @@ class IncomingMessage extends Readable {
       this.#fakeSocket = socket;
       socket.encrypted = true;
       isNextIncomingMessageHTTPS = false;
-    }
-
-    if (!assignHeaders(this, req)) {
-      this.#fakeSocket = req;
-      const reqUrl = String(req?.url || "");
-      this.url = reqUrl;
     }
 
     this.#noBody =

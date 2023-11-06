@@ -276,12 +276,18 @@ pub const GlobWalker = struct {
         if (this.patternComponents.items.len == 0) return .{ .result = 0 };
         var path_buf: [bun.MAX_PATH_BYTES]u8 = std.mem.zeroes([bun.MAX_PATH_BYTES]u8);
 
+        const root_path = this.cwd.toZigString().slice();
+        @memcpy(path_buf[0..root_path.len], root_path[0..root_path.len]);
+        path_buf[root_path.len] = 0;
+        this.root_cwd_slice = root_path;
+        var cwd_fd = switch (Syscall.open(@ptrCast(path_buf[0 .. root_path.len + 1]), std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+            .err => |err| return .{ .err = this.handleSysErrWithPath(err, @ptrCast(path_buf[0 .. root_path.len + 1])) },
+            .result => |fd| fd,
+        };
         // Handle root first
         {
-            const root_path = this.cwd.toZigString().slice();
-            this.root_cwd_slice = root_path;
             const root_work_item = WorkItem.new(root_path, 0, .directory);
-            switch (try this.handleDirEntries(&root_work_item, &path_buf, true)) {
+            switch (try this.handleDirEntriesRoot(&root_work_item, &path_buf, cwd_fd)) {
                 .err => |err| return .{ .err = err },
                 else => {},
             }
@@ -290,7 +296,7 @@ pub const GlobWalker = struct {
         while (this.workbuf.items.len > 0) {
             const work_item: WorkItem = this.workbuf.pop();
             switch (work_item.kind) {
-                .directory => switch (try this.handleDirEntries(&work_item, &path_buf, false)) {
+                .directory => switch (try this.handleDirEntries(&work_item, &path_buf, cwd_fd)) {
                     .err => |err| return .{ .err = err },
                     else => {},
                 },
@@ -307,17 +313,23 @@ pub const GlobWalker = struct {
     pub fn handleSymlink(
         this: *GlobWalker,
         work_item: *const WorkItem,
-        pathBuf: *[bun.MAX_PATH_BYTES]u8,
+        scratch_path_buf: *[bun.MAX_PATH_BYTES]u8,
     ) !Maybe(u0) {
         const only_files = this.only_files;
-        @memcpy(pathBuf[0..work_item.path.len], work_item.path);
-        pathBuf[work_item.path.len] = 0;
-        const symlink_full_path_z: [:0]const u8 = pathBuf[0..work_item.path.len :0];
+        @memcpy(scratch_path_buf[0..work_item.path.len], work_item.path);
+        scratch_path_buf[work_item.path.len] = 0;
+        var symlink_full_path_z: [:0]u8 = scratch_path_buf[0..work_item.path.len :0];
         const entry_name = symlink_full_path_z[work_item.entry_start..symlink_full_path_z.len];
 
-        const component_idx = if (this.patternComponents.items[work_item.idx].syntax_hint == .Double) this.collapseSuccessiveDoubleWildcards(work_item.idx) else work_item.idx;
-
+        var encountered_dot_dot = false;
+        const component_idx = this.skipSpecialComponents(
+            work_item.idx,
+            &symlink_full_path_z,
+            scratch_path_buf,
+            &encountered_dot_dot,
+        );
         var pattern = this.patternComponents.items[component_idx];
+
         // Since we collapsed successive double wildcards above, this is
         // guaranteed to not be a double wildcard
         const next_pattern: ?*Component = if (component_idx + 1 < this.patternComponents.items.len) &this.patternComponents.items[component_idx + 1] else null;
@@ -416,35 +428,48 @@ pub const GlobWalker = struct {
         idx: u32,
         dir_path: *[:0]u8,
         path_buf: *[bun.MAX_PATH_BYTES]u8,
-        comptime dot_kind: Component.SyntaxHint,
+        encountered_dot_dot: *bool,
     ) u32 {
-        if (comptime dot_kind != .Dot and dot_kind != .DotBack) @compileError("Invalid `dot_kind`");
-
         var component_idx = idx;
         var len = dir_path.len;
-        while (component_idx < this.patternComponents.items.len and
-            this.patternComponents.items[component_idx].syntax_hint == dot_kind) : (component_idx += 1)
-        {
-            if (comptime dot_kind == .Dot) {
-                if (dir_path.len + 2 >= bun.MAX_PATH_BYTES) @panic("Invalid path");
-                path_buf[len] = '/';
-                path_buf[len + 1] = '.';
-                path_buf[len + 2] = 0;
-                len += 2;
-            } else {
-                const new_dir_path = ResolvePath.join(
-                    &[_][]const u8{ (dir_path.*[0..dir_path.len]), "../" },
-                    .auto,
-                    // false,
-                    // true,
-                );
-                @memcpy(path_buf[0..new_dir_path.len], new_dir_path);
-                path_buf[new_dir_path.len] = 0;
-                dir_path.* = path_buf[0..new_dir_path.len :0];
+        while (component_idx < this.patternComponents.items.len) {
+            switch (this.patternComponents.items[component_idx].syntax_hint) {
+                .Dot => {
+                    defer component_idx += 1;
+                    if (len + 2 >= bun.MAX_PATH_BYTES) @panic("Invalid path");
+                    if (len == 0) {
+                        path_buf[len] = '.';
+                        path_buf[len + 1] = 0;
+                        len += 1;
+                    } else {
+                        path_buf[len] = '/';
+                        path_buf[len + 1] = '.';
+                        path_buf[len + 2] = 0;
+                        len += 2;
+                    }
+                },
+                .DotBack => {
+                    defer component_idx += 1;
+                    encountered_dot_dot.* = true;
+                    if (dir_path.len + 3 >= bun.MAX_PATH_BYTES) @panic("Invalid path");
+                    if (len == 0) {
+                        path_buf[len] = '.';
+                        path_buf[len + 1] = '.';
+                        path_buf[len + 2] = 0;
+                        len += 2;
+                    } else {
+                        path_buf[len] = '/';
+                        path_buf[len + 1] = '.';
+                        path_buf[len + 2] = '.';
+                        path_buf[len + 3] = 0;
+                        len += 3;
+                    }
+                },
+                else => break,
             }
         }
 
-        if (comptime dot_kind == .Dot) dir_path.len = len;
+        dir_path.len = len;
 
         return component_idx;
     }
@@ -461,37 +486,104 @@ pub const GlobWalker = struct {
         return component_idx;
     }
 
+    pub fn skipSpecialComponents(
+        this: *GlobWalker,
+        work_item_idx: u32,
+        dir_path: *[:0]u8,
+        scratch_path_buf: *[bun.MAX_PATH_BYTES]u8,
+        encountered_dot_dot: *bool,
+    ) u32 {
+        var component_idx = work_item_idx;
+
+        // Skip `.` and `..` while also appending them to `dir_path`
+        component_idx = switch (this.patternComponents.items[component_idx].syntax_hint) {
+            .Dot => this.collapseDots(
+                component_idx,
+                dir_path,
+                scratch_path_buf,
+                encountered_dot_dot,
+            ),
+            .DotBack => this.collapseDots(
+                component_idx,
+                dir_path,
+                scratch_path_buf,
+                encountered_dot_dot,
+            ),
+            else => component_idx,
+        };
+
+        // Skip to the last `**` if there is a chain of them
+        component_idx = switch (this.patternComponents.items[component_idx].syntax_hint) {
+            .Double => this.collapseSuccessiveDoubleWildcards(component_idx),
+            else => component_idx,
+        };
+
+        return component_idx;
+    }
+
+    pub fn handleDirEntriesRoot(
+        this: *GlobWalker,
+        work_item: *const WorkItem,
+        scratch_path_buf: *[bun.MAX_PATH_BYTES]u8,
+        cwd_fd: bun.FileDescriptor,
+    ) !Maybe(u0) {
+        // TODO Optimization: On posix systems filepaths are already null byte terminated so we can skip this if thats the case
+        // @memcpy(pathBuf[0..work_item.path.len], work_item.path);
+        // pathBuf[work_item.path.len] = 0;
+        // var dir_path: [:0]u8 = pathBuf[0..work_item.path.len :0];
+        scratch_path_buf[0] = 0;
+        var dir_path: [:0]u8 = scratch_path_buf[0..0 :0];
+
+        var encountered_dot_dot = false;
+        const component_idx = this.skipSpecialComponents(work_item.idx, &dir_path, scratch_path_buf, &encountered_dot_dot);
+
+        // If we encountered a `..` then we need to change the fd
+        if (encountered_dot_dot) {
+            const flags = std.os.O.DIRECTORY | std.os.O.RDONLY;
+            const fd = switch (Syscall.openat(cwd_fd, dir_path, flags, 0)) {
+                .err => |err| return .{
+                    .err = this.handleSysErrWithPath(err, dir_path),
+                },
+                .result => |fd_| fd_,
+            };
+            defer {
+                _ = Syscall.closeAllowingStdoutAndStderr(fd);
+            }
+
+            switch (try this.handleDirEntriesImpl(fd, component_idx, dir_path)) {
+                .err => |err| return .{ .err = err },
+                .result => return .{ .result = 0 },
+            }
+        }
+
+        switch (try this.handleDirEntriesImpl(cwd_fd, component_idx, dir_path)) {
+            .err => |err| return .{ .err = err },
+            .result => return .{ .result = 0 },
+        }
+    }
+
     pub fn handleDirEntries(
         this: *GlobWalker,
         work_item: *const WorkItem,
-        pathBuf: *[bun.MAX_PATH_BYTES]u8,
-        comptime in_root: bool,
-    ) !Maybe(void) {
-        const only_files = this.only_files;
-        const dot = this.dot;
-        _ = dot;
+        scratch_path_buf: *[bun.MAX_PATH_BYTES]u8,
+        cwd_fd: bun.FileDescriptor,
+    ) !Maybe(u0) {
 
         // TODO Optimization: On posix systems filepaths are already null byte terminated so we can skip this if thats the case
-        @memcpy(pathBuf[0..work_item.path.len], work_item.path);
-        pathBuf[work_item.path.len] = 0;
-        var dir_path: [:0]u8 = pathBuf[0..work_item.path.len :0];
+        @memcpy(scratch_path_buf[0..work_item.path.len], work_item.path);
+        scratch_path_buf[work_item.path.len] = 0;
+        var dir_path: [:0]u8 = scratch_path_buf[0..work_item.path.len :0];
 
-        const component_idx = switch (this.patternComponents.items[work_item.idx].syntax_hint) {
-            .Double => this.collapseSuccessiveDoubleWildcards(work_item.idx),
-            .Dot => this.collapseDots(work_item.idx, &dir_path, pathBuf, .Dot),
-            .DotBack => this.collapseDots(work_item.idx, &dir_path, pathBuf, .DotBack),
-            else => work_item.idx,
-        };
-
-        var pattern = this.patternComponents.items[component_idx];
-
-        // Since we collapsed successive double wildcards above, this is
-        // guaranteed to not be a double wildcard
-        const next_pattern: ?*Component = if (component_idx + 1 < this.patternComponents.items.len) &this.patternComponents.items[component_idx + 1] else null;
-        const is_last = component_idx == this.patternComponents.items.len - 1;
+        var encountered_dot_dot = false;
+        const component_idx = this.skipSpecialComponents(
+            work_item.idx,
+            &dir_path,
+            scratch_path_buf,
+            &encountered_dot_dot,
+        );
 
         const flags = std.os.O.DIRECTORY | std.os.O.RDONLY;
-        const fd = switch (Syscall.open(dir_path, flags, 0)) {
+        const fd = switch (Syscall.openat(cwd_fd, dir_path, flags, 0)) {
             .err => |err| return .{
                 .err = this.handleSysErrWithPath(err, dir_path),
             },
@@ -501,9 +593,28 @@ pub const GlobWalker = struct {
             // _ = Syscall.close(fd);
             _ = Syscall.closeAllowingStdoutAndStderr(fd);
         }
+
+        switch (try this.handleDirEntriesImpl(fd, component_idx, dir_path)) {
+            .err => |err| return .{ .err = err },
+            .result => return .{ .result = 0 },
+        }
+    }
+
+    fn handleDirEntriesImpl(this: *GlobWalker, fd: bun.FileDescriptor, component_idx: u32, dir_path: [:0]const u8) !Maybe(u0) {
+        const only_files = this.only_files;
+        const dot = this.dot;
+        _ = dot;
+
         var dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
         var iterator = DirIterator.iterate(dir);
         var entry = iterator.next();
+
+        var pattern = this.patternComponents.items[component_idx];
+
+        // Since we collapsed successive double wildcards above, this is
+        // guaranteed to not be a double wildcard
+        const next_pattern: ?*Component = if (component_idx + 1 < this.patternComponents.items.len) &this.patternComponents.items[component_idx + 1] else null;
+        const is_last = component_idx == this.patternComponents.items.len - 1;
 
         while (switch (entry) {
             .err => |err| return .{ .err = this.handleSysErrWithPath(err, dir_path) },
@@ -516,7 +627,7 @@ pub const GlobWalker = struct {
                 .file => {
                     const matches = this.matchPatternFile(entry_name, component_idx, is_last, &pattern, next_pattern);
                     if (matches) {
-                        try this.appendMatchedPath(entry_name, dir_path, in_root);
+                        try this.appendMatchedPath(entry_name, dir_path);
                     }
                 },
                 .directory => {
@@ -524,7 +635,7 @@ pub const GlobWalker = struct {
                     const recursion_idx_bump_ = this.matchPatternDir(&pattern, next_pattern, entry_name, component_idx, is_last, &add_dir);
 
                     if (add_dir and !only_files) {
-                        try this.appendMatchedPath(entry_name, dir_path, in_root);
+                        try this.appendMatchedPath(entry_name, dir_path);
                     }
 
                     const recursion_idx_bump = recursion_idx_bump_ orelse continue;
@@ -534,10 +645,10 @@ pub const GlobWalker = struct {
                         entry_name,
                     };
 
-                    const subdir_entry_name = try this.arena.allocator().dupe(u8, ResolvePath.join(subdir_parts, .auto));
+                    // const subdir_entry_name = try this.arena.allocator().dupe(u8, ResolvePath.join(subdir_parts, .auto));
                     // const subdir_entry_name = try this.arena.allocator().dupe(u8, ResolvePath.join(subdir_parts, .auto));
                     // const subdir_entry_name = try this.arena.allocator().dupe(u8, std.fs.path.join(this, paths: []const []const u8));
-                    // const subdir_entry_name = try std.fs.path.join(this.arena.allocator(), subdir_parts);
+                    const subdir_entry_name = try std.fs.path.join(this.arena.allocator(), subdir_parts);
 
                     try this.workbuf.append(
                         this.arena.allocator(),
@@ -572,14 +683,14 @@ pub const GlobWalker = struct {
 
                     const matches = this.matchPatternFile(entry_name, component_idx, is_last, &pattern, next_pattern);
                     if (matches) {
-                        try this.appendMatchedPath(entry_name, dir_path, in_root);
+                        try this.appendMatchedPath(entry_name, dir_path);
                     }
                 },
                 else => {},
             }
         }
 
-        return .{ .result = undefined };
+        return .{ .result = 0 };
     }
 
     fn matchPatternDir(
@@ -736,27 +847,24 @@ pub const GlobWalker = struct {
     fn appendMatchedPath(
         this: *GlobWalker,
         entry_name: []const u8,
-        dir_name_: [:0]const u8,
-        in_root: bool,
+        dir_name: [:0]const u8,
     ) !void {
-        if (comptime in_root) {
-            if (!this.absolute) {
-                const cloned = try this.arena.allocator().dupe(u8, entry_name);
-                try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(cloned));
-                return;
-            }
-        }
-        const dir_name = if (!this.absolute) dir_name_[this.root_cwd_slice.len + 1 .. dir_name_.len] else dir_name_[0..dir_name_.len];
-        const name = try this.arena.allocator().dupe(u8, ResolvePath.join(&[_][]const u8{
-            dir_name,
+        // const name = try this.arena.allocator().dupe(u8, ResolvePath.join(&[_][]const u8{
+        //     dir_name[0..dir_name.len],
+        //     entry_name,
+        // }, .auto));
+        const name = try std.fs.path.join(this.arena.allocator(), &[_][]const u8{
+            dir_name[0..dir_name.len],
             entry_name,
-        }, .auto));
+        });
         try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(name));
     }
 
     fn appendMatchedPathSymlink(this: *GlobWalker, symlink_full_path: []const u8) !void {
-        const name_slice = if (!this.absolute) symlink_full_path[this.root_cwd_slice.len + 1 .. symlink_full_path.len] else symlink_full_path[0..];
-        const name = try this.arena.allocator().dupe(u8, name_slice);
+        //     const name_slice = if (!this.absolute) symlink_full_path[this.root_cwd_slice.len + 1 .. symlink_full_path.len] else symlink_full_path[0..];
+        //     const name = try this.arena.allocator().dupe(u8, name_slice);
+        //     try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(name));
+        const name = try this.arena.allocator().dupe(u8, symlink_full_path);
         try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(name));
     }
 

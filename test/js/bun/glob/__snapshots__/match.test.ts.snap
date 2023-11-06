@@ -392,44 +392,44 @@ exports[`fast-glob e2e tests patterns regular cwd **/{nested,file.md}/*: **/{nes
 
 exports[`fast-glob e2e tests patterns regular relative cwd ./*: ./* 1`] = `
 [
-  "match.test.ts",
-  "matchString.ts",
+  "./match.test.ts",
+  "./matchString.ts",
 ]
 `;
 
 exports[`fast-glob e2e tests patterns regular relative cwd ./*: ./* 2`] = `
 [
-  "file.md",
+  "./file.md",
 ]
 `;
 
 exports[`fast-glob e2e tests patterns regular relative cwd ./**: ./** 1`] = `
 [
-  "file.md",
-  "first/file.md",
-  "first/nested/directory/file.json",
-  "first/nested/directory/file.md",
-  "first/nested/file.md",
-  "second/file.md",
-  "second/nested/directory/file.md",
-  "second/nested/file.md",
-  "third/library/a/book.md",
-  "third/library/b/book.md",
+  "./file.md",
+  "./first/file.md",
+  "./first/nested/directory/file.json",
+  "./first/nested/directory/file.md",
+  "./first/nested/file.md",
+  "./second/file.md",
+  "./second/nested/directory/file.md",
+  "./second/nested/file.md",
+  "./third/library/a/book.md",
+  "./third/library/b/book.md",
 ]
 `;
 
 exports[`fast-glob e2e tests patterns regular relative cwd ./**/*: ./**/* 1`] = `
 [
-  "file.md",
-  "first/file.md",
-  "first/nested/directory/file.json",
-  "first/nested/directory/file.md",
-  "first/nested/file.md",
-  "second/file.md",
-  "second/nested/directory/file.md",
-  "second/nested/file.md",
-  "third/library/a/book.md",
-  "third/library/b/book.md",
+  "./file.md",
+  "./first/file.md",
+  "./first/nested/directory/file.json",
+  "./first/nested/directory/file.md",
+  "./first/nested/file.md",
+  "./second/file.md",
+  "./second/nested/directory/file.md",
+  "./second/nested/file.md",
+  "./third/library/a/book.md",
+  "./third/library/b/book.md",
 ]
 `;
 

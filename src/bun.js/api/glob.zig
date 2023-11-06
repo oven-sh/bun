@@ -85,6 +85,7 @@ const MatchOpts = struct {
             }
 
             const cwd_str = cwd_str: {
+                // If its absolute return as is
                 if (ResolvePath.Platform.auto.isAbsolute(cwd_str_raw.slice())) {
                     const cwd_str = cwd_str_raw.clone(arena.allocator()) catch {
                         globalThis.throwOutOfMemory();
@@ -93,8 +94,19 @@ const MatchOpts = struct {
                     break :cwd_str cwd_str.ptr[0..cwd_str.len];
                 }
 
-                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 var path_buf2: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
+
+                if (!out.absolute) {
+                    const cwd_str = ResolvePath.joinStringBuf(&path_buf2, &[_][]const u8{cwd_str_raw.slice()}, .auto);
+                    break :cwd_str arena.allocator().dupe(u8, cwd_str) catch {
+                        globalThis.throwOutOfMemory();
+                        return null;
+                    };
+                }
+
+                // Convert to an absolute path
+
+                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 const cwd = switch (bun.sys.getcwd((&path_buf))) {
                     .result => |cwd| cwd,
                     .err => |err| {
@@ -103,10 +115,11 @@ const MatchOpts = struct {
                         return null;
                     },
                 };
-                _ = cwd;
 
-                // const cwd_str = ResolvePath.joinStringBuf(&path_buf2, &[_][]const u8{ cwd, cwd_str_raw.slice() }, .auto);
-                const cwd_str = ResolvePath.joinStringBuf(&path_buf2, &[_][]const u8{cwd_str_raw.slice()}, .auto);
+                const cwd_str = ResolvePath.joinStringBuf(&path_buf2, &[_][]const u8{
+                    cwd,
+                    cwd_str_raw.slice(),
+                }, .auto);
 
                 break :cwd_str arena.allocator().dupe(u8, cwd_str) catch {
                     globalThis.throwOutOfMemory();

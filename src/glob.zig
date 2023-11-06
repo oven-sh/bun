@@ -527,12 +527,17 @@ pub const GlobWalker = struct {
         scratch_path_buf: *[bun.MAX_PATH_BYTES]u8,
         cwd_fd: bun.FileDescriptor,
     ) !Maybe(u0) {
-        // TODO Optimization: On posix systems filepaths are already null byte terminated so we can skip this if thats the case
-        // @memcpy(pathBuf[0..work_item.path.len], work_item.path);
-        // pathBuf[work_item.path.len] = 0;
-        // var dir_path: [:0]u8 = pathBuf[0..work_item.path.len :0];
         scratch_path_buf[0] = 0;
-        var dir_path: [:0]u8 = scratch_path_buf[0..0 :0];
+        var dir_path: [:0]u8 = dir_path: {
+            // For the root `work_item.path` is absolute, so if absolute is
+            // disabled, make this an empty string so we joining dir with
+            // entries isn't absolute
+            if (!this.absolute) break :dir_path scratch_path_buf[0..0 :0];
+
+            @memcpy(scratch_path_buf[0..work_item.path.len], work_item.path);
+            scratch_path_buf[work_item.path.len] = 0;
+            break :dir_path scratch_path_buf[0..work_item.path.len :0];
+        };
 
         var encountered_dot_dot = false;
         const component_idx = this.skipSpecialComponents(work_item.idx, &dir_path, scratch_path_buf, &encountered_dot_dot);
@@ -648,7 +653,11 @@ pub const GlobWalker = struct {
                     // const subdir_entry_name = try this.arena.allocator().dupe(u8, ResolvePath.join(subdir_parts, .auto));
                     // const subdir_entry_name = try this.arena.allocator().dupe(u8, ResolvePath.join(subdir_parts, .auto));
                     // const subdir_entry_name = try this.arena.allocator().dupe(u8, std.fs.path.join(this, paths: []const []const u8));
-                    const subdir_entry_name = try std.fs.path.join(this.arena.allocator(), subdir_parts);
+                    // const subdir_entry_name = if (!this.absolute)
+                    //     try std.fs.path.join(this.arena.allocator(), subdir_parts)
+                    // else
+                    //     try this.arena.allocator().dupe(u8, ResolvePath.join(subdir_parts, .auto));
+                    const subdir_entry_name = try this.join(subdir_parts);
 
                     try this.workbuf.append(
                         this.arena.allocator(),
@@ -669,7 +678,8 @@ pub const GlobWalker = struct {
                         };
                         const entry_start: u32 = @intCast(if (dir_path.len == 0) 0 else dir_path.len + 1);
 
-                        const subdir_entry_name = try this.arena.allocator().dupe(u8, ResolvePath.join(subdir_parts, .auto));
+                        // const subdir_entry_name = try this.arena.allocator().dupe(u8, ResolvePath.join(subdir_parts, .auto));
+                        const subdir_entry_name = try this.join(subdir_parts);
 
                         try this.workbuf.append(
                             this.arena.allocator(),
@@ -853,10 +863,15 @@ pub const GlobWalker = struct {
         //     dir_name[0..dir_name.len],
         //     entry_name,
         // }, .auto));
-        const name = try std.fs.path.join(this.arena.allocator(), &[_][]const u8{
+        // const name = try std.fs.path.join(this.arena.allocator(), &[_][]const u8{
+        //     dir_name[0..dir_name.len],
+        //     entry_name,
+        // });
+        const subdir_parts: []const []const u8 = &[_][]const u8{
             dir_name[0..dir_name.len],
             entry_name,
-        });
+        };
+        const name = try this.join(subdir_parts);
         try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(name));
     }
 
@@ -866,6 +881,13 @@ pub const GlobWalker = struct {
         //     try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(name));
         const name = try this.arena.allocator().dupe(u8, symlink_full_path);
         try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(name));
+    }
+
+    inline fn join(this: *GlobWalker, subdir_parts: []const []const u8) ![]u8 {
+        return if (!this.absolute)
+            try std.fs.path.join(this.arena.allocator(), subdir_parts)
+        else
+            try this.arena.allocator().dupe(u8, ResolvePath.join(subdir_parts, .auto));
     }
 
     inline fn startsWithDot(filepath: []const u8) bool {

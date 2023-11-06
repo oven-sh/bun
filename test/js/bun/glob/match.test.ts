@@ -8,87 +8,85 @@ const followSymlinks = true;
 const bunGlobOpts = {
   followSymlinks: followSymlinks,
   onlyFiles: false,
+  // absolute: true,
 } satisfies GlobMatchOptions;
 
+type FgOpts = NonNullable<Parameters<typeof fg.glob>[1]>;
 const fgOpts = {
   followSymbolicLinks: followSymlinks,
   onlyFiles: false,
   // absolute: true,
-} satisfies NonNullable<Parameters<typeof fg.glob>[1]>;
+} satisfies FgOpts;
 
 describe("glob.match", async () => {
-  test("recursively search node_modules", async () => {
-    const pattern = "**/node_modules/**/*.js";
-    const glob = new Glob(pattern);
-    const filepaths = await glob.match(bunGlobOpts);
-    const fgFilepths = await fg.glob(pattern, fgOpts);
+  function testWithOpts(namePrefix: string, bunGlobOpts: GlobMatchOptions, fgOpts: FgOpts) {
+    test(`${namePrefix} recursively search node_modules`, async () => {
+      const pattern = "**/node_modules/**/*.js";
+      const glob = new Glob(pattern);
+      const filepaths = await glob.match(bunGlobOpts);
+      const fgFilepths = await fg.glob(pattern, fgOpts);
 
-    // console.error(filepaths);
-    expect(filepaths.length).toEqual(fgFilepths.length);
+      // console.error(filepaths);
+      expect(filepaths.length).toEqual(fgFilepths.length);
 
-    const bunfilepaths = new Set(filepaths);
-    for (const filepath of fgFilepths) {
-      if (!bunfilepaths.has(filepath)) console.error("Missing:", filepath);
-      expect(bunfilepaths.has(filepath)).toBeTrue();
-    }
-  });
+      const bunfilepaths = new Set(filepaths);
+      for (const filepath of fgFilepths) {
+        if (!bunfilepaths.has(filepath)) console.error("Missing:", filepath);
+        expect(bunfilepaths.has(filepath)).toBeTrue();
+      }
+    });
 
-  test("recursive search js files", async () => {
-    const pattern = "**/*.js";
-    const glob = new Glob(pattern);
-    const filepaths = await glob.match(bunGlobOpts);
-    const fgFilepths = await fg.glob(pattern, fgOpts);
+    test(`${namePrefix} recursive search js files`, async () => {
+      const pattern = "**/*.js";
+      const glob = new Glob(pattern);
+      const filepaths = await glob.match(bunGlobOpts);
+      const fgFilepths = await fg.glob(pattern, fgOpts);
 
-    expect(filepaths.length).toEqual(fgFilepths.length);
+      expect(filepaths.length).toEqual(fgFilepths.length);
 
-    const bunfilepaths = new Set(filepaths);
-    for (const filepath of fgFilepths) {
-      if (!bunfilepaths.has(filepath)) console.error("Missing:", filepath);
-      expect(bunfilepaths.has(filepath)).toBeTrue();
-    }
-  });
+      const bunfilepaths = new Set(filepaths);
+      for (const filepath of fgFilepths) {
+        if (!bunfilepaths.has(filepath)) console.error("Missing:", filepath);
+        expect(bunfilepaths.has(filepath)).toBeTrue();
+      }
+    });
 
-  test("recursive search ts files", async () => {
-    const pattern = "**/*.ts";
-    const glob = new Glob(pattern);
-    const filepaths = await glob.match(bunGlobOpts);
-    const fgFilepths = await fg.glob(pattern, fgOpts);
+    test(`${namePrefix} recursive search ts files`, async () => {
+      const pattern = "**/*.ts";
+      const glob = new Glob(pattern);
+      const filepaths = await glob.match(bunGlobOpts);
+      const fgFilepths = await fg.glob(pattern, fgOpts);
 
-    expect(filepaths.length).toEqual(fgFilepths.length);
+      expect(filepaths.length).toEqual(fgFilepths.length);
 
-    const bunfilepaths = new Set(filepaths);
-    for (const filepath of fgFilepths) {
-      if (!bunfilepaths.has(filepath)) console.error("Missing:", filepath);
-      expect(bunfilepaths.has(filepath)).toBeTrue();
-    }
-  });
+      const bunfilepaths = new Set(filepaths);
+      for (const filepath of fgFilepths) {
+        if (!bunfilepaths.has(filepath)) console.error("Missing:", filepath);
+        expect(bunfilepaths.has(filepath)).toBeTrue();
+      }
+    });
 
-  test("glob not freed before matching done", async () => {
-    const promise = (async () => {
-      const glob = new Glob("**/node_modules/**/*.js");
-      const result = glob.match(bunGlobOpts);
+    test(`${namePrefix} glob not freed before matching done`, async () => {
+      const promise = (async () => {
+        const glob = new Glob("**/node_modules/**/*.js");
+        const result = glob.match(bunGlobOpts);
+        Bun.gc(true);
+        const result2 = await result;
+        return result2;
+      })();
       Bun.gc(true);
-      const result2 = await result;
-      return result2;
-    })();
-    Bun.gc(true);
-    const values = await promise;
-    Bun.gc(true);
-  });
+      const values = await promise;
+      Bun.gc(true);
+    });
+  }
+
+  testWithOpts("non-absolute", bunGlobOpts, fgOpts);
+  testWithOpts("absolute", { ...bunGlobOpts, absolute: true }, { ...fgOpts, absolute: true });
 });
 
-/**
- * These are the e2e tests from fast-glob, with some omitted because we don't support features like ignored patterns
- * The snapshots are generated by running fast-glob on them first
- * There are slight discrepancies in the returned matches when there is a `./` in front of the pattern.
- * Bun.Glob is consistent with the Unix bash shell style, which always adds the `./`
- * fast-glob will randomly add it or omit it.
- * In practice this discrepancy makes no difference, so the snapshots were changed accordingly to match Bun.Glob / Unix bash shell style.
- */
-describe("fast-glob e2e tests", async () => {
-  const cwd = "test/js/bun/glob";
-
-  const regularPatterns = [
+// From fast-glob regular.e2e.tes
+const regular = {
+  regular: [
     "fixtures/*",
     "fixtures/**",
     "fixtures/**/*",
@@ -124,18 +122,8 @@ describe("fast-glob e2e tests", async () => {
     "fixtures/**/{nested,file.md}/*",
 
     "./fixtures/*",
-  ];
-
-  regularPatterns.forEach(pattern =>
-    test(`patterns regular ${pattern}`, () => {
-      // let entries = fg.globSync(pattern, { cwd });
-      let entries = new Glob(pattern).matchSync({ cwd, followSymlinks: true });
-      entries = entries.sort();
-      expect(entries).toMatchSnapshot(pattern);
-    }),
-  );
-
-  const regularCwdPatterns = [
+  ],
+  cwd: [
     { pattern: "*", cwd: "fixtures" },
     { pattern: "**", cwd: "fixtures" },
     { pattern: "**/*", cwd: "fixtures" },
@@ -165,19 +153,8 @@ describe("fast-glob e2e tests", async () => {
 
     { pattern: "*/{nested,file.md}/*", cwd: "fixtures" },
     { pattern: "**/{nested,file.md}/*", cwd: "fixtures" },
-  ];
-
-  regularCwdPatterns.forEach(({ pattern, cwd: secondHalf }) =>
-    test(`patterns regular cwd ${pattern}`, () => {
-      const testCwd = path.join(cwd, secondHalf);
-      // let entries = fg.globSync(pattern, { cwd: testCwd });
-      let entries = new Glob(pattern).matchSync({ cwd: testCwd, followSymlinks: true });
-      entries = entries.sort();
-      expect(entries).toMatchSnapshot(pattern);
-    }),
-  );
-
-  const regularRelativePatterns = [
+  ],
+  relativeCwd: [
     { pattern: "./*" },
     { pattern: "./*", cwd: "fixtures" },
     { pattern: "./**", cwd: "fixtures" },
@@ -189,9 +166,59 @@ describe("fast-glob e2e tests", async () => {
 
     { pattern: "../{first,second}", cwd: "fixtures/first" },
     { pattern: "./../*", cwd: "fixtures/first" },
-  ];
+  ],
+};
 
-  regularRelativePatterns.forEach(({ pattern, cwd: secondHalf }) =>
+// From fast-glob absolute.e2e.ts
+const absolutePatterns = {
+  regular: ["fixtures/*", "fixtures/**", "fixtures/**/*", "fixtures/../*"],
+  cwd: [
+    {
+      pattern: "*",
+      cwd: "fixtures",
+    },
+    {
+      pattern: "**",
+      cwd: "fixtures",
+    },
+    {
+      pattern: "**/*",
+      cwd: "fixtures",
+    },
+  ],
+};
+
+/**
+ * These are the e2e tests from fast-glob, with some omitted because we don't support features like ignored patterns
+ * The snapshots are generated by running fast-glob on them first
+ * There are slight discrepancies in the returned matches when there is a `./` in front of the pattern.
+ * Bun.Glob is consistent with the Unix bash shell style, which always adds the `./`
+ * fast-glob will randomly add it or omit it.
+ * In practice this discrepancy makes no difference, so the snapshots were changed accordingly to match Bun.Glob / Unix bash shell style.
+ */
+describe("fast-glob e2e tests", async () => {
+  const cwd = "test/js/bun/glob";
+
+  regular.regular.forEach(pattern =>
+    test(`patterns regular ${pattern}`, () => {
+      // let entries = fg.globSync(pattern, { cwd });
+      let entries = new Glob(pattern).matchSync({ cwd, followSymlinks: true });
+      entries = entries.sort();
+      expect(entries).toMatchSnapshot(pattern);
+    }),
+  );
+
+  regular.cwd.forEach(({ pattern, cwd: secondHalf }) =>
+    test(`patterns regular cwd ${pattern}`, () => {
+      const testCwd = path.join(cwd, secondHalf);
+      // let entries = fg.globSync(pattern, { cwd: testCwd });
+      let entries = new Glob(pattern).matchSync({ cwd: testCwd, followSymlinks: true });
+      entries = entries.sort();
+      expect(entries).toMatchSnapshot(pattern);
+    }),
+  );
+
+  regular.relativeCwd.forEach(({ pattern, cwd: secondHalf }) =>
     test(`patterns regular relative cwd ${pattern}`, () => {
       const testCwd = secondHalf ? path.join(cwd, secondHalf) : cwd;
       // let entries = fg.globSync(pattern, { cwd: testCwd });
@@ -200,14 +227,14 @@ describe("fast-glob e2e tests", async () => {
       expect(entries).toMatchSnapshot(pattern);
     }),
   );
-});
 
-function returnError(cb: () => any): Error | undefined {
-  try {
-    cb();
-  } catch (err) {
-    // @ts-expect-error
-    return err;
-  }
-  return undefined;
-}
+  absolutePatterns.cwd.forEach(({ pattern, cwd: secondHalf }) =>
+    test(`patterns absolute cwd ${pattern}`, () => {
+      const testCwd = secondHalf ? path.join(cwd, secondHalf) : cwd;
+      // let entries = fg.globSync(pattern, { cwd: testCwd, absolute: true });
+      let entries = new Glob(pattern).matchSync({ cwd: testCwd, followSymlinks: true, absolute: true });
+      entries = entries.sort();
+      expect(entries).toMatchSnapshot(pattern);
+    }),
+  );
+});

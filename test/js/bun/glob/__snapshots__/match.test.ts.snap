@@ -467,3 +467,39 @@ exports[`fast-glob e2e tests patterns regular relative cwd ./../*: ./../* 1`] = 
   "./../file.md",
 ]
 `;
+
+exports[`fast-glob e2e tests patterns absolute cwd *: * 1`] = `
+[
+  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/file.md",
+]
+`;
+
+exports[`fast-glob e2e tests patterns absolute cwd **: ** 1`] = `
+[
+  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/file.md",
+  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/first/file.md",
+  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/first/nested/directory/file.json",
+  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/first/nested/directory/file.md",
+  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/first/nested/file.md",
+  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/second/file.md",
+  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/second/nested/directory/file.md",
+  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/second/nested/file.md",
+  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/third/library/a/book.md",
+  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/third/library/b/book.md",
+]
+`;
+
+exports[`fast-glob e2e tests patterns absolute cwd **/*: **/* 1`] = `
+[
+  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/file.md",
+  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/first/file.md",
+  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/first/nested/directory/file.json",
+  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/first/nested/directory/file.md",
+  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/first/nested/file.md",
+  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/second/file.md",
+  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/second/nested/directory/file.md",
+  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/second/nested/file.md",
+  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/third/library/a/book.md",
+  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/third/library/b/book.md",
+]
+`;

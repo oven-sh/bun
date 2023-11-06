@@ -87,6 +87,18 @@ pub const Request = struct {
     pub const getBlob = RequestMixin.getBlob;
     pub const getFormData = RequestMixin.getFormData;
 
+    pub export fn Request__getUWSRequest(
+        this: *Request,
+    ) ?*uws.Request {
+        return this.request_context.getRequest();
+    }
+
+    comptime {
+        if (!JSC.is_bindgen) {
+            _ = Request__getUWSRequest;
+        }
+    }
+
     pub fn getContentType(
         this: *Request,
     ) ?ZigString.Slice {

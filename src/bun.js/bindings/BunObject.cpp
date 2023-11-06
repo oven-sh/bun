@@ -513,7 +513,7 @@ JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGl
 #else
     path = Bun__Path__resolve(lexicalGlobalObject, false, reinterpret_cast<JSC__JSValue*>(&path), 1);
 #endif
-
+  RETURN_IF_EXCEPTION(throwScope, {});
     JSC::JSString* pathString = JSC::JSValue::decode(path).toString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
 

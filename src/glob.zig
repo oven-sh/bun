@@ -534,7 +534,7 @@ pub const GlobWalker = struct {
                         entry_name,
                     };
 
-                    const subdir_entry_name = try this.arena.allocator().dupe(u8, ResolvePath.joinAdvanced(subdir_parts, .auto, true));
+                    const subdir_entry_name = try this.arena.allocator().dupe(u8, ResolvePath.join(subdir_parts, .auto));
                     // const subdir_entry_name = try this.arena.allocator().dupe(u8, ResolvePath.join(subdir_parts, .auto));
                     // const subdir_entry_name = try this.arena.allocator().dupe(u8, std.fs.path.join(this, paths: []const []const u8));
                     // const subdir_entry_name = try std.fs.path.join(this.arena.allocator(), subdir_parts);

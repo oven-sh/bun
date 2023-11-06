@@ -100,6 +100,9 @@ pub const GlobWalker = struct {
     pattern_codepoints: []u32 = &dummyu32,
     cp_len: u32 = 0,
 
+    /// If the pattern contains "./" or "../"
+    has_relative_components: bool = false,
+
     patternComponents: ArrayList(Component) = .{},
     matchedPaths: ArrayList(BunString) = .{},
     i: u32 = 0,
@@ -110,6 +113,7 @@ pub const GlobWalker = struct {
     cwd: BunString = undefined,
     follow_symlinks: bool = false,
     error_on_broken_symlinks: bool = false,
+    only_files: bool = true,
 
     root_cwd_slice: []const u8 = undefined,
 
@@ -165,6 +169,11 @@ pub const GlobWalker = struct {
             /// Uses special fast-patch matching for literal components e.g.
             /// "node_modules", becomes memcmp
             Literal,
+            /// ./fixtures/*.ts
+            /// ^
+            Dot,
+            /// ../
+            DotBack,
         };
     };
 
@@ -176,6 +185,7 @@ pub const GlobWalker = struct {
         absolute: bool,
         follow_symlinks: bool,
         error_on_broken_symlinks: bool,
+        only_files: bool,
     ) !Maybe(void) {
         var arena = arena_;
         errdefer arena.deinit();
@@ -198,6 +208,7 @@ pub const GlobWalker = struct {
             absolute,
             follow_symlinks,
             error_on_broken_symlinks,
+            only_files,
         );
         return .{ .result = globWalker };
     }
@@ -223,11 +234,19 @@ pub const GlobWalker = struct {
         absolute: bool,
         follow_symlinks: bool,
         error_on_broken_symlinks: bool,
+        only_files: bool,
     ) !void {
         var arena = arena_;
 
         var patternComponents = ArrayList(Component){};
-        try GlobWalker.buildPatternComponents(&arena, &patternComponents, pattern, &this.cp_len, &this.pattern_codepoints);
+        try GlobWalker.buildPatternComponents(
+            &arena,
+            &patternComponents,
+            pattern,
+            &this.cp_len,
+            &this.pattern_codepoints,
+            &this.has_relative_components,
+        );
 
         this.patternComponents = patternComponents;
         this.pattern = pattern;
@@ -237,6 +256,7 @@ pub const GlobWalker = struct {
         this.absolute = absolute;
         this.follow_symlinks = follow_symlinks;
         this.error_on_broken_symlinks = error_on_broken_symlinks;
+        this.only_files = only_files;
     }
 
     pub fn deinit(this: *GlobWalker) void {
@@ -289,14 +309,14 @@ pub const GlobWalker = struct {
         work_item: *const WorkItem,
         pathBuf: *[bun.MAX_PATH_BYTES]u8,
     ) !Maybe(u0) {
-        // FIXME: Option on struct
-        const only_files = false;
+        const only_files = this.only_files;
         @memcpy(pathBuf[0..work_item.path.len], work_item.path);
         pathBuf[work_item.path.len] = 0;
         const symlink_full_path_z: [:0]const u8 = pathBuf[0..work_item.path.len :0];
         const entry_name = symlink_full_path_z[work_item.entry_start..symlink_full_path_z.len];
 
-        const component_idx = this.collapseSuccessiveDoubleWildcards(work_item.idx);
+        const component_idx = if (this.patternComponents.items[work_item.idx].syntax_hint == .Double) this.collapseSuccessiveDoubleWildcards(work_item.idx) else work_item.idx;
+
         var pattern = this.patternComponents.items[component_idx];
         // Since we collapsed successive double wildcards above, this is
         // guaranteed to not be a double wildcard
@@ -378,11 +398,10 @@ pub const GlobWalker = struct {
                 );
             },
             .sym_link => {
-                // try this.workbuf.append(
-                //     this.arena.allocator(),
-                //     WorkItem.newSymlink(, idx: u32, entry_start: u32)
-                // );
-                @panic("TODO");
+                // This should not happen because if there's a symlink chain
+                // calling stat should follow it until it reaches the final
+                // file/dir
+                @panic("Unexpected symlink chain");
             },
             else => {},
         }
@@ -390,15 +409,55 @@ pub const GlobWalker = struct {
         return .{ .result = 0 };
     }
 
+    // NOTE you must check that the pattern at `idx` has `syntax_hint == .Dot` or
+    // `syntax_hint == .DotBack` first
+    fn collapseDots(
+        this: *GlobWalker,
+        idx: u32,
+        dir_path: *[:0]u8,
+        path_buf: *[bun.MAX_PATH_BYTES]u8,
+        comptime dot_kind: Component.SyntaxHint,
+    ) u32 {
+        if (comptime dot_kind != .Dot and dot_kind != .DotBack) @compileError("Invalid `dot_kind`");
+
+        var component_idx = idx;
+        var len = dir_path.len;
+        while (component_idx < this.patternComponents.items.len and
+            this.patternComponents.items[component_idx].syntax_hint == dot_kind) : (component_idx += 1)
+        {
+            if (comptime dot_kind == .Dot) {
+                if (dir_path.len + 2 >= bun.MAX_PATH_BYTES) @panic("Invalid path");
+                path_buf[len] = '/';
+                path_buf[len + 1] = '.';
+                path_buf[len + 2] = 0;
+                len += 2;
+            } else {
+                const new_dir_path = ResolvePath.join(
+                    &[_][]const u8{ (dir_path.*[0..dir_path.len]), "../" },
+                    .auto,
+                    false,
+                    // true,
+                );
+                @memcpy(path_buf[0..new_dir_path.len], new_dir_path);
+                path_buf[new_dir_path.len] = 0;
+                dir_path.* = path_buf[0..new_dir_path.len :0];
+            }
+        }
+
+        if (comptime dot_kind == .Dot) dir_path.len = len;
+
+        return component_idx;
+    }
+
+    // NOTE you must check that the pattern at `idx` has `syntax_hint == .Double` first
     fn collapseSuccessiveDoubleWildcards(this: *GlobWalker, idx: u32) u32 {
         var component_idx = idx;
         var pattern = this.patternComponents.items[idx];
-        if (pattern.syntax_hint == .Double) {
-            // Collapse successive double wildcards
-            while (component_idx + 1 < this.patternComponents.items.len and
-                this.patternComponents.items[component_idx + 1].syntax_hint == .Double) : (component_idx += 1)
-            {}
-        }
+        _ = pattern;
+        // Collapse successive double wildcards
+        while (component_idx + 1 < this.patternComponents.items.len and
+            this.patternComponents.items[component_idx + 1].syntax_hint == .Double) : (component_idx += 1)
+        {}
         return component_idx;
     }
 
@@ -408,17 +467,21 @@ pub const GlobWalker = struct {
         pathBuf: *[bun.MAX_PATH_BYTES]u8,
         comptime in_root: bool,
     ) !Maybe(void) {
-        // FIXME: Option on struct
-        const only_files = false;
+        const only_files = this.only_files;
         const dot = this.dot;
         _ = dot;
 
         // TODO Optimization: On posix systems filepaths are already null byte terminated so we can skip this if thats the case
         @memcpy(pathBuf[0..work_item.path.len], work_item.path);
         pathBuf[work_item.path.len] = 0;
-        const dir_path: [:0]const u8 = pathBuf[0..work_item.path.len :0];
+        var dir_path: [:0]u8 = pathBuf[0..work_item.path.len :0];
 
-        const component_idx = this.collapseSuccessiveDoubleWildcards(work_item.idx);
+        const component_idx = switch (this.patternComponents.items[work_item.idx].syntax_hint) {
+            .Double => this.collapseSuccessiveDoubleWildcards(work_item.idx),
+            .Dot => this.collapseDots(work_item.idx, &dir_path, pathBuf, .Dot),
+            .DotBack => this.collapseDots(work_item.idx, &dir_path, pathBuf, .DotBack),
+            else => work_item.idx,
+        };
 
         var pattern = this.patternComponents.items[component_idx];
 
@@ -471,7 +534,10 @@ pub const GlobWalker = struct {
                         entry_name,
                     };
 
-                    const subdir_entry_name = try this.arena.allocator().dupe(u8, ResolvePath.join(subdir_parts, .auto));
+                    const subdir_entry_name = try this.arena.allocator().dupe(u8, ResolvePath.joinAdvanced(subdir_parts, .auto, true));
+                    // const subdir_entry_name = try this.arena.allocator().dupe(u8, ResolvePath.join(subdir_parts, .auto));
+                    // const subdir_entry_name = try this.arena.allocator().dupe(u8, std.fs.path.join(this, paths: []const []const u8));
+                    // const subdir_entry_name = try std.fs.path.join(this.arena.allocator(), subdir_parts);
 
                     try this.workbuf.append(
                         this.arena.allocator(),
@@ -526,9 +592,10 @@ pub const GlobWalker = struct {
         add: *bool,
     ) ?u32 {
         if (!this.dot and GlobWalker.startsWithDot(entry_name)) return null;
+        // if (pattern.syntax_hint == .Dot) {
+        //     return 1;
+        // }
 
-        const only_files = false;
-        _ = only_files;
         // `recursion_idx_bump` is the component idx to offset to start at
         // when handling this directory's contents
 
@@ -680,10 +747,10 @@ pub const GlobWalker = struct {
             }
         }
         const dir_name = if (!this.absolute) dir_name_[this.root_cwd_slice.len + 1 .. dir_name_.len] else dir_name_[0..dir_name_.len];
-        const name = try std.fs.path.join(this.arena.allocator(), &[_][]const u8{
+        const name = try this.arena.allocator().dupe(u8, ResolvePath.join(&[_][]const u8{
             dir_name,
             entry_name,
-        });
+        }, .auto));
         try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(name));
     }
 
@@ -698,6 +765,28 @@ pub const GlobWalker = struct {
             return filepath[0] == '.';
         } else {
             return std.unicode.utf16DecodeSurrogatePair(&filepath[0..2]) == '.' catch false;
+        }
+    }
+
+    fn hasLeadingDot(filepath: []const u8, comptime allow_non_utf8: bool) bool {
+        if (comptime bun.Environment.isWindows and allow_non_utf8) {
+            // utf-16
+            if (filepath.len >= 4 and filepath[1] == '.' and filepath[3] == '/')
+                return true;
+        } else {
+            if (filepath.len >= 2 and filepath[0] == '.' and filepath[1] == '/')
+                return true;
+        }
+
+        return false;
+    }
+
+    /// NOTE This doesn't check that there is leading dot, use `hasLeadingDot()` to do that
+    fn removeLeadingDot(filepath: []const u8, comptime allow_non_utf8: bool) []const u8 {
+        if (comptime bun.Environment.isWindows and allow_non_utf8) {
+            return filepath[4..];
+        } else {
+            return filepath[2..];
         }
     }
 
@@ -740,11 +829,28 @@ pub const GlobWalker = struct {
         return false;
     }
 
-    fn addComponent(allocator: Allocator, pattern: []const u8, patternComponents: *ArrayList(Component), component_: Component) !void {
+    fn addComponent(
+        allocator: Allocator,
+        pattern: []const u8,
+        patternComponents: *ArrayList(Component),
+        component_: Component,
+        has_relative_patterns: *bool,
+    ) !void {
         if (component_.len == 0) return;
         var component: Component = component_;
 
         out: {
+            if (component.len == 1 and pattern[component.start] == '.') {
+                component.syntax_hint = .Dot;
+                has_relative_patterns.* = true;
+                break :out;
+            }
+            if (component.len == 2 and pattern[component_.start] == '.' and pattern[component_.start] == '.') {
+                component.syntax_hint = .DotBack;
+                has_relative_patterns.* = true;
+                break :out;
+            }
+
             if (!GlobWalker.checkSpecialSyntax(pattern[component.start .. component.start + component.len])) {
                 component.syntax_hint = .Literal;
                 break :out;
@@ -795,7 +901,14 @@ pub const GlobWalker = struct {
         try patternComponents.append(allocator, component);
     }
 
-    fn buildPatternComponents(arena: *Arena, patternComponents: *ArrayList(Component), pattern: []const u8, out_cp_len: *u32, out_pattern_cp: *[]u32) !void {
+    fn buildPatternComponents(
+        arena: *Arena,
+        patternComponents: *ArrayList(Component),
+        pattern: []const u8,
+        out_cp_len: *u32,
+        out_pattern_cp: *[]u32,
+        has_relative_patterns: *bool,
+    ) !void {
         var start: u32 = 0;
 
         const iter = CodepointIterator.init(pattern);
@@ -810,7 +923,7 @@ pub const GlobWalker = struct {
                 '\\' => {
                     if (comptime isWindows) {
                         const end = cursor.cp_idx;
-                        try addComponent(arena.allocator(), pattern, patternComponents, .{ .start = start, .len = end - start });
+                        try addComponent(arena.allocator(), pattern, patternComponents, .{ .start = start, .len = end - start }, has_relative_patterns);
                         start = cursor.i + cursor.width;
                         continue;
                     }
@@ -828,7 +941,7 @@ pub const GlobWalker = struct {
                     if (cursor.i + cursor.width == pattern.len) {
                         end = cursor.i + cursor.width;
                     }
-                    try addComponent(arena.allocator(), pattern, patternComponents, .{ .start = start, .len = end - start });
+                    try addComponent(arena.allocator(), pattern, patternComponents, .{ .start = start, .len = end - start }, has_relative_patterns);
                     start = cursor.i + cursor.width;
                 },
                 // TODO: Support other escaping glob syntax
@@ -846,7 +959,7 @@ pub const GlobWalker = struct {
         out_pattern_cp.* = codepoints;
 
         const end = cursor.i + cursor.width;
-        try addComponent(arena.allocator(), pattern, patternComponents, .{ .start = start, .len = end - start });
+        try addComponent(arena.allocator(), pattern, patternComponents, .{ .start = start, .len = end - start }, has_relative_patterns);
     }
 };
 

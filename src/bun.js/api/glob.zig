@@ -35,6 +35,7 @@ const MatchOpts = struct {
     cwd: ?BunString,
     dot: bool,
     absolute: bool,
+    only_files: bool,
     follow_symlinks: bool,
     error_on_broken_symlinks: bool,
 
@@ -51,7 +52,12 @@ const MatchOpts = struct {
             .absolute = false,
             .follow_symlinks = false,
             .error_on_broken_symlinks = false,
+            .only_files = true,
         };
+
+        if (optsObj.getTruthy(globalThis, "onlyFiles")) |only_files| {
+            out.only_files = if (only_files.isBoolean()) only_files.asBoolean() else false;
+        }
 
         if (optsObj.getTruthy(globalThis, "throwErrorOnBrokenSymlink")) |error_on_broken| {
             out.error_on_broken_symlinks = if (error_on_broken.isBoolean()) error_on_broken.asBoolean() else false;
@@ -97,8 +103,10 @@ const MatchOpts = struct {
                         return null;
                     },
                 };
+                _ = cwd;
 
-                const cwd_str = ResolvePath.joinStringBuf(&path_buf2, &[_][]const u8{ cwd, cwd_str_raw.slice() }, .auto);
+                // const cwd_str = ResolvePath.joinStringBuf(&path_buf2, &[_][]const u8{ cwd, cwd_str_raw.slice() }, .auto);
+                const cwd_str = ResolvePath.joinStringBuf(&path_buf2, &[_][]const u8{cwd_str_raw.slice()}, .auto);
 
                 break :cwd_str arena.allocator().dupe(u8, cwd_str) catch {
                     globalThis.throwOutOfMemory();
@@ -216,12 +224,14 @@ fn makeGlobWalker(
     var absolute = false;
     var follow_symlinks = false;
     var error_on_broken_symlinks = false;
+    var only_files = false;
     if (matchOpts) |opts| {
         cwd = opts.cwd;
         dot = opts.dot;
         absolute = opts.absolute;
         follow_symlinks = opts.follow_symlinks;
         error_on_broken_symlinks = opts.error_on_broken_symlinks;
+        only_files = opts.only_files;
     }
 
     if (cwd != null) {
@@ -239,6 +249,7 @@ fn makeGlobWalker(
             absolute,
             follow_symlinks,
             error_on_broken_symlinks,
+            only_files,
         ) catch {
             globalThis.throw("Out of memory", .{});
             return null;
@@ -258,6 +269,7 @@ fn makeGlobWalker(
         absolute,
         follow_symlinks,
         error_on_broken_symlinks,
+        only_files,
     ) catch {
         globalThis.throw("Out of memory", .{});
         return null;

@@ -104,6 +104,13 @@ declare module "bun" {
      * @default false
      */
     throwErrorOnBrokenSymlink?: boolean;
+
+    /**
+     * Return only files.
+     *
+     * @default true
+     */
+    onlyFiles?: boolean;
   }
 
   /**

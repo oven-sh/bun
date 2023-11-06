@@ -503,7 +503,8 @@ pub fn relativeAlloc(allocator: std.mem.Allocator, from: []const u8, to: []const
 
 // This function is based on Go's filepath.Clean function
 // https://cs.opensource.google/go/go/+/refs/tags/go1.17.6:src/path/filepath/path.go;l=89
-pub fn normalizeStringGeneric(path: []const u8, buf: []u8, comptime allow_above_root: bool, comptime separator: u8, comptime isSeparator: anytype, _: anytype, comptime preserve_trailing_slash: bool) []u8 {
+// If `preserve_dot_slash` option is enabled, it won't try to normalize `./` (e.g. `src/./././foo.ts` wont be normalized to `src/foo.ts`)
+pub fn normalizeStringGeneric(path: []const u8, buf: []u8, comptime allow_above_root: bool, comptime separator: u8, comptime isSeparator: anytype, _: anytype, comptime preserve_trailing_slash: bool, comptime preserve_dot_slash: bool) []u8 {
     var r: usize = 0;
     var dotdot: usize = 0;
     var buf_i: usize = 0;
@@ -519,9 +520,11 @@ pub fn normalizeStringGeneric(path: []const u8, buf: []u8, comptime allow_above_
             continue;
         }
 
-        if (path[r] == '.' and (r + 1 == n or isSeparator(path[r + 1]))) {
-            r += 1;
-            continue;
+        if (comptime !preserve_dot_slash) {
+            if (path[r] == '.' and (r + 1 == n or isSeparator(path[r + 1]))) {
+                r += 1;
+                continue;
+            }
         }
 
         if (@"is .."(path[r..]) and (r + 2 == n or isSeparator(path[r + 2]))) {
@@ -755,6 +758,7 @@ pub fn normalizeStringBuf(str: []const u8, buf: []u8, comptime allow_above_root:
                 buf,
                 allow_above_root,
                 preserve_trailing_slash,
+                false,
             );
         },
         .posix => {
@@ -763,6 +767,7 @@ pub fn normalizeStringBuf(str: []const u8, buf: []u8, comptime allow_above_root:
                 buf,
                 allow_above_root,
                 preserve_trailing_slash,
+                false,
             );
         },
 
@@ -772,6 +777,7 @@ pub fn normalizeStringBuf(str: []const u8, buf: []u8, comptime allow_above_root:
                 buf,
                 allow_above_root,
                 preserve_trailing_slash,
+                false,
             );
         },
     }
@@ -821,7 +827,15 @@ pub fn join(_parts: anytype, comptime _platform: Platform) []const u8 {
     return joinStringBuf(&join_buf, _parts, _platform);
 }
 
+pub fn joinAdvanced(_parts: anytype, comptime _platform: Platform, comptime preserve_dot_slash: bool) []const u8 {
+    return joinStringBufImpl(&join_buf, _parts, _platform, preserve_dot_slash);
+}
+
 pub fn joinStringBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) []const u8 {
+    return joinStringBufImpl(buf, _parts, _platform, false);
+}
+
+pub fn joinStringBufImpl(buf: []u8, _parts: anytype, comptime _platform: Platform, comptime preserve_dot_slash: bool) []const u8 {
     if (FeatureFlags.use_std_path_join) {
         var alloc = std.heap.FixedBufferAllocator.init(buf);
         return std.fs.path.join(&alloc.allocator, _parts) catch unreachable;
@@ -869,7 +883,11 @@ pub fn joinStringBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [
         return buf[0..1];
     }
 
-    return normalizeStringNode(temp_buf[0..written], buf, platform);
+    if (comptime preserve_dot_slash) {
+        return normalizeStringNodeImpl(temp_buf[0..written], buf, platform, preserve_dot_slash);
+    } else {
+        return normalizeStringNode(temp_buf[0..written], buf, platform);
+    }
 }
 
 pub fn joinAbsStringBuf(_cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) []const u8 {
@@ -1000,6 +1018,7 @@ pub fn normalizeStringLooseBuf(
     buf: []u8,
     comptime allow_above_root: bool,
     comptime preserve_trailing_slash: bool,
+    comptime preserve_dot_slash: bool,
 ) []u8 {
     return normalizeStringGeneric(
         str,
@@ -1009,6 +1028,7 @@ pub fn normalizeStringLooseBuf(
         isSepAny,
         lastIndexOfSeparatorLoose,
         preserve_trailing_slash,
+        preserve_dot_slash,
     );
 }
 
@@ -1017,6 +1037,7 @@ pub fn normalizeStringWindows(
     buf: []u8,
     comptime allow_above_root: bool,
     comptime preserve_trailing_slash: bool,
+    comptime preserve_dot_slash: bool,
 ) []u8 {
     return normalizeStringGeneric(
         str,
@@ -1026,6 +1047,7 @@ pub fn normalizeStringWindows(
         isSepWin32,
         lastIndexOfSeparatorWindows,
         preserve_trailing_slash,
+        preserve_dot_slash,
     );
 }
 
@@ -1033,6 +1055,15 @@ pub fn normalizeStringNode(
     str: []const u8,
     buf: []u8,
     comptime platform: Platform,
+) []u8 {
+    return normalizeStringNodeImpl(str, buf, platform, false);
+}
+
+pub fn normalizeStringNodeImpl(
+    str: []const u8,
+    buf: []u8,
+    comptime platform: Platform,
+    comptime preserve_dot_slash: bool,
 ) []u8 {
     if (str.len == 0) {
         buf[0] = '.';
@@ -1051,6 +1082,7 @@ pub fn normalizeStringNode(
         comptime platform.getSeparatorFunc(),
         comptime platform.getLastSeparatorFunc(),
         false,
+        preserve_dot_slash,
     ) else normalizeStringGeneric(
         str,
         buf_,
@@ -1059,6 +1091,7 @@ pub fn normalizeStringNode(
         comptime platform.getSeparatorFunc(),
         comptime platform.getLastSeparatorFunc(),
         false,
+        preserve_dot_slash,
     );
 
     if (out.len == 0) {
@@ -1068,7 +1101,8 @@ pub fn normalizeStringNode(
         }
 
         if (trailing_separator) {
-            buf[0..2].* = platform.trailingSeparator();
+            const trail = platform.trailingSeparator();
+            buf[0..2].* = trail;
             return buf[0..2];
         }
 

@@ -70,6 +70,7 @@ test("basic 1", async () => {
   const err = await new Response(stderr).text();
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
+  expect(await exited).toBe(0);
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
@@ -82,7 +83,6 @@ test("basic 1", async () => {
     name: "basic-1",
     version: "1.0.0",
   } as any);
-  expect(await exited).toBe(0);
 });
 
 test("dependency from root satisfies range from dependency", async () => {
@@ -111,6 +111,7 @@ test("dependency from root satisfies range from dependency", async () => {
   const err = await new Response(stderr).text();
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
+  expect(await exited).toBe(0);
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
@@ -124,7 +125,6 @@ test("dependency from root satisfies range from dependency", async () => {
     name: "no-deps",
     version: "1.0.0",
   } as any);
-  expect(await exited).toBe(0);
 });
 
 test("package added after install", async () => {
@@ -152,6 +152,7 @@ test("package added after install", async () => {
   var err = await new Response(stderr).text();
   expect(stdout).toBeDefined();
   var out = await new Response(stdout).text();
+  expect(await exited).toBe(0);
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
@@ -164,7 +165,6 @@ test("package added after install", async () => {
     name: "no-deps",
     version: "1.1.0",
   } as any);
-  expect(await exited).toBe(0);
 
   // add `no-deps` to root package.json with a smaller but still compatible
   // version for `one-range-dep`.
@@ -193,6 +193,7 @@ test("package added after install", async () => {
   err = await new Response(stderr).text();
   expect(stdout).toBeDefined();
   out = await new Response(stdout).text();
+  expect(await exited).toBe(0);
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
@@ -211,7 +212,6 @@ test("package added after install", async () => {
     name: "no-deps",
     version: "1.1.0",
   } as any);
-  expect(await exited).toBe(0);
 });
 
 describe("semver", () => {
@@ -239,12 +239,12 @@ describe("semver", () => {
     {
       title: "start with ||",
       depVersion: "|| 1",
-      expected: "3.0.0",
+      expected: "1.0.1",
     },
     {
       title: "start with || no space",
       depVersion: "||2",
-      expected: "3.0.0",
+      expected: "2.0.1",
     },
     {
       title: "|| with no space on both sides",
@@ -265,51 +265,6 @@ describe("semver", () => {
       title: "tagged above latest",
       depVersion: "pre-3",
       expected: "3.0.1",
-    },
-    {
-      title: "'||'",
-      depVersion: "||",
-      expected: "3.0.0",
-    },
-    {
-      title: "'|'",
-      depVersion: "|",
-      expected: "3.0.0",
-    },
-    {
-      title: "'|||'",
-      depVersion: "|||",
-      expected: "3.0.0",
-    },
-    {
-      title: "'|| ||'",
-      depVersion: "|| ||",
-      expected: "3.0.0",
-    },
-    {
-      title: "'|| 1 ||'",
-      depVersion: "|| 1 ||",
-      expected: "3.0.0",
-    },
-    {
-      title: "'| | |'",
-      depVersion: "| | |",
-      expected: "3.0.0",
-    },
-    {
-      title: "'|||||||||||||||||||||||||'",
-      depVersion: "|||||||||||||||||||||||||",
-      expected: "3.0.0",
-    },
-    {
-      title: "'2 ||| 1'",
-      depVersion: "2 ||| 1",
-      expected: "2.0.1",
-    },
-    {
-      title: "'2 |||| 1'",
-      depVersion: "2 |||| 1",
-      expected: "3.0.0",
     },
   ];
 
@@ -339,6 +294,7 @@ describe("semver", () => {
       var err = await new Response(stderr).text();
       expect(stdout).toBeDefined();
       var out = await new Response(stdout).text();
+      expect(await exited).toBe(0);
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -347,7 +303,6 @@ describe("semver", () => {
         "",
         " 1 package installed",
       ]);
-      expect(await exited).toBe(0);
     });
   }
 
@@ -376,8 +331,8 @@ describe("semver", () => {
     var err = await new Response(stderr).text();
     expect(stdout).toBeDefined();
     var out = await new Response(stdout).text();
-    expect(err).toContain('InvalidDependencyVersion parsing version "pre-1 || pre-2"');
     expect(await exited).toBe(1);
+    expect(err).toContain('InvalidDependencyVersion parsing dependency "dep-with-tags" with version "pre-1 || pre-2"');
     expect(out).toBeEmpty();
   });
 });
@@ -431,6 +386,7 @@ describe("prereleases", () => {
           const err = await new Response(stderr).text();
           expect(stdout).toBeDefined();
           const out = await new Response(stdout).text();
+          expect(await exited).toBe(0);
           expect(err).toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
@@ -443,7 +399,6 @@ describe("prereleases", () => {
             name: depName,
             version: expected,
           } as any);
-          expect(await exited).toBe(0);
         });
       }
     });
@@ -477,6 +432,7 @@ describe("yarn tests", () => {
     const err = await new Response(stderr).text();
     expect(stdout).toBeDefined();
     const out = await new Response(stdout).text();
+    expect(await exited).toBe(0);
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -512,7 +468,6 @@ describe("yarn tests", () => {
         "dragon-test-1-a": "1.0.0",
       },
     } as any);
-    expect(await exited).toBe(0);
   });
 
   test("dragon test 2", async () => {
@@ -567,6 +522,7 @@ describe("yarn tests", () => {
     const err = await new Response(stderr).text();
     expect(stdout).toBeDefined();
     const out = await new Response(stdout).text();
+    expect(await exited).toBe(0);
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -591,7 +547,6 @@ describe("yarn tests", () => {
       name: "no-deps",
       version: "1.0.0",
     } as any);
-    expect(await exited).toBe(0);
   });
 
   test("dragon test 3", async () => {
@@ -619,6 +574,7 @@ describe("yarn tests", () => {
     const err = await new Response(stderr).text();
     expect(stdout).toBeDefined();
     const out = await new Response(stdout).text();
+    expect(await exited).toBe(0);
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -643,7 +599,6 @@ describe("yarn tests", () => {
         "no-deps": "*",
       },
     } as any);
-    expect(await exited).toBe(0);
   });
 
   test("dragon test 4", async () => {
@@ -686,6 +641,7 @@ describe("yarn tests", () => {
     const err = await new Response(stderr).text();
     expect(stdout).toBeDefined();
     const out = await new Response(stdout).text();
+    expect(await exited).toBe(0);
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -711,7 +667,6 @@ describe("yarn tests", () => {
         "no-deps": "*",
       },
     } as any);
-    expect(await exited).toBe(0);
   });
 
   test("dragon test 5", async () => {
@@ -765,6 +720,7 @@ describe("yarn tests", () => {
     const err = await new Response(stderr).text();
     expect(stdout).toBeDefined();
     const out = await new Response(stdout).text();
+    expect(await exited).toBe(0);
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -797,7 +753,6 @@ describe("yarn tests", () => {
       name: "various-requires",
       version: "1.0.0",
     } as any);
-    expect(await exited).toBe(0);
   });
 
   test.todo("dragon test 6", async () => {
@@ -899,6 +854,7 @@ describe("yarn tests", () => {
     const err = await new Response(stderr).text();
     expect(stdout).toBeDefined();
     const out = await new Response(stdout).text();
+    expect(await exited).toBe(0);
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -913,7 +869,6 @@ describe("yarn tests", () => {
       "",
       " 7 packages installed",
     ]);
-    expect(await exited).toBe(0);
   });
 
   test.todo("dragon test 7", async () => {
@@ -944,6 +899,7 @@ describe("yarn tests", () => {
     var err = await new Response(stderr).text();
     expect(stdout).toBeDefined();
     var out = await new Response(stdout).text();
+    expect(await exited).toBe(0);
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -955,7 +911,6 @@ describe("yarn tests", () => {
       "",
       " 7 packages installed",
     ]);
-    expect(await exited).toBe(0);
 
     await writeFile(
       join(packageDir, "test.js"),
@@ -975,6 +930,7 @@ describe("yarn tests", () => {
     err = await new Response(stderr).text();
     expect(stdout).toBeDefined();
     out = await new Response(stdout).text();
+    expect(await exited).toBe(0);
     expect(err).toBeEmpty();
     expect(out).toBe("1.0.0 1.0.0\n");
 
@@ -996,7 +952,6 @@ describe("yarn tests", () => {
         join(packageDir, "node_modules", "dragon-test-7-d", "node_modules", "dragon-test-7-b", "node_modules"),
       ),
     ).toBeFalse();
-    expect(await exited).toBe(0);
   });
 
   test("dragon test 8", async () => {
@@ -1027,6 +982,7 @@ describe("yarn tests", () => {
     const err = await new Response(stderr).text();
     expect(stdout).toBeDefined();
     const out = await new Response(stdout).text();
+    expect(await exited).toBe(0);
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -1038,7 +994,6 @@ describe("yarn tests", () => {
       "",
       " 4 packages installed",
     ]);
-    expect(await exited).toBe(0);
   });
 
   test("dragon test 9", async () => {
@@ -1067,6 +1022,7 @@ describe("yarn tests", () => {
     var err = await new Response(stderr).text();
     expect(stdout).toBeDefined();
     var out = await new Response(stdout).text();
+    expect(await exited).toBe(0);
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -1080,7 +1036,6 @@ describe("yarn tests", () => {
     expect(await file(join(packageDir, "node_modules", "first", "package.json")).json()).toEqual(
       await file(join(packageDir, "node_modules", "second", "package.json")).json(),
     );
-    expect(await exited).toBe(0);
   });
 
   test.todo("dragon test 10", async () => {
@@ -1144,6 +1099,7 @@ describe("yarn tests", () => {
     const out = await new Response(stdout).text();
     expect(stderr).toBeDefined();
     const err = await new Response(stderr).text();
+    expect(await exited).toBe(0);
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
@@ -1154,7 +1110,6 @@ describe("yarn tests", () => {
       "",
       " 3 packages installed",
     ]);
-    expect(await exited).toBe(0);
   });
 
   test("dragon test 12", async () => {
@@ -1206,6 +1161,7 @@ describe("yarn tests", () => {
     const out = await new Response(stdout).text();
     expect(stderr).toBeDefined();
     const err = await new Response(stderr).text();
+    expect(await exited).toBe(0);
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
@@ -1229,7 +1185,6 @@ describe("yarn tests", () => {
         "no-deps": "*",
       },
     } as any);
-    expect(await exited).toBe(0);
   });
 
   test("it should not warn when the peer dependency resolution is compatible", async () => {
@@ -1258,6 +1213,7 @@ describe("yarn tests", () => {
     const out = await new Response(stdout).text();
     expect(stderr).toBeDefined();
     const err = await new Response(stderr).text();
+    expect(await exited).toBe(0);
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
@@ -1269,7 +1225,6 @@ describe("yarn tests", () => {
       " 2 packages installed",
     ]);
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".cache", "no-deps", "peer-deps-fixed"]);
-    expect(await exited).toBe(0);
   });
 
   test("it should warn when the peer dependency resolution is incompatible", async () => {
@@ -1298,6 +1253,7 @@ describe("yarn tests", () => {
     const out = await new Response(stdout).text();
     expect(stderr).toBeDefined();
     const err = await new Response(stderr).text();
+    expect(await exited).toBe(0);
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
@@ -1309,7 +1265,6 @@ describe("yarn tests", () => {
       " 2 packages installed",
     ]);
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".cache", "no-deps", "peer-deps-fixed"]);
-    expect(await exited).toBe(0);
   });
 
   test.todo(
@@ -1338,6 +1293,7 @@ describe("yarn tests", () => {
 
       var err = await new Response(stderr).text();
       var out = await new Response(stdout).text();
+      expect(await exited).toBe(0);
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("error:");
       expect(err).not.toContain("not found");
@@ -1348,7 +1304,6 @@ describe("yarn tests", () => {
         "",
         " 5 packages installed",
       ]);
-      expect(await exited).toBe(0);
 
       await writeFile(
         join(packageDir, "test.js"),
@@ -1413,9 +1368,9 @@ describe("yarn tests", () => {
 
       err = await new Response(stderr).text();
       out = await new Response(stdout).text();
-      expect(out).toBe("true\ntrue\ntrue");
-      expect(err).toBeEmpty();
       expect(await exited).toBe(0);
+      expect(err).toBeEmpty();
+      expect(out).toBe("true\ntrue\ntrue");
     },
   );
 
@@ -1443,6 +1398,7 @@ describe("yarn tests", () => {
 
     var err = await new Response(stderr).text();
     var out = await new Response(stdout).text();
+    expect(await exited).toBe(0);
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
@@ -1453,7 +1409,6 @@ describe("yarn tests", () => {
       "",
       " 4 packages installed",
     ]);
-    expect(await exited).toBe(0);
 
     await writeFile(
       join(packageDir, "test.js"),
@@ -1474,9 +1429,9 @@ describe("yarn tests", () => {
 
     err = await new Response(stderr).text();
     out = await new Response(stdout).text();
-    expect(out).toBe("true\n");
-    expect(err).toBeEmpty();
     expect(await exited).toBe(0);
+    expect(err).toBeEmpty();
+    expect(out).toBe("true\n");
   });
   test("it should install in such a way that two identical packages with the same peer dependencies are the same instances (complex)", async () => {
     await writeFile(
@@ -1503,6 +1458,7 @@ describe("yarn tests", () => {
 
     var err = await new Response(stderr).text();
     var out = await new Response(stdout).text();
+    expect(await exited).toBe(0);
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
@@ -1514,7 +1470,6 @@ describe("yarn tests", () => {
       "",
       " 4 packages installed",
     ]);
-    expect(await exited).toBe(0);
 
     await writeFile(
       join(packageDir, "test.js"),
@@ -1535,9 +1490,9 @@ describe("yarn tests", () => {
 
     err = await new Response(stderr).text();
     out = await new Response(stdout).text();
-    expect(out).toBe("true\n");
-    expect(err).toBeEmpty();
     expect(await exited).toBe(0);
+    expect(err).toBeEmpty();
+    expect(out).toBe("true\n");
   });
 
   test("it shouldn't deduplicate two packages with similar peer dependencies but different names", async () => {
@@ -1565,6 +1520,7 @@ describe("yarn tests", () => {
 
     var err = await new Response(stderr).text();
     var out = await new Response(stdout).text();
+    expect(await exited).toBe(0);
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
@@ -1576,7 +1532,6 @@ describe("yarn tests", () => {
       "",
       " 3 packages installed",
     ]);
-    expect(await exited).toBe(0);
 
     await writeFile(join(packageDir, "test.js"), `console.log(require('peer-deps') === require('peer-deps-too'));`);
 
@@ -1591,8 +1546,8 @@ describe("yarn tests", () => {
 
     err = await new Response(stderr).text();
     out = await new Response(stdout).text();
-    expect(out).toBe("false\n");
-    expect(err).toBeEmpty();
     expect(await exited).toBe(0);
+    expect(err).toBeEmpty();
+    expect(out).toBe("false\n");
   });
 });

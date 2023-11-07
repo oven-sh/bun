@@ -1858,6 +1858,7 @@ pub const Query = struct {
         input: string,
         sliced: SlicedString,
     ) !Group {
+        var i: usize = 0;
         var list = Group{
             .allocator = allocator,
             .input = input,
@@ -1869,96 +1870,86 @@ pub const Query = struct {
         var count: u8 = 0;
         var skip_round = false;
         var is_or = false;
-        var only_tagged_versions: ?bool = null;
 
-        var itr = strings.split(input, "||");
+        while (i < input.len) {
+            skip_round = false;
 
-        while (itr.next()) |part| {
-            var i: usize = 0;
-            while (i < part.len and strings.containsChar(&std.ascii.whitespace, part[i])) : (i += 1) {}
-            if (i >= part.len) return Group{
-                .allocator = allocator,
-                .input = input,
-            };
-            if (i < part.len) {
-                skip_round = false;
-
-                switch (part[i]) {
-                    '>' => {
-                        if (part.len > i + 1 and part[i + 1] == '=') {
-                            token.tag = .gte;
-                            i += 1;
-                        } else {
-                            token.tag = .gt;
-                        }
-
+            switch (input[i]) {
+                '>' => {
+                    if (input.len > i + 1 and input[i + 1] == '=') {
+                        token.tag = .gte;
                         i += 1;
-                        while (i < part.len and part[i] == ' ') : (i += 1) {}
-                    },
-                    '<' => {
-                        if (part.len > i + 1 and part[i + 1] == '=') {
-                            token.tag = .lte;
-                            i += 1;
-                        } else {
-                            token.tag = .lt;
-                        }
+                    } else {
+                        token.tag = .gt;
+                    }
 
+                    i += 1;
+                    while (i < input.len and input[i] == ' ') : (i += 1) {}
+                },
+                '<' => {
+                    if (input.len > i + 1 and input[i + 1] == '=') {
+                        token.tag = .lte;
                         i += 1;
-                        while (i < part.len and part[i] == ' ') : (i += 1) {}
-                    },
-                    '=', 'v' => {
-                        token.tag = .version;
-                        is_or = true;
-                        i += 1;
-                        while (i < part.len and part[i] == ' ') : (i += 1) {}
-                    },
-                    '~' => {
-                        token.tag = .tilda;
-                        i += 1;
+                    } else {
+                        token.tag = .lt;
+                    }
 
-                        if (i < part.len and part[i] == '>') i += 1;
+                    i += 1;
+                    while (i < input.len and input[i] == ' ') : (i += 1) {}
+                },
+                '=', 'v' => {
+                    token.tag = .version;
+                    is_or = true;
+                    i += 1;
+                    while (i < input.len and input[i] == ' ') : (i += 1) {}
+                },
+                '~' => {
+                    token.tag = .tilda;
+                    i += 1;
 
-                        while (i < part.len and part[i] == ' ') : (i += 1) {}
-                    },
-                    '^' => {
-                        token.tag = .caret;
-                        i += 1;
-                        while (i < part.len and part[i] == ' ') : (i += 1) {}
-                    },
-                    '0'...'9', 'X', 'x', '*' => {
-                        token.tag = .version;
-                        is_or = true;
-                    },
-                    '|' => {
-                        i += 1;
+                    if (i < input.len and input[i] == '>') i += 1;
 
-                        while (i < part.len and part[i] == '|') : (i += 1) {}
-                        while (i < part.len and part[i] == ' ') : (i += 1) {}
-                        is_or = true;
-                        token.tag = Token.Tag.none;
-                        continue;
-                    },
-                    '-' => {
-                        i += 1;
-                        while (i < part.len and part[i] == ' ') : (i += 1) {}
-                    },
-                    ' ' => {
-                        i += 1;
-                        while (i < part.len and part[i] == ' ') : (i += 1) {}
-                        continue;
-                    },
-                    else => {
-                        i += 1;
-                        token.tag = Token.Tag.none;
+                    while (i < input.len and input[i] == ' ') : (i += 1) {}
+                },
+                '^' => {
+                    token.tag = .caret;
+                    i += 1;
+                    while (i < input.len and input[i] == ' ') : (i += 1) {}
+                },
+                '0'...'9', 'X', 'x', '*' => {
+                    token.tag = .version;
+                    is_or = true;
+                },
+                '|' => {
+                    i += 1;
 
-                        // skip tagged versions
-                        while (i < part.len and part[i] != ' ' and part[i] != '|') : (i += 1) {}
-                        if (only_tagged_versions == null) only_tagged_versions = true;
-                        continue;
-                    },
-                }
+                    while (i < input.len and input[i] == '|') : (i += 1) {}
+                    while (i < input.len and input[i] == ' ') : (i += 1) {}
+                    is_or = true;
+                    token.tag = Token.Tag.none;
+                    skip_round = true;
+                },
+                '-' => {
+                    i += 1;
+                    while (i < input.len and input[i] == ' ') : (i += 1) {}
+                },
+                ' ' => {
+                    i += 1;
+                    while (i < input.len and input[i] == ' ') : (i += 1) {}
+                    skip_round = true;
+                },
+                else => {
+                    i += 1;
+                    token.tag = Token.Tag.none;
 
-                const parse_result = Version.parse(sliced.sub(part[i..]));
+                    // skip tagged versions
+                    while (i < input.len and input[i] != ' ' and input[i] != '|') : (i += 1) {}
+                    skip_round = true;
+                },
+            }
+
+            if (!skip_round) {
+                const parse_result = Version.parse(sliced.sub(input[i..]));
                 const version = parse_result.version.fill();
                 if (version.tag.hasBuild()) list.flags.setValue(Group.Flags.build, true);
                 if (version.tag.hasPre()) list.flags.setValue(Group.Flags.pre, true);
@@ -1968,21 +1959,21 @@ pub const Query = struct {
                 i += parse_result.stopped_at;
                 const rollback = i;
 
-                const had_space = i < part.len and part[i] == ' ';
+                const had_space = i < input.len and input[i] == ' ';
 
                 // TODO: can we do this without rolling back?
                 const hyphenate: bool = had_space and possibly_hyphenate: {
                     i += 1;
-                    while (i < part.len and part[i] == ' ') : (i += 1) {}
-                    if (!(i < part.len and part[i] == '-')) break :possibly_hyphenate false;
+                    while (i < input.len and input[i] == ' ') : (i += 1) {}
+                    if (!(i < input.len and input[i] == '-')) break :possibly_hyphenate false;
                     i += 1;
-                    if (!(i < part.len and part[i] == ' ')) break :possibly_hyphenate false;
+                    if (!(i < input.len and input[i] == ' ')) break :possibly_hyphenate false;
                     i += 1;
-                    while (i < part.len and switch (part[i]) {
+                    while (i < input.len and switch (input[i]) {
                         ' ', 'v', '=' => true,
                         else => false,
                     }) : (i += 1) {}
-                    if (!(i < part.len and switch (part[i]) {
+                    if (!(i < input.len and switch (input[i]) {
                         '0'...'9', 'X', 'x', '*' => true,
                         else => false,
                     })) break :possibly_hyphenate false;
@@ -1994,7 +1985,7 @@ pub const Query = struct {
                 i += @as(usize, @intFromBool(!hyphenate));
 
                 if (hyphenate) {
-                    const second_parsed = Version.parse(sliced.sub(part[i..]));
+                    const second_parsed = Version.parse(sliced.sub(input[i..]));
                     var second_version = second_parsed.version.fill();
                     if (second_version.tag.hasBuild()) list.flags.setValue(Group.Flags.build, true);
                     if (second_version.tag.hasPre()) list.flags.setValue(Group.Flags.pre, true);
@@ -2069,15 +2060,10 @@ pub const Query = struct {
                 }
 
                 is_or = false;
-                only_tagged_versions = false;
                 count += 1;
                 token.wildcard = .none;
                 prev_token.tag = token.tag;
             }
-        }
-
-        if (count == 0 and only_tagged_versions != null and only_tagged_versions.?) {
-            return error.InvalidDependencyVersion;
         }
 
         return list;

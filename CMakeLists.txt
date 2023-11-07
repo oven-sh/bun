@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
-set(Bun_VERSION "1.0.9")
+set(Bun_VERSION "1.0.10")
 set(WEBKIT_TAG 7cd84abfa787e4b96b27c3ef1e28a4eb1aa49aa1)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
@@ -29,6 +29,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
     set(DEBUG OFF)
     set(ZIG_OPTIMIZE "ReleaseFast")
+
     if(WIN32)
         # lld-link will strip it for you, so we can build directly to bun.exe
         set(bun "bun")
@@ -144,6 +145,7 @@ else()
     if(NOT CMAKE_C_COMPILER)
         set(CMAKE_C_COMPILER "clang-cl")
     endif()
+
     if(NOT CMAKE_CXX_COMPILER)
         set(CMAKE_CXX_COMPILER "clang-cl")
     endif()
@@ -170,9 +172,9 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 
 project(Bun VERSION "${Bun_VERSION}")
 
-#if(MSVC)
-#  message(FATAL_ERROR "Bun does not support building with MSVC. Please use `cmake -G Ninja` with LLVM ${LLVM_VERSION} and Ninja.")
-#endif()
+# if(MSVC)
+# message(FATAL_ERROR "Bun does not support building with MSVC. Please use `cmake -G Ninja` with LLVM ${LLVM_VERSION} and Ninja.")
+# endif()
 
 # More effort to prevent using the wrong C++ compiler
 if(UNIX)
@@ -196,6 +198,7 @@ if(NOT WIN32)
     set(SCRIPT_EXTENSION "sh")
 else()
     set(SCRIPT_EXTENSION "ps1")
+
     # pwsh is the new powershell, powershell is the old one.
     find_program(SHELL NAMES pwsh powershell)
 endif()
@@ -213,8 +216,10 @@ if(DEFINED ENV{CI} OR DEFINED ENV{GITHUB_ACTIONS})
 endif()
 
 set(DEFAULT_USE_STATIC_LIBATOMIC ON)
+
 if(UNIX AND NOT APPLE)
     execute_process(COMMAND cat /etc/os-release COMMAND head -n1 OUTPUT_VARIABLE LINUX_DISTRO)
+
     if(${LINUX_DISTRO} STREQUAL "NAME=\"Arch Linux\"\n")
         set(DEFAULT_USE_STATIC_LIBATOMIC OFF)
     endif()
@@ -238,7 +243,7 @@ option(USE_DEBUG_JSC "Enable assertions and use a debug build of JavaScriptCore"
 option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
 option(USE_STATIC_LIBATOMIC "Statically link libatomic, requires the presence of libatomic.a" ${DEFAULT_USE_STATIC_LIBATOMIC})
 
-if (NOT CANARY)
+if(NOT CANARY)
     set(CANARY 0)
 endif()
 
@@ -330,6 +335,7 @@ endif()
 # CCache
 find_program(CCACHE_PROGRAM sccache)
 find_program(CCACHE_PROGRAM ccache)
+
 if(CCACHE_PROGRAM)
     set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
     set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
@@ -546,6 +552,7 @@ set(BUN_OBJECT_LUT_SOURCES
 )
 set(BUN_OBJECT_LUT_OUTPUTS "")
 set(BUN_HASH_LUT_GENERATOR "${BUN_CODEGEN_SRC}/create-hash-table.ts")
+
 if(NOT BUN_LINK_ONLY)
     macro(GENERATE_HASH_LUT _input _output _display_name)
         if(NOT NO_CODEGEN)
@@ -558,6 +565,7 @@ if(NOT BUN_LINK_ONLY)
                 COMMENT "Generating ${_display_name}"
             )
         endif()
+
         list(APPEND BUN_OBJECT_LUT_OUTPUTS "${_output}")
 
         # list(APPEND Bun_HEADERS ${_output})
@@ -755,6 +763,7 @@ if(CANARY GREATER 0)
 else()
     set(Bun_VERSION_WITH_TAG "${Bun_VERSION}")
 endif()
+
 if(WIN32)
     set(BUN_ICO_PATH "${BUN_SRC}/bun.ico")
     configure_file("${BUN_SRC}/windows-app-info.rc" "${BUN_WORKDIR}/CMakeFiles/windows-app-info.rc")
@@ -779,6 +788,7 @@ set_target_properties(${bun} PROPERTIES
 )
 
 add_compile_definitions(
+
     # TODO: are all of these variables strictly necessary?
     "_HAS_EXCEPTIONS=0"
     "LIBUS_USE_OPENSSL=1"
@@ -822,7 +832,7 @@ include_directories(
 
 # -- BUN_CPP_ONLY Target
 if(NOT BUN_CPP_ARCHIVE)
-    if (BUN_CPP_ONLY)
+    if(BUN_CPP_ONLY)
         if(NOT WIN32)
             string(REPLACE ";" ".o\n  " BUN_OBJECT_LIST "${BUN_SOURCES}.o")
             string(REPLACE "${BUN_WORKDIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
@@ -862,6 +872,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     else()
         target_compile_options(${bun} PUBLIC -O1)
     endif()
+
     add_compile_definitions("BUN_DEBUG=1")
 elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
     if(NOT WIN32)
@@ -882,7 +893,7 @@ if(NOT CPU_TARGET STREQUAL "native")
     # on arm, this argument will not be passed.
     target_compile_options(${bun} PUBLIC "-march=${CPU_TARGET}")
 else()
-    if (APPLE AND ARCH STREQUAL "aarch64")
+    if(APPLE AND ARCH STREQUAL "aarch64")
         # On arm macOS, we can set it to a minimum of the M1 cpu set. this might be the default already.
         target_compile_options(${bun} PUBLIC "-mcpu=apple-m1")
     endif()
@@ -903,7 +914,7 @@ if(WIN32)
     target_compile_options(${bun} PUBLIC "/EHsc" "/GR-")
     target_link_options(${bun} PUBLIC "/STACK:4194304,2097152")
 else()
-    target_compile_options(${bun} PUBLIC 
+    target_compile_options(${bun} PUBLIC
         -fPIC
         -mtune=${CPU_TARGET}
         -fconstexpr-steps=1271242
@@ -1217,9 +1228,11 @@ endif()
 if(BUN_LINK_ONLY)
     message(STATUS "NOTE: BUN_LINK_ONLY is ON, this build config will only link the Bun executable")
 endif()
+
 if(BUN_CPP_ONLY)
     message(STATUS "NOTE: BUN_CPP_ONLY is ON, this build will only work with 'compile-cpp-only.${SCRIPT_EXTENSION}'")
 endif()
+
 if(NO_CODEGEN)
     message(STATUS "NOTE: NO_CODEGEN is ON, this build expects ./codegen to exist")
 endif()

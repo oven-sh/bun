@@ -261,6 +261,11 @@ describe("semver", () => {
       depVersion: "pre-2",
       expected: "2.0.1",
     },
+    {
+      title: "tagged above latest",
+      depVersion: "pre-3",
+      expected: "3.0.1",
+    },
   ];
 
   for (const { title, depVersion, expected } of taggedVersionTests) {

@@ -400,7 +400,7 @@ pub const Version = struct {
                 // ^1.2.3
                 // *
                 // || 1.x
-                '=', '>', '<', '^', '*', '|' => return .npm,
+                '=', '>', '<', '^', '*', '|', '&' => return .npm,
                 // ./foo.tgz
                 // ./path/to/foo
                 // ../path/to/bar
@@ -615,7 +615,12 @@ pub const Version = struct {
             // git@example.com:path/to/repo.git
             if (isSCPLikePath(dependency)) return .git;
             // beta
-            return .dist_tag;
+
+            if (!strings.containsChar(dependency, '|') and !strings.containsChar(dependency, '&')) {
+                return .dist_tag;
+            }
+
+            return .npm;
         }
     };
 

@@ -2066,10 +2066,6 @@ pub const Query = struct {
             }
         }
 
-        if (count == 0) {
-            return error.InvalidDependencyVersion;
-        }
-
         return list;
     }
 };

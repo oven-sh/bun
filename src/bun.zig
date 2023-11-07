@@ -290,7 +290,8 @@ pub inline fn constStrToU8(s: []const u8) []u8 {
 }
 
 pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.MAX_PATH_BYTES;
-pub const MAX_WPATH = [MAX_PATH_BYTES / 2:0]u16;
+pub const PathBuffer = [MAX_PATH_BYTES]u8;
+pub const WPathBuffer = [MAX_PATH_BYTES / 2:0]u16;
 
 pub inline fn cast(comptime To: type, value: anytype) To {
     if (comptime std.meta.trait.isIntegral(@TypeOf(value))) {
@@ -884,9 +885,12 @@ pub const StringArrayHashMapContext = struct {
 
 pub const CaseInsensitiveASCIIStringContext = struct {
     pub fn hash(_: @This(), str_: []const u8) u32 {
+        var buf: [1024]u8 = undefined;
+        if (str_.len < buf.len) {
+            return @truncate(std.hash.Wyhash.hash(0, strings.copyLowercase(str_, &buf)));
+        }
         var str = str_;
         var wyhash = std.hash.Wyhash.init(0);
-        var buf: [1024]u8 = undefined;
         while (str.len > 0) {
             const length = @min(str.len, buf.len);
             wyhash.update(strings.copyLowercase(str[0..length], &buf));
@@ -1827,7 +1831,7 @@ const WindowsStat = extern struct {
     }
 };
 
-pub const Stat = if (Environment.isPosix) std.os.Stat else WindowsStat;
+pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.os.Stat;
 
 pub const posix = struct {
     pub const STDOUT_FD = std.os.STDOUT_FILENO;
@@ -2055,12 +2059,18 @@ noinline fn outOfMemoryPanic() noreturn {
     @panic("Bun ran out of memory!");
 }
 
-inline fn new(comptime T: type, t: T) *T {
+pub inline fn new(comptime T: type, t: T) *T {
     var ptr = default_allocator.create(T) catch outOfMemoryPanic();
     ptr.* = t;
     return ptr;
 }
 
-inline fn delete(t: anytype) void {
+pub inline fn destroy(t: anytype) void {
     default_allocator.destroy(@TypeOf(t));
+}
+
+pub inline fn newWithAlloc(allocator: std.mem.Allocator, comptime T: type, t: T) *T {
+    var ptr = allocator.create(T) catch outOfMemoryPanic();
+    ptr.* = t;
+    return ptr;
 }

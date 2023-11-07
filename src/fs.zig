@@ -20,9 +20,10 @@ const path_handler = @import("./resolver/resolve_path.zig");
 const PathString = bun.PathString;
 const allocators = @import("./allocators.zig");
 
-pub const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
-pub const PathBuffer = [bun.MAX_PATH_BYTES]u8;
-pub const WPathBuffer = [bun.MAX_PATH_BYTES / 2]u16;
+const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
+const PathBuffer = bun.PathBuffer;
+const WPathBuffer = bun.WPathBuffer;
+
 pub const debug = Output.scoped(.fs, true);
 
 // pub const FilesystemImplementation = @import("fs_impl.zig");
@@ -703,8 +704,8 @@ pub const FileSystem = struct {
 
             pub fn promoteToCWD(this: *TmpfileWindows, from_name: [*:0]const u8, name: [:0]const u8) !void {
                 _ = from_name;
-                var existing_buf: bun.MAX_WPATH = undefined;
-                var new_buf: bun.MAX_WPATH = undefined;
+                var existing_buf: bun.WPathBuffer = undefined;
+                var new_buf: bun.WPathBuffer = undefined;
                 this.close();
                 const existing = bun.strings.toExtendedPathNormalized(&new_buf, this.existing_path);
                 const new = if (std.fs.path.isAbsoluteWindows(name))
@@ -946,6 +947,8 @@ pub const FileSystem = struct {
             }
 
             while (try iter.next()) |_entry| {
+                debug("readdir entry {s}", .{_entry.name});
+
                 try dir.addEntry(prev_map, _entry, allocator, Iterator, iterator);
             }
 

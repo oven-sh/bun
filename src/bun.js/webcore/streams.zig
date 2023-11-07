@@ -517,6 +517,7 @@ pub const StreamStart = union(Tag) {
                         return .{
                             .err = Syscall.Error{
                                 .errno = @intFromEnum(bun.C.SystemErrno.EINVAL),
+                                .syscall = .write,
                             },
                         };
                     }
@@ -534,6 +535,7 @@ pub const StreamStart = union(Tag) {
                         return .{
                             .err = Syscall.Error{
                                 .errno = @intFromEnum(bun.C.SystemErrno.EBADF),
+                                .syscall = .write,
                             },
                         };
                     }
@@ -542,6 +544,7 @@ pub const StreamStart = union(Tag) {
                         return .{
                             .err = Syscall.Error{
                                 .errno = @intFromEnum(bun.C.SystemErrno.EBADF),
+                                .syscall = .write,
                             },
                         };
                     }
@@ -1285,7 +1288,7 @@ pub const FileSink = struct {
                 },
             };
 
-            this.mode = stat.mode;
+            this.mode = @intCast(stat.mode);
             this.auto_truncate = this.auto_truncate and (bun.isRegularFile(this.mode));
         } else {
             this.auto_truncate = false;
@@ -4063,7 +4066,7 @@ pub const FIFO = struct {
     ) ReadResult {
         if (comptime Environment.isWindows) {
             return ReadResult{
-                .err = Syscall.Error.todo,
+                .err = Syscall.Error.todo(),
             };
         }
 

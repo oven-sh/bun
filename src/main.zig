@@ -29,6 +29,9 @@ pub fn main() void {
         bun.win32.STDOUT_FD = bun.toFD(std.io.getStdOut().handle);
         bun.win32.STDERR_FD = bun.toFD(std.io.getStdErr().handle);
         bun.win32.STDIN_FD = bun.toFD(std.io.getStdIn().handle);
+
+        // This fixes printing unicode characters
+        _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
     }
 
     bun.start_time = std.time.nanoTimestamp();

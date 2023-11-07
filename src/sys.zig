@@ -113,7 +113,9 @@ pub const Tag = enum(u8) {
     pwritev,
     readv,
     preadv,
+
     NtQueryDirectoryFile,
+    GetFinalPathNameByHandle,
 
     pub var strings = std.EnumMap(Tag, JSC.C.JSStringRef).initFull(null);
 };
@@ -190,11 +192,11 @@ pub fn chdir(destination: anytype) Maybe(void) {
             return Maybe(void).success;
         }
 
-        var wbuf: bun.MAX_WPATH = undefined;
+        var wbuf: bun.WPathBuffer = undefined;
         return chdirOSPath(bun.strings.toWDirPath(&wbuf, destination));
     }
 
-    return Maybe(void).todo;
+    return Maybe(void).todo();
 }
 
 pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
@@ -215,6 +217,9 @@ pub fn lstat(path: [:0]const u8) Maybe(bun.Stat) {
 }
 
 pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
+    if (comptime Environment.isWindows) {
+        @panic("fstat does not work");
+    }
     var stat_ = mem.zeroes(bun.Stat);
 
     const rc = fstatSym(fd, &stat_);
@@ -234,7 +239,7 @@ pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
     if (comptime Environment.isLinux) {
         return Maybe(void).errnoSysP(linux.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success;
     }
-    var wbuf: bun.MAX_WPATH = undefined;
+    var wbuf: bun.WPathBuffer = undefined;
     _ = kernel32.CreateDirectoryW(bun.strings.toWPath(&wbuf, file_path).ptr, null);
 
     return Maybe(void).errnoSysP(0, .mkdir, file_path) orelse Maybe(void).success;
@@ -259,7 +264,7 @@ pub fn mkdirA(file_path: []const u8, flags: bun.Mode) Maybe(void) {
         }), flags), .mkdir, file_path) orelse Maybe(void).success;
     }
 
-    var wbuf: bun.MAX_WPATH = undefined;
+    var wbuf: bun.WPathBuffer = undefined;
     _ = kernel32.CreateDirectoryW(bun.strings.toWPath(&wbuf, file_path).ptr, null);
 
     return Maybe(void).errnoSysP(0, .mkdir, file_path) orelse Maybe(void).success;
@@ -404,7 +409,7 @@ pub noinline fn openDirAtWindowsA(
     iterable: bool,
     no_follow: bool,
 ) Maybe(bun.FileDescriptor) {
-    var wbuf: bun.MAX_WPATH = undefined;
+    var wbuf: bun.WPathBuffer = undefined;
     return openDirAtWindows(dirFd, bun.strings.toNTDir(&wbuf, path), iterable, no_follow);
 }
 pub fn openatWindows(dirfD: bun.FileDescriptor, path_: []const u16, flags: bun.Mode) Maybe(bun.FileDescriptor) {
@@ -559,7 +564,7 @@ pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: bun.Mod
             return openDirAtWindowsA(dirfd, file_path, false, flags & O.NOFOLLOW != 0);
         }
 
-        var wbuf: bun.MAX_WPATH = undefined;
+        var wbuf: bun.WPathBuffer = undefined;
         return openatWindows(dirfd, bun.strings.toNTPath(&wbuf, file_path), flags);
     }
 
@@ -572,7 +577,7 @@ pub fn openatA(dirfd: bun.FileDescriptor, file_path: []const u8, flags: bun.Mode
             return openDirAtWindowsA(dirfd, file_path, false, flags & O.NOFOLLOW != 0);
         }
 
-        var wbuf: bun.MAX_WPATH = undefined;
+        var wbuf: bun.WPathBuffer = undefined;
         return openatWindows(dirfd, bun.strings.toNTPath(&wbuf, file_path), flags);
     }
 
@@ -644,7 +649,7 @@ pub fn closeAllowingStdoutAndStderr(fd: bun.FileDescriptor) ?Syscall.Error {
     @compileError("Not implemented yet");
 }
 
-const max_count = switch (builtin.os.tag) {
+pub const max_count = switch (builtin.os.tag) {
     .linux => 0x7ffff000,
     .macos, .ios, .watchos, .tvos => std.math.maxInt(i32),
     else => std.math.maxInt(isize),
@@ -891,6 +896,7 @@ pub fn read(fd_: bun.FileDescriptor, buf: []u8) Maybe(usize) {
         if (Maybe(usize).errnoSys(rc, .read)) |err| {
             return err;
         }
+
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
@@ -904,7 +910,7 @@ pub fn read(fd_: bun.FileDescriptor, buf: []u8) Maybe(usize) {
             return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
         }
     }
-    unreachable;
+    comptime unreachable;
 }
 
 pub fn recv(fd_: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
@@ -1091,7 +1097,7 @@ pub fn getFdPath(fd_: bun.FileDescriptor, out_buffer: *[MAX_PATH_BYTES]u8) Maybe
         .windows => {
             var wide_buf: [windows.PATH_MAX_WIDE]u16 = undefined;
             const wide_slice = std.os.windows.GetFinalPathNameByHandle(fd, .{}, wide_buf[0..]) catch {
-                return Maybe([]u8){ .err = .{ .errno = @intFromEnum(bun.C.SystemErrno.EBADF) } };
+                return Maybe([]u8){ .err = .{ .errno = @intFromEnum(bun.C.SystemErrno.EBADF), .syscall = .GetFinalPathNameByHandle } };
             };
 
             // Trust that Windows gives us valid UTF-16LE.
@@ -1113,7 +1119,7 @@ pub fn getFdPath(fd_: bun.FileDescriptor, out_buffer: *[MAX_PATH_BYTES]u8) Maybe
             const proc_path = std.fmt.bufPrintZ(procfs_buf[0..], "/proc/self/fd/{d}\x00", .{fd}) catch unreachable;
 
             return switch (readlink(proc_path, out_buffer)) {
-                .err => |err| return .{ .err = err },
+                .err => |err| return .{ .err = err, .syscall = .readlink },
                 .result => |len| return .{ .result = out_buffer[0..len] },
             };
         },
@@ -1208,7 +1214,7 @@ pub const Error = struct {
     pub const Int: type = std.math.IntFittingRange(0, max_errno_value + 5);
 
     errno: Int,
-    syscall: Syscall.Tag = @as(Syscall.Tag, @enumFromInt(0)),
+    syscall: Syscall.Tag,
     path: []const u8 = "",
     fd: bun.FileDescriptor = bun.invalid_fd,
 
@@ -1272,7 +1278,13 @@ pub const Error = struct {
     }
 
     pub const todo_errno = std.math.maxInt(Int) - 1;
-    pub const todo = Error{ .errno = todo_errno };
+
+    pub inline fn todo() void {
+        if (Environment.isDebug) {
+            @panic("bun.sys.Error.todo() was called");
+        }
+        return Error{ .errno = todo_errno, .syscall = .TODO };
+    }
 
     pub fn toSystemError(this: Error) SystemError {
         var err = SystemError{
@@ -1398,7 +1410,7 @@ pub fn exists(path: []const u8) bool {
     }
 
     if (comptime Environment.isWindows) {
-        var wbuf: bun.MAX_WPATH = undefined;
+        var wbuf: bun.WPathBuffer = undefined;
         const path_to_use = bun.strings.toWPath(&wbuf, path);
         return kernel32.GetFileAttributesW(path_to_use.ptr) != windows.INVALID_FILE_ATTRIBUTES;
     }

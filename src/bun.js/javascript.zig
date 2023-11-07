@@ -597,10 +597,20 @@ pub const VirtualMachine = struct {
 
     pub fn uwsLoop(this: *const VirtualMachine) *uws.Loop {
         if (comptime Environment.isPosix) {
+            if (Environment.allow_assert) {
+                return this.event_loop_handle orelse @panic("uws event_loop_handle is null");
+            }
             return this.event_loop_handle.?;
         }
 
         return uws.Loop.get();
+    }
+
+    pub fn uvLoop(this: *const VirtualMachine) *bun.Async.Loop {
+        if (Environment.allow_assert) {
+            return this.event_loop_handle orelse @panic("libuv event_loop_handle is null");
+        }
+        return this.event_loop_handle.?;
     }
 
     pub fn isMainThread(this: *const VirtualMachine) bool {

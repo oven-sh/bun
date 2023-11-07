@@ -81,7 +81,12 @@ pub fn Maybe(comptime ResultType: type) type {
             .result = std.mem.zeroes(ReturnType),
         };
 
-        pub const todo: @This() = @This(){ .err = Syscall.Error.todo };
+        pub inline fn todo() @This() {
+            if (Environment.isDebug) {
+                @panic("Maybe(" ++ @typeName(ResultType) ++ ").todo() Called");
+            }
+            return .{ .err = Syscall.Error.todo };
+        }
 
         pub fn unwrap(this: @This()) !ReturnType {
             return switch (this) {
@@ -1446,11 +1451,13 @@ pub fn StatType(comptime Big: bool) type {
 
         const This = @This();
 
-        inline fn toNanoseconds(ts: std.os.timespec) Timestamp {
+        const StatTimespec = if (Environment.isWindows) bun.windows.libuv.uv_timespec_t else std.os.timespec;
+
+        inline fn toNanoseconds(ts: StatTimespec) Timestamp {
             return @as(Timestamp, @intCast(ts.tv_sec * 1_000_000_000)) + @as(Timestamp, @intCast(ts.tv_nsec));
         }
 
-        inline fn toTimeMS(ts: std.os.timespec) Float {
+        inline fn toTimeMS(ts: StatTimespec) Float {
             if (Big) {
                 return @as(i64, @intCast(ts.tv_sec * std.time.ms_per_s)) + @as(i64, @intCast(@divTrunc(ts.tv_nsec, std.time.ns_per_ms)));
             } else {

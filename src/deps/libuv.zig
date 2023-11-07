@@ -24,6 +24,7 @@ const sockaddr_in6 = std.os.sockaddr_in6;
 const sockaddr_storage = std.os.sockaddr_storage;
 const sockaddr_un = std.os.sockaddr_un;
 const BOOL = windows.BOOL;
+const Env = bun.Environment;
 pub const CHAR = u8;
 pub const SHORT = c_short;
 pub const LONG = c_long;
@@ -526,17 +527,6 @@ pub const Loop = extern struct {
         this.active_handles -= 1;
     }
 
-    pub fn init() *Loop {
-        var this = get();
-        uv_replace_allocator(
-            this,
-            @ptrCast(&bun.Mimalloc.mi_malloc),
-            @ptrCast(&bun.Mimalloc.mi_realloc),
-            @ptrCast(&bun.Mimalloc.mi_calloc),
-            @ptrCast(&bun.Mimalloc.mi_free),
-        );
-    }
-
     pub fn isActive(this: *const Loop) bool {
         return uv_loop_alive(this) != 0;
     }
@@ -602,6 +592,11 @@ pub const struct_uv_buf_t = extern struct {
 
     pub fn slice(this: *const @This()) []u8 {
         return this.base[0..this.len];
+    }
+
+    pub fn init(input: []const u8) uv_buf_t {
+        std.debug.assert(input.len <= @as(usize, std.math.maxInt(ULONG)));
+        return uv_buf_init(@constCast(input.ptr), @intCast(input.len));
     }
 };
 pub const uv_buf_t = struct_uv_buf_t;
@@ -1707,22 +1702,38 @@ pub const uv_timeval64_t = extern struct {
     tv_usec: i32,
 };
 pub const uv_stat_t = extern struct {
-    st_dev: u64,
-    st_mode: u64,
-    st_nlink: u64,
-    st_uid: u64,
-    st_gid: u64,
-    st_rdev: u64,
-    st_ino: u64,
-    st_size: u64,
-    st_blksize: u64,
-    st_blocks: u64,
-    st_flags: u64,
-    st_gen: u64,
-    st_atim: uv_timespec_t,
-    st_mtim: uv_timespec_t,
-    st_ctim: uv_timespec_t,
-    st_birthtim: uv_timespec_t,
+    dev: u64,
+    mode: u64,
+    nlink: u64,
+    uid: u64,
+    gid: u64,
+    rdev: u64,
+    ino: u64,
+    size: u64,
+    blksize: u64,
+    blocks: u64,
+    flags: u64,
+    gen: u64,
+    atim: uv_timespec_t,
+    mtim: uv_timespec_t,
+    ctim: uv_timespec_t,
+    birthtim: uv_timespec_t,
+
+    pub fn atime(self: @This()) uv_timespec_t {
+        return self.atim;
+    }
+
+    pub fn mtime(self: @This()) uv_timespec_t {
+        return self.mtim;
+    }
+
+    pub fn ctime(self: @This()) uv_timespec_t {
+        return self.ctim;
+    }
+
+    pub fn birthtime(self: @This()) uv_timespec_t {
+        return self.birthtim;
+    }
 };
 pub const uv_fs_poll_cb = ?*const fn ([*c]uv_fs_poll_t, c_int, [*c]const uv_stat_t, [*c]const uv_stat_t) callconv(.C) void;
 pub const UV_LEAVE_GROUP: c_int = 0;

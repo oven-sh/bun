@@ -4952,12 +4952,13 @@ pub fn convertUTF8toUTF16InBuffer(
     buf: []u16,
     input: []const u8,
 ) []const u16 {
-    if (!Environment.enableSIMD) {
-        @panic("TODO: non-SIMD convertUTF8toUTF16");
-    }
+    if (!Environment.isWindows) @compileError("please dont't use this function on posix until fixing the todos.");
+
     const result = bun.simdutf.convert.utf8.to.utf16.with_errors.le(input, buf);
     switch (result.status) {
         .success => return buf[0..result.count],
+        // TODO(@paperdave): handle surrogate
+        .surrogate => @panic("TODO: handle surrogate in convertUTF8toUTF16"),
         else => @panic("TODO: handle error in convertUTF8toUTF16"),
     }
 }
@@ -4966,12 +4967,13 @@ pub fn convertUTF16toUTF8InBuffer(
     buf: []u8,
     input: []const u16,
 ) ![]const u8 {
-    if (!Environment.enableSIMD) {
-        @panic("TODO: non-SIMD convertUTF16toUTF8InBuffer");
-    }
+    if (!Environment.isWindows) @compileError("please dont't use this function on posix until fixing the todos.");
+
     const result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(input, buf);
     switch (result.status) {
         .success => return buf[0..result.count],
+        // TODO(@paperdave): handle surrogate
+        .surrogate => @panic("TODO: handle surrogate in convertUTF8toUTF16"),
         else => @panic("TODO: handle error in convertUTF16toUTF8InBuffer"),
     }
 }

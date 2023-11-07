@@ -728,7 +728,6 @@ pub const HTTPThread = struct {
             pub fn wakeup(_: *uws.Loop) callconv(.C) void {
                 http_thread.drainEvents();
             }
-
             pub fn pre(_: *uws.Loop) callconv(.C) void {}
             pub fn post(_: *uws.Loop) callconv(.C) void {}
         });
@@ -789,7 +788,7 @@ pub const HTTPThread = struct {
         }
     }
 
-    fn processEvents_(this: *@This()) void {
+    fn processEvents(this: *@This()) noreturn {
         if (comptime Environment.isPosix)
             this.loop.num_polls = @max(2, this.loop.num_polls);
 
@@ -808,11 +807,6 @@ pub const HTTPThread = struct {
                 Output.flush();
             }
         }
-    }
-
-    pub fn processEvents(this: *@This()) void {
-        processEvents_(this);
-        unreachable;
     }
 
     pub fn scheduleShutdown(this: *@This(), http: *AsyncHTTP) void {

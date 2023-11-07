@@ -1040,7 +1040,7 @@ pub fn normalizeStringWindows(
         str,
         buf,
         allow_above_root,
-        std.fs.path.sep_posix,
+        std.fs.path.sep_windows,
         isSepAny,
         lastIndexOfSeparatorWindows,
         preserve_trailing_slash,

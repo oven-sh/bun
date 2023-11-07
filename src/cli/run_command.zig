@@ -375,9 +375,7 @@ pub const RunCommand = struct {
             if (@errorReturnTrace()) |trace| {
                 std.debug.dumpStackTrace(trace.*);
             }
-            if (Environment.isDebug) {
-                Output.prettyErrorln("Full path: <b>{s}<r>", .{executable});
-            }
+            log("Full path: <b>{s}<r>", .{executable});
             Global.exit(1);
         };
         switch (result) {

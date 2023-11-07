@@ -2306,7 +2306,7 @@ pub const Fetch = struct {
 
                         const original_size = body.Blob.size;
                         const stat_size = @as(Blob.SizeType, @intCast(stat.size));
-                        const blob_size = if (bun.isRegularFile(stat.mode))
+                        const blob_size = if (bun.isRegularFile(@intCast(stat.mode)))
                             stat_size
                         else
                             @min(original_size, stat_size);
@@ -2320,7 +2320,7 @@ pub const Fetch = struct {
                             },
                         };
 
-                        if (bun.isRegularFile(stat.mode)) {
+                        if (bun.isRegularFile(@intCast(stat.mode))) {
                             http_body.Sendfile.offset = @min(http_body.Sendfile.offset, stat_size);
                             http_body.Sendfile.remain = @min(@max(http_body.Sendfile.remain, http_body.Sendfile.offset), stat_size) -| http_body.Sendfile.offset;
                         }

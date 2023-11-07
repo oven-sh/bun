@@ -15,7 +15,102 @@ const Flavor = JSC.Node.Flavor;
 const system = std.os.system;
 const Maybe = JSC.Maybe;
 const Encoding = JSC.Node.Encoding;
-const Syscall = bun.sys;
+const Syscall = if (Environment.isWindows) struct {
+    // pub usingnamespace bun.sys;
+
+    const log = bun.sys.syslog;
+    const Error = bun.sys.Error;
+
+    const mkdir = bun.sys.mkdir;
+    const readlink = bun.sys.readlink;
+    const rename = bun.sys.rename;
+    const ftruncate = bun.sys.ftruncate;
+    const openat = bun.sys.openat;
+    const setFileOffset = bun.sys.setFileOffset;
+    const getFdPath = bun.sys.getFdPath;
+
+    pub fn open(file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+        var req: uv.uv_fs_t = undefined;
+        const rc = uv.uv_fs_open(uv.Loop.get(), &req, file_path.ptr, flags, perm, null);
+        log("uv open({any}, {d}, {d}) = {d}", .{ file_path, flags, perm, rc });
+        return if (rc < 0)
+            .{ .err = .{ .errno = @truncate(@as(c_uint, @intCast(-rc))), .syscall = .open } }
+        else
+            .{ .result = bun.toFD(rc) };
+    }
+
+    // pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+    //     var req: uv.uv_fs_t = undefined;
+    //     const rc = uv.uv_fs_open(uv.Loop.get(), &req, file_path.ptr, flags, perm, null);
+    //     log("uv open({any}, {d}, {d}) = {d}", .{ file_path, flags, perm, rc });
+    //     return if (rc < 0)
+    //         .{ .err = .{ .errno = @truncate(@as(c_uint, @intCast(-rc))), .syscall = .open } }
+    //     else
+    //         .{ .result = bun.toFD(rc) };
+    // }
+
+    pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
+        var req: uv.uv_fs_t = undefined;
+        const rc = uv.uv_fs_fstat(uv.Loop.get(), &req, @intCast(fd), null);
+        log("uv fstat({d}) = {d}", .{ fd, rc });
+        return if (rc < 0)
+            .{ .err = .{ .errno = @truncate(@as(c_uint, @intCast(-rc))), .fd = fd, .syscall = .fstat } }
+        else
+            .{ .result = req.statbuf };
+    }
+
+    pub fn close(fd: bun.FileDescriptor) ?Syscall.Error {
+        if (fd == bun.STDOUT_FD or fd == bun.STDERR_FD) {
+            log("uv close({d}) SKIPPED", .{fd});
+            return null;
+        }
+
+        return closeAllowingStdoutAndStderr(fd);
+    }
+
+    pub fn closeAllowingStdoutAndStderr(fd: bun.FileDescriptor) ?Syscall.Error {
+        log("uv close({d})", .{fd});
+
+        var req: uv.uv_fs_t = undefined;
+        const rc = uv.uv_fs_close(uv.Loop.get(), &req, @intCast(fd), null);
+        return if (rc < 0)
+            .{ .errno = @truncate(@as(c_uint, @intCast(-rc))), .syscall = .close }
+        else
+            null;
+    }
+
+    pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
+        const debug_timer = bun.Output.DebugTimer.start();
+        const adjusted_len = @min(bytes.len, bun.sys.max_count);
+
+        var req: uv.uv_fs_t = undefined;
+        const bufs: [1]uv.uv_buf_t = .{uv.uv_buf_t.init(bytes)};
+        const rc = uv.uv_fs_write(uv.Loop.get(), &req, @intCast(fd), &bufs, 1, -1, null);
+        log("uv write({d}, {d}) = {d} ({any})", .{ fd, adjusted_len, rc, debug_timer });
+
+        if (rc < 0) {
+            return .{ .err = .{ .errno = @truncate(@as(c_uint, @intCast(-rc))), .fd = fd, .syscall = .read } };
+        } else {
+            return .{ .result = @as(usize, @intCast(rc)) };
+        }
+    }
+
+    pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
+        const debug_timer = bun.Output.DebugTimer.start();
+        const adjusted_len = @min(buf.len, bun.sys.max_count);
+
+        var req: uv.uv_fs_t = undefined;
+        const bufs: [1]uv.uv_buf_t = .{uv.uv_buf_t.init(buf)};
+        const rc = uv.uv_fs_read(uv.Loop.get(), &req, @intCast(fd), &bufs, 1, -1, null);
+        log("uv read({d}, {d}) = {d} ({any})", .{ fd, adjusted_len, rc, debug_timer });
+
+        if (rc < 0) {
+            return .{ .err = .{ .errno = @truncate(@as(c_uint, @intCast(-rc))), .fd = fd, .syscall = .read } };
+        } else {
+            return .{ .result = @as(usize, @intCast(rc)) };
+        }
+    }
+} else bun.sys;
 const Constants = @import("./node_fs_constant.zig").Constants;
 const builtin = @import("builtin");
 const os = @import("std").os;
@@ -32,6 +127,7 @@ const StringOrBuffer = JSC.Node.StringOrBuffer;
 const ArgumentsSlice = JSC.Node.ArgumentsSlice;
 const TimeLike = JSC.Node.TimeLike;
 const Mode = bun.Mode;
+const uv = bun.windows.libuv;
 const E = C.E;
 const uid_t = if (Environment.isPosix) std.os.uid_t else i32;
 const gid_t = if (Environment.isPosix) std.os.gid_t else i32;
@@ -3292,7 +3388,7 @@ pub const NodeFS = struct {
 
     pub fn access(this: *NodeFS, args: Arguments.Access, comptime _: Flavor) Maybe(Return.Access) {
         if (comptime Environment.isWindows) {
-            return Maybe(Return.Access).todo;
+            return Maybe(Return.Access).todo();
         }
 
         var path = args.path.sliceZ(&this.sync_error_buf);
@@ -3506,7 +3602,7 @@ pub const NodeFS = struct {
 
             // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
             if (args.mode.isForceClone()) {
-                return Maybe(Return.CopyFile).todo;
+                return Maybe(Return.CopyFile).todo();
             }
 
             const src_fd = switch (Syscall.open(src, std.os.O.RDONLY, 0o644)) {
@@ -3555,7 +3651,6 @@ pub const NodeFS = struct {
             if (size == 0) {
                 // copy until EOF
                 while (true) {
-
                     // Linux Kernel 5.3 or later
                     const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, std.mem.page_size, 0);
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
@@ -3590,11 +3685,11 @@ pub const NodeFS = struct {
 
         if (comptime Environment.isWindows) {
             if (args.mode.isForceClone()) {
-                return Maybe(Return.CopyFile).todo;
+                return Maybe(Return.CopyFile).todo();
             }
 
-            var src_buf: bun.MAX_WPATH = undefined;
-            var dest_buf: bun.MAX_WPATH = undefined;
+            var src_buf: bun.WPathBuffer = undefined;
+            var dest_buf: bun.WPathBuffer = undefined;
             var src = strings.toWPathNormalizeAutoExtend(&src_buf, args.src.slice());
             var dest = strings.toWPathNormalizeAutoExtend(&dest_buf, args.dest.slice());
             if (windows.CopyFileW(src.ptr, dest.ptr, if (args.mode.shouldntOverwrite()) 1 else 0) == windows.FALSE) {
@@ -3606,7 +3701,7 @@ pub const NodeFS = struct {
             return ret.success;
         }
 
-        return Maybe(Return.CopyFile).todo;
+        return Maybe(Return.CopyFile).todo();
     }
 
     pub fn exists(this: *NodeFS, args: Arguments.Exists, comptime flavor: Flavor) Maybe(Return.Exists) {
@@ -3625,7 +3720,7 @@ pub const NodeFS = struct {
     pub fn chown(this: *NodeFS, args: Arguments.Chown, comptime flavor: Flavor) Maybe(Return.Chown) {
         _ = flavor;
         if (comptime Environment.isWindows) {
-            return Maybe(Return.Fchmod).todo;
+            return Maybe(Return.Fchmod).todo();
         }
 
         const path = args.path.sliceZ(&this.sync_error_buf);
@@ -3637,7 +3732,7 @@ pub const NodeFS = struct {
     pub fn chmod(this: *NodeFS, args: Arguments.Chmod, comptime flavor: Flavor) Maybe(Return.Chmod) {
         _ = flavor;
         if (comptime Environment.isWindows) {
-            return Maybe(Return.Fchmod).todo;
+            return Maybe(Return.Fchmod).todo();
         }
 
         const path = args.path.sliceZ(&this.sync_error_buf);
@@ -3650,7 +3745,7 @@ pub const NodeFS = struct {
     pub fn fchmod(_: *NodeFS, args: Arguments.FChmod, comptime flavor: Flavor) Maybe(Return.Fchmod) {
         _ = flavor;
         if (comptime Environment.isWindows) {
-            return Maybe(Return.Fchmod).todo;
+            return Maybe(Return.Fchmod).todo();
         }
 
         return Syscall.fchmod(args.fd, args.mode);
@@ -3658,7 +3753,7 @@ pub const NodeFS = struct {
     pub fn fchown(_: *NodeFS, args: Arguments.Fchown, comptime flavor: Flavor) Maybe(Return.Fchown) {
         _ = flavor;
         if (comptime Environment.isWindows) {
-            return Maybe(Return.Fchown).todo;
+            return Maybe(Return.Fchown).todo();
         }
 
         return Maybe(Return.Fchown).errnoSys(C.fchown(args.fd, args.uid, args.gid), .fchown) orelse
@@ -3667,7 +3762,7 @@ pub const NodeFS = struct {
     pub fn fdatasync(_: *NodeFS, args: Arguments.FdataSync, comptime flavor: Flavor) Maybe(Return.Fdatasync) {
         _ = flavor;
         if (comptime Environment.isWindows) {
-            return Maybe(Return.Fdatasync).todo;
+            return Maybe(Return.Fdatasync).todo();
         }
         return Maybe(Return.Fdatasync).errnoSys(system.fdatasync(args.fd), .fdatasync) orelse
             Maybe(Return.Fdatasync).success;
@@ -3675,7 +3770,7 @@ pub const NodeFS = struct {
     pub fn fstat(_: *NodeFS, args: Arguments.Fstat, comptime flavor: Flavor) Maybe(Return.Fstat) {
         _ = flavor;
         if (comptime Environment.isWindows) {
-            return Maybe(Return.Fstat).todo;
+            return Maybe(Return.Fstat).todo();
         }
 
         if (comptime Environment.isPosix) {
@@ -3685,13 +3780,13 @@ pub const NodeFS = struct {
             };
         }
 
-        return Maybe(Return.Fstat).todo;
+        return Maybe(Return.Fstat).todo();
     }
 
     pub fn fsync(_: *NodeFS, args: Arguments.Fsync, comptime flavor: Flavor) Maybe(Return.Fsync) {
         _ = flavor;
         if (comptime Environment.isWindows) {
-            return Maybe(Return.Fsync).todo;
+            return Maybe(Return.Fsync).todo();
         }
 
         return Maybe(Return.Fsync).errnoSys(system.fsync(args.fd), .fsync) orelse
@@ -3709,7 +3804,7 @@ pub const NodeFS = struct {
     pub fn futimes(_: *NodeFS, args: Arguments.Futimes, comptime flavor: Flavor) Maybe(Return.Futimes) {
         _ = flavor;
         if (comptime Environment.isWindows) {
-            return Maybe(Return.Futimes).todo;
+            return Maybe(Return.Futimes).todo();
         }
 
         var times = [2]std.os.timespec{
@@ -3732,7 +3827,7 @@ pub const NodeFS = struct {
     pub fn lchmod(this: *NodeFS, args: Arguments.LCHmod, comptime flavor: Flavor) Maybe(Return.Lchmod) {
         _ = flavor;
         if (comptime Environment.isWindows) {
-            return Maybe(Return.Lchmod).todo;
+            return Maybe(Return.Lchmod).todo();
         }
 
         const path = args.path.sliceZ(&this.sync_error_buf);
@@ -3744,7 +3839,7 @@ pub const NodeFS = struct {
     pub fn lchown(this: *NodeFS, args: Arguments.LChown, comptime flavor: Flavor) Maybe(Return.Lchown) {
         _ = flavor;
         if (comptime Environment.isWindows) {
-            return Maybe(Return.Lchown).todo;
+            return Maybe(Return.Lchown).todo();
         }
 
         const path = args.path.sliceZ(&this.sync_error_buf);
@@ -3763,7 +3858,7 @@ pub const NodeFS = struct {
     }
     pub fn lstat(this: *NodeFS, args: Arguments.Lstat, comptime flavor: Flavor) Maybe(Return.Lstat) {
         if (comptime Environment.isWindows) {
-            return Maybe(Return.Lstat).todo;
+            return Maybe(Return.Lstat).todo();
         }
 
         _ = flavor;
@@ -3801,7 +3896,7 @@ pub const NodeFS = struct {
     pub fn mkdirRecursive(this: *NodeFS, args: Arguments.Mkdir, comptime flavor: Flavor) Maybe(Return.Mkdir) {
         _ = flavor;
         const Option = Maybe(Return.Mkdir);
-        if (comptime Environment.isWindows) return Option.todo;
+        if (comptime Environment.isWindows) return Option.todo();
 
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         const path = args.path.sliceZWithForceCopy(&buf, true);
@@ -3964,7 +4059,7 @@ pub const NodeFS = struct {
         };
     }
     pub fn openDir(_: *NodeFS, _: Arguments.OpenDir, comptime _: Flavor) Maybe(Return.OpenDir) {
-        return Maybe(Return.OpenDir).todo;
+        return Maybe(Return.OpenDir).todo();
     }
 
     fn _read(_: *NodeFS, args: Arguments.Read, comptime flavor: Flavor) Maybe(Return.Read) {
@@ -4005,7 +4100,7 @@ pub const NodeFS = struct {
     }
 
     pub fn read(this: *NodeFS, args: Arguments.Read, comptime flavor: Flavor) Maybe(Return.Read) {
-        if (comptime Environment.isWindows) return Maybe(Return.Read).todo;
+        if (comptime Environment.isWindows) return Maybe(Return.Read).todo();
         return if (args.position != null)
             this._pread(
                 args,
@@ -4019,17 +4114,17 @@ pub const NodeFS = struct {
     }
 
     pub fn readv(this: *NodeFS, args: Arguments.Readv, comptime flavor: Flavor) Maybe(Return.Read) {
-        if (comptime Environment.isWindows) return Maybe(Return.Read).todo;
+        if (comptime Environment.isWindows) return Maybe(Return.Read).todo();
         return if (args.position != null) _preadv(this, args, flavor) else _readv(this, args, flavor);
     }
 
     pub fn writev(this: *NodeFS, args: Arguments.Writev, comptime flavor: Flavor) Maybe(Return.Write) {
-        if (comptime Environment.isWindows) return Maybe(Return.Write).todo;
+        if (comptime Environment.isWindows) return Maybe(Return.Write).todo();
         return if (args.position != null) _pwritev(this, args, flavor) else _writev(this, args, flavor);
     }
 
     pub fn write(this: *NodeFS, args: Arguments.Write, comptime flavor: Flavor) Maybe(Return.Write) {
-        if (comptime Environment.isWindows) return Maybe(Return.Write).todo;
+        if (comptime Environment.isWindows) return Maybe(Return.Write).todo();
         return if (args.position != null) _pwrite(this, args, flavor) else _write(this, args, flavor);
     }
     fn _write(_: *NodeFS, args: Arguments.Write, comptime flavor: Flavor) Maybe(Return.Write) {
@@ -4315,20 +4410,15 @@ pub const NodeFS = struct {
         // For certain files, the size might be 0 but the file might still have contents.
         const size = @as(
             u64,
-            @intCast(@max(
+            @max(
                 @min(
                     stat_.size,
-                    @as(
-                        @TypeOf(stat_.size),
-                        // Only used in DOMFormData
-                        @intCast(args.max_size orelse std.math.maxInt(
-                            JSC.WebCore.Blob.SizeType,
-                        )),
-                    ),
+                    // Only used in DOMFormData
+                    args.max_size orelse std.math.maxInt(JSC.WebCore.Blob.SizeType),
                 ),
                 0,
-            )),
-        ) + if (comptime string_type == .null_terminated) 1 else 0;
+            ),
+        ) + @intFromBool(comptime string_type == .null_terminated);
 
         var buf = std.ArrayList(u8).init(bun.default_allocator);
         buf.ensureTotalCapacityPrecise(size + 16) catch unreachable;
@@ -4565,9 +4655,7 @@ pub const NodeFS = struct {
             std.os.O.RDONLY;
 
         const fd = switch (Syscall.open(path, flags, 0)) {
-            .err => |err| return .{
-                .err = err.withPath(path),
-            },
+            .err => |err| return .{ .err = err.withPath(path) },
             .result => |fd_| fd_,
         };
 
@@ -4576,9 +4664,7 @@ pub const NodeFS = struct {
         }
 
         const buf = switch (Syscall.getFdPath(fd, &outbuf)) {
-            .err => |err| return .{
-                .err = err.withPath(path),
-            },
+            .err => |err| return .{ .err = err.withPath(path) },
             .result => |buf_| buf_,
         };
 
@@ -4657,7 +4743,7 @@ pub const NodeFS = struct {
                 Maybe(Return.Rmdir).success;
         }
 
-        return Maybe(Return.Rmdir).todo;
+        return Maybe(Return.Rmdir).todo();
     }
     pub fn rm(this: *NodeFS, args: Arguments.RmDir, comptime flavor: Flavor) Maybe(Return.Rm) {
         _ = flavor;
@@ -4831,7 +4917,7 @@ pub const NodeFS = struct {
     }
     pub fn stat(this: *NodeFS, args: Arguments.Stat, comptime flavor: Flavor) Maybe(Return.Stat) {
         if (comptime Environment.isWindows) {
-            return Maybe(Return.Stat).todo;
+            return Maybe(Return.Stat).todo();
         }
         _ = flavor;
 
@@ -4853,7 +4939,7 @@ pub const NodeFS = struct {
     pub fn symlink(this: *NodeFS, args: Arguments.Symlink, comptime flavor: Flavor) Maybe(Return.Symlink) {
         _ = flavor;
         if (comptime Environment.isWindows) {
-            return Maybe(Return.Symlink).todo;
+            return Maybe(Return.Symlink).todo();
         }
 
         var to_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -4866,7 +4952,7 @@ pub const NodeFS = struct {
     fn _truncate(this: *NodeFS, path: PathLike, len: JSC.WebCore.Blob.SizeType, comptime flavor: Flavor) Maybe(Return.Truncate) {
         _ = flavor;
         if (comptime Environment.isWindows) {
-            return Maybe(Return.Truncate).todo;
+            return Maybe(Return.Truncate).todo();
         }
 
         return Maybe(Return.Truncate).errno(C.truncate(path.sliceZ(&this.sync_error_buf), len)) orelse
@@ -4888,7 +4974,7 @@ pub const NodeFS = struct {
     pub fn unlink(this: *NodeFS, args: Arguments.Unlink, comptime flavor: Flavor) Maybe(Return.Unlink) {
         _ = flavor;
         if (comptime Environment.isWindows) {
-            return Maybe(Return.Unlink).todo;
+            return Maybe(Return.Unlink).todo();
         }
 
         return Maybe(Return.Unlink).errnoSysP(system.unlink(args.path.sliceZ(&this.sync_error_buf)), .unlink, args.path.slice()) orelse
@@ -4914,12 +5000,12 @@ pub const NodeFS = struct {
         return Maybe(Return.Watch){ .result = watcher };
     }
     pub fn unwatchFile(_: *NodeFS, _: Arguments.UnwatchFile, comptime _: Flavor) Maybe(Return.UnwatchFile) {
-        return Maybe(Return.UnwatchFile).todo;
+        return Maybe(Return.UnwatchFile).todo();
     }
     pub fn utimes(this: *NodeFS, args: Arguments.Utimes, comptime flavor: Flavor) Maybe(Return.Utimes) {
         _ = flavor;
         if (comptime Environment.isWindows) {
-            return Maybe(Return.Utimes).todo;
+            return Maybe(Return.Utimes).todo();
         }
 
         var times = [2]std.c.timeval{
@@ -4943,7 +5029,7 @@ pub const NodeFS = struct {
 
     pub fn lutimes(this: *NodeFS, args: Arguments.Lutimes, comptime _: Flavor) Maybe(Return.Lutimes) {
         if (comptime Environment.isWindows) {
-            return Maybe(Return.Lutimes).todo;
+            return Maybe(Return.Lutimes).todo();
         }
 
         var times = [2]std.c.timeval{
@@ -4982,23 +5068,23 @@ pub const NodeFS = struct {
         return Maybe(Return.Watch){ .result = watcher };
     }
     pub fn createReadStream(_: *NodeFS, _: Arguments.CreateReadStream, comptime _: Flavor) Maybe(Return.CreateReadStream) {
-        return Maybe(Return.CreateReadStream).todo;
+        return Maybe(Return.CreateReadStream).todo();
     }
     pub fn createWriteStream(_: *NodeFS, _: Arguments.CreateWriteStream, comptime _: Flavor) Maybe(Return.CreateWriteStream) {
-        return Maybe(Return.CreateWriteStream).todo;
+        return Maybe(Return.CreateWriteStream).todo();
     }
 
     /// This function is `cpSync`, but only if you pass `{ recursive: ..., force: ..., errorOnExist: ..., mode: ... }'
     /// The other options like `filter` use a JS fallback, see `src/js/internal/fs/cp.ts`
     pub fn cp(this: *NodeFS, args: Arguments.Cp, comptime flavor: Flavor) Maybe(Return.Cp) {
         if (comptime Environment.isWindows) {
-            return Maybe(Return.Cp).todo;
+            return Maybe(Return.Cp).todo();
         }
 
         comptime std.debug.assert(flavor == .sync);
 
         if (comptime Environment.isWindows) {
-            return Maybe(Return.Cp).todo;
+            return Maybe(Return.Cp).todo();
         }
 
         var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -5270,7 +5356,7 @@ pub const NodeFS = struct {
         if (comptime Environment.isLinux) {
             // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
             if (mode.isForceClone()) {
-                return Maybe(Return.CopyFile).todo;
+                return Maybe(Return.CopyFile).todo();
             }
 
             const src_fd = switch (Syscall.open(src, std.os.O.RDONLY | std.os.O.NOFOLLOW, 0o644)) {
@@ -5391,7 +5477,7 @@ pub const NodeFS = struct {
     /// calls "_copySingleFileSync") will be dispatched as a separate task.
     pub fn cpAsync(this: *NodeFS, task: *AsyncCpTask) void {
         if (comptime Environment.isWindows) {
-            task.finishConcurrently(Maybe(Return.Cp).todo);
+            task.finishConcurrently(Maybe(Return.Cp).todo());
             return;
         }
 

@@ -2413,6 +2413,12 @@ pub const UVLoop = extern struct {
     pre: *uv.uv_prepare_t,
     check: *uv.uv_check_t,
 
+    pub fn init() *UVLoop {
+        return uws_get_loop_with_native(bun.windows.libuv.Loop.get());
+    }
+
+    extern fn uws_get_loop_with_native(*anyopaque) *UVLoop;
+
     pub fn isActive(this: *const UVLoop) bool {
         return this.uv_loop.isActive();
     }

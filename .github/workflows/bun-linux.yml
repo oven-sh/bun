@@ -34,7 +34,7 @@ on:
 jobs:
   build:
     name: Build ${{ matrix.tag }}
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner || 'ubuntu-latest' }}
     timeout-minutes: 90
     permissions: write-all
     continue-on-error: true

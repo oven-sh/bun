@@ -3,6 +3,7 @@ set -euxo pipefail
 source $(dirname -- "${BASH_SOURCE[0]}")/env.sh
 
 cd $BUN_DEPS_DIR/boringssl
+rm -rf build CMakeCache.txt CMakeFiles
 mkdir -p build
 cd build
 

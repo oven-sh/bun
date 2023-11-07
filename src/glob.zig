@@ -109,7 +109,6 @@ pub const GlobWalker = struct {
 
     dot: bool = false,
     absolute: bool = false,
-    /// Absolute path of cwd
     cwd: BunString = undefined,
     follow_symlinks: bool = false,
     error_on_broken_symlinks: bool = false,
@@ -227,15 +226,6 @@ pub const GlobWalker = struct {
                 _ = bun.simdutf.convert.utf8.to.utf32.le(pattern, codepoints);
             },
         }
-        // const iterator = CodepointIterator.init(pattern);
-        // var iter = CodepointIterator.Cursor{};
-        // var i: usize = 0;
-        // while (iterator.next(&iter)) : (i += 1) {
-        //     const cu32: u32 = @intCast(iter.c);
-        //     const cu8: u8 = @truncate(iter.c);
-        //     _ = cu8;
-        //     codepoints[i] = cu32;
-        // }
     }
 
     /// `cwd` should be allocated with the arena
@@ -298,6 +288,9 @@ pub const GlobWalker = struct {
             .err => |err| return .{ .err = this.handleSysErrWithPath(err, @ptrCast(path_buf[0 .. root_path.len + 1])) },
             .result => |fd| fd,
         };
+        defer {
+            _ = Syscall.closeAllowingStdoutAndStderr(cwd_fd);
+        }
         // Handle root first
         {
             const root_work_item = WorkItem.new(root_path, 0, .directory);
@@ -664,13 +657,6 @@ pub const GlobWalker = struct {
                         entry_name,
                     };
 
-                    // const subdir_entry_name = try this.arena.allocator().dupe(u8, ResolvePath.join(subdir_parts, .auto));
-                    // const subdir_entry_name = try this.arena.allocator().dupe(u8, ResolvePath.join(subdir_parts, .auto));
-                    // const subdir_entry_name = try this.arena.allocator().dupe(u8, std.fs.path.join(this, paths: []const []const u8));
-                    // const subdir_entry_name = if (!this.absolute)
-                    //     try std.fs.path.join(this.arena.allocator(), subdir_parts)
-                    // else
-                    //     try this.arena.allocator().dupe(u8, ResolvePath.join(subdir_parts, .auto));
                     const subdir_entry_name = try this.join(subdir_parts);
 
                     try this.workbuf.append(
@@ -727,12 +713,6 @@ pub const GlobWalker = struct {
         add: *bool,
     ) ?u32 {
         if (!this.dot and GlobWalker.startsWithDot(entry_name)) return null;
-        // if (pattern.syntax_hint == .Dot) {
-        //     return 1;
-        // }
-
-        // `recursion_idx_bump` is the component idx to offset to start at
-        // when handling this directory's contents
 
         // Handle double wildcard `**`, this could possibly
         // propagate the `**` to the directory's children
@@ -827,7 +807,7 @@ pub const GlobWalker = struct {
     }
 
     fn matchPatternSlow(this: *GlobWalker, pattern_component: *Component, filepath: []const u8) bool {
-        // windows filepaths are utf-16 so GlobAscii.match won't work
+        // windows filepaths are utf-16 so GlobAscii.match will never work
         if (comptime !isWindows) {
             if (pattern_component.is_ascii and isAllAscii(filepath))
                 return GlobAscii.match(
@@ -871,14 +851,6 @@ pub const GlobWalker = struct {
         entry_name: []const u8,
         dir_name: [:0]const u8,
     ) !void {
-        // const name = try this.arena.allocator().dupe(u8, ResolvePath.join(&[_][]const u8{
-        //     dir_name[0..dir_name.len],
-        //     entry_name,
-        // }, .auto));
-        // const name = try std.fs.path.join(this.arena.allocator(), &[_][]const u8{
-        //     dir_name[0..dir_name.len],
-        //     entry_name,
-        // });
         const subdir_parts: []const []const u8 = &[_][]const u8{
             dir_name[0..dir_name.len],
             entry_name,
@@ -888,15 +860,14 @@ pub const GlobWalker = struct {
     }
 
     fn appendMatchedPathSymlink(this: *GlobWalker, symlink_full_path: []const u8) !void {
-        //     const name_slice = if (!this.absolute) symlink_full_path[this.root_cwd_slice.len + 1 .. symlink_full_path.len] else symlink_full_path[0..];
-        //     const name = try this.arena.allocator().dupe(u8, name_slice);
-        //     try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(name));
         const name = try this.arena.allocator().dupe(u8, symlink_full_path);
         try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(name));
     }
 
     inline fn join(this: *GlobWalker, subdir_parts: []const []const u8) ![]u8 {
         return if (!this.absolute)
+            // If relative paths enabled, stdlib join is preferred over
+            // ResolvePath.joinBuf because it doesn't try to normalize the path
             try std.fs.path.join(this.arena.allocator(), subdir_parts)
         else
             try this.arena.allocator().dupe(u8, ResolvePath.join(subdir_parts, .auto));

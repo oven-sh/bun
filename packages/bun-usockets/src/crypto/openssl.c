@@ -207,11 +207,6 @@ struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
   // always handshake after open if on_handshake is set
   if (context->on_handshake || s->pending_handshake) {
     s->pending_handshake = 1;
-    // we clean up the input buffer here
-    loop_ssl_data->ssl_read_input_length = 0;
-    loop_ssl_data->ssl_read_input_offset = 0;
-    loop_ssl_data->ssl_socket = &s->s;
-    loop_ssl_data->msg_more = 0;
     us_internal_ssl_handshake(s);
   }
 
@@ -245,6 +240,11 @@ void us_internal_ssl_handshake(struct us_internal_ssl_socket_t *s) {
   struct us_loop_t *loop = us_socket_context_loop(0, &context->sc);
   struct loop_ssl_data *loop_ssl_data =
       (struct loop_ssl_data *)loop->data.ssl_data;
+
+  loop_ssl_data->ssl_read_input_length = 0;
+  loop_ssl_data->ssl_read_input_offset = 0;
+  loop_ssl_data->ssl_socket = &s->s;
+  loop_ssl_data->msg_more = 0;
 
   if (us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s)) {
     s->pending_handshake = 0;
@@ -355,6 +355,9 @@ struct us_internal_ssl_socket_t *ssl_on_data(struct us_internal_ssl_socket_t *s,
   struct loop_ssl_data *loop_ssl_data =
       (struct loop_ssl_data *)loop->data.ssl_data;
 
+  if (s->pending_handshake) {
+    us_internal_ssl_handshake(s);
+  }
   // note: if we put data here we should never really clear it (not in write
   // either, it still should be available for SSL_write to read from!)
   loop_ssl_data->ssl_read_input = data;
@@ -362,10 +365,6 @@ struct us_internal_ssl_socket_t *ssl_on_data(struct us_internal_ssl_socket_t *s,
   loop_ssl_data->ssl_read_input_offset = 0;
   loop_ssl_data->ssl_socket = &s->s;
   loop_ssl_data->msg_more = 0;
-
-  if (s->pending_handshake) {
-    us_internal_ssl_handshake(s);
-  }
 
   if (us_socket_is_closed(0, &s->s)) {
     return s;

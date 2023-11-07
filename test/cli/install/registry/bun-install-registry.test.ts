@@ -214,6 +214,89 @@ test("package added after install", async () => {
   } as any);
 });
 
+describe("semver", () => {
+  const taggedVersionTests = [
+    {
+      title: "tagged version last in range",
+      depVersion: "1 || 2 || pre-3",
+      expected: "2.0.1",
+    },
+    {
+      title: "tagged version in middle of range",
+      depVersion: "1 || pre-3 || 2",
+      expected: "2.0.1",
+    },
+    {
+      title: "tagged version first in range",
+      depVersion: "pre-3 || 2 || 1",
+      expected: "2.0.1",
+    },
+    {
+      title: "multiple tagged versions in range",
+      depVersion: "pre-3 || 2 || pre-1 || 1 || 3 || pre-3",
+      expected: "3.0.0",
+    },
+    {
+      title: "start with &&",
+      depVersion: "&& 1",
+      expected: "1.0.1",
+    },
+    {
+      title: "start with ||",
+      depVersion: "|| 1",
+      expected: "1.0.1",
+    },
+    {
+      title: "start with || no space",
+      depVersion: "||2",
+      expected: "2.0.1",
+    },
+    {
+      title: "|| with no space on both sides",
+      depVersion: "1||2",
+      expected: "2.0.1",
+    },
+  ];
+
+  for (const { title, depVersion, expected } of taggedVersionTests) {
+    test(title, async () => {
+      await writeFile(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            "dep-with-tags": depVersion,
+          },
+        }),
+      );
+
+      var { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: null,
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+
+      expect(stderr).toBeDefined();
+      var err = await new Response(stderr).text();
+      expect(stdout).toBeDefined();
+      var out = await new Response(stdout).text();
+      expect(await exited).toBe(0);
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        ` + dep-with-tags@${expected}`,
+        "",
+        " 1 package installed",
+      ]);
+    });
+  }
+});
+
 describe("prereleases", () => {
   const prereleaseTests = [
     [

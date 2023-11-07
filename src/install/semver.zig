@@ -1941,6 +1941,9 @@ pub const Query = struct {
                 else => {
                     i += 1;
                     token.tag = Token.Tag.none;
+
+                    // skip tagged versions
+                    while (i < input.len and input[i] != ' ') : (i += 1) {}
                     skip_round = true;
                 },
             }

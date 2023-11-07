@@ -3632,7 +3632,7 @@ pub const NodeFS = struct {
             };
 
             if (!os.S.ISREG(stat_.mode)) {
-                return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOTSUP) } };
+                return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOTSUP), .syscall = .copyfile } };
             }
 
             var flags: Mode = std.os.O.CREAT | std.os.O.WRONLY;
@@ -5395,7 +5395,10 @@ pub const NodeFS = struct {
             };
 
             if (!os.S.ISREG(stat_.mode)) {
-                return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOTSUP) } };
+                return Maybe(Return.CopyFile){ .err = .{
+                    .errno = @intFromEnum(C.SystemErrno.ENOTSUP),
+                    .syscall = .copyfile,
+                } };
             }
 
             var flags: Mode = std.os.O.CREAT | std.os.O.WRONLY;

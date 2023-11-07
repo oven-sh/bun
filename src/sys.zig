@@ -1120,7 +1120,7 @@ pub fn getFdPath(fd_: bun.FileDescriptor, out_buffer: *[MAX_PATH_BYTES]u8) Maybe
             const proc_path = std.fmt.bufPrintZ(procfs_buf[0..], "/proc/self/fd/{d}\x00", .{fd}) catch unreachable;
 
             return switch (readlink(proc_path, out_buffer)) {
-                .err => |err| return .{ .err = err, .syscall = .readlink },
+                .err => |err| return .{ .err = err },
                 .result => |len| return .{ .result = out_buffer[0..len] },
             };
         },
@@ -1280,7 +1280,7 @@ pub const Error = struct {
 
     pub const todo_errno = std.math.maxInt(Int) - 1;
 
-    pub inline fn todo() void {
+    pub inline fn todo() Error {
         if (Environment.isDebug) {
             @panic("bun.sys.Error.todo() was called");
         }
@@ -1345,12 +1345,12 @@ pub fn setPipeCapacityOnLinux(fd_: bun.FileDescriptor, capacity: usize) Maybe(us
     // We don't use glibc here
     // It didn't work. Always returned 0.
     const pipe_len = std.os.linux.fcntl(fd, F_GETPIPE_SZ, 0);
-    if (Maybe(usize).errno(pipe_len)) |err| return err;
+    if (Maybe(usize).errnoSys(pipe_len, .fcntl)) |err| return err;
     if (pipe_len == 0) return Maybe(usize){ .result = 0 };
     if (pipe_len >= capacity) return Maybe(usize){ .result = pipe_len };
 
     const new_pipe_len = std.os.linux.fcntl(fd, F_SETPIPE_SZ, capacity);
-    if (Maybe(usize).errno(new_pipe_len)) |err| return err;
+    if (Maybe(usize).errnoSys(new_pipe_len, .fcntl)) |err| return err;
     return Maybe(usize){ .result = new_pipe_len };
 }
 

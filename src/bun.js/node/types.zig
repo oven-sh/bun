@@ -85,7 +85,7 @@ pub fn Maybe(comptime ResultType: type) type {
             if (Environment.isDebug) {
                 @panic("Maybe(" ++ @typeName(ResultType) ++ ").todo() Called");
             }
-            return .{ .err = Syscall.Error.todo };
+            return .{ .err = Syscall.Error.todo() };
         }
 
         pub fn unwrap(this: @This()) !ReturnType {

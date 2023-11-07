@@ -198,7 +198,6 @@ struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
   } else {
     SSL_set_accept_state(s->ssl);
   }
-  printf("is_client: %d\n", is_client);
 
   struct us_internal_ssl_socket_t *result =
       (struct us_internal_ssl_socket_t *)context->on_open(s, is_client, ip,

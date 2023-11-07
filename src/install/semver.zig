@@ -1349,9 +1349,9 @@ pub const Range = struct {
         }
     };
 
-    pub fn satisfies(this: Range, version: Version, string_buf: string) bool {
-        const has_left = this.hasLeft();
-        const has_right = this.hasRight();
+    pub fn satisfies(range: Range, version: Version, range_buf: string, version_buf: string) bool {
+        const has_left = range.hasLeft();
+        const has_right = range.hasRight();
 
         if (!has_left) {
             return true;
@@ -1375,31 +1375,31 @@ pub const Range = struct {
         var include_pre = true;
         if (version.tag.hasPre()) {
             if (!has_right) {
-                if (!this.left.version.tag.hasPre()) {
+                if (!range.left.version.tag.hasPre()) {
                     include_pre = false;
                 }
             } else {
-                if (!this.left.version.tag.hasPre() and !this.right.version.tag.hasPre()) {
+                if (!range.left.version.tag.hasPre() and !range.right.version.tag.hasPre()) {
                     include_pre = false;
                 }
             }
         }
 
-        if (!this.left.satisfies(version, include_pre)) {
+        if (!range.left.satisfies(version, include_pre)) {
             return false;
         }
 
-        if (has_right and !this.right.satisfies(version, include_pre)) {
+        if (has_right and !range.right.satisfies(version, include_pre)) {
             return false;
         }
 
-        if (version.tag.hasPre() and this.left.version.tag.hasPre()) {
+        if (version.tag.hasPre() and range.left.version.tag.hasPre()) {
             // make sure strings leading up to first number are the same
-            const lhs_str = this.left.version.tag.pre.slice(string_buf);
+            const lhs_str = range.left.version.tag.pre.slice(range_buf);
 
-            const rhs_str = if (this.right.version.tag.hasPre()) this.right.version.tag.pre.slice(string_buf) else null;
+            const rhs_str = if (range.right.version.tag.hasPre()) range.right.version.tag.pre.slice(range_buf) else null;
             const has_rhs_pre = rhs_str != null;
-            const ver_str = version.tag.pre.slice(string_buf);
+            const ver_str = version.tag.pre.slice(version_buf);
 
             var lhs_itr = strings.split(lhs_str, ".");
             var rhs_itr = if (has_rhs_pre) strings.split(rhs_str.?, ".") else null;
@@ -1493,8 +1493,16 @@ pub const Query = struct {
         // OR
         next: ?*List = null,
 
-        pub fn satisfies(this: *const List, version: Version, string_buf: string) bool {
-            return this.head.satisfies(version, string_buf) or (this.next orelse return false).satisfies(version, string_buf);
+        pub fn satisfies(list: *const List, version: Version, list_buf: string, version_buf: string) bool {
+            return list.head.satisfies(
+                version,
+                list_buf,
+                version_buf,
+            ) or (list.next orelse return false).satisfies(
+                version,
+                list_buf,
+                version_buf,
+            );
         }
 
         pub fn eql(lhs: *const List, rhs: *const List) bool {
@@ -1619,8 +1627,13 @@ pub const Query = struct {
             self.tail = new_tail;
         }
 
-        pub inline fn satisfies(this: *const Group, version: Version, string_buf: string) bool {
-            return this.head.satisfies(version, string_buf);
+        pub inline fn satisfies(
+            group: *const Group,
+            version: Version,
+            group_buf: string,
+            version_buf: string,
+        ) bool {
+            return group.head.satisfies(version, group_buf, version_buf);
         }
     };
 
@@ -1633,8 +1646,16 @@ pub const Query = struct {
         return lhs_next.eql(rhs_next);
     }
 
-    pub fn satisfies(this: *const Query, version: Version, string_buf: string) bool {
-        return this.range.satisfies(version, string_buf) and (this.next orelse return true).satisfies(version, string_buf);
+    pub fn satisfies(query: *const Query, version: Version, query_buf: string, version_buf: string) bool {
+        return query.range.satisfies(
+            version,
+            query_buf,
+            version_buf,
+        ) and (query.next orelse return true).satisfies(
+            version,
+            query_buf,
+            version_buf,
+        );
     }
 
     const Token = struct {

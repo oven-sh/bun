@@ -2539,7 +2539,7 @@ pub const PackageManager = struct {
             Semver.Version.sortGt,
         );
         for (installed_versions.items) |installed_version| {
-            if (version.value.npm.version.satisfies(installed_version, this.lockfile.buffers.string_bytes.items)) {
+            if (version.value.npm.version.satisfies(installed_version, this.lockfile.buffers.string_bytes.items, tags_buf.items)) {
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 var npm_package_path = this.pathForCachedNPMPath(&buf, package_name, installed_version) catch |err| {
                     Output.debug("error getting path for cached npm path: {s}", .{bun.span(@errorName(err))});
@@ -2751,7 +2751,7 @@ pub const PackageManager = struct {
     fn resolutionSatisfiesDependency(this: *PackageManager, resolution: Resolution, dependency: Dependency.Version) bool {
         const buf = this.lockfile.buffers.string_bytes.items;
         if (resolution.tag == .npm and dependency.tag == .npm) {
-            return dependency.value.npm.version.satisfies(resolution.value.npm.version, buf);
+            return dependency.value.npm.version.satisfies(resolution.value.npm.version, buf, buf);
         }
 
         if (resolution.tag == .git and dependency.tag == .git) {
@@ -2866,7 +2866,7 @@ pub const PackageManager = struct {
                     if (this.lockfile.workspace_versions.count() > 0) resolve_from_workspace: {
                         if (this.lockfile.workspace_versions.get(name_hash)) |workspace_version| {
                             const buf = this.lockfile.buffers.string_bytes.items;
-                            if (version.value.npm.version.satisfies(workspace_version, buf)) {
+                            if (version.value.npm.version.satisfies(workspace_version, buf, buf)) {
                                 const root_package = this.lockfile.rootPackage() orelse break :resolve_from_workspace;
                                 const root_dependencies = root_package.dependencies.get(this.lockfile.buffers.dependencies.items);
                                 const root_resolutions = root_package.resolutions.get(this.lockfile.buffers.resolutions.items);
@@ -2890,7 +2890,7 @@ pub const PackageManager = struct {
                 const manifest = this.manifests.getPtr(name_hash) orelse return null; // manifest might still be downloading. This feels unreliable.
                 const find_result: Npm.PackageManifest.FindResult = switch (version.tag) {
                     .dist_tag => manifest.findByDistTag(this.lockfile.str(&version.value.dist_tag.tag)),
-                    .npm => manifest.findBestVersion(version.value.npm.version),
+                    .npm => manifest.findBestVersion(version.value.npm.version, this.lockfile.buffers.string_bytes.items),
                     else => unreachable,
                 } orelse return if (behavior.isPeer()) null else switch (version.tag) {
                     .npm => error.NoMatchingVersion,
@@ -3222,7 +3222,7 @@ pub const PackageManager = struct {
                     while (curr_list) |queries| {
                         var curr: ?*const Semver.Query = &queries.head;
                         while (curr) |query| {
-                            if (group.satisfies(query.range.left.version, buf) or group.satisfies(query.range.right.version, buf)) {
+                            if (group.satisfies(query.range.left.version, buf, buf) or group.satisfies(query.range.right.version, buf, buf)) {
                                 name = aliased.value.npm.name;
                                 name_hash = String.Builder.stringHash(this.lockfile.str(&name));
                                 break :version aliased;

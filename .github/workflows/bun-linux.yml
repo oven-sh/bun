@@ -31,11 +31,6 @@ on:
       - ".github/workflows/**/*"
   workflow_dispatch:
 
-env:
-  GITHUB_RUNNER: ubuntu-22.04
-  X64_RUNNER: big-ubuntu
-  ARM64_RUNNER: linux-arm64
-
 jobs:
   build:
     name: Build ${{ matrix.tag }}
@@ -52,19 +47,19 @@ jobs:
             build-arch: amd64
             build-machine-arch: x86_64
             cpu: haswell
-            runnner: ${{ github.repository_owner == 'oven-sh' && vars.X64_RUNNER || vars.GITHUB_RUNNER }}
+            runnner: ${{ github.repository_owner == 'oven-sh' && 'big-ubuntu' || 'ubuntu-latest' }}
           - tag: linux-x64-baseline
             arch: x86_64
             build-arch: amd64
             build-machine-arch: x86_64
             cpu: nehalem
-            runner: ${{ github.repository_owner == 'oven-sh' && vars.X64_RUNNER || vars.GITHUB_RUNNER }}
+            runner: ${{ github.repository_owner == 'oven-sh' && 'big-ubuntu' || 'ubuntu-latest' }}
           - tag: linux-aarch64
             arch: aarch64
             build-arch: arm64
             build-machine-arch: aarch64
             cpu: armv8
-            runner: ${{ github.repository_owner == 'oven-sh' && vars.ARM64_RUNNER || vars.GITHUB_RUNNER }}
+            runner: ${{ github.repository_owner == 'oven-sh' && 'linux-arm64' || 'ubuntu-latest' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -192,7 +187,7 @@ jobs:
   test:
     name: Test ${{ matrix.tag }}
     needs: [build]
-    runs-on: ${{ github.repository_owner == 'oven-sh' && matrix.runner == 'ARM64' && vars.ARM64_RUNNER || vars.GITHUB_RUNNER }}
+    runs-on: ${{ github.repository_owner == 'oven-sh' && matrix.runner == 'ARM64' && 'linux-arm64' || 'ubuntu-latest' }}
     timeout-minutes: 20
     permissions:
       pull-requests: write

@@ -155,11 +155,16 @@ pub const GlobWalker = struct {
     /// `src/**/*.ts` -> `src`, `**`, `*.ts`
     const Component = struct {
         start: u32,
-        // length in codepoints
         len: u32,
+
         syntax_hint: SyntaxHint = .None,
         is_ascii: bool = false,
-        unicode: ?[]u32 = null,
+
+        /// Only used when component is not ascii
+        unicode_set: bool = false,
+        start_cp: u32 = 0,
+        end_cp: u32 = 0,
+
         const SyntaxHint = enum {
             None,
             Single,
@@ -222,6 +227,15 @@ pub const GlobWalker = struct {
                 _ = bun.simdutf.convert.utf8.to.utf32.le(pattern, codepoints);
             },
         }
+        // const iterator = CodepointIterator.init(pattern);
+        // var iter = CodepointIterator.Cursor{};
+        // var i: usize = 0;
+        // while (iterator.next(&iter)) : (i += 1) {
+        //     const cu32: u32 = @intCast(iter.c);
+        //     const cu8: u8 = @truncate(iter.c);
+        //     _ = cu8;
+        //     codepoints[i] = cu32;
+        // }
     }
 
     /// `cwd` should be allocated with the arena
@@ -837,20 +851,18 @@ pub const GlobWalker = struct {
     }
 
     fn componentStringUnicodeWindows(this: *GlobWalker, pattern_component: *Component) []const u32 {
-        return this.pattern_codepoints[pattern_component.start .. pattern_component.start + pattern_component.len];
+        return this.pattern_codepoints[pattern_component.start_cp..pattern_component.end_cp];
     }
 
     fn componentStringUnicodePosix(this: *GlobWalker, pattern_component: *Component) []const u32 {
-        if (pattern_component.unicode) |the_unicode| {
-            return the_unicode;
-        }
+        if (pattern_component.unicode_set) return this.pattern_codepoints[pattern_component.start_cp..pattern_component.end_cp];
 
-        var codepoints = this.pattern_codepoints[pattern_component.start .. pattern_component.start + pattern_component.len];
+        var codepoints = this.pattern_codepoints[pattern_component.start_cp..pattern_component.end_cp];
         GlobWalker.convertUtf8ToCodepoints(
             codepoints,
             this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len],
         );
-        pattern_component.unicode = codepoints;
+        pattern_component.unicode_set = true;
         return codepoints;
     }
 
@@ -963,11 +975,19 @@ pub const GlobWalker = struct {
         allocator: Allocator,
         pattern: []const u8,
         patternComponents: *ArrayList(Component),
-        component_: Component,
+        start_cp: u32,
+        end_cp: u32,
+        start_byte: u32,
+        end_byte: u32,
         has_relative_patterns: *bool,
     ) !void {
-        if (component_.len == 0) return;
-        var component: Component = component_;
+        var component: Component = .{
+            .start = start_byte,
+            .len = end_byte - start_byte,
+            .start_cp = start_cp,
+            .end_cp = end_cp,
+        };
+        if (component.len == 0) return;
 
         out: {
             if (component.len == 1 and pattern[component.start] == '.') {
@@ -975,7 +995,7 @@ pub const GlobWalker = struct {
                 has_relative_patterns.* = true;
                 break :out;
             }
-            if (component.len == 2 and pattern[component_.start] == '.' and pattern[component_.start] == '.') {
+            if (component.len == 2 and pattern[component.start] == '.' and pattern[component.start] == '.') {
                 component.syntax_hint = .DotBack;
                 has_relative_patterns.* = true;
                 break :out;
@@ -1039,7 +1059,8 @@ pub const GlobWalker = struct {
         out_pattern_cp: *[]u32,
         has_relative_patterns: *bool,
     ) !void {
-        var start: u32 = 0;
+        var start_cp: u32 = 0;
+        var start_byte: u32 = 0;
 
         const iter = CodepointIterator.init(pattern);
         var cursor = CodepointIterator.Cursor{};
@@ -1049,12 +1070,25 @@ pub const GlobWalker = struct {
         while (iter.next(&cursor)) : (cp_len += 1) {
             const c = cursor.c;
 
+            const cu8: u8 = @truncate(c);
+            _ = cu8;
+
             switch (c) {
                 '\\' => {
                     if (comptime isWindows) {
-                        const end = cursor.cp_idx;
-                        try addComponent(arena.allocator(), pattern, patternComponents, .{ .start = start, .len = end - start }, has_relative_patterns);
-                        start = cursor.i + cursor.width;
+                        const end_cp = cp_len;
+                        try addComponent(
+                            arena.allocator(),
+                            pattern,
+                            patternComponents,
+                            start_cp,
+                            end_cp,
+                            start_byte,
+                            cursor.i,
+                            has_relative_patterns,
+                        );
+                        start_cp = cp_len + 1;
+                        start_byte = cursor.i + cursor.width;
                         continue;
                     }
 
@@ -1066,13 +1100,25 @@ pub const GlobWalker = struct {
                     prevIsBackslash = true;
                 },
                 '/' => {
-                    var end = cursor.i;
+                    var end_cp = cp_len;
+                    var end_byte = cursor.i;
                     // is last char
                     if (cursor.i + cursor.width == pattern.len) {
-                        end = cursor.i + cursor.width;
+                        end_cp += 1;
+                        end_byte += cursor.width;
                     }
-                    try addComponent(arena.allocator(), pattern, patternComponents, .{ .start = start, .len = end - start }, has_relative_patterns);
-                    start = cursor.i + cursor.width;
+                    try addComponent(
+                        arena.allocator(),
+                        pattern,
+                        patternComponents,
+                        start_cp,
+                        end_cp,
+                        start_byte,
+                        end_byte,
+                        has_relative_patterns,
+                    );
+                    start_cp = cp_len + 1;
+                    start_byte = cursor.i + cursor.width;
                 },
                 // TODO: Support other escaping glob syntax
                 else => {},
@@ -1088,8 +1134,17 @@ pub const GlobWalker = struct {
         }
         out_pattern_cp.* = codepoints;
 
-        const end = cursor.i + cursor.width;
-        try addComponent(arena.allocator(), pattern, patternComponents, .{ .start = start, .len = end - start }, has_relative_patterns);
+        const end_cp = cp_len;
+        try addComponent(
+            arena.allocator(),
+            pattern,
+            patternComponents,
+            start_cp,
+            end_cp,
+            start_byte,
+            @intCast(pattern.len),
+            has_relative_patterns,
+        );
     }
 };
 

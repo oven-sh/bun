@@ -89,6 +89,23 @@ describe("globMatch", () => {
     expect(glob.matchString("Fë")).toBeTrue();
     expect(glob.matchString("F£")).toBeTrue();
     expect(glob.matchString("Fa")).toBeTrue();
+
+    // invalid surrogate pairs
+    glob = new Glob("\uD83D\u0027");
+    expect(glob.matchString("lmao")).toBeFalse();
+
+    glob = new Glob("\uD800\uD800");
+    expect(glob.matchString("lmao")).toBeFalse();
+
+    glob = new Glob("*");
+    expect(glob.matchString("\uD800\uD800")).toBeTrue();
+
+    glob = new Glob("hello/*/friends");
+    expect(glob.matchString("hello/\uD800\uD800/friends")).toBeTrue();
+
+    glob = new Glob("*.{js,\uD83D\u0027}");
+    expect(glob.matchString("runtime.node.pre.out.ts")).toBeFalse();
+    expect(glob.matchString("runtime.node.pre.out.js")).toBeTrue();
   });
 
   test("invalid input", () => {

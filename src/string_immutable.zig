@@ -1651,9 +1651,12 @@ pub fn toUTF8ListWithType(list_: std.ArrayList(u8), comptime Type: type, utf16: 
         const length = bun.simdutf.length.utf8.from.utf16.le(utf16);
         try list.ensureTotalCapacityPrecise(length + 16);
         const buf = try convertUTF16ToUTF8(list, Type, utf16);
-        if (Environment.allow_assert) {
-            std.debug.assert(buf.items.len == length);
-        }
+        // Commenting out because `convertUTF16ToUTF8` may convert to WTF-8
+        // which uses 3 bytes for invalid surrogates, causing the length to not
+        // match from simdutf.
+        // if (Environment.allow_assert) {
+        //     std.debug.assert(buf.items.len == length);
+        // }
         return buf;
     }
 

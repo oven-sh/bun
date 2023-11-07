@@ -82,6 +82,28 @@ describe("glob.match", async () => {
 
   testWithOpts("non-absolute", bunGlobOpts, fgOpts);
   testWithOpts("absolute", { ...bunGlobOpts, absolute: true }, { ...fgOpts, absolute: true });
+
+  test("invalid surrogate pairs", async () => {
+    const pattern = `**/*.{md,\uD83D\uD800}`;
+    const cwd = "test/js/bun/glob";
+
+    const glob = new Glob(pattern);
+    const entries = await glob.match({ cwd });
+
+    expect(entries.sort()).toEqual(
+      [
+        "fixtures/file.md",
+        "fixtures/second/file.md",
+        "fixtures/second/nested/file.md",
+        "fixtures/second/nested/directory/file.md",
+        "fixtures/third/library/b/book.md",
+        "fixtures/third/library/a/book.md",
+        "fixtures/first/file.md",
+        "fixtures/first/nested/file.md",
+        "fixtures/first/nested/directory/file.md",
+      ].sort(),
+    );
+  });
 });
 
 // From fast-glob regular.e2e.tes
@@ -188,6 +210,7 @@ const absolutePatterns = {
   ],
 };
 
+// From fast-glob only-files.e2e.ts
 const onlyFilesPatterns = {
   regular: ["fixtures/*", "fixtures/**", "fixtures/**/*"],
   cwd: [

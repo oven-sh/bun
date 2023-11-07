@@ -1870,6 +1870,7 @@ pub const Query = struct {
         var count: u8 = 0;
         var skip_round = false;
         var is_or = false;
+        var only_tagged_versions: ?bool = null;
 
         while (i < input.len) {
             skip_round = false;
@@ -1943,7 +1944,10 @@ pub const Query = struct {
                     token.tag = Token.Tag.none;
 
                     // skip tagged versions
+                    // we are assuming this is the beginning of a tagged version like "boop"
+                    // "1.0.0 || boop"
                     while (i < input.len and input[i] != ' ' and input[i] != '|') : (i += 1) {}
+                    if (only_tagged_versions == null) only_tagged_versions = true;
                     skip_round = true;
                 },
             }
@@ -2063,7 +2067,12 @@ pub const Query = struct {
                 count += 1;
                 token.wildcard = .none;
                 prev_token.tag = token.tag;
+                only_tagged_versions = false;
             }
+        }
+
+        if (count == 0 and only_tagged_versions != null and only_tagged_versions.?) {
+            return error.InvalidDependencyVersion;
         }
 
         return list;

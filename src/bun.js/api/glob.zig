@@ -41,11 +41,6 @@ const ScanOpts = struct {
 
     fn fromJS(globalThis: *JSGlobalObject, arguments: *ArgumentsSlice, comptime fnName: []const u8, arena: *Arena) ?ScanOpts {
         const optsObj: JSValue = arguments.nextEat() orelse return null;
-        if (!optsObj.isObject() or optsObj.isUndefinedOrNull()) {
-            globalThis.throw("{s}: expected first argument to be an object", .{fnName});
-            return null;
-        }
-
         var out: ScanOpts = .{
             .cwd = null,
             .dot = false,
@@ -54,6 +49,11 @@ const ScanOpts = struct {
             .error_on_broken_symlinks = false,
             .only_files = true,
         };
+        if (optsObj.isUndefinedOrNull()) return out;
+        if (!optsObj.isObject()) {
+            globalThis.throw("{s}: expected first argument to be an object", .{fnName});
+            return null;
+        }
 
         if (optsObj.getTruthy(globalThis, "onlyFiles")) |only_files| {
             out.only_files = if (only_files.isBoolean()) only_files.asBoolean() else false;

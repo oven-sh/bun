@@ -16,6 +16,7 @@ on:
       - "build.zig"
       - "Makefile"
       - "Dockerfile"
+      - ".github/workflows/**/*"
   pull_request:
     branches:
       - main
@@ -27,6 +28,7 @@ on:
       - "build.zig"
       - "Makefile"
       - "Dockerfile"
+      - ".github/workflows/**/*"
   workflow_dispatch:
 
 env:

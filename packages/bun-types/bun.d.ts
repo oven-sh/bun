@@ -98,8 +98,7 @@ declare module "bun" {
     followSymlinks?: boolean;
 
     /**
-     * Throw an error when symbolic link is broken if `true` or safely
-     * return `lstat` call if `false`.
+     * Throw an error when symbolic link is broken
      *
      * @default false
      */
@@ -119,7 +118,7 @@ declare module "bun" {
    * @example
    * ```js
    * const glob = new Glob("*.{ts,tsx}");
-   * const matchedFilepaths = await glob.match({ cwd: './src' })
+   * const scannedFiles = await glob.scan({ cwd: './src' })
    * ```
    */
   export class Glob {

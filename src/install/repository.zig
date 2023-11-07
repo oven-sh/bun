@@ -113,7 +113,7 @@ pub const Repository = extern struct {
 
     fn exec(allocator: std.mem.Allocator, env: *DotEnv.Loader, cwd_dir: std.fs.Dir, argv: []const string) !string {
         const buf_map = try env.map.cloneToEnvMap(allocator);
-        const result = try std.ChildProcess.exec(.{
+        const result = try std.ChildProcess.run(.{
             .allocator = allocator,
             .argv = argv,
             .cwd_dir = cwd_dir,

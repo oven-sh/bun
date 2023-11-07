@@ -592,7 +592,7 @@ pub const PackageJSON = struct {
         // So we cannot free these
         const allocator = bun.fs_allocator;
 
-        const entry = r.caches.fs.readFileWithAllocator(
+        var entry = r.caches.fs.readFileWithAllocator(
             allocator,
             r.fs,
             package_json_path,
@@ -606,12 +606,7 @@ pub const PackageJSON = struct {
 
             return null;
         };
-
-        defer {
-            if (entry.fd != 0) {
-                _ = bun.sys.close(entry.fd);
-            }
-        }
+        defer _ = entry.closeFD();
 
         if (r.debug_logs) |*debug| {
             debug.addNoteFmt("The file \"{s}\" exists", .{package_json_path});

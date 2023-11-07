@@ -155,7 +155,7 @@ void JSByteLengthQueuingStrategy::destroy(JSC::JSCell* cell)
     thisObject->JSByteLengthQueuingStrategy::~JSByteLengthQueuingStrategy();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsByteLengthQueuingStrategyConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsByteLengthQueuingStrategyConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);

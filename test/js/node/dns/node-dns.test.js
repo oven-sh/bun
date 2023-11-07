@@ -3,6 +3,7 @@ import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
 import * as fs from "node:fs";
 import * as os from "node:os";
+import * as util from "node:util";
 
 // TODO:
 test("it exists", () => {
@@ -403,5 +404,33 @@ describe("lookup deprecated behavior", () => {
       expect(address).toBeNull();
       expect(family).toBe(4);
     });
+  });
+});
+
+describe("uses `dns.promises` implementations for `util.promisify` factory", () => {
+  it.each([
+    "lookup",
+    "lookupService",
+    "resolve",
+    "reverse",
+    "resolve4",
+    "resolve6",
+    "resolveAny",
+    "resolveCname",
+    "resolveCaa",
+    "resolveMx",
+    "resolveNs",
+    "resolvePtr",
+    "resolveSoa",
+    "resolveSrv",
+    "resolveTxt",
+    "resolveNaptr",
+  ])("%s", method => {
+    expect(dns[method][util.promisify.custom]).toBe(dns_promises[method]);
+    expect(dns.promises[method]).toBe(dns_promises[method]);
+  });
+
+  it("util.promisify(dns.lookup) acts like dns.promises.lookup", async () => {
+    expect(await util.promisify(dns.lookup)("example.com")).toEqual(await dns.promises.lookup("example.com"));
   });
 });

@@ -1,4 +1,4 @@
-import { define } from "../scripts/class-definitions";
+import { define } from "../../codegen/class-definitions";
 
 function generate(name) {
   return define({

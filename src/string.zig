@@ -846,6 +846,10 @@ pub const String = extern struct {
         }
     }
 
+    pub fn eqlUTF8(this: String, other: []const u8) bool {
+        return this.toZigString().eql(ZigString.initUTF8(other));
+    }
+
     pub fn eql(this: String, other: String) bool {
         return this.toZigString().eql(other.toZigString());
     }

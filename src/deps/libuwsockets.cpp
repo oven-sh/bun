@@ -1492,7 +1492,6 @@ extern "C"
                    LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
   }
 
- 
   void uws_res_override_write_offset(int ssl, uws_res_t *res, uintmax_t offset)
   {
     if (ssl)
@@ -1504,7 +1503,7 @@ extern "C"
       uwsRes->setWriteOffset(offset); //TODO: when updated to master this will bechanged to overrideWriteOffset
     }
   }
-  
+
   void uws_res_cork(int ssl, uws_res_t *res, void *ctx,
                     void (*corker)(void *ctx))
   {
@@ -1618,10 +1617,10 @@ extern "C"
 
     if (length == 0) return 0;
     if (length == 4) {
-      length = snprintf(b, 64, "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
-      *dest = b;
+      ares_inet_ntop(AF_INET, b, &b[4], 64 - 4);
+      *dest = &b[4];
       *is_ipv6 = false;
-      return length;
+      return strlen(*dest);
     } else {
       ares_inet_ntop(AF_INET6, b, &b[16], 64 - 16);
       *dest = &b[16];

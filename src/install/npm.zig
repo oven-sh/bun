@@ -809,7 +809,7 @@ pub const PackageManifest = struct {
         }
 
         if (this.findByDistTag("latest")) |result| {
-            if (group.satisfies(result.version)) {
+            if (group.satisfies(result.version, this.string_buf)) {
                 if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
                     if (left.version.order(result.version, this.string_buf, this.string_buf) == .eq) {
                         // if prerelease, use latest if semver+tag match range exactly
@@ -829,7 +829,7 @@ pub const PackageManifest = struct {
             while (i > 0) : (i -= 1) {
                 const version = releases[i - 1];
 
-                if (group.satisfies(version)) {
+                if (group.satisfies(version, this.string_buf)) {
                     return .{ .version = version, .package = &this.pkg.releases.values.get(this.package_versions)[i - 1] };
                 }
             }
@@ -842,7 +842,7 @@ pub const PackageManifest = struct {
                 const version = prereleases[i - 1];
 
                 // This list is sorted at serialization time.
-                if (group.satisfies(version)) {
+                if (group.satisfies(version, this.string_buf)) {
                     const packages = this.pkg.prereleases.values.get(this.package_versions);
                     return .{ .version = version, .package = &packages[i - 1] };
                 }

@@ -1,7 +1,7 @@
 #include "root.h"
 #include "headers-handwritten.h"
-#include "JavaScriptCore/RegularExpression.h"
-#include "JavaScriptCore/Options.h"
+#include <JavaScriptCore/RegularExpression.h>
+#include <JavaScriptCore/Options.h>
 
 using namespace JSC;
 using namespace JSC::Yarr;

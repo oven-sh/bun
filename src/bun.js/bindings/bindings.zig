@@ -2874,7 +2874,7 @@ pub const JSGlobalObject = extern struct {
         return cppFn("deleteModuleRegistryEntry", .{ this, name_ });
     }
 
-    pub fn bunVM_(this: *JSGlobalObject) *anyopaque {
+    fn bunVM_(this: *JSGlobalObject) *anyopaque {
         return cppFn("bunVM", .{this});
     }
 
@@ -4968,32 +4968,6 @@ pub const JSValue = enum(JSValueReprInt) {
 
 extern "c" fn AsyncContextFrame__withAsyncContextIfNeeded(global: *JSGlobalObject, callback: JSValue) JSValue;
 
-extern "c" fn Microtask__run(*Microtask, *JSGlobalObject) void;
-extern "c" fn Microtask__run_default(*MicrotaskForDefaultGlobalObject, *JSGlobalObject) void;
-
-pub const Microtask = opaque {
-    pub const name = "Zig::JSMicrotaskCallback";
-    pub const namespace = "Zig";
-
-    pub fn run(this: *Microtask, global_object: *JSGlobalObject) void {
-        if (comptime is_bindgen) {
-            return;
-        }
-
-        return Microtask__run(this, global_object);
-    }
-};
-
-pub const MicrotaskForDefaultGlobalObject = opaque {
-    pub fn run(this: *MicrotaskForDefaultGlobalObject, global_object: *JSGlobalObject) void {
-        if (comptime is_bindgen) {
-            return;
-        }
-
-        return Microtask__run_default(this, global_object);
-    }
-};
-
 pub const Exception = extern struct {
     pub const shim = Shimmer("JSC", "Exception", @This());
     bytes: shim.Bytes,
@@ -5637,7 +5611,7 @@ pub const URLSearchParams = opaque {
     extern fn URLSearchParams__toString(
         self: *URLSearchParams,
         ctx: *anyopaque,
-        callback: *const fn (ctx: *anyopaque, str: *const ZigString) void,
+        callback: *const fn (ctx: *anyopaque, str: *const ZigString) callconv(.C) void,
     ) void;
 
     pub fn toString(
@@ -5649,7 +5623,7 @@ pub const URLSearchParams = opaque {
         JSC.markBinding(@src());
         const Wrap = struct {
             const cb_ = callback;
-            pub fn cb(c: *anyopaque, str: *const ZigString) void {
+            pub fn cb(c: *anyopaque, str: *const ZigString) callconv(.C) void {
                 cb_(
                     bun.cast(*Ctx, c),
                     str.*,

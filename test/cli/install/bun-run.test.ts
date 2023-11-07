@@ -14,7 +14,7 @@ beforeEach(async () => {
   );
 });
 afterEach(async () => {
-  await rm(run_dir, { force: true, recursive: true });
+  // await rm(run_dir, { force: true, recursive: true });
 });
 
 for (let withRun of [false, true]) {
@@ -149,6 +149,7 @@ logLevel = "debug"
               cwd: run_dir,
               env: bunEnv,
             });
+            console.log(run_dir);
             if (withLogLevel) {
               expect(stderr.toString().trim()).toContain("FileNotFound loading tsconfig.json extends");
             } else {
@@ -311,7 +312,7 @@ for (const entry of await decompress(Buffer.from(buffer))) {
   });
   expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
-  expect(err2).toBe("");
+  if (err2) throw new Error(err2);
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("decompress");
   expect(await readdirSorted(join(run_dir, ".cache", "decompress"))).toEqual(["4.2.1"]);

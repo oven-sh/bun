@@ -3,9 +3,9 @@
 // #include "root.h"
 // #include "headers.h"
 
-// #include "JavaScriptCore/JSObject.h"
+// #include <JavaScriptCore/JSObject.h>
 //
-// #include "JavaScriptCore/InternalFunction.h"
+// #include <JavaScriptCore/InternalFunction.h>
 
 // namespace Zig {
 

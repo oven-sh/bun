@@ -19,8 +19,8 @@
 #include "JSDOMWrapperCache.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
-#include "JavaScriptCore/FunctionPrototype.h"
-#include "JavaScriptCore/HeapAnalyzer.h"
+#include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/HeapAnalyzer.h>
 
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/InternalFunction.h>
@@ -28,20 +28,24 @@
 #include <JavaScriptCore/LazyClassStructureInlines.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 
-#include "JavaScriptCore/JSDestructibleObjectHeapCellType.h"
-#include "JavaScriptCore/SlotVisitorMacros.h"
-#include "JavaScriptCore/SubspaceInlines.h"
-#include "wtf/GetPtr.h"
-#include "wtf/PointerPreparations.h"
-#include "wtf/URL.h"
-#include "wtf/text/WTFString.h"
-#include "JavaScriptCore/BuiltinNames.h"
+#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
+#include <JavaScriptCore/SlotVisitorMacros.h>
+#include <JavaScriptCore/SubspaceInlines.h>
+#include <wtf/GetPtr.h>
+#include <wtf/PointerPreparations.h>
+#include <wtf/URL.h>
+#include <wtf/text/WTFString.h>
+#include <JavaScriptCore/BuiltinNames.h>
 
 #include "JSBufferEncodingType.h"
-#include "JavaScriptCore/JSBase.h"
+#include <JavaScriptCore/JSBase.h>
 #if ENABLE(MEDIA_SOURCE)
 #include "BufferMediaSource.h"
 #include "JSMediaSource.h"
+#endif
+
+#ifdef WIN32
+#include "musl-memmem.h"
 #endif
 
 #include <JavaScriptCore/DOMJITAbstractHeap.h>
@@ -51,8 +55,8 @@
 #include "DOMJITHelpers.h"
 #include <JavaScriptCore/DFGAbstractHeap.h>
 
-// #include "JavaScriptCore/JSTypedArrayViewPrototype.h"
-#include "JavaScriptCore/JSArrayBufferViewInlines.h"
+// #include <JavaScriptCore/JSTypedArrayViewPrototype.h>
+#include <JavaScriptCore/JSArrayBufferViewInlines.h>
 
 using namespace JSC;
 using namespace WebCore;
@@ -218,7 +222,7 @@ JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalO
 namespace WebCore {
 using namespace JSC;
 
-static inline EncodedJSValue writeToBuffer(JSC::JSGlobalObject* lexicalGlobalObject, JSArrayBufferView* castedThis, JSString* str, uint32_t offset, uint32_t length, BufferEncodingType encoding)
+static inline JSC::EncodedJSValue writeToBuffer(JSC::JSGlobalObject* lexicalGlobalObject, JSArrayBufferView* castedThis, JSString* str, uint32_t offset, uint32_t length, BufferEncodingType encoding)
 {
     if (UNLIKELY(str->length() == 0))
         return JSC::JSValue::encode(JSC::jsNumber(0));
@@ -241,6 +245,9 @@ static inline EncodedJSValue writeToBuffer(JSC::JSGlobalObject* lexicalGlobalObj
         } else {
             written = Bun__encoding__writeUTF16(view.characters16(), view.length(), reinterpret_cast<unsigned char*>(castedThis->vector()) + offset, length, static_cast<uint8_t>(encoding));
         }
+        break;
+    }
+    default: {
         break;
     }
     }
@@ -271,7 +278,7 @@ static inline JSC::JSUint8Array* JSBuffer__bufferFromLengthAsArray(JSC::JSGlobal
     RELEASE_AND_RETURN(throwScope, uint8Array);
 }
 
-extern "C" EncodedJSValue JSBuffer__bufferFromLength(JSC::JSGlobalObject* lexicalGlobalObject, int64_t length)
+extern "C" JSC::EncodedJSValue JSBuffer__bufferFromLength(JSC::JSGlobalObject* lexicalGlobalObject, int64_t length)
 {
     return JSC::JSValue::encode(JSBuffer__bufferFromLengthAsArray(lexicalGlobalObject, length));
 }
@@ -310,18 +317,18 @@ EncodedJSValue JSBuffer__bufferFromPointerAndLength(JSC::JSGlobalObject* lexical
 }
 
 // new Buffer()
-static inline EncodedJSValue constructBufferEmpty(JSGlobalObject* lexicalGlobalObject)
+static inline JSC::EncodedJSValue constructBufferEmpty(JSGlobalObject* lexicalGlobalObject)
 {
     return JSBuffer__bufferFromLength(lexicalGlobalObject, 0);
 }
 
 // new Buffer(size)
-static inline EncodedJSValue constructBufferFromLength(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
+static inline JSC::EncodedJSValue constructBufferFromLength(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     return jsBufferConstructorFunction_allocUnsafeBody(lexicalGlobalObject, callFrame);
 }
 
-static EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject, JSString* str, WebCore::BufferEncodingType encoding)
+static JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject, JSString* str, WebCore::BufferEncodingType encoding)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -345,6 +352,9 @@ static EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject,
             result = JSBuffer__bufferFromPointerAndLength(lexicalGlobalObject, view.characters8(), view.length());
             break;
         }
+        default: {
+            break;
+        }
         }
     } else {
         switch (encoding) {
@@ -362,6 +372,9 @@ static EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject,
             // The native encoding is UTF-16
             // so we don't need to do any conversion.
             result = JSBuffer__bufferFromPointerAndLength(lexicalGlobalObject, reinterpret_cast<const unsigned char*>(view.characters16()), view.length() * 2);
+            break;
+        }
+        default: {
             break;
         }
         }
@@ -581,6 +594,9 @@ static inline JSC::EncodedJSValue jsBufferByteLengthFromStringAndEncoding(JSC::J
         } else {
             written = Bun__encoding__byteLengthUTF16(view.characters16(), view.length(), static_cast<uint8_t>(encoding));
         }
+        break;
+    }
+    default: {
         break;
     }
     }

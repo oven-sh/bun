@@ -198,6 +198,7 @@ struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
   } else {
     SSL_set_accept_state(s->ssl);
   }
+  printf("is_client: %d\n", is_client);
 
   struct us_internal_ssl_socket_t *result =
       (struct us_internal_ssl_socket_t *)context->on_open(s, is_client, ip,
@@ -241,7 +242,10 @@ void us_internal_ssl_handshake(struct us_internal_ssl_socket_t *s) {
   struct loop_ssl_data *loop_ssl_data =
       (struct loop_ssl_data *)loop->data.ssl_data;
 
+  loop_ssl_data->ssl_read_input_length = 0;
+  loop_ssl_data->ssl_read_input_offset = 0;
   loop_ssl_data->ssl_socket = &s->s;
+  loop_ssl_data->msg_more = 0;
 
   if (us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s)) {
     s->pending_handshake = 0;
@@ -304,6 +308,7 @@ us_internal_ssl_socket_close(struct us_internal_ssl_socket_t *s, int code,
                              void *reason) {
   struct us_internal_ssl_socket_context_t *context =
       (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
+
   if (s->pending_handshake) {
     s->pending_handshake = 0;
     if (context->on_handshake != NULL) {
@@ -311,6 +316,7 @@ us_internal_ssl_socket_close(struct us_internal_ssl_socket_t *s, int code,
       context->on_handshake(s, 0, verify_error, context->handshake_data);
     }
   }
+
   return (struct us_internal_ssl_socket_t *)us_socket_close(
       0, (struct us_socket_t *)s, code, reason);
 }
@@ -353,7 +359,6 @@ struct us_internal_ssl_socket_t *ssl_on_data(struct us_internal_ssl_socket_t *s,
   if (s->pending_handshake) {
     us_internal_ssl_handshake(s);
   }
-
   // note: if we put data here we should never really clear it (not in write
   // either, it still should be available for SSL_write to read from!)
   loop_ssl_data->ssl_read_input = data;
@@ -399,7 +404,6 @@ restart:
                              loop_ssl_data->ssl_read_output +
                                  LIBUS_RECV_BUFFER_PADDING + read,
                              LIBUS_RECV_BUFFER_LENGTH - read);
-
     if (just_read <= 0) {
       int err = SSL_get_error(s->ssl, just_read);
 
@@ -427,7 +431,6 @@ restart:
 
         if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
           // clear per thread error queue if it may contain something
-
           ERR_clear_error();
         }
 

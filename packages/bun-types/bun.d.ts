@@ -125,6 +125,7 @@ declare module "bun" {
     constructor(pattern: string);
 
     scan(options?: GlobScanOptions): Promise<Array<string>>;
+    scanIter(options?: GlobScanOptions): AsyncIterableIterator<string>;
     scanSync(options?: GlobScanOptions): Array<string>;
     match(str: string): boolean;
   }

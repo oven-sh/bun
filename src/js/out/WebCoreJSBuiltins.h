@@ -493,6 +493,84 @@ inline void EventSourceBuiltinsWrapper::exportNames()
     WEBCORE_FOREACH_EVENTSOURCE_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
 #undef EXPORT_FUNCTION_NAME
 }
+/* Glob.ts */
+// scanIter
+#define WEBCORE_BUILTIN_GLOB_SCANITER 1
+extern const char* const s_globScanIterCode;
+extern const int s_globScanIterCodeLength;
+extern const JSC::ConstructAbility s_globScanIterCodeConstructAbility;
+extern const JSC::ConstructorKind s_globScanIterCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_globScanIterCodeImplementationVisibility;
+
+#define WEBCORE_FOREACH_GLOB_BUILTIN_DATA(macro) \
+    macro(scanIter, globScanIter, 1) \
+
+#define WEBCORE_FOREACH_GLOB_BUILTIN_CODE(macro) \
+    macro(globScanIterCode, scanIter, ASCIILiteral(), s_globScanIterCodeLength) \
+
+#define WEBCORE_FOREACH_GLOB_BUILTIN_FUNCTION_NAME(macro) \
+    macro(scanIter) \
+
+#define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
+    JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
+
+WEBCORE_FOREACH_GLOB_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
+#undef DECLARE_BUILTIN_GENERATOR
+
+class GlobBuiltinsWrapper : private JSC::WeakHandleOwner {
+public:
+    explicit GlobBuiltinsWrapper(JSC::VM& vm)
+        : m_vm(vm)
+        WEBCORE_FOREACH_GLOB_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
+        WEBCORE_FOREACH_GLOB_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
+#undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
+    {
+    }
+
+#define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
+    JSC::UnlinkedFunctionExecutable* name##Executable(); \
+    const JSC::SourceCode& name##Source() const { return m_##name##Source; }
+    WEBCORE_FOREACH_GLOB_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
+#undef EXPOSE_BUILTIN_EXECUTABLES
+
+    WEBCORE_FOREACH_GLOB_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+
+    void exportNames();
+
+private:
+    JSC::VM& m_vm;
+
+    WEBCORE_FOREACH_GLOB_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
+
+#define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
+    JSC::SourceCode m_##name##Source;\
+    JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
+    WEBCORE_FOREACH_GLOB_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
+#undef DECLARE_BUILTIN_SOURCE_MEMBERS
+
+};
+
+#define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
+inline JSC::UnlinkedFunctionExecutable* GlobBuiltinsWrapper::name##Executable() \
+{\
+    if (!m_##name##Executable) {\
+        JSC::Identifier executableName = functionName##PublicName();\
+        if (overriddenName)\
+            executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
+        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
+    }\
+    return m_##name##Executable.get();\
+}
+WEBCORE_FOREACH_GLOB_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
+#undef DEFINE_BUILTIN_EXECUTABLES
+
+inline void GlobBuiltinsWrapper::exportNames()
+{
+#define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
+    WEBCORE_FOREACH_GLOB_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
+#undef EXPORT_FUNCTION_NAME
+}
 /* ImportMetaObject.ts */
 // createRequireCache
 #define WEBCORE_BUILTIN_IMPORTMETAOBJECT_CREATEREQUIRECACHE 1
@@ -5742,6 +5820,7 @@ public:
         , m_consoleObjectBuiltins(m_vm)
         , m_countQueuingStrategyBuiltins(m_vm)
         , m_eventSourceBuiltins(m_vm)
+        , m_globBuiltins(m_vm)
         , m_importMetaObjectBuiltins(m_vm)
         , m_jsBufferConstructorBuiltins(m_vm)
         , m_jsBufferPrototypeBuiltins(m_vm)
@@ -5776,6 +5855,7 @@ public:
     ConsoleObjectBuiltinsWrapper& consoleObjectBuiltins() { return m_consoleObjectBuiltins; }
     CountQueuingStrategyBuiltinsWrapper& countQueuingStrategyBuiltins() { return m_countQueuingStrategyBuiltins; }
     EventSourceBuiltinsWrapper& eventSourceBuiltins() { return m_eventSourceBuiltins; }
+    GlobBuiltinsWrapper& globBuiltins() { return m_globBuiltins; }
     ImportMetaObjectBuiltinsWrapper& importMetaObjectBuiltins() { return m_importMetaObjectBuiltins; }
     JSBufferConstructorBuiltinsWrapper& jsBufferConstructorBuiltins() { return m_jsBufferConstructorBuiltins; }
     JSBufferPrototypeBuiltinsWrapper& jsBufferPrototypeBuiltins() { return m_jsBufferPrototypeBuiltins; }
@@ -5805,6 +5885,7 @@ private:
     ConsoleObjectBuiltinsWrapper m_consoleObjectBuiltins;
     CountQueuingStrategyBuiltinsWrapper m_countQueuingStrategyBuiltins;
     EventSourceBuiltinsWrapper m_eventSourceBuiltins;
+    GlobBuiltinsWrapper m_globBuiltins;
     ImportMetaObjectBuiltinsWrapper m_importMetaObjectBuiltins;
     JSBufferConstructorBuiltinsWrapper m_jsBufferConstructorBuiltins;
     JSBufferPrototypeBuiltinsWrapper m_jsBufferPrototypeBuiltins;

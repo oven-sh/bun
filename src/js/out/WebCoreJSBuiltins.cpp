@@ -163,6 +163,24 @@ JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
 WEBCORE_FOREACH_EVENTSOURCE_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 #undef DEFINE_BUILTIN_GENERATOR
 
+/* Glob.ts */
+// scanIter
+const JSC::ConstructAbility s_globScanIterCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_globScanIterCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_globScanIterCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_globScanIterCodeLength = 202;
+static const JSC::Intrinsic s_globScanIterCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_globScanIterCode = "(function (opts) {\"use strict\";\n  async function* iter(glob, opts2) {\n    const theStrings = await glob.scan(opts2);\n    for (let path of theStrings)\n      yield path;\n  }\n  return iter(this, opts);\n})\n";
+
+#define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
+JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
+{\
+    JSVMClientData* clientData = static_cast<JSVMClientData*>(vm.clientData); \
+    return clientData->builtinFunctions().globBuiltins().codeName##Executable()->link(vm, nullptr, clientData->builtinFunctions().globBuiltins().codeName##Source(), std::nullopt, s_##codeName##Intrinsic); \
+}
+WEBCORE_FOREACH_GLOB_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
+#undef DEFINE_BUILTIN_GENERATOR
+
 /* ImportMetaObject.ts */
 // createRequireCache
 const JSC::ConstructAbility s_importMetaObjectCreateRequireCacheCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;

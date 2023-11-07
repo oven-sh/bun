@@ -21,7 +21,16 @@ export type Field =
         pure?: boolean;
       };
     } & PropertyAttribute)
-  | { internal: true };
+  | { internal: true }
+  | {
+      /**
+       * The function is a builtin (its implementation is defined in
+       * src/js/builtins/), this value is the name of the code generator
+       * function: `camelCase(fileName + functionName + "CodeGenerator"`)
+       */
+      builtin: string;
+      length?: number;
+    };
 
 export interface ClassDefinition {
   name: string;

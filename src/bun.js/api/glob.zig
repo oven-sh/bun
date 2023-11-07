@@ -71,18 +71,14 @@ const ScanOpts = struct {
             out.absolute = if (absoluteVal.isBoolean()) absoluteVal.asBoolean() else false;
         }
 
-        if (optsObj.get(globalThis, "cwd")) |cwdVal| parse_cwd: {
-            if (cwdVal.isUndefinedOrNull()) break :parse_cwd;
+        if (optsObj.getTruthy(globalThis, "cwd")) |cwdVal| parse_cwd: {
             if (!cwdVal.isString()) {
                 globalThis.throw("{s}: invalid `cwd`, not a string", .{fnName});
                 return null;
             }
 
             var cwd_str_raw = cwdVal.toSlice(globalThis, arena.allocator());
-            if (cwd_str_raw.len == 0) {
-                globalThis.throw("{s}: invalid `cwd`, empty string", .{fnName});
-                return null;
-            }
+            if (cwd_str_raw.len == 0) break :parse_cwd;
 
             const cwd_str = cwd_str: {
                 // If its absolute return as is

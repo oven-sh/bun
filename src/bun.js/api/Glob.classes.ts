@@ -14,6 +14,10 @@ export default [
         fn: "scan",
         length: 1,
       },
+      scanIter: {
+        builtin: "globScanIterCodeGenerator",
+        length: 1,
+      },
       scanSync: {
         fn: "scanSync",
         length: 1,

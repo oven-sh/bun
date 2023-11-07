@@ -104,6 +104,26 @@ describe("glob.match", async () => {
       ].sort(),
     );
   });
+
+  test("bad options", async () => {
+    const glob = new Glob("lmaowtf");
+    expect(returnError(() => glob.scan())).toBeUndefined();
+    expect(returnError(() => glob.scan("sldkfjsldfj"))).toBeDefined();
+    expect(returnError(() => glob.scan({}))).toBeUndefined();
+    expect(returnError(() => glob.scan({ cwd: "" }))).toBeUndefined();
+    expect(returnError(() => glob.scan({ cwd: true }))).toBeDefined();
+    expect(returnError(() => glob.scan({ cwd: 123123 }))).toBeDefined();
+
+    function returnError(cb: () => any): Error | undefined {
+      try {
+        cb();
+      } catch (err) {
+        // @ts-expect-error
+        return err;
+      }
+      return undefined;
+    }
+  });
 });
 
 // From fast-glob regular.e2e.tes

@@ -11496,6 +11496,7 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSGlobPrototype, JSGlobPrototype::Base);
 static const HashTableValue JSGlobPrototypeTableValues[] = {
     { "match"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, GlobPrototype__matchCallback, 1 } },
     { "scan"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, GlobPrototype__scanCallback, 1 } },
+    { "scanIter"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, globScanIterCodeGenerator, 1 } },
     { "scanSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, GlobPrototype__scanSyncCallback, 1 } }
 };
 

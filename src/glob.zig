@@ -183,7 +183,7 @@ pub const GlobWalker = struct {
 
     pub fn init(
         this: *GlobWalker,
-        arena_: Arena,
+        arena: *Arena,
         pattern: []const u8,
         dot: bool,
         absolute: bool,
@@ -191,7 +191,6 @@ pub const GlobWalker = struct {
         error_on_broken_symlinks: bool,
         only_files: bool,
     ) !Maybe(void) {
-        var arena = arena_;
         errdefer arena.deinit();
         var cwd: BunString = undefined;
         switch (Syscall.getcwd(&this.pathBuf)) {
@@ -231,7 +230,7 @@ pub const GlobWalker = struct {
     /// `cwd` should be allocated with the arena
     pub fn initWithCwd(
         this: *GlobWalker,
-        arena_: Arena,
+        arena: *Arena,
         pattern: []const u8,
         cwd: BunString,
         dot: bool,
@@ -240,11 +239,9 @@ pub const GlobWalker = struct {
         error_on_broken_symlinks: bool,
         only_files: bool,
     ) !void {
-        var arena = arena_;
-
         var patternComponents = ArrayList(Component){};
         try GlobWalker.buildPatternComponents(
-            &arena,
+            arena,
             &patternComponents,
             pattern,
             &this.cp_len,
@@ -254,7 +251,7 @@ pub const GlobWalker = struct {
 
         this.patternComponents = patternComponents;
         this.pattern = pattern;
-        this.arena = arena;
+        this.arena = arena.*;
         this.cwd = cwd;
         this.dot = dot;
         this.absolute = absolute;

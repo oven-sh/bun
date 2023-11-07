@@ -228,10 +228,9 @@ fn makeGlobWalker(
     arguments: *ArgumentsSlice,
     comptime fnName: []const u8,
     alloc: Allocator,
-    arena_: Arena,
+    arena: *Arena,
 ) ?*GlobWalker {
-    var arena = arena_;
-    const matchOpts = ScanOpts.fromJS(globalThis, arguments, fnName, &arena);
+    const matchOpts = ScanOpts.fromJS(globalThis, arguments, fnName, arena);
     var cwd: ?BunString = null;
     var dot = false;
     var absolute = false;
@@ -366,8 +365,8 @@ pub fn scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame)
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
 
-    const arena = std.heap.ArenaAllocator.init(alloc);
-    var globWalker = this.makeGlobWalker(globalThis, &arguments, "match", alloc, arena) orelse {
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    var globWalker = this.makeGlobWalker(globalThis, &arguments, "match", alloc, &arena) orelse {
         arena.deinit();
         return .undefined;
     };
@@ -390,8 +389,8 @@ pub fn scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFr
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
 
-    const arena = std.heap.ArenaAllocator.init(alloc);
-    var globWalker = this.makeGlobWalker(globalThis, &arguments, "match", alloc, arena) orelse {
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    var globWalker = this.makeGlobWalker(globalThis, &arguments, "match", alloc, &arena) orelse {
         arena.deinit();
         return .undefined;
     };

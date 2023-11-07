@@ -251,6 +251,16 @@ describe("semver", () => {
       depVersion: "1||2",
       expected: "2.0.1",
     },
+    {
+      title: "no version is latest",
+      depVersion: "",
+      expected: "3.0.0",
+    },
+    {
+      title: "tagged version works",
+      depVersion: "pre-2",
+      expected: "2.0.1",
+    },
   ];
 
   for (const { title, depVersion, expected } of taggedVersionTests) {
@@ -290,6 +300,36 @@ describe("semver", () => {
       ]);
     });
   }
+
+  test("only tagged versions in range errors", async () => {
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "dep-with-tags": "pre-1 || pre-2",
+        },
+      }),
+    );
+
+    var { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    expect(stderr).toBeDefined();
+    var err = await new Response(stderr).text();
+    expect(stdout).toBeDefined();
+    var out = await new Response(stdout).text();
+    expect(await exited).toBe(1);
+    expect(err).toContain('InvalidDependencyVersion parsing dependency "dep-with-tags" with version "pre-1 || pre-2"');
+    expect(out).toBeEmpty();
+  });
 });
 
 describe("prereleases", () => {

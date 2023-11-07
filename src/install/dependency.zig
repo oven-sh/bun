@@ -762,7 +762,17 @@ pub fn parseWithTag(
                 input,
                 sliced.sub(input),
             ) catch |err| {
-                if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "{s} parsing dependency \"{s}\"", .{ @errorName(err), dependency }) catch unreachable;
+                if (log_) |log| log.addErrorFmt(
+                    null,
+                    logger.Loc.Empty,
+                    allocator,
+                    "{s} parsing dependency \"{s}\" with version \"{s}\"",
+                    .{
+                        @errorName(err),
+                        name.fmt(sliced.buf),
+                        dependency,
+                    },
+                ) catch unreachable;
                 return null;
             };
 

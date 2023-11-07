@@ -67,7 +67,8 @@
     "src/deps/lol-html": true,
     "src/deps/c-ares": true,
     "src/deps/tinycc": true,
-    "src/deps/zstd": true
+    "src/deps/zstd": true,
+    "packages/bun-uws/fuzzing/seed-corpus/**/*": true
   },
   "C_Cpp.files.exclude": {
     "**/.vscode": true,

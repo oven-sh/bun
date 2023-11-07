@@ -770,7 +770,7 @@ pub const H2FrameParser = struct {
         if (rstCode == .NO_ERROR) {
             this.dispatchWithExtra(.onStreamEnd, JSC.JSValue.jsNumber(stream.id), JSC.JSValue.jsUndefined());
         } else {
-            this.dispatchWithExtra(.onStreamError, JSC.JSValue.jsNumber(stream.id), JSC.JSValue.jsNumber(value));
+            this.dispatchWithExtra(.onStreamError, JSC.JSValue.jsNumber(stream.id), JSC.JSValue.jsNumber(@intFromEnum(rstCode)));
         }
 
         this.write(&buffer);
@@ -2273,7 +2273,7 @@ pub const H2FrameParser = struct {
 
             if (options.get(globalObject, "signal")) |signal_arg| {
                 if (signal_arg.as(JSC.WebCore.AbortSignal)) |signal_| {
-                    if(signal_.aborted()) {
+                    if (signal_.aborted()) {
                         stream.state = .CLOSED;
                         stream.rstCode = @intFromEnum(ErrorCode.CANCEL);
                         this.dispatchWithExtra(.onStreamError, JSC.JSValue.jsNumber(stream_id), JSC.JSValue.jsNumber(stream.rstCode));

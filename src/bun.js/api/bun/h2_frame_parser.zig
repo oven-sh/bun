@@ -187,6 +187,7 @@ const FullSettingsPayload = packed struct(u288) {
         result.put(globalObject, JSC.ZigString.static("initialWindowSize"), JSC.JSValue.jsNumber(this.initialWindowSize));
         result.put(globalObject, JSC.ZigString.static("maxFrameSize"), JSC.JSValue.jsNumber(this.maxFrameSize));
         result.put(globalObject, JSC.ZigString.static("maxHeaderListSize"), JSC.JSValue.jsNumber(this.maxHeaderListSize));
+        result.put(globalObject, JSC.ZigString.static("maxHeaderSize"), JSC.JSValue.jsNumber(this.maxHeaderListSize));
 
         return result;
     }
@@ -2196,7 +2197,6 @@ pub const H2FrameParser = struct {
         var weight: i32 = 0;
         var parent: i32 = 0;
         var waitForTrailers: bool = false;
-        var signal: ?*JSC.WebCore.AbortSignal = null;
         var end_stream: bool = false;
         if (args_list.len > 1 and !args_list.ptr[1].isEmptyOrUndefinedOrNull()) {
             const options = args_list.ptr[1];
@@ -2204,8 +2204,7 @@ pub const H2FrameParser = struct {
                 stream.state = .CLOSED;
                 stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
                 this.dispatchWithExtra(.onStreamError, JSC.JSValue.jsNumber(stream_id), JSC.JSValue.jsNumber(stream.rstCode));
-                globalObject.throw("Expected options to be an object", .{});
-                return .zero;
+                return JSC.JSValue.jsNumber(stream.id);
             }
 
             if (options.get(globalObject, "waitForTrailers")) |trailes_js| {
@@ -2245,8 +2244,7 @@ pub const H2FrameParser = struct {
                         stream.state = .CLOSED;
                         stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
                         this.dispatchWithExtra(.onStreamError, JSC.JSValue.jsNumber(stream_id), JSC.JSValue.jsNumber(stream.rstCode));
-                        globalObject.throw("Expected parent to be a number between 1 and 2147483647", .{});
-                        return .zero;
+                        return JSC.JSValue.jsNumber(stream.id);
                     }
                     stream.streamDependency = @intCast(parent);
                 }
@@ -2260,8 +2258,7 @@ pub const H2FrameParser = struct {
                         stream.state = .CLOSED;
                         stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
                         this.dispatchWithExtra(.onStreamError, JSC.JSValue.jsNumber(stream_id), JSC.JSValue.jsNumber(stream.rstCode));
-                        globalObject.throw("Expected weight to be a number between 1 and 256", .{});
-                        return .zero;
+                        return JSC.JSValue.jsNumber(stream.id);
                     }
                     stream.weight = @intCast(weight);
                 }
@@ -2270,8 +2267,7 @@ pub const H2FrameParser = struct {
                     stream.state = .CLOSED;
                     stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
                     this.dispatchWithExtra(.onStreamError, JSC.JSValue.jsNumber(stream_id), JSC.JSValue.jsNumber(stream.rstCode));
-                    globalObject.throw("Expected weight to be a number between 1 and 256", .{});
-                    return .zero;
+                    return JSC.JSValue.jsNumber(stream.id);
                 }
                 stream.weight = @intCast(weight);
             }
@@ -2281,17 +2277,12 @@ pub const H2FrameParser = struct {
                     if (signal_.aborted()) {
                         stream.state = .CLOSED;
                         stream.rstCode = @intFromEnum(ErrorCode.CANCEL);
-                        this.dispatchWithExtra(.onStreamError, JSC.JSValue.jsNumber(stream_id), JSC.JSValue.jsNumber(stream.rstCode));
-                        globalObject.throw("Request aborted before start", .{});
-                        return .zero;
+                        this.dispatchWithExtra(.onAborted, JSC.JSValue.jsNumber(stream.id), signal_.abortReason());
+                        return JSC.JSValue.jsNumber(stream.id);
                     }
-                    signal = signal_;
+                    stream.attachSignal(signal_);
                 }
             }
-        }
-
-        if (signal) |signal_| {
-            stream.attachSignal(signal_);
         }
 
         var length: usize = encoded_size;

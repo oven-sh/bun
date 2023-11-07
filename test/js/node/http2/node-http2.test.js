@@ -422,6 +422,7 @@ describe("Client Basics", () => {
       maxFrameSize: 16384,
       maxConcurrentStreams: 2147483647,
       maxHeaderListSize: 65535,
+      maxHeaderSize: 65535,
     });
   });
   it("getPackedSettings/getUnpackedSettings", () => {
@@ -432,6 +433,7 @@ describe("Client Basics", () => {
       maxFrameSize: 32768,
       maxConcurrentStreams: 4,
       maxHeaderListSize: 5,
+      maxHeaderSize: 5,
     };
     const buffer = http2.getPackedSettings(settings);
     expect(buffer.byteLength).toBe(36);
@@ -572,8 +574,7 @@ describe("Client Basics", () => {
     await promise;
     expect(client.destroyed).toBe(true);
   });
-
-  it("aborted request", async () => {
+  it("is possibel to abort request", async () => {
     const abortController = new AbortController();
     const promise = doHttp2Request("https://httpbin.org/get", { ":path": "/get" }, null, null, {
       signal: abortController.signal,
@@ -587,13 +588,49 @@ describe("Client Basics", () => {
       expect(err.message).toBe("Stream closed with error code 8");
     }
   });
-
+  it("aborted event should work with abortController", async () => {
+    const abortController = new AbortController();
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const client = http2.connect("https://www.example.com");
+    client.on("error", reject);
+    const req = client.request({ ":path": "/" }, { signal: abortController.signal });
+    req.on("aborted", resolve);
+    req.on("end", () => {
+      resolve();
+      client.close();
+    });
+    abortController.abort();
+    const result = await promise;
+    expect(result).toBeDefined();
+    expect(result.name).toBe("AbortError");
+    expect(result.message).toBe("The operation was aborted.");
+    expect(result.code).toBe(20);
+    expect(req.aborted).toBeTrue();
+    expect(req.rstCode).toBe(8);
+  });
+  it("aborted event should work with aborted signal", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const client = http2.connect("https://www.example.com");
+    client.on("error", reject);
+    const req = client.request({ ":path": "/" }, { signal: AbortSignal.abort() });
+    req.on("aborted", resolve);
+    req.on("end", () => {
+      resolve();
+      client.close();
+    });
+    const result = await promise;
+    expect(result).toBeDefined();
+    expect(result.name).toBe("AbortError");
+    expect(result.message).toBe("The operation was aborted.");
+    expect(result.code).toBe(20);
+    expect(req.rstCode).toBe(8);
+    expect(req.aborted).toBeTrue();
+  });
   it("endAfterHeaders should work", async () => {
     const { promise, resolve, reject } = Promise.withResolvers();
     const client = http2.connect("https://www.example.com");
-
     client.on("error", reject);
-    const req = client.request({ ":path": "/", "test-header": "test-value" });
+    const req = client.request({ ":path": "/" });
     req.endAfterHeaders = true;
     let response_headers = null;
     req.on("response", (headers, flags) => {
@@ -609,8 +646,125 @@ describe("Client Basics", () => {
       client.close();
     });
     await promise;
-
     expect(response_headers[":status"]).toBe(200);
     expect(data).toBeFalsy();
+  });
+
+  it("state should work", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const client = http2.connect("https://www.example.com");
+    client.on("error", reject);
+    const req = client.request({ ":path": "/", "test-header": "test-value" });
+
+    {
+      const state = req.state;
+      expect(typeof state).toBe("object");
+      expect(typeof state.state).toBe("number");
+      expect(typeof state.weight).toBe("number");
+      expect(typeof state.sumDependencyWeight).toBe("number");
+      expect(typeof state.localClose).toBe("number");
+      expect(typeof state.remoteClose).toBe("number");
+      expect(typeof state.localWindowSize).toBe("number");
+    }
+
+    // Test Session State.
+    {
+      const state = client.state;
+      expect(typeof state).toBe("object");
+      expect(typeof state.effectiveLocalWindowSize).toBe("number");
+      expect(typeof state.effectiveRecvDataLength).toBe("number");
+      expect(typeof state.nextStreamID).toBe("number");
+      expect(typeof state.localWindowSize).toBe("number");
+      expect(typeof state.lastProcStreamID).toBe("number");
+      expect(typeof state.remoteWindowSize).toBe("number");
+      expect(typeof state.outboundQueueSize).toBe("number");
+      expect(typeof state.deflateDynamicTableSize).toBe("number");
+      expect(typeof state.inflateDynamicTableSize).toBe("number");
+    }
+
+    let response_headers = null;
+    req.on("response", (headers, flags) => {
+      response_headers = headers;
+    });
+    req.on("end", () => {
+      resolve();
+      client.close();
+    });
+    await promise;
+    expect(response_headers[":status"]).toBe(200);
+  });
+
+  it("settings and properties should work", async () => {
+    const assertSettings = settings => {
+      expect(settings).toBeDefined();
+      expect(typeof settings).toBe("object");
+      expect(typeof settings.headerTableSize).toBe("number");
+      expect(typeof settings.enablePush).toBe("boolean");
+      expect(typeof settings.initialWindowSize).toBe("number");
+      expect(typeof settings.maxFrameSize).toBe("number");
+      expect(typeof settings.maxConcurrentStreams).toBe("number");
+      expect(typeof settings.maxHeaderListSize).toBe("number");
+      expect(typeof settings.maxHeaderSize).toBe("number");
+    };
+
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const client = http2.connect("https://www.example.com");
+    client.on("error", reject);
+    expect(client.connecting).toBeTrue();
+    expect(client.alpnProtocol).toBeUndefined();
+    expect(client.encrypted).toBeTrue();
+    expect(client.closed).toBeFalse();
+
+    expect(client.destroyed).toBeFalse();
+    expect(client.originSet.length).toBe(0);
+    expect(client.pendingSettingsAck).toBeTrue();
+    let received_origin = null;
+    client.on("origin", origin => {
+      received_origin = origin;
+    });
+
+    assertSettings(client.localSettings);
+    expect(client.remoteSettings).toBeNull();
+    const headers = { ":path": "/" };
+    const req = client.request(headers);
+
+    expect(req.closed).toBeFalse();
+    expect(req.destroyed).toBeFalse();
+    // we always asign a stream id to the request
+    expect(req.pending).toBeFalse();
+    expect(typeof req.id).toBe("number");
+    expect(req.session).toBeDefined();
+    expect(req.sentHeaders).toEqual(headers);
+    expect(req.sentTrailers).toBeUndefined();
+    expect(req.sentInfoHeaders.length).toBe(0);
+
+    let response_headers = null;
+    req.on("response", (headers, flags) => {
+      response_headers = headers;
+    });
+    req.on("end", () => {
+      resolve();
+    });
+    await promise;
+    expect(response_headers[":status"]).toBe(200);
+    const settings = client.remoteSettings;
+    const localSettings = client.localSettings;
+    assertSettings(settings);
+    assertSettings(localSettings);
+    expect(settings).toEqual(client.remoteSettings);
+    expect(localSettings).toEqual(client.localSettings);
+    client.destroy();
+
+    expect(client.connecting).toBeFalse();
+    expect(client.alpnProtocol).toBe("h2");
+    expect(client.originSet.length).toBe(1);
+    expect(client.originSet).toEqual(received_origin);
+    expect(client.originSet[0]).toBe("www.example.com");
+    expect(client.pendingSettingsAck).toBeFalse();
+    expect(client.destroyed).toBeTrue();
+    expect(client.closed).toBeTrue();
+    expect(req.closed).toBeTrue();
+    expect(req.destroyed).toBeTrue();
+    expect(req.rstCode).toBe(http2.constants.NGHTTP2_NO_ERROR);
   });
 });

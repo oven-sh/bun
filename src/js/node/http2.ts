@@ -4,6 +4,7 @@ const { hideFromStack, throwNotImplemented } = require("$shared");
 
 const tls = require("node:tls");
 const net = require("node:net");
+const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 type Http2ConnectOptions = { settings?: Settings; protocol?: "https:" | "http:"; createConnection?: Function };
 const TLSSocket = tls.TLSSocket;
 const Socket = net.Socket;
@@ -410,11 +411,12 @@ type NativeHttp2HeaderValue = {
 
 type Settings = {
   headerTableSize: number;
-  enablePush: number;
+  enablePush: boolean;
   maxConcurrentStreams: number;
   initialWindowSize: number;
   maxFrameSize: number;
   maxHeaderListSize: number;
+  maxHeaderSize: number;
 };
 
 class Http2Session extends EventEmitter {}
@@ -588,6 +590,14 @@ class ClientHttp2Stream extends Duplex {
     }
   }
 
+  get closed() {
+    return this[bunHTTP2Closed];
+  }
+
+  get destroyed() {
+    return this[bunHTTP2Session] === null;
+  }
+
   get state() {
     const session = this[bunHTTP2Session];
     if (session) {
@@ -666,16 +676,21 @@ class ClientHttp2Stream extends Duplex {
   }
   _destroy(err, callback) {
     if (!this[bunHTTP2Closed]) {
+      this[bunHTTP2Closed] = true;
+
       const session = this[bunHTTP2Session];
       assertSession(session);
 
       session[bunHTTP2Native]?.rstStream(this.#id, 0);
       this.rstCode = 0;
+      this[bunHTTP2Session] = null;
     }
+
     callback(err);
   }
 
   _final(callback) {
+    this[bunHTTP2Closed] = true;
     callback();
   }
 
@@ -732,6 +747,22 @@ function emitStreamErrorNT(self, streams, streamId, error, destroy) {
   }
   self.emit("streamError", error_instance);
 }
+
+function emitAbortedNT(self, streams, streamId, error) {
+  const stream = streams.get(streamId);
+  const error_instance = streamErrorFromCode(constants.NGHTTP2_CANCEL);
+  if (stream) {
+    if (!stream[bunHTTP2Closed]) {
+      stream[bunHTTP2Closed] = true;
+    }
+
+    stream.rstCode = constants.NGHTTP2_CANCEL;
+    stream.emit("aborted", error);
+    stream.emit("error", error_instance);
+    self.emit("sessionError", error_instance);
+  }
+  self.emit("streamError", error_instance);
+}
 class ClientHttp2Session extends Http2Session {
   #closed: boolean = false;
   #queue: Array<Buffer> = [];
@@ -743,14 +774,17 @@ class ClientHttp2Session extends Http2Session {
   #originSet = new Set<string>();
   #streams = new Map<number, any>();
   #isServer: boolean = false;
+  #alpnProtocol: string | undefined = undefined;
   #localSettings: Settings | null = {
     headerTableSize: 4096,
-    enablePush: 1,
+    enablePush: true,
     maxConcurrentStreams: 100,
     initialWindowSize: 65535,
     maxFrameSize: 16384,
     maxHeaderListSize: 65535,
+    maxHeaderSize: 65535,
   };
+  #encrypted: boolean = false;
   #pendingSettingsAck: boolean = true;
   #remoteSettings: Settings | null = null;
   #pingCallbacks: Array<[Function, number]> | null = null;
@@ -765,7 +799,19 @@ class ClientHttp2Session extends Http2Session {
       }
     },
     streamError(self: ClientHttp2Session, streamId: number, error: number) {
-      process.nextTick(emitStreamErrorNT, self, self.#streams, streamId, error);
+      var stream = self.#streams.get(streamId);
+      if (stream) {
+        const error_instance = streamErrorFromCode(error);
+        if (!stream[bunHTTP2Closed]) {
+          stream[bunHTTP2Closed] = true;
+        }
+        stream.rstCode = error;
+        stream.emit("error", error_instance);
+        self.emit("sessionError", error_instance);
+        self.emit("streamError", error_instance);
+      } else {
+        process.nextTick(emitStreamErrorNT, self, self.#streams, streamId, error);
+      }
     },
     streamEnd(self: ClientHttp2Session, streamId: number) {
       self.#connecions--;
@@ -774,6 +820,7 @@ class ClientHttp2Session extends Http2Session {
         stream.emit("end");
         // detach stream
         stream[bunHTTP2Session] = null;
+        stream[bunHTTP2Closed] = true;
       }
       if (self.#connecions === 0 && self.#closed) {
         self[bunHTTP2Socket]?.end();
@@ -841,11 +888,26 @@ class ClientHttp2Session extends Http2Session {
     aborted(self: ClientHttp2Session, streamId: number, error: any) {
       var stream = self.#streams.get(streamId);
       if (stream) {
+        const error_instance = streamErrorFromCode(constants.NGHTTP2_CANCEL);
+        if (!stream[bunHTTP2Closed]) {
+          stream[bunHTTP2Closed] = true;
+        }
+
+        stream.rstCode = constants.NGHTTP2_CANCEL;
         stream.emit("aborted", error);
+        stream.emit("error", error_instance);
+        self.emit("sessionError", error_instance);
+      } else {
+        process.nextTick(emitAbortedNT, self, self.#streams, streamId, error);
       }
     },
     wantTrailers(self: ClientHttp2Session, streamId: number) {
-      process.nextTick(emitWantTrailersNT, self.#streams, streamId);
+      var stream = self.#streams.get(streamId);
+      if (stream) {
+        stream.emit("wantTrailers");
+      } else {
+        process.nextTick(emitWantTrailersNT, self.#streams, streamId);
+      }
     },
     goaway(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       self.emit("goaway", errorCode, lastStreamId, opaqueData);
@@ -883,12 +945,15 @@ class ClientHttp2Session extends Http2Session {
   #onRead(data: Buffer) {
     this.#parser?.read(data);
   }
+
   get originSet() {
     if (this.encrypted) {
       return Array.from(this.#originSet);
     }
   }
   get alpnProtocol() {
+    const protocol = this.#alpnProtocol;
+    if (protocol) return protocol;
     const socket = this[bunHTTP2Socket];
     if (!socket) return;
     return (socket as TLSSocket).alpnProtocol;
@@ -905,9 +970,13 @@ class ClientHttp2Session extends Http2Session {
         error.code = "ERR_HTTP2_ERROR";
         this.emit("error", error);
       }
+      this.#alpnProtocol = "h2";
+      const origin = socket[bunTLSConnectOptions]?.serverName || socket.remoteAddress;
+      this.#originSet.add(origin);
+      this.emit("origin", this.originSet);
+    } else {
+      this.#alpnProtocol = "h2";
     }
-    this.#originSet.add(socket.remoteAddress as string);
-    this.emit("origin", this.#originSet);
     // TODO: make a native bindings on data and write and fallback to non-native
     socket.on("data", this.#onRead.bind(this));
     // connected!
@@ -942,7 +1011,13 @@ class ClientHttp2Session extends Http2Session {
     this.#parser = null;
     this.emit("timeout");
   }
-
+  get connecting() {
+    const socket = this[bunHTTP2Socket];
+    if (!socket) {
+      return false;
+    }
+    return socket.connecting || false;
+  }
   get connected() {
     return this[bunHTTP2Socket]?.connecting === false;
   }
@@ -950,10 +1025,7 @@ class ClientHttp2Session extends Http2Session {
     return this[bunHTTP2Socket] === null;
   }
   get encrypted() {
-    const socket = this[bunHTTP2Socket];
-    if (!socket) return;
-
-    return socket instanceof TLSSocket;
+    return this.#encrypted;
   }
   get closed() {
     return this.#closed;
@@ -1084,6 +1156,7 @@ class ClientHttp2Session extends Http2Session {
       );
       this[bunHTTP2Socket] = socket;
     }
+    this.#encrypted = socket instanceof TLSSocket;
 
     this.#parser = new H2FrameParser({
       context: this,
@@ -1116,7 +1189,9 @@ class ClientHttp2Session extends Http2Session {
   destroy(error: Error, code: number) {
     const socket = this[bunHTTP2Socket];
     if (!socket) return;
-    this.goaway(code || constants.NGHTTP2_FLAG_NONE, 0, Buffer.alloc(0));
+    this.#closed = true;
+    code = code || constants.NGHTTP2_NO_ERROR;
+    this.goaway(code, 0, Buffer.alloc(0));
     socket.end();
     this[bunHTTP2Socket] = null;
     // this should not be needed since RST + GOAWAY should be sent
@@ -1124,7 +1199,8 @@ class ClientHttp2Session extends Http2Session {
       if (error) {
         stream.emit("error", error);
       }
-      stream[bunHTTP2Session] = null;
+      stream.destroy();
+      stream.rstCode = code;
       stream.emit("close");
     }
 

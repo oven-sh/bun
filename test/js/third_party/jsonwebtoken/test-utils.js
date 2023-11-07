@@ -94,12 +94,16 @@ function verifyJWTHelper(jwtString, secretOrPrivateKey, options, callback) {
     } catch (err) {
       error = err;
     }
-    expectError(error, err);
-    if (error) {
+    try {
+      expectError(error, err);
+      if (error) {
+        callback(err);
+      } else {
+        expect(syncVerified).toStrictEqual(asyncVerifiedToken);
+        callback(null, syncVerified);
+      }
+    } catch (err) {
       callback(err);
-    } else {
-      expect(syncVerified).toStrictEqual(asyncVerifiedToken);
-      callback(null, syncVerified);
     }
   });
 }
@@ -120,12 +124,16 @@ function signJWTHelper(payload, secretOrPrivateKey, options, callback) {
     } catch (err) {
       error = err;
     }
-    expectError(error, err);
-    if (error) {
+    try {
+      expectError(error, err);
+      if (error) {
+        callback(err);
+      } else {
+        expect(syncSigned).toEqual(asyncSigned);
+        callback(null, syncSigned);
+      }
+    } catch (err) {
       callback(err);
-    } else {
-      expect(syncSigned).toEqual(asyncSigned);
-      callback(null, syncSigned);
     }
   });
 }

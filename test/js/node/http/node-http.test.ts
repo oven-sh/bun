@@ -157,6 +157,9 @@ describe("node:http", () => {
     function runTest(done: Function, callback: (server: Server, port: number, done: (err?: Error) => void) => void) {
       var timer;
       var server = createServer((req, res) => {
+        if (req.headers.__proto__ !== {}.__proto__) {
+          throw new Error("Headers should inherit from Object.prototype");
+        }
         const reqUrl = new URL(req.url!, `http://${req.headers.host}`);
         if (reqUrl.pathname) {
           if (reqUrl.pathname === "/redirect") {

@@ -6714,7 +6714,7 @@ pub const PackageManager = struct {
         comptime subcommand: Subcommand,
     ) !void {
         if (Environment.isWindows and !Environment.isDebug) {
-            @panic("Bun install does not support Windows");
+            @panic("Windows support for bun install is not implemented yet");
         }
 
         var manager = init(ctx, subcommand) catch |err| brk: {

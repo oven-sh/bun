@@ -1943,7 +1943,7 @@ pub const Query = struct {
                     token.tag = Token.Tag.none;
 
                     // skip tagged versions
-                    while (i < input.len and input[i] != ' ') : (i += 1) {}
+                    while (i < input.len and input[i] != ' ' and input[i] != '|' and input[i] != '&') : (i += 1) {}
                     skip_round = true;
                 },
             }

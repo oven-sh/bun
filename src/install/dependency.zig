@@ -757,7 +757,7 @@ pub fn parseWithTag(
                 input = input[1..];
             }
 
-            const version = Semver.Query.parse(
+            const version = if (input.len > 0) Semver.Query.parse(
                 allocator,
                 input,
                 sliced.sub(input),
@@ -773,6 +773,9 @@ pub fn parseWithTag(
                     },
                 ) catch unreachable;
                 return null;
+            } else Semver.Query.Group{
+                .allocator = allocator,
+                .input = input,
             };
 
             const result = Version{

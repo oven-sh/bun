@@ -989,6 +989,7 @@ pub const H2FrameParser = struct {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Data frame on connection stream", this.lastStreamID);
             return data.len;
         }
+
         var settings = this.remoteSettings orelse this.localSettings;
 
         if (frame.length > settings.maxFrameSize) {
@@ -997,6 +998,10 @@ pub const H2FrameParser = struct {
         }
 
         var stream = stream_.?;
+        // we actually dont want to process any if endAfterHeaders is set
+        if (stream.endAfterHeaders) {
+            return data.len;
+        }
         this.readBuffer.reset();
 
         const end: usize = @min(@as(usize, @intCast(this.remainingLength)), data.len);
@@ -1657,7 +1662,7 @@ pub const H2FrameParser = struct {
             return .zero;
         }
 
-        var stream = this.streams.get(stream_id) orelse {
+        var stream = this.streams.getPtr(stream_id) orelse {
             globalObject.throw("Invalid stream id", .{});
             return .zero;
         };
@@ -1686,7 +1691,7 @@ pub const H2FrameParser = struct {
             return .zero;
         }
 
-        var stream = this.streams.get(stream_id) orelse {
+        var stream = this.streams.getPtr(stream_id) orelse {
             globalObject.throw("Invalid stream id", .{});
             return .zero;
         };
@@ -1719,7 +1724,7 @@ pub const H2FrameParser = struct {
             return .zero;
         }
 
-        var stream = this.streams.get(stream_id) orelse {
+        var stream = this.streams.getPtr(stream_id) orelse {
             globalObject.throw("Invalid stream id", .{});
             return .zero;
         };
@@ -1749,7 +1754,7 @@ pub const H2FrameParser = struct {
             return .zero;
         }
 
-        var stream = this.streams.get(stream_id) orelse {
+        var stream = this.streams.getPtr(stream_id) orelse {
             globalObject.throw("Invalid stream id", .{});
             return .zero;
         };
@@ -1787,7 +1792,7 @@ pub const H2FrameParser = struct {
             return .zero;
         }
 
-        var stream = this.streams.get(stream_id) orelse {
+        var stream = this.streams.getPtr(stream_id) orelse {
             globalObject.throw("Invalid stream id", .{});
             return .zero;
         };
@@ -1881,7 +1886,7 @@ pub const H2FrameParser = struct {
             return .zero;
         }
 
-        var stream = this.streams.get(stream_id) orelse {
+        var stream = this.streams.getPtr(stream_id) orelse {
             globalObject.throw("Invalid stream id", .{});
             return .zero;
         };
@@ -1900,7 +1905,7 @@ pub const H2FrameParser = struct {
             return .zero;
         }
 
-        this.endStream(&stream, @enumFromInt(error_code));
+        this.endStream(stream, @enumFromInt(error_code));
 
         return JSC.JSValue.jsBoolean(true);
     }
@@ -1959,7 +1964,7 @@ pub const H2FrameParser = struct {
             return .zero;
         }
 
-        var stream = this.streams.get(@intCast(stream_id)) orelse {
+        var stream = this.streams.getPtr(@intCast(stream_id)) orelse {
             globalObject.throw("Invalid stream id", .{});
             return .zero;
         };
@@ -2061,7 +2066,7 @@ pub const H2FrameParser = struct {
         }
         const close = close_arg.toBoolean();
 
-        var stream = this.streams.get(@intCast(stream_id)) orelse {
+        var stream = this.streams.getPtr(@intCast(stream_id)) orelse {
             globalObject.throw("Invalid stream id", .{});
             return .zero;
         };

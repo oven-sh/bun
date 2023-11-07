@@ -894,8 +894,9 @@ class ClientHttp2Session extends Http2Session {
     return (socket as TLSSocket).alpnProtocol;
   }
   #onConnect() {
-    this.#closed = false;
     const socket = this[bunHTTP2Socket] as TLSSocket;
+    if (!socket) return;
+    this.#closed = false;
     // check if h2 is supported only for TLSSocket or Socket
     if (socket instanceof Socket) {
       if (socket.alpnProtocol !== "h2") {

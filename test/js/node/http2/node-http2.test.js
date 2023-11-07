@@ -572,6 +572,7 @@ describe("Client Basics", () => {
     await promise;
     expect(client.destroyed).toBe(true);
   });
+
   it("aborted request", async () => {
     const abortController = new AbortController();
     const promise = doHttp2Request("https://httpbin.org/get", { ":path": "/get" }, null, null, {
@@ -585,5 +586,31 @@ describe("Client Basics", () => {
       expect(err.code).toBe("ERR_HTTP2_STREAM_ERROR");
       expect(err.message).toBe("Stream closed with error code 8");
     }
+  });
+
+  it("endAfterHeaders should work", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const client = http2.connect("https://www.example.com");
+
+    client.on("error", reject);
+    const req = client.request({ ":path": "/", "test-header": "test-value" });
+    req.endAfterHeaders = true;
+    let response_headers = null;
+    req.on("response", (headers, flags) => {
+      response_headers = headers;
+    });
+    req.setEncoding("utf8");
+    let data = "";
+    req.on("data", chunk => {
+      data += chunk;
+    });
+    req.on("end", () => {
+      resolve();
+      client.close();
+    });
+    await promise;
+
+    expect(response_headers[":status"]).toBe(200);
+    expect(data).toBeFalsy();
   });
 });

@@ -1258,3 +1258,13 @@ endif()
 if(NO_CODEGEN)
     message(STATUS "NOTE: NO_CODEGEN is ON, this build expects ./codegen to exist")
 endif()
+
+add_library(lshpack STATIC 
+    "${BUN_SRC}/deps/ls-hpack/lshpack.c"
+    "${BUN_SRC}/deps/ls-hpack/deps/xxhash/xxhash.c"
+)
+target_include_directories(lshpack PUBLIC ${BUN_SRC}/deps/ls-hpack)
+target_compile_definitions(lshpack PRIVATE
+    "XXH_HEADER_NAME=\"${BUN_SRC}/deps/ls-hpack/deps/xxhash/xxhash.h\""
+)
+target_link_libraries(${bun} PRIVATE lshpack)

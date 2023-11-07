@@ -766,10 +766,9 @@ pub fn parseWithTag(
                     null,
                     logger.Loc.Empty,
                     allocator,
-                    "{s} parsing dependency \"{s}\" with version \"{s}\"",
+                    "{s} parsing version \"{s}\"",
                     .{
                         @errorName(err),
-                        name.fmt(sliced.buf),
                         dependency,
                     },
                 ) catch unreachable;

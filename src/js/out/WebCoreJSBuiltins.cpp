@@ -164,13 +164,21 @@ WEBCORE_FOREACH_EVENTSOURCE_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 #undef DEFINE_BUILTIN_GENERATOR
 
 /* Glob.ts */
-// scanIter
-const JSC::ConstructAbility s_globScanIterCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_globScanIterCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_globScanIterCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_globScanIterCodeLength = 202;
-static const JSC::Intrinsic s_globScanIterCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_globScanIterCode = "(function (opts) {\"use strict\";\n  async function* iter(glob, opts2) {\n    const theStrings = await glob.scan(opts2);\n    for (let path of theStrings)\n      yield path;\n  }\n  return iter(this, opts);\n})\n";
+// scan
+const JSC::ConstructAbility s_globScanCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_globScanCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_globScanCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_globScanCodeLength = 164;
+static const JSC::Intrinsic s_globScanCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_globScanCode = "(function (opts) {\"use strict\";\n  const valuesPromise = this.__scan(opts);\n  async function* iter() {\n    yield* await valuesPromise || [];\n  }\n  return iter();\n})\n";
+
+// scanSync
+const JSC::ConstructAbility s_globScanSyncCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_globScanSyncCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_globScanSyncCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_globScanSyncCodeLength = 136;
+static const JSC::Intrinsic s_globScanSyncCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_globScanSyncCode = "(function (opts) {\"use strict\";\n  const arr = this.__scanSync(opts) || [];\n  function* iter() {\n    yield* arr;\n  }\n  return iter();\n})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \

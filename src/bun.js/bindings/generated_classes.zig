@@ -3201,19 +3201,19 @@ pub const JSGlob = struct {
             @compileLog("Glob.finalize is not a finalizer");
         }
 
+        if (@TypeOf(Glob.__scan) != CallbackType)
+            @compileLog("Expected Glob.__scan to be a callback but received " ++ @typeName(@TypeOf(Glob.__scan)));
+        if (@TypeOf(Glob.__scanSync) != CallbackType)
+            @compileLog("Expected Glob.__scanSync to be a callback but received " ++ @typeName(@TypeOf(Glob.__scanSync)));
         if (@TypeOf(Glob.match) != CallbackType)
             @compileLog("Expected Glob.match to be a callback but received " ++ @typeName(@TypeOf(Glob.match)));
-        if (@TypeOf(Glob.scan) != CallbackType)
-            @compileLog("Expected Glob.scan to be a callback but received " ++ @typeName(@TypeOf(Glob.scan)));
-        if (@TypeOf(Glob.scanSync) != CallbackType)
-            @compileLog("Expected Glob.scanSync to be a callback but received " ++ @typeName(@TypeOf(Glob.scanSync)));
         if (!JSC.is_bindgen) {
+            @export(Glob.__scan, .{ .name = "GlobPrototype____scan" });
+            @export(Glob.__scanSync, .{ .name = "GlobPrototype____scanSync" });
             @export(Glob.constructor, .{ .name = "GlobClass__construct" });
             @export(Glob.finalize, .{ .name = "GlobClass__finalize" });
             @export(Glob.hasPendingActivity, .{ .name = "Glob__hasPendingActivity" });
             @export(Glob.match, .{ .name = "GlobPrototype__match" });
-            @export(Glob.scan, .{ .name = "GlobPrototype__scan" });
-            @export(Glob.scanSync, .{ .name = "GlobPrototype__scanSync" });
         }
     }
 };

@@ -29,7 +29,7 @@ group({ name: `async pattern="${normalPattern}"`, summary: true }, () => {
   });
 
   bench("Bun.Glob", async () => {
-    const entries = await new Glob(normalPattern).scan(bunOpts);
+    const entries = await Array.fromAsync(new Glob(normalPattern).scan(bunOpts));
   });
 
   if (benchFdir)
@@ -44,7 +44,7 @@ group({ name: `async-recursive pattern="${recursivePattern}"`, summary: true }, 
   });
 
   bench("Bun.Glob", async () => {
-    const entries = await new Glob(recursivePattern).scan(bunOpts);
+    const entries = await Array.fromAsync(new Glob(recursivePattern).scan(bunOpts));
   });
 
   if (benchFdir)
@@ -59,7 +59,7 @@ group({ name: `sync pattern="${normalPattern}"`, summary: true }, () => {
   });
 
   bench("Bun.Glob", () => {
-    const entries = new Glob(normalPattern).scanSync(bunOpts);
+    const entries = Array.from(new Glob(normalPattern).scanSync(bunOpts));
   });
 
   if (benchFdir)
@@ -74,7 +74,7 @@ group({ name: `sync-recursive pattern="${recursivePattern}"`, summary: true }, (
   });
 
   bench("Bun.Glob", () => {
-    const entries = new Glob(recursivePattern).scanSync(bunOpts);
+    const entries = Array.from(new Glob(recursivePattern).scanSync(bunOpts));
   });
 
   if (benchFdir)
@@ -89,7 +89,7 @@ group({ name: `node_modules pattern="${nodeModulesPattern}"`, summary: true }, (
   });
 
   bench("Bun.Glob", async () => {
-    const entries = await new Glob(nodeModulesPattern).scan(bunOpts);
+    const entries = await Array.fromAsync(new Glob(nodeModulesPattern).scan(bunOpts));
   });
 
   if (benchFdir)

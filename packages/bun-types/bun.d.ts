@@ -118,15 +118,59 @@ declare module "bun" {
    * @example
    * ```js
    * const glob = new Glob("*.{ts,tsx}");
-   * const scannedFiles = await glob.scan({ cwd: './src' })
+   * const scannedFiles = await Array.fromAsync(glob.scan({ cwd: './src' }))
    * ```
    */
   export class Glob {
     constructor(pattern: string);
 
-    scan(options?: GlobScanOptions): Promise<Array<string>>;
-    scanIter(options?: GlobScanOptions): AsyncIterableIterator<string>;
-    scanSync(options?: GlobScanOptions): Array<string>;
+    /**
+     * Scan for files that match this glob pattern. Returns an async iterator.
+     *
+     * @example
+     * ```js
+     * const glob = new Glob("*.{ts,tsx}");
+     * const scannedFiles = await Array.fromAsync(glob.scan({ cwd: './src' }))
+     * ```
+     *
+     * @example
+     * ```js
+     * const glob = new Glob("*.{ts,tsx}");
+     * for await (const path of glob.scan()) {
+     *   // do something
+     * }
+     * ```
+     */
+    scan(options?: GlobScanOptions): AsyncIterableIterator<string>;
+
+    /**
+     * Scan for files that match this glob pattern. Returns an iterator.
+     *
+     * @example
+     * ```js
+     * const glob = new Glob("*.{ts,tsx}");
+     * const scannedFiles = Array.from(glob.scan({ cwd: './src' }))
+     * ```
+     *
+     * @example
+     * ```js
+     * const glob = new Glob("*.{ts,tsx}");
+     * for (const path of glob.scan()) {
+     *   // do something
+     * }
+     * ```
+     */
+    scanSync(options?: GlobScanOptions): IterableIterator<string>;
+
+    /**
+     * Match the glob against a string
+     *
+     * @example
+     * ```js
+     * const glob = new Glob("*.{ts,tsx}");
+     * expect(glob.match('foo.ts')).toBeTrue();
+     * ```
+     */
     match(str: string): boolean;
   }
 

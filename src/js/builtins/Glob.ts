@@ -1,13 +1,21 @@
 interface Glob {
-  scan();
+  __scan(opts);
+  __scanSync(opts);
 }
 
-export function scanIter(this: Glob, opts) {
-  async function* iter(glob, opts) {
-    const theStrings = await glob.scan(opts);
-    for (const path of theStrings) {
-      yield path;
-    }
+export function scan(this: Glob, opts) {
+  const valuesPromise = this.__scan(opts);
+  async function* iter() {
+    const values = (await valuesPromise) || [];
+    yield* values;
   }
-  return iter(this, opts);
+  return iter();
+}
+
+export function scanSync(this: Glob, opts) {
+  const arr = this.__scanSync(opts) || [];
+  function* iter() {
+    yield* arr;
+  }
+  return iter();
 }

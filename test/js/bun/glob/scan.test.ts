@@ -23,7 +23,7 @@ describe("glob.match", async () => {
     test(`${namePrefix} recursively search node_modules`, async () => {
       const pattern = "**/node_modules/**/*.js";
       const glob = new Glob(pattern);
-      const filepaths = await glob.scan(bunGlobOpts);
+      const filepaths = await Array.fromAsync(glob.scan(bunGlobOpts));
       const fgFilepths = await fg.glob(pattern, fgOpts);
 
       // console.error(filepaths);
@@ -39,7 +39,7 @@ describe("glob.match", async () => {
     test(`${namePrefix} recursive search js files`, async () => {
       const pattern = "**/*.js";
       const glob = new Glob(pattern);
-      const filepaths = await glob.scan(bunGlobOpts);
+      const filepaths = await Array.fromAsync(glob.scan(bunGlobOpts));
       const fgFilepths = await fg.glob(pattern, fgOpts);
 
       expect(filepaths.length).toEqual(fgFilepths.length);
@@ -54,7 +54,7 @@ describe("glob.match", async () => {
     test(`${namePrefix} recursive search ts files`, async () => {
       const pattern = "**/*.ts";
       const glob = new Glob(pattern);
-      const filepaths = await glob.scan(bunGlobOpts);
+      const filepaths = await Array.fromAsync(glob.scan(bunGlobOpts));
       const fgFilepths = await fg.glob(pattern, fgOpts);
 
       expect(filepaths.length).toEqual(fgFilepths.length);
@@ -69,7 +69,7 @@ describe("glob.match", async () => {
     test(`${namePrefix} glob not freed before matching done`, async () => {
       const promise = (async () => {
         const glob = new Glob("**/node_modules/**/*.js");
-        const result = glob.scan(bunGlobOpts);
+        const result = Array.fromAsync(glob.scan(bunGlobOpts));
         Bun.gc(true);
         const result2 = await result;
         return result2;
@@ -88,7 +88,7 @@ describe("glob.match", async () => {
     const cwd = "test/js/bun/glob";
 
     const glob = new Glob(pattern);
-    const entries = await glob.scan({ cwd });
+    const entries = await Array.fromAsync(glob.scan({ cwd }));
 
     expect(entries.sort()).toEqual(
       [
@@ -118,6 +118,7 @@ describe("glob.match", async () => {
       try {
         cb();
       } catch (err) {
+        console.error("Error", err);
         // @ts-expect-error
         return err;
       }
@@ -263,7 +264,7 @@ describe("fast-glob e2e tests", async () => {
   regular.regular.forEach(pattern =>
     test(`patterns regular ${pattern}`, () => {
       // let entries = fg.globSync(pattern, { cwd });
-      let entries = new Glob(pattern).scanSync({ cwd, followSymlinks: true });
+      let entries = Array.from(new Glob(pattern).scanSync({ cwd, followSymlinks: true }));
       entries = entries.sort();
       expect(entries).toMatchSnapshot(pattern);
     }),
@@ -273,7 +274,7 @@ describe("fast-glob e2e tests", async () => {
     test(`patterns regular cwd ${pattern}`, () => {
       const testCwd = path.join(cwd, secondHalf);
       // let entries = fg.globSync(pattern, { cwd: testCwd });
-      let entries = new Glob(pattern).scanSync({ cwd: testCwd, followSymlinks: true });
+      let entries = Array.from(new Glob(pattern).scanSync({ cwd: testCwd, followSymlinks: true }));
       entries = entries.sort();
       expect(entries).toMatchSnapshot(pattern);
     }),
@@ -283,7 +284,7 @@ describe("fast-glob e2e tests", async () => {
     test(`patterns regular relative cwd ${pattern}`, () => {
       const testCwd = secondHalf ? path.join(cwd, secondHalf) : cwd;
       // let entries = fg.globSync(pattern, { cwd: testCwd });
-      let entries = new Glob(pattern).scanSync({ cwd: testCwd, followSymlinks: true });
+      let entries = Array.from(new Glob(pattern).scanSync({ cwd: testCwd, followSymlinks: true }));
       entries = entries.sort();
       expect(entries).toMatchSnapshot(pattern);
     }),
@@ -293,7 +294,7 @@ describe("fast-glob e2e tests", async () => {
     test(`patterns absolute cwd ${pattern}`, () => {
       const testCwd = secondHalf ? path.join(cwd, secondHalf) : cwd;
       // let entries = fg.globSync(pattern, { cwd: testCwd, absolute: true });
-      let entries = new Glob(pattern).scanSync({ cwd: testCwd, followSymlinks: true, absolute: true });
+      let entries = Array.from(new Glob(pattern).scanSync({ cwd: testCwd, followSymlinks: true, absolute: true }));
       entries = entries.sort();
       expect(entries).toMatchSnapshot(pattern);
     }),
@@ -302,7 +303,7 @@ describe("fast-glob e2e tests", async () => {
   onlyFilesPatterns.regular.forEach(pattern =>
     test(`only files ${pattern}`, () => {
       // let entries = fg.globSync(pattern, { cwd, absolute: false, onlyFiles: true });
-      let entries = new Glob(pattern).scanSync({ cwd, followSymlinks: true, onlyFiles: true });
+      let entries = Array.from(new Glob(pattern).scanSync({ cwd, followSymlinks: true, onlyFiles: true }));
       entries = entries.sort();
       expect(entries).toMatchSnapshot(pattern);
     }),
@@ -312,7 +313,7 @@ describe("fast-glob e2e tests", async () => {
     test(`only files (cwd) ${pattern}`, () => {
       const testCwd = secondHalf ? path.join(cwd, secondHalf) : cwd;
       // let entries = fg.globSync(pattern, { cwd: testCwd, absolute: false, onlyFiles: true });
-      let entries = new Glob(pattern).scanSync({ cwd: testCwd, followSymlinks: true, onlyFiles: true });
+      let entries = Array.from(new Glob(pattern).scanSync({ cwd: testCwd, followSymlinks: true, onlyFiles: true }));
       entries = entries.sort();
       expect(entries).toMatchSnapshot(pattern);
     }),

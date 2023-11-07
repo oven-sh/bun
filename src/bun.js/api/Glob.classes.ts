@@ -11,15 +11,19 @@ export default [
     JSType: "0b11101110",
     proto: {
       scan: {
-        fn: "scan",
-        length: 1,
-      },
-      scanIter: {
-        builtin: "globScanIterCodeGenerator",
+        builtin: "globScanCodeGenerator",
         length: 1,
       },
       scanSync: {
-        fn: "scanSync",
+        builtin: "globScanSyncCodeGenerator",
+        length: 1,
+      },
+      __scan: {
+        fn: "__scan",
+        length: 1,
+      },
+      __scanSync: {
+        fn: "__scanSync",
         length: 1,
       },
       match: {

@@ -11482,22 +11482,23 @@ JSC_DECLARE_CUSTOM_GETTER(jsGlobConstructor);
 
 extern "C" void GlobClass__finalize(void*);
 
+extern "C" EncodedJSValue GlobPrototype____scan(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(GlobPrototype____scanCallback);
+
+extern "C" EncodedJSValue GlobPrototype____scanSync(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(GlobPrototype____scanSyncCallback);
+
 extern "C" EncodedJSValue GlobPrototype__match(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(GlobPrototype__matchCallback);
-
-extern "C" EncodedJSValue GlobPrototype__scan(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(GlobPrototype__scanCallback);
-
-extern "C" EncodedJSValue GlobPrototype__scanSync(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(GlobPrototype__scanSyncCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSGlobPrototype, JSGlobPrototype::Base);
 
 static const HashTableValue JSGlobPrototypeTableValues[] = {
+    { "__scan"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, GlobPrototype____scanCallback, 1 } },
+    { "__scanSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, GlobPrototype____scanSyncCallback, 1 } },
     { "match"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, GlobPrototype__matchCallback, 1 } },
-    { "scan"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, GlobPrototype__scanCallback, 1 } },
-    { "scanIter"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, globScanIterCodeGenerator, 1 } },
-    { "scanSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, GlobPrototype__scanSyncCallback, 1 } }
+    { "scan"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, globScanCodeGenerator, 1 } },
+    { "scanSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, globScanSyncCodeGenerator, 1 } }
 };
 
 const ClassInfo JSGlobPrototype::s_info = { "Glob"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSGlobPrototype) };
@@ -11512,6 +11513,62 @@ JSC_DEFINE_CUSTOM_GETTER(jsGlobConstructor, (JSGlobalObject * lexicalGlobalObjec
     if (UNLIKELY(!prototype))
         return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for Glob"_s);
     return JSValue::encode(globalObject->JSGlobConstructor());
+}
+
+JSC_DEFINE_HOST_FUNCTION(GlobPrototype____scanCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSGlob* thisObject = jsDynamicCast<JSGlob*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Glob"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return GlobPrototype____scan(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(GlobPrototype____scanSyncCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSGlob* thisObject = jsDynamicCast<JSGlob*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Glob"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return GlobPrototype____scanSync(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 JSC_DEFINE_HOST_FUNCTION(GlobPrototype__matchCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -11540,62 +11597,6 @@ JSC_DEFINE_HOST_FUNCTION(GlobPrototype__matchCallback, (JSGlobalObject * lexical
 #endif
 
     return GlobPrototype__match(thisObject->wrapped(), lexicalGlobalObject, callFrame);
-}
-
-JSC_DEFINE_HOST_FUNCTION(GlobPrototype__scanCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    auto& vm = lexicalGlobalObject->vm();
-
-    JSGlob* thisObject = jsDynamicCast<JSGlob*>(callFrame->thisValue());
-
-    if (UNLIKELY(!thisObject)) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Glob"_s);
-        return JSValue::encode({});
-    }
-
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-#ifdef BUN_DEBUG
-    /** View the file name of the JS file that called this function
-     * from a debugger */
-    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
-    const char* fileName = sourceOrigin.string().utf8().data();
-    static const char* lastFileName = nullptr;
-    if (lastFileName != fileName) {
-        lastFileName = fileName;
-    }
-#endif
-
-    return GlobPrototype__scan(thisObject->wrapped(), lexicalGlobalObject, callFrame);
-}
-
-JSC_DEFINE_HOST_FUNCTION(GlobPrototype__scanSyncCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    auto& vm = lexicalGlobalObject->vm();
-
-    JSGlob* thisObject = jsDynamicCast<JSGlob*>(callFrame->thisValue());
-
-    if (UNLIKELY(!thisObject)) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Glob"_s);
-        return JSValue::encode({});
-    }
-
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-#ifdef BUN_DEBUG
-    /** View the file name of the JS file that called this function
-     * from a debugger */
-    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
-    const char* fileName = sourceOrigin.string().utf8().data();
-    static const char* lastFileName = nullptr;
-    if (lastFileName != fileName) {
-        lastFileName = fileName;
-    }
-#endif
-
-    return GlobPrototype__scanSync(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 void JSGlobPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)

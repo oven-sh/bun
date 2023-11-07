@@ -494,22 +494,33 @@ inline void EventSourceBuiltinsWrapper::exportNames()
 #undef EXPORT_FUNCTION_NAME
 }
 /* Glob.ts */
-// scanIter
-#define WEBCORE_BUILTIN_GLOB_SCANITER 1
-extern const char* const s_globScanIterCode;
-extern const int s_globScanIterCodeLength;
-extern const JSC::ConstructAbility s_globScanIterCodeConstructAbility;
-extern const JSC::ConstructorKind s_globScanIterCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_globScanIterCodeImplementationVisibility;
+// scan
+#define WEBCORE_BUILTIN_GLOB_SCAN 1
+extern const char* const s_globScanCode;
+extern const int s_globScanCodeLength;
+extern const JSC::ConstructAbility s_globScanCodeConstructAbility;
+extern const JSC::ConstructorKind s_globScanCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_globScanCodeImplementationVisibility;
+
+// scanSync
+#define WEBCORE_BUILTIN_GLOB_SCANSYNC 1
+extern const char* const s_globScanSyncCode;
+extern const int s_globScanSyncCodeLength;
+extern const JSC::ConstructAbility s_globScanSyncCodeConstructAbility;
+extern const JSC::ConstructorKind s_globScanSyncCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_globScanSyncCodeImplementationVisibility;
 
 #define WEBCORE_FOREACH_GLOB_BUILTIN_DATA(macro) \
-    macro(scanIter, globScanIter, 1) \
+    macro(scan, globScan, 1) \
+    macro(scanSync, globScanSync, 1) \
 
 #define WEBCORE_FOREACH_GLOB_BUILTIN_CODE(macro) \
-    macro(globScanIterCode, scanIter, ASCIILiteral(), s_globScanIterCodeLength) \
+    macro(globScanCode, scan, ASCIILiteral(), s_globScanCodeLength) \
+    macro(globScanSyncCode, scanSync, ASCIILiteral(), s_globScanSyncCodeLength) \
 
 #define WEBCORE_FOREACH_GLOB_BUILTIN_FUNCTION_NAME(macro) \
-    macro(scanIter) \
+    macro(scan) \
+    macro(scanSync) \
 
 #define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
     JSC::FunctionExecutable* codeName##Generator(JSC::VM&);

@@ -226,21 +226,13 @@ fn makeGlobWalker(
     alloc: Allocator,
     arena: *Arena,
 ) ?*GlobWalker {
-    const matchOpts = ScanOpts.fromJS(globalThis, arguments, fnName, arena);
-    var cwd: ?BunString = null;
-    var dot = false;
-    var absolute = false;
-    var follow_symlinks = false;
-    var error_on_broken_symlinks = false;
-    var only_files = false;
-    if (matchOpts) |opts| {
-        cwd = opts.cwd;
-        dot = opts.dot;
-        absolute = opts.absolute;
-        follow_symlinks = opts.follow_symlinks;
-        error_on_broken_symlinks = opts.error_on_broken_symlinks;
-        only_files = opts.only_files;
-    }
+    const matchOpts = ScanOpts.fromJS(globalThis, arguments, fnName, arena) orelse return null;
+    var cwd = matchOpts.cwd;
+    var dot = matchOpts.dot;
+    var absolute = matchOpts.absolute;
+    var follow_symlinks = matchOpts.follow_symlinks;
+    var error_on_broken_symlinks = matchOpts.error_on_broken_symlinks;
+    var only_files = matchOpts.only_files;
 
     if (cwd != null) {
         var globWalker = alloc.create(GlobWalker) catch {
@@ -354,7 +346,7 @@ fn updateHasPendingActivityFlag(has_pending_activity: *std.atomic.Atomic(bool), 
     has_pending_activity.store(value, .SeqCst);
 }
 
-pub fn scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
     const alloc = getAllocator(globalThis);
 
     const arguments_ = callframe.arguments(1);
@@ -362,7 +354,7 @@ pub fn scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame)
     defer arguments.deinit();
 
     var arena = std.heap.ArenaAllocator.init(alloc);
-    var globWalker = this.makeGlobWalker(globalThis, &arguments, "match", alloc, &arena) orelse {
+    var globWalker = this.makeGlobWalker(globalThis, &arguments, "scan", alloc, &arena) orelse {
         arena.deinit();
         return .undefined;
     };
@@ -378,7 +370,7 @@ pub fn scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame)
     return task.promise.value();
 }
 
-pub fn scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
     const alloc = getAllocator(globalThis);
 
     const arguments_ = callframe.arguments(1);
@@ -386,7 +378,7 @@ pub fn scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFr
     defer arguments.deinit();
 
     var arena = std.heap.ArenaAllocator.init(alloc);
-    var globWalker = this.makeGlobWalker(globalThis, &arguments, "match", alloc, &arena) orelse {
+    var globWalker = this.makeGlobWalker(globalThis, &arguments, "scanSync", alloc, &arena) orelse {
         arena.deinit();
         return .undefined;
     };

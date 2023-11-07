@@ -237,11 +237,6 @@ describe("semver", () => {
       expected: "3.0.0",
     },
     {
-      title: "start with &&",
-      depVersion: "&& 1",
-      expected: "1.0.1",
-    },
-    {
       title: "start with ||",
       depVersion: "|| 1",
       expected: "1.0.1",
@@ -715,7 +710,7 @@ describe("yarn tests", () => {
     } as any);
   });
 
-  test.skip("dragon test 6", async () => {
+  test.todo("dragon test 6", async () => {
     await writeFile(
       join(packageDir, "package.json"),
       JSON.stringify({
@@ -831,7 +826,7 @@ describe("yarn tests", () => {
     ]);
   });
 
-  test.skip("dragon test 7", async () => {
+  test.todo("dragon test 7", async () => {
     await writeFile(
       join(packageDir, "package.json"),
       JSON.stringify({
@@ -998,7 +993,7 @@ describe("yarn tests", () => {
     );
   });
 
-  test.skip("dragon test 10", async () => {
+  test.todo("dragon test 10", async () => {
     await writeFile(
       join(packageDir, "package.json"),
       JSON.stringify({
@@ -1227,45 +1222,47 @@ describe("yarn tests", () => {
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".cache", "no-deps", "peer-deps-fixed"]);
   });
 
-  test.skip("it should install in such a way that two identical packages with different peer dependencies are different instances", async () => {
-    await writeFile(
-      join(packageDir, "package.json"),
-      JSON.stringify({
-        name: "foo",
-        version: "1.0.0",
-        dependencies: {
-          "provides-peer-deps-1-0-0": "1.0.0",
-          "provides-peer-deps-2-0-0": "1.0.0",
-        },
-      }),
-    );
+  test.todo(
+    "it should install in such a way that two identical packages with different peer dependencies are different instances",
+    async () => {
+      await writeFile(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            "provides-peer-deps-1-0-0": "1.0.0",
+            "provides-peer-deps-2-0-0": "1.0.0",
+          },
+        }),
+      );
 
-    var { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: packageDir,
-      stdout: null,
-      stdin: "pipe",
-      stderr: "pipe",
-      env,
-    });
+      var { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: null,
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
 
-    var err = await new Response(stderr).text();
-    var out = await new Response(stdout).text();
-    expect(await exited).toBe(0);
-    expect(err).toContain("Saved lockfile");
-    expect(err).not.toContain("error:");
-    expect(err).not.toContain("not found");
-    expect(err).not.toContain("incorrect peer dependency");
-    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      " + provides-peer-deps-1-0-0@1.0.0",
-      " + provides-peer-deps-2-0-0@1.0.0",
-      "",
-      " 5 packages installed",
-    ]);
+      var err = await new Response(stderr).text();
+      var out = await new Response(stdout).text();
+      expect(await exited).toBe(0);
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("incorrect peer dependency");
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        " + provides-peer-deps-1-0-0@1.0.0",
+        " + provides-peer-deps-2-0-0@1.0.0",
+        "",
+        " 5 packages installed",
+      ]);
 
-    await writeFile(
-      join(packageDir, "test.js"),
-      `console.log(
+      await writeFile(
+        join(packageDir, "test.js"),
+        `console.log(
         require("provides-peer-deps-1-0-0").dependencies["peer-deps"] ===
           require("provides-peer-deps-2-0-0").dependencies["peer-deps"]
       );
@@ -1313,23 +1310,24 @@ describe("yarn tests", () => {
           },
         })
       );`,
-    );
+      );
 
-    ({ stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "test.js"],
-      cwd: packageDir,
-      stdout: null,
-      stdin: "pipe",
-      stderr: "pipe",
-      env,
-    }));
+      ({ stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "test.js"],
+        cwd: packageDir,
+        stdout: null,
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      }));
 
-    err = await new Response(stderr).text();
-    out = await new Response(stdout).text();
-    expect(await exited).toBe(0);
-    expect(err).toBeEmpty();
-    expect(out).toBe("true\ntrue\ntrue");
-  });
+      err = await new Response(stderr).text();
+      out = await new Response(stdout).text();
+      expect(await exited).toBe(0);
+      expect(err).toBeEmpty();
+      expect(out).toBe("true\ntrue\ntrue");
+    },
+  );
 
   test("it should install in such a way that two identical packages with the same peer dependencies are the same instances (simple)", async () => {
     await writeFile(

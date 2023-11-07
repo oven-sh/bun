@@ -1098,6 +1098,7 @@ fn selectALPNCallback(
     }
 }
 
+
 fn NewSocket(comptime ssl: bool) type {
     return struct {
         pub const Socket = uws.NewSocketHandler(ssl);
@@ -1107,7 +1108,7 @@ fn NewSocket(comptime ssl: bool) type {
         handlers: *Handlers,
         this_value: JSC.JSValue = .zero,
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
-        reffer: JSC.Ref = JSC.Ref.init(),
+        is_active: bool = false,
         last_4: [4]u8 = .{ 0, 0, 0, 0 },
         authorized: bool = false,
         connection: ?Listener.UnixOrHost = null,
@@ -1277,15 +1278,15 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn markActive(this: *This) void {
-            if (!this.reffer.has) {
+            if (!this.is_active) {
                 this.handlers.markActive();
-                this.reffer.ref(this.handlers.vm);
+                this.is_active = true;
                 this.has_pending_activity.store(true, .Release);
             }
         }
 
         pub fn markInactive(this: *This) void {
-            if (this.reffer.has) {
+            if (this.is_active) {
                 // we have to close the socket before the socket context is closed
                 // otherwise we will get a segfault
                 // uSockets will defer closing the TCP socket until the next tick
@@ -1296,7 +1297,6 @@ fn NewSocket(comptime ssl: bool) type {
                 }
 
                 var vm = this.handlers.vm;
-                this.reffer.unref(vm);
 
                 this.handlers.markInactive(ssl, this.socket.context(), this.wrapped);
                 this.poll_ref.unref(vm);
@@ -2876,9 +2876,9 @@ fn NewSocket(comptime ssl: bool) type {
 
             //detach and invalidate the old instance
             this.detached = true;
-            if (this.reffer.has) {
+            if (this.is_active) {
                 var vm = this.handlers.vm;
-                this.reffer.unref(vm);
+                this.is_active = false;
                 old_context.deinit(ssl);
                 bun.default_allocator.destroy(this.handlers);
                 this.poll_ref.unref(vm);

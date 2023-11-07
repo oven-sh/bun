@@ -118,7 +118,7 @@ const Socket = (function (InternalSocket) {
       open(socket) {
         const self = socket.data;
         socket.timeout(self.timeout);
-        socket.ref();
+        if (self.#unrefOnConnected) socket.unref();
         self[bunSocketInternal] = socket;
         self.connecting = false;
         const options = self[bunTLSConnectOptions];
@@ -323,6 +323,7 @@ const Socket = (function (InternalSocket) {
     server;
     pauseOnConnect = false;
     #upgraded;
+    #unrefOnConnected = false;
 
     constructor(options) {
       const { socket, signal, write, read, allowHalfOpen = false, ...opts } = options || {};
@@ -363,7 +364,7 @@ const Socket = (function (InternalSocket) {
       this.remotePort = port;
       socket.data = this;
       socket.timeout(this.timeout);
-      socket.ref();
+      if (this.#unrefOnConnected) socket.unref();
       this[bunSocketInternal] = socket;
       this.connecting = false;
       if (!this.#upgraded) {
@@ -611,7 +612,12 @@ const Socket = (function (InternalSocket) {
     }
 
     ref() {
-      this[bunSocketInternal]?.ref();
+      const socket = this[bunSocketInternal];
+      if (!socket) {
+        this.#unrefOnConnected = false;
+        return;
+      }
+      socket.ref();
     }
 
     get remoteAddress() {
@@ -644,7 +650,12 @@ const Socket = (function (InternalSocket) {
     }
 
     unref() {
-      this[bunSocketInternal]?.unref();
+      const socket = this[bunSocketInternal];
+      if (!socket) {
+        this.#unrefOnConnected = true;
+        return;
+      }
+      socket.unref();
     }
 
     _write(chunk, encoding, callback) {

@@ -1083,11 +1083,13 @@ class ClientHttp2Session extends Http2Session {
       );
       this[bunHTTP2Socket] = socket;
     }
+
     this.#parser = new H2FrameParser({
       context: this,
       settings: options,
       handlers: ClientHttp2Session.#Handlers,
     });
+
     socket.on("close", this.#onClose.bind(this));
     socket.on("error", this.#onError.bind(this));
     socket.on("timeout", this.#onTimeout.bind(this));

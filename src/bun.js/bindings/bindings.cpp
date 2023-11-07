@@ -3517,7 +3517,7 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
     }
 
     // Search for the beginning of the line
-    unsigned int lineStart = expressionStart;
+    unsigned int lineStart = expressionStart > 0 ? expressionStart : 0;
     while ((lineStart > 0) && ('\n' != sourceString[lineStart - 1])) {
         lineStart--;
     }

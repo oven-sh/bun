@@ -10,16 +10,16 @@ export default [
     klass: {},
     JSType: "0b11101110",
     proto: {
+      scan: {
+        fn: "scan",
+        length: 1,
+      },
+      scanSync: {
+        fn: "scanSync",
+        length: 1,
+      },
       match: {
         fn: "match",
-        length: 1,
-      },
-      matchSync: {
-        fn: "matchSync",
-        length: 1,
-      },
-      matchString: {
-        fn: "matchString",
         length: 1,
       },
     },

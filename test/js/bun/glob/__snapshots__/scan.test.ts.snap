@@ -393,7 +393,7 @@ exports[`fast-glob e2e tests patterns regular cwd **/{nested,file.md}/*: **/{nes
 exports[`fast-glob e2e tests patterns regular relative cwd ./*: ./* 1`] = `
 [
   "./match.test.ts",
-  "./matchString.test.ts",
+  "./scan.test.ts",
 ]
 `;
 

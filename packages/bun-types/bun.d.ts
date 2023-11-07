@@ -70,7 +70,7 @@ declare module "bun" {
     options?: { PATH?: string; cwd?: string },
   ): string | null;
 
-  export interface GlobMatchOptions {
+  export interface GlobScanOptions {
     /**
      * The root directory to start matching from. Defaults to `process.cwd()`
      */
@@ -125,9 +125,9 @@ declare module "bun" {
   export class Glob {
     constructor(pattern: string);
 
-    match(options?: GlobMatchOptions): Promise<Array<string>>;
-    matchSync(options?: GlobMatchOptions): Array<string>;
-    matchString(str: string): boolean;
+    scan(options?: GlobScanOptions): Promise<Array<string>>;
+    scanSync(options?: GlobScanOptions): Array<string>;
+    match(str: string): boolean;
   }
 
   interface TOML {

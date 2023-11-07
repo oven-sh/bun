@@ -11485,18 +11485,18 @@ extern "C" void GlobClass__finalize(void*);
 extern "C" EncodedJSValue GlobPrototype__match(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(GlobPrototype__matchCallback);
 
-extern "C" EncodedJSValue GlobPrototype__matchString(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(GlobPrototype__matchStringCallback);
+extern "C" EncodedJSValue GlobPrototype__scan(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(GlobPrototype__scanCallback);
 
-extern "C" EncodedJSValue GlobPrototype__matchSync(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(GlobPrototype__matchSyncCallback);
+extern "C" EncodedJSValue GlobPrototype__scanSync(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(GlobPrototype__scanSyncCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSGlobPrototype, JSGlobPrototype::Base);
 
 static const HashTableValue JSGlobPrototypeTableValues[] = {
     { "match"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, GlobPrototype__matchCallback, 1 } },
-    { "matchString"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, GlobPrototype__matchStringCallback, 1 } },
-    { "matchSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, GlobPrototype__matchSyncCallback, 1 } }
+    { "scan"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, GlobPrototype__scanCallback, 1 } },
+    { "scanSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, GlobPrototype__scanSyncCallback, 1 } }
 };
 
 const ClassInfo JSGlobPrototype::s_info = { "Glob"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSGlobPrototype) };
@@ -11541,7 +11541,7 @@ JSC_DEFINE_HOST_FUNCTION(GlobPrototype__matchCallback, (JSGlobalObject * lexical
     return GlobPrototype__match(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
-JSC_DEFINE_HOST_FUNCTION(GlobPrototype__matchStringCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(GlobPrototype__scanCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
 
@@ -11566,10 +11566,10 @@ JSC_DEFINE_HOST_FUNCTION(GlobPrototype__matchStringCallback, (JSGlobalObject * l
     }
 #endif
 
-    return GlobPrototype__matchString(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+    return GlobPrototype__scan(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
-JSC_DEFINE_HOST_FUNCTION(GlobPrototype__matchSyncCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(GlobPrototype__scanSyncCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
 
@@ -11594,7 +11594,7 @@ JSC_DEFINE_HOST_FUNCTION(GlobPrototype__matchSyncCallback, (JSGlobalObject * lex
     }
 #endif
 
-    return GlobPrototype__matchSync(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+    return GlobPrototype__scanSync(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 void JSGlobPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)

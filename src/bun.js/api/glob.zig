@@ -31,7 +31,7 @@ pattern_codepoints: ?std.ArrayList(u32) = null,
 is_ascii: bool,
 has_pending_activity: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
 
-const MatchOpts = struct {
+const ScanOpts = struct {
     cwd: ?BunString,
     dot: bool,
     absolute: bool,
@@ -39,14 +39,14 @@ const MatchOpts = struct {
     follow_symlinks: bool,
     error_on_broken_symlinks: bool,
 
-    fn fromJS(globalThis: *JSGlobalObject, arguments: *ArgumentsSlice, comptime fnName: []const u8, arena: *Arena) ?MatchOpts {
+    fn fromJS(globalThis: *JSGlobalObject, arguments: *ArgumentsSlice, comptime fnName: []const u8, arena: *Arena) ?ScanOpts {
         const optsObj: JSValue = arguments.nextEat() orelse return null;
         if (!optsObj.isObject() or optsObj.isUndefinedOrNull()) {
             globalThis.throw("{s}: expected first argument to be an object", .{fnName});
             return null;
         }
 
-        var out: MatchOpts = .{
+        var out: ScanOpts = .{
             .cwd = null,
             .dot = false,
             .absolute = false,
@@ -231,7 +231,7 @@ fn makeGlobWalker(
     arena_: Arena,
 ) ?*GlobWalker {
     var arena = arena_;
-    const matchOpts = MatchOpts.fromJS(globalThis, arguments, fnName, &arena);
+    const matchOpts = ScanOpts.fromJS(globalThis, arguments, fnName, &arena);
     var cwd: ?BunString = null;
     var dot = false;
     var absolute = false;
@@ -359,7 +359,7 @@ fn updateHasPendingActivityFlag(has_pending_activity: *std.atomic.Atomic(bool), 
     has_pending_activity.store(value, .SeqCst);
 }
 
-pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+pub fn scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
     const alloc = getAllocator(globalThis);
 
     const arguments_ = callframe.arguments(1);
@@ -383,7 +383,7 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame
     return task.promise.value();
 }
 
-pub fn matchSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+pub fn scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
     const alloc = getAllocator(globalThis);
 
     const arguments_ = callframe.arguments(1);
@@ -413,7 +413,7 @@ pub fn matchSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallF
     return matchedPaths;
 }
 
-pub fn matchString(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
     const alloc = getAllocator(globalThis);
     var arena = Arena.init(alloc);
     defer arena.deinit();

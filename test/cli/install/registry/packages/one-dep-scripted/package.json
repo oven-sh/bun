@@ -1,0 +1,45 @@
+{
+	"name": "one-dep-scripted",
+	"versions": {
+		"1.0.0": {
+			"name": "one-dep-scripted",
+			"version": "1.0.0",
+			"dependencies": {
+				"has-bin-entries": "1.0.0"
+			},
+			"scripts": {
+				"install": "has-bin-entries"
+			},
+			"_id": "one-dep-scripted@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-LfPLrOUEOvonUbajvISRjW7ekzwcQ6OIn3F5IK5MPQUOf+tiFJ2fRiLeudnPCRkThjY+WMz3NCcDJe6kO6nJEQ==",
+				"shasum": "fce9ca522efdeb8e9e0b3e205a25603f82e1c5fc",
+				"tarball": "http://localhost:4873/one-dep-scripted/-/one-dep-scripted-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:23.788Z",
+		"created": "2023-11-01T22:05:23.788Z",
+		"1.0.0": "2023-11-01T22:05:23.788Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"one-dep-scripted-1.0.0.tgz": {
+			"shasum": "fce9ca522efdeb8e9e0b3e205a25603f82e1c5fc",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-3ec6efca7c822777",
+	"_id": "one-dep-scripted",
+	"readme": "ERROR: No README data found!"
+}

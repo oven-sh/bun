@@ -15,10 +15,11 @@ ARG ARCH=x86_64
 ARG BUILD_MACHINE_ARCH=x86_64
 ARG BUILDARCH=amd64
 ARG TRIPLET=${ARCH}-linux-gnu
-ARG GIT_SHA="unknown"
-ARG BUN_DOWNLOAD_URL_BASE="https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/latest"
+ARG GIT_SHA=""
+ARG BUN_VERSION="bun-v1.0.7"
+ARG BUN_DOWNLOAD_URL_BASE="https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${BUN_VERSION}"
+ARG CANARY=0
 
-ARG BUN_VERSION="1.0.7"
 ARG NODE_VERSION="20"
 ARG LLVM_VERSION="16"
 ARG ZIG_VERSION="0.12.0-dev.1297+a9e66ed73"
@@ -40,8 +41,10 @@ ARG LLVM_VERSION
 ARG BUILD_MACHINE_ARCH
 ARG BUN_DIR
 ARG BUN_DEPS_OUT_DIR
+ARG CPU_TARGET
 
 ENV CI 1
+ENV CPU_TARGET=${CPU_TARGET}
 ENV BUILDARCH=${BUILDARCH}
 ENV BUN_DEPS_OUT_DIR=${BUN_DEPS_OUT_DIR}
 
@@ -318,6 +321,8 @@ RUN mkdir ${BUN_DIR}/bun-webkit \
 
 FROM bun-base as bun-cpp-objects
 
+ARG CANARY
+
 COPY --from=bun-webkit ${BUN_DIR}/bun-webkit ${BUN_DIR}/bun-webkit
 
 COPY packages ${BUN_DIR}/packages
@@ -330,8 +335,8 @@ ENV CCACHE_DIR=/ccache
 RUN --mount=type=cache,target=/ccache  mkdir ${BUN_DIR}/build \
   && cd ${BUN_DIR}/build \
   && mkdir -p tmp_modules tmp_functions js codegen \
-  && cmake .. -GNinja -DCMAKE_BUILD_TYPE=Release -DBUN_CPP_ONLY=1 -DWEBKIT_DIR=/build/bun/bun-webkit \
-  && bash compile-cpp-only.sh
+  && cmake .. -GNinja -DCMAKE_BUILD_TYPE=Release -DBUN_CPP_ONLY=1 -DWEBKIT_DIR=/build/bun/bun-webkit -DCANARY=${CANARY} \
+  && bash compile-cpp-only.sh -v
 
 FROM bun-base-with-zig as bun-codegen-for-zig
 
@@ -355,6 +360,7 @@ ARG ZIG_PATH
 ARG TRIPLET
 ARG GIT_SHA
 ARG CPU_TARGET
+ARG CANARY=0
 
 COPY *.zig package.json CMakeLists.txt ${BUN_DIR}/
 COPY completions ${BUN_DIR}/completions
@@ -380,8 +386,8 @@ RUN mkdir -p build \
   -DNO_CONFIGURE_DEPENDS=1 \
   -DNO_CODEGEN=1 \
   -DBUN_ZIG_OBJ="/tmp/bun-zig.o" \
-  && ONLY_ZIG=1 ninja "/tmp/bun-zig.o" \
-  && echo "-> /tmp/bun-zig.o"
+  -DCANARY="${CANARY}" \
+  && ONLY_ZIG=1 ninja "/tmp/bun-zig.o" -v
 
 FROM scratch as build_release_obj
 
@@ -393,6 +399,8 @@ COPY --from=bun-compile-zig-obj /tmp/bun-zig.o /
 FROM bun-base as bun-link
 
 ARG CPU_TARGET
+ARG CANARY
+
 ENV CPU_TARGET=${CPU_TARGET}
 
 WORKDIR $BUN_DIR
@@ -428,7 +436,11 @@ RUN cmake .. \
   -DBUN_CPP_ARCHIVE="${BUN_DIR}/build/bun-cpp-objects.a" \
   -DWEBKIT_DIR="${BUN_DIR}/bun-webkit" \
   -DBUN_DEPS_OUT_DIR="${BUN_DEPS_OUT_DIR}" \
-  && ninja \
+  -DCPU_TARGET="${CPU_TARGET}" \
+  -DNO_CONFIGURE_DEPENDS=1 \
+  -DCANARY="${CANARY}" \
+  && ninja -v \
+  && ./bun --revision \
   && mkdir -p /build/out \
   && mv bun bun-profile /build/out \
   && rm -rf ${BUN_DIR} ${BUN_DEPS_OUT_DIR}

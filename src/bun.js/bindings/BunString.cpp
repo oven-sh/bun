@@ -455,3 +455,15 @@ extern "C" BunString URL__pathname(WTF::URL* url)
 {
     return Bun::toStringRef(url->path().toStringWithoutCopying());
 }
+
+size_t BunString::utf8ByteLength(const WTF::String& str)
+{
+    if (str.isEmpty())
+        return 0;
+
+    if (str.is8Bit()) {
+        return simdutf::utf8_length_from_latin1(reinterpret_cast<const char*>(str.characters8()), static_cast<size_t>(str.length()));
+    } else {
+        return simdutf::utf8_length_from_utf16(reinterpret_cast<const char16_t*>(str.characters16()), static_cast<size_t>(str.length()));
+    }
+}

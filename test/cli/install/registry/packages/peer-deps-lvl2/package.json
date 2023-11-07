@@ -1,0 +1,42 @@
+{
+	"name": "peer-deps-lvl2",
+	"versions": {
+		"1.0.0": {
+			"name": "peer-deps-lvl2",
+			"version": "1.0.0",
+			"peerDependencies": {
+				"no-deps": "*"
+			},
+			"_id": "peer-deps-lvl2@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-Mq+bgUFEyK6YG5bJOwjMmoqnumh9/Li5G+/kh5RfCFR14ONxoUXvsrpbi9RpZE/Y2Wlb0sHPu5ENh4W6BiqPKA==",
+				"shasum": "7d165551b29ef3e4448133ee745013a516e58384",
+				"tarball": "http://localhost:4873/peer-deps-lvl2/-/peer-deps-lvl2-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:29.273Z",
+		"created": "2023-11-01T22:05:29.273Z",
+		"1.0.0": "2023-11-01T22:05:29.273Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"peer-deps-lvl2-1.0.0.tgz": {
+			"shasum": "7d165551b29ef3e4448133ee745013a516e58384",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-19e9ab360a6eb8e5",
+	"_id": "peer-deps-lvl2",
+	"readme": "ERROR: No README data found!"
+}

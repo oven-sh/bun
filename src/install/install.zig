@@ -5674,7 +5674,7 @@ pub const PackageManager = struct {
         comptime subcommand: Subcommand,
     ) !*PackageManager {
         if (Environment.isWindows and !Environment.isDebug) {
-            @panic("Bun install does not support Windows");
+            @panic("Windows support for bun install is not implemented yet");
         }
         // assume that spawning a thread will take a lil so we do that asap
         try HTTP.HTTPThread.init();
@@ -6714,7 +6714,7 @@ pub const PackageManager = struct {
         comptime subcommand: Subcommand,
     ) !void {
         if (Environment.isWindows and !Environment.isDebug) {
-            @panic("Bun install does not support Windows");
+            @panic("Windows support for bun install is not implemented yet");
         }
 
         var manager = init(ctx, subcommand) catch |err| brk: {

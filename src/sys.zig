@@ -101,6 +101,7 @@ pub const Tag = enum(u8) {
     sendfile,
     splice,
     rmdir,
+    truncate,
 
     kevent,
     kqueue,

@@ -51,7 +51,7 @@ pub fn isPackagePath(path: string) bool {
     // Always check for posix absolute paths (starts with "/")
     // But don't check window's style on posix
     // For a more in depth explanation, look above where `isPackagePathNotAbsolute` is used.
-    const isAbsolute = !(std.fs.path.isAbsolutePosix(path) or
+    const isAbsolute = (std.fs.path.isAbsolutePosix(path) or
         (if (Environment.isWindows) std.fs.path.isAbsoluteWindows(path) else false));
     return !isAbsolute and @call(.always_inline, isPackagePathNotAbsolute, .{path});
 }

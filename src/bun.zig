@@ -1752,7 +1752,7 @@ pub inline fn assertComptime() void {
     }
 }
 
-const TODO_LOG = Output.scoped(.TODO, false);
+const TODO_LOG = Output.scoped(.TODO, true);
 pub inline fn todo(src: std.builtin.SourceLocation, value: anytype) @TypeOf(value) {
     if (comptime Environment.allow_assert) {
         TODO_LOG("{s}() at {s}:{d}:{d}", .{ src.fn_name, src.file, src.line, src.column });

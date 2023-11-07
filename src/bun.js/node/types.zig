@@ -155,22 +155,15 @@ pub fn Maybe(comptime ResultType: type) type {
             };
         }
 
-        pub inline fn errno(rc: anytype) ?@This() {
-            return switch (Syscall.getErrno(rc)) {
-                .SUCCESS => null,
-                else => |err| @This(){
-                    // always truncate
-                    .err = .{ .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(err))) },
-                },
-            };
-        }
-
         pub inline fn errnoSys(rc: anytype, syscall: Syscall.Tag) ?@This() {
             return switch (Syscall.getErrno(rc)) {
                 .SUCCESS => null,
                 else => |err| @This(){
                     // always truncate
-                    .err = .{ .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(err))), .syscall = syscall },
+                    .err = .{
+                        .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(err))),
+                        .syscall = syscall,
+                    },
                 },
             };
         }
@@ -194,7 +187,11 @@ pub fn Maybe(comptime ResultType: type) type {
                 .SUCCESS => null,
                 else => |err| @This(){
                     // always truncate
-                    .err = .{ .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(err))), .syscall = syscall, .path = bun.asByteSlice(path) },
+                    .err = .{
+                        .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(err))),
+                        .syscall = syscall,
+                        .path = bun.asByteSlice(path),
+                    },
                 },
             };
         }

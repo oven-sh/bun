@@ -59,6 +59,16 @@ const Syscall = if (Environment.isWindows) struct {
             .{ .result = req.statbuf };
     }
 
+    pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
+        var req: uv.uv_fs_t = undefined;
+        const rc = uv.uv_fs_stat(uv.Loop.get(), &req, path.ptr, null);
+        log("uv stat({s}) = {d}", .{ path, rc });
+        return if (rc < 0)
+            .{ .err = .{ .errno = @truncate(@as(c_uint, @intCast(-rc))), .syscall = .fstat } }
+        else
+            .{ .result = req.statbuf };
+    }
+
     pub fn close(fd: bun.FileDescriptor) ?Syscall.Error {
         if (fd == bun.STDOUT_FD or fd == bun.STDERR_FD) {
             log("uv close({d}) SKIPPED", .{fd});
@@ -3539,7 +3549,10 @@ pub const NodeFS = struct {
                 };
 
                 if (!os.S.ISREG(stat_.mode)) {
-                    return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOTSUP) } };
+                    return Maybe(Return.CopyFile){ .err = .{
+                        .errno = @intFromEnum(C.SystemErrno.ENOTSUP),
+                        .syscall = .copyfile,
+                    } };
                 }
 
                 // 64 KB is about the break-even point for clonefile() to be worth it
@@ -4955,7 +4968,7 @@ pub const NodeFS = struct {
             return Maybe(Return.Truncate).todo();
         }
 
-        return Maybe(Return.Truncate).errno(C.truncate(path.sliceZ(&this.sync_error_buf), len)) orelse
+        return Maybe(Return.Truncate).errnoSys(C.truncate(path.sliceZ(&this.sync_error_buf), len), .truncate) orelse
             Maybe(Return.Truncate).success;
     }
     pub fn truncate(this: *NodeFS, args: Arguments.Truncate, comptime flavor: Flavor) Maybe(Return.Truncate) {
@@ -5270,6 +5283,7 @@ pub const NodeFS = struct {
                     return Maybe(Return.CopyFile){ .err = .{
                         .errno = @intFromEnum(C.SystemErrno.ENOTSUP),
                         .path = this.sync_error_buf[0..src.len],
+                        .syscall = .copyfile,
                     } };
                 }
 

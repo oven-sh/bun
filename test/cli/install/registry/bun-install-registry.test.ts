@@ -400,6 +400,35 @@ describe("prereleases", () => {
       { title: "latest", depVersion: "latest", expected: "0.5.0" },
       { title: "greater than or equal to latest", depVersion: ">=0.5.0", expected: "0.5.0" },
     ],
+
+    // package "prereleases-3" has four versions, all with prerelease tags:
+    // - 5.0.0-alpha.150
+    // - 5.0.0-alpha.151
+    // - 5.0.0-alpha.152
+    // - 5.0.0-alpha.153
+    [
+      { title: "#6956", depVersion: "^5.0.0-alpha.153", expected: "5.0.0-alpha.153" },
+      { title: "range matches highest possible", depVersion: "^5.0.0-alpha.152", expected: "5.0.0-alpha.153" },
+      { title: "exact", depVersion: "5.0.0-alpha.152", expected: "5.0.0-alpha.152" },
+      { title: "exact latest", depVersion: "5.0.0-alpha.153", expected: "5.0.0-alpha.153" },
+      { title: "latest", depVersion: "latest", expected: "5.0.0-alpha.153" },
+      { title: "~ lower than latest", depVersion: "~5.0.0-alpha.151", expected: "5.0.0-alpha.153" },
+      {
+        title: "~ equal semver and lower non-existant prerelease",
+        depVersion: "~5.0.0-alpha.100",
+        expected: "5.0.0-alpha.153",
+      },
+      {
+        title: "^ equal semver and lower non-existant prerelease",
+        depVersion: "^5.0.0-alpha.100",
+        expected: "5.0.0-alpha.153",
+      },
+      {
+        title: "~ and ^ latest prerelease",
+        depVersion: "~5.0.0-alpha.153 || ^5.0.0-alpha.153",
+        expected: "5.0.0-alpha.153",
+      },
+    ],
   ];
   for (let i = 0; i < prereleaseTests.length; i++) {
     const tests = prereleaseTests[i];

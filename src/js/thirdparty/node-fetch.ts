@@ -19,8 +19,11 @@ class Headers extends WebHeaders {
     return obj;
   }
 
-  // This method exists in node-fetch, but not in web.
-  sort() {}
+  // node-fetch inherits this due to URLSearchParams.
+  // it also throws if you try to use it.
+  sort() {
+    throw new TypeError("Expected this to be instanceof URLSearchParams");
+  }
 }
 
 const kHeaders = Symbol("kHeaders");

@@ -10,6 +10,7 @@ const TLS_CERT = {
 
 const nodeExecutable = which("node");
 async function nodeEchoServer() {
+  if (!nodeExecutable) throw new Error("node executable not found");
   const subprocess = Bun.spawn([nodeExecutable, path.join(import.meta.dir, "node-echo-server.fixture.js")], {
     stdout: "pipe",
   });

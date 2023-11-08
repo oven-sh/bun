@@ -1664,7 +1664,8 @@ pub fn initEmpty(this: *Lockfile, allocator: Allocator) !void {
 pub fn getPackageID(
     this: *Lockfile,
     name_hash: u64,
-    // if it's a peer dependency, a folder, or a symlink
+    // If non-null, attempt to use an existing package
+    // that satisfies this version range.
     version: ?Dependency.Version,
     resolution: *const Resolution,
 ) ?PackageID {
@@ -1674,29 +1675,30 @@ pub fn getPackageID(
         .npm => v.value.npm.version,
         else => null,
     } else null;
+    const buf = this.buffers.string_bytes.items;
 
     switch (entry) {
         .PackageID => |id| {
             if (comptime Environment.allow_assert) std.debug.assert(id < resolutions.len);
 
-            if (resolutions[id].eql(resolution, this.buffers.string_bytes.items, this.buffers.string_bytes.items)) {
+            if (resolutions[id].eql(resolution, buf, buf)) {
                 return id;
             }
 
             if (npm_version) |range| {
-                if (range.satisfies(resolutions[id].value.npm.version)) return id;
+                if (range.satisfies(resolutions[id].value.npm.version, buf, buf)) return id;
             }
         },
         .PackageIDMultiple => |ids| {
             for (ids.items) |id| {
                 if (comptime Environment.allow_assert) std.debug.assert(id < resolutions.len);
 
-                if (resolutions[id].eql(resolution, this.buffers.string_bytes.items, this.buffers.string_bytes.items)) {
+                if (resolutions[id].eql(resolution, buf, buf)) {
                     return id;
                 }
 
                 if (npm_version) |range| {
-                    if (range.satisfies(resolutions[id].value.npm.version)) return id;
+                    if (range.satisfies(resolutions[id].value.npm.version, buf, buf)) return id;
                 }
             }
         },
@@ -1712,16 +1714,35 @@ pub fn getOrPutID(this: *Lockfile, id: PackageID, name_hash: PackageNameHash) !v
         var index: *PackageIndex.Entry = gpe.value_ptr;
 
         switch (index.*) {
-            .PackageID => |single| {
+            .PackageID => |existing_id| {
                 var ids = try PackageIDList.initCapacity(this.allocator, 8);
-                ids.appendAssumeCapacity(single);
-                ids.appendAssumeCapacity(id);
+                ids.items.len = 2;
+
+                const resolutions = this.packages.items(.resolution);
+                const buf = this.buffers.string_bytes.items;
+
+                ids.items[0..2].* = if (resolutions[id].order(&resolutions[existing_id], buf, buf) == .gt)
+                    .{ id, existing_id }
+                else
+                    .{ existing_id, id };
+
                 index.* = .{
                     .PackageIDMultiple = ids,
                 };
             },
-            .PackageIDMultiple => {
-                try index.PackageIDMultiple.append(this.allocator, id);
+            .PackageIDMultiple => |*existing_ids| {
+                const resolutions = this.packages.items(.resolution);
+                const buf = this.buffers.string_bytes.items;
+
+                for (existing_ids.items, 0..) |existing_id, i| {
+                    if (resolutions[id].order(&resolutions[existing_id], buf, buf) == .gt) {
+                        try existing_ids.insert(this.allocator, i, id);
+                        return;
+                    }
+                }
+
+                // append to end because it's the smallest or equal to the smallest
+                try existing_ids.append(this.allocator, id);
             },
         }
     } else {
@@ -3109,7 +3130,7 @@ pub const Package = extern struct {
             .npm => if (comptime tag != null)
                 unreachable
             else if (workspace_version) |ver| {
-                if (dependency_version.value.npm.version.satisfies(ver)) {
+                if (dependency_version.value.npm.version.satisfies(ver, buf, buf)) {
                     for (package_dependencies[0..dependencies_count]) |dep| {
                         // `dependencies` & `workspaces` defined within the same `package.json`
                         if (dep.version.tag == .workspace and dep.name_hash == name_hash) {
@@ -3134,7 +3155,7 @@ pub const Package = extern struct {
             .workspace => if (workspace_path) |path| {
                 if (workspace_range) |range| {
                     if (workspace_version) |ver| {
-                        if (range.satisfies(ver)) {
+                        if (range.satisfies(ver, buf, buf)) {
                             dependency_version.literal = path;
                             dependency_version.value.workspace = path;
                         }
@@ -3190,7 +3211,7 @@ pub const Package = extern struct {
                         if (switch (package_dep.version.tag) {
                             // `dependencies` & `workspaces` defined within the same `package.json`
                             .npm => String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash and
-                                package_dep.version.value.npm.version.satisfies(ver),
+                                package_dep.version.value.npm.version.satisfies(ver, buf, buf),
                             // `workspace:*`
                             .workspace => workspace_entry.found_existing and
                                 String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash,
@@ -3266,7 +3287,7 @@ pub const Package = extern struct {
         const Map = bun.StringArrayHashMap(Entry);
         pub const Entry = struct {
             name: string,
-            version: ?Semver.Version,
+            version: ?string,
         };
 
         pub fn init(allocator: std.mem.Allocator) WorkspaceMap {
@@ -3321,7 +3342,7 @@ pub const Package = extern struct {
     const WorkspaceEntry = struct {
         path: []const u8 = "",
         name: []const u8 = "",
-        version: ?Semver.Version = null,
+        version: ?[]const u8 = null,
     };
 
     fn processWorkspaceName(
@@ -3356,18 +3377,14 @@ pub const Package = extern struct {
         if (!workspace_json.has_found_name) {
             return error.MissingPackageName;
         }
-        bun.copy(u8, name_to_copy[0..], workspace_json.found_name);
+        @memcpy(name_to_copy[0..workspace_json.found_name.len], workspace_json.found_name);
         var entry = WorkspaceEntry{
             .name = name_to_copy[0..workspace_json.found_name.len],
             .path = path_to_use,
         };
         debug("processWorkspaceName({s}) = {s}", .{ path_to_use, entry.name });
         if (workspace_json.has_found_version) {
-            const version = SlicedString.init(workspace_json.found_version, workspace_json.found_version);
-            const result = Semver.Version.parse(version);
-            if (result.valid and result.wildcard == .none) {
-                entry.version = result.version.fill();
-            }
+            entry.version = try allocator.dupe(u8, workspace_json.found_version);
         }
         return entry;
     }
@@ -3482,6 +3499,9 @@ pub const Package = extern struct {
                 builder.count(workspace_entry.name);
                 builder.count(input_path);
                 builder.cap += bun.MAX_PATH_BYTES;
+                if (workspace_entry.version) |version_string| {
+                    builder.count(version_string);
+                }
             }
 
             try workspace_names.insert(input_path, .{
@@ -4051,6 +4071,20 @@ pub const Package = extern struct {
                 for (workspace_names.values(), workspace_names.keys()) |entry, path| {
                     const external_name = string_builder.append(ExternalString, entry.name);
 
+                    const workspace_version = brk: {
+                        if (entry.version) |version_string| {
+                            const external_version = string_builder.append(ExternalString, version_string);
+                            allocator.free(version_string);
+                            const sliced = external_version.value.sliced(lockfile.buffers.string_bytes.items);
+                            const result = Semver.Version.parse(sliced);
+                            if (result.valid and result.wildcard == .none) {
+                                break :brk result.version.fill();
+                            }
+                        }
+
+                        break :brk null;
+                    };
+
                     if (try parseDependency(
                         lockfile,
                         allocator,
@@ -4063,7 +4097,7 @@ pub const Package = extern struct {
                         total_dependencies_count,
                         in_workspace,
                         .workspace,
-                        entry.version,
+                        workspace_version,
                         external_name,
                         path,
                         logger.Loc.Empty,
@@ -4078,8 +4112,8 @@ pub const Package = extern struct {
                         total_dependencies_count += 1;
 
                         try lockfile.workspace_paths.put(allocator, external_name.hash, dep.version.value.workspace);
-                        if (entry.version) |v| {
-                            try lockfile.workspace_versions.put(allocator, external_name.hash, v);
+                        if (workspace_version) |version| {
+                            try lockfile.workspace_versions.put(allocator, external_name.hash, version);
                         }
                     }
                 }
@@ -5073,6 +5107,7 @@ pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaH
 pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Version) ?PackageID {
     const name_hash = String.Builder.stringHash(package_name);
     const entry = this.package_index.get(name_hash) orelse return null;
+    const buf = this.buffers.string_bytes.items;
 
     switch (version.tag) {
         .npm => switch (entry) {
@@ -5080,7 +5115,7 @@ pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Ve
                 const resolutions = this.packages.items(.resolution);
 
                 if (comptime Environment.allow_assert) std.debug.assert(id < resolutions.len);
-                if (version.value.npm.version.satisfies(resolutions[id].value.npm.version)) {
+                if (version.value.npm.version.satisfies(resolutions[id].value.npm.version, buf, buf)) {
                     return id;
                 }
             },
@@ -5089,7 +5124,7 @@ pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Ve
 
                 for (ids.items) |id| {
                     if (comptime Environment.allow_assert) std.debug.assert(id < resolutions.len);
-                    if (version.value.npm.version.satisfies(resolutions[id].value.npm.version)) {
+                    if (version.value.npm.version.satisfies(resolutions[id].value.npm.version, buf, buf)) {
                         return id;
                     }
                 }

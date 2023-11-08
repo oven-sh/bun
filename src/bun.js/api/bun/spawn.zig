@@ -289,7 +289,7 @@ pub const PosixSpawn = struct {
     /// `execve` method.
     pub fn waitpid(pid: pid_t, flags: u32) Maybe(WaitPidResult) {
         const Status = c_int;
-        var status: Status = undefined;
+        var status: Status = 0;
         while (true) {
             const rc = system.waitpid(pid, &status, @as(c_int, @intCast(flags)));
             switch (errno(rc)) {

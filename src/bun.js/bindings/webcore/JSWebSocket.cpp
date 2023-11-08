@@ -209,7 +209,7 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
 
     Vector<String> protocols;
-
+    int rejectUnauthorized = -1;
     auto headersInit = std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>::ReturnType>();
     if (JSC::JSObject* options = optionsObjectValue.getObject()) {
         if (JSValue headersValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "headers"_s)))) {
@@ -230,10 +230,25 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
                 RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
             }
         }
+
+        if (JSValue tlsOptionsValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "tls"_s)))) {
+            if (!tlsOptionsValue.isUndefinedOrNull() && tlsOptionsValue.isObject()) {
+                if (JSC::JSObject* tlsOptions = tlsOptionsValue.getObject()) {
+
+                    if (JSValue rejectUnauthorizedValue = tlsOptions->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "rejectUnauthorized"_s)))) {
+                        if (!rejectUnauthorizedValue.isUndefinedOrNull() && rejectUnauthorizedValue.isBoolean()) {
+                            rejectUnauthorized = rejectUnauthorizedValue.asBoolean() ? 1 : 0;
+                        }
+                    }       
+                }
+            }
+
+        }
     }
 
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    auto object = WebSocket::create(*context, WTFMove(url), protocols, WTFMove(headersInit));
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());     
+    auto object = (rejectUnauthorized == -1) ? WebSocket::create(*context, WTFMove(url), protocols, WTFMove(headersInit)) : WebSocket::create(*context, WTFMove(url), protocols, WTFMove(headersInit), rejectUnauthorized ? true : false);
+
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);

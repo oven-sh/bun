@@ -69,6 +69,11 @@ public:
         return m_headers.size();
     }
 
+    inline uint32_t sizeAfterJoiningSetCookieHeader()
+    {
+        return m_headers.commonHeaders().size() + m_headers.uncommonHeaders().size() + (m_headers.getSetCookieHeaders().size() > 0);
+    }
+
     String fastGet(HTTPHeaderName name) const { return m_headers.get(name); }
     bool fastHas(HTTPHeaderName name) const { return m_headers.contains(name); }
     bool fastRemove(HTTPHeaderName name) { return m_headers.remove(name); }

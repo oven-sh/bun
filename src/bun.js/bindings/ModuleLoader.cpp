@@ -561,7 +561,7 @@ JSValue fetchCommonJSModule(
     Bun__transpileFile(bunVM, globalObject, specifier, referrer, res, false);
 
     if (res->success && res->result.value.commonJSExportsLen) {
-        target->evaluate(globalObject, Bun::toWTFString(*specifier).isolatedCopy(), res->result.value);
+        target->evaluate(globalObject, Bun::toWTFString(*specifier), res->result.value);
         RETURN_IF_EXCEPTION(scope, {});
         RELEASE_AND_RETURN(scope, target);
     }

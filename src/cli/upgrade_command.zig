@@ -394,8 +394,17 @@ pub const UpgradeCommand = struct {
 
         return null;
     }
-    const exe_subpath = Version.folder_name ++ std.fs.path.sep_str ++ "bun";
-    const profile_exe_subpath = Version.profile_folder_name ++ std.fs.path.sep_str ++ "bun-profile";
+
+    const exe_suffix = if (Environment.isWindows) ".exe" else "";
+
+    const exe_subpath = Version.folder_name ++ std.fs.path.sep_str ++ "bun" ++ exe_suffix;
+    const profile_exe_subpath = Version.profile_folder_name ++ std.fs.path.sep_str ++ "bun-profile" ++ exe_suffix;
+
+    const manual_upgrade_command = switch (Environment.os) {
+        .linux, .mac => "curl -fsSL https://bun.sh/install | bash",
+        .windows => "TODO",
+        else => "TODO",
+    };
 
     pub fn exec(ctx: Command.Context) !void {
         @setCold(true);
@@ -405,10 +414,10 @@ pub const UpgradeCommand = struct {
                 \\<r>Bun upgrade failed with error: <red><b>{s}<r>
                 \\
                 \\<cyan>Please upgrade manually<r>:
-                \\  <b>curl -fsSL https://bun.sh/install | bash<r>
+                \\  <b>{s}<r>
                 \\
                 \\
-            , .{@errorName(err)});
+            , .{ @errorName(err), manual_upgrade_command });
             Global.exit(1);
         };
     }
@@ -626,7 +635,7 @@ pub const UpgradeCommand = struct {
                     // Run a powershell script to unzip the file
                     var unzip_script = try std.fmt.allocPrint(
                         ctx.allocator,
-                        "Expand-Archive -Path {s} -DestinationPath {s} -Force",
+                        "Expand-Archive -Path {s} {s} -Force",
                         .{
                             tmpname,
                             tmpdir_path,
@@ -729,13 +738,13 @@ pub const UpgradeCommand = struct {
                 // Check if the versions are the same
                 const target_stat = target_dir.statFile(target_filename) catch |err| {
                     save_dir_.deleteTree(version_name) catch {};
-                    Output.prettyErrorln("<r><red>error:<r> Failed to stat target Bun {s}", .{@errorName(err)});
+                    Output.prettyErrorln("<r><red>error:<r> {s} while trying to stat target {s} ", .{ @errorName(err), target_filename });
                     Global.exit(1);
                 };
 
                 const dest_stat = save_dir.statFile(exe) catch |err| {
                     save_dir_.deleteTree(version_name) catch {};
-                    Output.prettyErrorln("<r><red>error:<r> Failed to stat source Bun {s}", .{@errorName(err)});
+                    Output.prettyErrorln("<r><red>error:<r> {s} while trying to stat source {s}", .{ @errorName(err), exe });
                     Global.exit(1);
                 };
 
@@ -744,13 +753,13 @@ pub const UpgradeCommand = struct {
 
                     const target_hash = bun.hash(target_dir.readFile(target_filename, input_buf) catch |err| {
                         save_dir_.deleteTree(version_name) catch {};
-                        Output.prettyErrorln("<r><red>error:<r> Failed to read target Bun {s}", .{@errorName(err)});
+                        Output.prettyErrorln("<r><red>error:<r> Failed to read target bun {s}", .{@errorName(err)});
                         Global.exit(1);
                     });
 
                     const source_hash = bun.hash(save_dir.readFile(exe, input_buf) catch |err| {
                         save_dir_.deleteTree(version_name) catch {};
-                        Output.prettyErrorln("<r><red>error:<r> Failed to read source Bun {s}", .{@errorName(err)});
+                        Output.prettyErrorln("<r><red>error:<r> Failed to read source bun {s}", .{@errorName(err)});
                         Global.exit(1);
                     });
 
@@ -769,21 +778,31 @@ pub const UpgradeCommand = struct {
                 }
             }
 
+            var outdated_filename: if (Environment.isWindows) ?stringZ else ?void = null;
+
             if (env_loader.map.get("BUN_DRY_RUN") == null) {
                 if (comptime Environment.isWindows) {
                     // On Windows, we cannot replace the running executable directly.
                     // we rename the old executable to a temporary name, and then move the new executable to the old name.
                     // This is because Windows locks the executable while it's running.
-
-                    // var tmpname = try std.fmt.allocPrint(ctx.allocator, "{s}.old.exe", .{target_filename});
-
-                } else {
-                    C.moveFileZ(save_dir.fd, exe, target_dir.fd, target_filename) catch |err| {
+                    current_executable_buf[target_dir_.len] = '\\';
+                    outdated_filename = try std.fmt.allocPrintZ(ctx.allocator, "{s}\\{s}.outdated", .{
+                        target_dirname,
+                        target_filename,
+                    });
+                    std.os.rename(destination_executable_, outdated_filename.?) catch |err| {
                         save_dir_.deleteTree(version_name) catch {};
-                        Output.prettyErrorln("<r><red>error:<r> Failed to move new version of Bun due to {s}. You could try the install script instead:\n   curl -fsSL https://bun.sh/install | bash", .{@errorName(err)});
+                        Output.prettyErrorln("<r><red>error:<r> Failed to rename current executable {s}", .{@errorName(err)});
                         Global.exit(1);
                     };
+                    current_executable_buf[target_dir_.len] = 0;
                 }
+
+                C.moveFileZ(save_dir.fd, exe, target_dir.fd, target_filename) catch |err| {
+                    save_dir_.deleteTree(version_name) catch {};
+                    Output.prettyErrorln("<r><red>error:<r> Failed to move new version of Bun due to {s}. You could try the install script instead:\n   curl -fsSL https://bun.sh/install | bash", .{@errorName(err)});
+                    Global.exit(1);
+                };
             }
 
             // Ensure completions are up to date.
@@ -849,7 +868,51 @@ pub const UpgradeCommand = struct {
             }
 
             Output.flush();
-            return;
+
+            if (Environment.isWindows) {
+                if (outdated_filename) |to_remove| {
+                    current_executable_buf[target_dir_.len] = '\\';
+                    var delete_old_script = try std.fmt.allocPrint(
+                        ctx.allocator,
+                        // What is this?
+                        // 1. spawns powershell
+                        // 2. waits for all processes with the same path as the current executable to exit (including the current process)
+                        // 3. deletes the old executable
+                        //
+                        // probably possible to hit a race condition, but i think the worst case is simply the file not getting deleted.
+                        //
+                        // in that edge case, the next time you upgrade it will simply override itself, fixing the bug.
+                        //
+                        // -NoNewWindow doesnt work, will keep the parent alive it seems
+                        // -WindowStyle Hidden seems to just do nothing, not sure why.
+                        // Using -WindowStyle Minimized seems to work, but you can spot a powershell icon appear in your taskbar for about ~1 second
+                        //
+                        // Alternative: we could simply do nothing and leave the `.outdated` file.
+                        \\Start-Process powershell.exe -WindowStyle Minimized -ArgumentList "-NoProfile","-ExecutionPolicy","Bypass","-Command",'&{{$ErrorActionPreference=''SilentlyContinue''; Get-Process|Where-Object{{ $_.Path -eq ''{s}'' }}|Wait-Process; Remove-Item -Path ''{s}'' -Force }};'; exit
+                    ,
+                        .{
+                            destination_executable_,
+                            to_remove,
+                        },
+                    );
+
+                    var delete_argv = [_]string{
+                        "powershell.exe",
+                        "-NoProfile",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-Command",
+                        delete_old_script,
+                    };
+
+                    _ = std.ChildProcess.run(.{
+                        .allocator = ctx.allocator,
+                        .argv = &delete_argv,
+                        .cwd = tmpdir_path,
+                        .max_output_bytes = 512,
+                    }) catch {};
+                }
+            }
         }
     }
 };

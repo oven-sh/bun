@@ -4096,27 +4096,27 @@ it("should install peerDependencies when needed", async () => {
   expect(requested).toBe(3);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "bar", "baz", "moo"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual(["baz-exec", "baz-run"]);
-  expect(await readlink(join(package_dir, "node_modules", ".bin", "baz-exec"))).toBe(
-    join("..", "..", "moo", "node_modules", "baz", "index.js"),
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "baz-exec"))).toBe(join("..", "baz", "index.js"));
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "baz-run"))).toBe(
+    join("..", "..", "bar", "node_modules", "baz", "index.js"),
   );
-  expect(await readlink(join(package_dir, "node_modules", ".bin", "baz-run"))).toBe(join("..", "baz", "index.js"));
   expect(await readlink(join(package_dir, "node_modules", "bar"))).toBe(join("..", "bar"));
-  expect(await readdirSorted(join(package_dir, "bar"))).toEqual(["package.json"]);
+  expect(await readdirSorted(join(package_dir, "bar"))).toEqual(["node_modules", "package.json"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
   expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
-    name: "baz",
-    version: "0.0.3",
-    bin: {
-      "baz-run": "index.js",
-    },
-  });
-  expect(await readlink(join(package_dir, "node_modules", "moo"))).toBe(join("..", "moo"));
-  expect(await readdirSorted(join(package_dir, "moo"))).toEqual(["node_modules", "package.json"]);
-  expect(await file(join(package_dir, "moo", "node_modules", "baz", "package.json")).json()).toEqual({
     name: "baz",
     version: "0.0.5",
     bin: {
       "baz-exec": "index.js",
+    },
+  });
+  expect(await readlink(join(package_dir, "node_modules", "moo"))).toBe(join("..", "moo"));
+  expect(await readdirSorted(join(package_dir, "moo"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "bar", "node_modules", "baz", "package.json")).json()).toEqual({
+    name: "baz",
+    version: "0.0.3",
+    bin: {
+      "baz-run": "index.js",
     },
   });
   await access(join(package_dir, "bun.lockb"));

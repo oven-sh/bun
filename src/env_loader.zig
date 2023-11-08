@@ -34,6 +34,7 @@ pub const Loader = struct {
     quiet: bool = false,
 
     did_load_process: bool = false,
+    reject_unauthorized: ?bool = null,
 
     pub fn has(this: *const Loader, input: []const u8) bool {
         const value = this.map.get(input) orelse return false;
@@ -93,11 +94,21 @@ pub const Loader = struct {
     }
 
     pub fn getTLSRejectUnauthorized(this: *Loader) bool {
+        if (this.reject_unauthorized) |reject_unauthorized| {
+            return reject_unauthorized;
+        }
         if (this.map.get("NODE_TLS_REJECT_UNAUTHORIZED")) |reject| {
-            if (strings.eql(reject, "0")) return false;
-            if (strings.eql(reject, "false")) return false;
+            if (strings.eql(reject, "0")) {
+                this.reject_unauthorized = false;
+                return false;
+            }
+            if (strings.eql(reject, "false")) {
+                this.reject_unauthorized = false;
+                return false;
+            }
         }
         // default: true
+        this.reject_unauthorized = true;
         return true;
     }
 
@@ -904,7 +915,12 @@ pub const Map = struct {
         while (iter_.next()) |entry| {
             // Allow var from .env.development or .env.production to be loaded again
             if (!entry.value_ptr.conditional) {
-                try env_map.putMove(bun.constStrToU8(entry.key_ptr.*), bun.constStrToU8(entry.value_ptr.value));
+                // TODO(@paperdave): this crashes on windows. i remember there being a merge conflict with these two implementations. not sure what we should keep
+                if (Environment.isWindows) {
+                    try env_map.put(bun.constStrToU8(entry.key_ptr.*), bun.constStrToU8(entry.value_ptr.value));
+                } else {
+                    try env_map.putMove(bun.constStrToU8(entry.key_ptr.*), bun.constStrToU8(entry.value_ptr.value));
+                }
             }
         }
 

@@ -728,7 +728,12 @@ class ClientHttp2Stream extends Duplex {
     }
   }
 }
-
+function connectWithProtocol(protocol: string, options: Http2ConnectOptions | string | URL, listener?: Function) {
+  if (protocol === "http:") {
+    return net.connect(options, listener);
+  }
+  return tls.connect(options, listener);
+}
 function emitWantTrailersNT(streams, streamId) {
   const stream = streams.get(streamId);
   if (stream) {
@@ -952,29 +957,22 @@ class ClientHttp2Session extends Http2Session {
     }
   }
   get alpnProtocol() {
-    const protocol = this.#alpnProtocol;
-    if (protocol) return protocol;
-    const socket = this[bunHTTP2Socket];
-    if (!socket) return;
-    return (socket as TLSSocket).alpnProtocol;
+    return this.#alpnProtocol;
   }
   #onConnect() {
     const socket = this[bunHTTP2Socket] as TLSSocket;
     if (!socket) return;
     // check if h2 is supported only for TLSSocket or Socket
-    if (socket instanceof Socket) {
+    if (socket instanceof TLSSocket) {
       if (socket.alpnProtocol !== "h2") {
         socket.end();
         const error = new Error("ERR_HTTP2_ERROR: h2 is not supported");
         error.code = "ERR_HTTP2_ERROR";
         this.emit("error", error);
       }
-      this.#alpnProtocol = "h2";
       const origin = socket[bunTLSConnectOptions]?.serverName || socket.remoteAddress;
       this.#originSet.add(origin);
       this.emit("origin", this.originSet);
-    } else {
-      this.#alpnProtocol = "h2";
     }
     // TODO: make a native bindings on data and write and fallback to non-native
     socket.on("data", this.#onRead.bind(this));
@@ -1150,7 +1148,8 @@ class ClientHttp2Session extends Http2Session {
         this.#onConnect();
       }
     } else {
-      socket = tls.connect(
+      socket = connectWithProtocol(
+        protocol,
         options
           ? {
               host: url.hostname,
@@ -1166,6 +1165,7 @@ class ClientHttp2Session extends Http2Session {
         this.#onConnect.bind(this),
       );
       this[bunHTTP2Socket] = socket;
+      this.#alpnProtocol = protocol === "http:" ? "h2c" : "h2";
     }
     this.#encrypted = socket instanceof TLSSocket;
 

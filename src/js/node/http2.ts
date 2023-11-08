@@ -1,4 +1,7 @@
 // Hardcoded module "node:http2"
+
+const { isTypedArray } = require("node:util/types");
+
 // This is a stub! None of this is actually implemented yet.
 const { hideFromStack, throwNotImplemented } = require("$shared");
 
@@ -733,6 +736,13 @@ function emitWantTrailersNT(streams, streamId) {
   }
 }
 
+function emitStreamNT(self, streams, streamId) {
+  const stream = streams.get(streamId);
+  if (stream) {
+    self.emit("stream", stream);
+  }
+}
+
 function emitStreamErrorNT(self, streams, streamId, error, destroy) {
   const stream = streams.get(streamId);
   const error_instance = streamErrorFromCode(error);
@@ -742,7 +752,6 @@ function emitStreamErrorNT(self, streams, streamId, error, destroy) {
     }
     stream.rstCode = error;
     stream.emit("error", error_instance);
-    self.emit("sessionError", error_instance);
     if (destroy) stream.destroy(error_instance);
   }
   self.emit("streamError", error_instance);
@@ -759,7 +768,6 @@ function emitAbortedNT(self, streams, streamId, error) {
     stream.rstCode = constants.NGHTTP2_CANCEL;
     stream.emit("aborted", error);
     stream.emit("error", error_instance);
-    self.emit("sessionError", error_instance);
   }
   self.emit("streamError", error_instance);
 }
@@ -793,10 +801,7 @@ class ClientHttp2Session extends Http2Session {
     binaryType: "buffer",
     streamStart(self: ClientHttp2Session, streamId: number) {
       self.#connecions++;
-      var stream = self.#streams.get(streamId);
-      if (stream) {
-        stream.emit("session", stream);
-      }
+      process.nextTick(emitStreamNT, self, self.#streams, streamId);
     },
     streamError(self: ClientHttp2Session, streamId: number, error: number) {
       var stream = self.#streams.get(streamId);
@@ -807,7 +812,6 @@ class ClientHttp2Session extends Http2Session {
         }
         stream.rstCode = error;
         stream.emit("error", error_instance);
-        self.emit("sessionError", error_instance);
         self.emit("streamError", error_instance);
       } else {
         process.nextTick(emitStreamErrorNT, self, self.#streams, streamId, error);
@@ -896,7 +900,7 @@ class ClientHttp2Session extends Http2Session {
         stream.rstCode = constants.NGHTTP2_CANCEL;
         stream.emit("aborted", error);
         stream.emit("error", error_instance);
-        self.emit("sessionError", error_instance);
+        self.emit("streamError", error_instance);
       } else {
         process.nextTick(emitAbortedNT, self, self.#streams, streamId, error);
       }
@@ -1057,23 +1061,37 @@ class ClientHttp2Session extends Http2Session {
     return this[bunHTTP2Socket]?.setTimeout(msecs, callback);
   }
   ping(payload, callback) {
-    payload = payload || Buffer.alloc(8);
+    if (typeof payload === "function") {
+      callback = payload;
+      payload = Buffer.alloc(8);
+    } else {
+      payload = payload || Buffer.alloc(8);
+    }
+    if (!(payload instanceof Buffer) && !isTypedArray(payload)) {
+      const error = new TypeError("ERR_INVALID_ARG_TYPE: payload must be a Buffer or TypedArray");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
     const parser = this.#parser;
     if (!parser) return false;
     if (!this[bunHTTP2Socket]) return false;
 
     if (typeof callback === "function") {
       if (payload.byteLength !== 8) {
-        callback(new Error("ERR_HTTP2_PING_PAYLOAD_SIZE"), 0, payload);
+        const error = new RangeError("ERR_HTTP2_PING_LENGTH: HTTP2 ping payload must be 8 bytes");
+        error.code = "ERR_HTTP2_PING_LENGTH";
+        callback(error, 0, payload);
         return;
       }
       if (this.#pingCallbacks) {
         this.#pingCallbacks.push([callback, Date.now()]);
       } else {
-        this.#pingCallbacks = [callback, Date.now()];
+        this.#pingCallbacks = [[callback, Date.now()]];
       }
     } else if (payload.byteLength !== 8) {
-      throw new Error("ERR_HTTP2_PING_PAYLOAD_SIZE");
+      const error = new RangeError("ERR_HTTP2_PING_LENGTH: HTTP2 ping payload must be 8 bytes");
+      error.code = "ERR_HTTP2_PING_LENGTH";
+      throw error;
     }
 
     parser.ping(payload);

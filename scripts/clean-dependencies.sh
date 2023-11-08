@@ -25,3 +25,4 @@ git_reset $BUN_DEPS_DIR/picohttpparser
 git_reset $BUN_DEPS_DIR/tinycc
 git_reset $BUN_DEPS_DIR/zlib
 git_reset $BUN_DEPS_DIR/zstd
+git_reset $BUN_DEPS_DIR/lshpack

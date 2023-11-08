@@ -649,13 +649,11 @@ describe("Client Basics", () => {
     expect(response_headers[":status"]).toBe(200);
     expect(data).toBeFalsy();
   });
-
   it("state should work", async () => {
     const { promise, resolve, reject } = Promise.withResolvers();
     const client = http2.connect("https://www.example.com");
     client.on("error", reject);
     const req = client.request({ ":path": "/", "test-header": "test-value" });
-
     {
       const state = req.state;
       expect(typeof state).toBe("object");
@@ -666,7 +664,6 @@ describe("Client Basics", () => {
       expect(typeof state.remoteClose).toBe("number");
       expect(typeof state.localWindowSize).toBe("number");
     }
-
     // Test Session State.
     {
       const state = client.state;
@@ -681,7 +678,6 @@ describe("Client Basics", () => {
       expect(typeof state.deflateDynamicTableSize).toBe("number");
       expect(typeof state.inflateDynamicTableSize).toBe("number");
     }
-
     let response_headers = null;
     req.on("response", (headers, flags) => {
       response_headers = headers;
@@ -693,7 +689,6 @@ describe("Client Basics", () => {
     await promise;
     expect(response_headers[":status"]).toBe(200);
   });
-
   it("settings and properties should work", async () => {
     const assertSettings = settings => {
       expect(settings).toBeDefined();
@@ -706,7 +701,6 @@ describe("Client Basics", () => {
       expect(typeof settings.maxHeaderListSize).toBe("number");
       expect(typeof settings.maxHeaderSize).toBe("number");
     };
-
     const { promise, resolve, reject } = Promise.withResolvers();
     const client = http2.connect("https://www.example.com");
     client.on("error", reject);
@@ -714,7 +708,6 @@ describe("Client Basics", () => {
     expect(client.alpnProtocol).toBeUndefined();
     expect(client.encrypted).toBeTrue();
     expect(client.closed).toBeFalse();
-
     expect(client.destroyed).toBeFalse();
     expect(client.originSet.length).toBe(0);
     expect(client.pendingSettingsAck).toBeTrue();
@@ -722,12 +715,10 @@ describe("Client Basics", () => {
     client.on("origin", origin => {
       received_origin = origin;
     });
-
     assertSettings(client.localSettings);
     expect(client.remoteSettings).toBeNull();
     const headers = { ":path": "/" };
     const req = client.request(headers);
-
     expect(req.closed).toBeFalse();
     expect(req.destroyed).toBeFalse();
     // we always asign a stream id to the request
@@ -737,7 +728,6 @@ describe("Client Basics", () => {
     expect(req.sentHeaders).toEqual(headers);
     expect(req.sentTrailers).toBeUndefined();
     expect(req.sentInfoHeaders.length).toBe(0);
-
     let response_headers = null;
     req.on("response", (headers, flags) => {
       response_headers = headers;
@@ -754,7 +744,6 @@ describe("Client Basics", () => {
     expect(settings).toEqual(client.remoteSettings);
     expect(localSettings).toEqual(client.localSettings);
     client.destroy();
-
     expect(client.connecting).toBeFalse();
     expect(client.alpnProtocol).toBe("h2");
     expect(client.originSet.length).toBe(1);
@@ -766,5 +755,110 @@ describe("Client Basics", () => {
     expect(req.closed).toBeTrue();
     expect(req.destroyed).toBeTrue();
     expect(req.rstCode).toBe(http2.constants.NGHTTP2_NO_ERROR);
+  });
+  it("ping events should work", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const client = http2.connect("https://www.example.com");
+    client.on("error", reject);
+    client.on("connect", () => {
+      client.ping(Buffer.from("12345678"), (err, duration, payload) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve({ duration, payload });
+        }
+        client.close();
+      });
+    });
+    let received_ping;
+    client.on("ping", payload => {
+      received_ping = payload;
+    });
+    const result = await promise;
+    expect(typeof result.duration).toBe("number");
+    expect(result.duration).toBeGreaterThan(0);
+    expect(result.payload).toBeInstanceOf(Buffer);
+    expect(result.payload.byteLength).toBe(8);
+    expect(received_ping).toBeInstanceOf(Buffer);
+    expect(received_ping.byteLength).toBe(8);
+    expect(received_ping).toEqual(result.payload);
+    expect(received_ping).toEqual(Buffer.from("12345678"));
+  });
+  it("ping without events should work", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const client = http2.connect("https://www.example.com");
+    client.on("error", reject);
+    client.on("connect", () => {
+      client.ping((err, duration, payload) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve({ duration, payload });
+        }
+        client.close();
+      });
+    });
+    let received_ping;
+    client.on("ping", payload => {
+      received_ping = payload;
+    });
+    const result = await promise;
+    expect(typeof result.duration).toBe("number");
+    expect(result.duration).toBeGreaterThan(0);
+    expect(result.payload).toBeInstanceOf(Buffer);
+    expect(result.payload.byteLength).toBe(8);
+    expect(received_ping).toBeInstanceOf(Buffer);
+    expect(received_ping.byteLength).toBe(8);
+    expect(received_ping).toEqual(result.payload);
+  });
+  it("ping with wrong payload length events should error", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const client = http2.connect("https://www.example.com");
+    client.on("error", resolve);
+    client.on("connect", () => {
+      client.ping(Buffer.from("oops"), (err, duration, payload) => {
+        if (err) {
+          resolve(err);
+        } else {
+          reject("unreachable");
+        }
+        client.close();
+      });
+    });
+    const result = await promise;
+    expect(result).toBeDefined();
+    expect(result.code).toBe("ERR_HTTP2_PING_LENGTH");
+  });
+  it("ping with wrong payload type events should throw", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const client = http2.connect("https://www.example.com");
+    client.on("error", resolve);
+    client.on("connect", () => {
+      try {
+        client.ping("oops", (err, duration, payload) => {
+          reject("unreachable");
+          client.close();
+        });
+      } catch (err) {
+        resolve(err);
+        client.close();
+      }
+    });
+    const result = await promise;
+    expect(result).toBeDefined();
+    expect(result.code).toBe("ERR_INVALID_ARG_TYPE");
+  });
+  it("stream event should work", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const client = http2.connect("https://www.example.com");
+    client.on("error", reject);
+    client.on("stream", stream => {
+      resolve(stream);
+      client.close();
+    });
+    client.request({ ":path": "/" }).end();
+    const stream = await promise;
+    expect(stream).toBeDefined();
+    expect(stream.id).toBe(1);
   });
 });

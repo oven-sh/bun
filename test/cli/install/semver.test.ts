@@ -34,6 +34,31 @@ describe("Bun.semver.satisfies()", () => {
     }).toThrow("Cannot convert a symbol to a string");
   });
 
+  test("failures does not cause weird memory issues", () => {
+    for (let i = 0; i < 1e5; i++) {
+      if (!satisfies("1.2.3", "1.2.3")) {
+        expect().fail("Expected true");
+      }
+
+      if (satisfies("lol||shark", "1.2.3")) {
+        expect().fail("Expected false");
+      }
+
+      if (satisfies("^1.2.3||lol||!!#4_", "+!+!+!_)31231.2.3")) {
+        expect().fail("Expected false");
+      }
+
+      if (!satisfies("^1.2.3", "1.2.3")) {
+        expect().fail("Expected true");
+      }
+
+      if (!satisfies("1.2.3", "^1.2.3")) {
+        expect().fail("Expected true");
+      }
+    }
+    Bun.gc(true);
+  });
+
   test("exact versions", () => {
     testSatisfies("1.2.3", "1.2.3", true);
     testSatisfies("4", "4", false);

@@ -1505,6 +1505,9 @@ pub const Query = struct {
                 range.left.op == .eql and
                 !range.hasRight())
             {
+                if (comptime Environment.allow_assert) {
+                    std.debug.assert(this.tail == null);
+                }
                 return range.left.version;
             }
 

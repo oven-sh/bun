@@ -435,7 +435,7 @@ RUN mkdir -p build bun-webkit
 
 # lol
 COPY src/bun.js/bindings/sqlite/sqlite3.c ${BUN_DIR}/src/bun.js/bindings/sqlite/sqlite3.c
-COPY src/deps/lshpack ${BUN_DIR}/src/deps/lshpack
+COPY src/deps/ls-hpack ${BUN_DIR}/src/deps/ls-hpack
 
 COPY src/symbols.dyn src/linker.lds ${BUN_DIR}/src/
 

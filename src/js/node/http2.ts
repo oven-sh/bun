@@ -587,10 +587,6 @@ class ClientHttp2Stream extends Duplex {
     const session = this[bunHTTP2Session];
     assertSession(session);
     session.setTimeout(timeout, callback);
-
-    if (typeof callback == "function") {
-      callback();
-    }
   }
 
   get closed() {
@@ -1009,11 +1005,9 @@ class ClientHttp2Session extends Http2Session {
   #onTimeout() {
     for (let [_, stream] of this.#streams) {
       stream.emit("timeout");
-      stream.end();
     }
-    this.#parser?.detach();
-    this.#parser = null;
     this.emit("timeout");
+    this.destroy();
   }
   get connecting() {
     const socket = this[bunHTTP2Socket];

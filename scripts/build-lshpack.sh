@@ -17,4 +17,4 @@ cmake "${CMAKE_FLAGS[@]}" . \
 
 ninja
 
-cp ./liblshpack.a $BUN_DEPS_OUT_DIR/liblshpack.a
+cp ./libls-hpack.a $BUN_DEPS_OUT_DIR/liblshpack.a

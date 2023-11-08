@@ -279,6 +279,15 @@ WORKDIR $BUN_DIR
 RUN cd $BUN_DIR && \
   make base64 && rm -rf src/deps/base64 Makefile
 
+FROM bun-base as lshpack
+
+ARG BUN_DIR
+ARG CPU_TARGET
+ENV CPU_TARGET=${CPU_TARGET}
+
+COPY Makefile ${BUN_DIR}/Makefile
+COPY src/deps/lshpack ${BUN_DIR}/src/deps/lshpack
+
 FROM bun-base as zstd
 
 ARG BUN_DIR
@@ -448,6 +457,7 @@ COPY --from=mimalloc ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=zstd ${BUN_DEPS_OUT_DIR}/*  ${BUN_DEPS_OUT_DIR}/
 COPY --from=tinycc ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=c-ares ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
+COPY --from=lshpack ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=bun-compile-zig-obj /tmp/bun-zig.o ${BUN_DIR}/build/bun-zig.o
 COPY --from=bun-cpp-objects ${BUN_DIR}/build/bun-cpp-objects.a ${BUN_DIR}/build/bun-cpp-objects.a
 COPY --from=bun-cpp-objects ${BUN_DIR}/bun-webkit/lib ${BUN_DIR}/bun-webkit/lib

@@ -1,6 +1,6 @@
 const { satisfies } = Bun.semver;
 
-function testSatisfies(left: string, right: string, expected: boolean) {
+function testSatisfies(left: any, right: any, expected: boolean) {
   expect(satisfies(left, right)).toBe(expected);
   expect(satisfies(right, left)).toBe(expected);
   const leftBuffer = Buffer.from(left);
@@ -23,6 +23,15 @@ describe("Bun.semver.satisfies()", () => {
       satisfies("1.2.3");
     }).toThrow("Expected two arguments");
     expect(satisfies("1.2.3", "1.2.3", "blah")).toBeTrue();
+    expect(() => {
+      satisfies(Symbol.for("~1.2.3"), "1.2.3");
+    }).toThrow("Cannot convert a symbol to a string");
+    expect(() => {
+      satisfies(Symbol.for("~1.2.3"), Symbol.for("1.2.3"));
+    }).toThrow("Cannot convert a symbol to a string");
+    expect(() => {
+      satisfies("~1.2.3", Symbol.for("1.2.3"));
+    }).toThrow("Cannot convert a symbol to a string");
   });
 
   test("exact versions", () => {

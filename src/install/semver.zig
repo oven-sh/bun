@@ -10,6 +10,7 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
+const JSC = bun.JSC;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 
 /// String type that stores either an offset/length into an external buffer or a string inline directly
@@ -2027,6 +2028,94 @@ pub const Query = struct {
         }
 
         return list;
+    }
+};
+
+pub const SemverObject = struct {
+    pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        const object = JSC.JSValue.createEmptyObject(globalThis, 2);
+
+        object.put(
+            globalThis,
+            JSC.ZigString.static("satisfies"),
+            JSC.NewFunction(
+                globalThis,
+                JSC.ZigString.static("satisfies"),
+                2,
+                SemverObject.satisfies,
+                false,
+            ),
+        );
+
+        return object;
+    }
+
+    pub fn satisfies(
+        globalThis: *JSC.JSGlobalObject,
+        callFrame: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        const allocator = globalThis.allocator();
+        const arguments = callFrame.arguments(2).slice();
+        if (arguments.len < 2) {
+            globalThis.throw("Expected 2 arguments", .{});
+            return .zero;
+        }
+
+        const left_arg = arguments[0];
+        const right_arg = arguments[1];
+
+        if (!left_arg.isString() and !right_arg.isString()) return .null;
+
+        const left_string = left_arg.toBunString(globalThis);
+        const right_string = right_arg.toBunString(globalThis);
+
+        const left = left_string.toUTF8(allocator);
+        const right = right_string.toUTF8(allocator);
+
+        const left_group = Query.parse(
+            allocator,
+            left.slice(),
+            SlicedString.init(left.slice(), left.slice()),
+        ) catch return .false;
+
+        const right_group = Query.parse(
+            allocator,
+            right.slice(),
+            SlicedString.init(right.slice(), right.slice()),
+        ) catch return .false;
+
+        const right_list = right_group.head;
+        const left_list = left_group.head;
+        const right_range = right_list.head.range;
+        const left_range = left_list.head.range;
+
+        const right_is_version = right_list.next == null and
+            right_list.head.next == null and
+            right_range.hasLeft() and
+            right_range.left.op == .eql and
+            !right_range.hasRight();
+
+        const left_is_version = left_list.next == null and
+            left_list.head.next == null and
+            left_range.hasLeft() and
+            left_range.left.op == .eql and
+            !left_range.hasRight();
+
+        if (left_is_version and right_is_version) {
+            return JSC.jsBoolean(left_range.left.version.eql(right_range.left.version));
+        }
+
+        if (left_is_version) {
+            return JSC.jsBoolean(right_group.satisfies(left_range.left.version, right.slice(), left.slice()));
+        }
+
+        if (right_is_version) {
+            return JSC.jsBoolean(left_group.satisfies(right_range.left.version, left.slice(), right.slice()));
+        }
+
+        // received two groups
+        // TODO: test if the two groups intersect
+        return .false;
     }
 };
 

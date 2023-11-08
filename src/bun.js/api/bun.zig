@@ -69,6 +69,7 @@ pub const BunObject = struct {
     pub const stdin = Bun.getStdin;
     pub const stdout = Bun.getStdout;
     pub const unsafe = Bun.getUnsafe;
+    pub const semver = Bun.getSemver;
     // --- Getters ---
 
     fn getterName(comptime baseName: anytype) [:0]const u8 {
@@ -114,6 +115,7 @@ pub const BunObject = struct {
         @export(BunObject.stdin, .{ .name = getterName("stdin") });
         @export(BunObject.stdout, .{ .name = getterName("stdout") });
         @export(BunObject.unsafe, .{ .name = getterName("unsafe") });
+        @export(BunObject.semver, .{ .name = getterName("semver") });
         // --- Getters --
 
         // -- Callbacks --
@@ -234,6 +236,7 @@ const ErrorableString = JSC.ErrorableString;
 const is_bindgen = JSC.is_bindgen;
 const max_addressible_memory = std.math.maxInt(u56);
 const Async = bun.Async;
+const SemverObject = @import("../../install/semver.zig").SemverObject;
 
 threadlocal var css_imports_list_strings: [512]ZigString = undefined;
 threadlocal var css_imports_list: [512]Api.StringPointer = undefined;
@@ -2962,6 +2965,13 @@ pub fn getTOMLObject(
     _: *JSC.JSObject,
 ) callconv(.C) JSC.JSValue {
     return TOMLObject.create(globalThis);
+}
+
+pub fn getSemver(
+    globalThis: *JSC.JSGlobalObject,
+    _: *JSC.JSObject,
+) callconv(.C) JSC.JSValue {
+    return SemverObject.create(globalThis);
 }
 
 pub fn getUnsafe(

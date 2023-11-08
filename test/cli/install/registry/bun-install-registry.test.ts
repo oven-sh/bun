@@ -382,73 +382,276 @@ describe("semver", () => {
   });
 });
 
-describe("prereleases", () => {
-  const prereleaseTests = [
-    [
-      { title: "specific", depVersion: "1.0.0-future.1", expected: "1.0.0-future.1" },
-      { title: "latest", depVersion: "latest", expected: "1.0.0-future.4" },
-      { title: "range starting with latest", depVersion: "^1.0.0-future.4", expected: "1.0.0-future.4" },
-      { title: "range above latest", depVersion: "^1.0.0-future.5", expected: "1.0.0-future.7" },
-    ],
-    [
-      { title: "#6683", depVersion: "^1.0.0-next.23", expected: "1.0.0-next.23" },
-      {
-        title: "greater than or equal to",
-        depVersion: ">=1.0.0-next.23",
-        expected: "1.0.0-next.23",
-      },
-      { title: "latest", depVersion: "latest", expected: "0.5.0" },
-      { title: "greater than or equal to latest", depVersion: ">=0.5.0", expected: "0.5.0" },
-    ],
-  ];
-  for (let i = 0; i < prereleaseTests.length; i++) {
-    const tests = prereleaseTests[i];
-    const depName = `prereleases-${i + 1}`;
-    describe(`${i}`, () => {
-      for (const { title, depVersion, expected } of tests) {
-        test(title, async () => {
-          await writeFile(
-            join(packageDir, "package.json"),
-            JSON.stringify({
-              name: "foo",
-              version: "1.0.0",
-              dependencies: {
-                [`${depName}`]: depVersion,
-              },
-            }),
-          );
+const prereleaseTests = [
+  [
+    { title: "specific", depVersion: "1.0.0-future.1", expected: "1.0.0-future.1" },
+    { title: "latest", depVersion: "latest", expected: "1.0.0-future.4" },
+    { title: "range starting with latest", depVersion: "^1.0.0-future.4", expected: "1.0.0-future.4" },
+    { title: "range above latest", depVersion: "^1.0.0-future.5", expected: "1.0.0-future.7" },
+  ],
+  [
+    { title: "#6683", depVersion: "^1.0.0-next.23", expected: "1.0.0-next.23" },
+    {
+      title: "greater than or equal to",
+      depVersion: ">=1.0.0-next.23",
+      expected: "1.0.0-next.23",
+    },
+    { title: "latest", depVersion: "latest", expected: "0.5.0" },
+    { title: "greater than or equal to latest", depVersion: ">=0.5.0", expected: "0.5.0" },
+  ],
 
-          const { stdout, stderr, exited } = spawn({
-            cmd: [bunExe(), "install"],
-            cwd: packageDir,
-            stdout: null,
-            stdin: "pipe",
-            stderr: "pipe",
-            env,
-          });
+  // package "prereleases-3" has four versions, all with prerelease tags:
+  // - 5.0.0-alpha.150
+  // - 5.0.0-alpha.151
+  // - 5.0.0-alpha.152
+  // - 5.0.0-alpha.153
+  [
+    { title: "#6956", depVersion: "^5.0.0-alpha.153", expected: "5.0.0-alpha.153" },
+    { title: "range matches highest possible", depVersion: "^5.0.0-alpha.152", expected: "5.0.0-alpha.153" },
+    { title: "exact", depVersion: "5.0.0-alpha.152", expected: "5.0.0-alpha.152" },
+    { title: "exact latest", depVersion: "5.0.0-alpha.153", expected: "5.0.0-alpha.153" },
+    { title: "latest", depVersion: "latest", expected: "5.0.0-alpha.153" },
+    { title: "~ lower than latest", depVersion: "~5.0.0-alpha.151", expected: "5.0.0-alpha.153" },
+    {
+      title: "~ equal semver and lower non-existant prerelease",
+      depVersion: "~5.0.0-alpha.100",
+      expected: "5.0.0-alpha.153",
+    },
+    {
+      title: "^ equal semver and lower non-existant prerelease",
+      depVersion: "^5.0.0-alpha.100",
+      expected: "5.0.0-alpha.153",
+    },
+    {
+      title: "~ and ^ latest prerelease",
+      depVersion: "~5.0.0-alpha.153 || ^5.0.0-alpha.153",
+      expected: "5.0.0-alpha.153",
+    },
+    {
+      title: "< latest prerelease",
+      depVersion: "<5.0.0-alpha.153",
+      expected: "5.0.0-alpha.152",
+    },
+    {
+      title: "< lower than latest prerelease",
+      depVersion: "<5.0.0-alpha.152",
+      expected: "5.0.0-alpha.151",
+    },
+    {
+      title: "< higher than latest prerelease",
+      depVersion: "<5.0.0-alpha.22343423",
+      expected: "5.0.0-alpha.153",
+    },
+    {
+      title: "< at lowest possible version",
+      depVersion: "<5.0.0-alpha.151",
+      expected: "5.0.0-alpha.150",
+    },
+    {
+      title: "<= latest prerelease",
+      depVersion: "<=5.0.0-alpha.153",
+      expected: "5.0.0-alpha.153",
+    },
+    {
+      title: "<= lower than latest prerelease",
+      depVersion: "<=5.0.0-alpha.152",
+      expected: "5.0.0-alpha.152",
+    },
+    {
+      title: "<= lowest possible version",
+      depVersion: "<=5.0.0-alpha.150",
+      expected: "5.0.0-alpha.150",
+    },
+    {
+      title: "<= higher than latest prerelease",
+      depVersion: "<=5.0.0-alpha.153261345",
+      expected: "5.0.0-alpha.153",
+    },
+    {
+      title: "> latest prerelease",
+      depVersion: ">=5.0.0-alpha.153",
+      expected: "5.0.0-alpha.153",
+    },
+  ],
+];
+for (let i = 0; i < prereleaseTests.length; i++) {
+  const tests = prereleaseTests[i];
+  const depName = `prereleases-${i + 1}`;
+  describe(`${depName} should pass`, () => {
+    for (const { title, depVersion, expected } of tests) {
+      test(title, async () => {
+        await writeFile(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            version: "1.0.0",
+            dependencies: {
+              [`${depName}`]: depVersion,
+            },
+          }),
+        );
 
-          expect(stderr).toBeDefined();
-          const err = await new Response(stderr).text();
-          expect(stdout).toBeDefined();
-          const out = await new Response(stdout).text();
-          expect(err).toContain("Saved lockfile");
-          expect(err).not.toContain("not found");
-          expect(err).not.toContain("error:");
-          expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-            ` + ${depName}@${expected}`,
-            "",
-            " 1 package installed",
-          ]);
-          expect(await file(join(packageDir, "node_modules", depName, "package.json")).json()).toEqual({
-            name: depName,
-            version: expected,
-          } as any);
-          expect(await exited).toBe(0);
+        const { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: null,
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
         });
-      }
-    });
-  }
-});
+
+        expect(stderr).toBeDefined();
+        const err = await new Response(stderr).text();
+        expect(stdout).toBeDefined();
+        const out = await new Response(stdout).text();
+        expect(err).toContain("Saved lockfile");
+        expect(err).not.toContain("not found");
+        expect(err).not.toContain("error:");
+        expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+          ` + ${depName}@${expected}`,
+          "",
+          " 1 package installed",
+        ]);
+        expect(await file(join(packageDir, "node_modules", depName, "package.json")).json()).toEqual({
+          name: depName,
+          version: expected,
+        } as any);
+        expect(await exited).toBe(0);
+      });
+    }
+  });
+}
+const prereleaseFailTests = [
+  [
+    // { title: "specific", depVersion: "1.0.0-future.1", expected: "1.0.0-future.1" },
+    // { title: "latest", depVersion: "latest", expected: "1.0.0-future.4" },
+    // { title: "range starting with latest", depVersion: "^1.0.0-future.4", expected: "1.0.0-future.4" },
+    // { title: "range above latest", depVersion: "^1.0.0-future.5", expected: "1.0.0-future.7" },
+  ],
+  [
+    // { title: "#6683", depVersion: "^1.0.0-next.23", expected: "1.0.0-next.23" },
+    // {
+    //   title: "greater than or equal to",
+    //   depVersion: ">=1.0.0-next.23",
+    //   expected: "1.0.0-next.23",
+    // },
+    // { title: "latest", depVersion: "latest", expected: "0.5.0" },
+    // { title: "greater than or equal to latest", depVersion: ">=0.5.0", expected: "0.5.0" },
+  ],
+
+  // package "prereleases-3" has four versions, all with prerelease tags:
+  // - 5.0.0-alpha.150
+  // - 5.0.0-alpha.151
+  // - 5.0.0-alpha.152
+  // - 5.0.0-alpha.153
+  [
+    {
+      title: "^ with higher non-existant prerelease",
+      depVersion: "^5.0.0-alpha.1000",
+    },
+    {
+      title: "~ with higher non-existant prerelease",
+      depVersion: "~5.0.0-alpha.1000",
+    },
+    {
+      title: "> with higher non-existant prerelease",
+      depVersion: ">5.0.0-alpha.1000",
+    },
+    {
+      title: ">= with higher non-existant prerelease",
+      depVersion: ">=5.0.0-alpha.1000",
+    },
+    {
+      title: "^4.3.0",
+      depVersion: "^4.3.0",
+    },
+    {
+      title: "~4.3.0",
+      depVersion: "~4.3.0",
+    },
+    {
+      title: ">4.3.0",
+      depVersion: ">4.3.0",
+    },
+    {
+      title: ">=4.3.0",
+      depVersion: ">=4.3.0",
+    },
+    {
+      title: "<5.0.0-alpha.150",
+      depVersion: "<5.0.0-alpha.150",
+    },
+    {
+      title: "<=5.0.0-alpha.149",
+      depVersion: "<=5.0.0-alpha.149",
+    },
+    {
+      title: "greater than highest prerelease",
+      depVersion: ">5.0.0-alpha.153",
+    },
+    {
+      title: "greater than or equal to highest prerelease + 1",
+      depVersion: ">=5.0.0-alpha.154",
+    },
+  ],
+  // prereleases-4 has one version
+  // - 2.0.0-pre.0
+  [
+    {
+      title: "wildcard should not match prerelease",
+      depVersion: "x",
+    },
+    {
+      title: "major wildcard should not match prerelease",
+      depVersion: "x.0.0",
+    },
+    {
+      title: "minor wildcard should not match prerelease",
+      depVersion: "2.x",
+    },
+    {
+      title: "patch wildcard should not match prerelease",
+      depVersion: "2.0.x",
+    },
+  ],
+];
+for (let i = 0; i < prereleaseFailTests.length; i++) {
+  const tests = prereleaseFailTests[i];
+  const depName = `prereleases-${i + 1}`;
+  describe(`${depName} should fail`, () => {
+    for (const { title, depVersion } of tests) {
+      test(title, async () => {
+        await writeFile(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            version: "1.0.0",
+            dependencies: {
+              [`${depName}`]: depVersion,
+            },
+          }),
+        );
+
+        const { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: null,
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        });
+
+        expect(stderr).toBeDefined();
+        const err = await new Response(stderr).text();
+        expect(stdout).toBeDefined();
+        const out = await new Response(stdout).text();
+        expect(out).toBeEmpty();
+        expect(err).toContain(`No version matching "${depVersion}" found for specifier "${depName}"`);
+        expect(await exited).toBe(1);
+      });
+    }
+  });
+}
 
 describe("yarn tests", () => {
   test("dragon test 1", async () => {

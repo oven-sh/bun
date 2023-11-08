@@ -1329,19 +1329,25 @@ pub const Range = struct {
             return lhs.op == rhs.op and lhs.version.eql(rhs.version);
         }
 
-        pub fn satisfies(this: Comparator, version: Version, include_pre: bool) bool {
-            const order = version.orderWithoutTag(this.version);
+        pub fn satisfies(
+            comparator: Comparator,
+            version: Version,
+            comparator_buf: string,
+            version_buf: string,
+            include_pre: bool,
+        ) bool {
+            const order = version.order(comparator.version, version_buf, comparator_buf);
 
             return switch (order) {
-                .eq => switch (this.op) {
+                .eq => switch (comparator.op) {
                     .lte, .gte, .eql => true,
                     else => false,
                 },
-                .gt => switch (this.op) {
+                .gt => switch (comparator.op) {
                     .gt, .gte => if (!include_pre) false else true,
                     else => false,
                 },
-                .lt => switch (this.op) {
+                .lt => switch (comparator.op) {
                     .lt, .lte => if (!include_pre) false else true,
                     else => false,
                 },
@@ -1385,81 +1391,12 @@ pub const Range = struct {
             }
         }
 
-        if (!range.left.satisfies(version, include_pre)) {
+        if (!range.left.satisfies(version, range_buf, version_buf, include_pre)) {
             return false;
         }
 
-        if (has_right and !range.right.satisfies(version, include_pre)) {
+        if (has_right and !range.right.satisfies(version, range_buf, version_buf, include_pre)) {
             return false;
-        }
-
-        if (version.tag.hasPre() and range.left.version.tag.hasPre()) {
-            // make sure strings leading up to first number are the same
-            const lhs_str = range.left.version.tag.pre.slice(range_buf);
-
-            const rhs_str = if (range.right.version.tag.hasPre()) range.right.version.tag.pre.slice(range_buf) else null;
-            const has_rhs_pre = rhs_str != null;
-            const ver_str = version.tag.pre.slice(version_buf);
-
-            var lhs_itr = strings.split(lhs_str, ".");
-            var rhs_itr = if (has_rhs_pre) strings.split(rhs_str.?, ".") else null;
-            var ver_itr = strings.split(ver_str, ".");
-
-            while (true) {
-                const lhs_part = lhs_itr.next();
-                const rhs_part = if (has_rhs_pre) rhs_itr.?.next() else null;
-                const ver_part = ver_itr.next();
-
-                // it's a match
-                if (lhs_part == null and ver_part == null and rhs_part == null) return true;
-
-                // parts do not have equal length
-                if (lhs_part == null or ver_part == null) return false;
-                if (Environment.allow_assert) {
-                    if (has_rhs_pre) {
-                        std.debug.assert(rhs_part != null);
-                    }
-                }
-
-                const lhs_uint = std.fmt.parseUnsigned(u32, lhs_part.?, 10) catch null;
-                const rhs_uint = if (has_rhs_pre) std.fmt.parseUnsigned(u32, rhs_part.?, 10) catch null else null;
-                const ver_uint = std.fmt.parseUnsigned(u32, ver_part.?, 10) catch null;
-
-                if (lhs_uint != null and ver_uint != null) {
-                    if (has_rhs_pre and rhs_uint == null) return false;
-
-                    if (lhs_uint.? <= ver_uint.?) {
-                        if (!has_rhs_pre) continue;
-
-                        if (ver_uint.? <= rhs_uint.?) {
-                            // between lhs and rhs
-                            continue;
-                        }
-
-                        // is not between lhs and rhs.
-                        return false;
-                    }
-
-                    // falls below lhs
-                    return false;
-                }
-
-                if (lhs_uint != null or ver_uint != null) return false;
-                if (Environment.allow_assert) {
-                    if (has_rhs_pre) {
-                        std.debug.assert(rhs_uint == null);
-                    }
-                }
-
-                if (!strings.eqlLong(lhs_part.?, ver_part.?, true)) return false;
-                if (Environment.allow_assert) {
-                    if (has_rhs_pre) {
-                        std.debug.assert(strings.eqlLong(ver_part.?, rhs_part.?, true));
-                    }
-                }
-
-                // continue to next part
-            }
         }
 
         return true;

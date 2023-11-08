@@ -427,6 +427,51 @@ const prereleaseTests = [
       depVersion: "~5.0.0-alpha.153 || ^5.0.0-alpha.153",
       expected: "5.0.0-alpha.153",
     },
+    {
+      title: "< latest prerelease",
+      depVersion: "<5.0.0-alpha.153",
+      expected: "5.0.0-alpha.152",
+    },
+    {
+      title: "< lower than latest prerelease",
+      depVersion: "<5.0.0-alpha.152",
+      expected: "5.0.0-alpha.151",
+    },
+    {
+      title: "< higher than latest prerelease",
+      depVersion: "<5.0.0-alpha.22343423",
+      expected: "5.0.0-alpha.153",
+    },
+    {
+      title: "< at lowest possible version",
+      depVersion: "<5.0.0-alpha.151",
+      expected: "5.0.0-alpha.150",
+    },
+    {
+      title: "<= latest prerelease",
+      depVersion: "<=5.0.0-alpha.153",
+      expected: "5.0.0-alpha.153",
+    },
+    {
+      title: "<= lower than latest prerelease",
+      depVersion: "<=5.0.0-alpha.152",
+      expected: "5.0.0-alpha.152",
+    },
+    {
+      title: "<= lowest possible version",
+      depVersion: "<=5.0.0-alpha.150",
+      expected: "5.0.0-alpha.150",
+    },
+    {
+      title: "<= higher than latest prerelease",
+      depVersion: "<=5.0.0-alpha.153261345",
+      expected: "5.0.0-alpha.153",
+    },
+    {
+      title: "> latest prerelease",
+      depVersion: ">=5.0.0-alpha.153",
+      expected: "5.0.0-alpha.153",
+    },
   ],
 ];
 for (let i = 0; i < prereleaseTests.length; i++) {
@@ -515,6 +560,38 @@ const prereleaseFailTests = [
     {
       title: ">= with higher non-existant prerelease",
       depVersion: ">=5.0.0-alpha.1000",
+    },
+    {
+      title: "^4.3.0",
+      depVersion: "^4.3.0",
+    },
+    {
+      title: "~4.3.0",
+      depVersion: "~4.3.0",
+    },
+    {
+      title: ">4.3.0",
+      depVersion: ">4.3.0",
+    },
+    {
+      title: ">=4.3.0",
+      depVersion: ">=4.3.0",
+    },
+    {
+      title: "<5.0.0-alpha.150",
+      depVersion: "<5.0.0-alpha.150",
+    },
+    {
+      title: "<=5.0.0-alpha.149",
+      depVersion: "<=5.0.0-alpha.149",
+    },
+    {
+      title: "greater than highest prerelease",
+      depVersion: ">5.0.0-alpha.153",
+    },
+    {
+      title: "greater than or equal to highest prerelease + 1",
+      depVersion: ">=5.0.0-alpha.154",
     },
   ],
 ];

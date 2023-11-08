@@ -594,6 +594,26 @@ const prereleaseFailTests = [
       depVersion: ">=5.0.0-alpha.154",
     },
   ],
+  // prereleases-4 has one version
+  // - 2.0.0-pre.0
+  [
+    {
+      title: "wildcard should not match prerelease",
+      depVersion: "x",
+    },
+    {
+      title: "major wildcard should not match prerelease",
+      depVersion: "x.0.0",
+    },
+    {
+      title: "minor wildcard should not match prerelease",
+      depVersion: "2.x",
+    },
+    {
+      title: "patch wildcard should not match prerelease",
+      depVersion: "2.0.x",
+    },
+  ],
 ];
 for (let i = 0; i < prereleaseFailTests.length; i++) {
   const tests = prereleaseFailTests[i];

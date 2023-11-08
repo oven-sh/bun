@@ -764,7 +764,7 @@ pub const Version = extern struct {
         return lhs.tag.order(rhs.tag, lhs_buf, rhs_buf);
     }
 
-    pub fn orderIgnoringBuild(
+    pub fn orderWithoutBuild(
         lhs: Version,
         rhs: Version,
         lhs_buf: []const u8,
@@ -1385,7 +1385,7 @@ pub const Range = struct {
             version_buf: string,
             include_pre: bool,
         ) bool {
-            const order = version.order(comparator.version, version_buf, comparator_buf);
+            const order = version.orderWithoutBuild(comparator.version, version_buf, comparator_buf);
 
             return switch (order) {
                 .eq => switch (comparator.op) {
@@ -1985,20 +1985,22 @@ pub const Query = struct {
                 i += parse_result.stopped_at;
                 const rollback = i;
 
-                const had_space = i < input.len and input[i] == ' ';
+                const maybe_hyphenate = i < input.len and (input[i] == ' ' or input[i] == '-');
 
                 // TODO: can we do this without rolling back?
-                const hyphenate: bool = had_space and possibly_hyphenate: {
-                    i += 1;
-                    while (i < input.len and input[i] == ' ') : (i += 1) {}
+                const hyphenate: bool = maybe_hyphenate and possibly_hyphenate: {
+                    while (i < input.len and strings.containsChar(&std.ascii.whitespace, input[i])) : (i += 1) {}
                     if (!(i < input.len and input[i] == '-')) break :possibly_hyphenate false;
                     i += 1;
-                    if (!(i < input.len and input[i] == ' ')) break :possibly_hyphenate false;
-                    i += 1;
-                    while (i < input.len and switch (input[i]) {
-                        ' ', 'v', '=' => true,
-                        else => false,
-                    }) : (i += 1) {}
+                    while (i < input.len and strings.containsChar(&std.ascii.whitespace, input[i])) : (i += 1) {}
+                    if (i == input.len) break :possibly_hyphenate false;
+                    if (input[i] == 'v' or input[i] == '=') {
+                        i += 1;
+                    }
+                    if (i == input.len) break :possibly_hyphenate false;
+                    while (i < input.len and strings.containsChar(&std.ascii.whitespace, input[i])) : (i += 1) {}
+                    if (i == input.len) break :possibly_hyphenate false;
+
                     if (!(i < input.len and switch (input[i]) {
                         '0'...'9', 'X', 'x', '*' => true,
                         else => false,
@@ -2018,13 +2020,13 @@ pub const Query = struct {
                     const range: Range = brk: {
                         switch (second_parsed.wildcard) {
                             .major => {
-                                second_version.major +|= 1;
+                                // "1.0.0 - x" --> ">=1.0.0"
                                 break :brk Range{
                                     .left = .{ .op = .gte, .version = version },
-                                    .right = .{ .op = .lte, .version = second_version },
                                 };
                             },
                             .minor => {
+                                // "1.0.0 - 1.x" --> ">=1.0.0 < 2.0.0"
                                 second_version.major +|= 1;
                                 second_version.minor = 0;
                                 second_version.patch = 0;
@@ -2035,6 +2037,7 @@ pub const Query = struct {
                                 };
                             },
                             .patch => {
+                                // "1.0.0 - 1.0.x" --> ">=1.0.0 <1.1.0"
                                 second_version.minor +|= 1;
                                 second_version.patch = 0;
 
@@ -2172,7 +2175,7 @@ pub const SemverObject = struct {
         const left_version = left_result.version.fill();
         const right_version = right_result.version.fill();
 
-        return switch (left_version.orderIgnoringBuild(right_version, left.slice(), right.slice())) {
+        return switch (left_version.orderWithoutBuild(right_version, left.slice(), right.slice())) {
             .eq => JSC.jsNumber(0),
             .gt => JSC.jsNumber(1),
             .lt => JSC.jsNumber(-1),

@@ -49,4 +49,4 @@ unsorted.sort(semver.order); // ["1.0.0-alpha", "1.0.0-beta", "1.0.0-rc", "1.0.0
 console.log(unsorted);
 ```
 
-If you need other semver functions, feel free to open an issue or pull request. In the meantime, you can use `node-semver` directly, as that also works in Bun.
+If you need other semver functions, feel free to open an issue or pull request.

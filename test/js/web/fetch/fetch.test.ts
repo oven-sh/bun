@@ -1,4 +1,4 @@
-import { AnyFunction, serve, ServeOptions, Server, sleep } from "bun";
+import { AnyFunction, serve, ServeOptions, Server, sleep, TCPSocketListener } from "bun";
 import { afterAll, afterEach, beforeAll, describe, expect, it, beforeEach } from "bun:test";
 import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { mkfifo } from "mkfifo";
@@ -1820,80 +1820,78 @@ it("304 not modified with 0 content-length does not cause a request timeout", as
 describe("http/1.1 response body length", () => {
   // issue #6932 (support response without Content-Length and Transfer-Encoding) + some regression tests
 
-  let server: net.Server | undefined;
+  let server: TCPSocketListener | undefined;
   beforeAll(async () => {
-    server = net.createServer(socket => {
-      socket.on("data", data => {
-        const lines = data.toString().split("\r\n");
-        for (const line of lines) {
-          const [method, path] = line.split(" ");
-          if (method === "GET" || method === "HEAD") {
-            if (path === "/text") {
-              socket.end("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nHello, World!");
-            } else if (path === "/json") {
-              socket.end('HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{"hello":"World"}');
-            } else if (path === "/chunked") {
-              socket.end(
-                "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nTransfer-Encoding: chunked\r\n\r\nd\r\nHello, World!\r\n0\r\n\r\n",
-              );
-            } else if (path === "/empty") {
-              socket.end("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
-            } else {
-              const status = +path.slice(1) || 200;
-              socket.end(
-                `HTTP/1.1 ${status} STATUS MESSAGE\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nHello, World!`,
-              );
-            }
+    server = Bun.listen({
+      socket: {
+        open(socket) {
+          setTimeout(() => {
+            socket.end();
+          }, 9999).unref();
+        },
+        data(socket, data) {
+          const text = data.toString();
+          if (text.startsWith("GET /text")) {
+            socket.end("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nHello, World!");
+          } else if (text.startsWith("GET /json")) {
+            socket.end('HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{"hello":"World"}');
+          } else if (text.startsWith("GET /chunked")) {
+            socket.end(
+              "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nTransfer-Encoding: chunked\r\n\r\nd\r\nHello, World!\r\n0\r\n\r\n",
+            );
+          } else if (text.startsWith("GET /empty")) {
+            socket.end("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+          } else {
+            socket.end(`HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nHello, World!`);
           }
-        }
-      });
+        },
+        close() {},
+      },
+      port: 0,
+      hostname: "localhost",
     });
-
-    const { promise: start, resolve } = Promise.withResolvers();
-    server.listen(8080, resolve);
-    await start;
   });
   afterAll(() => {
-    server?.close?.();
+    server?.stop?.();
   });
 
-  const getHost = () => `127.0.0.1:${(server!.address() as net.AddressInfo).port}`;
+  const getHost = () => `${server!.hostname}:${server!.port}`;
 
   describe("without content-length", () => {
     it("should read text until socket closed", async () => {
       const response = await fetch(`http://${getHost()}/text`);
       expect(response.status).toBe(200);
-      expect(await response.text()).toBe("Hello, World!");
+      expect(response.text()).resolves.toBe("Hello, World!");
     });
 
     it("should read json until socket closed", async () => {
       const response = await fetch(`http://${getHost()}/json`);
       expect(response.status).toBe(200);
-      expect(await response.json<unknown>()).toEqual({ "hello": "World" });
+      expect(response.json<unknown>()).resolves.toEqual({ "hello": "World" });
     });
   });
 
   it("should support transfer-encoding: chunked", async () => {
     const response = await fetch(`http://${getHost()}/chunked`);
     expect(response.status).toBe(200);
-    expect(await response.text()).toBe("Hello, World!");
+    expect(response.text()).resolves.toBe("Hello, World!");
   });
 
   it("should support non-zero content-length", async () => {
     const response = await fetch(`http://${getHost()}/non-empty`);
     expect(response.status).toBe(200);
-    expect(await response.text()).toBe("Hello, World!");
+    expect(response.text()).resolves.toBe("Hello, World!");
   });
 
   it("should support content-length: 0", async () => {
     const response = await fetch(`http://${getHost()}/empty`);
     expect(response.status).toBe(200);
-    expect(await response.arrayBuffer()).toHaveLength(0);
+    expect(response.arrayBuffer()).resolves.toHaveLength(0);
   });
 
   it("should ignore body on HEAD", async () => {
     const response = await fetch(`http://${getHost()}/text`, { method: "HEAD" });
     expect(response.status).toBe(200);
-    expect(await response.arrayBuffer()).toHaveLength(0);
+    expect(response.arrayBuffer()).resolves.toHaveLength(0);
   });
 });

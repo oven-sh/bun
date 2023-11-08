@@ -3344,6 +3344,16 @@ pub fn handleResponseMetadata(
         response.status_code = 304;
     }
 
+    // according to RFC 7230 section 3.3.3:
+    //   1. Any response to a HEAD request and any response with a 1xx (Informational),
+    //      204 (No Content), or 304 (Not Modified) status code
+    //      [...] cannot contain a message body or trailer section.
+    // therefore in these cases set content-length to 0, so the response body is always ignored
+    // and is not waited for (which could cause a timeout)
+    if ((response.status_code >= 100 and response.status_code < 200) or response.status_code == 204 or response.status_code == 304) {
+        this.state.content_length = 0;
+    }
+
     if (this.proxy_tunneling and this.proxy_tunnel == null) {
         if (response.status_code == 200) {
             // signal to continue the proxing

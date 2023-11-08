@@ -1,5 +1,6 @@
 #pragma once
-
+#ifndef HEADERS_HANDWRITTEN
+#define HEADERS_HANDWRITTEN
 typedef uint16_t ZigErrorCode;
 typedef struct VirtualMachine VirtualMachine;
 // exists to make headers.h happy
@@ -18,6 +19,11 @@ typedef union BunStringImpl {
 } BunStringImpl;
 
 #else
+namespace WTF {
+class StringImpl;
+class String;
+}
+
 typedef union BunStringImpl {
     ZigString zig;
     WTF::StringImpl* wtf;
@@ -38,6 +44,7 @@ typedef struct BunString {
 
     inline void ref();
     inline void deref();
+    static size_t utf8ByteLength(const WTF::String&);
 } BunString;
 
 typedef struct ZigErrorType {
@@ -63,12 +70,13 @@ typedef struct ErrorableString {
 typedef struct ResolvedSource {
     BunString specifier;
     BunString source_code;
-    ZigString source_url;
+    BunString source_url;
     ZigString* commonJSExports;
     uint32_t commonJSExportsLen;
     uint32_t hash;
     void* allocator;
     uint32_t tag;
+    bool needsDeref;
 } ResolvedSource;
 static const uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
@@ -263,15 +271,13 @@ typedef struct {
     bool shared;
 } Bun__ArrayBuffer;
 
-#include "../../../js/out/SyntheticModuleType.h"
+#include "SyntheticModuleType.h"
 
 extern "C" const char* Bun__userAgent;
 
 extern "C" ZigErrorCode Zig_ErrorCodeParserError;
 
 extern "C" void ZigString__free(const unsigned char* ptr, size_t len, void* allocator);
-extern "C" void Microtask__run(void* ptr, void* global);
-extern "C" void Microtask__run_default(void* ptr, void* global);
 
 extern "C" bool Bun__transpileVirtualModule(
     JSC::JSGlobalObject* global,
@@ -346,8 +352,6 @@ class ScriptArguments;
 
 using ScriptArguments = Inspector::ScriptArguments;
 
-#endif
-
 ALWAYS_INLINE void BunString::ref()
 {
     if (this->tag == BunStringTag::WTFStringImpl) {
@@ -360,3 +364,6 @@ ALWAYS_INLINE void BunString::deref()
         this->impl.wtf->deref();
     }
 }
+
+#endif // __cplusplus
+#endif // HEADERS_HANDWRITTEN

@@ -1,0 +1,42 @@
+{
+	"name": "dep-loop-entry",
+	"versions": {
+		"1.0.0": {
+			"name": "dep-loop-entry",
+			"version": "1.0.0",
+			"dependencies": {
+				"dep-loop-exit": "1.0.0"
+			},
+			"_id": "dep-loop-entry@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-XQR76R6M+i++Bl7qGqCU+aHLPNpFHvfGaH/fNrtVt24zhi/ahp6X7fWK+5JPh/2aHTPAXGndeyGnHAOsJ2DboQ==",
+				"shasum": "14f60b4ac54127ee3072cb5cba5450a1dd4af41b",
+				"tarball": "http://localhost:4873/dep-loop-entry/-/dep-loop-entry-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:00.847Z",
+		"created": "2023-11-01T22:05:00.847Z",
+		"1.0.0": "2023-11-01T22:05:00.847Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"dep-loop-entry-1.0.0.tgz": {
+			"shasum": "14f60b4ac54127ee3072cb5cba5450a1dd4af41b",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-a1699a638c1a15b3",
+	"_id": "dep-loop-entry",
+	"readme": "ERROR: No README data found!"
+}

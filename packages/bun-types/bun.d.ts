@@ -2680,6 +2680,22 @@ declare module "bun" {
    */
   const stdin: BunFile;
 
+  type StringLike = string | { toString(): string };
+
+  interface semver {
+    /**
+     * Test if the version satisfies the range. Stringifies both arguments. Returns `true` or `false`.
+     */
+    satisfies(version: StringLike, range: StringLike): boolean;
+
+    /**
+     * Returns 0 if the versions are equal, 1 if `v1` is greater, or -1 if `v2` is greater.
+     * Throws an error if either version is invalid.
+     */
+    order(v1: StringLike, v2: StringLike): -1 | 0 | 1;
+  }
+  export const semver: semver;
+
   interface unsafe {
     /**
      * Cast bytes to a `String` without copying. This is the fastest way to get a `String` from a `Uint8Array` or `ArrayBuffer`.
@@ -4181,7 +4197,7 @@ declare module "bun" {
    * Spawn a new process
    *
    * ```js
-   * const {stdout} = Bun.spawn(["echo", "hello"]));
+   * const {stdout} = Bun.spawn(["echo", "hello"]);
    * const text = await readableStreamToText(stdout);
    * console.log(text); // "hello\n"
    * ```
@@ -4243,7 +4259,7 @@ declare module "bun" {
    * Synchronously spawn a new process
    *
    * ```js
-   * const {stdout} = Bun.spawnSync(["echo", "hello"]));
+   * const {stdout} = Bun.spawnSync(["echo", "hello"]);
    * console.log(stdout.toString()); // "hello\n"
    * ```
    *

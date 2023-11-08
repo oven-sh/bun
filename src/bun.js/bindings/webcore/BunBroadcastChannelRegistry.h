@@ -1,9 +1,9 @@
 #pragma once
 
 #include "BroadcastChannelRegistry.h"
-#include "wtf/CallbackAggregator.h"
-#include "wtf/Vector.h"
-#include "wtf/HashMap.h"
+#include <wtf/CallbackAggregator.h>
+#include <wtf/Vector.h>
+#include <wtf/HashMap.h>
 
 namespace WebCore {
 

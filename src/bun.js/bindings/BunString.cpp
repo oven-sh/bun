@@ -1,9 +1,10 @@
 #include "root.h"
 #include "headers-handwritten.h"
-#include "JavaScriptCore/JSCJSValueInlines.h"
+#include <JavaScriptCore/JSCJSValueInlines.h>
 #include "helpers.h"
 #include "simdutf.h"
-#include "wtf/Seconds.h"
+#include <wtf/Seconds.h>
+#include <wtf/text/ExternalStringImpl.h>
 #include "GCDefferalContext.h"
 #include <JavaScriptCore/JSONObject.h>
 #include <wtf/text/AtomString.h>
@@ -266,7 +267,7 @@ extern "C" BunString BunString__createExternal(const char* bytes, size_t length,
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }
 
-extern "C" EncodedJSValue BunString__toJSON(
+extern "C" JSC::EncodedJSValue BunString__toJSON(
     JSC::JSGlobalObject* globalObject,
     BunString* bunString)
 {
@@ -279,7 +280,7 @@ extern "C" EncodedJSValue BunString__toJSON(
     return JSC::JSValue::encode(result);
 }
 
-extern "C" EncodedJSValue BunString__createArray(
+extern "C" JSC::EncodedJSValue BunString__createArray(
     JSC::JSGlobalObject* globalObject,
     const BunString* ptr, size_t length)
 {
@@ -453,4 +454,16 @@ extern "C" uint32_t URL__port(WTF::URL* url)
 extern "C" BunString URL__pathname(WTF::URL* url)
 {
     return Bun::toStringRef(url->path().toStringWithoutCopying());
+}
+
+size_t BunString::utf8ByteLength(const WTF::String& str)
+{
+    if (str.isEmpty())
+        return 0;
+
+    if (str.is8Bit()) {
+        return simdutf::utf8_length_from_latin1(reinterpret_cast<const char*>(str.characters8()), static_cast<size_t>(str.length()));
+    } else {
+        return simdutf::utf8_length_from_utf16(reinterpret_cast<const char16_t*>(str.characters16()), static_cast<size_t>(str.length()));
+    }
 }

@@ -123,6 +123,13 @@ pub const Source = struct {
         if (bun.getenvZ("TERM")) |term| {
             return !strings.eqlComptime(term, "dumb");
         }
+        if (Environment.isWindows) {
+            // https://github.com/chalk/supports-color/blob/d4f413efaf8da045c5ab440ed418ef02dbb28bf1/index.js#L100C11-L112
+            // Windows 10 build 10586 is the first Windows release that supports 256 colors.
+            // Windows 10 build 14931 is the first release that supports 16m/TrueColor.
+            // Every other version supports 16 colors.
+            return true;
+        }
         return false;
     }
 
@@ -476,11 +483,23 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
             defer lock.unlock();
 
             if (Output.enable_ansi_colors_stderr) {
-                out.print(comptime prettyFmt("<r><d>[" ++ @tagName(tag) ++ "]<r> " ++ fmt, true), args) catch unreachable;
-                buffered_writer.flush() catch unreachable;
+                out.print(comptime prettyFmt("<r><d>[" ++ @tagName(tag) ++ "]<r> " ++ fmt, true), args) catch {
+                    really_disable = true;
+                    return;
+                };
+                buffered_writer.flush() catch {
+                    really_disable = true;
+                    return;
+                };
             } else {
-                out.print(comptime prettyFmt("<r><d>[" ++ @tagName(tag) ++ "]<r> " ++ fmt, false), args) catch unreachable;
-                buffered_writer.flush() catch unreachable;
+                out.print(comptime prettyFmt("<r><d>[" ++ @tagName(tag) ++ "]<r> " ++ fmt, false), args) catch {
+                    really_disable = true;
+                    return;
+                };
+                buffered_writer.flush() catch {
+                    really_disable = true;
+                    return;
+                };
             }
         }
     }.log;

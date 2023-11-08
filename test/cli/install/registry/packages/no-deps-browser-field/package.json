@@ -1,0 +1,46 @@
+{
+	"name": "no-deps-browser-field",
+	"versions": {
+		"1.0.0": {
+			"name": "no-deps-browser-field",
+			"version": "1.0.0",
+			"bin": {
+				"no-deps-browser-field": "bin"
+			},
+			"main": "./index.js",
+			"browser": {
+				"./index.js": "./index.js"
+			},
+			"_id": "no-deps-browser-field@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-ZcyVxkVsGiw5WoECUqDKOamAagd8HFyy9sVB9QAUcgQvDzO13Lw/I2Iclhe3U211NvVCOCjubntbq6XiRZ64tQ==",
+				"shasum": "936e0ead4e82744631e18681bb105cf1455bbc9c",
+				"tarball": "http://localhost:4873/no-deps-browser-field/-/no-deps-browser-field-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:17.110Z",
+		"created": "2023-11-01T22:05:17.110Z",
+		"1.0.0": "2023-11-01T22:05:17.110Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"no-deps-browser-field-1.0.0.tgz": {
+			"shasum": "936e0ead4e82744631e18681bb105cf1455bbc9c",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-cff2869993cf82f4",
+	"_id": "no-deps-browser-field",
+	"readme": "ERROR: No README data found!"
+}

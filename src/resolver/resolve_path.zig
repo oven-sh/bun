@@ -321,7 +321,7 @@ pub fn getIfExistsLongestCommonPath(input: []const []const u8) ?[]const u8 {
 }
 
 pub fn longestCommonPathWindows(input: []const []const u8) []const u8 {
-    return longestCommonPathGeneric(input, std.fs.path.sep_windows, isSepWin32);
+    return longestCommonPathGeneric(input, std.fs.path.sep_windows, isSepAny);
 }
 
 pub fn longestCommonPathPosix(input: []const []const u8) []const u8 {
@@ -580,8 +580,9 @@ pub const Platform = enum {
     pub fn isAbsolute(comptime platform: Platform, path: []const u8) bool {
         return switch (comptime platform) {
             .auto => (comptime platform.resolve()).isAbsolute(path),
-            .loose, .posix => path.len > 0 and path[0] == '/',
+            .posix => path.len > 0 and path[0] == '/',
             .windows => std.fs.path.isAbsoluteWindows(path),
+            .loose => isAbsolute(.posix, path) or isAbsolute(.windows, path),
         };
     }
 
@@ -613,7 +614,7 @@ pub const Platform = enum {
                 return isSepAny;
             },
             .windows => {
-                return isSepWin32;
+                return isSepAny;
             },
             .posix => {
                 return isSepPosix;
@@ -643,7 +644,7 @@ pub const Platform = enum {
                 return isSepAny(char);
             },
             .windows => {
-                return isSepWin32(char);
+                return isSepAny(char);
             },
             .posix => {
                 return isSepPosix(char);
@@ -654,7 +655,7 @@ pub const Platform = enum {
     pub fn trailingSeparator(comptime _platform: Platform) [2]u8 {
         return comptime switch (_platform) {
             .auto => _platform.resolve().trailingSeparator(),
-            .windows => ".\\".*,
+            .windows => "./".*,
             .posix, .loose => "./".*,
         };
     }
@@ -727,8 +728,7 @@ pub fn normalizeBuf(str: []const u8, buf: []u8, comptime _platform: Platform) []
 
     const is_absolute = _platform.isAbsolute(str);
 
-    const trailing_separator =
-        buf[buf.len - 1] == _platform.separator();
+    const trailing_separator = _platform.getLastSeparatorFunc()(str) == str.len - 1;
 
     if (is_absolute and trailing_separator)
         return normalizeStringBuf(str, buf, true, _platform, true);
@@ -820,7 +820,17 @@ threadlocal var join_buf: [4096]u8 = undefined;
 pub fn join(_parts: anytype, comptime _platform: Platform) []const u8 {
     return joinStringBuf(&join_buf, _parts, _platform);
 }
+pub fn joinZ(_parts: anytype, comptime _platform: Platform) [:0]const u8 {
+    return joinZBuf(&join_buf, _parts, _platform);
+}
 
+pub fn joinZBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [:0]const u8 {
+    var joined = joinStringBuf(buf[0 .. buf.len - 1], _parts, _platform);
+    std.debug.assert(bun.isSliceInBuffer(joined, buf));
+    const start_offset = @intFromPtr(joined.ptr) - @intFromPtr(buf.ptr);
+    buf[joined.len + start_offset] = 0;
+    return buf[start_offset..][0..joined.len :0];
+}
 pub fn joinStringBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) []const u8 {
     if (FeatureFlags.use_std_path_join) {
         var alloc = std.heap.FixedBufferAllocator.init(buf);
@@ -880,7 +890,7 @@ pub fn joinAbsStringBufZ(_cwd: []const u8, buf: []u8, _parts: anytype, comptime 
     return _joinAbsStringBuf(true, [:0]const u8, _cwd, buf, _parts, _platform);
 }
 
-inline fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) ReturnType {
+fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) ReturnType {
     var parts: []const []const u8 = _parts;
     var temp_buf: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
     if (parts.len == 0) {
@@ -937,10 +947,18 @@ inline fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: typ
         out += part.len;
     }
 
-    const leading_separator: []const u8 = if (_platform.leadingSeparatorIndex(temp_buf[0..out])) |i|
-        temp_buf[0 .. i + 1]
-    else
-        "/";
+    const leading_separator: []const u8 = if (_platform.leadingSeparatorIndex(temp_buf[0..out])) |i| brk: {
+        var outdir = temp_buf[0 .. i + 1];
+        if (_platform == .windows or _platform == .loose) {
+            for (outdir) |*c| {
+                if (c.* == '\\') {
+                    c.* = '/';
+                }
+            }
+        }
+
+        break :brk outdir;
+    } else "/";
 
     const result = normalizeStringBuf(
         temp_buf[leading_separator.len..out],
@@ -973,7 +991,7 @@ pub fn isSepAny(char: u8) bool {
 }
 
 pub fn lastIndexOfSeparatorWindows(slice: []const u8) ?usize {
-    return std.mem.lastIndexOfScalar(u8, slice, std.fs.path.sep_windows);
+    return lastIndexOfSep(slice);
 }
 
 pub fn lastIndexOfSeparatorPosix(slice: []const u8) ?usize {
@@ -992,7 +1010,7 @@ pub fn lastIndexOfNonSeparatorPosix(slice: []const u8) ?u32 {
 }
 
 pub fn lastIndexOfSeparatorLoose(slice: []const u8) ?usize {
-    return std.mem.lastIndexOfAny(u8, slice, "/\\");
+    return lastIndexOfSep(slice);
 }
 
 pub fn normalizeStringLooseBuf(
@@ -1022,8 +1040,8 @@ pub fn normalizeStringWindows(
         str,
         buf,
         allow_above_root,
-        std.fs.path.sep_windows,
-        isSepWin32,
+        std.fs.path.sep_posix,
+        isSepAny,
         lastIndexOfSeparatorWindows,
         preserve_trailing_slash,
     );
@@ -1420,4 +1438,70 @@ test "longestCommonPath" {
     const more = [_][]const u8{ "/app/public/index.html", "/app/public/index.js", "/app/public", "/app/src/bacon.ts" };
     _ = t.expect("/app/", longestCommonPath(&more), @src());
     _ = t.expect("/app/public/", longestCommonPath(more[0..2]), @src());
+}
+
+pub fn basename(path: []const u8) []const u8 {
+    if (path.len == 0)
+        return &[_]u8{};
+
+    var end_index: usize = path.len - 1;
+    while (isSepAny(path[end_index])) {
+        if (end_index == 0)
+            return &[_]u8{};
+        end_index -= 1;
+    }
+    var start_index: usize = end_index;
+    end_index += 1;
+    while (!isSepAny(path[start_index])) {
+        if (start_index == 0)
+            return path[0..end_index];
+        start_index -= 1;
+    }
+
+    return path[start_index + 1 .. end_index];
+}
+pub fn lastIndexOfSep(path: []const u8) ?usize {
+    if (comptime !bun.Environment.isWindows) {
+        return strings.lastIndexOfChar(path, '/');
+    }
+
+    return std.mem.lastIndexOfAny(u8, path, "/\\");
+}
+
+pub fn nextDirname(path_: []const u8) ?[]const u8 {
+    var path = path_;
+    var root_prefix: []const u8 = "";
+    if (path.len > 3) {
+        // disk designator
+        if (path[1] == ':' and isSepAny(path[2])) {
+            root_prefix = path[0..3];
+        }
+
+        // TODO: unc path
+
+    }
+
+    if (path.len == 0)
+        return if (root_prefix.len > 0) root_prefix else null;
+
+    var end_index: usize = path.len - 1;
+    while (isSepAny(path[end_index])) {
+        if (end_index == 0)
+            return if (root_prefix.len > 0) root_prefix else null;
+        end_index -= 1;
+    }
+
+    while (!isSepAny(path[end_index])) {
+        if (end_index == 0)
+            return if (root_prefix.len > 0) root_prefix else null;
+        end_index -= 1;
+    }
+
+    if (end_index == 0 and isSepAny(path[0]))
+        return path[0..1];
+
+    if (end_index == 0)
+        return if (root_prefix.len > 0) root_prefix else null;
+
+    return path[0 .. end_index + 1];
 }

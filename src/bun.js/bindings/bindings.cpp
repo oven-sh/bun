@@ -107,17 +107,18 @@ static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
         res->writeHeader(std::string_view("set-cookie", 10), std::string_view(value.is8Bit() ? reinterpret_cast<const char*>(value.characters8()) : value.utf8().data(), value.length()));
     }
 
-    for (auto& header : internalHeaders.commonHeaders()) {
+    for (const auto& header : internalHeaders.commonHeaders()) {
         const auto& name = WebCore::httpHeaderNameString(header.key);
-        auto& value = header.value;
+        const auto& value = header.value;
+
         res->writeHeader(
             std::string_view(name.is8Bit() ? reinterpret_cast<const char*>(name.characters8()) : name.utf8().data(), name.length()),
             std::string_view(value.is8Bit() ? reinterpret_cast<const char*>(value.characters8()) : value.utf8().data(), value.length()));
     }
 
     for (auto& header : internalHeaders.uncommonHeaders()) {
-        auto& name = header.key;
-        auto& value = header.value;
+        const auto& name = header.key;
+        const auto& value = header.value;
         res->writeHeader(
             std::string_view(name.is8Bit() ? reinterpret_cast<const char*>(name.characters8()) : name.utf8().data(), name.length()),
             std::string_view(value.is8Bit() ? reinterpret_cast<const char*>(value.characters8()) : value.utf8().data(), value.length()));
@@ -1193,10 +1194,13 @@ void WebCore__FetchHeaders__copyTo(WebCore__FetchHeaders* headers, StringPointer
 void WebCore__FetchHeaders__count(WebCore__FetchHeaders* headers, uint32_t* count, uint32_t* buf_len)
 {
     auto iter = headers->createIterator();
-    uint32_t i = 0;
+    size_t i = 0;
     for (auto pair = iter.next(); pair; pair = iter.next()) {
-        i += pair->key.length();
-        i += pair->value.length();
+        // UTF8 byteLength is not strictly necessary here
+        // They should always be ASCII.
+        // However, we can still do this out of an abundance of caution
+        i += BunString::utf8ByteLength(pair->key);
+        i += BunString::utf8ByteLength(pair->value);
     }
 
     *count = headers->size();
@@ -1542,7 +1546,7 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC__JSValue value, JSC__
         return 0;
     }
 
-    case WebCore::JSDOMWrapperType: {
+    case static_cast<JSC::JSType>(WebCore::JSDOMWrapperType): {
         if (auto* headers = jsDynamicCast<WebCore::JSFetchHeaders*>(cell))
             return static_cast<double>(jsCast<WebCore::JSFetchHeaders*>(cell)->wrapped().size());
 
@@ -1767,6 +1771,7 @@ void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC__JSGlobalObject* global,
 
 void JSC__VM__collectAsync(JSC__VM* vm)
 {
+    JSC::JSLockHolder lock(*vm);
     vm->heap.collectAsync();
 }
 
@@ -2032,76 +2037,6 @@ JSC__JSObject* JSC__JSString__toObject(JSC__JSString* arg0, JSC__JSGlobalObject*
 //     arg2->depen
 // }
 
-class JSMicrotaskCallbackDefaultGlobal final : public RefCounted<JSMicrotaskCallbackDefaultGlobal> {
-public:
-    static Ref<JSMicrotaskCallbackDefaultGlobal> create(Ref<JSC::Microtask>&& task)
-    {
-        return adoptRef(*new JSMicrotaskCallbackDefaultGlobal(WTFMove(task).leakRef()));
-    }
-
-    void call(JSC::JSGlobalObject* globalObject)
-    {
-
-        JSC::VM& vm = globalObject->vm();
-        auto task = &m_task.leakRef();
-        task->run(globalObject);
-
-        delete this;
-    }
-
-private:
-    JSMicrotaskCallbackDefaultGlobal(Ref<JSC::Microtask>&& task)
-        : m_task { WTFMove(task) }
-    {
-    }
-
-    Ref<JSC::Microtask> m_task;
-};
-
-class JSMicrotaskCallback final : public RefCounted<JSMicrotaskCallback> {
-public:
-    static Ref<JSMicrotaskCallback> create(JSC::JSGlobalObject& globalObject,
-        Ref<JSC::Microtask>&& task)
-    {
-        return adoptRef(*new JSMicrotaskCallback(globalObject, WTFMove(task).leakRef()));
-    }
-
-    void call()
-    {
-        auto* globalObject = m_globalObject.get();
-        if (UNLIKELY(!globalObject)) {
-            delete this;
-            return;
-        }
-
-        JSC::VM& vm = m_globalObject->vm();
-        auto task = &m_task.leakRef();
-        task->run(globalObject);
-
-        delete this;
-    }
-
-private:
-    JSMicrotaskCallback(JSC::JSGlobalObject& globalObject, Ref<JSC::Microtask>&& task)
-        : m_globalObject { &globalObject }
-        , m_task { WTFMove(task) }
-    {
-    }
-
-    JSC::Weak<JSC::JSGlobalObject> m_globalObject;
-    Ref<JSC::Microtask> m_task;
-};
-
-void Microtask__run(void* microtask, void* global)
-{
-    reinterpret_cast<JSMicrotaskCallback*>(microtask)->call();
-}
-
-void Microtask__run_default(void* microtask, void* global)
-{
-    reinterpret_cast<JSMicrotaskCallbackDefaultGlobal*>(microtask)->call(reinterpret_cast<Zig::GlobalObject*>(global));
-}
-
 JSC__JSValue JSC__JSModuleLoader__evaluate(JSC__JSGlobalObject* globalObject, const unsigned char* arg1,
     size_t arg2, const unsigned char* originUrlPtr, size_t originURLLen, const unsigned char* referrerUrlPtr, size_t referrerUrlLen,
     JSC__JSValue JSValue5, JSC__JSValue* arg6)
@@ -2322,6 +2257,9 @@ bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
             arg2->_value = JSValue::encode(value);
             return true;
         }
+        break;
+    }
+    default: {
         break;
     }
     }
@@ -2944,6 +2882,8 @@ bool JSC__JSValue__isClass(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
         if (callData.native.isBoundFunction)
             return false;
         return value.isConstructor();
+    default:
+        return false;
     }
     return false;
 }
@@ -3521,6 +3461,18 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
     if (!m_codeBlock)
         return;
 
+    // https://github.com/oven-sh/bun/issues/6951
+    auto* provider = m_codeBlock->source().provider();
+
+    if (UNLIKELY(!provider))
+        return;
+
+    // Make sure the range is valid
+    WTF::StringView sourceString = provider->source();
+
+    if (UNLIKELY(sourceString.isNull()))
+        return;
+
     JSC::BytecodeIndex bytecodeOffset = stackFrame->hasBytecodeIndex() ? stackFrame->bytecodeIndex() : JSC::BytecodeIndex();
 
     /* Get the "raw" position info.
@@ -3560,15 +3512,12 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
     // Calculate the staring\ending offsets of the entire expression
     int expressionStart = divotPoint - startOffset;
     int expressionStop = divotPoint + endOffset;
-
-    // Make sure the range is valid
-    WTF::StringView sourceString = m_codeBlock->source().provider()->source();
     if (expressionStop < 1 || expressionStart > static_cast<int>(sourceString.length())) {
         return;
     }
 
     // Search for the beginning of the line
-    unsigned int lineStart = expressionStart;
+    unsigned int lineStart = expressionStart > 0 ? expressionStart : 0;
     while ((lineStart > 0) && ('\n' != sourceString[lineStart - 1])) {
         lineStart--;
     }
@@ -4027,10 +3976,6 @@ bool JSC__JSValue__isTerminationException(JSC__JSValue JSValue0, JSC__VM* arg1)
 void JSC__VM__shrinkFootprint(JSC__VM* arg0) { arg0->shrinkFootprintWhenIdle(); };
 void JSC__VM__whenIdle(JSC__VM* arg0, void (*ArgFn1)()) { arg0->whenIdle(ArgFn1); };
 
-JSC__VM* JSC__VM__create(unsigned char HeapType0)
-{
-}
-
 void JSC__VM__holdAPILock(JSC__VM* arg0, void* ctx, void (*callback)(void* arg0))
 {
     JSC::JSLockHolder locker(arg0);
@@ -4175,7 +4120,7 @@ static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigne
     }
 }
 
-extern "C" EncodedJSValue JSC__JSValue__callCustomInspectFunction(
+extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     JSC::JSGlobalObject* lexicalGlobalObject,
     JSC__JSValue encodedFunctionValue,
     JSC__JSValue encodedThisValue,

@@ -331,7 +331,14 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
         for (wksp.map.keys(), wksp.map.values()) |k, v| {
             const name_hash = stringHash(v.name);
             this.workspace_paths.putAssumeCapacity(name_hash, builder.append(String, k));
-            if (v.version) |version| this.workspace_versions.putAssumeCapacity(name_hash, version);
+
+            if (v.version) |version_string| {
+                const sliced_version = Semver.SlicedString.init(version_string, version_string);
+                const result = Semver.Version.parse(sliced_version);
+                if (result.valid and result.wildcard == .none) {
+                    this.workspace_versions.putAssumeCapacity(name_hash, result.version.fill());
+                }
+            }
         }
     }
 

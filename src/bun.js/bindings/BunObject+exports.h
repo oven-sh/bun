@@ -28,6 +28,7 @@
     macro(stdin) \
     macro(stdout) \
     macro(unsafe) \
+    macro(semver) \
 
 // --- Callbacks ---
 #define FOR_EACH_CALLBACK(macro) \

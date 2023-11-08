@@ -17,6 +17,13 @@ namespace Bun {
 JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateCommonJSModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionLoadModule);
 
+void populateESMExports(
+    JSC::JSGlobalObject* globalObject,
+    JSC::JSValue result,
+    WTF::Vector<JSC::Identifier, 4>& exportNames,
+    JSC::MarkedArgumentBuffer& exportValues,
+    bool ignoreESModuleAnnotation);
+
 class JSCommonJSModule final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;

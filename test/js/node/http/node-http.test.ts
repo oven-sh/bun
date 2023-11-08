@@ -9,7 +9,10 @@ import {
   validateHeaderName,
   validateHeaderValue,
   ServerResponse,
+  IncomingMessage,
 } from "node:http";
+
+import https from "node:https";
 import { createServer as createHttpsServer } from "node:https";
 import { createTest } from "node-harness";
 import url from "node:url";
@@ -154,6 +157,9 @@ describe("node:http", () => {
     function runTest(done: Function, callback: (server: Server, port: number, done: (err?: Error) => void) => void) {
       var timer;
       var server = createServer((req, res) => {
+        if (req.headers.__proto__ !== {}.__proto__) {
+          throw new Error("Headers should inherit from Object.prototype");
+        }
         const reqUrl = new URL(req.url!, `http://${req.headers.host}`);
         if (reqUrl.pathname) {
           if (reqUrl.pathname === "/redirect") {
@@ -162,6 +168,12 @@ describe("node:http", () => {
               Location: `http://localhost:${server.port}/redirected`,
             });
             res.end("Got redirect!\n");
+            return;
+          }
+          if (reqUrl.pathname === "/multiple-set-cookie") {
+            expect(req.headers.cookie).toBe("foo=bar; bar=baz");
+            res.setHeader("Set-Cookie", ["foo=bar", "bar=baz"]);
+            res.end("OK");
             return;
           }
           if (reqUrl.pathname === "/redirected") {
@@ -297,6 +309,25 @@ describe("node:http", () => {
       } finally {
         server.close();
       }
+    });
+
+    it("multiple Set-Cookie headers works #6810", done => {
+      runTest(done, (server, port, done) => {
+        const req = request(`http://localhost:${port}/multiple-set-cookie`, res => {
+          let data = "";
+          res.setEncoding("utf8");
+          res.on("data", chunk => {
+            data += chunk;
+          });
+          res.on("end", () => {
+            expect(res.headers["set-cookie"]).toEqual(["foo=bar", "bar=baz"]);
+            done();
+          });
+          res.on("error", err => done(err));
+        });
+        req.setHeader("Cookie", ["foo=bar; bar=baz"]);
+        req.end();
+      });
     });
 
     it("should make a standard GET request when passed string as first arg", done => {
@@ -987,7 +1018,7 @@ describe("node https server", async () => {
       res.end();
     });
     try {
-      await fetch(url);
+      await fetch(url, { tls: { rejectUnauthorized: false } });
     } catch (e) {
       throw e;
     } finally {
@@ -1078,4 +1109,450 @@ describe("server.address should be valid IP", () => {
       }
     });
   });
+});
+
+it("should not accept untrusted certificates", async () => {
+  const server = https.createServer(
+    {
+      key: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "openssl.key")),
+      cert: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "openssl.crt")),
+      passphrase: "123123123",
+    },
+    (req, res) => {
+      res.write("Hello from https server");
+      res.end();
+    },
+  );
+  server.listen(0, "127.0.0.1");
+  const address = server.address();
+
+  try {
+    let url_address = address.address;
+    if (address.family === "IPv6") {
+      url_address = `[${url_address}]`;
+    }
+    const res = await fetch(`https://${url_address}:${address.port}`, {
+      tls: {
+        rejectUnauthorized: true,
+      },
+    });
+    await res.text();
+    expect(true).toBe("unreacheable");
+  } catch (err) {
+    expect(err.code).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+    expect(err.message).toBe("unable to verify the first certificate");
+  }
+
+  server.close();
+});
+
+it("IncomingMessage with a RequestLike object", () => {
+  const rawHeadersMap = {
+    "x-test": "test",
+    "Real-Header": "test",
+    "content-type": "text/plain",
+    "User-Agent": "Bun",
+  };
+
+  // To excercise the case where inline capacity cannot be used
+  for (let i = 0; i < 64; i++) {
+    rawHeadersMap[`header-${i}`] = `value-${i}`;
+  }
+
+  const headers = new Headers(rawHeadersMap);
+  headers.append("set-cookie", "foo=bar");
+  headers.append("set-cookie", "bar=baz");
+
+  const request = new Request("https://example.com/hello/hi", {
+    headers,
+  });
+
+  const incomingMessageFromRequest = new IncomingMessage(request);
+  const incomingMessageFromRequestLike1 = new IncomingMessage({
+    url: "/hello/hi",
+    headers: headers,
+    method: request.method,
+  });
+  const incomingMessageFromRequestLike2 = new IncomingMessage({
+    url: "/hello/hi",
+    headers: headers.toJSON(),
+    method: request.method,
+  });
+  for (let incomingMessageFromRequestLike of [
+    incomingMessageFromRequestLike1,
+    incomingMessageFromRequestLike2,
+    incomingMessageFromRequest,
+  ]) {
+    expect(incomingMessageFromRequestLike.headers).toEqual(incomingMessageFromRequest.headers);
+    expect(incomingMessageFromRequestLike.method).toEqual(incomingMessageFromRequest.method);
+    expect(incomingMessageFromRequestLike.url).toEqual(incomingMessageFromRequest.url);
+    expect(incomingMessageFromRequestLike.headers).toEqual({
+      "x-test": "test",
+      "real-header": "test",
+      "content-type": "text/plain",
+      "user-agent": "Bun",
+      "set-cookie": ["foo=bar", "bar=baz"],
+      "header-0": "value-0",
+      "header-1": "value-1",
+      "header-10": "value-10",
+      "header-11": "value-11",
+      "header-12": "value-12",
+      "header-13": "value-13",
+      "header-14": "value-14",
+      "header-15": "value-15",
+      "header-16": "value-16",
+      "header-17": "value-17",
+      "header-18": "value-18",
+      "header-19": "value-19",
+      "header-2": "value-2",
+      "header-20": "value-20",
+      "header-21": "value-21",
+      "header-22": "value-22",
+      "header-23": "value-23",
+      "header-24": "value-24",
+      "header-25": "value-25",
+      "header-26": "value-26",
+      "header-27": "value-27",
+      "header-28": "value-28",
+      "header-29": "value-29",
+      "header-3": "value-3",
+      "header-30": "value-30",
+      "header-31": "value-31",
+      "header-32": "value-32",
+      "header-33": "value-33",
+      "header-34": "value-34",
+      "header-35": "value-35",
+      "header-36": "value-36",
+      "header-37": "value-37",
+      "header-38": "value-38",
+      "header-39": "value-39",
+      "header-4": "value-4",
+      "header-40": "value-40",
+      "header-41": "value-41",
+      "header-42": "value-42",
+      "header-43": "value-43",
+      "header-44": "value-44",
+      "header-45": "value-45",
+      "header-46": "value-46",
+      "header-47": "value-47",
+      "header-48": "value-48",
+      "header-49": "value-49",
+      "header-5": "value-5",
+      "header-50": "value-50",
+      "header-51": "value-51",
+      "header-52": "value-52",
+      "header-53": "value-53",
+      "header-54": "value-54",
+      "header-55": "value-55",
+      "header-56": "value-56",
+      "header-57": "value-57",
+      "header-58": "value-58",
+      "header-59": "value-59",
+      "header-6": "value-6",
+      "header-60": "value-60",
+      "header-61": "value-61",
+      "header-62": "value-62",
+      "header-63": "value-63",
+      "header-7": "value-7",
+      "header-8": "value-8",
+      "header-9": "value-9",
+    });
+  }
+
+  // this one preserves the original case
+  expect(incomingMessageFromRequestLike1.rawHeaders).toEqual([
+    "content-type",
+    "text/plain",
+    "user-agent",
+    "Bun",
+    "set-cookie",
+    "foo=bar",
+    "set-cookie",
+    "bar=baz",
+    "x-test",
+    "test",
+    "Real-Header",
+    "test",
+    "header-0",
+    "value-0",
+    "header-1",
+    "value-1",
+    "header-2",
+    "value-2",
+    "header-3",
+    "value-3",
+    "header-4",
+    "value-4",
+    "header-5",
+    "value-5",
+    "header-6",
+    "value-6",
+    "header-7",
+    "value-7",
+    "header-8",
+    "value-8",
+    "header-9",
+    "value-9",
+    "header-10",
+    "value-10",
+    "header-11",
+    "value-11",
+    "header-12",
+    "value-12",
+    "header-13",
+    "value-13",
+    "header-14",
+    "value-14",
+    "header-15",
+    "value-15",
+    "header-16",
+    "value-16",
+    "header-17",
+    "value-17",
+    "header-18",
+    "value-18",
+    "header-19",
+    "value-19",
+    "header-20",
+    "value-20",
+    "header-21",
+    "value-21",
+    "header-22",
+    "value-22",
+    "header-23",
+    "value-23",
+    "header-24",
+    "value-24",
+    "header-25",
+    "value-25",
+    "header-26",
+    "value-26",
+    "header-27",
+    "value-27",
+    "header-28",
+    "value-28",
+    "header-29",
+    "value-29",
+    "header-30",
+    "value-30",
+    "header-31",
+    "value-31",
+    "header-32",
+    "value-32",
+    "header-33",
+    "value-33",
+    "header-34",
+    "value-34",
+    "header-35",
+    "value-35",
+    "header-36",
+    "value-36",
+    "header-37",
+    "value-37",
+    "header-38",
+    "value-38",
+    "header-39",
+    "value-39",
+    "header-40",
+    "value-40",
+    "header-41",
+    "value-41",
+    "header-42",
+    "value-42",
+    "header-43",
+    "value-43",
+    "header-44",
+    "value-44",
+    "header-45",
+    "value-45",
+    "header-46",
+    "value-46",
+    "header-47",
+    "value-47",
+    "header-48",
+    "value-48",
+    "header-49",
+    "value-49",
+    "header-50",
+    "value-50",
+    "header-51",
+    "value-51",
+    "header-52",
+    "value-52",
+    "header-53",
+    "value-53",
+    "header-54",
+    "value-54",
+    "header-55",
+    "value-55",
+    "header-56",
+    "value-56",
+    "header-57",
+    "value-57",
+    "header-58",
+    "value-58",
+    "header-59",
+    "value-59",
+    "header-60",
+    "value-60",
+    "header-61",
+    "value-61",
+    "header-62",
+    "value-62",
+    "header-63",
+    "value-63",
+  ]);
+
+  // this one does not preserve the original case
+  expect(incomingMessageFromRequestLike2.rawHeaders).toEqual([
+    "content-type",
+    "text/plain",
+    "user-agent",
+    "Bun",
+    "Set-Cookie",
+    "foo=bar",
+    "Set-Cookie",
+    "bar=baz",
+    "x-test",
+    "test",
+    "real-header",
+    "test",
+    "header-0",
+    "value-0",
+    "header-1",
+    "value-1",
+    "header-2",
+    "value-2",
+    "header-3",
+    "value-3",
+    "header-4",
+    "value-4",
+    "header-5",
+    "value-5",
+    "header-6",
+    "value-6",
+    "header-7",
+    "value-7",
+    "header-8",
+    "value-8",
+    "header-9",
+    "value-9",
+    "header-10",
+    "value-10",
+    "header-11",
+    "value-11",
+    "header-12",
+    "value-12",
+    "header-13",
+    "value-13",
+    "header-14",
+    "value-14",
+    "header-15",
+    "value-15",
+    "header-16",
+    "value-16",
+    "header-17",
+    "value-17",
+    "header-18",
+    "value-18",
+    "header-19",
+    "value-19",
+    "header-20",
+    "value-20",
+    "header-21",
+    "value-21",
+    "header-22",
+    "value-22",
+    "header-23",
+    "value-23",
+    "header-24",
+    "value-24",
+    "header-25",
+    "value-25",
+    "header-26",
+    "value-26",
+    "header-27",
+    "value-27",
+    "header-28",
+    "value-28",
+    "header-29",
+    "value-29",
+    "header-30",
+    "value-30",
+    "header-31",
+    "value-31",
+    "header-32",
+    "value-32",
+    "header-33",
+    "value-33",
+    "header-34",
+    "value-34",
+    "header-35",
+    "value-35",
+    "header-36",
+    "value-36",
+    "header-37",
+    "value-37",
+    "header-38",
+    "value-38",
+    "header-39",
+    "value-39",
+    "header-40",
+    "value-40",
+    "header-41",
+    "value-41",
+    "header-42",
+    "value-42",
+    "header-43",
+    "value-43",
+    "header-44",
+    "value-44",
+    "header-45",
+    "value-45",
+    "header-46",
+    "value-46",
+    "header-47",
+    "value-47",
+    "header-48",
+    "value-48",
+    "header-49",
+    "value-49",
+    "header-50",
+    "value-50",
+    "header-51",
+    "value-51",
+    "header-52",
+    "value-52",
+    "header-53",
+    "value-53",
+    "header-54",
+    "value-54",
+    "header-55",
+    "value-55",
+    "header-56",
+    "value-56",
+    "header-57",
+    "value-57",
+    "header-58",
+    "value-58",
+    "header-59",
+    "value-59",
+    "header-60",
+    "value-60",
+    "header-61",
+    "value-61",
+    "header-62",
+    "value-62",
+    "header-63",
+    "value-63",
+  ]);
+});
+
+it("#6892", () => {
+  const totallyValid = ["*", "/", "/foo", "/foo/bar"];
+  for (const url of totallyValid) {
+    const req = new IncomingMessage({ url });
+    expect(req.url).toBe(url);
+    expect(req.method).toBeNull();
+  }
 });

@@ -519,9 +519,9 @@ class ClientHttp2Stream extends Duplex {
   }
 
   get bufferSize() {
-    // we have no buffer
-    // we write into TLSSocket/Socket directly and let it buffer for us
-    return 0;
+    const session = this[bunHTTP2Session];
+    if (!session) return 0;
+    return session[bunHTTP2Socket]?.bufferSize || 0;
   }
 
   get sentHeaders() {
@@ -734,6 +734,7 @@ function connectWithProtocol(protocol: string, options: Http2ConnectOptions | st
   }
   return tls.connect(options, listener);
 }
+
 function emitWantTrailersNT(streams, streamId) {
   const stream = streams.get(streamId);
   if (stream) {
@@ -960,9 +961,9 @@ class ClientHttp2Session extends Http2Session {
     return this.#alpnProtocol;
   }
   #onConnect() {
-    const socket = this[bunHTTP2Socket] as TLSSocket;
+    const socket = this[bunHTTP2Socket];
     if (!socket) return;
-    // check if h2 is supported only for TLSSocket or Socket
+    // check if h2 is supported only for TLSSocket
     if (socket instanceof TLSSocket) {
       if (socket.alpnProtocol !== "h2") {
         socket.end();
@@ -970,16 +971,19 @@ class ClientHttp2Session extends Http2Session {
         error.code = "ERR_HTTP2_ERROR";
         this.emit("error", error);
       }
+      this.#alpnProtocol = "h2";
+
       const origin = socket[bunTLSConnectOptions]?.serverName || socket.remoteAddress;
       this.#originSet.add(origin);
       this.emit("origin", this.originSet);
+    } else {
+      this.#alpnProtocol = "h2c";
     }
+
+    this.emit("connect", this, socket);
+
     // TODO: make a native bindings on data and write and fallback to non-native
     socket.on("data", this.#onRead.bind(this));
-    // connected!
-    this.emit("connect", this, socket);
-    this.emit("connection", socket);
-
     // redirect the queued buffers
     const queue = this.#queue;
     while (queue.length) {
@@ -1165,7 +1169,6 @@ class ClientHttp2Session extends Http2Session {
         this.#onConnect.bind(this),
       );
       this[bunHTTP2Socket] = socket;
-      this.#alpnProtocol = protocol === "http:" ? "h2c" : "h2";
     }
     this.#encrypted = socket instanceof TLSSocket;
 

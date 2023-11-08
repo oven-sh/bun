@@ -519,7 +519,7 @@ describe("Client Basics", () => {
     await promise;
     expect(client.destroyed).toBe(true);
   });
-  it("should fail to connect over http/1", async () => {
+  it("should fail to connect over HTTP/1.1", async () => {
     const tls = {
       ...TLS_CERT,
       ca: TLS_CERT.cert,

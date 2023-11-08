@@ -273,7 +273,7 @@ describe("Bun.semver.satisfies()", () => {
     testSatisfies("1.2 - 1.3 || 5.0", "1.2.1", true);
     testSatisfies("5.0 || 1.2 - 1.3", "1.2.1", true);
     testSatisfies("1.2 - 1.3 || 5.0", "5.0", false);
-    //   expect(satisfies("5.0 || 1.2 - 1.3", "5.0")).toBeTrue();
+    testSatisfies("5.0 || 1.2 - 1.3", "5.0", false);
     testSatisfies("1.2 - 1.3 || 5.0", "5.0.2", true);
     testSatisfies("5.0 || 1.2 - 1.3", "5.0.2", true);
     testSatisfies("1.2 - 1.3 || 5.0", "5.0.2", true);

@@ -1044,7 +1044,7 @@ pub const Version = extern struct {
 
         var i: usize = 0;
 
-        while (i < input.len and strings.containsChar(&std.ascii.whitespace, input[i])) : (i += 1) {}
+        i += strings.lengthOfLeadingWhitespaceASCII(input[i..]);
         if (i == input.len) {
             result.valid = false;
             return result;
@@ -1054,7 +1054,7 @@ pub const Version = extern struct {
             i += 1;
         }
 
-        while (i < input.len and strings.containsChar(&std.ascii.whitespace, input[i])) : (i += 1) {}
+        i += strings.lengthOfLeadingWhitespaceASCII(input[i..]);
         if (i == input.len) {
             result.valid = false;
             return result;
@@ -1989,16 +1989,16 @@ pub const Query = struct {
 
                 // TODO: can we do this without rolling back?
                 const hyphenate: bool = maybe_hyphenate and possibly_hyphenate: {
-                    while (i < input.len and strings.containsChar(&std.ascii.whitespace, input[i])) : (i += 1) {}
+                    i += strings.lengthOfLeadingWhitespaceASCII(input[i..]);
                     if (!(i < input.len and input[i] == '-')) break :possibly_hyphenate false;
                     i += 1;
-                    while (i < input.len and strings.containsChar(&std.ascii.whitespace, input[i])) : (i += 1) {}
+                    i += strings.lengthOfLeadingWhitespaceASCII(input[i..]);
                     if (i == input.len) break :possibly_hyphenate false;
                     if (input[i] == 'v' or input[i] == '=') {
                         i += 1;
                     }
                     if (i == input.len) break :possibly_hyphenate false;
-                    while (i < input.len and strings.containsChar(&std.ascii.whitespace, input[i])) : (i += 1) {}
+                    i += strings.lengthOfLeadingWhitespaceASCII(input[i..]);
                     if (i == input.len) break :possibly_hyphenate false;
 
                     if (!(i < input.len and switch (input[i]) {

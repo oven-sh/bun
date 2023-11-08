@@ -40,7 +40,7 @@ describe("Bun.semver.satisfies()", () => {
         expect().fail("Expected true");
       }
 
-      if (satisfies("lol||shark", "1.2.3")) {
+      if (satisfies("^2.2.3||lol||!!#4_", "1.2.3")) {
         expect().fail("Expected false");
       }
 

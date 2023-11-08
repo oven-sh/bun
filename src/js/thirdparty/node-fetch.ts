@@ -30,6 +30,11 @@ const kHeaders = Symbol("kHeaders");
 const kBody = Symbol("kBody");
 const HeadersPrototype = Headers.prototype;
 
+var BodyReadable;
+function loadBodyReadable() {
+  ({ _ReadableFromWebForUndici: BodyReadable } = require("node:stream")[Symbol.for("::bunternal::")]);
+}
+
 class Response extends WebResponse {
   [kBody]: any;
   [kHeaders];
@@ -46,10 +51,10 @@ class Response extends WebResponse {
   get body() {
     let body = this[kBody];
     if (!body) {
-      const { Readable } = require("node:stream");
-      const web = super.body;
+      var web = super.body;
       if (!web) return null;
-      body = this[kBody] = Readable.fromWeb(web);
+      if (!BodyReadable) loadBodyReadable();
+      body = this[kBody] = new BodyReadable({}, web);
     }
 
     return body;
@@ -58,8 +63,50 @@ class Response extends WebResponse {
   get headers() {
     return (this[kHeaders] ??= Object.setPrototypeOf(super.headers, HeadersPrototype) as any);
   }
+
+  clone() {
+    return Object.setPrototypeOf(super.clone(this), ResponsePrototype);
+  }
+
+  async arrayBuffer() {
+    // load the getter
+    this.body;
+    return await super.arrayBuffer();
+  }
+
+  async blob() {
+    // load the getter
+    this.body;
+    return await super.blob();
+  }
+
+  async formData() {
+    // load the getter
+    this.body;
+    return await super.formData();
+  }
+
+  async json() {
+    // load the getter
+    this.body;
+    return await super.json();
+  }
+
+  async text() {
+    // load the getter
+    this.body;
+    return await super.text();
+  }
+
+  get type() {
+    if (!super.ok) {
+      return "error";
+    }
+
+    return "default";
+  }
 }
-const ResponsePrototype = Response.prototype;
+var ResponsePrototype = Response.prototype;
 
 /**
  * `node-fetch` works like the browser-fetch API, except it's a little more strict on some features,

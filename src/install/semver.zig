@@ -2082,7 +2082,9 @@ pub const SemverObject = struct {
         const right_string = right_arg.toStringOrNull(globalThis) orelse return .false;
 
         const left = left_string.toSlice(globalThis, allocator);
+        defer left.deinit();
         const right = right_string.toSlice(globalThis, allocator);
+        defer right.deinit();
 
         if (!strings.isAllASCII(left.slice())) return .false;
         if (!strings.isAllASCII(right.slice())) return .false;

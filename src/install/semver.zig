@@ -2211,11 +2211,12 @@ pub const SemverObject = struct {
         if (!strings.isAllASCII(left.slice())) return .false;
         if (!strings.isAllASCII(right.slice())) return .false;
 
-        const left_group = Query.parse(
-            allocator,
-            left.slice(),
-            SlicedString.init(left.slice(), left.slice()),
-        ) catch return .false;
+        const left_result = Version.parse(SlicedString.init(left.slice(), left.slice()));
+        if (left_result.wildcard != .none) {
+            return .false;
+        }
+
+        const left_version = left_result.version.fill();
 
         const right_group = Query.parse(
             allocator,
@@ -2223,19 +2224,13 @@ pub const SemverObject = struct {
             SlicedString.init(right.slice(), right.slice()),
         ) catch return .false;
 
-        const left_version = left_group.getExactVersion();
         const right_version = right_group.getExactVersion();
 
-        if (left_version != null and right_version != null) {
-            return JSC.jsBoolean(left_version.?.eql(right_version.?));
+        if (right_version != null) {
+            return JSC.jsBoolean(left_version.eql(right_version.?));
         }
 
-        if (left_version) |version| {
-            return JSC.jsBoolean(right_group.satisfies(version, right.slice(), left.slice()));
-        }
-
-        // received two groups or right is version and left is group
-        return .false;
+        return JSC.jsBoolean(right_group.satisfies(left_version, right.slice(), left.slice()));
     }
 };
 

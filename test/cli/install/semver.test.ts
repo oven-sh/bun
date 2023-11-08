@@ -1,3 +1,19 @@
+// The ISC License
+
+// Copyright (c) Isaac Z. Schlueter and Contributors
+
+// Permission to use, copy, modify, and/or distribute this software for any
+// purpose with or without fee is hereby granted, provided that the above
+// copyright notice and this permission notice appear in all copies.
+
+// THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+// WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+// MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+// ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+// WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+// ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
+// IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
 const { satisfies, order } = Bun.semver;
 
 function testSatisfiesExact(left: any, right: any, expected: boolean) {
@@ -57,6 +73,7 @@ describe("Bun.semver.order()", () => {
       ["1.2.3-a.b.c.10.d.5", "1.2.3-a.b.c.5.d.100"],
       ["1.2.3-r2", "1.2.3-r100"],
       ["1.2.3-r100", "1.2.3-R2"],
+      ["1.0.0-pre.a.b", "1.0.0-pre.a"],
     ];
     for (const [left, right] of tests) {
       expect(order(left, right)).toBe(1);
@@ -203,7 +220,7 @@ describe("Bun.semver.satisfies()", () => {
     testSatisfies(">=3", "3.5.0", true);
     testSatisfies(">=3", "2.999.999", false);
     testSatisfies(">=3", "3.5.1", true);
-    testSatisfies(">=3", "4", false);
+    testSatisfies(">=3.x.x", "3.x.x", false);
 
     testSatisfies("<6 >= 5", "5.0.0", true);
     testSatisfies("<6 >= 5", "4.0.0", false);

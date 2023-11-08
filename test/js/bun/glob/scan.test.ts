@@ -275,7 +275,7 @@ function tempFixturesDir(files: Record<string, string | Record<string, string>>)
   }
 
   const dir = path.join(import.meta.dir, "fixtures");
-  fs.mkdirSync(dir);
+  fs.mkdirSync(dir, { recursive: true });
 
   impl(dir, files);
 

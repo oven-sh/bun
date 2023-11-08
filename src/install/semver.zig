@@ -2119,12 +2119,7 @@ pub const SemverObject = struct {
             return JSC.jsBoolean(right_group.satisfies(version, right.slice(), left.slice()));
         }
 
-        if (right_version) |version| {
-            return JSC.jsBoolean(left_group.satisfies(version, left.slice(), right.slice()));
-        }
-
-        // received two groups
-        // TODO: test if the two groups intersect
+        // received two groups or right is version and left is group
         return .false;
     }
 };

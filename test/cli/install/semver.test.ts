@@ -1,6 +1,6 @@
 const { satisfies } = Bun.semver;
 
-function testSatisfies(left: any, right: any, expected: boolean) {
+function testSatisfiesExact(left: any, right: any, expected: boolean) {
   expect(satisfies(left, right)).toBe(expected);
   expect(satisfies(right, left)).toBe(expected);
   const leftBuffer = Buffer.from(left);
@@ -13,8 +13,17 @@ function testSatisfies(left: any, right: any, expected: boolean) {
   expect(satisfies(rightBuffer, left)).toBe(expected);
 }
 
+function testSatisfies(right: any, left: any, expected: boolean) {
+  expect(satisfies(left, right)).toBe(expected);
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  expect(satisfies(leftBuffer, rightBuffer)).toBe(expected);
+  expect(satisfies(leftBuffer, right)).toBe(expected);
+  expect(satisfies(left, rightBuffer)).toBe(expected);
+}
+
 describe("Bun.semver.satisfies()", () => {
-  test("basic", () => {
+  test("expected errors", () => {
     expect(satisfies).toBeInstanceOf(Function);
     expect(() => {
       satisfies();
@@ -48,27 +57,27 @@ describe("Bun.semver.satisfies()", () => {
         expect().fail("Expected false");
       }
 
-      if (!satisfies("^1.2.3", "1.2.3")) {
+      if (!satisfies("1.2.3", "^1.2.3")) {
         expect().fail("Expected true");
       }
 
-      if (!satisfies("1.2.3", "^1.2.3")) {
-        expect().fail("Expected true");
+      if (satisfies("^1.2.3", "1.2.3")) {
+        expect().fail("Expected false");
       }
     }
     Bun.gc(true);
   });
 
   test("exact versions", () => {
-    testSatisfies("1.2.3", "1.2.3", true);
-    testSatisfies("4", "4", false);
-    testSatisfies("4.0.0", "4.0.0", true);
-    testSatisfies("4.0", "4.0", false);
-    testSatisfies("5.0.0-beta.1", "5.0.0-beta.1", true);
-    testSatisfies("5.0.0-beta.1", "5.0.0-beta.2", false);
-    testSatisfies("5.0.0-beta.1", "5.0.0-beta.0", false);
-    testSatisfies("5.0.0-beta.1", "5.0.0-beta", false);
-    testSatisfies("5.0.0-beta.1", "5.0.0", false);
+    testSatisfiesExact("1.2.3", "1.2.3", true);
+    testSatisfiesExact("4", "4", false);
+    testSatisfiesExact("4.0.0", "4.0.0", true);
+    testSatisfiesExact("4.0", "4.0", false);
+    testSatisfiesExact("5.0.0-beta.1", "5.0.0-beta.1", true);
+    testSatisfiesExact("5.0.0-beta.1", "5.0.0-beta.2", false);
+    testSatisfiesExact("5.0.0-beta.1", "5.0.0-beta.0", false);
+    testSatisfiesExact("5.0.0-beta.1", "5.0.0-beta", false);
+    testSatisfiesExact("5.0.0-beta.1", "5.0.0", false);
   });
 
   test("ranges", () => {
@@ -294,9 +303,5 @@ describe("Bun.semver.satisfies()", () => {
       testSatisfies("^2 <2.2 || > 2.3", item, true);
       testSatisfies("> 2.3 || ^2 <2.2", item, true);
     }
-  });
-
-  test.todo("intersections", () => {
-    testSatisfies("1.3.0 || <1.0.0 >2.0.0", "1.3.0 || <1.0.0 >2.0.0", true);
   });
 });

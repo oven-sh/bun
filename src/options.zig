@@ -1199,7 +1199,7 @@ pub fn definesFromTransformOptions(
         }
     }
     if (framework_env) |framework| {
-        if (framework.behavior != .disable and framework.inline_defines) {
+        if (framework.inline_defines) {
             var quoted_node_env: string = brk: {
                 if (NODE_ENV) |node_env| {
                     if (node_env.len > 0) {

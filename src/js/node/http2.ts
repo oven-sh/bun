@@ -742,6 +742,10 @@ function emitWantTrailersNT(streams, streamId) {
   }
 }
 
+function emitConnectNT(self, socket) {
+  self.emit("connect", self, socket);
+}
+
 function emitStreamNT(self, streams, streamId) {
   const stream = streams.get(streamId);
   if (stream) {
@@ -980,8 +984,6 @@ class ClientHttp2Session extends Http2Session {
       this.#alpnProtocol = "h2c";
     }
 
-    this.emit("connect", this, socket);
-
     // TODO: make a native bindings on data and write and fallback to non-native
     socket.on("data", this.#onRead.bind(this));
     // redirect the queued buffers
@@ -989,6 +991,7 @@ class ClientHttp2Session extends Http2Session {
     while (queue.length) {
       socket.write(queue.shift());
     }
+    process.nextTick(emitConnectNT, this, socket);
   }
 
   #onClose() {
@@ -1148,8 +1151,10 @@ class ClientHttp2Session extends Http2Session {
       this[bunHTTP2Socket] = socket;
       if (socket.secureConnecting === true) {
         socket.on("secureConnect", this.#onConnect.bind(this));
+      } else if (socket.connecting === true) {
+        socket.on("connect", this.#onConnect.bind(this));
       } else {
-        this.#onConnect();
+        process.nextTick(this.#onConnect.bind(this));
       }
     } else {
       socket = connectWithProtocol(

@@ -73,7 +73,7 @@ function main() {
   } else {
     credentials = grpc.ServerCredentials.createInsecure();
   }
-  server.bindAsync("0.0.0.0:0", credentials, () => {
+  server.bindAsync("localhost:0", credentials, () => {
     server.start();
     process.stdout.write(JSON.stringify(server.http2ServerList[0].server.address()));
   });

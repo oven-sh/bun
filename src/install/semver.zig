@@ -2033,7 +2033,7 @@ pub const Query = struct {
 
 pub const SemverObject = struct {
     pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        const object = JSC.JSValue.createEmptyObject(globalThis, 2);
+        const object = JSC.JSValue.createEmptyObject(globalThis, 1);
 
         object.put(
             globalThis,

@@ -1,11 +1,30 @@
-const { satisfies, parse } = Bun.semver;
+const { satisfies } = Bun.semver;
 
 function testSatisfies(left: string, right: string, expected: boolean) {
   expect(satisfies(left, right)).toBe(expected);
   expect(satisfies(right, left)).toBe(expected);
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  expect(satisfies(leftBuffer, rightBuffer)).toBe(expected);
+  expect(satisfies(rightBuffer, leftBuffer)).toBe(expected);
+  expect(satisfies(leftBuffer, right)).toBe(expected);
+  expect(satisfies(right, leftBuffer)).toBe(expected);
+  expect(satisfies(left, rightBuffer)).toBe(expected);
+  expect(satisfies(rightBuffer, left)).toBe(expected);
 }
 
 describe("Bun.semver.satisfies()", () => {
+  test("basic", () => {
+    expect(satisfies).toBeInstanceOf(Function);
+    expect(() => {
+      satisfies();
+    }).toThrow("Expected two arguments");
+    expect(() => {
+      satisfies("1.2.3");
+    }).toThrow("Expected two arguments");
+    expect(satisfies("1.2.3", "1.2.3", "blah")).toBeTrue();
+  });
+
   test("exact versions", () => {
     testSatisfies("1.2.3", "1.2.3", true);
     testSatisfies("4", "4", false);

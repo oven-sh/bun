@@ -1497,6 +1497,20 @@ pub const Query = struct {
             }
         }
 
+        pub fn getExactVersion(this: *const Group) ?Version {
+            const range = this.head.head.range;
+            if (this.head.next == null and
+                this.head.head.next == null and
+                range.hasLeft() and
+                range.left.op == .eql and
+                !range.hasRight())
+            {
+                return range.left.version;
+            }
+
+            return null;
+        }
+
         pub fn from(version: Version) Group {
             return .{
                 .allocator = bun.default_allocator,
@@ -2057,20 +2071,21 @@ pub const SemverObject = struct {
         const allocator = globalThis.allocator();
         const arguments = callFrame.arguments(2).slice();
         if (arguments.len < 2) {
-            globalThis.throw("Expected 2 arguments", .{});
+            globalThis.throw("Expected two arguments", .{});
             return .zero;
         }
 
         const left_arg = arguments[0];
         const right_arg = arguments[1];
 
-        if (!left_arg.isString() and !right_arg.isString()) return .null;
+        const left_string = left_arg.toStringOrNull(globalThis) orelse return .false;
+        const right_string = right_arg.toStringOrNull(globalThis) orelse return .false;
 
-        const left_string = left_arg.toBunString(globalThis);
-        const right_string = right_arg.toBunString(globalThis);
+        const left = left_string.toSlice(globalThis, allocator);
+        const right = right_string.toSlice(globalThis, allocator);
 
-        const left = left_string.toUTF8(allocator);
-        const right = right_string.toUTF8(allocator);
+        if (!strings.isAllASCII(left.slice())) return .false;
+        if (!strings.isAllASCII(right.slice())) return .false;
 
         const left_group = Query.parse(
             allocator,
@@ -2084,33 +2099,19 @@ pub const SemverObject = struct {
             SlicedString.init(right.slice(), right.slice()),
         ) catch return .false;
 
-        const right_list = right_group.head;
-        const left_list = left_group.head;
-        const right_range = right_list.head.range;
-        const left_range = left_list.head.range;
+        const left_version = left_group.getExactVersion();
+        const right_version = right_group.getExactVersion();
 
-        const right_is_version = right_list.next == null and
-            right_list.head.next == null and
-            right_range.hasLeft() and
-            right_range.left.op == .eql and
-            !right_range.hasRight();
-
-        const left_is_version = left_list.next == null and
-            left_list.head.next == null and
-            left_range.hasLeft() and
-            left_range.left.op == .eql and
-            !left_range.hasRight();
-
-        if (left_is_version and right_is_version) {
-            return JSC.jsBoolean(left_range.left.version.eql(right_range.left.version));
+        if (left_version != null and right_version != null) {
+            return JSC.jsBoolean(left_version.?.eql(right_version.?));
         }
 
-        if (left_is_version) {
-            return JSC.jsBoolean(right_group.satisfies(left_range.left.version, right.slice(), left.slice()));
+        if (left_version) |version| {
+            return JSC.jsBoolean(right_group.satisfies(version, right.slice(), left.slice()));
         }
 
-        if (right_is_version) {
-            return JSC.jsBoolean(left_group.satisfies(right_range.left.version, left.slice(), right.slice()));
+        if (right_version) |version| {
+            return JSC.jsBoolean(left_group.satisfies(version, left.slice(), right.slice()));
         }
 
         // received two groups

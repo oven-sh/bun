@@ -8,9 +8,20 @@ import { test, expect } from "bun:test";
 test("node-fetch", () => {
   expect(Response.prototype).toBeInstanceOf(globalThis.Response);
   expect(Request).toBe(globalThis.Request);
-  expect(Headers).toBe(globalThis.Headers);
+  expect(new Headers()).toBeInstanceOf(globalThis.Headers);
   expect(fetch2.default).toBe(fetch2);
   expect(fetch2.Response).toBe(Response);
+});
+
+test("node-fetch Headers.raw()", () => {
+  const headers = new Headers({ "a": "1" });
+  headers.append("Set-Cookie", "b=1");
+  headers.append("Set-Cookie", "c=1");
+
+  expect(headers.raw()).toEqual({
+    "Set-Cookie": ["b=1", "c=1"],
+    "a": ["1"],
+  });
 });
 
 for (const [impl, name] of [
@@ -57,6 +68,12 @@ test("node-fetch uses node streams instead of web streams", async () => {
     });
     expect(result.body).toBeInstanceOf(stream.Readable);
     expect(result.body === result.body).toBe(true); // cached lazy getter
+    const headersJSON = result.headers.toJSON();
+    for (const key of Object.keys(headersJSON)) {
+      const value = headersJSON[key];
+      headersJSON[key] = Array.isArray(value) ? value : [value];
+    }
+    expect(result.headers.raw()).toEqual(headersJSON);
     const chunks = [];
     for await (const chunk of result.body) {
       chunks.push(chunk);

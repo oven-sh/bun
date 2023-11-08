@@ -1,4 +1,4 @@
-const { satisfies } = Bun.semver;
+const { satisfies, order } = Bun.semver;
 
 function testSatisfiesExact(left: any, right: any, expected: boolean) {
   expect(satisfies(left, right)).toBe(expected);
@@ -22,15 +22,109 @@ function testSatisfies(right: any, left: any, expected: boolean) {
   expect(satisfies(left, rightBuffer)).toBe(expected);
 }
 
+describe("Bun.semver.order()", () => {
+  test("comparisons", () => {
+    var tests = [
+      ["0.0.0", "0.0.0-foo"],
+      ["0.0.1", "0.0.0"],
+      ["1.0.0", "0.9.9"],
+      ["0.10.0", "0.9.0"],
+      ["0.99.0", "0.10.0"],
+      ["2.0.0", "1.2.3"],
+      ["v0.0.0", "0.0.0-foo"],
+      ["v0.0.1", "0.0.0"],
+      ["v1.0.0", "0.9.9"],
+      ["v0.10.0", "0.9.0"],
+      ["v0.99.0", "0.10.0"],
+      ["v2.0.0", "1.2.3"],
+      ["0.0.0", "v0.0.0-foo"],
+      ["0.0.1", "v0.0.0"],
+      ["1.0.0", "v0.9.9"],
+      ["0.10.0", "v0.9.0"],
+      ["0.99.0", "v0.10.0"],
+      ["2.0.0", "v1.2.3"],
+      ["1.2.3", "1.2.3-asdf"],
+      ["1.2.3", "1.2.3-4"],
+      ["1.2.3", "1.2.3-4-foo"],
+      ["1.2.3-5-foo", "1.2.3-5"],
+      ["1.2.3-5", "1.2.3-4"],
+      ["1.2.3-5-foo", "1.2.3-5-Foo"],
+      ["3.0.0", "2.7.2+asdf"],
+      ["1.2.3-a.10", "1.2.3-a.5"],
+      ["1.2.3-a.b", "1.2.3-a.5"],
+      ["1.2.3-a.b", "1.2.3-a"],
+      ["1.2.3-a.b.c.10.d.5", "1.2.3-a.b.c.5.d.100"],
+      ["1.2.3-r2", "1.2.3-r100"],
+      ["1.2.3-r100", "1.2.3-R2"],
+    ];
+    for (const [left, right] of tests) {
+      expect(order(left, right)).toBe(1);
+      expect(order(right, left)).toBe(-1);
+      expect(order(left, left)).toBe(0);
+      expect(order(right, right)).toBe(0);
+    }
+  });
+
+  test("equality", () => {
+    var tests = [
+      ["1.2.3", "v1.2.3"],
+      ["1.2.3", "=1.2.3"],
+      ["1.2.3", "v 1.2.3"],
+      ["1.2.3", "= 1.2.3"],
+      ["1.2.3", " v1.2.3"],
+      ["1.2.3", " =1.2.3"],
+      ["1.2.3", " v 1.2.3"],
+      ["1.2.3", " = 1.2.3"],
+      ["1.2.3-0", "v1.2.3-0"],
+      ["1.2.3-0", "=1.2.3-0"],
+      ["1.2.3-0", "v 1.2.3-0"],
+      ["1.2.3-0", "= 1.2.3-0"],
+      ["1.2.3-0", " v1.2.3-0"],
+      ["1.2.3-0", " =1.2.3-0"],
+      ["1.2.3-0", " v 1.2.3-0"],
+      ["1.2.3-0", " = 1.2.3-0"],
+      ["1.2.3-1", "v1.2.3-1"],
+      ["1.2.3-1", "=1.2.3-1"],
+      ["1.2.3-1", "v 1.2.3-1"],
+      ["1.2.3-1", "= 1.2.3-1"],
+      ["1.2.3-1", " v1.2.3-1"],
+      ["1.2.3-1", " =1.2.3-1"],
+      ["1.2.3-1", " v 1.2.3-1"],
+      ["1.2.3-1", " = 1.2.3-1"],
+      ["1.2.3-beta", "v1.2.3-beta"],
+      ["1.2.3-beta", "=1.2.3-beta"],
+      ["1.2.3-beta", "v 1.2.3-beta"],
+      ["1.2.3-beta", "= 1.2.3-beta"],
+      ["1.2.3-beta", " v1.2.3-beta"],
+      ["1.2.3-beta", " =1.2.3-beta"],
+      ["1.2.3-beta", " v 1.2.3-beta"],
+      ["1.2.3-beta", " = 1.2.3-beta"],
+      ["1.2.3-beta+build", " = 1.2.3-beta+otherbuild"],
+      ["1.2.3+build", " = 1.2.3+otherbuild"],
+      ["1.2.3-beta+build", "1.2.3-beta+otherbuild"],
+      ["1.2.3+build", "1.2.3+otherbuild"],
+      ["  v1.2.3+build", "1.2.3+otherbuild"],
+    ];
+
+    for (const [left, right] of tests) {
+      expect(order(left, right)).toBe(0);
+      expect(order(right, left)).toBe(0);
+    }
+  });
+});
+
 describe("Bun.semver.satisfies()", () => {
   test("expected errors", () => {
     expect(satisfies).toBeInstanceOf(Function);
     expect(() => {
+      // @ts-expect-error
       satisfies();
     }).toThrow("Expected two arguments");
     expect(() => {
+      // @ts-expect-error
       satisfies("1.2.3");
     }).toThrow("Expected two arguments");
+    // @ts-expect-error
     expect(satisfies("1.2.3", "1.2.3", "blah")).toBeTrue();
     expect(() => {
       satisfies(Symbol.for("~1.2.3"), "1.2.3");

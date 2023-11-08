@@ -764,6 +764,18 @@ pub const Version = extern struct {
         return lhs.tag.order(rhs.tag, lhs_buf, rhs_buf);
     }
 
+    pub fn orderIgnoringBuild(
+        lhs: Version,
+        rhs: Version,
+        lhs_buf: []const u8,
+        rhs_buf: []const u8,
+    ) std.math.Order {
+        const order_without_tag = orderWithoutTag(lhs, rhs);
+        if (order_without_tag != .eq) return order_without_tag;
+
+        return lhs.tag.orderWithoutBuild(rhs.tag, lhs_buf, rhs_buf);
+    }
+
     pub const Tag = extern struct {
         pre: ExternalString = ExternalString{},
         build: ExternalString = ExternalString{},
@@ -787,9 +799,11 @@ pub const Version = extern struct {
 
                 if (lhs_part == null and rhs_part == null) return .eq;
 
-                // not having a prerelease part is greater than having one
-                if (lhs_part == null) return .gt;
-                if (rhs_part == null) return .lt;
+                // if right is null, left is greater than.
+                if (rhs_part == null) return .gt;
+
+                // if left is null, left is less than.
+                if (lhs_part == null) return .lt;
 
                 const lhs_uint: ?u32 = std.fmt.parseUnsigned(u32, lhs_part.?, 10) catch null;
                 const rhs_uint: ?u32 = std.fmt.parseUnsigned(u32, rhs_part.?, 10) catch null;
@@ -813,7 +827,12 @@ pub const Version = extern struct {
             unreachable;
         }
 
-        pub fn order(lhs: Tag, rhs: Tag, lhs_buf: []const u8, rhs_buf: []const u8) std.math.Order {
+        pub fn order(
+            lhs: Tag,
+            rhs: Tag,
+            lhs_buf: []const u8,
+            rhs_buf: []const u8,
+        ) std.math.Order {
             if (!lhs.pre.isEmpty() and !rhs.pre.isEmpty()) {
                 return lhs.orderPre(rhs, lhs_buf, rhs_buf);
             }
@@ -822,6 +841,19 @@ pub const Version = extern struct {
             if (pre_order != .eq) return pre_order;
 
             return lhs.build.order(&rhs.build, lhs_buf, rhs_buf);
+        }
+
+        pub fn orderWithoutBuild(
+            lhs: Tag,
+            rhs: Tag,
+            lhs_buf: []const u8,
+            rhs_buf: []const u8,
+        ) std.math.Order {
+            if (!lhs.pre.isEmpty() and !rhs.pre.isEmpty()) {
+                return lhs.orderPre(rhs, lhs_buf, rhs_buf);
+            }
+
+            return lhs.pre.order(&rhs.pre, lhs_buf, rhs_buf);
         }
 
         pub fn cloneInto(this: Tag, slice: []const u8, buf: *[]u8) Tag {
@@ -1011,6 +1043,22 @@ pub const Version = extern struct {
         var stopped_at: i32 = 0;
 
         var i: usize = 0;
+
+        while (i < input.len and strings.containsChar(&std.ascii.whitespace, input[i])) : (i += 1) {}
+        if (i == input.len) {
+            result.valid = false;
+            return result;
+        }
+
+        if (input[i] == 'v' or input[i] == '=') {
+            i += 1;
+        }
+
+        while (i < input.len and strings.containsChar(&std.ascii.whitespace, input[i])) : (i += 1) {}
+        if (i == input.len) {
+            result.valid = false;
+            return result;
+        }
 
         // two passes :(
         while (i < input.len) {
@@ -2050,7 +2098,7 @@ pub const Query = struct {
 
 pub const SemverObject = struct {
     pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        const object = JSC.JSValue.createEmptyObject(globalThis, 1);
+        const object = JSC.JSValue.createEmptyObject(globalThis, 2);
 
         object.put(
             globalThis,
@@ -2064,7 +2112,71 @@ pub const SemverObject = struct {
             ),
         );
 
+        object.put(
+            globalThis,
+            JSC.ZigString.static("order"),
+            JSC.NewFunction(
+                globalThis,
+                JSC.ZigString.static("order"),
+                2,
+                SemverObject.order,
+                false,
+            ),
+        );
+
         return object;
+    }
+
+    pub fn order(
+        globalThis: *JSC.JSGlobalObject,
+        callFrame: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+        defer arena.deinit();
+        var stack_fallback = std.heap.stackFallback(512, arena.allocator());
+        const allocator = stack_fallback.get();
+
+        const arguments = callFrame.arguments(2).slice();
+        if (arguments.len < 2) {
+            globalThis.throw("Expected two arguments", .{});
+            return .zero;
+        }
+
+        const left_arg = arguments[0];
+        const right_arg = arguments[1];
+
+        const left_string = left_arg.toStringOrNull(globalThis) orelse return JSC.jsNumber(0);
+        const right_string = right_arg.toStringOrNull(globalThis) orelse return JSC.jsNumber(0);
+
+        const left = left_string.toSlice(globalThis, allocator);
+        defer left.deinit();
+        const right = right_string.toSlice(globalThis, allocator);
+        defer right.deinit();
+
+        if (!strings.isAllASCII(left.slice())) return JSC.jsNumber(0);
+        if (!strings.isAllASCII(right.slice())) return JSC.jsNumber(0);
+
+        const left_result = Version.parse(SlicedString.init(left.slice(), left.slice()));
+        const right_result = Version.parse(SlicedString.init(right.slice(), right.slice()));
+
+        if (!left_result.valid) {
+            globalThis.throw("Invalid SemVer: {s}\n", .{left.slice()});
+            return .zero;
+        }
+
+        if (!right_result.valid) {
+            globalThis.throw("Invalid SemVer: {s}\n", .{right.slice()});
+            return .zero;
+        }
+
+        const left_version = left_result.version.fill();
+        const right_version = right_result.version.fill();
+
+        return switch (left_version.orderIgnoringBuild(right_version, left.slice(), right.slice())) {
+            .eq => JSC.jsNumber(0),
+            .gt => JSC.jsNumber(1),
+            .lt => JSC.jsNumber(-1),
+        };
     }
 
     pub fn satisfies(

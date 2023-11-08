@@ -46,6 +46,9 @@ const serviceImpl =
       }
     : {
         echo: (call, callback) => {
+          if (call.metadata) {
+            call.sendMetadata(call.metadata);
+          }
           callback(null, call.request);
         },
       };

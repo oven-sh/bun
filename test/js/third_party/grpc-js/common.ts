@@ -68,18 +68,31 @@ function loadProtoFile(file: string) {
 const protoFile = path.join(import.meta.dir, "fixtures", "echo_service.proto");
 const EchoService = loadProtoFile(protoFile).EchoService as grpc.ServiceClientConstructor;
 
-const ca = readFileSync(path.join(import.meta.dir, "fixtures", "ca.pem"));
+export const ca = readFileSync(path.join(import.meta.dir, "fixtures", "ca.pem"));
 
 export class TestClient {
   #client: grpc.Client;
-  constructor(url: string, useTls: boolean, options?: grpc.ChannelOptions) {
+  constructor(url: string, useTls: boolean | grpc.ChannelCredentials, options?: grpc.ChannelOptions) {
     let credentials: grpc.ChannelCredentials;
-    if (useTls) {
+    if (useTls instanceof grpc.ChannelCredentials) {
+      credentials = useTls;
+    } else if (useTls) {
       credentials = grpc.credentials.createSsl(ca);
     } else {
       credentials = grpc.credentials.createInsecure();
     }
     this.#client = new EchoService(url, credentials, options);
+  }
+
+  static createFromServerWithCredentials(
+    server: TestServer,
+    credentials: grpc.ChannelCredentials,
+    options?: grpc.ChannelOptions,
+  ) {
+    if (!server.address) {
+      throw new Error("Cannot create client, server not started");
+    }
+    return new TestClient(server.url, credentials, options);
   }
 
   static createFromServer(server: TestServer, options?: grpc.ChannelOptions) {

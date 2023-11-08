@@ -3094,7 +3094,7 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
 
     // done or streaming
     const is_done = content_length != null and this.state.total_body_received >= content_length.?;
-    if (is_done or this.signals.get(.body_streaming)) {
+    if (is_done or this.signals.get(.body_streaming) or content_length == null) {
         const processed = try this.state.processBodyBuffer(buffer.*);
 
         if (this.progress_node) |progress| {
@@ -3541,7 +3541,7 @@ pub fn handleResponseMetadata(
         log("handleResponseMetadata: content_length is null and transfer_encoding {}", .{this.state.transfer_encoding});
     }
 
-    if (this.method.hasBody() and ((content_length != null and content_length.? > 0) or !this.state.allow_keepalive or this.state.transfer_encoding == .chunked or is_server_sent_events)) {
+    if (this.method.hasBody() and (content_length == null or content_length.? > 0 or !this.state.allow_keepalive or this.state.transfer_encoding == .chunked or is_server_sent_events)) {
         return ShouldContinue.continue_streaming;
     } else {
         return ShouldContinue.finished;

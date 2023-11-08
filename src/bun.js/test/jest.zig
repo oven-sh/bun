@@ -8,6 +8,7 @@ const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = @import("root").bun.HTTP;
 const NetworkThread = HTTPClient.NetworkThread;
 const Environment = bun.Environment;
+const JestPrettyFormat = @import("./pretty_format.zig").JestPrettyFormat;
 
 const Snapshots = @import("./snapshot.zig").Snapshots;
 const expect = @import("./expect.zig");
@@ -1818,6 +1819,7 @@ fn formatLabel(globalThis: *JSC.JSGlobalObject, label: string, function_args: []
     var idx: usize = 0;
     var args_idx: usize = 0;
     var list = try std.ArrayListUnmanaged(u8).initCapacity(allocator, label.len);
+    var writer = list.writer(allocator);
 
     while (idx < label.len) {
         const char = label[idx];
@@ -1826,7 +1828,7 @@ fn formatLabel(globalThis: *JSC.JSGlobalObject, label: string, function_args: []
 
             switch (label[idx + 1]) {
                 's' => {
-                    try consumeArg(globalThis, current_arg.jsType().isString(), &idx, &args_idx, &list, &current_arg, "%s");
+                    try consumeArg(globalThis, true, &idx, &args_idx, &list, &current_arg, "%s");
                 },
                 'i' => {
                     try consumeArg(globalThis, current_arg.isAnyInt(), &idx, &args_idx, &list, &current_arg, "%i");
@@ -1857,6 +1859,26 @@ fn formatLabel(globalThis: *JSC.JSGlobalObject, label: string, function_args: []
                     try list.append(allocator, '%');
                     idx += 1;
                 },
+                'p' => {
+                    JestPrettyFormat.format(
+                        .Debug,
+                        globalThis,
+                        @as([*]const JSValue, @ptrCast(&current_arg)),
+                        1,
+                        @TypeOf(writer),
+                        @TypeOf(writer),
+                        writer,
+                        .{
+                            .enable_colors = false,
+                            .add_newline = false,
+                            .flush = false,
+                            .quote_strings = true,
+                        },
+                    );
+                    idx += 1;
+                    args_idx += 1;
+                },
+
                 else => {
                     // ignore unrecognized fmt
                 },

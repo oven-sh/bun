@@ -2068,7 +2068,11 @@ pub const SemverObject = struct {
         globalThis: *JSC.JSGlobalObject,
         callFrame: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        const allocator = globalThis.allocator();
+        var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+        defer arena.deinit();
+        var stack_fallback = std.heap.stackFallback(512, arena.allocator());
+        const allocator = stack_fallback.get();
+
         const arguments = callFrame.arguments(2).slice();
         if (arguments.len < 2) {
             globalThis.throw("Expected two arguments", .{});

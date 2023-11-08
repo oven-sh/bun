@@ -506,6 +506,10 @@ class ClientHttp2Stream extends Duplex {
     this.#headers = headers;
   }
 
+  get scheme() {
+    return this.#headers[":scheme"] || "https";
+  }
+
   get id() {
     return this.#id;
   }

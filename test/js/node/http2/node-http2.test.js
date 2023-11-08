@@ -861,4 +861,21 @@ describe("Client Basics", () => {
     expect(stream).toBeDefined();
     expect(stream.id).toBe(1);
   });
+
+  it("should wait request to be sent before closing", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const client = http2.connect("https://www.example.com");
+    client.on("error", reject);
+
+    const req = client.request({ ":path": "/" });
+    let response_headers = null;
+    req.on("response", (headers, flags) => {
+      response_headers = headers;
+    });
+    client.close(resolve);
+    req.end();
+    await promise;
+    expect(response_headers).toBeTruthy();
+    expect(response_headers[":status"]).toBe(200);
+  });
 });

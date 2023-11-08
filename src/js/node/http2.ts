@@ -770,7 +770,7 @@ function emitAbortedNT(self, streams, streamId, error) {
 class ClientHttp2Session extends Http2Session {
   #closed: boolean = false;
   #queue: Array<Buffer> = [];
-  #connecions: number = 0;
+  #connections: number = 0;
   [bunHTTP2Socket]: TLSSocket | Socket | null;
   #socket_proxy: Proxy<TLSSocket | Socket>;
   #parser: typeof H2FrameParser | null;
@@ -796,7 +796,7 @@ class ClientHttp2Session extends Http2Session {
   static #Handlers = {
     binaryType: "buffer",
     streamStart(self: ClientHttp2Session, streamId: number) {
-      self.#connecions++;
+      self.#connections++;
       process.nextTick(emitStreamNT, self, self.#streams, streamId);
     },
     streamError(self: ClientHttp2Session, streamId: number, error: number) {
@@ -814,20 +814,16 @@ class ClientHttp2Session extends Http2Session {
       }
     },
     streamEnd(self: ClientHttp2Session, streamId: number) {
-      self.#connecions--;
+      self.#connections--;
       var stream = self.#streams.get(streamId);
       if (stream) {
+        stream.destroy();
         stream.emit("end");
-        // detach stream
-        stream[bunHTTP2Session] = null;
-        stream[bunHTTP2Closed] = true;
+        stream.emit("close");
+        self.#streams.delete(streamId);
       }
-      if (self.#connecions === 0 && self.#closed) {
-        self[bunHTTP2Socket]?.end();
-        self[bunHTTP2Socket] = null;
-        self.#parser?.detach();
-        self.#parser = null;
-        self.emit("close");
+      if (self.#connections === 0 && self.#closed) {
+        self.destroy();
       }
     },
     streamData(self: ClientHttp2Session, streamId: number, data: Buffer) {
@@ -961,7 +957,6 @@ class ClientHttp2Session extends Http2Session {
   #onConnect() {
     const socket = this[bunHTTP2Socket] as TLSSocket;
     if (!socket) return;
-    this.#closed = false;
     // check if h2 is supported only for TLSSocket or Socket
     if (socket instanceof Socket) {
       if (socket.alpnProtocol !== "h2") {
@@ -1187,24 +1182,21 @@ class ClientHttp2Session extends Http2Session {
     this.#closed = true;
 
     if (typeof callback === "function") {
-      this.on("close", callback);
+      this.once("close", callback);
     }
-    if (this.#connecions === 0) {
-      this[bunHTTP2Socket]?.end();
-      this[bunHTTP2Socket] = null;
-      this.#parser?.detach();
-      this.#parser = null;
-      this.emit("close");
+    if (this.#connections === 0) {
+      this.destroy();
     }
   }
 
-  destroy(error: Error, code: number) {
+  destroy(error?: Error, code?: number) {
     const socket = this[bunHTTP2Socket];
-    if (!socket) return;
     this.#closed = true;
     code = code || constants.NGHTTP2_NO_ERROR;
-    this.goaway(code, 0, Buffer.alloc(0));
-    socket.end();
+    if (socket) {
+      this.goaway(code, 0, Buffer.alloc(0));
+      socket.end();
+    }
     this[bunHTTP2Socket] = null;
     // this should not be needed since RST + GOAWAY should be sent
     for (let [_, stream] of this.#streams) {

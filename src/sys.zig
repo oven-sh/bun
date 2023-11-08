@@ -102,6 +102,7 @@ pub const Tag = enum(u8) {
     splice,
     rmdir,
     truncate,
+    realpath,
 
     kevent,
     kqueue,
@@ -388,7 +389,7 @@ pub fn openDirAtWindows(
             if (code.toSystemErrno()) |sys_err| {
                 return .{
                     .err = .{
-                        .errno = @truncate(@intFromEnum(sys_err)),
+                        .errno = @intFromEnum(sys_err),
                         .syscall = .open,
                     },
                 };
@@ -499,7 +500,7 @@ pub fn openatWindows(dirfD: bun.FileDescriptor, path_: []const u16, flags: bun.M
                 if (code.toSystemErrno()) |sys_err| {
                     return .{
                         .err = .{
-                            .errno = @truncate(@intFromEnum(sys_err)),
+                            .errno = @intFromEnum(sys_err),
                             .syscall = .open,
                         },
                     };
@@ -527,7 +528,7 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSlice, flags
             .SUCCESS => .{ .result = @as(bun.FileDescriptor, @intCast(rc)) },
             else => |err| .{
                 .err = .{
-                    .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(err))),
+                    .errno = @intFromEnum(err),
                     .syscall = .open,
                 },
             },
@@ -548,7 +549,7 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSlice, flags
             else => |err| {
                 return Maybe(std.os.fd_t){
                     .err = .{
-                        .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(err))),
+                        .errno = @intFromEnum(err),
                         .syscall = .open,
                     },
                 };
@@ -1204,15 +1205,8 @@ pub fn munmap(memory: []align(mem.page_size) const u8) Maybe(void) {
 
 pub const Error = struct {
     const E = bun.C.E;
-    const max_errno_value = brk: {
-        const errno_values = std.enums.values(E);
-        var err = @intFromEnum(E.SUCCESS);
-        for (errno_values) |errn| {
-            err = @max(err, @intFromEnum(errn));
-        }
-        break :brk err;
-    };
-    pub const Int: type = std.math.IntFittingRange(0, max_errno_value + 5);
+
+    pub const Int = @TypeOf(@intFromEnum(E.BADF));
 
     errno: Int,
     syscall: Syscall.Tag,

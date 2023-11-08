@@ -270,10 +270,34 @@ else if (Environment.isWindows)
 else
     std.os.fd_t;
 
+pub const UVFileDescriptor = if (Environment.isWindows) c_int else FileDescriptor;
+
 // When we are on a computer with an absurdly high number of max open file handles
 // such is often the case with macOS
 // As a useful optimization, we can store file descriptors and just keep them open...forever
 pub const StoredFileDescriptorType = if (Environment.isBrowser) u0 else FileDescriptor;
+
+/// Thin wrapper around iovec / libuv buffer
+/// This is used for readv/writev calls.
+pub const PlatformIOVec = if (Environment.isWindows)
+    windows.libuv.uv_buf_t
+else
+    extern struct {
+        native: std.os.iovec,
+
+        pub fn init(input: []const u8) @This() {
+            if (Environment.allow_assert) {
+                if (input.len > @as(usize, std.math.maxInt(u32))) {
+                    Output.prettyWarnln("debug warn: bun.PlatformIOVec.init: Buffer overflow, this write will fail on windows.");
+                }
+            }
+            return .{ .native = .{ .iov_len = @intCast(input.len), .iov_base = @constCast(input.ptr) } };
+        }
+
+        pub fn slice(this: *const @This()) []u8 {
+            return this.base[0..this.len];
+        }
+    };
 
 pub const StringTypes = @import("string_types.zig");
 pub const stringZ = StringTypes.stringZ;

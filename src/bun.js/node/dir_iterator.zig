@@ -193,7 +193,7 @@ pub const Iterator = switch (builtin.os.tag) {
                     if (rc == .INVALID_PARAMETER) {
                         return .{
                             .err = .{
-                                .errno = @as(bun.sys.Error.Int, @truncate(@intFromEnum(bun.C.SystemErrno.ENOTDIR))),
+                                .errno = @intFromEnum(bun.C.SystemErrno.ENOTDIR),
                                 .syscall = .NtQueryDirectoryFile,
                             },
                         };
@@ -208,7 +208,7 @@ pub const Iterator = switch (builtin.os.tag) {
                         if ((bun.windows.Win32Error.fromNTStatus(rc).toSystemErrno())) |errno| {
                             return .{
                                 .err = .{
-                                    .errno = @truncate(@intFromEnum(errno)),
+                                    .errno = @intFromEnum(errno),
                                     .syscall = .NtQueryDirectoryFile,
                                 },
                             };
@@ -216,7 +216,7 @@ pub const Iterator = switch (builtin.os.tag) {
 
                         return .{
                             .err = .{
-                                .errno = @truncate(@intFromEnum(bun.C.SystemErrno.EUNKNOWN)),
+                                .errno = @intFromEnum(bun.C.SystemErrno.EUNKNOWN),
                                 .syscall = .NtQueryDirectoryFile,
                             },
                         };

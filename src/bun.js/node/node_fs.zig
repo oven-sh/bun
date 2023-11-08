@@ -15,61 +15,231 @@ const Flavor = JSC.Node.Flavor;
 const system = std.os.system;
 const Maybe = JSC.Maybe;
 const Encoding = JSC.Node.Encoding;
+
+/// For all JS-exposed code, we should return LibUV file descriptors.
+const FileDescriptor = bun.UVFileDescriptor;
+
+/// LibUV FD -> Windows FD
+pub inline fn fdcast(fd: FileDescriptor) bun.FileDescriptor {
+    if (Environment.isWindows) {
+        return @intFromPtr(uv.uv_get_osfhandle(fd));
+    }
+    return fd;
+}
+
+/// Windows FD -> LibUV FD
+pub inline fn fduncast(fd: anytype) FileDescriptor {
+    const ptr: std.os.fd_t = switch (@TypeOf(fd)) {
+        std.os.fd_t => fd,
+        else => @ptrFromInt(fd),
+    };
+    if (Environment.isWindows) {
+        return uv.uv_open_osfhandle(ptr);
+    }
+    return ptr;
+}
+
 const Syscall = if (Environment.isWindows) struct {
-    // pub usingnamespace bun.sys;
+    const WinFD = FileDescriptor;
 
     const log = bun.sys.syslog;
     const Error = bun.sys.Error;
 
-    const mkdir = bun.sys.mkdir;
-    const readlink = bun.sys.readlink;
-    const rename = bun.sys.rename;
-    const ftruncate = bun.sys.ftruncate;
-    const openat = bun.sys.openat;
-    const setFileOffset = bun.sys.setFileOffset;
-    const getFdPath = bun.sys.getFdPath;
+    // Note: `req = undefined; req.deinit()` has a saftey-check in a debug build
 
-    pub fn open(file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
-        var req: uv.uv_fs_t = undefined;
-        const rc = uv.uv_fs_open(uv.Loop.get(), &req, file_path.ptr, flags, perm, null);
-        log("uv open({any}, {d}, {d}) = {d}", .{ file_path, flags, perm, rc });
-        return if (rc < 0)
-            .{ .err = .{ .errno = @truncate(@as(c_uint, @intCast(-rc))), .syscall = .open } }
+    pub fn open(file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(FileDescriptor) {
+        var req: uv.fs_t = uv.fs_t.uninitialized;
+        defer req.deinit();
+        const result = uv.uv_fs_open(uv.Loop.get(), &req, file_path.ptr, flags, perm, null);
+
+        log("uv open({s}, {d}, {d}) = {d}", .{ file_path, flags, perm, result.value });
+        return if (result.errno()) |code|
+            .{ .err = .{ .errno = code, .syscall = .open } }
         else
-            .{ .result = bun.toFD(rc) };
+            .{ .result = result.value };
     }
 
-    // pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
-    //     var req: uv.uv_fs_t = undefined;
-    //     const rc = uv.uv_fs_open(uv.Loop.get(), &req, file_path.ptr, flags, perm, null);
-    //     log("uv open({any}, {d}, {d}) = {d}", .{ file_path, flags, perm, rc });
-    //     return if (rc < 0)
-    //         .{ .err = .{ .errno = @truncate(@as(c_uint, @intCast(-rc))), .syscall = .open } }
-    //     else
-    //         .{ .result = bun.toFD(rc) };
-    // }
+    pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
+        var req: uv.fs_t = uv.fs_t.uninitialized;
+        defer req.deinit();
+        const rc = uv.uv_fs_mkdir(uv.Loop.get(), &req, file_path.ptr, flags, null);
 
-    pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
-        var req: uv.uv_fs_t = undefined;
+        log("uv mkdir({s}, {d}) = {d}", .{ file_path, flags, rc.value });
+        return if (rc.errno()) |errno|
+            .{ .err = .{ .errno = errno, .syscall = .mkdir } }
+        else
+            .{ .result = {} };
+    }
+
+    pub fn access(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
+        var req: uv.fs_t = uv.fs_t.uninitialized;
+        defer req.deinit();
+        const rc = uv.uv_fs_access(uv.Loop.get(), &req, file_path.ptr, flags, null);
+
+        log("uv access({s}, {d}) = {d}", .{ file_path, flags, rc.value });
+        return if (rc.errno()) |errno|
+            .{ .err = .{ .errno = errno, .syscall = .mkdir } }
+        else
+            .{ .result = {} };
+    }
+
+    pub fn rmdir(file_path: [:0]const u8) Maybe(void) {
+        var req: uv.fs_t = uv.fs_t.uninitialized;
+        defer req.deinit();
+        const rc = uv.uv_fs_rmdir(uv.Loop.get(), &req, file_path.ptr, null);
+
+        log("uv rmdir({s}) = {d}", .{ file_path, rc.value });
+        return if (rc.errno()) |errno|
+            .{ .err = .{ .errno = errno, .syscall = .mkdir } }
+        else
+            .{ .result = {} };
+    }
+
+    pub fn unlink(file_path: [:0]const u8) Maybe(void) {
+        var req: uv.fs_t = uv.fs_t.uninitialized;
+        defer req.deinit();
+        const rc = uv.uv_fs_unlink(uv.Loop.get(), &req, file_path.ptr, null);
+
+        log("uv unlink({s}) = {d}", .{ file_path, rc.value });
+        return if (rc.errno()) |errno|
+            .{ .err = .{ .errno = errno, .syscall = .mkdir } }
+        else
+            .{ .result = {} };
+    }
+
+    pub fn readlink(file_path: [:0]const u8, buf: []u8) Maybe(usize) {
+        var req: uv.fs_t = uv.fs_t.uninitialized;
+        defer req.deinit();
+        // Edge cases: http://docs.libuv.org/en/v1.x/fs.html#c.uv_fs_realpath
+        const rc = uv.uv_fs_readlink(uv.Loop.get(), &req, file_path.ptr, null);
+
+        if (rc.errno()) |errno| {
+            log("uv readlink({s}) = {d}, [err]", .{ file_path, rc.value });
+            return .{ .err = .{ .errno = errno, .syscall = .mkdir } };
+        } else {
+            // Seems like `rc` does not contain the errno?
+            std.debug.assert(rc.value == 0);
+            const slice = bun.span(req.ptrAs([*:0]u8));
+            if (slice.len > buf.len) {
+                log("uv readlink({s}) = {d}, {s} TRUNCATED", .{ file_path, rc.value, slice });
+                return .{ .err = .{ .errno = @intFromEnum(E.NOMEM), .syscall = .mkdir } };
+            }
+            log("uv readlink({s}) = {d}, {s}", .{ file_path, rc.value, slice });
+            @memcpy(buf[0..slice.len], slice);
+            return .{ .result = slice.len };
+        }
+    }
+
+    pub fn rename(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
+        var req: uv.fs_t = uv.fs_t.uninitialized;
+        defer req.deinit();
+        const rc = uv.uv_fs_rename(uv.Loop.get(), &req, from.ptr, to.ptr, null);
+
+        log("uv rename({s}, {s}) = {d}", .{ from, to, rc.value });
+        return if (rc.errno()) |errno|
+            .{ .err = .{ .errno = errno, .syscall = .mkdir } }
+        else
+            .{ .result = {} };
+    }
+
+    pub fn link(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
+        var req: uv.fs_t = uv.fs_t.uninitialized;
+        defer req.deinit();
+        // TODO: i think the flags here are what let us do directory junctions
+        const rc = uv.uv_fs_link(uv.Loop.get(), &req, from.ptr, to.ptr, null);
+
+        log("uv link({s}, {s}) = {d}", .{ from, to, rc.value });
+        return if (rc.errno()) |errno|
+            .{ .err = .{ .errno = errno, .syscall = .mkdir } }
+        else
+            .{ .result = {} };
+    }
+
+    pub fn symlinkUV(from: [:0]const u8, to: [:0]const u8, flags: c_int) Maybe(void) {
+        var req: uv.fs_t = uv.fs_t.uninitialized;
+        defer req.deinit();
+        // TODO: i think the flags here are what let us do directory junctions
+        const rc = uv.uv_fs_symlink(uv.Loop.get(), &req, from.ptr, to.ptr, flags, null);
+
+        log("uv symlink({s}, {s}) = {d}", .{ from, to, rc.value });
+        return if (rc.errno()) |errno|
+            .{ .err = .{ .errno = errno, .syscall = .mkdir } }
+        else
+            .{ .result = {} };
+    }
+
+    pub fn ftruncate(fd: FileDescriptor, size: isize) Maybe(void) {
+        var req: uv.fs_t = uv.fs_t.uninitialized;
+        defer req.deinit();
+        const rc = uv.uv_fs_ftruncate(uv.Loop.get(), &req, fd, size, null);
+
+        log("uv ftruncate({d}, {d}) = {d}", .{ fd, size, rc.value });
+        return if (rc.errno()) |errno|
+            .{ .err = .{ .errno = errno, .syscall = .ftruncate } }
+        else
+            .{ .result = {} };
+    }
+
+    pub fn fstat(fd: FileDescriptor) Maybe(bun.Stat) {
+        var req: uv.fs_t = uv.fs_t.uninitialized;
+        defer req.deinit();
         const rc = uv.uv_fs_fstat(uv.Loop.get(), &req, @intCast(fd), null);
-        log("uv fstat({d}) = {d}", .{ fd, rc });
-        return if (rc < 0)
-            .{ .err = .{ .errno = @truncate(@as(c_uint, @intCast(-rc))), .fd = fd, .syscall = .fstat } }
+
+        log("uv fstat({d}) = {d}", .{ fd, rc.value });
+        return if (rc.errno()) |errno|
+            .{ .err = .{ .errno = errno, .syscall = .fstat } }
         else
             .{ .result = req.statbuf };
+    }
+
+    pub fn fdatasync(fd: FileDescriptor) Maybe(void) {
+        var req: uv.fs_t = uv.fs_t.uninitialized;
+        defer req.deinit();
+        const rc = uv.uv_fs_fdatasync(uv.Loop.get(), &req, @intCast(fd), null);
+
+        log("uv fdatasync({d}) = {d}", .{ fd, rc.value });
+        return if (rc.errno()) |errno|
+            .{ .err = .{ .errno = errno, .syscall = .fstat } }
+        else
+            .{ .result = {} };
+    }
+    pub fn fsync(fd: FileDescriptor) Maybe(void) {
+        var req: uv.fs_t = uv.fs_t.uninitialized;
+        defer req.deinit();
+        const rc = uv.uv_fs_fsync(uv.Loop.get(), &req, @intCast(fd), null);
+
+        log("uv fsync({d}) = {d}", .{ fd, rc.value });
+        return if (rc.errno()) |errno|
+            .{ .err = .{ .errno = errno, .syscall = .fstat } }
+        else
+            .{ .result = {} };
     }
 
     pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
-        var req: uv.uv_fs_t = undefined;
+        var req: uv.fs_t = uv.fs_t.uninitialized;
+        defer req.deinit();
         const rc = uv.uv_fs_stat(uv.Loop.get(), &req, path.ptr, null);
-        log("uv stat({s}) = {d}", .{ path, rc });
-        return if (rc < 0)
-            .{ .err = .{ .errno = @truncate(@as(c_uint, @intCast(-rc))), .syscall = .fstat } }
+
+        log("uv stat({s}) = {d}", .{ path, rc.value });
+        return if (rc.errno()) |errno|
+            .{ .err = .{ .errno = errno, .syscall = .fstat } }
         else
             .{ .result = req.statbuf };
     }
 
-    pub fn close(fd: bun.FileDescriptor) ?Syscall.Error {
+    pub fn lstat(path: [:0]const u8) Maybe(bun.Stat) {
+        var req: uv.fs_t = uv.fs_t.uninitialized;
+        defer req.deinit();
+        const rc = uv.uv_fs_lstat(uv.Loop.get(), &req, path.ptr, null);
+
+        log("uv lstat({s}) = {d}", .{ path, rc.value });
+        return if (rc.errno()) |errno|
+            .{ .err = .{ .errno = errno, .syscall = .fstat } }
+        else
+            .{ .result = req.statbuf };
+    }
+
+    pub fn close(fd: FileDescriptor) ?Syscall.Error {
         if (fd == bun.STDOUT_FD or fd == bun.STDERR_FD) {
             log("uv close({d}) SKIPPED", .{fd});
             return null;
@@ -78,47 +248,125 @@ const Syscall = if (Environment.isWindows) struct {
         return closeAllowingStdoutAndStderr(fd);
     }
 
-    pub fn closeAllowingStdoutAndStderr(fd: bun.FileDescriptor) ?Syscall.Error {
+    pub fn closeAllowingStdoutAndStderr(fd: FileDescriptor) ?Syscall.Error {
         log("uv close({d})", .{fd});
 
-        var req: uv.uv_fs_t = undefined;
+        var req: uv.fs_t = uv.fs_t.uninitialized;
+        defer req.deinit();
         const rc = uv.uv_fs_close(uv.Loop.get(), &req, @intCast(fd), null);
-        return if (rc < 0)
-            .{ .errno = @truncate(@as(c_uint, @intCast(-rc))), .syscall = .close }
+        return if (rc.errno()) |errno|
+            .{ .errno = errno, .syscall = .close }
         else
             null;
     }
 
-    pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
+    pub fn preadv(fd: FileDescriptor, bufs: []const bun.PlatformIOVec, position: i64) Maybe(usize) {
+        comptime std.debug.assert(bun.PlatformIOVec == uv.uv_buf_t);
+
         const debug_timer = bun.Output.DebugTimer.start();
-        const adjusted_len = @min(bytes.len, bun.sys.max_count);
 
-        var req: uv.uv_fs_t = undefined;
-        const bufs: [1]uv.uv_buf_t = .{uv.uv_buf_t.init(bytes)};
-        const rc = uv.uv_fs_write(uv.Loop.get(), &req, @intCast(fd), &bufs, 1, -1, null);
-        log("uv write({d}, {d}) = {d} ({any})", .{ fd, adjusted_len, rc, debug_timer });
+        var req: uv.fs_t = uv.fs_t.uninitialized;
+        defer req.deinit();
 
-        if (rc < 0) {
-            return .{ .err = .{ .errno = @truncate(@as(c_uint, @intCast(-rc))), .fd = fd, .syscall = .read } };
+        const rc = uv.uv_fs_read(
+            uv.Loop.get(),
+            &req,
+            fd,
+            bufs.ptr,
+            @intCast(bufs.len),
+            position,
+            null,
+        );
+
+        if (Environment.isDebug) {
+            var total_bytes: usize = 0;
+            for (bufs) |buf| {
+                total_bytes += buf.len;
+            }
+            log("uv preadv({d}, {d} total bytes) = {d} ({any})", .{ fd, total_bytes, rc.value, debug_timer });
+        }
+
+        if (rc.errno()) |errno| {
+            return .{ .err = .{ .errno = errno, .fd = @intCast(fd), .syscall = .read } };
         } else {
-            return .{ .result = @as(usize, @intCast(rc)) };
+            return .{ .result = @as(usize, @intCast(rc.value)) };
         }
     }
 
-    pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
+    pub fn pwritev(fd: FileDescriptor, bufs: []const bun.PlatformIOVec, position: i64) Maybe(usize) {
+        comptime std.debug.assert(bun.PlatformIOVec == uv.uv_buf_t);
+
         const debug_timer = bun.Output.DebugTimer.start();
-        const adjusted_len = @min(buf.len, bun.sys.max_count);
 
-        var req: uv.uv_fs_t = undefined;
-        const bufs: [1]uv.uv_buf_t = .{uv.uv_buf_t.init(buf)};
-        const rc = uv.uv_fs_read(uv.Loop.get(), &req, @intCast(fd), &bufs, 1, -1, null);
-        log("uv read({d}, {d}) = {d} ({any})", .{ fd, adjusted_len, rc, debug_timer });
+        var req: uv.fs_t = uv.fs_t.uninitialized;
+        defer req.deinit();
 
-        if (rc < 0) {
-            return .{ .err = .{ .errno = @truncate(@as(c_uint, @intCast(-rc))), .fd = fd, .syscall = .read } };
-        } else {
-            return .{ .result = @as(usize, @intCast(rc)) };
+        const rc = uv.uv_fs_write(
+            uv.Loop.get(),
+            &req,
+            fd,
+            bufs.ptr,
+            @intCast(bufs.len),
+            position,
+            null,
+        );
+
+        if (Environment.isDebug) {
+            var total_bytes: usize = 0;
+            for (bufs) |buf| {
+                total_bytes += buf.len;
+            }
+            log("uv preadv({d}, {d} total bytes) = {d} ({any})", .{ fd, total_bytes, rc.value, debug_timer });
         }
+
+        if (rc.errno()) |errno| {
+            return .{ .err = .{ .errno = errno, .fd = @intCast(fd), .syscall = .read } };
+        } else {
+            return .{ .result = @as(usize, @intCast(rc.value)) };
+        }
+    }
+
+    pub inline fn readv(fd: FileDescriptor, bufs: []bun.PlatformIOVec) Maybe(usize) {
+        return preadv(fd, bufs, -1);
+    }
+
+    pub inline fn pread(fd: FileDescriptor, buf: []u8, position: i64) Maybe(usize) {
+        var bufs: [1]bun.PlatformIOVec = .{bun.PlatformIOVec.init(buf)};
+        return preadv(fd, &bufs, position);
+    }
+
+    pub inline fn read(fd: FileDescriptor, buf: []u8) Maybe(usize) {
+        var bufs: [1]bun.PlatformIOVec = .{bun.PlatformIOVec.init(buf)};
+        return readv(fd, &bufs);
+    }
+
+    pub inline fn writev(fd: FileDescriptor, bufs: []bun.PlatformIOVec) Maybe(usize) {
+        return pwritev(fd, bufs, -1);
+    }
+
+    pub inline fn pwrite(fd: FileDescriptor, buf: []const u8, position: i64) Maybe(usize) {
+        var bufs: [1]bun.PlatformIOVec = .{bun.PlatformIOVec.init(buf)};
+        return pwritev(fd, &bufs, position);
+    }
+
+    pub inline fn write(fd: FileDescriptor, buf: []const u8) Maybe(usize) {
+        var bufs: [1]bun.PlatformIOVec = .{bun.PlatformIOVec.init(buf)};
+        return writev(fd, &bufs);
+    }
+
+    pub fn openat(dirfd: FileDescriptor, file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(FileDescriptor) {
+        return switch (bun.sys.openat(fdcast(dirfd), file_path, flags, perm)) {
+            .result => |result| .{ .result = fduncast(result) },
+            .err => |err| .{ .err = err },
+        };
+    }
+
+    pub fn getFdPath(fd: FileDescriptor, out_buffer: *bun.PathBuffer) Maybe([]u8) {
+        return bun.sys.getFdPath(fdcast(fd), out_buffer);
+    }
+
+    pub fn setFileOffset(fd: FileDescriptor, offset: usize) Maybe(void) {
+        return bun.sys.setFileOffset(fdcast(fd), offset);
     }
 } else bun.sys;
 const Constants = @import("./node_fs_constant.zig").Constants;
@@ -126,10 +374,8 @@ const builtin = @import("builtin");
 const os = @import("std").os;
 const darwin = os.darwin;
 const linux = os.linux;
-const PathOrBuffer = JSC.Node.PathOrBuffer;
 const PathLike = JSC.Node.PathLike;
 const PathOrFileDescriptor = JSC.Node.PathOrFileDescriptor;
-const FileDescriptor = bun.FileDescriptor;
 const DirIterator = @import("./dir_iterator.zig");
 const Path = @import("../../resolver/resolve_path.zig");
 const FileSystem = @import("../../fs.zig").FileSystem;
@@ -603,7 +849,7 @@ pub const Arguments = struct {
         pub fn toThreadSafe(this: *@This()) void {
             this.buffers.value.protect();
 
-            var clone = bun.default_allocator.dupe(std.os.iovec, this.buffers.buffers.items) catch @panic("out of memory");
+            var clone = bun.default_allocator.dupe(bun.PlatformIOVec, this.buffers.buffers.items) catch @panic("out of memory");
             this.buffers.buffers.deinit();
             this.buffers.buffers.items = clone;
             this.buffers.buffers.capacity = clone.len;
@@ -673,7 +919,8 @@ pub const Arguments = struct {
                 }
             }
 
-            return Writev{ .fd = fd, .buffers = buffers, .position = position };
+            // TODO(@paperdave): This cast is incorrect on Windows
+            return Writev{ .fd = @intCast(fd), .buffers = buffers, .position = position };
         }
     };
 
@@ -693,7 +940,8 @@ pub const Arguments = struct {
 
         pub fn toThreadSafe(this: *@This()) void {
             this.buffers.value.protect();
-            var clone = bun.default_allocator.dupe(std.os.iovec, this.buffers.buffers.items) catch @panic("out of memory");
+
+            var clone = bun.default_allocator.dupe(bun.PlatformIOVec, this.buffers.buffers.items) catch @panic("out of memory");
             this.buffers.buffers.deinit();
             this.buffers.buffers.items = clone;
             this.buffers.buffers.capacity = clone.len;
@@ -763,7 +1011,8 @@ pub const Arguments = struct {
                 }
             }
 
-            return Readv{ .fd = fd, .buffers = buffers, .position = position };
+            // TODO(@paperdave): This cast is incorrect on Windows
+            return Readv{ .fd = @intCast(fd), .buffers = buffers, .position = position };
         }
     };
 
@@ -820,7 +1069,8 @@ pub const Arguments = struct {
                 break :brk 0;
             };
 
-            return FTruncate{ .fd = fd, .len = len };
+            // TODO(@paperdave): This cast is incorrect on Windows
+            return FTruncate{ .fd = @intCast(fd), .len = len };
         }
     };
 
@@ -960,7 +1210,8 @@ pub const Arguments = struct {
                 break :brk @as(gid_t, @intCast(gid_value.toInt32()));
             };
 
-            return Fchown{ .fd = fd, .uid = uid, .gid = gid };
+            // TODO(@paperdave): This cast is incorrect on Windows
+            return Fchown{ .fd = @intCast(fd), .uid = uid, .gid = gid };
         }
     };
 
@@ -1165,7 +1416,8 @@ pub const Arguments = struct {
 
             arguments.eat();
 
-            return FChmod{ .fd = fd, .mode = mode };
+            // TODO(@paperdave): This cast is incorrect on Windows
+            return FChmod{ .fd = @intCast(fd), .mode = mode };
         }
     };
 
@@ -1284,7 +1536,8 @@ pub const Arguments = struct {
 
             if (exception.* != null) return null;
 
-            return Fstat{ .fd = fd, .big_int = big_int };
+            // TODO(@paperdave): This cast is incorrect on Windows
+            return Fstat{ .fd = @intCast(fd), .big_int = big_int };
         }
     };
 
@@ -1345,6 +1598,19 @@ pub const Arguments = struct {
     pub const Symlink = struct {
         old_path: PathLike,
         new_path: PathLike,
+        link_type: LinkType,
+
+        const LinkType = if (!Environment.isWindows)
+            enum(u0) {
+                auto = 0,
+            }
+        else
+            enum {
+                auto,
+                file,
+                dir,
+                junction,
+            };
 
         pub fn deinit(this: Symlink) void {
             this.old_path.deinit();
@@ -1390,24 +1656,25 @@ pub const Arguments = struct {
 
             if (exception.* != null) return null;
 
-            if (arguments.next()) |next_val| {
-                // The type argument is only available on Windows and
-                // ignored on other platforms. It can be set to 'dir',
-                // 'file', or 'junction'. If the type argument is not set,
-                // Node.js will autodetect target type and use 'file' or
-                // 'dir'. If the target does not exist, 'file' will be used.
-                // Windows junction points require the destination path to
-                // be absolute. When using 'junction', the target argument
-                // will automatically be normalized to absolute path.
-                if (next_val.isString()) {
-                    if (comptime Environment.isWindows) {
+            var link_type: LinkType = .auto;
+            if (comptime Environment.isWindows) {
+                if (arguments.next()) |next_val| {
+                    // The type argument is only available on Windows and
+                    // ignored on other platforms. It can be set to 'dir',
+                    // 'file', or 'junction'. If the type argument is not set,
+                    // Node.js will autodetect target type and use 'file' or
+                    // 'dir'. If the target does not exist, 'file' will be used.
+                    // Windows junction points require the destination path to
+                    // be absolute. When using 'junction', the target argument
+                    // will automatically be normalized to absolute path.
+                    if (next_val.isString()) {
                         bun.todo(@src(), {});
+                        arguments.eat();
                     }
-                    arguments.eat();
                 }
             }
 
-            return Symlink{ .old_path = old_path, .new_path = new_path };
+            return Symlink{ .old_path = old_path, .new_path = new_path, .link_type = link_type };
         }
     };
 
@@ -1844,8 +2111,9 @@ pub const Arguments = struct {
 
             if (exception.* != null) return null;
 
+            // TODO(@paperdave): This cast is incorrect on Windows
             return Close{
-                .fd = fd,
+                .fd = @intCast(fd),
             };
         }
     };
@@ -2011,7 +2279,8 @@ pub const Arguments = struct {
             if (exception.* != null) return null;
 
             return Futimes{
-                .fd = fd,
+                // TODO(@paperdave): This cast is incorrect on Windows
+                .fd = @intCast(fd),
                 .atime = atime,
                 .mtime = mtime,
             };
@@ -2114,7 +2383,8 @@ pub const Arguments = struct {
             if (exception.* != null) return null;
 
             var args = Write{
-                .fd = fd,
+                // TODO(@paperdave): This cast is incorrect on Windows
+                .fd = @intCast(fd),
                 .buffer = buffer,
                 .encoding = switch (buffer) {
                     .SliceWithUnderlyingString => Encoding.utf8,
@@ -2241,7 +2511,8 @@ pub const Arguments = struct {
             arguments.eat();
 
             var args = Read{
-                .fd = fd,
+                // TODO(@paperdave): This cast is incorrect on Windows
+                .fd = @intCast(fd),
                 .buffer = buffer,
             };
 
@@ -2533,7 +2804,7 @@ pub const Arguments = struct {
                 .flag = flag,
                 .mode = mode,
                 .data = data,
-                .dirfd = bun.toFD(std.fs.cwd().fd),
+                .dirfd = @intCast(bun.toFD(std.fs.cwd().fd)),
             };
         }
     };
@@ -3012,7 +3283,8 @@ pub const Arguments = struct {
             if (exception.* != null) return null;
 
             return FdataSync{
-                .fd = fd,
+                // TODO(@paperdave): This cast is incorrect on Windows
+                .fd = @intCast(fd),
             };
         }
     };
@@ -3218,7 +3490,8 @@ pub const Arguments = struct {
             if (exception.* != null) return null;
 
             return Fsync{
-                .fd = fd,
+                // TODO(@paperdave): This cast is incorrect on Windows
+                .fd = @intCast(fd),
             };
         }
     };
@@ -3397,11 +3670,10 @@ pub const NodeFS = struct {
     pub const ReturnType = Return;
 
     pub fn access(this: *NodeFS, args: Arguments.Access, comptime _: Flavor) Maybe(Return.Access) {
-        if (comptime Environment.isWindows) {
-            return Maybe(Return.Access).todo();
-        }
-
         var path = args.path.sliceZ(&this.sync_error_buf);
+        if (Environment.isWindows) {
+            return Syscall.access(path, @intFromEnum(args.mode));
+        }
         const rc = Syscall.system.access(path, @intFromEnum(args.mode));
         return Maybe(Return.Access).errnoSysP(rc, .access, path) orelse Maybe(Return.Access).success;
     }
@@ -3413,7 +3685,8 @@ pub const NodeFS = struct {
         switch (args.file) {
             .fd => |fd| {
                 while (data.len > 0) {
-                    const written = switch (Syscall.write(fd, data)) {
+                    // TODO(@paperdave): This cast is incorrect on Windows
+                    const written = switch (Syscall.write(@intCast(fd), data)) {
                         .result => |result| result,
                         .err => |err| return .{ .err = err },
                     };
@@ -3772,36 +4045,24 @@ pub const NodeFS = struct {
         return Maybe(Return.Fchown).errnoSys(C.fchown(args.fd, args.uid, args.gid), .fchown) orelse
             Maybe(Return.Fchown).success;
     }
-    pub fn fdatasync(_: *NodeFS, args: Arguments.FdataSync, comptime flavor: Flavor) Maybe(Return.Fdatasync) {
-        _ = flavor;
-        if (comptime Environment.isWindows) {
-            return Maybe(Return.Fdatasync).todo();
+    pub fn fdatasync(_: *NodeFS, args: Arguments.FdataSync, comptime _: Flavor) Maybe(Return.Fdatasync) {
+        if (Environment.isWindows) {
+            return Syscall.fdatasync(args.fd);
         }
         return Maybe(Return.Fdatasync).errnoSys(system.fdatasync(args.fd), .fdatasync) orelse
             Maybe(Return.Fdatasync).success;
     }
-    pub fn fstat(_: *NodeFS, args: Arguments.Fstat, comptime flavor: Flavor) Maybe(Return.Fstat) {
-        _ = flavor;
-        if (comptime Environment.isWindows) {
-            return Maybe(Return.Fstat).todo();
-        }
-
-        if (comptime Environment.isPosix) {
-            return switch (Syscall.fstat(args.fd)) {
-                .result => |result| Maybe(Return.Fstat){ .result = Stats.init(result, false) },
-                .err => |err| Maybe(Return.Fstat){ .err = err },
-            };
-        }
-
-        return Maybe(Return.Fstat).todo();
+    pub fn fstat(_: *NodeFS, args: Arguments.Fstat, comptime _: Flavor) Maybe(Return.Fstat) {
+        return switch (Syscall.fstat(args.fd)) {
+            .result => |result| Maybe(Return.Fstat){ .result = Stats.init(result, false) },
+            .err => |err| Maybe(Return.Fstat){ .err = err },
+        };
     }
 
-    pub fn fsync(_: *NodeFS, args: Arguments.Fsync, comptime flavor: Flavor) Maybe(Return.Fsync) {
-        _ = flavor;
-        if (comptime Environment.isWindows) {
-            return Maybe(Return.Fsync).todo();
+    pub fn fsync(_: *NodeFS, args: Arguments.Fsync, comptime _: Flavor) Maybe(Return.Fsync) {
+        if (Environment.isWindows) {
+            return Syscall.fsync(args.fd);
         }
-
         return Maybe(Return.Fsync).errnoSys(system.fsync(args.fd), .fsync) orelse
             Maybe(Return.Fsync).success;
     }
@@ -3860,21 +4121,21 @@ pub const NodeFS = struct {
         return Maybe(Return.Lchown).errnoSysP(C.lchown(path, args.uid, args.gid), .lchown, path) orelse
             Maybe(Return.Lchown).success;
     }
-    pub fn link(this: *NodeFS, args: Arguments.Link, comptime flavor: Flavor) Maybe(Return.Link) {
-        _ = flavor;
+
+    pub fn link(this: *NodeFS, args: Arguments.Link, comptime _: Flavor) Maybe(Return.Link) {
         var new_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         const from = args.old_path.sliceZ(&this.sync_error_buf);
         const to = args.new_path.sliceZ(&new_path_buf);
 
+        if (Environment.isWindows) {
+            return Syscall.link(from, to);
+        }
+
         return Maybe(Return.Link).errnoSysP(system.link(from, to, 0), .link, from) orelse
             Maybe(Return.Link).success;
     }
-    pub fn lstat(this: *NodeFS, args: Arguments.Lstat, comptime flavor: Flavor) Maybe(Return.Lstat) {
-        if (comptime Environment.isWindows) {
-            return Maybe(Return.Lstat).todo();
-        }
 
-        _ = flavor;
+    pub fn lstat(this: *NodeFS, args: Arguments.Lstat, comptime _: Flavor) Maybe(Return.Lstat) {
         return switch (Syscall.lstat(
             args.path.sliceZ(
                 &this.sync_error_buf,
@@ -3909,7 +4170,6 @@ pub const NodeFS = struct {
     pub fn mkdirRecursive(this: *NodeFS, args: Arguments.Mkdir, comptime flavor: Flavor) Maybe(Return.Mkdir) {
         _ = flavor;
         const Option = Maybe(Return.Mkdir);
-        if (comptime Environment.isWindows) return Option.todo();
 
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         const path = args.path.sliceZWithForceCopy(&buf, true);
@@ -4061,8 +4321,7 @@ pub const NodeFS = struct {
         const errno = @as(std.c.E, @enumFromInt(std.c._errno().*));
         return .{ .err = Syscall.Error{ .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(errno))), .syscall = .mkdtemp } };
     }
-    pub fn open(this: *NodeFS, args: Arguments.Open, comptime flavor: Flavor) Maybe(Return.Open) {
-        _ = flavor;
+    pub fn open(this: *NodeFS, args: Arguments.Open, comptime _: Flavor) Maybe(Return.Open) {
         const path = args.path.sliceZ(&this.sync_error_buf);
         return switch (Syscall.open(path, @intFromEnum(args.flags), args.mode)) {
             .err => |err| .{
@@ -4075,8 +4334,7 @@ pub const NodeFS = struct {
         return Maybe(Return.OpenDir).todo();
     }
 
-    fn _read(_: *NodeFS, args: Arguments.Read, comptime flavor: Flavor) Maybe(Return.Read) {
-        _ = flavor;
+    fn _read(_: *NodeFS, args: Arguments.Read, comptime _: Flavor) Maybe(Return.Read) {
         if (Environment.allow_assert) std.debug.assert(args.position == null);
         var buf = args.buffer.slice();
         buf = buf[@min(args.offset, buf.len)..];
@@ -4113,7 +4371,6 @@ pub const NodeFS = struct {
     }
 
     pub fn read(this: *NodeFS, args: Arguments.Read, comptime flavor: Flavor) Maybe(Return.Read) {
-        if (comptime Environment.isWindows) return Maybe(Return.Read).todo();
         return if (args.position != null)
             this._pread(
                 args,
@@ -4127,17 +4384,14 @@ pub const NodeFS = struct {
     }
 
     pub fn readv(this: *NodeFS, args: Arguments.Readv, comptime flavor: Flavor) Maybe(Return.Read) {
-        if (comptime Environment.isWindows) return Maybe(Return.Read).todo();
         return if (args.position != null) _preadv(this, args, flavor) else _readv(this, args, flavor);
     }
 
     pub fn writev(this: *NodeFS, args: Arguments.Writev, comptime flavor: Flavor) Maybe(Return.Write) {
-        if (comptime Environment.isWindows) return Maybe(Return.Write).todo();
         return if (args.position != null) _pwritev(this, args, flavor) else _writev(this, args, flavor);
     }
 
     pub fn write(this: *NodeFS, args: Arguments.Write, comptime flavor: Flavor) Maybe(Return.Write) {
-        if (comptime Environment.isWindows) return Maybe(Return.Write).todo();
         return if (args.position != null) _pwrite(this, args, flavor) else _write(this, args, flavor);
     }
     fn _write(_: *NodeFS, args: Arguments.Write, comptime flavor: Flavor) Maybe(Return.Write) {
@@ -4282,7 +4536,7 @@ pub const NodeFS = struct {
         }
 
         var entries = std.ArrayList(ExpectedType).init(bun.default_allocator);
-        var dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
+        var dir = std.fs.Dir{ .fd = bun.fdcast(fdcast(fd)) };
         var iterator = DirIterator.iterate(dir);
         var entry = iterator.next();
         while (switch (entry) {
@@ -4401,7 +4655,7 @@ pub const NodeFS = struct {
                     .result => |fd_| fd_,
                 };
             },
-            .fd => |_fd| _fd,
+            .fd => |_fd| fduncast(_fd),
         };
 
         defer {
@@ -4538,19 +4792,30 @@ pub const NodeFS = struct {
         const fd = switch (args.file) {
             .path => brk: {
                 path = args.file.path.sliceZ(pathbuf);
-                break :brk switch (Syscall.openat(
-                    args.dirfd,
-                    path,
-                    @intFromEnum(args.flag) | os.O.NOCTTY,
-                    args.mode,
-                )) {
+
+                const open_result = if (!Environment.isWindows)
+                    Syscall.openat(
+                        args.dirfd,
+                        path,
+                        @intFromEnum(args.flag) | os.O.NOCTTY,
+                        args.mode,
+                    )
+                else
+                    Syscall.open(
+                        path,
+                        @intFromEnum(args.flag) | os.O.NOCTTY,
+                        args.mode,
+                    );
+
+                break :brk switch (open_result) {
                     .err => |err| return .{
                         .err = err.withPath(path),
                     },
                     .result => |fd_| fd_,
                 };
             },
-            .fd => |_fd| _fd,
+            // TODO(@paperdave): This cast is incorrect on Windows
+            .fd => |_fd| @as(FileDescriptor, @intCast(_fd)),
         };
 
         defer {
@@ -4629,7 +4894,7 @@ pub const NodeFS = struct {
             .err => |err| return .{
                 .err = err.withPath(args.path.slice()),
             },
-            .result => |buf_| buf_,
+            .result => |len| len,
         };
 
         return .{
@@ -4650,6 +4915,44 @@ pub const NodeFS = struct {
         };
     }
     pub fn realpath(this: *NodeFS, args: Arguments.Realpath, comptime _: Flavor) Maybe(Return.Realpath) {
+        if (Environment.isWindows) {
+            var req: uv.fs_t = uv.fs_t.uninitialized;
+            defer req.deinit();
+            const rc = uv.uv_fs_realpath(
+                bun.Async.Loop.get(),
+                &req,
+                args.path.sliceZ(&this.sync_error_buf).ptr,
+                null,
+            );
+
+            if (rc.errno()) |errno|
+                return .{ .err = Syscall.Error{
+                    .errno = errno,
+                    .syscall = .realpath,
+                } };
+
+            // Seems like `rc` does not contain the errno?
+            std.debug.assert(rc.value == 0);
+            const buf = bun.span(req.ptrAs([*:0]u8));
+
+            return .{
+                .result = switch (args.encoding) {
+                    .buffer => .{
+                        .buffer = Buffer.fromString(buf, bun.default_allocator) catch unreachable,
+                    },
+                    else => if (args.path == .slice_with_underlying_string and
+                        strings.eqlLong(args.path.slice_with_underlying_string.slice(), buf, true))
+                        .{
+                            .BunString = args.path.slice_with_underlying_string.underlying.dupeRef(),
+                        }
+                    else
+                        .{
+                            .BunString = bun.String.create(buf),
+                        },
+                },
+            };
+        }
+
         var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var inbuf = &this.sync_error_buf;
         if (comptime Environment.allow_assert) std.debug.assert(FileSystem.instance_loaded);
@@ -4715,52 +5018,50 @@ pub const NodeFS = struct {
         return Syscall.rename(from, to);
     }
     pub fn rmdir(this: *NodeFS, args: Arguments.RmDir, comptime _: Flavor) Maybe(Return.Rmdir) {
-        if (comptime Environment.isPosix) {
-            if (args.recursive) {
-                std.fs.cwd().deleteTree(args.path.slice()) catch |err| {
-                    const errno: std.os.E = switch (err) {
-                        error.InvalidHandle => .BADF,
-                        error.AccessDenied => .PERM,
-                        error.FileTooBig => .FBIG,
-                        error.SymLinkLoop => .LOOP,
-                        error.ProcessFdQuotaExceeded => .NFILE,
-                        error.NameTooLong => .NAMETOOLONG,
-                        error.SystemFdQuotaExceeded => .MFILE,
-                        error.SystemResources => .NOMEM,
-                        error.ReadOnlyFileSystem => .ROFS,
-                        error.FileSystem => .IO,
-                        error.FileBusy => .BUSY,
-                        error.DeviceBusy => .BUSY,
+        if (args.recursive) {
+            std.fs.cwd().deleteTree(args.path.slice()) catch |err| {
+                const errno: bun.C.E = switch (err) {
+                    error.InvalidHandle => .BADF,
+                    error.AccessDenied => .PERM,
+                    error.FileTooBig => .FBIG,
+                    error.SymLinkLoop => .LOOP,
+                    error.ProcessFdQuotaExceeded => .NFILE,
+                    error.NameTooLong => .NAMETOOLONG,
+                    error.SystemFdQuotaExceeded => .MFILE,
+                    error.SystemResources => .NOMEM,
+                    error.ReadOnlyFileSystem => .ROFS,
+                    error.FileSystem => .IO,
+                    error.FileBusy => .BUSY,
+                    error.DeviceBusy => .BUSY,
 
-                        // One of the path components was not a directory.
-                        // This error is unreachable if `sub_path` does not contain a path separator.
-                        error.NotDir => .NOTDIR,
-                        // On Windows, file paths must be valid Unicode.
-                        error.InvalidUtf8 => .INVAL,
+                    // One of the path components was not a directory.
+                    // This error is unreachable if `sub_path` does not contain a path separator.
+                    error.NotDir => .NOTDIR,
+                    // On Windows, file paths must be valid Unicode.
+                    error.InvalidUtf8 => .INVAL,
 
-                        // On Windows, file paths cannot contain these characters:
-                        // '/', '*', '?', '"', '<', '>', '|'
-                        error.BadPathName => .INVAL,
+                    // On Windows, file paths cannot contain these characters:
+                    // '/', '*', '?', '"', '<', '>', '|'
+                    error.BadPathName => .INVAL,
 
-                        else => .FAULT,
-                    };
-                    return Maybe(Return.Rm){
-                        .err = bun.sys.Error.fromCode(errno, .rmdir),
-                    };
+                    else => .FAULT,
                 };
+                return Maybe(Return.Rm){
+                    .err = bun.sys.Error.fromCode(errno, .rmdir),
+                };
+            };
 
-                return Maybe(Return.Rmdir).success;
-            }
-
-            return Maybe(Return.Rmdir).errnoSysP(system.rmdir(args.path.sliceZ(&this.sync_error_buf)), .rmdir, args.path.slice()) orelse
-                Maybe(Return.Rmdir).success;
+            return Maybe(Return.Rmdir).success;
         }
 
-        return Maybe(Return.Rmdir).todo();
-    }
-    pub fn rm(this: *NodeFS, args: Arguments.RmDir, comptime flavor: Flavor) Maybe(Return.Rm) {
-        _ = flavor;
+        if (comptime Environment.isWindows) {
+            return Syscall.rmdir(args.path.sliceZ(&this.sync_error_buf));
+        }
 
+        return Maybe(Return.Rmdir).errnoSysP(rmdir(args.path.sliceZ(&this.sync_error_buf)), .rmdir, args.path.slice()) orelse
+            Maybe(Return.Rmdir).success;
+    }
+    pub fn rm(this: *NodeFS, args: Arguments.RmDir, comptime _: Flavor) Maybe(Return.Rm) {
         if (comptime Environment.isPosix) {
             // We cannot use removefileat() on macOS because it does not handle write-protected files as expected.
             if (args.recursive) {
@@ -4928,12 +5229,7 @@ pub const NodeFS = struct {
             return Maybe(Return.Rm).success;
         }
     }
-    pub fn stat(this: *NodeFS, args: Arguments.Stat, comptime flavor: Flavor) Maybe(Return.Stat) {
-        if (comptime Environment.isWindows) {
-            return Maybe(Return.Stat).todo();
-        }
-        _ = flavor;
-
+    pub fn stat(this: *NodeFS, args: Arguments.Stat, comptime _: Flavor) Maybe(Return.Stat) {
         return @as(Maybe(Return.Stat), switch (Syscall.stat(
             args.path.sliceZ(
                 &this.sync_error_buf,
@@ -4949,23 +5245,39 @@ pub const NodeFS = struct {
         });
     }
 
-    pub fn symlink(this: *NodeFS, args: Arguments.Symlink, comptime flavor: Flavor) Maybe(Return.Symlink) {
-        _ = flavor;
-        if (comptime Environment.isWindows) {
-            return Maybe(Return.Symlink).todo();
-        }
-
+    pub fn symlink(this: *NodeFS, args: Arguments.Symlink, comptime _: Flavor) Maybe(Return.Symlink) {
         var to_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+
+        if (Environment.isWindows) {
+            return Syscall.symlinkUV(
+                args.old_path.sliceZ(&this.sync_error_buf),
+                args.new_path.sliceZ(&to_buf),
+                switch (args.link_type) {
+                    // TODO: auto mode
+                    .auto => 0,
+                    .file => 0,
+                    .dir => uv.UV_FS_SYMLINK_DIR,
+                    .junction => uv.UV_FS_SYMLINK_JUNCTION,
+                },
+            );
+        }
 
         return Syscall.symlink(
             args.old_path.sliceZ(&this.sync_error_buf),
             args.new_path.sliceZ(&to_buf),
         );
     }
-    fn _truncate(this: *NodeFS, path: PathLike, len: JSC.WebCore.Blob.SizeType, comptime flavor: Flavor) Maybe(Return.Truncate) {
-        _ = flavor;
+    fn _truncate(this: *NodeFS, path: PathLike, len: JSC.WebCore.Blob.SizeType, comptime _: Flavor) Maybe(Return.Truncate) {
         if (comptime Environment.isWindows) {
-            return Maybe(Return.Truncate).todo();
+            const file = Syscall.open(
+                path.sliceZ(&this.sync_error_buf),
+                os.O.RDWR,
+                0,
+            );
+            if (file == .err)
+                return .{ .err = file.err.withPath(path.slice()) };
+            defer _ = Syscall.close(file.result);
+            return Syscall.ftruncate(file.result, len);
         }
 
         return Maybe(Return.Truncate).errnoSys(C.truncate(path.sliceZ(&this.sync_error_buf), len), .truncate) orelse
@@ -4974,7 +5286,8 @@ pub const NodeFS = struct {
     pub fn truncate(this: *NodeFS, args: Arguments.Truncate, comptime flavor: Flavor) Maybe(Return.Truncate) {
         return switch (args.path) {
             .fd => |fd| this.ftruncate(
-                Arguments.FTruncate{ .fd = fd, .len = args.len },
+                // TODO(@paperdave): this cast is incorrect on Windows
+                Arguments.FTruncate{ .fd = @intCast(fd), .len = args.len },
                 flavor,
             ),
             .path => this._truncate(
@@ -4984,12 +5297,10 @@ pub const NodeFS = struct {
             ),
         };
     }
-    pub fn unlink(this: *NodeFS, args: Arguments.Unlink, comptime flavor: Flavor) Maybe(Return.Unlink) {
-        _ = flavor;
-        if (comptime Environment.isWindows) {
-            return Maybe(Return.Unlink).todo();
+    pub fn unlink(this: *NodeFS, args: Arguments.Unlink, comptime _: Flavor) Maybe(Return.Unlink) {
+        if (Environment.isWindows) {
+            return Syscall.unlink(args.path.sliceZ(&this.sync_error_buf));
         }
-
         return Maybe(Return.Unlink).errnoSysP(system.unlink(args.path.sliceZ(&this.sync_error_buf)), .unlink, args.path.slice()) orelse
             Maybe(Return.Unlink).success;
     }
@@ -5015,10 +5326,25 @@ pub const NodeFS = struct {
     pub fn unwatchFile(_: *NodeFS, _: Arguments.UnwatchFile, comptime _: Flavor) Maybe(Return.UnwatchFile) {
         return Maybe(Return.UnwatchFile).todo();
     }
-    pub fn utimes(this: *NodeFS, args: Arguments.Utimes, comptime flavor: Flavor) Maybe(Return.Utimes) {
-        _ = flavor;
+    pub fn utimes(this: *NodeFS, args: Arguments.Utimes, comptime _: Flavor) Maybe(Return.Utimes) {
         if (comptime Environment.isWindows) {
-            return Maybe(Return.Utimes).todo();
+            var req: uv.fs_t = uv.fs_t.uninitialized;
+            defer req.deinit();
+            const rc = uv.uv_fs_utime(
+                bun.Async.Loop.get(),
+                &req,
+                args.path.sliceZ(&this.sync_error_buf).ptr,
+                @floatFromInt(args.atime),
+                @floatFromInt(args.mtime),
+                null,
+            );
+            return if (rc.errno()) |errno|
+                .{ .err = Syscall.Error{
+                    .errno = errno,
+                    .syscall = .utimes,
+                } }
+            else
+                Maybe(Return.Utimes).success;
         }
 
         var times = [2]std.c.timeval{
@@ -5042,7 +5368,23 @@ pub const NodeFS = struct {
 
     pub fn lutimes(this: *NodeFS, args: Arguments.Lutimes, comptime _: Flavor) Maybe(Return.Lutimes) {
         if (comptime Environment.isWindows) {
-            return Maybe(Return.Lutimes).todo();
+            var req: uv.fs_t = uv.fs_t.uninitialized;
+            defer req.deinit();
+            const rc = uv.uv_fs_lutime(
+                bun.Async.Loop.get(),
+                &req,
+                args.path.sliceZ(&this.sync_error_buf).ptr,
+                @floatFromInt(args.atime),
+                @floatFromInt(args.mtime),
+                null,
+            );
+            return if (rc.errno()) |errno|
+                .{ .err = Syscall.Error{
+                    .errno = errno,
+                    .syscall = .utimes,
+                } }
+            else
+                Maybe(Return.Utimes).success;
         }
 
         var times = [2]std.c.timeval{
@@ -5080,9 +5422,11 @@ pub const NodeFS = struct {
         };
         return Maybe(Return.Watch){ .result = watcher };
     }
+
     pub fn createReadStream(_: *NodeFS, _: Arguments.CreateReadStream, comptime _: Flavor) Maybe(Return.CreateReadStream) {
         return Maybe(Return.CreateReadStream).todo();
     }
+
     pub fn createWriteStream(_: *NodeFS, _: Arguments.CreateWriteStream, comptime _: Flavor) Maybe(Return.CreateWriteStream) {
         return Maybe(Return.CreateWriteStream).todo();
     }
@@ -5090,10 +5434,6 @@ pub const NodeFS = struct {
     /// This function is `cpSync`, but only if you pass `{ recursive: ..., force: ..., errorOnExist: ..., mode: ... }'
     /// The other options like `filter` use a JS fallback, see `src/js/internal/fs/cp.ts`
     pub fn cp(this: *NodeFS, args: Arguments.Cp, comptime flavor: Flavor) Maybe(Return.Cp) {
-        if (comptime Environment.isWindows) {
-            return Maybe(Return.Cp).todo();
-        }
-
         comptime std.debug.assert(flavor == .sync);
 
         if (comptime Environment.isWindows) {

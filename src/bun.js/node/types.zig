@@ -161,7 +161,7 @@ pub fn Maybe(comptime ResultType: type) type {
                 else => |err| @This(){
                     // always truncate
                     .err = .{
-                        .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(err))),
+                        .errno = @intFromEnum(err),
                         .syscall = syscall,
                     },
                 },
@@ -174,7 +174,7 @@ pub fn Maybe(comptime ResultType: type) type {
                 else => |err| @This(){
                     // always truncate
                     .err = .{
-                        .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(err))),
+                        .errno = @intFromEnum(err),
                         .syscall = syscall,
                         .fd = @intCast(bun.toFD(fd)),
                     },
@@ -188,7 +188,7 @@ pub fn Maybe(comptime ResultType: type) type {
                 else => |err| @This(){
                     // always truncate
                     .err = .{
-                        .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(err))),
+                        .errno = @intFromEnum(err),
                         .syscall = syscall,
                         .path = bun.asByteSlice(path),
                     },
@@ -971,7 +971,7 @@ pub const Valid = struct {
 
 pub const VectorArrayBuffer = struct {
     value: JSC.JSValue,
-    buffers: std.ArrayList(std.os.iovec),
+    buffers: std.ArrayList(bun.PlatformIOVec),
 
     pub fn toJS(this: VectorArrayBuffer, _: *JSC.JSGlobalObject) JSC.JSValue {
         return this.value;
@@ -983,7 +983,7 @@ pub const VectorArrayBuffer = struct {
             return null;
         }
 
-        var bufferlist = std.ArrayList(std.os.iovec).init(allocator);
+        var bufferlist = std.ArrayList(bun.PlatformIOVec).init(allocator);
         var i: usize = 0;
         const len = val.getLength(globalObject);
         bufferlist.ensureTotalCapacityPrecise(len) catch @panic("Failed to allocate memory for ArrayBuffer[]");
@@ -1002,10 +1002,7 @@ pub const VectorArrayBuffer = struct {
             };
 
             var buf = array_buffer.byteSlice();
-            bufferlist.append(std.os.iovec{
-                .iov_base = buf.ptr,
-                .iov_len = buf.len,
-            }) catch @panic("Failed to allocate memory for ArrayBuffer[]");
+            bufferlist.append(bun.PlatformIOVec.init(buf)) catch @panic("Failed to allocate memory for ArrayBuffer[]");
             i += 1;
         }
 
@@ -1421,8 +1418,8 @@ pub fn StatType(comptime Big: bool) type {
         pub usingnamespace if (Big) JSC.Codegen.JSBigIntStats else JSC.Codegen.JSStats;
 
         // Stats stores these as i32, but BigIntStats stores all of these as i64
-        dev: Int,
-        ino: Int,
+        dev: if (Environment.isWindows) u64 else Int,
+        ino: if (Environment.isWindows) u64 else Int,
         mode: Int,
         nlink: Int,
         uid: Int,
@@ -1451,12 +1448,16 @@ pub fn StatType(comptime Big: bool) type {
         const StatTimespec = if (Environment.isWindows) bun.windows.libuv.uv_timespec_t else std.os.timespec;
 
         inline fn toNanoseconds(ts: StatTimespec) Timestamp {
-            return @as(Timestamp, @intCast(ts.tv_sec * 1_000_000_000)) + @as(Timestamp, @intCast(ts.tv_nsec));
+            const tv_sec: i64 = @intCast(ts.tv_sec);
+            const tv_nsec: i64 = @intCast(ts.tv_nsec);
+            return @as(Timestamp, @intCast(tv_sec * 1_000_000_000)) + @as(Timestamp, @intCast(tv_nsec));
         }
 
-        inline fn toTimeMS(ts: StatTimespec) Float {
+        fn toTimeMS(ts: StatTimespec) Float {
             if (Big) {
-                return @as(i64, @intCast(ts.tv_sec * std.time.ms_per_s)) + @as(i64, @intCast(@divTrunc(ts.tv_nsec, std.time.ns_per_ms)));
+                const tv_sec: i64 = @intCast(ts.tv_sec);
+                const tv_nsec: i64 = @intCast(ts.tv_nsec);
+                return @as(i64, @intCast(tv_sec * std.time.ms_per_s)) + @as(i64, @intCast(@divTrunc(tv_nsec, std.time.ns_per_ms)));
             } else {
                 return (@as(f64, @floatFromInt(@max(ts.tv_sec, 0))) * std.time.ms_per_s) + (@as(f64, @floatFromInt(@as(usize, @intCast(@max(ts.tv_nsec, 0))))) / std.time.ns_per_ms);
             }
@@ -1612,8 +1613,8 @@ pub fn StatType(comptime Big: bool) type {
             const cTime = stat_.ctime();
 
             return .{
-                .dev = @truncate(@as(i64, @intCast(stat_.dev))),
-                .ino = @truncate(@as(i64, @intCast(stat_.ino))),
+                .dev = if (Environment.isWindows) stat_.dev else @truncate(@as(i64, @intCast(stat_.dev))),
+                .ino = if (Environment.isWindows) stat_.ino else @truncate(@as(i64, @intCast(stat_.ino))),
                 .mode = @truncate(@as(i64, @intCast(stat_.mode))),
                 .nlink = @truncate(@as(i64, @intCast(stat_.nlink))),
                 .uid = @truncate(@as(i64, @intCast(stat_.uid))),
@@ -1661,14 +1662,14 @@ pub fn StatType(comptime Big: bool) type {
             var ctime_ms: f64 = if (args.len > 12 and args[12].isNumber()) args[12].asNumber() else 0;
             var birthtime_ms: f64 = if (args.len > 13 and args[13].isNumber()) args[13].asNumber() else 0;
             this.* = .{
-                .dev = if (args.len > 0 and args[0].isNumber()) args[0].toInt32() else 0,
+                .dev = if (args.len > 0 and args[0].isNumber()) @intCast(args[0].toInt32()) else 0,
                 .mode = if (args.len > 1 and args[1].isNumber()) args[1].toInt32() else 0,
                 .nlink = if (args.len > 2 and args[2].isNumber()) args[2].toInt32() else 0,
                 .uid = if (args.len > 3 and args[3].isNumber()) args[3].toInt32() else 0,
                 .gid = if (args.len > 4 and args[4].isNumber()) args[4].toInt32() else 0,
                 .rdev = if (args.len > 5 and args[5].isNumber()) args[5].toInt32() else 0,
                 .blksize = if (args.len > 6 and args[6].isNumber()) args[6].toInt32() else 0,
-                .ino = if (args.len > 7 and args[7].isNumber()) args[7].toInt32() else 0,
+                .ino = if (args.len > 7 and args[7].isNumber()) @intCast(args[7].toInt32()) else 0,
                 .size = if (args.len > 8 and args[8].isNumber()) args[8].toInt32() else 0,
                 .blocks = if (args.len > 9 and args[9].isNumber()) args[9].toInt32() else 0,
                 .atime_ms = atime_ms,

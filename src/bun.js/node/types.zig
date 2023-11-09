@@ -1002,7 +1002,7 @@ pub const VectorArrayBuffer = struct {
             };
 
             var buf = array_buffer.byteSlice();
-            bufferlist.append(bun.PlatformIOVec.init(buf)) catch @panic("Failed to allocate memory for ArrayBuffer[]");
+            bufferlist.append(bun.platformIOVecCreate(buf)) catch @panic("Failed to allocate memory for ArrayBuffer[]");
             i += 1;
         }
 
@@ -2052,6 +2052,7 @@ pub const Path = struct {
 
         return JSC.ZigString.init(out).withEncoding().toValueGC(globalThis);
     }
+
     pub fn extname(globalThis: *JSC.JSGlobalObject, _: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
         if (args_len == 0) {
@@ -2068,6 +2069,7 @@ pub const Path = struct {
 
         return JSC.ZigString.init(std.fs.path.extension(base_slice)).withEncoding().toValueGC(globalThis);
     }
+
     pub fn format(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
         if (args_len == 0) {
@@ -2174,11 +2176,12 @@ pub const Path = struct {
             return JSC.ZigString.init(out).withEncoding().toValueGC(globalThis);
         }
     }
+
     fn isAbsoluteString(path: JSC.ZigString, windows: bool) bool {
         if (!windows) return path.hasPrefixChar('/');
-
         return isZigStringAbsoluteWindows(path);
     }
+
     pub fn isAbsolute(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
         const arg = if (args_len > 0) args_ptr[0] else JSC.JSValue.undefined;
@@ -2189,6 +2192,7 @@ pub const Path = struct {
         const zig_str = arg.getZigString(globalThis);
         return JSC.JSValue.jsBoolean(zig_str.len > 0 and isAbsoluteString(zig_str, isWindows));
     }
+
     fn isZigStringAbsoluteWindows(zig_str: JSC.ZigString) bool {
         std.debug.assert(zig_str.len > 0); // caller must check
         if (zig_str.is16Bit()) {
@@ -2276,7 +2280,18 @@ pub const Path = struct {
         if (str_slice.isAllocated()) out_str.setOutputEncoding();
         return out_str.toValueGC(globalThis);
     }
+
+    pub inline fn charIsSlash(char: u8) bool {
+        return char == '/' or char == '\\';
+    }
+
     pub fn parse(globalThis: *JSC.JSGlobalObject, win32: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
+        return switch (win32) {
+            inline else => |use_win32| parseWithComptimePlatform(globalThis, use_win32, args_ptr, args_len),
+        };
+    }
+
+    pub fn parseWithComptimePlatform(globalThis: *JSC.JSGlobalObject, comptime win32: bool, args_ptr: [*]JSC.JSValue, args_len: u16) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
         if (args_len == 0 or !args_ptr[0].jsType().isStringLike()) {
             return JSC.toInvalidArguments("path string is required", .{}, globalThis);
@@ -2286,18 +2301,73 @@ pub const Path = struct {
         var path = path_slice.slice();
         const path_name = Fs.NodeJSPathName.init(
             path,
-            if (win32) std.fs.path.sep_windows else std.fs.path.sep_posix,
+            win32,
         );
         var dir = JSC.ZigString.init(path_name.dir);
-        const is_absolute = (win32 and dir.len > 0 and isZigStringAbsoluteWindows(dir)) or (!win32 and path.len > 0 and path[0] == '/');
+        const is_absolute =
+            switch (win32) {
+            true => path.len > 0 and std.fs.path.isAbsoluteWindows(path),
+            false => path.len > 0 and std.fs.path.isAbsolutePosix(path),
+        };
 
         // if its not absolute root must be empty
         var root = JSC.ZigString.Empty;
         if (is_absolute) {
-            root = JSC.ZigString.init(if (win32) std.fs.path.sep_str_windows else std.fs.path.sep_str_posix);
+            std.debug.assert(path.len > 0);
+            root = JSC.ZigString.init(
+                if (win32) root: {
+                    // On Win32, the root is a substring of the input, containing just the root dir. Aka:
+                    // - Unix Absolute path
+                    //     "\" or "/"
+                    // - Drive letter
+                    //     "C:\" or "C:" if no slash
+                    // - UNC paths must start with \\ and then include another \ somewhere
+                    // they can also use forward slashes anywhere
+                    //     "\\server\share"
+                    //     "//server/share"
+                    //     "/\server\share" lol
+                    //     "\\?\" lol
+                    if (path.len > 0 and charIsSlash(path[0])) {
+                        // minimum length for a unc path is 5
+                        if (path.len >= 5 and
+                            charIsSlash(path[1]) and
+                            !charIsSlash(path[2]))
+                        {
+                            if (strings.indexOfAny(path[3..], "/\\")) |first_slash| {
+                                if (strings.indexOfAny(path[3 + first_slash + 1 ..], "/\\")) |second_slash| {
+                                    const len = 3 + 1 + first_slash + second_slash;
+                                    // case given for input "//hello/world/"
+                                    // this is not considered a unc path
+                                    if (path.len > len) {
+                                        break :root path[0 .. len + 1];
+                                    }
+                                }
+                            }
+                        }
+                        // return the un-normalized slash
+                        break :root path[0..1];
+                    }
+                    if (path.len > 2 and path[1] == ':') {
+                        // would not be an absolute path if it was just "C:"
+                        std.debug.assert(charIsSlash(path[2]));
+                        break :root path[0..3];
+                    }
+                    break :root path[0..1];
+                } else
+                // Unix does not make it possible to have a root that isnt `/`
+                std.fs.path.sep_str_posix,
+            );
+
             // if is absolute and dir is empty, then dir = root
             if (path_name.dir.len == 0) {
                 dir = root;
+            }
+        } else if (win32) {
+            if (path.len > 1 and path[1] == ':') {
+                // for input "C:hello" which is not considered absolute
+                comptime std.debug.assert(!std.fs.path.isAbsoluteWindows("C:hello"));
+                comptime std.debug.assert(std.fs.path.isAbsoluteWindows("/:/"));
+                root = JSC.ZigString.init(path[0..2]);
             }
         }
         var base = JSC.ZigString.init(path_name.base);
@@ -2310,11 +2380,11 @@ pub const Path = struct {
         ext.setOutputEncoding();
 
         var result = JSC.JSValue.createEmptyObject(globalThis, 5);
-        result.put(globalThis, JSC.ZigString.static("dir"), dir.toValueGC(globalThis));
         result.put(globalThis, JSC.ZigString.static("root"), root.toValueGC(globalThis));
+        result.put(globalThis, JSC.ZigString.static("dir"), dir.toValueGC(globalThis));
         result.put(globalThis, JSC.ZigString.static("base"), base.toValueGC(globalThis));
-        result.put(globalThis, JSC.ZigString.static("name"), name_.toValueGC(globalThis));
         result.put(globalThis, JSC.ZigString.static("ext"), ext.toValueGC(globalThis));
+        result.put(globalThis, JSC.ZigString.static("name"), name_.toValueGC(globalThis));
         return result;
     }
     pub fn relative(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {

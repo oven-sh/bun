@@ -331,12 +331,12 @@ const Syscall = if (Environment.isWindows) struct {
     }
 
     pub inline fn pread(fd: FileDescriptor, buf: []u8, position: i64) Maybe(usize) {
-        var bufs: [1]bun.PlatformIOVec = .{bun.PlatformIOVec.init(buf)};
+        var bufs: [1]bun.PlatformIOVec = .{bun.platformIOVecCreate(buf)};
         return preadv(fd, &bufs, position);
     }
 
     pub inline fn read(fd: FileDescriptor, buf: []u8) Maybe(usize) {
-        var bufs: [1]bun.PlatformIOVec = .{bun.PlatformIOVec.init(buf)};
+        var bufs: [1]bun.PlatformIOVec = .{bun.platformIOVecCreate(buf)};
         return readv(fd, &bufs);
     }
 
@@ -345,12 +345,12 @@ const Syscall = if (Environment.isWindows) struct {
     }
 
     pub inline fn pwrite(fd: FileDescriptor, buf: []const u8, position: i64) Maybe(usize) {
-        var bufs: [1]bun.PlatformIOVec = .{bun.PlatformIOVec.init(buf)};
+        var bufs: [1]bun.PlatformIOVec = .{bun.platformIOVecCreate(buf)};
         return pwritev(fd, &bufs, position);
     }
 
     pub inline fn write(fd: FileDescriptor, buf: []const u8) Maybe(usize) {
-        var bufs: [1]bun.PlatformIOVec = .{bun.PlatformIOVec.init(buf)};
+        var bufs: [1]bun.PlatformIOVec = .{bun.platformIOVecCreate(buf)};
         return writev(fd, &bufs);
     }
 
@@ -1601,9 +1601,7 @@ pub const Arguments = struct {
         link_type: LinkType,
 
         const LinkType = if (!Environment.isWindows)
-            enum(u0) {
-                auto = 0,
-            }
+            u0
         else
             enum {
                 auto,
@@ -1656,8 +1654,9 @@ pub const Arguments = struct {
 
             if (exception.* != null) return null;
 
-            var link_type: LinkType = .auto;
-            if (comptime Environment.isWindows) {
+            const link_type: LinkType = if (!Environment.isWindows)
+                0
+            else link_type: {
                 if (arguments.next()) |next_val| {
                     // The type argument is only available on Windows and
                     // ignored on other platforms. It can be set to 'dir',
@@ -1668,13 +1667,33 @@ pub const Arguments = struct {
                     // be absolute. When using 'junction', the target argument
                     // will automatically be normalized to absolute path.
                     if (next_val.isString()) {
-                        bun.todo(@src(), {});
                         arguments.eat();
+                        var str = next_val.toBunString(ctx.ptr());
+                        var utf8 = str.utf8();
+                        inline for (std.enums.values(LinkType)) |f| {
+                            if (f != .auto and strings.eqlComptime(utf8, @tagName(f))) {
+                                break :link_type f;
+                            }
+                        }
+                        if (exception.* == null) {
+                            JSC.throwInvalidArguments(
+                                "Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{s}\"",
+                                .{utf8},
+                                ctx,
+                                exception,
+                            );
+                        }
+                        return null;
                     }
                 }
-            }
+                break :link_type .auto;
+            };
 
-            return Symlink{ .old_path = old_path, .new_path = new_path, .link_type = link_type };
+            return Symlink{
+                .old_path = old_path,
+                .new_path = new_path,
+                .link_type = link_type,
+            };
         }
     };
 
@@ -5058,7 +5077,7 @@ pub const NodeFS = struct {
             return Syscall.rmdir(args.path.sliceZ(&this.sync_error_buf));
         }
 
-        return Maybe(Return.Rmdir).errnoSysP(rmdir(args.path.sliceZ(&this.sync_error_buf)), .rmdir, args.path.slice()) orelse
+        return Maybe(Return.Rmdir).errnoSysP(system.rmdir(args.path.sliceZ(&this.sync_error_buf)), .rmdir, args.path.slice()) orelse
             Maybe(Return.Rmdir).success;
     }
     pub fn rm(this: *NodeFS, args: Arguments.RmDir, comptime _: Flavor) Maybe(Return.Rm) {

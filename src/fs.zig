@@ -1355,7 +1355,9 @@ pub const NodeJSPathName = struct {
     ext: string,
     filename: string,
 
-    pub fn init(_path: string, sep: u8) NodeJSPathName {
+    pub fn init(_path: string, comptime isWindows: bool) NodeJSPathName {
+        const sep = if (isWindows) std.fs.path.sep_windows else std.fs.path.sep_posix;
+
         var path = _path;
         var base = path;
         // ext must be empty if not detected
@@ -1365,7 +1367,6 @@ pub const NodeJSPathName = struct {
         var _i = strings.lastIndexOfChar(path, sep);
         var first = true;
         while (_i) |i| {
-
             // Stop if we found a non-trailing slash
             if (i + 1 != path.len and path.len >= i + 1) {
                 base = path[i + 1 ..];

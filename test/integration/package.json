@@ -1,0 +1,13 @@
+{
+  "private": true,
+  "name": "integration",
+  "trustedDependencies": [
+    "puppeteer"
+  ],
+  "dependencies": {
+    "astro": "^3.5.0",
+    "nuxt": "^3.8.1",
+    "puppeteer": "^21.5.0",
+    "vite": "^4.5.0"
+  }
+}

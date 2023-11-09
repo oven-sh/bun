@@ -1698,9 +1698,8 @@ unsigned char JSC__JSValue__jsType(JSC__JSValue JSValue0)
     // if the value is NOT a cell
     // asCell will return an invalid pointer rather than a nullptr
     //
-    // The empty check is needed because the value could be empty
-    // and return true from isCell if it's an array hole from a
-    // sparse array.
+    // The empty check is needed because isCell returns true for
+    // empty values, and asCell on an empty value returns nullptr
     if (jsValue.isCell() and !jsValue.isEmpty())
         return jsValue.asCell()->type();
 

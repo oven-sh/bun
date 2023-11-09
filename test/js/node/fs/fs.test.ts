@@ -2070,7 +2070,7 @@ describe("fs.read", () => {
       done();
     });
   });
-  it("should work with util.promisify", async done => {
+  it("should work with util.promisify", async () => {
     const path = `${tmpdir()}/bun-fs-read-6-${Date.now()}.txt`;
     fs.writeFileSync(path, "bun bun bun bun");
 

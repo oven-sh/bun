@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { dirname } from "node:path";
+import { promisify } from "node:util";
 import { bunEnv, bunExe, gc } from "harness";
 import fs, {
   closeSync,
@@ -2068,6 +2069,20 @@ describe("fs.read", () => {
       }
       done();
     });
+  });
+  it("should work with util.promisify", async done => {
+    const path = `${tmpdir()}/bun-fs-read-6-${Date.now()}.txt`;
+    fs.writeFileSync(path, "bun bun bun bun");
+
+    const fd = fs.openSync(path, "r");
+    const buffer = Buffer.alloc(15);
+    const fsread = promisify(fs.read);
+
+    const ret = await fsread(fd, buffer, 0, 15, 0);
+    expect(typeof ret === "object").toBeTrue();
+    expect(ret.bytesRead === 15).toBeTrue();
+    expect(buffer.slice().toString() === "bun bun bun bun").toBeTrue();
+    done();
   });
 });
 

@@ -213,14 +213,12 @@ var access = function access(...args) {
       }
       ({ offset = 0, length = buffer?.byteLength - offset, position = null } = params ?? {});
     }
-    queueMicrotask(() => {
-      try {
-        var bytesRead = fs.readSync(fd, buffer, offset, length, position);
-      } catch (e) {
-        callback(e);
-      }
-      callback(null, bytesRead, buffer);
-    });
+    fs.read(fd, buffer, offset, length, position).then(
+      (bytesRead,) => {
+        callback(null, bytesRead, buffer);
+      },
+      err => callback(err)
+    )
   },
   write = function write(...args) {
     callbackify(fs.write, args);
@@ -369,6 +367,18 @@ var access = function access(...args) {
   watch = function watch(path, options, listener) {
     return new FSWatcher(path, options, listener);
   };
+
+  var kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
+  read[kCustomPromisifiedSymbol] = async function (fd, bufferOrOptions, ...rest) {
+    const bytesRead = await fs.read(fd, bufferOrOptions, ...rest);
+    let buffer;
+    if ($isTypedArrayView(bufferOrOptions)) {
+      buffer = bufferOrOptions;
+    } else {
+      buffer = bufferOrOptions.buffer;
+    }
+    return {bytesRead,buffer};
+  }
 
 // TODO: move this entire thing into native code.
 // the reason it's not done right now is because there isnt a great way to have multiple

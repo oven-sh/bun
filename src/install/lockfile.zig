@@ -1686,7 +1686,7 @@ pub fn getPackageID(
             }
 
             if (npm_version) |range| {
-                if (range.satisfies(resolutions[id].value.npm.version, buf)) return id;
+                if (range.satisfies(resolutions[id].value.npm.version, buf, buf)) return id;
             }
         },
         .PackageIDMultiple => |ids| {
@@ -1698,7 +1698,7 @@ pub fn getPackageID(
                 }
 
                 if (npm_version) |range| {
-                    if (range.satisfies(resolutions[id].value.npm.version, buf)) return id;
+                    if (range.satisfies(resolutions[id].value.npm.version, buf, buf)) return id;
                 }
             }
         },
@@ -3130,7 +3130,7 @@ pub const Package = extern struct {
             .npm => if (comptime tag != null)
                 unreachable
             else if (workspace_version) |ver| {
-                if (dependency_version.value.npm.version.satisfies(ver, buf)) {
+                if (dependency_version.value.npm.version.satisfies(ver, buf, buf)) {
                     for (package_dependencies[0..dependencies_count]) |dep| {
                         // `dependencies` & `workspaces` defined within the same `package.json`
                         if (dep.version.tag == .workspace and dep.name_hash == name_hash) {
@@ -3155,7 +3155,7 @@ pub const Package = extern struct {
             .workspace => if (workspace_path) |path| {
                 if (workspace_range) |range| {
                     if (workspace_version) |ver| {
-                        if (range.satisfies(ver, buf)) {
+                        if (range.satisfies(ver, buf, buf)) {
                             dependency_version.literal = path;
                             dependency_version.value.workspace = path;
                         }
@@ -3211,7 +3211,7 @@ pub const Package = extern struct {
                         if (switch (package_dep.version.tag) {
                             // `dependencies` & `workspaces` defined within the same `package.json`
                             .npm => String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash and
-                                package_dep.version.value.npm.version.satisfies(ver, buf),
+                                package_dep.version.value.npm.version.satisfies(ver, buf, buf),
                             // `workspace:*`
                             .workspace => workspace_entry.found_existing and
                                 String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash,
@@ -5115,7 +5115,7 @@ pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Ve
                 const resolutions = this.packages.items(.resolution);
 
                 if (comptime Environment.allow_assert) std.debug.assert(id < resolutions.len);
-                if (version.value.npm.version.satisfies(resolutions[id].value.npm.version, buf)) {
+                if (version.value.npm.version.satisfies(resolutions[id].value.npm.version, buf, buf)) {
                     return id;
                 }
             },
@@ -5124,7 +5124,7 @@ pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Ve
 
                 for (ids.items) |id| {
                     if (comptime Environment.allow_assert) std.debug.assert(id < resolutions.len);
-                    if (version.value.npm.version.satisfies(resolutions[id].value.npm.version, buf)) {
+                    if (version.value.npm.version.satisfies(resolutions[id].value.npm.version, buf, buf)) {
                         return id;
                     }
                 }

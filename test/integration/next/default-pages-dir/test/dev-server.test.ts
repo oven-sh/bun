@@ -48,7 +48,11 @@ test("ssr works for 100 requests", async () => {
   for (let i = 0; i < 100; i++) {
     promises.push(
       (async () => {
-        const x = await fetch(`${baseUrl}/`);
+        const x = await fetch(`${baseUrl}/?i=${i}`, {
+          headers: {
+            "Cache-Control": "private, no-cache, no-store, must-revalidate",
+          },
+        });
         expect(x.status).toBe(200);
         const text = await x.text();
         expect(text).toContain(`>${Bun.version}</code>`);

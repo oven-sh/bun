@@ -4367,6 +4367,19 @@ pub fn trim(slice: anytype, comptime values_to_strip: []const u8) @TypeOf(slice)
     return slice[begin..end];
 }
 
+pub fn lengthOfLeadingWhitespaceASCII(slice: string) usize {
+    for (slice) |*c| {
+        switch (c.*) {
+            ' ', '\t', '\n', '\r', std.ascii.control_code.vt, std.ascii.control_code.ff => {},
+            else => {
+                return @intFromPtr(c) - @intFromPtr(slice.ptr);
+            },
+        }
+    }
+
+    return slice.len;
+}
+
 pub fn containsNonBmpCodePointUTF16(_text: []const u16) bool {
     const n = _text.len;
     if (n > 0) {

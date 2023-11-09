@@ -2082,7 +2082,6 @@ describe("fs.read", () => {
     expect(typeof ret === "object").toBeTrue();
     expect(ret.bytesRead === 15).toBeTrue();
     expect(buffer.slice().toString() === "bun bun bun bun").toBeTrue();
-    done();
   });
 });
 

@@ -368,6 +368,7 @@ var access = function access(...args) {
     return new FSWatcher(path, options, listener);
   };
 
+  // TODO: make symbols a separate export somewhere
   var kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
   read[kCustomPromisifiedSymbol] = async function (fd, bufferOrOptions, ...rest) {
     const bytesRead = await fs.read(fd, bufferOrOptions, ...rest);

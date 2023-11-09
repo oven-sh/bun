@@ -1826,7 +1826,7 @@ fn formatLabel(globalThis: *JSC.JSGlobalObject, label: string, function_args: []
 
             switch (label[idx + 1]) {
                 's' => {
-                    try consumeArg(globalThis, current_arg.jsType().isString(), &idx, &args_idx, &list, &current_arg, "%s");
+                    try consumeArg(globalThis, !current_arg.isEmpty() and current_arg.jsType().isString(), &idx, &args_idx, &list, &current_arg, "%s");
                 },
                 'i' => {
                     try consumeArg(globalThis, current_arg.isAnyInt(), &idx, &args_idx, &list, &current_arg, "%i");
@@ -1944,7 +1944,7 @@ fn eachBind(
         var test_idx: usize = 0;
         while (iter.next()) |item| {
             const func_params_length = function.getLength(globalThis);
-            const item_is_array = !item.isEmptyOrUndefinedOrNull() and item.jsType().isArray();
+            const item_is_array = !item.isEmptyOrUndefinedOrNull() and !item.isEmpty() and item.jsType().isArray();
             var arg_size: usize = 1;
 
             if (item_is_array) {
@@ -2036,7 +2036,7 @@ inline fn createEach(
     }
 
     var array = args[0];
-    if (!array.jsType().isArray()) {
+    if (array.isEmpty() or !array.jsType().isArray()) {
         globalThis.throwPretty("{s} expects an array", .{signature});
         return .zero;
     }

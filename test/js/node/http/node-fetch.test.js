@@ -19,7 +19,7 @@ test("node-fetch Headers.raw()", () => {
   headers.append("Set-Cookie", "c=1");
 
   expect(headers.raw()).toEqual({
-    "Set-Cookie": ["b=1", "c=1"],
+    "set-cookie": ["b=1", "c=1"],
     "a": ["1"],
   });
 });

@@ -147,7 +147,7 @@ describe("node:http", () => {
       res.setHeader("Set-Cookie", ["swag=true", "yolo=true"]);
       res.setHeader("test", "test");
       expect(res.getHeaders()).toEqual({
-        "Set-Cookie": ["swag=true", "yolo=true"],
+        "set-cookie": ["swag=true", "yolo=true"],
         "test": "test",
       });
     });

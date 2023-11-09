@@ -296,6 +296,22 @@ WORKDIR $BUN_DIR
 
 RUN --mount=type=cache,target=/ccache cd $BUN_DIR && make zstd
 
+FROM bun-base as ls-hpack
+
+ARG BUN_DIR
+
+ARG CPU_TARGET
+ENV CPU_TARGET=${CPU_TARGET}
+
+ENV CCACHE_DIR=/ccache
+
+COPY Makefile ${BUN_DIR}/Makefile
+COPY src/deps/ls-hpack ${BUN_DIR}/src/deps/ls-hpack
+
+WORKDIR $BUN_DIR
+
+RUN --mount=type=cache,target=/ccache cd $BUN_DIR && make lshpack
+
 FROM bun-base-with-zig as bun-identifier-cache
 
 ARG DEBIAN_FRONTEND
@@ -390,7 +406,6 @@ COPY *.zig package.json CMakeLists.txt ${BUN_DIR}/
 COPY completions ${BUN_DIR}/completions
 COPY packages ${BUN_DIR}/packages
 COPY src ${BUN_DIR}/src
-COPY src/deps/ls-hpack ${BUN_DIR}/src/deps/ls-hpack
 
 COPY --from=bun-identifier-cache ${BUN_DIR}/src/js_lexer/*.blob ${BUN_DIR}/src/js_lexer/
 COPY --from=bun-node-fallbacks ${BUN_DIR}/src/node-fallbacks/out ${BUN_DIR}/src/node-fallbacks/out
@@ -436,7 +451,6 @@ RUN mkdir -p build bun-webkit
 
 # lol
 COPY src/bun.js/bindings/sqlite/sqlite3.c ${BUN_DIR}/src/bun.js/bindings/sqlite/sqlite3.c
-COPY src/deps/ls-hpack ${BUN_DIR}/src/deps/ls-hpack
 
 COPY src/symbols.dyn src/linker.lds ${BUN_DIR}/src/
 
@@ -450,6 +464,7 @@ COPY --from=mimalloc ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=zstd ${BUN_DEPS_OUT_DIR}/*  ${BUN_DEPS_OUT_DIR}/
 COPY --from=tinycc ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=c-ares ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
+COPY --from=ls-hpack ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=bun-compile-zig-obj /tmp/bun-zig.o ${BUN_DIR}/build/bun-zig.o
 COPY --from=bun-cpp-objects ${BUN_DIR}/build/bun-cpp-objects.a ${BUN_DIR}/build/bun-cpp-objects.a
 COPY --from=bun-cpp-objects ${BUN_DIR}/bun-webkit/lib ${BUN_DIR}/bun-webkit/lib

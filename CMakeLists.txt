@@ -242,6 +242,7 @@ option(USE_CUSTOM_BASE64 "Use Bun's recommended version of libbase64" ON)
 option(USE_CUSTOM_LOLHTML "Use Bun's recommended version of lolhtml" ON)
 option(USE_CUSTOM_TINYCC "Use Bun's recommended version of tinycc" ON)
 option(USE_CUSTOM_LIBUV "Use Bun's recommended version of libuv (Windows only)" ON)
+option(USE_CUSTOM_LSHPACK "Use Bun's recommended version of ls-hpack" ON)
 option(USE_BASELINE_BUILD "Build Bun for baseline (older) CPUs" OFF)
 
 option(ZIG_OPTIMIZE "Optimization level for Zig" ${DEFAULT_ZIG_OPTIMIZE})
@@ -1226,6 +1227,18 @@ else()
     target_compile_definitions(${bun} PRIVATE "LAZY_LOAD_SQLITE=1")
 endif()
 
+if(USE_CUSTOM_LSHPACK)
+    if(WIN32)
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/lshpack.lib")
+    else()
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/liblshpack.a")
+    endif()
+else()
+    find_package(lshpack REQUIRED)
+    target_link_libraries(${bun} PRIVATE lshpack)
+endif()
+
+
 if(NOT WIN32)
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libWTF.a")
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libJavaScriptCore.a")
@@ -1258,13 +1271,3 @@ endif()
 if(NO_CODEGEN)
     message(STATUS "NOTE: NO_CODEGEN is ON, this build expects ./codegen to exist")
 endif()
-
-add_library(lshpack STATIC 
-    "${BUN_SRC}/deps/ls-hpack/lshpack.c"
-    "${BUN_SRC}/deps/ls-hpack/deps/xxhash/xxhash.c"
-)
-target_include_directories(lshpack PUBLIC ${BUN_SRC}/deps/ls-hpack)
-target_compile_definitions(lshpack PRIVATE
-    "XXH_HEADER_NAME=\"${BUN_SRC}/deps/ls-hpack/deps/xxhash/xxhash.h\""
-)
-target_link_libraries(${bun} PRIVATE lshpack)

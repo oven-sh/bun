@@ -264,8 +264,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPAssignHeaders, (JSGlobalObject * globalObject, Ca
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue requestValue = callFrame->argument(0);
-    JSObject* prototype = callFrame->argument(1).getObject();
-    JSObject* objectValue = callFrame->argument(2).getObject();
+    JSObject* objectValue = callFrame->argument(1).getObject();
 
     JSC::InternalFieldTuple* tuple = JSC::InternalFieldTuple::create(vm, globalObject->m_internalFieldTupleStructure.get());
 
@@ -273,7 +272,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPAssignHeaders, (JSGlobalObject * globalObject, Ca
     JSValue urlValue = JSValue();
     if (auto* jsRequest = jsDynamicCast<WebCore::JSRequest*>(requestValue)) {
         if (uWS::HttpRequest* request = Request__getUWSRequest(jsRequest->wrapped())) {
-            return assignHeadersFromUWebSockets(request, prototype, objectValue, tuple, globalObject, vm);
+            return assignHeadersFromUWebSockets(request, globalObject->objectPrototype(), objectValue, tuple, globalObject, vm);
         }
 
         if (jsRequest->m_headers) {
@@ -317,7 +316,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPAssignHeaders, (JSGlobalObject * globalObject, Ca
                     RETURN_IF_EXCEPTION(scope, {});
                 }
 
-                return assignHeadersFromFetchHeaders(impl, prototype, objectValue, tuple, globalObject, vm);
+                return assignHeadersFromFetchHeaders(impl, globalObject->objectPrototype(), objectValue, tuple, globalObject, vm);
             }
         }
     }

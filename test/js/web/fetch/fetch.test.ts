@@ -397,6 +397,19 @@ describe("Headers", () => {
     expect([...headers.values()]).toEqual(["abc, def", "foo=bar", "bar=baz"]);
   });
 
+  it("Set-Cookies toJSON", () => {
+    const headers = new Headers([
+      ["Set-Cookie", "foo=bar"],
+      ["Set-Cookie", "bar=baz"],
+      ["X-bun", "abc"],
+      ["X-bun", "def"],
+    ]).toJSON();
+    expect(headers).toEqual({
+      "x-bun": "abc, def",
+      "set-cookie": ["foo=bar", "bar=baz"],
+    });
+  });
+
   it("Headers append multiple", () => {
     const headers = new Headers([
       ["Set-Cookie", "foo=bar"],

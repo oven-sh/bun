@@ -3516,9 +3516,13 @@ pub const JSValue = enum(JSValueReprInt) {
         );
     }
 
+    /// The value cannot be empty. Check `!this.isEmpty()` before calling this function
     pub fn jsType(
         this: JSValue,
     ) JSType {
+        if (comptime bun.Environment.allow_assert) {
+            std.debug.assert(!this.isEmpty());
+        }
         return cppFn("jsType", .{this});
     }
 

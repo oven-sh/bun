@@ -147,7 +147,7 @@ describe("node:http", () => {
       res.setHeader("Set-Cookie", ["swag=true", "yolo=true"]);
       res.setHeader("test", "test");
       expect(res.getHeaders()).toEqual({
-        "Set-Cookie": ["swag=true", "yolo=true"],
+        "set-cookie": ["swag=true", "yolo=true"],
         "test": "test",
       });
     });
@@ -157,6 +157,9 @@ describe("node:http", () => {
     function runTest(done: Function, callback: (server: Server, port: number, done: (err?: Error) => void) => void) {
       var timer;
       var server = createServer((req, res) => {
+        if (req.headers.__proto__ !== {}.__proto__) {
+          throw new Error("Headers should inherit from Object.prototype");
+        }
         const reqUrl = new URL(req.url!, `http://${req.headers.host}`);
         if (reqUrl.pathname) {
           if (reqUrl.pathname === "/redirect") {
@@ -1571,9 +1574,9 @@ it("IncomingMessage with a RequestLike object", () => {
     "text/plain",
     "user-agent",
     "Bun",
-    "Set-Cookie",
+    "set-cookie",
     "foo=bar",
-    "Set-Cookie",
+    "set-cookie",
     "bar=baz",
     "x-test",
     "test",

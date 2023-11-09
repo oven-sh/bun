@@ -1067,7 +1067,7 @@ pub const RunCommand = struct {
                                     temp_script_buffer[1..],
                                     this_bundler.fs.top_level_dir,
                                     this_bundler.env,
-                                    passthrough,
+                                    &.{},
                                     ctx.debug.silent,
                                 )) {
                                     return false;
@@ -1093,7 +1093,7 @@ pub const RunCommand = struct {
                                     temp_script_buffer,
                                     this_bundler.fs.top_level_dir,
                                     this_bundler.env,
-                                    passthrough,
+                                    &.{},
                                     ctx.debug.silent,
                                 )) {
                                     return false;

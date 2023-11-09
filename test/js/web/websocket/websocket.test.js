@@ -443,7 +443,7 @@ describe("websocket in subprocess", () => {
 
     subprocess.kill();
 
-    expect(await subprocess.exited).toBe("SIGHUP");
+    expect(await subprocess.exited).toBe(129);
   });
 
   it("should exit with invalid url", async () => {

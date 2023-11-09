@@ -148,7 +148,7 @@ pub const FilePoll = struct {
     }
 
     pub inline fn isKeepingProcessAlive(this: *const FilePoll) bool {
-        return !this.flags.contains(.disable) and this.isActive();
+        return !this.flags.contains(.closed) and this.isActive();
     }
 
     pub fn isRegistered(this: *const FilePoll) bool {
@@ -157,9 +157,9 @@ pub const FilePoll = struct {
 
     /// Make calling ref() on this poll into a no-op.
     pub fn disableKeepingProcessAlive(this: *FilePoll, vm: *JSC.VirtualMachine) void {
-        if (this.flags.contains(.disable))
+        if (this.flags.contains(.closed))
             return;
-        this.flags.insert(.disable);
+        this.flags.insert(.closed);
 
         vm.event_loop_handle.?.active_handles -= @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
     }
@@ -200,6 +200,8 @@ pub const FilePoll = struct {
     pub inline fn fileDescriptor(this: *FilePoll) bun.FileDescriptor {
         return @intCast(this.fd);
     }
+
+    pub const deinitForceUnregister = deinit;
 
     pub fn unregister(this: *FilePoll, loop: *Loop) bool {
         _ = loop;
@@ -252,9 +254,9 @@ pub const FilePoll = struct {
     }
 
     pub fn enableKeepingProcessAlive(this: *FilePoll, vm: *JSC.VirtualMachine) void {
-        if (!this.flags.contains(.disable))
+        if (!this.flags.contains(.closed))
             return;
-        this.flags.remove(.disable);
+        this.flags.remove(.closed);
 
         vm.event_loop_handle.?.active_handles += @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
     }
@@ -266,18 +268,18 @@ pub const FilePoll = struct {
     /// Only intended to be used from EventLoop.Pollable
     pub fn deactivate(this: *FilePoll, loop: *Loop) void {
         std.debug.assert(this.flags.contains(.has_incremented_poll_count));
-        loop.active_handles -= @as(u32, @intFromBool(!this.flags.contains(.disable) and this.flags.contains(.has_incremented_poll_count)));
+        loop.active_handles -= @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
         this.flags.remove(.has_incremented_poll_count);
     }
 
     /// Only intended to be used from EventLoop.Pollable
     pub fn activate(this: *FilePoll, loop: *Loop) void {
-        loop.active_handles += @as(u32, @intFromBool(!this.flags.contains(.disable) and !this.flags.contains(.has_incremented_poll_count)));
+        loop.active_handles += @as(u32, @intFromBool(!this.flags.contains(.closed) and !this.flags.contains(.has_incremented_poll_count)));
         this.flags.insert(.has_incremented_poll_count);
     }
 
     pub inline fn canRef(this: *const FilePoll) bool {
-        if (this.flags.contains(.disable))
+        if (this.flags.contains(.closed))
             return false;
 
         return !this.flags.contains(.has_incremented_poll_count);

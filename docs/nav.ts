@@ -340,6 +340,10 @@ export default {
       description: `Bun implements the Node-API spec for building native addons.`,
     }), // "`Node-API`"),
 
+    page("api/semver", "Semver", {
+      description: `Bun's native Semver implementation is 20x faster than the popular \`node-semver\` package.`,
+    }), // "`Semver`"),
+
     // divider("Dev Server"),
     // page("bun-dev", "Vanilla"),
     // page("dev/css", "CSS"),

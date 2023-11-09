@@ -1257,9 +1257,9 @@ pub const FileSink = struct {
     pub fn updateRef(this: *FileSink, value: bool) void {
         if (this.poll_ref) |poll| {
             if (value)
-                poll.enableKeepingProcessAlive(JSC.VirtualMachine.get())
+                poll.ref(JSC.VirtualMachine.get())
             else
-                poll.disableKeepingProcessAlive(JSC.VirtualMachine.get());
+                poll.unref(JSC.VirtualMachine.get());
         }
     }
 
@@ -1572,7 +1572,7 @@ pub const FileSink = struct {
 
         if (this.poll_ref) |poll| {
             this.poll_ref = null;
-            poll.deinit();
+            poll.deinitForceUnregister();
         }
 
         if (this.auto_close) {
@@ -1743,7 +1743,7 @@ pub const FileSink = struct {
         if (signal_close) {
             if (this.poll_ref) |poll| {
                 this.poll_ref = null;
-                poll.deinit();
+                poll.deinitForceUnregister();
             }
 
             this.fd = bun.invalid_fd;
@@ -3811,6 +3811,7 @@ pub const FIFO = struct {
         this.close_on_empty_read = true;
         if (this.poll_ref) |poll| {
             poll.flags.insert(.hup);
+            poll.disableKeepingProcessAlive(JSC.VirtualMachine.get());
         }
 
         this.pending.result = .{ .done = {} };
@@ -3820,12 +3821,7 @@ pub const FIFO = struct {
     pub fn close(this: *FIFO) void {
         if (this.poll_ref) |poll| {
             this.poll_ref = null;
-            if (comptime Environment.isLinux) {
-                // force target fd to be removed from epoll
-                poll.deinitForceUnregister();
-            } else {
-                poll.deinit();
-            }
+            poll.deinit();
         }
 
         const fd = this.fd;
@@ -4624,6 +4620,10 @@ pub const FileReader = struct {
             }
         };
 
+        pub fn toBlob(this: *Readable) Blob {
+            if (this.isClosed()) return Blob.initEmpty(JSC.VirtualMachine.get().global);
+        }
+
         pub fn deinit(this: *Readable) void {
             switch (this.*) {
                 .FIFO => {
@@ -4748,7 +4748,7 @@ pub const FileReader = struct {
                             },
                         };
                         this.lazy_readable.readable.FIFO.watch(readable_file.fd);
-                        this.lazy_readable.readable.FIFO.pollRef().ref(this.globalThis().bunVM());
+                        this.lazy_readable.readable.FIFO.pollRef().enableKeepingProcessAlive(this.globalThis().bunVM());
                         if (!(blob.data.file.is_atty orelse false)) {
                             this.lazy_readable.readable.FIFO.poll_ref.?.flags.insert(.nonblocking);
                         }
@@ -4822,9 +4822,9 @@ pub const FileReader = struct {
                 .FIFO => {
                     if (this.lazy_readable.readable.FIFO.poll_ref) |poll| {
                         if (value) {
-                            poll.enableKeepingProcessAlive(this.globalThis().bunVM());
+                            poll.ref(this.globalThis().bunVM());
                         } else {
-                            poll.disableKeepingProcessAlive(this.globalThis().bunVM());
+                            poll.unref(this.globalThis().bunVM());
                         }
                     }
                 },
@@ -4909,6 +4909,7 @@ pub fn NewReadyWatcher(
             std.debug.assert(
                 this.poll_ref.?.unregister(JSC.VirtualMachine.get().event_loop_handle.?, false) == .result,
             );
+            this.poll_ref.?.disableKeepingProcessAlive(JSC.VirtualMachine.get());
         }
 
         pub fn pollRef(this: *Context) *Async.FilePoll {

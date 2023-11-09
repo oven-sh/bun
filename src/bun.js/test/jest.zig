@@ -1944,7 +1944,7 @@ fn eachBind(
         var test_idx: usize = 0;
         while (iter.next()) |item| {
             const func_params_length = function.getLength(globalThis);
-            const item_is_array = !item.isEmptyOrUndefinedOrNull() and !item.isEmpty() and item.jsType().isArray();
+            const item_is_array = !item.isEmptyOrUndefinedOrNull() and item.jsType().isArray();
             var arg_size: usize = 1;
 
             if (item_is_array) {

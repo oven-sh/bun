@@ -2281,10 +2281,6 @@ pub const Path = struct {
         return out_str.toValueGC(globalThis);
     }
 
-    pub inline fn charIsSlash(char: u8) bool {
-        return char == '/' or char == '\\';
-    }
-
     pub fn parse(globalThis: *JSC.JSGlobalObject, win32: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
         return switch (win32) {
             inline else => |use_win32| parseWithComptimePlatform(globalThis, use_win32, args_ptr, args_len),
@@ -2327,11 +2323,11 @@ pub const Path = struct {
                     //     "//server/share"
                     //     "/\server\share" lol
                     //     "\\?\" lol
-                    if (path.len > 0 and charIsSlash(path[0])) {
+                    if (path.len > 0 and strings.charIsAnySlash(path[0])) {
                         // minimum length for a unc path is 5
                         if (path.len >= 5 and
-                            charIsSlash(path[1]) and
-                            !charIsSlash(path[2]))
+                            strings.charIsAnySlash(path[1]) and
+                            !strings.charIsAnySlash(path[2]))
                         {
                             if (strings.indexOfAny(path[3..], "/\\")) |first_slash| {
                                 if (strings.indexOfAny(path[3 + first_slash + 1 ..], "/\\")) |second_slash| {
@@ -2349,7 +2345,7 @@ pub const Path = struct {
                     }
                     if (path.len > 2 and path[1] == ':') {
                         // would not be an absolute path if it was just "C:"
-                        std.debug.assert(charIsSlash(path[2]));
+                        std.debug.assert(strings.charIsAnySlash(path[2]));
                         break :root path[0..3];
                     }
                     break :root path[0..1];

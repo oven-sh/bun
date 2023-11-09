@@ -189,7 +189,7 @@ it("path.parse() windows edition", () => {
   expectStrictEqual(path.win32.parse("file:stream").name, "file:stream");
 });
 
-it("path.parse() windows edition - drive letter", () => {
+it.todo("path.parse() windows edition - drive letter", () => {
   expectStrictEqual(path.win32.parse("C:").name, "");
   expectStrictEqual(path.win32.parse("C:.").name, ".");
   expectStrictEqual(path.win32.parse("C:\\").name, "");

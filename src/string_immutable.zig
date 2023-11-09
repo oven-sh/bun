@@ -4990,3 +4990,7 @@ pub fn convertUTF16toUTF8InBuffer(
         else => @panic("TODO: handle error in convertUTF16toUTF8InBuffer"),
     }
 }
+
+pub inline fn charIsAnySlash(char: u8) bool {
+    return char == '/' or char == '\\';
+}

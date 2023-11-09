@@ -501,12 +501,84 @@ pub fn relativeAlloc(allocator: std.mem.Allocator, from: []const u8, to: []const
     }
 }
 
+// This function is based on Go's volumeNameLen function
+// https://cs.opensource.google/go/go/+/refs/tags/go1.17.6:src/path/filepath/path_windows.go;l=57
+// volumeNameLen returns length of the leading volume name on Windows.
+fn windowsVolumeNameLen(path: []const u8) struct { usize, usize } {
+    if (path.len < 2) return .{ 0, 0 };
+    // with drive letter
+    var c = path[0];
+    if (path[1] == ':' and ('a' <= c and c <= 'z' or 'A' <= c and c <= 'Z')) {
+        return .{ 2, 0 };
+    }
+    // UNC
+    if (path.len >= 5 and
+        Platform.windows.isSeparator(path[0]) and
+        Platform.windows.isSeparator(path[1]) and
+        !Platform.windows.isSeparator(path[2]) and
+        path[2] != '.')
+    {
+        if (strings.indexOfAny(path[3..], "/\\")) |idx| {
+            if (path.len > idx + 4 and !Platform.windows.isSeparator(path[idx + 4])) {
+                if (strings.indexOfAny(path[idx + 4 ..], "/\\")) |idx2| {
+                    return .{ idx + idx2 + 4, idx + 3 };
+                } else {
+                    return .{ path.len, idx + 3 };
+                }
+            }
+        }
+    }
+    return .{ 0, 0 };
+}
+
 // This function is based on Go's filepath.Clean function
 // https://cs.opensource.google/go/go/+/refs/tags/go1.17.6:src/path/filepath/path.go;l=89
-pub fn normalizeStringGeneric(path: []const u8, buf: []u8, comptime allow_above_root: bool, comptime separator: u8, comptime isSeparator: anytype, _: anytype, comptime preserve_trailing_slash: bool) []u8 {
+pub fn normalizeStringGeneric(
+    path_: []const u8,
+    buf: []u8,
+    comptime allow_above_root: bool,
+    comptime separator: u8,
+    comptime isSeparator: anytype,
+    _: anytype,
+    comptime preserve_trailing_slash: bool,
+) []u8 {
+    const isWindows = comptime separator == std.fs.path.sep_windows;
+
+    var buf_i: usize = 0;
+
+    const volLen, const indexOfThirdUNCSlash = if (isWindows and !allow_above_root)
+        windowsVolumeNameLen(path_)
+    else
+        .{ 0, 0 };
+    if (volLen > 0) {
+        comptime std.debug.assert(isWindows and !allow_above_root);
+
+        if (path_[1] != ':') {
+            // UNC paths
+            buf[0..1].* = [_]u8{separator};
+            @memcpy(buf[1..indexOfThirdUNCSlash], path_[2 .. indexOfThirdUNCSlash + 1]);
+            buf[indexOfThirdUNCSlash - 1] = separator;
+            @memcpy(
+                buf[indexOfThirdUNCSlash .. volLen - 1],
+                path_[indexOfThirdUNCSlash + 1 .. volLen],
+            );
+            if (path_.len != volLen) {
+                buf_i = volLen - 1;
+            } else {
+                buf[volLen - 1] = separator;
+                buf_i = volLen;
+            }
+        } else {
+            // empty string or drive letter
+            @memcpy(buf[0..volLen], path_[0..volLen]);
+            buf[path_.len] = '.';
+            buf_i = volLen;
+        }
+    }
+
     var r: usize = 0;
     var dotdot: usize = 0;
-    var buf_i: usize = 0;
+    var path = if (isWindows) path_[volLen..] else path_;
 
     const n = path.len;
 
@@ -581,8 +653,9 @@ pub const Platform = enum {
         return switch (comptime platform) {
             .auto => (comptime platform.resolve()).isAbsolute(path),
             .posix => path.len > 0 and path[0] == '/',
-            .windows => std.fs.path.isAbsoluteWindows(path),
-            .loose => isAbsolute(.posix, path) or isAbsolute(.windows, path),
+            .windows,
+            .loose,
+            => std.fs.path.isAbsoluteWindows(path),
         };
     }
 
@@ -749,7 +822,6 @@ pub fn normalizeStringBuf(str: []const u8, buf: []u8, comptime allow_above_root:
         .auto => unreachable,
 
         .windows => {
-            // @compileError("Not implemented");
             return normalizeStringWindows(
                 str,
                 buf,
@@ -831,14 +903,24 @@ pub fn joinZBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [:0]co
     buf[joined.len + start_offset] = 0;
     return buf[start_offset..][0..joined.len :0];
 }
-pub fn joinStringBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) []const u8 {
+pub fn joinStringBuf(buf: []u8, parts: anytype, comptime _platform: Platform) []const u8 {
     if (FeatureFlags.use_std_path_join) {
         var alloc = std.heap.FixedBufferAllocator.init(buf);
-        return std.fs.path.join(&alloc.allocator, _parts) catch unreachable;
+        return std.fs.path.join(&alloc.allocator, parts) catch unreachable;
     }
 
-    var written: usize = 0;
     const platform = comptime _platform.resolve();
+
+    // const is_unc = platform == .windows and
+    //     parts.len >= 1 and
+    //     parts[0].len >= 3 and
+    //     strings.charIsAnySlash(parts[0][0]) and
+    //     strings.charIsAnySlash(parts[0][1]) and
+    //     !strings.charIsAnySlash(parts[0][2]) and
+    //     (parts.len > 1 or
+    //     strings.indexOfAny(parts[0][3..], "\\/") != null);
+
+    var written: usize = 0;
     var temp_buf_: [4096]u8 = undefined;
     var temp_buf: []u8 = &temp_buf_;
     var free_temp_buf = false;
@@ -849,7 +931,7 @@ pub fn joinStringBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [
     }
 
     var count: usize = 0;
-    for (_parts) |part| {
+    for (parts) |part| {
         count += if (part.len > 0) part.len + 1 else 0;
     }
 
@@ -858,9 +940,14 @@ pub fn joinStringBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [
         free_temp_buf = true;
     }
 
+    // if (is_unc) {
+    //     temp_buf[0] = '\\';
+    //     written += 1;
+    // } else {
     temp_buf[0] = 0;
+    // }
 
-    for (_parts) |part| {
+    for (parts) |part| {
         if (part.len == 0) {
             continue;
         }

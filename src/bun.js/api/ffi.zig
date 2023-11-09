@@ -1097,12 +1097,11 @@ pub const FFI = struct {
                     try writer.writeAll(", ");
                 }
                 first = false;
-                try arg.typename(writer);
+                try arg.paramTypename(writer);
                 try writer.print(" arg{d}", .{i});
             }
             try writer.writeAll(
                 \\);
-                \\
                 \\
                 \\/* ---- Your Wrapper Function ---- */
                 \\ZIG_REPR_TYPE JSFunctionCall(void* JS_GLOBAL_OBJECT, void* callFrame) {
@@ -1546,7 +1545,10 @@ pub const FFI = struct {
                     .char, .int8_t, .uint8_t, .int16_t, .uint16_t, .int32_t => {
                         try writer.print("INT32_TO_JSVALUE((int32_t){s})", .{self.symbol});
                     },
-                    .uint32_t, .i64_fast => {
+                    .uint32_t => {
+                        try writer.print("UINT32_TO_JSVALUE({s})", .{self.symbol});
+                    },
+                    .i64_fast => {
                         try writer.print("INT64_TO_JSVALUE(JS_GLOBAL_OBJECT, (int64_t){s})", .{self.symbol});
                     },
                     .int64_t => {
@@ -1603,6 +1605,31 @@ pub const FFI = struct {
                 .uint16_t => "uint16_t",
                 .int32_t => "int32_t",
                 .uint32_t => "uint32_t",
+                .i64_fast, .int64_t => "int64_t",
+                .u64_fast, .uint64_t => "uint64_t",
+                .double => "double",
+                .float => "float",
+                .char => "char",
+                .void => "void",
+            };
+        }
+
+        pub fn paramTypename(this: ABIType, writer: anytype) !void {
+            try writer.writeAll(this.typenameLabel());
+        }
+
+        pub fn paramTypenameLabel(this: ABIType) []const u8 {
+            return switch (this) {
+                .function, .cstring, .ptr => "void*",
+                .bool => "bool",
+                .int8_t => "int8_t",
+                .uint8_t => "uint8_t",
+                .int16_t => "int16_t",
+                .uint16_t => "uint16_t",
+                // see the comment in ffi.ts about why `uint32_t` acts as `int32_t`
+                .int32_t,
+                .uint32_t,
+                => "int32_t",
                 .i64_fast, .int64_t => "int64_t",
                 .u64_fast, .uint64_t => "uint64_t",
                 .double => "double",

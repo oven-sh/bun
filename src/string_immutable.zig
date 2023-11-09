@@ -4367,10 +4367,14 @@ pub fn trim(slice: anytype, comptime values_to_strip: []const u8) @TypeOf(slice)
     return slice[begin..end];
 }
 
+pub const whitespace_chars = [_]u8{ ' ', '\t', '\n', '\r', std.ascii.control_code.vt, std.ascii.control_code.ff };
+
 pub fn lengthOfLeadingWhitespaceASCII(slice: string) usize {
     for (slice) |*c| {
         switch (c.*) {
-            ' ', '\t', '\n', '\r', std.ascii.control_code.vt, std.ascii.control_code.ff => {},
+            whitespace: {
+                inline for (whitespace_chars) |wc| break :whitespace wc;
+            } => {},
             else => {
                 return @intFromPtr(c) - @intFromPtr(slice.ptr);
             },

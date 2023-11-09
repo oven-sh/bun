@@ -3,7 +3,7 @@ import { bunExe, bunEnv } from "harness";
 import path from "path";
 
 describe("Server", () => {
-  test("normlizes incoming request URLs", async () => {
+  test("normalizes incoming request URLs", async () => {
     const server = Bun.serve({
       fetch(request) {
         return new Response(request.url, {
@@ -406,6 +406,31 @@ describe("Server", () => {
       expect(result).toBe("Hello");
     } finally {
       server.stop(true);
+    }
+  });
+
+  test("should accept more than 999 999 999 bytes in maxRequestSize", async () => {
+    let server;
+    const MAX_REQUEST_BODY_SIZE = 1000000000;
+    try {
+      server = Bun.serve({
+        async fetch(request, server) {
+          return new Response("Hi", { status: 200 });
+        },
+        port: 0,
+        maxRequestBodySize: MAX_REQUEST_BODY_SIZE,
+      });
+      const url = `http://${server.hostname}:${server.port}`;
+
+      for (const length of [MAX_REQUEST_BODY_SIZE - 1, MAX_REQUEST_BODY_SIZE, MAX_REQUEST_BODY_SIZE + 1]) {
+        const response = await fetch(url, {
+          method: "POST",
+          body: "A".repeat(length),
+        });
+        expect(response.status).toBe(length > MAX_REQUEST_BODY_SIZE ? 413 : 200);
+      }
+    } finally {
+      server?.stop(true);
     }
   });
 });

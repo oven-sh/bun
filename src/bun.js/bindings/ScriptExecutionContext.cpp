@@ -105,7 +105,7 @@ bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identif
 
 void ScriptExecutionContext::didCreateDestructionObserver(ContextDestructionObserver& observer)
 {
-    ASSERT(!m_inScriptExecutionContextDestructor);
+    // ASSERT(!m_inScriptExecutionContextDestructor);
     m_destructionObservers.add(&observer);
 }
 
@@ -181,7 +181,7 @@ void ScriptExecutionContext::dispatchMessagePortEvents()
     ASSERT(isContextThread());
     checkConsistency();
 
-    ASSERT(m_willprocessMessageWithMessagePortsSoon);
+    ASSERT(m_willProcessMessageWithMessagePortsSoon);
     m_willProcessMessageWithMessagePortsSoon = false;
 
     auto completionHandlers = std::exchange(m_processMessageWithMessagePortsSoonHandlers, Vector<CompletionHandler<void()>> {});

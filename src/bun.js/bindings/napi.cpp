@@ -3,55 +3,55 @@
 #include "root.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
-#include "JavaScriptCore/JSObjectInlines.h"
-#include "JavaScriptCore/JSCellInlines.h"
-#include "wtf/text/ExternalStringImpl.h"
-#include "wtf/text/StringCommon.h"
-#include "wtf/text/StringImpl.h"
-#include "JavaScriptCore/JSMicrotask.h"
-#include "JavaScriptCore/ObjectConstructor.h"
-#include "JavaScriptCore/JSModuleLoader.h"
-#include "wtf/text/StringView.h"
-#include "wtf/text/StringBuilder.h"
-#include "wtf/text/WTFString.h"
+#include <JavaScriptCore/JSObjectInlines.h>
+#include <JavaScriptCore/JSCellInlines.h>
+#include <wtf/text/ExternalStringImpl.h>
+#include <wtf/text/StringCommon.h>
+#include <wtf/text/StringImpl.h>
+#include <JavaScriptCore/JSMicrotask.h>
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/JSModuleLoader.h>
+#include <wtf/text/StringView.h>
+#include <wtf/text/StringBuilder.h>
+#include <wtf/text/WTFString.h>
 #include "BufferEncodingType.h"
-#include "JavaScriptCore/AggregateError.h"
-#include "JavaScriptCore/BytecodeIndex.h"
-#include "JavaScriptCore/CallFrame.h"
-#include "JavaScriptCore/CallFrameInlines.h"
-#include "JavaScriptCore/ClassInfo.h"
-#include "JavaScriptCore/CodeBlock.h"
-#include "JavaScriptCore/Completion.h"
-#include "JavaScriptCore/Error.h"
-#include "JavaScriptCore/ErrorInstance.h"
-#include "JavaScriptCore/Exception.h"
-#include "JavaScriptCore/ExceptionScope.h"
-#include "JavaScriptCore/FunctionConstructor.h"
-#include "JavaScriptCore/HashMapImpl.h"
-#include "JavaScriptCore/HashMapImplInlines.h"
-#include "JavaScriptCore/Heap.h"
-#include "JavaScriptCore/Identifier.h"
-#include "JavaScriptCore/InitializeThreading.h"
-#include "JavaScriptCore/IteratorOperations.h"
-#include "JavaScriptCore/JSArray.h"
-#include "JavaScriptCore/JSInternalPromise.h"
-#include "JavaScriptCore/ObjectConstructor.h"
-#include "JavaScriptCore/ArrayBuffer.h"
-#include "JavaScriptCore/JSArrayBuffer.h"
+#include <JavaScriptCore/AggregateError.h>
+#include <JavaScriptCore/BytecodeIndex.h>
+#include <JavaScriptCore/CallFrame.h>
+#include <JavaScriptCore/CallFrameInlines.h>
+#include <JavaScriptCore/ClassInfo.h>
+#include <JavaScriptCore/CodeBlock.h>
+#include <JavaScriptCore/Completion.h>
+#include <JavaScriptCore/Error.h>
+#include <JavaScriptCore/ErrorInstance.h>
+#include <JavaScriptCore/Exception.h>
+#include <JavaScriptCore/ExceptionScope.h>
+#include <JavaScriptCore/FunctionConstructor.h>
+#include <JavaScriptCore/HashMapImpl.h>
+#include <JavaScriptCore/HashMapImplInlines.h>
+#include <JavaScriptCore/Heap.h>
+#include <JavaScriptCore/Identifier.h>
+#include <JavaScriptCore/InitializeThreading.h>
+#include <JavaScriptCore/IteratorOperations.h>
+#include <JavaScriptCore/JSArray.h>
+#include <JavaScriptCore/JSInternalPromise.h>
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/ArrayBuffer.h>
+#include <JavaScriptCore/JSArrayBuffer.h>
 #include "JSFFIFunction.h"
-#include "JavaScriptCore/JavaScript.h"
-#include "JavaScriptCore/JSWeakValue.h"
+#include <JavaScriptCore/JavaScript.h>
+#include <JavaScriptCore/JSWeakValue.h>
 #include "napi.h"
-#include "JavaScriptCore/GetterSetter.h"
-#include "JavaScriptCore/JSSourceCode.h"
-#include "JavaScriptCore/JSNativeStdFunction.h"
-#include "JavaScriptCore/BigIntObject.h"
+#include <JavaScriptCore/GetterSetter.h>
+#include <JavaScriptCore/JSSourceCode.h>
+#include <JavaScriptCore/JSNativeStdFunction.h>
+#include <JavaScriptCore/BigIntObject.h>
 #include "ScriptExecutionContext.h"
 #include "Strong.h"
 
 #include "../modules/ObjectModule.h"
 
-#include "JavaScriptCore/JSSourceCode.h"
+#include <JavaScriptCore/JSSourceCode.h>
 #include "napi_external.h"
 
 // #include <iostream>
@@ -200,10 +200,6 @@ static uint32_t getPropertyAttributes(napi_property_descriptor prop)
     //     result |= JSC::PropertyAttribute::ReadOnly;
     // }
 
-    if (prop.method) {
-        result |= JSC::PropertyAttribute::Function;
-    }
-
     return result;
 }
 
@@ -257,7 +253,7 @@ static void defineNapiProperty(Zig::GlobalObject* globalObject, JSC::JSObject* t
         value = JSC::JSValue(function);
         // }
 
-        to->putDirect(vm, propertyName, value, getPropertyAttributes(property) | JSC::PropertyAttribute::Function);
+        to->putDirect(vm, propertyName, value, getPropertyAttributes(property));
         return;
     }
 
@@ -670,8 +666,8 @@ extern "C" napi_status napi_wrap(napi_env env,
 
     auto clientData = WebCore::clientData(vm);
 
-    auto* ref = new NapiRef(globalObject, 1);
-    ref->strongRef.set(globalObject->vm(), value.getObject());
+    auto* ref = new NapiRef(globalObject, 0);
+    ref->weakValueRef.setObject(value.getObject(), weakValueHandleOwner(), ref);
 
     if (finalize_cb) {
         ref->finalizer.finalize_cb = finalize_cb;

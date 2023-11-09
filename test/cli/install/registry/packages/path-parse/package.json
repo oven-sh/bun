@@ -1,0 +1,71 @@
+{
+	"name": "path-parse",
+	"versions": {
+		"1.0.6": {
+			"name": "path-parse",
+			"version": "1.0.6",
+			"description": "Node.js path.parse() ponyfill",
+			"main": "index.js",
+			"scripts": {
+				"test": "node test.js"
+			},
+			"repository": {
+				"type": "git",
+				"url": "git+https://github.com/jbgutierrez/path-parse.git"
+			},
+			"keywords": [
+				"path",
+				"paths",
+				"file",
+				"dir",
+				"parse",
+				"built-in",
+				"util",
+				"utils",
+				"core",
+				"ponyfill",
+				"polyfill",
+				"shim"
+			],
+			"author": {
+				"name": "Javier Blanco",
+				"email": "http://jbgutierrez.info"
+			},
+			"license": "MIT",
+			"bugs": {
+				"url": "https://github.com/jbgutierrez/path-parse/issues"
+			},
+			"homepage": "https://github.com/jbgutierrez/path-parse#readme",
+			"_id": "path-parse@1.0.6",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-rwamWwM82xZRuke+9AWeM9Qa9rqclTTe6D4qrTNHCaer+E/9m9sTHT/cO0+brxwEqf3aeDCZgnwI0A62O9pZKg==",
+				"shasum": "8aed42c156109ca5eaa46bbb5e22f4cb686b7b11",
+				"tarball": "http://localhost:4873/path-parse/-/path-parse-1.0.6.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:27.817Z",
+		"created": "2023-11-01T22:05:27.817Z",
+		"1.0.6": "2023-11-01T22:05:27.817Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.6"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"path-parse-1.0.6.tgz": {
+			"shasum": "8aed42c156109ca5eaa46bbb5e22f4cb686b7b11",
+			"version": "1.0.6"
+		}
+	},
+	"_rev": "3-5a19f64adf18edab",
+	"_id": "path-parse",
+	"readme": "ERROR: No README data found!"
+}

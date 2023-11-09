@@ -21,6 +21,28 @@ fn NativeSocketHandleType(comptime ssl: bool) type {
         return anyopaque;
     }
 }
+pub const InternalLoopData = extern struct {
+    pub const us_internal_async = opaque {};
+
+    sweep_timer: ?*Timer,
+    wakeup_async: ?*us_internal_async,
+    last_write_failed: i32,
+    head: ?*SocketContext,
+    iterator: ?*SocketContext,
+    recv_buf: [*]u8,
+    ssl_data: ?*anyopaque,
+    pre_cb: ?*fn (?*Loop) callconv(.C) void,
+    post_cb: ?*fn (?*Loop) callconv(.C) void,
+    closed_head: ?*Socket,
+    low_prio_head: ?*Socket,
+    low_prio_budget: i32,
+    iteration_nr: c_longlong,
+
+    pub fn recvSlice(this: *InternalLoopData) []u8 {
+        return this.recv_buf[0..LIBUS_RECV_BUFFER_LENGTH];
+    }
+};
+
 pub fn NewSocketHandler(comptime is_ssl: bool) type {
     return struct {
         const ssl_int: i32 = @intFromBool(is_ssl);
@@ -304,6 +326,64 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 buf,
                 length,
             );
+        }
+
+        /// Get the local address of a socket in binary format.
+        ///
+        /// # Arguments
+        /// - `buf`: A buffer to store the binary address data.
+        ///
+        /// # Returns
+        /// This function returns a slice of the buffer on success, or null on failure.
+        pub fn localAddressBinary(this: ThisSocket, buf: []u8) ?[]const u8 {
+            var length: i32 = @intCast(buf.len);
+            us_socket_local_address(
+                comptime ssl_int,
+                this.socket,
+                buf.ptr,
+                &length,
+            );
+
+            if (length <= 0) {
+                return null;
+            }
+            return buf[0..@intCast(length)];
+        }
+
+        /// Get the local address of a socket in text format.
+        ///
+        /// # Arguments
+        /// - `buf`: A buffer to store the text address data.
+        /// - `is_ipv6`: A pointer to a boolean representing whether the address is IPv6.
+        ///
+        /// # Returns
+        /// This function returns a slice of the buffer on success, or null on failure.
+        pub fn localAddressText(this: ThisSocket, buf: []u8, is_ipv6: *bool) ?[]const u8 {
+            const addr_v4_len = @sizeOf(std.meta.FieldType(std.os.sockaddr.in, .addr));
+            const addr_v6_len = @sizeOf(std.meta.FieldType(std.os.sockaddr.in6, .addr));
+
+            var sa_buf: [addr_v6_len + 1]u8 = undefined;
+            const binary = this.localAddressBinary(&sa_buf);
+            if (binary == null) {
+                return null;
+            }
+            const addr_len: usize = binary.?.len;
+            sa_buf[addr_len] = 0;
+
+            var ret: ?[*:0]const u8 = null;
+            if (addr_len == addr_v4_len) {
+                ret = bun.c_ares.ares_inet_ntop(std.os.AF.INET, &sa_buf, buf.ptr, @as(u32, @intCast(buf.len)));
+                is_ipv6.* = false;
+            } else if (addr_len == addr_v6_len) {
+                ret = bun.c_ares.ares_inet_ntop(std.os.AF.INET6, &sa_buf, buf.ptr, @as(u32, @intCast(buf.len)));
+                is_ipv6.* = true;
+            }
+
+            if (ret) |_| {
+                const length: usize = @intCast(bun.len(bun.cast([*:0]u8, buf)));
+                return buf[0..length];
+            }
+            return null;
         }
 
         pub fn connect(
@@ -739,12 +819,10 @@ pub const SocketContext = opaque {
     pub fn deinit(this: *SocketContext, ssl: bool) void {
         this.close(ssl);
         //always deinit in next iteration
-        if (Loop.get()) |loop| {
-            if (ssl) {
-                loop.nextTick(*SocketContext, this, SocketContext._deinit_ssl);
-            } else {
-                loop.nextTick(*SocketContext, this, SocketContext._deinit);
-            }
+        if (ssl) {
+            Loop.get().nextTick(*SocketContext, this, SocketContext._deinit_ssl);
+        } else {
+            Loop.get().nextTick(*SocketContext, this, SocketContext._deinit);
         }
     }
 
@@ -767,7 +845,7 @@ pub const SocketContext = opaque {
         return @as(*align(alignment) ContextType, @ptrCast(@alignCast(ptr)));
     }
 };
-pub const Loop = extern struct {
+pub const PosixLoop = extern struct {
     internal_loop_data: InternalLoopData align(16),
 
     /// Number of non-fallthrough polls in the loop
@@ -798,57 +876,57 @@ pub const Loop = extern struct {
 
     const log = bun.Output.scoped(.Loop, false);
 
-    pub const InternalLoopData = extern struct {
-        pub const us_internal_async = opaque {};
+    pub fn inc(this: *PosixLoop) void {
+        this.num_polls += 1;
+    }
 
-        sweep_timer: ?*Timer,
-        wakeup_async: ?*us_internal_async,
-        last_write_failed: i32,
-        head: ?*SocketContext,
-        iterator: ?*SocketContext,
-        recv_buf: [*]u8,
-        ssl_data: ?*anyopaque,
-        pre_cb: ?*fn (?*Loop) callconv(.C) void,
-        post_cb: ?*fn (?*Loop) callconv(.C) void,
-        closed_head: ?*Socket,
-        low_prio_head: ?*Socket,
-        low_prio_budget: i32,
-        iteration_nr: c_longlong,
+    pub fn dec(this: *PosixLoop) void {
+        this.num_polls -= 1;
+    }
 
-        pub fn recvSlice(this: *InternalLoopData) []u8 {
-            return this.recv_buf[0..LIBUS_RECV_BUFFER_LENGTH];
-        }
-    };
-
-    pub fn ref(this: *Loop) void {
+    pub fn ref(this: *PosixLoop) void {
         log("ref", .{});
         this.num_polls += 1;
         this.active += 1;
     }
-    pub fn refConcurrently(this: *Loop) void {
+    pub fn refConcurrently(this: *PosixLoop) void {
         _ = @atomicRmw(@TypeOf(this.num_polls), &this.num_polls, .Add, 1, .Monotonic);
         _ = @atomicRmw(@TypeOf(this.active), &this.active, .Add, 1, .Monotonic);
         log("refConcurrently ({d}, {d})", .{ this.num_polls, this.active });
     }
-    pub fn unrefConcurrently(this: *Loop) void {
+    pub fn unrefConcurrently(this: *PosixLoop) void {
         _ = @atomicRmw(@TypeOf(this.num_polls), &this.num_polls, .Sub, 1, .Monotonic);
         _ = @atomicRmw(@TypeOf(this.active), &this.active, .Sub, 1, .Monotonic);
         log("unrefConcurrently ({d}, {d})", .{ this.num_polls, this.active });
     }
 
-    pub fn unref(this: *Loop) void {
+    pub fn unref(this: *PosixLoop) void {
         log("unref", .{});
         this.num_polls -= 1;
         this.active -|= 1;
     }
 
-    pub fn unrefCount(this: *Loop, count: i32) void {
+    pub fn isActive(this: *const Loop) bool {
+        return this.active > 0;
+    }
+
+    // This exists as a method so that we can stick a debugger in here
+    pub fn addActive(this: *PosixLoop, value: u32) void {
+        this.active +|= value;
+    }
+
+    // This exists as a method so that we can stick a debugger in here
+    pub fn subActive(this: *PosixLoop, value: u32) void {
+        this.active -|= value;
+    }
+
+    pub fn unrefCount(this: *PosixLoop, count: i32) void {
         log("unref x {d}", .{count});
         this.num_polls -|= count;
         this.active -|= @as(u32, @intCast(count));
     }
 
-    pub fn get() ?*Loop {
+    pub fn get() *Loop {
         return uws_get_loop();
     }
 
@@ -862,19 +940,27 @@ pub const Loop = extern struct {
         ).?;
     }
 
-    pub fn wakeup(this: *Loop) void {
+    pub fn wakeup(this: *PosixLoop) void {
         return us_wakeup_loop(this);
     }
 
-    pub fn tick(this: *Loop, ctx: ?*anyopaque) void {
-        us_loop_run_bun_tick(this, 0, ctx);
+    pub const wake = wakeup;
+
+    pub fn tick(this: *PosixLoop) void {
+        us_loop_run_bun_tick(this, 0);
     }
 
-    pub fn tickWithTimeout(this: *Loop, timeoutMs: i64, ctx: ?*anyopaque) void {
-        us_loop_run_bun_tick(this, timeoutMs, ctx);
+    pub fn tickWithoutIdle(this: *PosixLoop) void {
+        us_loop_run_bun_tick(this, std.math.maxInt(i64));
     }
 
-    pub fn nextTick(this: *Loop, comptime UserType: type, user_data: UserType, comptime deferCallback: fn (ctx: UserType) void) void {
+    pub fn tickWithTimeout(this: *PosixLoop, timeoutMs: i64) void {
+        us_loop_run_bun_tick(this, timeoutMs);
+    }
+
+    extern fn us_loop_run_bun_tick(loop: ?*Loop, timouetMs: i64) void;
+
+    pub fn nextTick(this: *PosixLoop, comptime UserType: type, user_data: UserType, comptime deferCallback: fn (ctx: UserType) void) void {
         const Handler = struct {
             pub fn callback(data: *anyopaque) callconv(.C) void {
                 deferCallback(@as(UserType, @ptrCast(@alignCast(data))));
@@ -898,7 +984,7 @@ pub const Loop = extern struct {
         };
     }
 
-    pub fn addPostHandler(this: *Loop, comptime UserType: type, ctx: UserType, comptime callback: fn (UserType) void) NewHandler(UserType, callback) {
+    pub fn addPostHandler(this: *PosixLoop, comptime UserType: type, ctx: UserType, comptime callback: fn (UserType) void) NewHandler(UserType, callback) {
         const Handler = NewHandler(UserType, callback);
 
         uws_loop_addPostHandler(this, ctx, Handler.callback);
@@ -907,7 +993,7 @@ pub const Loop = extern struct {
         };
     }
 
-    pub fn addPreHandler(this: *Loop, comptime UserType: type, ctx: UserType, comptime callback: fn (UserType) void) NewHandler(UserType, callback) {
+    pub fn addPreHandler(this: *PosixLoop, comptime UserType: type, ctx: UserType, comptime callback: fn (UserType) void) NewHandler(UserType, callback) {
         const Handler = NewHandler(UserType, callback);
 
         uws_loop_addPreHandler(this, ctx, Handler.callback);
@@ -916,33 +1002,12 @@ pub const Loop = extern struct {
         };
     }
 
-    pub fn run(this: *Loop) void {
+    pub fn run(this: *PosixLoop) void {
         us_loop_run(this);
     }
-
-    extern fn uws_loop_defer(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque) callconv(.C) void)) void;
-
-    extern fn uws_get_loop() ?*Loop;
-    extern fn us_create_loop(
-        hint: ?*anyopaque,
-        wakeup_cb: ?*const fn (*Loop) callconv(.C) void,
-        pre_cb: ?*const fn (*Loop) callconv(.C) void,
-        post_cb: ?*const fn (*Loop) callconv(.C) void,
-        ext_size: c_uint,
-    ) ?*Loop;
-    extern fn us_loop_free(loop: ?*Loop) void;
-    extern fn us_loop_ext(loop: ?*Loop) ?*anyopaque;
-    extern fn us_loop_run(loop: ?*Loop) void;
-    extern fn us_loop_run_bun_tick(loop: ?*Loop, timouetMs: i64, ?*anyopaque) void;
-    extern fn us_wakeup_loop(loop: ?*Loop) void;
-    extern fn us_loop_integrate(loop: ?*Loop) void;
-    extern fn us_loop_iteration_number(loop: ?*Loop) c_longlong;
-    extern fn uws_loop_addPostHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
-    extern fn uws_loop_removePostHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
-    extern fn uws_loop_addPreHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
-    extern fn uws_loop_removePreHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
 };
 const uintmax_t = c_ulong;
+extern fn uws_loop_defer(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque) callconv(.C) void)) void;
 
 extern fn us_create_timer(loop: ?*Loop, fallthrough: i32, ext_size: c_uint) *Timer;
 extern fn us_timer_ext(timer: ?*Timer) *?*anyopaque;
@@ -1138,6 +1203,7 @@ extern fn us_socket_open(ssl: i32, s: ?*Socket, is_client: i32, ip: [*c]const u8
 
 extern fn us_socket_local_port(ssl: i32, s: ?*Socket) i32;
 extern fn us_socket_remote_address(ssl: i32, s: ?*Socket, buf: [*c]u8, length: [*c]i32) void;
+extern fn us_socket_local_address(ssl: i32, s: ?*Socket, buf: [*c]u8, length: [*c]i32) void;
 pub const uws_app_s = opaque {};
 pub const uws_req_s = opaque {};
 pub const uws_header_iterator_s = opaque {};
@@ -2337,6 +2403,110 @@ extern fn uws_app_listen_domain_with_options(
     ?*anyopaque,
 ) void;
 
+pub const UVLoop = extern struct {
+    const uv = bun.windows.libuv;
+
+    internal_loop_data: InternalLoopData align(16),
+
+    uv_loop: *uv.Loop,
+    is_default: c_int,
+    pre: *uv.uv_prepare_t,
+    check: *uv.uv_check_t,
+
+    pub fn isActive(this: *const UVLoop) bool {
+        return this.uv_loop.isActive();
+    }
+    pub fn get() *UVLoop {
+        return @ptrCast(uws_get_loop());
+    }
+
+    pub fn wakeup(this: *UVLoop) void {
+        us_wakeup_loop(this);
+    }
+
+    pub const wake = wakeup;
+
+    pub fn tickWithTimeout(this: *UVLoop, _: i64) void {
+        us_loop_run(this);
+    }
+
+    pub fn tickWithoutIdle(this: *UVLoop) void {
+        us_loop_pump(this);
+    }
+
+    pub fn create(comptime Handler: anytype) *UVLoop {
+        return us_create_loop(
+            null,
+            Handler.wakeup,
+            if (@hasDecl(Handler, "pre")) Handler.pre else null,
+            if (@hasDecl(Handler, "post")) Handler.post else null,
+            0,
+        ).?;
+    }
+
+    pub fn run(this: *UVLoop) void {
+        us_loop_run(this);
+    }
+    pub const tick = run;
+
+    pub fn wait(this: *UVLoop) void {
+        us_loop_run(this);
+    }
+
+    pub fn inc(this: *UVLoop) void {
+        this.uv_loop.inc();
+    }
+
+    pub fn dec(this: *UVLoop) void {
+        this.uv_loop.dec();
+    }
+
+    pub fn nextTick(this: *Loop, comptime UserType: type, user_data: UserType, comptime deferCallback: fn (ctx: UserType) void) void {
+        const Handler = struct {
+            pub fn callback(data: *anyopaque) callconv(.C) void {
+                deferCallback(@as(UserType, @ptrCast(@alignCast(data))));
+            }
+        };
+        uws_loop_defer(this, user_data, Handler.callback);
+    }
+
+    fn NewHandler(comptime UserType: type, comptime callback_fn: fn (UserType) void) type {
+        return struct {
+            loop: *Loop,
+            pub fn removePost(handler: @This()) void {
+                return uws_loop_removePostHandler(handler.loop, callback);
+            }
+            pub fn removePre(handler: @This()) void {
+                return uws_loop_removePostHandler(handler.loop, callback);
+            }
+            pub fn callback(data: *anyopaque, _: *Loop) callconv(.C) void {
+                callback_fn(@as(UserType, @ptrCast(@alignCast(data))));
+            }
+        };
+    }
+};
+
+pub const Loop = if (bun.Environment.isWindows) UVLoop else PosixLoop;
+
+extern fn uws_get_loop() *Loop;
+extern fn us_create_loop(
+    hint: ?*anyopaque,
+    wakeup_cb: ?*const fn (*Loop) callconv(.C) void,
+    pre_cb: ?*const fn (*Loop) callconv(.C) void,
+    post_cb: ?*const fn (*Loop) callconv(.C) void,
+    ext_size: c_uint,
+) ?*Loop;
+extern fn us_loop_free(loop: ?*Loop) void;
+extern fn us_loop_ext(loop: ?*Loop) ?*anyopaque;
+extern fn us_loop_run(loop: ?*Loop) void;
+extern fn us_loop_pump(loop: ?*Loop) void;
+extern fn us_wakeup_loop(loop: ?*Loop) void;
+extern fn us_loop_integrate(loop: ?*Loop) void;
+extern fn us_loop_iteration_number(loop: ?*Loop) c_longlong;
+extern fn uws_loop_addPostHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
+extern fn uws_loop_removePostHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
+extern fn uws_loop_addPreHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
+extern fn uws_loop_removePreHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
 extern fn us_socket_pair(
     ctx: *SocketContext,
     ext_size: c_int,

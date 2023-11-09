@@ -26,9 +26,9 @@
 
 #pragma once
 
-#include "JavaScriptCore/ArrayBuffer.h"
-#include "JavaScriptCore/ArrayBufferView.h"
-#include "wtf/RefPtr.h"
+#include <JavaScriptCore/ArrayBuffer.h>
+#include <JavaScriptCore/ArrayBufferView.h>
+#include <wtf/RefPtr.h>
 #include <variant>
 
 namespace WebCore {

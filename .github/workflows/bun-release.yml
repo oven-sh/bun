@@ -152,7 +152,7 @@ jobs:
       matrix:
         include:
           - variant: debian
-            suffix: ''
+            suffix: ""
           - variant: debian
             suffix: -debian
           - variant: slim

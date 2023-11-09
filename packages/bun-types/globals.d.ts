@@ -235,7 +235,10 @@ declare namespace NodeJS {
   interface Require {
     (id: string): any;
     resolve: RequireResolve;
+    cache: Record<string, NodeModule>;
+    main: NodeModule | undefined;
   }
+
   interface ProcessEnv {}
   type Signals =
     | "SIGABRT"
@@ -546,6 +549,12 @@ interface Worker extends EventTarget, AbstractWorker {
    */
   unref(): void;
 
+  /**
+   * An integer identifier for the referenced thread. Inside the worker thread,
+   * it is available as `require('node:worker_threads').threadId`.
+   * This value is unique for each `Worker` instance inside a single process.
+   * @since v10.5.0
+   */
   threadId: number;
 }
 
@@ -2388,6 +2397,12 @@ declare var WebSocket: {
        * Sets the sub-protocols the client is willing to accept.
        */
       protocols?: string[];
+      /**
+       * Override the default TLS options
+       */
+      tls?: {
+        rejectUnauthorized?: boolean | undefined; // Defaults to true
+      };
     },
   ): WebSocket;
 

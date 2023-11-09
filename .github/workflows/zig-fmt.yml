@@ -1,7 +1,7 @@
 name: zig-fmt
 
 env:
-  ZIG_VERSION: 0.12.0-dev.888+130227491
+  ZIG_VERSION: 0.12.0-dev.1297+a9e66ed73
 
 on:
   pull_request:

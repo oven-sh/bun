@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, beforeEach } from
 import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { mkfifo } from "mkfifo";
 import { tmpdir } from "os";
+import { gzipSync } from "zlib";
 import { join } from "path";
 import { gc, withoutAggressiveGC, gcTick } from "harness";
 import net from "net";
@@ -346,6 +347,27 @@ describe("Headers", () => {
     expect(headers.getAll("set-cookie")).toEqual(["foo=bar; Path=/; HttpOnly"]);
   });
 
+  it("presence of content-encoding header(issue #5668)", async () => {
+    startServer({
+      fetch(req) {
+        const content = gzipSync(JSON.stringify({ message: "Hello world" }));
+        return new Response(content, {
+          status: 200,
+          headers: {
+            "content-encoding": "gzip",
+            "content-type": "application/json",
+          },
+        });
+      },
+    });
+    const result = await fetch(`http://${server.hostname}:${server.port}/`);
+    const value = result.headers.get("content-encoding");
+    const body = await result.json();
+    expect(value).toBe("gzip");
+    expect(body).toBeDefined();
+    expect(body.message).toBe("Hello world");
+  });
+
   it(".getSetCookie() with array", () => {
     const headers = new Headers([
       ["content-length", "123"],
@@ -373,6 +395,19 @@ describe("Headers", () => {
       ["set-cookie", "bar=baz"],
     ]);
     expect([...headers.values()]).toEqual(["abc, def", "foo=bar", "bar=baz"]);
+  });
+
+  it("Set-Cookies toJSON", () => {
+    const headers = new Headers([
+      ["Set-Cookie", "foo=bar"],
+      ["Set-Cookie", "bar=baz"],
+      ["X-bun", "abc"],
+      ["X-bun", "def"],
+    ]).toJSON();
+    expect(headers).toEqual({
+      "x-bun": "abc, def",
+      "set-cookie": ["foo=bar", "bar=baz"],
+    });
   });
 
   it("Headers append multiple", () => {

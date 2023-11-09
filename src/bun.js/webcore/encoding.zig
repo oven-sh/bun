@@ -765,7 +765,7 @@ pub const Encoder = struct {
     export fn Bun__encoding__writeLatin1(input: [*]const u8, len: usize, to: [*]u8, to_len: usize, encoding: u8) usize {
         return switch (@as(JSC.Node.Encoding, @enumFromInt(encoding))) {
             .utf8 => writeU8(input, len, to, to_len, .utf8),
-            .latin1 => writeU8(input, len, to, to_len, .ascii),
+            .latin1 => writeU8(input, len, to, to_len, .latin1),
             .ascii => writeU8(input, len, to, to_len, .ascii),
             .ucs2 => writeU8(input, len, to, to_len, .utf16le),
             .utf16le => writeU8(input, len, to, to_len, .utf16le),
@@ -880,6 +880,7 @@ pub const Encoder = struct {
             else => toString(input, len, globalObject, .utf8),
         };
     }
+
     pub fn toString(input_ptr: [*]const u8, len: usize, global: *JSGlobalObject, comptime encoding: JSC.Node.Encoding) JSValue {
         if (len == 0)
             return ZigString.Empty.toValue(global);
@@ -967,13 +968,13 @@ pub const Encoder = struct {
         // if (comptime encoding.isBinaryToText()) {}
 
         switch (comptime encoding) {
-            .buffer => {
+            .buffer, .latin1 => {
                 const written = @min(len, to_len);
                 @memcpy(to_ptr[0..written], input[0..written]);
 
                 return written;
             },
-            .latin1, .ascii => {
+            .ascii => {
                 const written = @min(len, to_len);
 
                 var to = to_ptr[0..written];
@@ -1254,4 +1255,10 @@ comptime {
     }
 }
 
-test "Vec" {}
+export fn Zig__Bun_base64URLEncodeToString(input_ptr: [*]const u8, len: usize, ret: *bun.String) void {
+    const input = input_ptr[0..len];
+    var out = bun.String.createUninitialized(.latin1, bun.base64.urlSafeEncodeLen(input)) orelse @panic("Out of memory");
+    defer out.deref();
+    _ = bun.base64.encodeURLSafe(@constCast(out.latin1()), input);
+    ret.* = out;
+}

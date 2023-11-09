@@ -107,17 +107,18 @@ static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
         res->writeHeader(std::string_view("set-cookie", 10), std::string_view(value.is8Bit() ? reinterpret_cast<const char*>(value.characters8()) : value.utf8().data(), value.length()));
     }
 
-    for (auto& header : internalHeaders.commonHeaders()) {
+    for (const auto& header : internalHeaders.commonHeaders()) {
         const auto& name = WebCore::httpHeaderNameString(header.key);
-        auto& value = header.value;
+        const auto& value = header.value;
+
         res->writeHeader(
             std::string_view(name.is8Bit() ? reinterpret_cast<const char*>(name.characters8()) : name.utf8().data(), name.length()),
             std::string_view(value.is8Bit() ? reinterpret_cast<const char*>(value.characters8()) : value.utf8().data(), value.length()));
     }
 
     for (auto& header : internalHeaders.uncommonHeaders()) {
-        auto& name = header.key;
-        auto& value = header.value;
+        const auto& name = header.key;
+        const auto& value = header.value;
         res->writeHeader(
             std::string_view(name.is8Bit() ? reinterpret_cast<const char*>(name.characters8()) : name.utf8().data(), name.length()),
             std::string_view(value.is8Bit() ? reinterpret_cast<const char*>(value.characters8()) : value.utf8().data(), value.length()));
@@ -348,10 +349,8 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     // need to check this before primitives, asymmetric matchers
     // can match against any type of value.
     if constexpr (enableAsymmetricMatchers) {
-        JSCell* c1 = v1.asCell();
-        JSCell* c2 = v2.asCell();
-        if (v2.isCell() && !v2.isEmpty() && c2->type() == JSC::JSType(JSDOMWrapperType)) {
-            switch (matchAsymmetricMatcher(globalObject, c2, v1, scope)) {
+        if (v2.isCell() && !v2.isEmpty() && v2.asCell()->type() == JSC::JSType(JSDOMWrapperType)) {
+            switch (matchAsymmetricMatcher(globalObject, v2.asCell(), v1, scope)) {
             case AsymmetricMatcherResult::FAIL:
                 return false;
             case AsymmetricMatcherResult::PASS:
@@ -360,8 +359,8 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 // continue comparison
                 break;
             }
-        } else if (v1.isCell() && !v1.isEmpty() && c1->type() == JSC::JSType(JSDOMWrapperType)) {
-            switch (matchAsymmetricMatcher(globalObject, c1, v2, scope)) {
+        } else if (v1.isCell() && !v1.isEmpty() && v1.asCell()->type() == JSC::JSType(JSDOMWrapperType)) {
+            switch (matchAsymmetricMatcher(globalObject, v1.asCell(), v2, scope)) {
             case AsymmetricMatcherResult::FAIL:
                 return false;
             case AsymmetricMatcherResult::PASS:
@@ -669,6 +668,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     case JSDOMWrapperType: {
         if (c2Type == JSDOMWrapperType) {
             // https://github.com/oven-sh/bun/issues/4089
+            // https://github.com/oven-sh/bun/issues/6492
             auto* url2 = jsDynamicCast<JSDOMURL*>(v2);
             auto* url1 = jsDynamicCast<JSDOMURL*>(v1);
 
@@ -677,19 +677,15 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 if ((url2 == nullptr) != (url1 == nullptr)) {
                     return false;
                 }
+            }
 
-                if (url2 && url1) {
-                    return url1->wrapped().href() != url2->wrapped().href();
-                }
-            } else {
-                if (url2 && url1) {
-                    // toEqual should return false when the URLs' href is not equal
-                    // But you could have added additional properties onto the
-                    // url object itself, so we must check those as well
-                    // But it's definitely not equal if the href() is not the same
-                    if (url1->wrapped().href() != url2->wrapped().href()) {
-                        return false;
-                    }
+            if (url2 && url1) {
+                // toEqual or toStrictEqual should return false when the URLs' href is not equal
+                // But you could have added additional properties onto the
+                // url object itself, so we must check those as well
+                // But it's definitely not equal if the href() is not the same
+                if (url1->wrapped().href() != url2->wrapped().href()) {
+                    return false;
                 }
             }
         }
@@ -1087,7 +1083,9 @@ void WebCore__FetchHeaders__toUWSResponse(WebCore__FetchHeaders* arg0, bool is_s
 
 WebCore__FetchHeaders* WebCore__FetchHeaders__createEmpty()
 {
-    return new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    headers->relaxAdoptionRequirement();
+    return headers;
 }
 void WebCore__FetchHeaders__append(WebCore__FetchHeaders* headers, const ZigString* arg1, const ZigString* arg2,
     JSC__JSGlobalObject* lexicalGlobalObject)
@@ -1116,6 +1114,7 @@ WebCore__FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC__JSGlobalObject* 
     RETURN_IF_EXCEPTION(throwScope, nullptr);
 
     auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    headers->relaxAdoptionRequirement();
     if (init) {
         // `fill` doesn't set an exception on the VM if it fails, it returns an
         //  ExceptionOr<void>.  So we need to check for the exception and, if set,
@@ -1154,6 +1153,7 @@ WebCore__FetchHeaders* WebCore__FetchHeaders__cloneThis(WebCore__FetchHeaders* h
 {
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
     auto* clone = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    clone->relaxAdoptionRequirement();
     WebCore::propagateException(*lexicalGlobalObject, throwScope,
         clone->fill(*headers));
     return clone;
@@ -1194,10 +1194,13 @@ void WebCore__FetchHeaders__copyTo(WebCore__FetchHeaders* headers, StringPointer
 void WebCore__FetchHeaders__count(WebCore__FetchHeaders* headers, uint32_t* count, uint32_t* buf_len)
 {
     auto iter = headers->createIterator();
-    uint32_t i = 0;
+    size_t i = 0;
     for (auto pair = iter.next(); pair; pair = iter.next()) {
-        i += pair->key.length();
-        i += pair->value.length();
+        // UTF8 byteLength is not strictly necessary here
+        // They should always be ASCII.
+        // However, we can still do this out of an abundance of caution
+        i += BunString::utf8ByteLength(pair->key);
+        i += BunString::utf8ByteLength(pair->value);
     }
 
     *count = headers->size();
@@ -1223,6 +1226,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
 {
     PicoHTTPHeaders pico_headers = *reinterpret_cast<const PicoHTTPHeaders*>(arg1);
     auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    headers->relaxAdoptionRequirement(); // This prevents an assertion later, but may not be the proper approach.
 
     if (pico_headers.len > 0) {
         HTTPHeaderMap map = HTTPHeaderMap();
@@ -1265,6 +1269,8 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(JSC__JSGlobalObject*
     size_t i = 0;
 
     auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    headers->relaxAdoptionRequirement(); // This prevents an assertion later, but may not be the proper approach.
+
     HTTPHeaderMap map = HTTPHeaderMap();
 
     for (const auto& header : req) {
@@ -1288,7 +1294,6 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(JSC__JSGlobalObject*
         if (i > 56)
             __builtin_unreachable();
     }
-
     headers->setInternalHeaders(WTFMove(map));
     return headers;
 }
@@ -1541,7 +1546,7 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC__JSValue value, JSC__
         return 0;
     }
 
-    case WebCore::JSDOMWrapperType: {
+    case static_cast<JSC::JSType>(WebCore::JSDOMWrapperType): {
         if (auto* headers = jsDynamicCast<WebCore::JSFetchHeaders*>(cell))
             return static_cast<double>(jsCast<WebCore::JSFetchHeaders*>(cell)->wrapped().size());
 
@@ -1766,6 +1771,7 @@ void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC__JSGlobalObject* global,
 
 void JSC__VM__collectAsync(JSC__VM* vm)
 {
+    JSC::JSLockHolder lock(*vm);
     vm->heap.collectAsync();
 }
 
@@ -2031,76 +2037,6 @@ JSC__JSObject* JSC__JSString__toObject(JSC__JSString* arg0, JSC__JSGlobalObject*
 //     arg2->depen
 // }
 
-class JSMicrotaskCallbackDefaultGlobal final : public RefCounted<JSMicrotaskCallbackDefaultGlobal> {
-public:
-    static Ref<JSMicrotaskCallbackDefaultGlobal> create(Ref<JSC::Microtask>&& task)
-    {
-        return adoptRef(*new JSMicrotaskCallbackDefaultGlobal(WTFMove(task).leakRef()));
-    }
-
-    void call(JSC::JSGlobalObject* globalObject)
-    {
-
-        JSC::VM& vm = globalObject->vm();
-        auto task = &m_task.leakRef();
-        task->run(globalObject);
-
-        delete this;
-    }
-
-private:
-    JSMicrotaskCallbackDefaultGlobal(Ref<JSC::Microtask>&& task)
-        : m_task { WTFMove(task) }
-    {
-    }
-
-    Ref<JSC::Microtask> m_task;
-};
-
-class JSMicrotaskCallback final : public RefCounted<JSMicrotaskCallback> {
-public:
-    static Ref<JSMicrotaskCallback> create(JSC::JSGlobalObject& globalObject,
-        Ref<JSC::Microtask>&& task)
-    {
-        return adoptRef(*new JSMicrotaskCallback(globalObject, WTFMove(task).leakRef()));
-    }
-
-    void call()
-    {
-        auto* globalObject = m_globalObject.get();
-        if (UNLIKELY(!globalObject)) {
-            delete this;
-            return;
-        }
-
-        JSC::VM& vm = m_globalObject->vm();
-        auto task = &m_task.leakRef();
-        task->run(globalObject);
-
-        delete this;
-    }
-
-private:
-    JSMicrotaskCallback(JSC::JSGlobalObject& globalObject, Ref<JSC::Microtask>&& task)
-        : m_globalObject { &globalObject }
-        , m_task { WTFMove(task) }
-    {
-    }
-
-    JSC::Weak<JSC::JSGlobalObject> m_globalObject;
-    Ref<JSC::Microtask> m_task;
-};
-
-void Microtask__run(void* microtask, void* global)
-{
-    reinterpret_cast<JSMicrotaskCallback*>(microtask)->call();
-}
-
-void Microtask__run_default(void* microtask, void* global)
-{
-    reinterpret_cast<JSMicrotaskCallbackDefaultGlobal*>(microtask)->call(reinterpret_cast<Zig::GlobalObject*>(global));
-}
-
 JSC__JSValue JSC__JSModuleLoader__evaluate(JSC__JSGlobalObject* globalObject, const unsigned char* arg1,
     size_t arg2, const unsigned char* originUrlPtr, size_t originURLLen, const unsigned char* referrerUrlPtr, size_t referrerUrlLen,
     JSC__JSValue JSValue5, JSC__JSValue* arg6)
@@ -2323,6 +2259,9 @@ bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
         }
         break;
     }
+    default: {
+        break;
+    }
     }
 
     return false;
@@ -2360,29 +2299,31 @@ JSC__JSValue JSC__JSValue__createStringArray(JSC__JSGlobalObject* globalObject, 
 
     JSC::JSArray* array = nullptr;
     {
+        JSC::GCDeferralContext deferralContext(vm);
         JSC::ObjectInitializationScope initializationScope(vm);
         if ((array = JSC::JSArray::tryCreateUninitializedRestricted(
-                 initializationScope, nullptr,
+                 initializationScope, &deferralContext,
                  globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
                  arg2))) {
 
             if (!clone) {
                 for (size_t i = 0; i < arg2; ++i) {
-                    array->putDirectIndex(globalObject, i, JSC::jsString(vm, Zig::toString(arg1[i])));
+                    array->putDirectIndex(globalObject, i, JSC::jsString(vm, Zig::toString(arg1[i]), &deferralContext));
                 }
             } else {
                 for (size_t i = 0; i < arg2; ++i) {
-                    array->putDirectIndex(globalObject, i, JSC::jsString(vm, Zig::toStringCopy(arg1[i])));
+                    array->putDirectIndex(globalObject, i, JSC::jsString(vm, Zig::toStringCopy(arg1[i]), &deferralContext));
                 }
             }
         }
-    }
-    if (!array) {
-        JSC::throwOutOfMemoryError(globalObject, scope);
-        return JSC::JSValue::encode(JSC::JSValue());
-    }
 
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSValue(array)));
+        if (!array) {
+            JSC::throwOutOfMemoryError(globalObject, scope);
+            return JSC::JSValue::encode(JSC::JSValue());
+        }
+
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSValue(array)));
+    }
 }
 
 JSC__JSValue JSC__JSGlobalObject__createAggregateError(JSC__JSGlobalObject* globalObject,
@@ -2860,7 +2801,7 @@ JSC__VM* JSC__JSGlobalObject__vm(JSC__JSGlobalObject* arg0) { return &arg0->vm()
 
 void JSC__JSGlobalObject__handleRejectedPromises(JSC__JSGlobalObject* arg0)
 {
-    return static_cast<Zig::GlobalObject*>(arg0)->handleRejectedPromises();
+    return jsCast<Zig::GlobalObject*>(arg0)->handleRejectedPromises();
 }
 
 #pragma mark - JSC::JSValue
@@ -2941,6 +2882,8 @@ bool JSC__JSValue__isClass(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
         if (callData.native.isBoundFunction)
             return false;
         return value.isConstructor();
+    default:
+        return false;
     }
     return false;
 }
@@ -3069,20 +3012,16 @@ JSC__JSValue JSC__JSValue__jsNumberFromUint64(uint64_t arg0)
 
 int64_t JSC__JSValue__toInt64(JSC__JSValue val)
 {
-    JSC::JSValue _val = JSC::JSValue::decode(val);
-
-    int64_t result = JSC::tryConvertToInt52(_val.asDouble());
-    if (result != JSC::JSValue::notInt52) {
-        return result;
-    }
-
-    if (_val.isHeapBigInt()) {
-
-        if (auto* heapBigInt = _val.asHeapBigInt()) {
+    JSC::JSValue value = JSC::JSValue::decode(val);
+    ASSERT(value.isHeapBigInt() || value.isNumber());
+    if (value.isHeapBigInt()) {
+        if (auto* heapBigInt = value.asHeapBigInt()) {
             return heapBigInt->toBigInt64(heapBigInt);
         }
     }
-    return _val.asAnyInt();
+    if (value.isInt32())
+        return value.asInt32();
+    return static_cast<int64_t>(value.asDouble());
 }
 
 uint8_t JSC__JSValue__asBigIntCompare(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, JSC__JSValue JSValue1)
@@ -3143,28 +3082,28 @@ JSC__JSValue JSC__JSValue__fromUInt64NoTruncate(JSC__JSGlobalObject* globalObjec
 
 uint64_t JSC__JSValue__toUInt64NoTruncate(JSC__JSValue val)
 {
-    JSC::JSValue _val = JSC::JSValue::decode(val);
+    JSC::JSValue value = JSC::JSValue::decode(val);
+    ASSERT(value.isHeapBigInt() || value.isNumber());
 
-    int64_t result = JSC::tryConvertToInt52(_val.asDouble());
+    if (value.isHeapBigInt()) {
+        if (auto* heapBigInt = value.asHeapBigInt()) {
+            return heapBigInt->toBigUInt64(heapBigInt);
+        }
+    }
+
+    if (value.isInt32()) {
+        return static_cast<uint64_t>(value.asInt32());
+    }
+    ASSERT(value.isDouble());
+
+    int64_t result = JSC::tryConvertToInt52(value.asDouble());
     if (result != JSC::JSValue::notInt52) {
         if (result < 0)
             return 0;
 
         return static_cast<uint64_t>(result);
     }
-
-    if (_val.isHeapBigInt()) {
-
-        if (auto* heapBigInt = _val.asHeapBigInt()) {
-            return heapBigInt->toBigUInt64(heapBigInt);
-        }
-    }
-
-    if (!_val.isNumber()) {
-        return 0;
-    }
-
-    return static_cast<uint64_t>(_val.asAnyInt());
+    return 0;
 }
 
 JSC__JSValue JSC__JSValue__createObject2(JSC__JSGlobalObject* globalObject, const ZigString* arg1,
@@ -3522,6 +3461,18 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
     if (!m_codeBlock)
         return;
 
+    // https://github.com/oven-sh/bun/issues/6951
+    auto* provider = m_codeBlock->source().provider();
+
+    if (UNLIKELY(!provider))
+        return;
+
+    // Make sure the range is valid
+    WTF::StringView sourceString = provider->source();
+
+    if (UNLIKELY(sourceString.isNull()))
+        return;
+
     JSC::BytecodeIndex bytecodeOffset = stackFrame->hasBytecodeIndex() ? stackFrame->bytecodeIndex() : JSC::BytecodeIndex();
 
     /* Get the "raw" position info.
@@ -3561,15 +3512,12 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
     // Calculate the staring\ending offsets of the entire expression
     int expressionStart = divotPoint - startOffset;
     int expressionStop = divotPoint + endOffset;
-
-    // Make sure the range is valid
-    WTF::StringView sourceString = m_codeBlock->source().provider()->source();
     if (expressionStop < 1 || expressionStart > static_cast<int>(sourceString.length())) {
         return;
     }
 
     // Search for the beginning of the line
-    unsigned int lineStart = expressionStart;
+    unsigned int lineStart = expressionStart > 0 ? expressionStart : 0;
     while ((lineStart > 0) && ('\n' != sourceString[lineStart - 1])) {
         lineStart--;
     }
@@ -3903,6 +3851,32 @@ void JSC__JSValue__getNameProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* a
     arg2->len = 0;
 }
 
+extern "C" void JSC__JSValue__getName(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, BunString* arg2)
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    if (!value.isObject()) {
+        *arg2 = BunStringEmpty;
+        return;
+    }
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
+    JSObject* object = value.getObject();
+    auto displayName = JSC::getCalculatedDisplayName(vm, object);
+
+    // JSC doesn't include @@toStringTag in calculated display name
+    if (displayName.isEmpty()) {
+        if (auto toStringTagValue = object->getIfPropertyExists(globalObject, vm.propertyNames->toStringTagSymbol)) {
+            if (toStringTagValue.isString()) {
+                displayName = toStringTagValue.toWTFString(globalObject);
+            }
+        }
+    }
+    if (scope.exception())
+        scope.clearException();
+
+    *arg2 = Bun::toStringRef(displayName);
+}
+
 JSC__JSValue JSC__JSValue__toError_(JSC__JSValue JSValue0)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
@@ -4002,10 +3976,6 @@ bool JSC__JSValue__isTerminationException(JSC__JSValue JSValue0, JSC__VM* arg1)
 void JSC__VM__shrinkFootprint(JSC__VM* arg0) { arg0->shrinkFootprintWhenIdle(); };
 void JSC__VM__whenIdle(JSC__VM* arg0, void (*ArgFn1)()) { arg0->whenIdle(ArgFn1); };
 
-JSC__VM* JSC__VM__create(unsigned char HeapType0)
-{
-}
-
 void JSC__VM__holdAPILock(JSC__VM* arg0, void* ctx, void (*callback)(void* arg0))
 {
     JSC::JSLockHolder locker(arg0);
@@ -4103,6 +4073,7 @@ enum class BuiltinNamesMap : uint8_t {
     method,
     headers,
     status,
+    statusText,
     url,
     body,
     data,
@@ -4121,6 +4092,9 @@ static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigne
     }
     case BuiltinNamesMap::headers: {
         return clientData->builtinNames().headersPublicName();
+    }
+    case BuiltinNamesMap::statusText: {
+        return clientData->builtinNames().statusTextPublicName();
     }
     case BuiltinNamesMap::status: {
         return clientData->builtinNames().statusPublicName();
@@ -4146,7 +4120,7 @@ static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigne
     }
 }
 
-extern "C" EncodedJSValue JSC__JSValue__callCustomInspectFunction(
+extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     JSC::JSGlobalObject* lexicalGlobalObject,
     JSC__JSValue encodedFunctionValue,
     JSC__JSValue encodedThisValue,

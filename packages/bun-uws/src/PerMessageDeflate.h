@@ -245,9 +245,14 @@ struct InflationStream {
         }
 #endif
 
+        /* Save off the bytes we're about to overwrite */
+        char* tailLocation = (char*)compressed.data() + compressed.length();
+        char preTailBytes[4];
+        memcpy(preTailBytes, tailLocation, 4);
+
         /* Append tail to chunk */
         unsigned char tail[4] = {0x00, 0x00, 0xff, 0xff};
-        memcpy((char *)compressed.data() + compressed.length(), tail, 4);
+        memcpy(tailLocation, tail, 4);
         compressed = {compressed.data(), compressed.length() + 4};
 
         /* We clear this one here, could be done better */
@@ -274,6 +279,9 @@ struct InflationStream {
         if (reset) {
             inflateReset(&inflationStream);
         }
+
+        /* Restore the bytes we used for the tail */
+        memcpy(tailLocation, preTailBytes, 4);
 
         if ((err != Z_BUF_ERROR && err != Z_OK) || zlibContext->dynamicInflationBuffer.length() > maxPayloadLength) {
             return std::nullopt;

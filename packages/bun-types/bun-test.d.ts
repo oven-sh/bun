@@ -27,6 +27,38 @@ declare module "bun:test" {
 
   export const mock: {
     <T extends AnyFunction>(Function: T): Mock<T>;
+
+    /**
+     * Replace the module `id` with the return value of `factory`.
+     *
+     * This is useful for mocking modules.
+     *
+     * @param id module ID to mock
+     * @param factory a function returning an object that will be used as the exports of the mocked module
+     *
+     * @example
+     * ## Example
+     * ```ts
+     * import { mock } from "bun:test";
+     *
+     * mock.module("fs/promises", () => {
+     *  return {
+     *    readFile: () => Promise.resolve("hello world"),
+     *  };
+     * });
+     *
+     * import { readFile } from "fs/promises";
+     *
+     * console.log(await readFile("hello.txt", "utf8")); // hello world
+     * ```
+     *
+     * ## More notes
+     *
+     * If the module is already loaded, exports are overwritten with the return
+     * value of `factory`. If the export didn't exist before, it will not be
+     * added to existing import statements. This is due to how ESM works.
+     */
+    module(id: string, factory: () => any): void | Promise<void>;
   };
 
   /**
@@ -479,13 +511,13 @@ declare module "bun:test" {
    * @param actual the actual value
    */
   export const expect: {
-    (actual?: unknown): Expect;
+    <T = unknown>(actual?: T): Expect<T>;
     any: (
       constructor: ((..._: any[]) => any) | { new (..._: any[]): any },
     ) => Expect;
     anything: () => Expect;
-    stringContaining: (str: string) => Expect;
-    stringMatching: (regex: RegExp | string) => Expect;
+    stringContaining: (str: string) => Expect<string>;
+    stringMatching: <T extends RegExp | string>(regex: T) => Expect<T>;
   };
   /**
    * Asserts that a value matches some criteria.

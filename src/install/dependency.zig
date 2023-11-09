@@ -2,6 +2,7 @@ const bun = @import("root").bun;
 const logger = bun.logger;
 const Environment = @import("../env.zig");
 const Install = @import("./install.zig");
+const PackageManager = Install.PackageManager;
 const ExternalStringList = Install.ExternalStringList;
 const Features = Install.Features;
 const PackageNameHash = Install.PackageNameHash;
@@ -92,6 +93,7 @@ pub fn cloneWithDifferentBuffers(this: *const Dependency, name_buf: []const u8, 
         .version = Dependency.parseWithTag(
             builder.lockfile.allocator,
             new_name,
+            String.Builder.stringHash(new_name.slice(out_slice)),
             new_literal.slice(out_slice),
             this.version.tag,
             &sliced,
@@ -144,11 +146,12 @@ pub fn toDependency(
     const name = String{
         .bytes = this[0..8].*,
     };
+    const name_hash: u64 = @bitCast(this[8..16].*);
     return Dependency{
         .name = name,
-        .name_hash = @as(u64, @bitCast(this[8..16].*)),
+        .name_hash = name_hash,
         .behavior = @bitCast(this[16]),
-        .version = Dependency.Version.toVersion(name, this[17..this.len].*, ctx),
+        .version = Dependency.Version.toVersion(name, name_hash, this[17..this.len].*, ctx),
     };
 }
 
@@ -297,6 +300,7 @@ pub const Version = struct {
 
     pub fn toVersion(
         alias: String,
+        alias_hash: PackageNameHash,
         bytes: Version.External,
         ctx: Dependency.Context,
     ) Dependency.Version {
@@ -306,6 +310,7 @@ pub const Version = struct {
         return Dependency.parseWithTag(
             ctx.allocator,
             alias,
+            alias_hash,
             sliced.slice,
             tag,
             sliced,
@@ -610,13 +615,19 @@ pub const Version = struct {
             // git@example.com:path/to/repo.git
             if (isSCPLikePath(dependency)) return .git;
             // beta
-            return .dist_tag;
+
+            if (!strings.containsChar(dependency, '|')) {
+                return .dist_tag;
+            }
+
+            return .npm;
         }
     };
 
     pub const NpmInfo = struct {
         name: String,
         version: Semver.Query.Group,
+        is_alias: bool = false,
 
         fn eql(this: NpmInfo, that: NpmInfo, this_buf: []const u8, that_buf: []const u8) bool {
             return this.name.eql(that.name, this_buf, that_buf) and this.version.eql(that.version);
@@ -670,17 +681,19 @@ pub fn eql(
 pub inline fn parse(
     allocator: std.mem.Allocator,
     alias: String,
+    alias_hash: ?PackageNameHash,
     dependency: string,
     sliced: *const SlicedString,
     log: ?*logger.Log,
 ) ?Version {
     const dep = std.mem.trimLeft(u8, dependency, " \t\n\r");
-    return parseWithTag(allocator, alias, dep, Version.Tag.infer(dep), sliced, log);
+    return parseWithTag(allocator, alias, alias_hash, dep, Version.Tag.infer(dep), sliced, log);
 }
 
 pub fn parseWithOptionalTag(
     allocator: std.mem.Allocator,
     alias: String,
+    alias_hash: ?PackageNameHash,
     dependency: string,
     tag: ?Dependency.Version.Tag,
     sliced: *const SlicedString,
@@ -690,6 +703,7 @@ pub fn parseWithOptionalTag(
     return parseWithTag(
         allocator,
         alias,
+        alias_hash,
         dep,
         tag orelse Version.Tag.infer(dep),
         sliced,
@@ -700,6 +714,7 @@ pub fn parseWithOptionalTag(
 pub fn parseWithTag(
     allocator: std.mem.Allocator,
     alias: String,
+    alias_hash: ?PackageNameHash,
     dependency: string,
     tag: Dependency.Version.Tag,
     sliced: *const SlicedString,
@@ -710,19 +725,30 @@ pub fn parseWithTag(
     switch (tag) {
         .npm => {
             var input = dependency;
-            const name = if (strings.hasPrefixComptime(input, "npm:")) sliced.sub(brk: {
-                var str = input["npm:".len..];
-                var i: usize = @intFromBool(str.len > 0 and str[0] == '@');
 
-                while (i < str.len) : (i += 1) {
-                    if (str[i] == '@') {
-                        input = str[i + 1 ..];
-                        break :brk str[0..i];
+            var is_alias = false;
+            const name = brk: {
+                if (strings.hasPrefixComptime(input, "npm:")) {
+                    is_alias = true;
+                    var str = input["npm:".len..];
+                    var i: usize = @intFromBool(str.len > 0 and str[0] == '@');
+
+                    while (i < str.len) : (i += 1) {
+                        if (str[i] == '@') {
+                            input = str[i + 1 ..];
+                            break :brk sliced.sub(str[0..i]).value();
+                        }
                     }
+
+                    input = str[i..];
+
+                    break :brk sliced.sub(str[0..i]).value();
                 }
-                input = str[i..];
-                break :brk str[0..i];
-            }).value() else alias;
+
+                break :brk alias;
+            };
+
+            is_alias = is_alias and alias_hash != null;
 
             // Strip single leading v
             // v1.0.0 -> 1.0.0
@@ -736,20 +762,40 @@ pub fn parseWithTag(
                 input,
                 sliced.sub(input),
             ) catch |err| {
-                if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "{s} parsing dependency \"{s}\"", .{ @errorName(err), dependency }) catch unreachable;
+                if (log_) |log| log.addErrorFmt(
+                    null,
+                    logger.Loc.Empty,
+                    allocator,
+                    "{s} parsing version \"{s}\"",
+                    .{
+                        @errorName(err),
+                        dependency,
+                    },
+                ) catch unreachable;
                 return null;
             };
 
-            return .{
+            const result = Version{
                 .literal = sliced.value(),
                 .value = .{
                     .npm = .{
+                        .is_alias = is_alias,
                         .name = name,
                         .version = version,
                     },
                 },
                 .tag = .npm,
             };
+
+            if (is_alias) {
+                PackageManager.instance.known_npm_aliases.put(
+                    allocator,
+                    alias_hash.?,
+                    result,
+                ) catch unreachable;
+            }
+
+            return result;
         },
         .dist_tag => {
             var tag_to_use = sliced.value();
@@ -988,6 +1034,10 @@ pub const Behavior = packed struct(u8) {
 
     pub inline fn isOptional(this: Behavior) bool {
         return this.optional and !this.isPeer();
+    }
+
+    pub inline fn isOptionalPeer(this: Behavior) bool {
+        return this.optional and this.isPeer();
     }
 
     pub inline fn isDev(this: Behavior) bool {

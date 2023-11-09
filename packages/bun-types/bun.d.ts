@@ -1871,6 +1871,15 @@ declare module "bun" {
     port?: string | number;
 
     /**
+     * If the `SO_REUSEPORT` flag should be set.
+     *
+     * This allows multiple processes to bind to the same port, which is useful for load balancing.
+     *
+     * @default false
+     */
+    reusePort?: boolean;
+
+    /**
      * What hostname should the server listen on?
      *
      * @default
@@ -2566,6 +2575,22 @@ declare module "bun" {
    * This is read-only
    */
   const stdin: BunFile;
+
+  type StringLike = string | { toString(): string };
+
+  interface semver {
+    /**
+     * Test if the version satisfies the range. Stringifies both arguments. Returns `true` or `false`.
+     */
+    satisfies(version: StringLike, range: StringLike): boolean;
+
+    /**
+     * Returns 0 if the versions are equal, 1 if `v1` is greater, or -1 if `v2` is greater.
+     * Throws an error if either version is invalid.
+     */
+    order(v1: StringLike, v2: StringLike): -1 | 0 | 1;
+  }
+  export const semver: semver;
 
   interface unsafe {
     /**
@@ -4068,7 +4093,7 @@ declare module "bun" {
    * Spawn a new process
    *
    * ```js
-   * const {stdout} = Bun.spawn(["echo", "hello"]));
+   * const {stdout} = Bun.spawn(["echo", "hello"]);
    * const text = await readableStreamToText(stdout);
    * console.log(text); // "hello\n"
    * ```
@@ -4130,7 +4155,7 @@ declare module "bun" {
    * Synchronously spawn a new process
    *
    * ```js
-   * const {stdout} = Bun.spawnSync(["echo", "hello"]));
+   * const {stdout} = Bun.spawnSync(["echo", "hello"]);
    * console.log(stdout.toString()); // "hello\n"
    * ```
    *

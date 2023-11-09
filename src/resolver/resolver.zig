@@ -1751,6 +1751,7 @@ pub const Resolver = struct {
                             dependency_version = Dependency.parse(
                                 r.allocator,
                                 Semver.String.init(esm.name, esm.name),
+                                null,
                                 esm.version,
                                 &sliced_string,
                                 r.log,
@@ -2297,7 +2298,7 @@ pub const Resolver = struct {
     ) !?*TSConfigJSON {
         // Since tsconfig.json is cached permanently, in our DirEntries cache
         // we must use the global allocator
-        const entry = try r.caches.fs.readFileWithAllocator(
+        var entry = try r.caches.fs.readFileWithAllocator(
             bun.fs_allocator,
             r.fs,
             file,
@@ -2305,7 +2306,7 @@ pub const Resolver = struct {
             false,
             null,
         );
-        _ = bun.sys.close(entry.fd);
+        defer _ = entry.closeFD();
 
         // The file name needs to be persistent because it can have errors
         // and if those errors need to print the filename
@@ -2409,7 +2410,7 @@ pub const Resolver = struct {
         return r.dir_cache.get(path);
     }
 
-    inline fn dirInfoCachedMaybeLog(r: *ThisResolver, __path: string, comptime enable_logging: bool, comptime follow_symlinks: bool) !?*DirInfo {
+    fn dirInfoCachedMaybeLog(r: *ThisResolver, __path: string, comptime enable_logging: bool, comptime follow_symlinks: bool) !?*DirInfo {
         r.mutex.lock();
         defer r.mutex.unlock();
         var _path = __path;
@@ -2436,7 +2437,8 @@ pub const Resolver = struct {
             .status = .not_found,
         };
         const root_path = if (comptime Environment.isWindows)
-            std.fs.path.diskDesignator(path)
+            // std.fs.path.diskDesignator(path)
+            path[0..3]
         else
             // we cannot just use "/"
             // we will write to the buffer past the ptr len so it must be a non-const buffer
@@ -2448,6 +2450,7 @@ pub const Resolver = struct {
 
         while (!strings.eql(top, root_path)) : (top = Dirname.dirname(top)) {
             var result = try r.dir_cache.getOrPut(top);
+
             if (result.status != .unknown) {
                 top_parent = result;
                 break;
@@ -2530,14 +2533,23 @@ pub const Resolver = struct {
                 defer path.ptr[queue_top.unsafe_path.len] = prev_char;
                 var sentinel = path.ptr[0..queue_top.unsafe_path.len :0];
 
-                _open_dir = std.fs.openIterableDirAbsoluteZ(
-                    sentinel,
-                    .{
-                        .no_follow = !follow_symlinks,
-                    },
-                );
+                if (comptime Environment.isPosix) {
+                    _open_dir = std.fs.openIterableDirAbsoluteZ(
+                        sentinel,
+                        .{
+                            .no_follow = !follow_symlinks,
+                        },
+                    );
+                } else if (comptime Environment.isWindows) {
+                    const dirfd_result = bun.sys.openDirAtWindowsA(bun.invalid_fd, sentinel, true, !follow_symlinks);
+                    if (dirfd_result.unwrap()) |result| {
+                        _open_dir = std.fs.IterableDir{ .dir = .{ .fd = bun.fdcast(result) } };
+                    } else |err| {
+                        _open_dir = err;
+                    }
+                }
+
                 bun.fs.debug("open({s}) = {any}", .{ sentinel, _open_dir });
-                // }
             }
 
             const open_dir = if (queue_top.fd != 0) std.fs.IterableDir{ .dir = .{ .fd = bun.fdcast(queue_top.fd) } } else (_open_dir catch |err| {
@@ -3682,7 +3694,7 @@ pub const Resolver = struct {
                         }
 
                         const this_dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
-                        var file = this_dir.openDirZ("node_modules/.bin", .{}, true) catch break :append_bin_dir;
+                        var file = this_dir.openDirZ(bun.pathLiteral("node_modules/.bin"), .{}, true) catch break :append_bin_dir;
                         defer file.close();
                         var bin_path = bun.getFdPath(file.fd, bufs(.node_bin_path)) catch break :append_bin_dir;
                         bin_folders_lock.lock();
@@ -3855,9 +3867,12 @@ pub const Resolver = struct {
                         // not sure why this needs cwd but we'll just pass in the dir of the tsconfig...
                         var abs_path = ResolvePath.joinAbsStringBuf(ts_dir_name, bufs(.tsconfig_path_abs), &[_]string{ ts_dir_name, current.extends }, .auto);
                         var parent_config_maybe = r.parseTSConfig(abs_path, 0) catch |err| {
-                            r.log.addDebugFmt(null, logger.Loc.Empty, r.allocator, "{s} loading tsconfig.json extends {}", .{ @errorName(err), strings.QuotedFormatter{
-                                .text = abs_path,
-                            } }) catch {};
+                            r.log.addDebugFmt(null, logger.Loc.Empty, r.allocator, "{s} loading tsconfig.json extends {}", .{
+                                @errorName(err),
+                                strings.QuotedFormatter{
+                                    .text = abs_path,
+                                },
+                            }) catch {};
                             break;
                         };
                         if (parent_config_maybe) |parent_config| {
@@ -3899,28 +3914,46 @@ pub const Resolver = struct {
 };
 
 pub const Dirname = struct {
-    pub fn dirname(path: string) string {
+    pub fn dirname(path_: string) string {
+        var path = path_;
+        const root = brk: {
+            if (Environment.isWindows) {
+                if (path.len > 1 and path[1] == ':' and switch (path[0]) {
+                    'A'...'Z', 'a'...'z' => true,
+                    else => false,
+                }) {
+                    break :brk path[0..2];
+                }
+
+                // TODO: UNC paths
+                // TODO: NT paths
+                break :brk "/c/";
+            }
+
+            break :brk "/";
+        };
+
         if (path.len == 0)
-            return "/";
+            return root;
 
         var end_index: usize = path.len - 1;
-        while (path[end_index] == '/') {
+        while (bun.path.isSepAny(path[end_index])) {
             if (end_index == 0)
-                return "/";
+                return root;
             end_index -= 1;
         }
 
-        while (path[end_index] != '/') {
+        while (!bun.path.isSepAny(path[end_index])) {
             if (end_index == 0)
-                return "/";
+                return root;
             end_index -= 1;
         }
 
-        if (end_index == 0 and path[0] == '/')
+        if (end_index == 0 and bun.path.isSepAny(path[0]))
             return path[0..1];
 
         if (end_index == 0)
-            return "/";
+            return root;
 
         return path[0 .. end_index + 1];
     }

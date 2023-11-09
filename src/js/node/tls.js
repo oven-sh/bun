@@ -30,28 +30,32 @@ function parseCertString() {
   throwNotImplemented("Not implemented");
 }
 
+const rejectUnauthorizedDefault =
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED !== "0" && process.env.NODE_TLS_REJECT_UNAUTHORIZED !== "false";
 function isValidTLSArray(obj) {
   if (typeof obj === "string" || isTypedArray(obj) || obj instanceof ArrayBuffer || obj instanceof Blob) return true;
   if (Array.isArray(obj)) {
     for (var i = 0; i < obj.length; i++) {
-      if (typeof obj !== "string" && !isTypedArray(obj) && !(obj instanceof ArrayBuffer) && !(obj instanceof Blob))
+      const item = obj[i];
+      if (typeof item !== "string" && !isTypedArray(item) && !(item instanceof ArrayBuffer) && !(item instanceof Blob))
         return false;
     }
     return true;
   }
+  return false;
 }
 
 function unfqdn(host) {
-  return RegExpPrototypeSymbolReplace.call(/[.]$/, host, "");
+  return RegExpPrototypeSymbolReplace.$call(/[.]$/, host, "");
 }
 // String#toLowerCase() is locale-sensitive so we use
 // a conservative version that only lowercases A-Z.
 function toLowerCase(c) {
-  return StringFromCharCode.call(32 + StringPrototypeCharCodeAt.call(c, 0));
+  return StringFromCharCode.$call(32 + StringPrototypeCharCodeAt.$call(c, 0));
 }
 
 function splitHost(host) {
-  return StringPrototypeSplit.call(RegExpPrototypeSymbolReplace.call(/[A-Z]/g, unfqdn(host), toLowerCase), ".");
+  return StringPrototypeSplit.$call(RegExpPrototypeSymbolReplace.$call(/[A-Z]/g, unfqdn(host), toLowerCase), ".");
 }
 
 function check(hostParts, pattern, wildcards) {
@@ -63,14 +67,14 @@ function check(hostParts, pattern, wildcards) {
   if (hostParts.length !== patternParts.length) return false;
 
   // Pattern has empty components, e.g. "bad..example.com".
-  if (ArrayPrototypeIncludes.call(patternParts, "")) return false;
+  if (ArrayPrototypeIncludes.$call(patternParts, "")) return false;
 
   // RFC 6125 allows IDNA U-labels (Unicode) in names but we have no
   // good way to detect their encoding or normalize them so we simply
   // reject them.  Control characters and blanks are rejected as well
   // because nothing good can come from accepting them.
-  const isBad = s => RegExpPrototypeExec.call(/[^\u0021-\u007F]/u, s) !== null;
-  if (ArrayPrototypeSome.call(patternParts, isBad)) return false;
+  const isBad = s => RegExpPrototypeExec.$call(/[^\u0021-\u007F]/u, s) !== null;
+  if (ArrayPrototypeSome.$call(patternParts, isBad)) return false;
 
   // Check host parts from right to left first.
   for (let i = hostParts.length - 1; i > 0; i -= 1) {
@@ -79,12 +83,12 @@ function check(hostParts, pattern, wildcards) {
 
   const hostSubdomain = hostParts[0];
   const patternSubdomain = patternParts[0];
-  const patternSubdomainParts = StringPrototypeSplit.call(patternSubdomain, "*");
+  const patternSubdomainParts = StringPrototypeSplit.$call(patternSubdomain, "*");
 
   // Short-circuit when the subdomain does not contain a wildcard.
   // RFC 6125 does not allow wildcard substitution for components
   // containing IDNA A-labels (Punycode) so match those verbatim.
-  if (patternSubdomainParts.length === 1 || StringPrototypeIncludes.call(patternSubdomain, "xn--"))
+  if (patternSubdomainParts.length === 1 || StringPrototypeIncludes.$call(patternSubdomain, "xn--"))
     return hostSubdomain === patternSubdomain;
 
   if (!wildcards) return false;
@@ -99,9 +103,9 @@ function check(hostParts, pattern, wildcards) {
 
   if (prefix.length + suffix.length > hostSubdomain.length) return false;
 
-  if (!StringPrototypeStartsWith.call(hostSubdomain, prefix)) return false;
+  if (!StringPrototypeStartsWith.$call(hostSubdomain, prefix)) return false;
 
-  if (!StringPrototypeEndsWith.call(hostSubdomain, suffix)) return false;
+  if (!StringPrototypeEndsWith.$call(hostSubdomain, suffix)) return false;
 
   return true;
 }
@@ -118,12 +122,12 @@ function splitEscapedAltNames(altNames) {
   let currentToken = "";
   let offset = 0;
   while (offset !== altNames.length) {
-    const nextSep = StringPrototypeIndexOf.call(altNames, ", ", offset);
-    const nextQuote = StringPrototypeIndexOf.call(altNames, '"', offset);
+    const nextSep = StringPrototypeIndexOf.$call(altNames, ", ", offset);
+    const nextQuote = StringPrototypeIndexOf.$call(altNames, '"', offset);
     if (nextQuote !== -1 && (nextSep === -1 || nextQuote < nextSep)) {
       // There is a quote character and there is no separator before the quote.
-      currentToken += StringPrototypeSubstring.call(altNames, offset, nextQuote);
-      const match = RegExpPrototypeExec.call(jsonStringPattern, StringPrototypeSubstring.call(altNames, nextQuote));
+      currentToken += StringPrototypeSubstring.$call(altNames, offset, nextQuote);
+      const match = RegExpPrototypeExec.$call(jsonStringPattern, StringPrototypeSubstring.$call(altNames, nextQuote));
       if (!match) {
         let error = new SyntaxError("ERR_TLS_CERT_ALTNAME_FORMAT: Invalid subject alternative name string");
         error.name = ERR_TLS_CERT_ALTNAME_FORMAT;
@@ -133,16 +137,16 @@ function splitEscapedAltNames(altNames) {
       offset = nextQuote + match[0].length;
     } else if (nextSep !== -1) {
       // There is a separator and no quote before it.
-      currentToken += StringPrototypeSubstring.call(altNames, offset, nextSep);
-      ArrayPrototypePush.call(result, currentToken);
+      currentToken += StringPrototypeSubstring.$call(altNames, offset, nextSep);
+      ArrayPrototypePush.$call(result, currentToken);
       currentToken = "";
       offset = nextSep + 2;
     } else {
-      currentToken += StringPrototypeSubstring.call(altNames, offset);
+      currentToken += StringPrototypeSubstring.$call(altNames, offset);
       offset = altNames.length;
     }
   }
-  ArrayPrototypePush.call(result, currentToken);
+  ArrayPrototypePush.$call(result, currentToken);
   return result;
 }
 
@@ -155,14 +159,14 @@ function checkServerIdentity(hostname, cert) {
   hostname = "" + hostname;
 
   if (altNames) {
-    const splitAltNames = StringPrototypeIncludes.call(altNames, '"')
+    const splitAltNames = StringPrototypeIncludes.$call(altNames, '"')
       ? splitEscapedAltNames(altNames)
-      : StringPrototypeSplit.call(altNames, ", ");
-    ArrayPrototypeForEach.call(splitAltNames, name => {
-      if (StringPrototypeStartsWith.call(name, "DNS:")) {
-        ArrayPrototypePush.call(dnsNames, StringPrototypeSlice.call(name, 4));
-      } else if (StringPrototypeStartsWith.call(name, "IP Address:")) {
-        ArrayPrototypePush.call(ips, canonicalizeIP(StringPrototypeSlice.call(name, 11)));
+      : StringPrototypeSplit.$call(altNames, ", ");
+    ArrayPrototypeForEach.$call(splitAltNames, name => {
+      if (StringPrototypeStartsWith.$call(name, "DNS:")) {
+        ArrayPrototypePush.$call(dnsNames, StringPrototypeSlice.$call(name, 4));
+      } else if (StringPrototypeStartsWith.$call(name, "IP Address:")) {
+        ArrayPrototypePush.$call(ips, canonicalizeIP(StringPrototypeSlice.$call(name, 11)));
       }
     });
   }
@@ -172,20 +176,20 @@ function checkServerIdentity(hostname, cert) {
 
   hostname = unfqdn(hostname); // Remove trailing dot for error messages.
   if (net.isIP(hostname)) {
-    valid = ArrayPrototypeIncludes.call(ips, canonicalizeIP(hostname));
-    if (!valid) reason = `IP: ${hostname} is not in the cert's list: ` + ArrayPrototypeJoin.call(ips, ", ");
+    valid = ArrayPrototypeIncludes.$call(ips, canonicalizeIP(hostname));
+    if (!valid) reason = `IP: ${hostname} is not in the cert's list: ` + ArrayPrototypeJoin.$call(ips, ", ");
   } else if (dnsNames.length > 0 || subject?.CN) {
     const hostParts = splitHost(hostname);
     const wildcard = pattern => check(hostParts, pattern, true);
 
     if (dnsNames.length > 0) {
-      valid = ArrayPrototypeSome.call(dnsNames, wildcard);
+      valid = ArrayPrototypeSome.$call(dnsNames, wildcard);
       if (!valid) reason = `Host: ${hostname}. is not in the cert's altnames: ${altNames}`;
     } else {
       // Match against Common Name only if no supported identifiers exist.
       const cn = subject.CN;
 
-      if (Array.isArray(cn)) valid = ArrayPrototypeSome.call(cn, wildcard);
+      if (Array.isArray(cn)) valid = ArrayPrototypeSome.$call(cn, wildcard);
       else if (cn) valid = wildcard(cn);
 
       if (!valid) reason = `Host: ${hostname}. is not cert's CN: ${cn}`;
@@ -281,7 +285,7 @@ function translatePeerCertificate(c) {
     const info = c.infoAccess;
     c.infoAccess = { __proto__: null };
     // XXX: More key validation?
-    RegExpPrototypeSymbolReplace.call(/([^\n:]*):([^\n]*)(?:\n|$)/g, info, (all, key, val) => {
+    RegExpPrototypeSymbolReplace.$call(/([^\n:]*):([^\n]*)(?:\n|$)/g, info, (all, key, val) => {
       if (val.charCodeAt(0) === 0x22) {
         // The translatePeerCertificate function is only
         // used on internally created legacy certificate
@@ -290,7 +294,7 @@ function translatePeerCertificate(c) {
         // so this should never throw.
         val = JSONParse(val);
       }
-      if (key in c.infoAccess) ArrayPrototypePush.call(c.infoAccess[key], val);
+      if (key in c.infoAccess) ArrayPrototypePush.$call(c.infoAccess[key], val);
       else c.infoAccess[key] = [val];
     });
   }
@@ -346,6 +350,7 @@ const TLSSocket = (function (InternalTLSSocket) {
     }
 
     _secureEstablished = false;
+    _rejectUnauthorized = rejectUnauthorizedDefault;
     _securePending = true;
     _newSessionPending;
     _controlReleased;
@@ -473,6 +478,8 @@ const TLSSocket = (function (InternalTLSSocket) {
         serverName: this.servername || host || "localhost",
         checkServerIdentity: this.#checkServerIdentity,
         session: this.#session,
+        rejectUnauthorized: this._rejectUnauthorized,
+        requestCert: this._requestCert,
         ...this.#secureContext,
       };
     }
@@ -485,7 +492,7 @@ class Server extends NetServer {
   ca;
   passphrase;
   secureOptions;
-  _rejectUnauthorized;
+  _rejectUnauthorized = rejectUnauthorizedDefault;
   _requestCert;
   servername;
   ALPNProtocols;
@@ -557,11 +564,11 @@ class Server extends NetServer {
       if (requestCert) this._requestCert = requestCert;
       else this._requestCert = undefined;
 
-      const rejectUnauthorized = options.rejectUnauthorized || false;
+      const rejectUnauthorized = options.rejectUnauthorized;
 
-      if (rejectUnauthorized) {
+      if (typeof rejectUnauthorized !== "undefined") {
         this._rejectUnauthorized = rejectUnauthorized;
-      } else this._rejectUnauthorized = undefined;
+      } else this._rejectUnauthorized = rejectUnauthorizedDefault;
     }
   }
 
@@ -582,9 +589,8 @@ class Server extends NetServer {
         ca: this.ca,
         passphrase: this.passphrase,
         secureOptions: this.secureOptions,
-        // Client always is NONE on set_verify
-        rejectUnauthorized: isClient ? false : this._rejectUnauthorized,
-        requestCert: isClient ? false : this._requestCert,
+        rejectUnauthorized: this._rejectUnauthorized,
+        requestCert: isClient ? true : this._requestCert,
         ALPNProtocols: this.ALPNProtocols,
       },
       SocketClass,
@@ -627,7 +633,7 @@ function getCiphers() {
 function convertProtocols(protocols) {
   const lens = new Array(protocols.length);
   const buff = Buffer.allocUnsafe(
-    ArrayPrototypeReduce.call(
+    ArrayPrototypeReduce.$call(
       protocols,
       (p, c, i) => {
         const len = Buffer.byteLength(c);

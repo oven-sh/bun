@@ -3461,6 +3461,18 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
     if (!m_codeBlock)
         return;
 
+    // https://github.com/oven-sh/bun/issues/6951
+    auto* provider = m_codeBlock->source().provider();
+
+    if (UNLIKELY(!provider))
+        return;
+
+    // Make sure the range is valid
+    WTF::StringView sourceString = provider->source();
+
+    if (UNLIKELY(sourceString.isNull()))
+        return;
+
     JSC::BytecodeIndex bytecodeOffset = stackFrame->hasBytecodeIndex() ? stackFrame->bytecodeIndex() : JSC::BytecodeIndex();
 
     /* Get the "raw" position info.
@@ -3500,15 +3512,12 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
     // Calculate the staring\ending offsets of the entire expression
     int expressionStart = divotPoint - startOffset;
     int expressionStop = divotPoint + endOffset;
-
-    // Make sure the range is valid
-    WTF::StringView sourceString = m_codeBlock->source().provider()->source();
     if (expressionStop < 1 || expressionStart > static_cast<int>(sourceString.length())) {
         return;
     }
 
     // Search for the beginning of the line
-    unsigned int lineStart = expressionStart;
+    unsigned int lineStart = expressionStart > 0 ? expressionStart : 0;
     while ((lineStart > 0) && ('\n' != sourceString[lineStart - 1])) {
         lineStart--;
     }

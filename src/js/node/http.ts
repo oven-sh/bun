@@ -610,13 +610,10 @@ function assignHeadersSlow(object, req) {
   object.headers = outHeaders;
   object.rawHeaders = rawHeaders;
 }
-// This is the prototype for the req.headers object.
-// It must not be exposed
-const kEmptyObjectInternal = Object.create(null);
 
 function assignHeaders(object, req) {
   // This fast path is an 8% speedup for a "hello world" node:http server, and a 7% speedup for a "hello world" express server
-  const tuple = assignHeadersFast(req, kEmptyObjectInternal, object);
+  const tuple = assignHeadersFast(req, object);
   if (tuple !== null) {
     object.headers = $getInternalField(tuple, 0);
     object.rawHeaders = $getInternalField(tuple, 1);

@@ -1,6 +1,28 @@
 import { it, expect, describe } from "bun:test";
 import util from "util";
 
+it("prototype", () => {
+  const prototypes = [
+    Request.prototype,
+    Response.prototype,
+    Blob.prototype,
+    Headers.prototype,
+    URL.prototype,
+    URLSearchParams.prototype,
+    ReadableStream.prototype,
+    WritableStream.prototype,
+    TransformStream.prototype,
+    MessageEvent.prototype,
+    CloseEvent.prototype,
+    WebSocket.prototype,
+  ];
+
+  for (let prototype of prototypes) {
+    for (let i = 0; i < 10; i++) expect(Bun.inspect(prototype).length > 0).toBeTrue();
+  }
+  Bun.gc(true);
+});
+
 it("getters", () => {
   const obj = {
     get foo() {

@@ -174,7 +174,7 @@ ffiWrappers[FFIType.int32_t] = "val|0";
 // when passing the value to the C ffi code, misinterpret it again, resulting in the correct uint32_t.
 //
 // To do this in native code, there is a spot in zig where uint32_t just prints int32_t.
-ffiWrappers[FFIType.uint32_t] = "val<0?0:val>0xFFFFFFFF?-1:(val|0)";
+ffiWrappers[FFIType.uint32_t] = "val<0?0:val>0xFFFFFFFF?-1:val|0";
 ffiWrappers[FFIType.i64_fast] = `{
   if (typeof val === "bigint") {
     if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= BigInt(-Number.MAX_SAFE_INTEGER)) {

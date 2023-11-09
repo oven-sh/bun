@@ -197,7 +197,7 @@ static EncodedJSValue INT32_TO_JSVALUE(int32_t val) {
 
 static EncodedJSValue UINT32_TO_JSVALUE(uint32_t val) {
   EncodedJSValue res;
-  if(val < MAX_INT32) {
+  if(val <= MAX_INT32) {
     res.asInt64 = NumberTag | val;
     return res;
   } else {

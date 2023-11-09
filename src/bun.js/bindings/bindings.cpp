@@ -1697,7 +1697,11 @@ unsigned char JSC__JSValue__jsType(JSC__JSValue JSValue0)
     JSC::JSValue jsValue = JSC::JSValue::decode(JSValue0);
     // if the value is NOT a cell
     // asCell will return an invalid pointer rather than a nullptr
-    if (jsValue.isCell())
+    //
+    // The empty check is needed because the value could be empty
+    // and return true from isCell if it's an array hole from a
+    // sparse array.
+    if (jsValue.isCell() and !jsValue.isEmpty())
         return jsValue.asCell()->type();
 
     return 0;

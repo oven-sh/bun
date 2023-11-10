@@ -1603,12 +1603,14 @@ pub const Arguments = struct {
         const LinkType = if (!Environment.isWindows)
             u0
         else
-            enum {
-                auto,
-                file,
-                dir,
-                junction,
-            };
+            LinkTypeEnum;
+
+        const LinkTypeEnum = enum {
+            auto,
+            file,
+            dir,
+            junction,
+        };
 
         pub fn deinit(this: Symlink) void {
             this.old_path.deinit();
@@ -1670,11 +1672,9 @@ pub const Arguments = struct {
                         arguments.eat();
                         var str = next_val.toBunString(ctx.ptr());
                         var utf8 = str.utf8();
-                        inline for (std.enums.values(LinkType)) |f| {
-                            if (f != .auto and strings.eqlComptime(utf8, @tagName(f))) {
-                                break :link_type f;
-                            }
-                        }
+                        if (strings.eqlComptime(utf8, "dir")) break :link_type .dir;
+                        if (strings.eqlComptime(utf8, "file")) break :link_type .file;
+                        if (strings.eqlComptime(utf8, "junction")) break :link_type .junction;
                         if (exception.* == null) {
                             JSC.throwInvalidArguments(
                                 "Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{s}\"",

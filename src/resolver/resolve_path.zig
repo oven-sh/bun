@@ -969,15 +969,15 @@ pub fn joinStringBuf(buf: []u8, parts: anytype, comptime _platform: Platform) []
     return normalizeStringNode(temp_buf[0..written], buf, platform);
 }
 
-pub fn joinAbsStringBuf(_cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) []const u8 {
-    return _joinAbsStringBuf(false, []const u8, _cwd, buf, _parts, _platform);
+pub fn joinAbsStringBuf(cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) []const u8 {
+    return _joinAbsStringBuf(false, []const u8, cwd, buf, _parts, _platform);
 }
 
-pub fn joinAbsStringBufZ(_cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) [:0]const u8 {
-    return _joinAbsStringBuf(true, [:0]const u8, _cwd, buf, _parts, _platform);
+pub fn joinAbsStringBufZ(cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) [:0]const u8 {
+    return _joinAbsStringBuf(true, [:0]const u8, cwd, buf, _parts, _platform);
 }
 
-fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) ReturnType {
+fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd: []const u8, buf: []u8, _parts: anytype, comptime platform: Platform) ReturnType {
     var parts: []const []const u8 = _parts;
     var temp_buf: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
     if (parts.len == 0) {
@@ -987,7 +987,7 @@ fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd
         return _cwd;
     }
 
-    if ((comptime _platform == .loose or _platform == .posix) and
+    if ((comptime platform == .loose or platform == .posix) and
         parts.len == 1 and
         parts[0].len == 1 and
         parts[0][0] == std.fs.path.sep_posix)
@@ -996,27 +996,82 @@ fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd
     }
 
     var out: usize = 0;
-    var cwd = _cwd;
+    // cwd: posix is the cwd, windows is the text after the :
+    // driveLetter: "/" to represent no drive letter, otherwise the drive letter
+    var cwd, var driveLetter: if (platform == .windows) u8 else u0 = if (platform == .windows) cwdAndDrive: {
+        if (_cwd.len >= 3 and _cwd[1] == ':' and strings.charIsAnySlash(_cwd[2])) {
+            break :cwdAndDrive .{ _cwd[2..], _cwd[0] };
+        }
+        break :cwdAndDrive .{ _cwd, '/' };
+    } else .{
+        // When on windows, posix path resolve has to remove drive label from cwd
+        if (bun.Environment.isWindows and _cwd.len >= 3 and _cwd[1] == ':')
+            _cwd[2..]
+        else
+            _cwd,
+        0,
+    };
 
     {
         var part_i: u16 = 0;
         var part_len: u16 = @as(u16, @truncate(parts.len));
 
         while (part_i < part_len) {
-            if (_platform.isAbsolute(parts[part_i])) {
-                cwd = parts[part_i];
-                parts = parts[part_i + 1 ..];
+            if (platform.isAbsolute(parts[part_i])) {
+                if (platform == .windows and strings.charIsAnySlash(parts[part_i][0])) {
+                    cwd = parts[part_i];
+                } else if (platform == .windows) {
+                    cwd = parts[part_i][2..];
+                    driveLetter = parts[part_i][0];
+                } else {
+                    cwd = parts[part_i];
+                }
 
+                parts = parts[part_i + 1 ..];
                 part_len = @as(u16, @truncate(parts.len));
                 part_i = 0;
+
                 continue;
+            }
+            // Relative Drive Letters
+            // If CWD is on "C:\...", then "D:./relative" must act as an absolute path,
+            // But if they match, the drive letter is ignored and it is a relative path.
+            if ((platform == .windows) and
+                parts[part_i].len > 2 and
+                parts[part_i][1] == ':' and
+                switch (parts[part_i][0]) {
+                'a'...'z', 'A'...'Z' => true,
+                else => false,
+            }) {
+                if (cwd.len == 0 or parts[part_i][0] != driveLetter) {
+                    cwd = parts[part_i][2..];
+                    driveLetter = parts[part_i][0];
+                    parts = parts[part_i + 1 ..];
+
+                    part_len = @as(u16, @truncate(parts.len));
+                    part_i = 0;
+                    continue;
+                }
             }
             part_i += 1;
         }
     }
 
-    bun.copy(u8, &temp_buf, cwd);
-    out = cwd.len;
+    if (platform == .windows and driveLetter != '/') {
+        temp_buf[0] = driveLetter;
+        temp_buf[1] = ':';
+        if (cwd.len > 0 and cwd[0] != '/') {
+            temp_buf[2] = '\\';
+            @memcpy(temp_buf[3 .. 3 + cwd.len], cwd);
+            out = cwd.len + 3;
+        } else {
+            @memcpy(temp_buf[2 .. 2 + cwd.len], cwd);
+            out = cwd.len + 2;
+        }
+    } else {
+        @memcpy(temp_buf[0..cwd.len], cwd);
+        out = cwd.len;
+    }
 
     for (parts) |_part| {
         if (_part.len == 0) {
@@ -1025,33 +1080,49 @@ fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd
 
         var part = _part;
 
-        if (out > 0 and temp_buf[out - 1] != _platform.separator()) {
-            temp_buf[out] = _platform.separator();
+        if (out > 0 and temp_buf[out - 1] != platform.separator()) {
+            temp_buf[out] = platform.separator();
             out += 1;
         }
 
-        bun.copy(u8, temp_buf[out..], part);
-        out += part.len;
+        // I do not like that the relative drive stuff is checked a second time, but it is only done on windows.
+        const to_copy = if (platform == .windows and part.len >= 2 and
+            part[1] == ':' and
+            switch (part[0]) {
+            'a'...'z', 'A'...'Z' => true,
+            else => false,
+        })
+            part[2..]
+        else
+            part;
+        bun.copy(u8, temp_buf[out..], to_copy);
+        out += to_copy.len;
     }
 
-    const leading_separator: []const u8 = if (_platform.leadingSeparatorIndex(temp_buf[0..out])) |i| brk: {
+    const leading_separator: []const u8 = if (platform.leadingSeparatorIndex(temp_buf[0..out])) |i| brk: {
         var outdir = temp_buf[0 .. i + 1];
-        if (_platform == .windows or _platform == .loose) {
+        const this_sep = comptime platform.separator();
+        const other_sep = comptime switch (this_sep) {
+            '/' => '\\',
+            '\\' => '/',
+            else => unreachable,
+        };
+        if (platform == .loose or platform == .windows) {
             for (outdir) |*c| {
-                if (c.* == '\\') {
-                    c.* = '/';
+                if (c.* == other_sep) {
+                    c.* = this_sep;
                 }
             }
         }
 
         break :brk outdir;
-    } else "/";
+    } else comptime platform.separatorString();
 
     const result = normalizeStringBuf(
         temp_buf[leading_separator.len..out],
         buf[leading_separator.len..],
         false,
-        _platform,
+        platform,
         true,
     );
 

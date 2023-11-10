@@ -285,7 +285,7 @@ else
     std.os.iovec;
 
 pub fn platformIOVecCreate(input: []const u8) PlatformIOVec {
-    if (Environment.isWindows) return windows.libuv.uv_buf_t.init(input.ptr, input.len);
+    if (Environment.isWindows) return windows.libuv.uv_buf_t.init(input);
     if (Environment.allow_assert) {
         if (input.len > @as(usize, std.math.maxInt(u32))) {
             Output.prettyWarnln("debug warn: call to bun.PlatformIOVec.init with len {d}, this will overflow on windows.", .{
@@ -297,7 +297,7 @@ pub fn platformIOVecCreate(input: []const u8) PlatformIOVec {
 }
 
 pub fn platformIOVecToSlice(iovec: PlatformIOVec) []u8 {
-    if (Environment.isWindows) return windows.libuv.uv_buf_t.slice(iovec.ptr, iovec.len);
+    if (Environment.isWindows) return windows.libuv.uv_buf_t.slice(iovec);
     return iovec.base[0..iovec.len];
 }
 
@@ -1200,6 +1200,8 @@ pub fn getcwd(buf_: []u8) ![]u8 {
 
     var temp: [MAX_PATH_BYTES]u8 = undefined;
     var temp_slice = try std.os.getcwd(&temp);
+    // Paths are normalized to use / to make more things reliable, but eventually this will have to change to be the true file sep
+    // It is possible to expose this value to JS land
     return path.normalizeBuf(temp_slice, buf_, .loose);
 }
 

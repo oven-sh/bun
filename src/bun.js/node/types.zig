@@ -2421,7 +2421,7 @@ pub const Path = struct {
         var parts = allocator.alloc(string, args_len) catch unreachable;
         defer allocator.free(parts);
 
-        var arena = @import("root").bun.ArenaAllocator.init(heap_allocator);
+        var arena = bun.ArenaAllocator.init(heap_allocator);
         var arena_allocator = arena.allocator();
         defer arena.deinit();
 
@@ -2431,11 +2431,9 @@ pub const Path = struct {
         }
 
         var out: JSC.ZigString = if (!isWindows)
-            JSC.ZigString.init(PathHandler.joinAbsStringBuf(Fs.FileSystem.instance.top_level_dir, &out_buf, parts, .posix))
+            JSC.ZigString.init(strings.withoutTrailingSlash(PathHandler.joinAbsStringBuf(Fs.FileSystem.instance.top_level_dir, &out_buf, parts, .posix)))
         else
-            JSC.ZigString.init(PathHandler.joinAbsStringBuf(Fs.FileSystem.instance.top_level_dir, &out_buf, parts, .windows));
-
-        out.len = strings.withoutTrailingSlash(out.slice()).len;
+            JSC.ZigString.init(strings.withoutTrailingSlashWindowsPath(PathHandler.joinAbsStringBuf(Fs.FileSystem.instance.top_level_dir, &out_buf, parts, .windows)));
 
         if (arena.state.buffer_list.first != null)
             out.setOutputEncoding();

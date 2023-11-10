@@ -10,7 +10,6 @@ const net = require("node:net");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 type Http2ConnectOptions = { settings?: Settings; protocol?: "https:" | "http:"; createConnection?: Function };
 const TLSSocket = tls.TLSSocket;
-const Socket = net.Socket;
 const EventEmitter = require("node:events");
 const { Duplex } = require("node:stream");
 const { H2FrameParser, getPackedSettings, getUnpackedSettings } = $lazy("internal/http2");
@@ -25,6 +24,7 @@ const bunHTTP2Session = Symbol.for("::bunhttp2session::");
 
 const ReflectGetPrototypeOf = Reflect.getPrototypeOf;
 const FunctionPrototypeBind = Function.prototype.call.bind(Function.prototype.bind);
+const isArray = Array.isArray;
 
 const proxySocketHandler = {
   get(session, prop) {
@@ -354,64 +354,6 @@ const NoPayloadMethods = new Set([
   constants.HTTP2_METHOD_HEAD,
 ]);
 
-const ValidPseudoHeaders = new Set([
-  constants.HTTP2_HEADER_STATUS,
-  constants.HTTP2_HEADER_METHOD,
-  constants.HTTP2_HEADER_AUTHORITY,
-  constants.HTTP2_HEADER_SCHEME,
-  constants.HTTP2_HEADER_PATH,
-  constants.HTTP2_HEADER_PROTOCOL,
-]);
-
-const SingleValueHeaders = new Set([
-  constants.HTTP2_HEADER_STATUS,
-  constants.HTTP2_HEADER_METHOD,
-  constants.HTTP2_HEADER_AUTHORITY,
-  constants.HTTP2_HEADER_SCHEME,
-  constants.HTTP2_HEADER_PATH,
-  constants.HTTP2_HEADER_PROTOCOL,
-  constants.HTTP2_HEADER_ACCESS_CONTROL_ALLOW_CREDENTIALS,
-  constants.HTTP2_HEADER_ACCESS_CONTROL_MAX_AGE,
-  constants.HTTP2_HEADER_ACCESS_CONTROL_REQUEST_METHOD,
-  constants.HTTP2_HEADER_AGE,
-  constants.HTTP2_HEADER_AUTHORIZATION,
-  constants.HTTP2_HEADER_CONTENT_ENCODING,
-  constants.HTTP2_HEADER_CONTENT_LANGUAGE,
-  constants.HTTP2_HEADER_CONTENT_LENGTH,
-  constants.HTTP2_HEADER_CONTENT_LOCATION,
-  constants.HTTP2_HEADER_CONTENT_MD5,
-  constants.HTTP2_HEADER_CONTENT_RANGE,
-  constants.HTTP2_HEADER_CONTENT_TYPE,
-  constants.HTTP2_HEADER_DATE,
-  constants.HTTP2_HEADER_DNT,
-  constants.HTTP2_HEADER_ETAG,
-  constants.HTTP2_HEADER_EXPIRES,
-  constants.HTTP2_HEADER_FROM,
-  constants.HTTP2_HEADER_HOST,
-  constants.HTTP2_HEADER_IF_MATCH,
-  constants.HTTP2_HEADER_IF_MODIFIED_SINCE,
-  constants.HTTP2_HEADER_IF_NONE_MATCH,
-  constants.HTTP2_HEADER_IF_RANGE,
-  constants.HTTP2_HEADER_IF_UNMODIFIED_SINCE,
-  constants.HTTP2_HEADER_LAST_MODIFIED,
-  constants.HTTP2_HEADER_LOCATION,
-  constants.HTTP2_HEADER_MAX_FORWARDS,
-  constants.HTTP2_HEADER_PROXY_AUTHORIZATION,
-  constants.HTTP2_HEADER_RANGE,
-  constants.HTTP2_HEADER_REFERER,
-  constants.HTTP2_HEADER_RETRY_AFTER,
-  constants.HTTP2_HEADER_TK,
-  constants.HTTP2_HEADER_UPGRADE_INSECURE_REQUESTS,
-  constants.HTTP2_HEADER_USER_AGENT,
-  constants.HTTP2_HEADER_X_CONTENT_TYPE_OPTIONS,
-]);
-
-type NativeHttp2HeaderValue = {
-  name: string;
-  value: string;
-  neverIndex?: boolean;
-};
-
 type Settings = {
   headerTableSize: number;
   enablePush: boolean;
@@ -424,30 +366,11 @@ type Settings = {
 
 class Http2Session extends EventEmitter {}
 
-class ClientStream extends EventEmitter {}
-class Http2Stream extends EventEmitter {}
-
 function streamErrorFromCode(code: number) {
   const error = new Error(`Stream closed with error code ${code}`);
   error.code = "ERR_HTTP2_STREAM_ERROR";
   error.errno = code;
   return error;
-}
-
-function assertPseudoHeader(name: string) {
-  if (ValidPseudoHeaders.has(name)) return;
-
-  const error = new TypeError(`"${name}" is an invalid pseudoheader or is used incorrectly`);
-  error.code = "ERR_HTTP2_INVALID_PSEUDOHEADER";
-  throw error;
-}
-
-function assertSingleValueHeader(name: string) {
-  if (!SingleValueHeaders.has(name)) return;
-
-  const error = new TypeError(`Header field "${name}" must only have a single value`);
-  error.code = "ERR_HTTP2_INVALID_SINGLE_VALUE_HEADER";
-  throw error;
 }
 
 function assertSession(session) {
@@ -456,37 +379,6 @@ function assertSession(session) {
     error.code = "ERR_HTTP2_INVALID_SESSION";
     throw error;
   }
-}
-
-function reduceToCompatileTrailerHeaders(obj: any, currentValue: any) {
-  let { name, value } = currentValue;
-  // invalid or malformed header
-  if (name.startsWith(":")) throw new Error("Invalid tariler header");
-  const lastValue = obj[name];
-  if (typeof lastValue === "string" || typeof lastValue === "number") {
-    obj[name] = [obj[name], value];
-  } else if (Array.isArray(lastValue)) {
-    obj[name].push(value);
-  } else {
-    obj[name] = value;
-  }
-  return obj;
-}
-
-function reduceToCompatibleHeaders(obj: any, currentValue: any) {
-  let { name, value } = currentValue;
-  if (name === constants.HTTP2_HEADER_STATUS) {
-    value = parseInt(value, 10);
-  }
-  const lastValue = obj[name];
-  if (typeof lastValue === "string" || typeof lastValue === "number") {
-    obj[name] = [obj[name], value];
-  } else if (Array.isArray(lastValue)) {
-    obj[name].push(value);
-  } else {
-    obj[name] = value;
-  }
-  return obj;
 }
 
 class ClientHttp2Stream extends Duplex {
@@ -542,14 +434,26 @@ class ClientHttp2Stream extends Duplex {
     const session = this[bunHTTP2Session];
     assertSession(session);
 
-    if (!(headers instanceof Object)) {
-      throw new Error("ERROR_HTTP2: Invalid headers");
+    if (this.destroyed || this.closed) {
+      const error = new Error(`ERR_HTTP2_INVALID_STREAM: The stream has been destroyed`);
+      error.code = "ERR_HTTP2_INVALID_STREAM";
+      throw error;
     }
-    const flat_headers: Array<NativeHttp2HeaderValue> = [];
+
+    if (this.sentTrailers) {
+      const error = new Error(`ERR_HTTP2_TRAILERS_ALREADY_SENT: Trailing headers have already been sent`);
+      error.code = "ERR_HTTP2_TRAILERS_ALREADY_SENT";
+      throw error;
+    }
+
+    if (!(headers instanceof Object)) {
+      throw new Error("ERR_HTTP2_INVALID_HEADERS: headers must be an object");
+    }
+
     const sensitives = headers[sensitiveHeaders];
     const sensitiveNames = {};
     if (sensitives) {
-      if (!Array.isArray(sensitives)) {
+      if (!isArray(sensitives)) {
         const error = new TypeError("headers[http2.neverIndex]");
         error.code = "ERR_INVALID_ARG_VALUE";
         throw error;
@@ -559,30 +463,7 @@ class ClientHttp2Stream extends Duplex {
       }
     }
 
-    const keys = Object.keys(headers);
-    for (let key of keys) {
-      //@ts-ignore
-      if (key === sensitiveHeaders) {
-        continue;
-      }
-      // no pseudo headers are allowed in trailer headers
-      if (key.startsWith(":")) {
-        const error = new TypeError(`"${key}" is an invalid pseudoheader or is used incorrectly`);
-        error.code = "ERR_HTTP2_INVALID_PSEUDOHEADER";
-        throw error;
-      }
-
-      const value = headers[key];
-      if (Array.isArray(value)) {
-        assertSingleValueHeader(key);
-        for (let i = 0; i < value.length; i++) {
-          flat_headers.push({ name: key, value: value[i]?.toString(), neverIndex: sensitiveNames[key] || false });
-        }
-      } else {
-        flat_headers.push({ name: key, value: value?.toString() });
-      }
-    }
-    session[bunHTTP2Native]?.sendTrailers(this.#id, flat_headers);
+    session[bunHTTP2Native]?.sendTrailers(this.#id, headers, sensitiveNames);
     this.#sentTrailers = headers;
   }
 
@@ -851,18 +732,39 @@ class ClientHttp2Session extends Http2Session {
         queue.push(data);
       }
     },
-    streamHeaders(self: ClientHttp2Session, streamId: number, headers: Array<NativeHttp2HeaderValue>, flags: number) {
+    streamHeaders(
+      self: ClientHttp2Session,
+      streamId: number,
+      headers: Record<string, string | string[]>,
+      flags: number,
+    ) {
       var stream = self.#streams.get(streamId);
       if (stream) {
+        let status: string | number = headers[":status"] as string;
+        if (status) {
+          // client status is always number
+          status = parseInt(status as string, 10);
+          (headers as Record<string, string | number>)[":status"] = status;
+        }
+
+        let set_cookies = headers["set-cookie"];
+        if (typeof set_cookies === "string") {
+          (headers as Record<string, string | string[]>)["set-cookie"] = [set_cookies];
+        }
+
+        let cookie = headers["cookie"];
+        if (isArray(cookie)) {
+          headers["cookie"] = (headers["cookie"] as string[]).join(";");
+        }
         if (stream[bunHTTP2StreamResponded]) {
           try {
-            stream.emit("trailers", headers.reduce(reduceToCompatileTrailerHeaders, {}), flags);
+            stream.emit("trailers", headers, flags);
           } catch {
             process.nextTick(emitStreamErrorNT, self, self.#streams, streamId, constants.NGHTTP2_PROTOCOL_ERROR, true);
           }
         } else {
           stream[bunHTTP2StreamResponded] = true;
-          stream.emit("response", headers.reduce(reduceToCompatibleHeaders, {}), flags);
+          stream.emit("response", headers, flags);
         }
       }
     },
@@ -1231,14 +1133,10 @@ class ClientHttp2Session extends Http2Session {
     if (!(headers instanceof Object)) {
       throw new Error("ERROR_HTTP2: Invalid headers");
     }
-    const flat_headers: Array<NativeHttp2HeaderValue> = [];
-    let has_scheme = false;
-    let authority: any = null;
-    let method: string | null = null;
     const sensitives = headers[sensitiveHeaders];
     const sensitiveNames = {};
     if (sensitives) {
-      if (!Array.isArray(sensitives)) {
+      if (!isArray(sensitives)) {
         const error = new TypeError("headers[http2.neverIndex]");
         error.code = "ERR_INVALID_ARG_VALUE";
         throw error;
@@ -1249,90 +1147,44 @@ class ClientHttp2Session extends Http2Session {
     }
     const url = this.#url;
 
-    const keys = Object.keys(headers);
-    for (let key of keys) {
-      //@ts-ignore
-      if (key === sensitiveHeaders) {
-        continue;
-      }
-      // only allowed for responses
-      if (key === constants.HTTP2_HEADER_STATUS) {
-        const error = new TypeError(
-          `"${constants.HTTP2_HEADER_STATUS}" is an invalid pseudoheader or is used incorrectly`,
-        );
-        error.code = "ERR_HTTP2_INVALID_PSEUDOHEADER";
-        throw error;
-      }
-      const is_pseudo_header = key.startsWith(":");
-      if (is_pseudo_header) {
-        assertPseudoHeader(key);
-      }
-      switch (key) {
-        case constants.HTTP2_HEADER_SCHEME:
-          has_scheme = true;
-          break;
-        case constants.HTTP2_HEADER_AUTHORITY:
-          authority = headers[key];
-          break;
-        case constants.HTTP2_HEADER_METHOD:
-          method = headers[key]?.toString() || "GET";
-          break;
-      }
-
-      const value = headers[key];
-      if (Array.isArray(value)) {
-        assertSingleValueHeader(key);
-        for (let i = 0; i < value.length; i++) {
-          const header = { name: key, value: value[i]?.toString(), neverIndex: sensitiveNames[key] || false };
-          if (is_pseudo_header) {
-            flat_headers.unshift(header);
-          } else {
-            flat_headers.push(header);
-          }
-        }
-      } else {
-        const header = { name: key, value: value?.toString() };
-        if (is_pseudo_header) {
-          flat_headers.unshift(header);
-        } else {
-          flat_headers.push(header);
-        }
-      }
-    }
-    if (!has_scheme) {
-      let protocol: string = options?.protocol || "https";
-      switch (url.protocol) {
-        case "https:":
-          protocol = "https";
-          break;
-        case "http:":
-          protocol = "http";
-          break;
-      }
-
-      flat_headers.unshift({ name: ":scheme", value: protocol });
-    }
+    let authority = headers[":authority"];
     if (!authority) {
-      authority = { name: ":authority", value: url.host };
-      flat_headers.unshift(authority);
+      authority = url.host;
+      headers[":authority"] = authority;
     }
-
+    let method = headers[":method"];
     if (!method) {
       method = "GET";
-      flat_headers.unshift({ name: ":method", value: method });
+      headers[":method"] = method;
+    }
+
+    let scheme = headers[":scheme"];
+    if (!scheme) {
+      let protocol: string = url.protocol || options?.protocol || "https:";
+      switch (protocol) {
+        case "https:":
+          scheme = "https";
+          break;
+        case "http:":
+          scheme = "http";
+          break;
+        default:
+          scheme = protocol;
+      }
+      headers[":scheme"] = scheme;
     }
 
     if (NoPayloadMethods.has(method.toUpperCase())) {
       options = options || {};
       options.endStream = true;
     }
-
     let stream_id: number;
     if (typeof options === "undefined") {
-      stream_id = this.#parser.request(flat_headers);
+      stream_id = this.#parser.request(headers, sensitiveNames);
     } else {
-      stream_id = this.#parser.request(flat_headers, options);
+      stream_id = this.#parser.request(headers, sensitiveNames, options);
     }
+
     if (stream_id < 0) {
       const error = new Error(
         "ERR_HTTP2_OUT_OF_STREAMS: No stream ID is available because maximum stream ID has been reached",

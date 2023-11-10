@@ -3344,6 +3344,16 @@ pub fn handleResponseMetadata(
         response.status_code = 304;
     }
 
+    // according to RFC 7230 section 6.3:
+    //   In order to remain persistent, all messages on a connection need to
+    //   have a self-defined message length (i.e., one not defined by closure
+    //   of the connection)
+    // therefore, if response has no content-length header and is not chunked, implicitly disable
+    // the keep-alive behavior (keep-alive being the default behavior for HTTP/1.1 and not for HTTP/1.0)
+    if (this.state.content_length == null and this.state.transfer_encoding != .chunked) {
+        this.state.allow_keepalive = false;
+    }
+
     // according to RFC 7230 section 3.3.3:
     //   1. Any response to a HEAD request and any response with a 1xx (Informational),
     //      204 (No Content), or 304 (Not Modified) status code

@@ -1841,6 +1841,13 @@ describe("http/1.1 response body length", () => {
             );
           } else if (text.startsWith("GET /empty")) {
             socket.end("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+          } else if (text.startsWith("GET /keepalive/bad")) {
+            const resp = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: keep-alive\r\n\r\nHello, World!";
+            socket.end(`${resp}${resp}`);
+          } else if (text.startsWith("GET /keepalive")) {
+            const resp =
+              "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: keep-alive\r\nContent-Length: 13\r\n\r\nHello, World!";
+            socket.end(`${resp}${resp}`);
           } else {
             socket.end(`HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nHello, World!`);
           }
@@ -1869,6 +1876,22 @@ describe("http/1.1 response body length", () => {
       expect(response.status).toBe(200);
       expect(response.json<unknown>()).resolves.toEqual({ "hello": "World" });
     });
+
+    it("should disable keep-alive", async () => {
+      // according to http/1.1 spec, the keep-alive persistence behavior should be disabled when
+      // "Content-Length" header is not set (and response is not chunked)
+      // therefore the response text for this test should contain
+      // the 1st http response body + the full 2nd http response as text
+      const response = await fetch(`http://${getHost()}/keepalive/bad`);
+      expect(response.status).toBe(200);
+      expect(response.text()).resolves.toHaveLength(95);
+    });
+  });
+
+  it("should support keep-alive", async () => {
+    const response = await fetch(`http://${getHost()}/keepalive`);
+    expect(response.status).toBe(200);
+    expect(response.text()).resolves.toBe("Hello, World!");
   });
 
   it("should support transfer-encoding: chunked", async () => {

@@ -78,6 +78,9 @@ subcommands:
       - name: server-bunfile
         type: string
         summary: "Use a specific .bun file for SSR in bun dev (default: node_modules.server.bun)"
+      - name: env-file
+        type: string
+        summary: "Load environment variables from the specified file(s)"
       - name: extension-order
         type: string
         summary: "defaults to: .tsx,.ts,.jsx,.js,.json"

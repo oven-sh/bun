@@ -243,6 +243,8 @@ const NetworkTask = struct {
         header_builder.count("npm-auth-type", "legacy");
     }
 
+    // The first time this happened!
+    //
     // "peerDependencies": {
     //   "@ianvs/prettier-plugin-sort-imports": "*",
     //   "prettier-plugin-twig-melody": "*"
@@ -254,7 +256,19 @@ const NetworkTask = struct {
     // Example case ^
     // `@ianvs/prettier-plugin-sort-imports` is peer and also optional but was not marked optional because
     // the offset would be 0 and the current loop index is also 0.
-    const invalidate_manifest_cache_because_optional_peer_dependencies_were_not_marked_as_optional_if_the_optional_peer_dependency_offset_was_equal_to_the_current_index = 1697871350;
+    // const invalidate_manifest_cache_because_optional_peer_dependencies_were_not_marked_as_optional_if_the_optional_peer_dependency_offset_was_equal_to_the_current_index = 1697871350;
+    // ----
+    // The second time this happened!
+    //
+    // pre-release sorting when the number of segments between dots were different, was sorted incorrectly
+    // so we must invalidate the manifest cache once again.
+    //
+    // example:
+    //
+    //  1.0.0-pre.a.b > 1.0.0-pre.a
+    //  before ordering said the left was smaller than the right
+    //
+    const invalidate_manifest_cache_because_prerelease_segments_were_sorted_incorrectly_sometimes = 1697871350;
 
     pub fn forManifest(
         this: *NetworkTask,
@@ -304,7 +318,7 @@ const NetworkTask = struct {
         var last_modified: string = "";
         var etag: string = "";
         if (loaded_manifest) |manifest| {
-            if (manifest.pkg.public_max_age > invalidate_manifest_cache_because_optional_peer_dependencies_were_not_marked_as_optional_if_the_optional_peer_dependency_offset_was_equal_to_the_current_index) {
+            if (manifest.pkg.public_max_age > invalidate_manifest_cache_because_prerelease_segments_were_sorted_incorrectly_sometimes) {
                 last_modified = manifest.pkg.last_modified.slice(manifest.string_buf);
                 etag = manifest.pkg.etag.slice(manifest.string_buf);
             }
@@ -2539,7 +2553,7 @@ pub const PackageManager = struct {
             Semver.Version.sortGt,
         );
         for (installed_versions.items) |installed_version| {
-            if (version.value.npm.version.satisfies(installed_version, this.lockfile.buffers.string_bytes.items)) {
+            if (version.value.npm.version.satisfies(installed_version, this.lockfile.buffers.string_bytes.items, tags_buf.items)) {
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 var npm_package_path = this.pathForCachedNPMPath(&buf, package_name, installed_version) catch |err| {
                     Output.debug("error getting path for cached npm path: {s}", .{bun.span(@errorName(err))});
@@ -2751,7 +2765,7 @@ pub const PackageManager = struct {
     fn resolutionSatisfiesDependency(this: *PackageManager, resolution: Resolution, dependency: Dependency.Version) bool {
         const buf = this.lockfile.buffers.string_bytes.items;
         if (resolution.tag == .npm and dependency.tag == .npm) {
-            return dependency.value.npm.version.satisfies(resolution.value.npm.version, buf);
+            return dependency.value.npm.version.satisfies(resolution.value.npm.version, buf, buf);
         }
 
         if (resolution.tag == .git and dependency.tag == .git) {
@@ -2788,11 +2802,32 @@ pub const PackageManager = struct {
                 switch (index) {
                     .PackageID => |existing_id| {
                         if (existing_id < resolutions.len) {
+                            const existing_resolution = resolutions[existing_id];
+                            if (this.resolutionSatisfiesDependency(existing_resolution, version)) {
+                                successFn(this, dependency_id, existing_id);
+                                return .{
+                                    // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
+                                    .package = this.lockfile.packages.get(existing_id),
+                                };
+                            }
+
                             const res_tag = resolutions[existing_id].tag;
                             const ver_tag = version.tag;
                             if ((res_tag == .npm and ver_tag == .npm) or (res_tag == .git and ver_tag == .git) or (res_tag == .github and ver_tag == .github)) {
+                                const existing_package = this.lockfile.packages.get(existing_id);
+                                this.log.addWarningFmt(
+                                    null,
+                                    logger.Loc.Empty,
+                                    this.allocator,
+                                    "incorrect peer dependency \"{}@{}\"",
+                                    .{
+                                        existing_package.name.fmt(this.lockfile.buffers.string_bytes.items),
+                                        existing_package.resolution.fmt(this.lockfile.buffers.string_bytes.items),
+                                    },
+                                ) catch unreachable;
                                 successFn(this, dependency_id, existing_id);
                                 return .{
+                                    // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
                                     .package = this.lockfile.packages.get(existing_id),
                                 };
                             }
@@ -2815,9 +2850,22 @@ pub const PackageManager = struct {
                             const res_tag = resolutions[list.items[0]].tag;
                             const ver_tag = version.tag;
                             if ((res_tag == .npm and ver_tag == .npm) or (res_tag == .git and ver_tag == .git) or (res_tag == .github and ver_tag == .github)) {
+                                const existing_package_id = list.items[0];
+                                const existing_package = this.lockfile.packages.get(existing_package_id);
+                                this.log.addWarningFmt(
+                                    null,
+                                    logger.Loc.Empty,
+                                    this.allocator,
+                                    "incorrect peer dependency \"{}@{}\"",
+                                    .{
+                                        existing_package.name.fmt(this.lockfile.buffers.string_bytes.items),
+                                        existing_package.resolution.fmt(this.lockfile.buffers.string_bytes.items),
+                                    },
+                                ) catch unreachable;
                                 successFn(this, dependency_id, list.items[0]);
                                 return .{
-                                    .package = this.lockfile.packages.get(list.items[0]),
+                                    // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
+                                    .package = this.lockfile.packages.get(existing_package_id),
                                 };
                             }
                         }
@@ -2832,7 +2880,7 @@ pub const PackageManager = struct {
                     if (this.lockfile.workspace_versions.count() > 0) resolve_from_workspace: {
                         if (this.lockfile.workspace_versions.get(name_hash)) |workspace_version| {
                             const buf = this.lockfile.buffers.string_bytes.items;
-                            if (version.value.npm.version.satisfies(workspace_version, buf)) {
+                            if (version.value.npm.version.satisfies(workspace_version, buf, buf)) {
                                 const root_package = this.lockfile.rootPackage() orelse break :resolve_from_workspace;
                                 const root_dependencies = root_package.dependencies.get(this.lockfile.buffers.dependencies.items);
                                 const root_resolutions = root_package.resolutions.get(this.lockfile.buffers.resolutions.items);
@@ -2856,7 +2904,7 @@ pub const PackageManager = struct {
                 const manifest = this.manifests.getPtr(name_hash) orelse return null; // manifest might still be downloading. This feels unreliable.
                 const find_result: Npm.PackageManifest.FindResult = switch (version.tag) {
                     .dist_tag => manifest.findByDistTag(this.lockfile.str(&version.value.dist_tag.tag)),
-                    .npm => manifest.findBestVersion(version.value.npm.version),
+                    .npm => manifest.findBestVersion(version.value.npm.version, this.lockfile.buffers.string_bytes.items),
                     else => unreachable,
                 } orelse return if (behavior.isPeer()) null else switch (version.tag) {
                     .npm => error.NoMatchingVersion,
@@ -3188,7 +3236,7 @@ pub const PackageManager = struct {
                     while (curr_list) |queries| {
                         var curr: ?*const Semver.Query = &queries.head;
                         while (curr) |query| {
-                            if (group.satisfies(query.range.left.version, buf) or group.satisfies(query.range.right.version, buf)) {
+                            if (group.satisfies(query.range.left.version, buf, buf) or group.satisfies(query.range.right.version, buf, buf)) {
                                 name = aliased.value.npm.name;
                                 name_hash = String.Builder.stringHash(this.lockfile.str(&name));
                                 break :version aliased;
@@ -4834,7 +4882,7 @@ pub const PackageManager = struct {
         explicit_global_directory: string = "",
         /// destination directory to link bins into
         // must be a variable due to global installs and bunx
-        bin_path: stringZ = "node_modules/.bin",
+        bin_path: stringZ = bun.pathLiteral("node_modules/.bin"),
 
         lockfile_path: stringZ = Lockfile.default_filename,
         did_override_default_scope: bool = false,
@@ -4932,11 +4980,20 @@ pub const PackageManager = struct {
                 return try std.fs.cwd().makeOpenPathIterable(path, .{});
             }
 
-            if (bun.getenvZ("XDG_CACHE_HOME") orelse bun.getenvZ("HOME")) |home_dir| {
-                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                var parts = [_]string{ ".bun", "install", "global" };
-                var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
-                return try std.fs.cwd().makeOpenPathIterable(path, .{});
+            if (!Environment.isWindows) {
+                if (bun.getenvZ("XDG_CACHE_HOME") orelse bun.getenvZ("HOME")) |home_dir| {
+                    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var parts = [_]string{ ".bun", "install", "global" };
+                    var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
+                    return try std.fs.cwd().makeOpenPathIterable(path, .{});
+                }
+            } else {
+                if (bun.getenvZ("USERPROFILE")) |home_dir| {
+                    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var parts = [_]string{ ".bun", "install", "global" };
+                    var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
+                    return try std.fs.cwd().makeOpenPathIterable(path, .{});
+                }
             }
 
             return error.@"No global directory found";

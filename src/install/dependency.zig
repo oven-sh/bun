@@ -615,7 +615,12 @@ pub const Version = struct {
             // git@example.com:path/to/repo.git
             if (isSCPLikePath(dependency)) return .git;
             // beta
-            return .dist_tag;
+
+            if (!strings.containsChar(dependency, '|')) {
+                return .dist_tag;
+            }
+
+            return .npm;
         }
     };
 
@@ -757,7 +762,16 @@ pub fn parseWithTag(
                 input,
                 sliced.sub(input),
             ) catch |err| {
-                if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "{s} parsing dependency \"{s}\"", .{ @errorName(err), dependency }) catch unreachable;
+                if (log_) |log| log.addErrorFmt(
+                    null,
+                    logger.Loc.Empty,
+                    allocator,
+                    "{s} parsing version \"{s}\"",
+                    .{
+                        @errorName(err),
+                        dependency,
+                    },
+                ) catch unreachable;
                 return null;
             };
 

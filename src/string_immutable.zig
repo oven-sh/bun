@@ -929,6 +929,10 @@ pub fn hasPrefixComptime(self: string, comptime alt: anytype) bool {
     return self.len >= alt.len and eqlComptimeCheckLenWithType(u8, self[0..alt.len], alt, false);
 }
 
+pub fn hasPrefixComptimeUTF16(self: []const u16, comptime alt: []const u8) bool {
+    return self.len >= alt.len and eqlComptimeCheckLenWithType(u16, self[0..alt.len], comptime toUTF16Literal(alt), false);
+}
+
 pub fn hasSuffixComptime(self: string, comptime alt: anytype) bool {
     return self.len >= alt.len and eqlComptimeCheckLenWithType(u8, self[self.len - alt.len ..], alt, false);
 }
@@ -4361,6 +4365,19 @@ pub fn trim(slice: anytype, comptime values_to_strip: []const u8) @TypeOf(slice)
     while (begin < end and std.mem.indexOfScalar(u8, values_to_strip, slice[begin]) != null) : (begin += 1) {}
     while (end > begin and std.mem.indexOfScalar(u8, values_to_strip, slice[end - 1]) != null) : (end -= 1) {}
     return slice[begin..end];
+}
+
+pub fn lengthOfLeadingWhitespaceASCII(slice: string) usize {
+    for (slice) |*c| {
+        switch (c.*) {
+            ' ', '\t', '\n', '\r', std.ascii.control_code.vt, std.ascii.control_code.ff => {},
+            else => {
+                return @intFromPtr(c) - @intFromPtr(slice.ptr);
+            },
+        }
+    }
+
+    return slice.len;
 }
 
 pub fn containsNonBmpCodePointUTF16(_text: []const u16) bool {

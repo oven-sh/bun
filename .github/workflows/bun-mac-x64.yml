@@ -273,10 +273,10 @@ jobs:
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
           brew link --overwrite llvm@$LLVM_VERSION
 
-          curl -LO "$BUN_DOWNLOAD_URL_BASE/bun-darwin-x64.zip"
-          unzip bun-darwin-x64.zip
+          curl -LO "$BUN_DOWNLOAD_URL_BASE/bun-darwin-x64-baseline.zip"
+          unzip bun-darwin-x64-baseline.zip
           mkdir -p ${{ runner.temp }}/.bun/bin
-          mv bun-darwin-x64/bun ${{ runner.temp }}/.bun/bin/bun
+          mv bun-darwin-x64-baseline/bun ${{ runner.temp }}/.bun/bin/bun
           chmod +x ${{ runner.temp }}/.bun/bin/bun
           echo "${{ runner.temp }}/.bun/bin" >> $GITHUB_PATH
 

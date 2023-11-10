@@ -1,0 +1,42 @@
+{
+	"name": "inject-node-gyp",
+	"versions": {
+		"1.0.0": {
+			"name": "inject-node-gyp",
+			"version": "1.0.0",
+			"scripts": {
+				"install": "node-gyp help"
+			},
+			"_id": "inject-node-gyp@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-AC9vGZSSZCdJ+rgWK8ilP8tucMSfTN86J21TBA3Cu+B4U9+NNsL7Y3pV98AnU0nENGpkge/D2Q42htSaW3d4gA==",
+				"shasum": "00fbbad474eda58e20e16080d8ad17e945386643",
+				"tarball": "http://localhost:4873/inject-node-gyp/-/inject-node-gyp-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:10.454Z",
+		"created": "2023-11-01T22:05:10.454Z",
+		"1.0.0": "2023-11-01T22:05:10.454Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"inject-node-gyp-1.0.0.tgz": {
+			"shasum": "00fbbad474eda58e20e16080d8ad17e945386643",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-74e80da4a358aaa4",
+	"_id": "inject-node-gyp",
+	"readme": "ERROR: No README data found!"
+}

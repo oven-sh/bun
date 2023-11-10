@@ -599,7 +599,7 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     auto& impl = castedThis->wrapped();
-    size_t size = impl.size();
+    size_t size = impl.sizeAfterJoiningSetCookieHeader();
     JSObject* obj;
     if (size == 0) {
         obj = constructEmptyObject(lexicalGlobalObject);
@@ -614,9 +614,9 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
     auto& internal = impl.internalHeaders();
     {
         auto& vec = internal.commonHeaders();
-        for (auto it = vec.begin(); it != vec.end(); ++it) {
-            auto& name = it->key;
-            auto& value = it->value;
+        for (const auto& it : vec) {
+            const auto& name = it.key;
+            const auto& value = it.value;
             obj->putDirect(vm, Identifier::fromString(vm, WTF::httpHeaderNameStringImpl(name)), jsString(vm, value), 0);
         }
     }
@@ -636,15 +636,15 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
             }
 
             RETURN_IF_EXCEPTION(throwScope, jsUndefined());
-            obj->putDirect(vm, JSC::Identifier::fromString(vm, httpHeaderNameString(HTTPHeaderName::SetCookie).toStringWithoutCopying()), array, 0);
+            obj->putDirect(vm, JSC::Identifier::fromString(vm, WTF::httpHeaderNameStringImpl(HTTPHeaderName::SetCookie)), array, 0);
         }
     }
 
     {
         auto& vec = internal.uncommonHeaders();
-        for (auto it = vec.begin(); it != vec.end(); ++it) {
-            auto& name = it->key;
-            auto& value = it->value;
+        for (const auto& it : vec) {
+            const auto& name = it.key;
+            const auto& value = it.value;
             obj->putDirect(vm, Identifier::fromString(vm, name.convertToASCIILowercase()), jsString(vm, value), 0);
         }
     }

@@ -444,6 +444,8 @@ const Handlers = struct {
 
     vm: *JSC.VirtualMachine,
     globalObject: *JSC.JSGlobalObject,
+    strong_ctx: JSC.Strong = .{},
+
 
     pub fn callEventHandler(this: *Handlers, comptime event: @Type(.EnumLiteral), thisValue: JSValue, data: []const JSValue) bool {
         const callback = @field(this, @tagName(event));
@@ -531,29 +533,13 @@ const Handlers = struct {
                 return null;
             };
         }
+        
+        handlers.strong_ctx.set(globalObject, opts);
 
         return handlers;
     }
 
-    pub fn unprotect(this: *Handlers) void {
-        this.onError.unprotect();
-        this.onGoAway.unprotect();
-        this.onWrite.unprotect();
-        this.onStreamError.unprotect();
-        this.onStreamStart.unprotect();
-        this.onStreamHeaders.unprotect();
-        this.onStreamEnd.unprotect();
-        this.onStreamData.unprotect();
-        this.onStreamError.unprotect();
-        this.onLocalSettings.unprotect();
-        this.onRemoteSettings.unprotect();
-        this.onWantTrailers.unprotect();
-        this.onPing.unprotect();
-        this.onEnd.unprotect();
-        this.onAborted.unprotect();
-    }
-
-    pub fn clear(this: *Handlers) void {
+    pub fn deinit(this: *Handlers) void {
         this.onError = .zero;
         this.onWrite = .zero;
         this.onStreamError = .zero;
@@ -569,23 +555,7 @@ const Handlers = struct {
         this.onEnd = .zero;
         this.onGoAway = .zero;
         this.onAborted = .zero;
-    }
-
-    pub fn protect(this: *Handlers) void {
-        this.onError.protect();
-        this.onWrite.protect();
-        this.onStreamError.protect();
-        this.onStreamStart.protect();
-        this.onStreamHeaders.protect();
-        this.onStreamEnd.protect();
-        this.onStreamData.protect();
-        this.onStreamError.protect();
-        this.onLocalSettings.protect();
-        this.onRemoteSettings.protect();
-        this.onWantTrailers.protect();
-        this.onEnd.protect();
-        this.onGoAway.protect();
-        this.onAborted.protect();
+        this.strong_ctx.deinit();
     }
 };
 
@@ -940,13 +910,12 @@ pub const H2FrameParser = struct {
         this.dispatch(.onWrite, output_value);
     }
 
+    // Detach handlers
     pub fn detach(this: *H2FrameParser, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
         JSC.markBinding(@src());
         log("detach", .{});
         var handler = this.handlers;
-        defer handler.unprotect();
-        this.handlers.clear();
-        this.strong_ctx.deinit();
+        handler.deinit();
 
         return JSC.JSValue.jsUndefined();
     }
@@ -2534,7 +2503,7 @@ pub const H2FrameParser = struct {
         if (options.get(globalObject, "handlers")) |handlers_| {
             handler_js = handlers_;
         }
-        const handlers = Handlers.fromJS(globalObject, handler_js, &exception) orelse {
+        var handlers = Handlers.fromJS(globalObject, handler_js, &exception) orelse {
             globalObject.throwValue(exception.?.value());
             return null;
         };
@@ -2558,11 +2527,11 @@ pub const H2FrameParser = struct {
             if (!settings_js.isEmptyOrUndefinedOrNull()) {
                 if (!this.loadSettingsFromJSValue(globalObject, settings_js)) {
                     this.deinit();
+                    handlers.deinit();
                     return null;
                 }
             }
         }
-        this.handlers.protect();
 
         this.strong_ctx.set(globalObject, context_obj);
 
@@ -2581,7 +2550,7 @@ pub const H2FrameParser = struct {
         var allocator = this.allocator;
         defer allocator.destroy(this);
         this.strong_ctx.deinit();
-        this.handlers.unprotect();
+        this.handlers.deinit();
         this.readBuffer.deinit();
 
         lshpack.lshpack_dec_cleanup(&this.decoder);

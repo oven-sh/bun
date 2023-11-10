@@ -1144,45 +1144,45 @@ pub const AnyRequestContext = struct {
         return .{ .tagged_pointer = Pointer.init(request_ctx) };
     }
 
-    pub fn pushRequestClone(self: AnyRequestContext, request: *Request) void {
+    pub fn pushRequestClone(self: AnyRequestContext, body: *JSC.WebCore.BodyValueRef) void {
         if (self.tagged_pointer.isNull()) {
             return;
         }
 
         switch (self.tagged_pointer.tag()) {
             @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
-                return self.tagged_pointer.as(HTTPServer.RequestContext).pushRequestClone(request);
+                return self.tagged_pointer.as(HTTPServer.RequestContext).pushRequestBodyClone(body);
             },
             @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
-                return self.tagged_pointer.as(HTTPSServer.RequestContext).pushRequestClone(request);
+                return self.tagged_pointer.as(HTTPSServer.RequestContext).pushRequestBodyClone(body);
             },
             @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
-                return self.tagged_pointer.as(DebugHTTPServer.RequestContext).pushRequestClone(request);
+                return self.tagged_pointer.as(DebugHTTPServer.RequestContext).pushRequestBodyClone(body);
             },
             @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
-                return self.tagged_pointer.as(DebugHTTPSServer.RequestContext).pushRequestClone(request);
+                return self.tagged_pointer.as(DebugHTTPSServer.RequestContext).pushRequestBodyClone(body);
             },
             else => @panic("Unexpected AnyRequestContext tag"),
         }
     }
 
-    pub fn deleteRequestClone(self: AnyRequestContext, request: *Request) void {
+    pub fn deleteRequestClone(self: AnyRequestContext, body: *JSC.WebCore.BodyValueRef) void {
         if (self.tagged_pointer.isNull()) {
             return;
         }
 
         switch (self.tagged_pointer.tag()) {
             @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
-                return self.tagged_pointer.as(HTTPServer.RequestContext).deleteRequestClone(request);
+                return self.tagged_pointer.as(HTTPServer.RequestContext).deleteRequestBodyClone(body);
             },
             @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
-                return self.tagged_pointer.as(HTTPSServer.RequestContext).deleteRequestClone(request);
+                return self.tagged_pointer.as(HTTPSServer.RequestContext).deleteRequestBodyClone(body);
             },
             @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
-                return self.tagged_pointer.as(DebugHTTPServer.RequestContext).deleteRequestClone(request);
+                return self.tagged_pointer.as(DebugHTTPServer.RequestContext).deleteRequestBodyClone(body);
             },
             @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
-                return self.tagged_pointer.as(DebugHTTPSServer.RequestContext).deleteRequestClone(request);
+                return self.tagged_pointer.as(DebugHTTPSServer.RequestContext).deleteRequestBodyClone(body);
             },
             else => @panic("Unexpected AnyRequestContext tag"),
         }
@@ -1279,7 +1279,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         req: *uws.Request,
         signal: ?*JSC.WebCore.AbortSignal = null,
         method: HTTP.Method,
-        request_clones: ?ArrayList(*Request) = null,
+        body_clones: ArrayList(*JSC.WebCore.BodyValueRef) = ArrayList(*JSC.WebCore.BodyValueRef){ .items = undefined, .capacity = 0, .allocator = undefined },
 
         flags: NewFlags(debug_mode) = .{},
 
@@ -1322,22 +1322,20 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             return this.defer_deinit_until_callback_completes == null;
         }
 
-        pub fn pushRequestClone(this: *RequestContext, request: *Request) void {
-            if (this.request_body != null) {
-                var body = this.request_body.?;
-                if (body.value == .Locked) {
-                    if (this.request_clones == null)
-                        this.request_clones = ArrayList(*Request).init(default_allocator);
-                    this.request_clones.?.append(request) catch unreachable;
-                }
+        pub fn pushRequestBodyClone(this: *RequestContext, body: *JSC.WebCore.BodyValueRef) void {
+            var this_body = this.request_body.?;
+            if (this_body.value == .Locked) {
+                if (this.body_clones.capacity == 0)
+                    this.body_clones = ArrayList(*JSC.WebCore.BodyValueRef).init(bun.default_allocator);
+                this.body_clones.append(body.ref()) catch unreachable;
             }
         }
 
-        pub fn deleteRequestClone(this: *RequestContext, request: *Request) void {
-            if (this.request_clones != null) {
-                for (this.request_clones.?.items, 0..) |other, i| {
-                    if (other == request) {
-                        _ = this.request_clones.?.orderedRemove(i);
+        pub fn deleteRequestBodyClone(this: *RequestContext, body: *JSC.WebCore.BodyValueRef) void {
+            if (this.body_clones.capacity > 0) {
+                for (this.body_clones.items, 0..) |other, i| {
+                    if (other == body) {
+                        _ = this.body_clones.orderedRemove(i);
                         break;
                     }
                 }
@@ -1685,9 +1683,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
             }
 
-            if (this.request_clones) |clones| {
-                for (clones.items) |item| {
-                    if (item.body.value == .Locked) {
+            if (this.body_clones.capacity > 0) {
+                for (this.body_clones.items) |item| {
+                    if (item.value == .Locked) {
                         return false;
                     }
                 }
@@ -1757,9 +1755,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     }
                 }
 
-                if (this.request_clones) |clones| {
-                    for (clones.items) |item| {
-                        var body = item.body;
+                if (this.body_clones.capacity > 0) {
+                    for (this.body_clones.items) |body| {
                         if (body.value == .Locked) {
                             // the promise is pending
                             if (body.value.Locked.action != .none or body.value.Locked.promise != null) {
@@ -1840,18 +1837,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
             }
 
-            if (this.request_clones) |clones| {
-                ctxLog("finalizeWithoutDeinit: freeing clones {any}", .{clones.items.len});
-                for (clones.items) |item| {
-                    var body = item.body;
+            if (this.body_clones.capacity > 0) {
+                ctxLog("finalizeWithoutDeinit: freeing clones {any}", .{this.body_clones.items.len});
+                for (this.body_clones.items) |body| {
                     if (body.value == .Locked and body.value.Locked.action != .none and body.value.Locked.promise != null) {
                         body.value.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
                     }
-                    item.maybeUnprotect();
-                    item.derefContext();
                 }
-                clones.deinit();
-                this.request_clones = null;
             }
 
             if (this.promise) |promise| {
@@ -1914,6 +1906,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (this.request_body) |body| {
                 _ = body.unref();
                 this.request_body = null;
+            }
+
+            if (this.body_clones.capacity > 0) {
+                for (this.body_clones.items) |other_body| {
+                    _ = other_body.unref();
+                }
+                this.body_clones.deinit();
+                this.body_clones.capacity = 0;
             }
 
             server.request_pool_allocator.put(this);
@@ -3224,11 +3224,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
             var all_clones_handled = false;
             var vm = this.server.vm;
-            if (this.request_clones) |request_clones| {
-                ctxLog("clones length is {any}", .{request_clones.items.len});
+            if (this.body_clones.capacity > 0) {
+                ctxLog("clones length is {any}", .{this.body_clones.items.len});
                 var readable_count: usize = 0;
-                for (request_clones.items) |other_request| {
-                    var other_body = other_request.body;
+                for (this.body_clones.items) |other_body| {
                     if (other_body.value != .Locked) continue;
                     if (other_body.value.Locked.readable) |other_readable| {
                         if (other_readable.ptr == .Bytes) {
@@ -3246,15 +3245,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                     },
                                     bun.default_allocator,
                                 );
-                                other_request.maybeUnprotect();
                             }
                             readable_count += 1;
                         }
                     }
                 }
-                all_clones_handled = request_clones.items.len == 0 or readable_count == request_clones.items.len;
+                all_clones_handled = this.body_clones.items.len == 0 or readable_count == this.body_clones.items.len;
             } else {
-                // we have no clones
                 all_clones_handled = true;
             }
             if (this.request_body != null and this.request_body.?.value == .Locked) {
@@ -3327,22 +3324,20 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         old_locked = true;
                         // if we are the only body we take the body as is and avoid a clone but we also take ownership
                         // so we we need to cancel the deiniting by this functuon
-                        has_allocated = this.request_clones != null and this.request_clones.?.items.len > 0;
+                        has_allocated = this.body_clones.capacity > 0 and this.body_clones.items.len > 0;
                         body.value = if (has_allocated) body_value.clone(this.server.globalThis) else body_value;
                         old.resolve(&body.value, this.server.globalThis);
                     }
                 }
 
-                if (this.request_clones) |request_clones| {
-                    for (request_clones.items) |other_request| {
-                        var other_body = other_request.body;
+                if (this.body_clones.capacity > 0) {
+                    for (this.body_clones.items) |other_body| {
                         var other_old = other_body.value;
                         if (other_old == .Locked and other_body.value.Locked.readable == null) {
                             old_locked = true;
                             other_body.value = body_value.clone(this.server.globalThis);
                             other_old.resolve(&other_body.value, this.server.globalThis);
                         }
-                        other_request.maybeUnprotect();
                     }
                 }
                 if (has_allocated)

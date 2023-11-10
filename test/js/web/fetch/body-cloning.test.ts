@@ -144,8 +144,7 @@ describe("request body cloning", () => {
         expect(reader_out).toEqual(Buffer.from(data).buffer.slice());
         expect(text).toEqual(data);
         expect(json).toEqual(JSON.parse(data));
-        socket.end();
-        done();
+
         return new Response(JSON.stringify({}), {
           headers: {
             "Content-type": "application/json",
@@ -160,7 +159,13 @@ describe("request body cloning", () => {
       port: server.port,
 
       socket: {
-        data(socket, data) {},
+        data(socket, data) {
+          const s = data.toString().trim();
+          expect(s.startsWith("HTTP/1.1 200 OK")).toBe(true);
+          expect(s.substr(s.length - 4)).toEqual("\r\n{}");
+          socket.end();
+          done();
+        },
         error(socket, error) {
           done(error);
         },
@@ -169,7 +174,17 @@ describe("request body cloning", () => {
         },
       },
     });
-    socket.write(
+
+    const writeAndVerify = data => {
+      const buffer = Buffer.from(data, "utf-8");
+      let written = socket.write(buffer);
+      if (written !== buffer.length) {
+        const flushed = socket.flush();
+        if (typeof flushed === "number") written += flushed;
+      }
+      expect(written).toEqual(buffer.length);
+    };
+    writeAndVerify(
       [
         "POST / HTTP/1.1",
         "Host: localhost",
@@ -182,11 +197,9 @@ describe("request body cloning", () => {
     );
     await sleep(500);
     for (const char of data.split("")) {
-      socket.write(`${char}`);
+      writeAndVerify(`${char}`);
       await sleep(150);
     }
-    socket.write("\r\n\r\n");
-    socket.flush();
   });
 
   it("cant clone consumed body", async done => {

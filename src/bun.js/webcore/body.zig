@@ -1,4 +1,5 @@
 const std = @import("std");
+const ArrayList = std.ArrayList;
 const Api = @import("../../api/schema.zig").Api;
 const bun = @import("root").bun;
 const MimeType = @import("../../bun_dev_http_server.zig").MimeType;
@@ -52,7 +53,8 @@ const Request = JSC.WebCore.Request;
 // https://developer.mozilla.org/en-US/docs/Web/API/Body
 pub const Body = struct {
     value: Value, // = Value.empty,
-
+    body_clones: ArrayList(*Body) = ArrayList(*Body){ .capacity = 0, .items = undefined, .allocator = undefined },
+    original_body: ?*Body = null,
     pub inline fn len(this: *const Body) Blob.SizeType {
         return this.value.size();
     }
@@ -66,9 +68,7 @@ pub const Body = struct {
     }
 
     pub fn clone(this: *Body, globalThis: *JSGlobalObject) Body {
-        return Body{
-            .value = this.value.clone(globalThis),
-        };
+        return Body{ .value = this.value.clone(globalThis), .original_body = this.original_body orelse this };
     }
 
     pub fn writeFormat(this: *const Body, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
@@ -97,8 +97,48 @@ pub const Body = struct {
             }
         }
     }
+    pub fn removeClone(this: *Body, other: *Body) void {
+        if (this.body_clones.capacity > 0) {
+            for (this.body_clones.items, 0..) |entry, i| {
+                if (other == entry) {
+                    _ = this.body_clones.orderedRemove(i);
+                    break;
+                }
+            }
+        }
+    }
+    pub fn unrefParentBody(this: *Body, other: *Body) void {
+        if (this.original_body) |original_body| {
+            if (original_body == other) {
+                this.original_body = null;
+            }
+        }
+    }
 
+    pub fn maybeAddClone(this: *Body, other: *Body) void {
+        if (this.original_body) |original_body| {
+            original_body.maybeAddClone(other);
+        } else {
+            if (this.value == .Locked) {
+                if (this.body_clones.capacity == 0)
+                    this.body_clones = ArrayList(*Body).init(bun.default_allocator);
+                this.body_clones.append(other) catch @panic("oom!");
+            }
+        }
+    }
     pub fn deinit(this: *Body, _: std.mem.Allocator) void {
+        if (this.original_body) |original_body| {
+            original_body.removeClone(this);
+            this.original_body = null;
+        }
+        if (this.body_clones.capacity > 0) {
+            for (this.body_clones.items) |entry| {
+                entry.unrefParentBody(this);
+            }
+            this.body_clones.deinit();
+            this.body_clones.capacity = 0;
+        }
+
         this.value.deinit();
     }
 

@@ -65,12 +65,10 @@ pub const Response = struct {
 
     allocator: std.mem.Allocator,
     body: Body,
-    original_response: ?*Response = null,
-    response_clones: ?ArrayList(*Response) = null,
     init: Init,
     url: bun.String = bun.String.empty,
     redirected: bool = false,
-    js_value: ?JSC.JSValue = null,
+    refs: ArrayList(JSC.Strong) = ArrayList(JSC.Strong){ .allocator = undefined, .capacity = 0, .items = undefined },
 
     // We must report a consistent value for this
     reported_estimated_size: ?u63 = null,
@@ -263,16 +261,17 @@ pub const Response = struct {
             return .zero;
         }
         var cloned = this.clone(getAllocator(globalThis), globalThis);
-        return Response.makeMaybePooled(globalThis, cloned);
+        var js_value = Response.makeMaybePooled(globalThis, cloned);
+        if (this.body.value == .Locked) {
+            if (this.refs.capacity == 0)
+                this.refs = ArrayList(JSC.Strong).init(bun.default_allocator);
+            this.refs.append(JSC.Strong.create(js_value, globalThis)) catch @panic("oom");
+        }
+        return js_value;
     }
 
     pub fn makeMaybePooled(globalObject: *JSC.JSGlobalObject, ptr: *Response) JSValue {
-        var value = ptr.toJS(globalObject);
-        if (ptr.original_response != null and ptr.body.value == .Locked) {
-            ptr.js_value = value;
-            value.protect();
-        }
-        return value;
+        return ptr.toJS(globalObject);
     }
 
     pub fn cloneInto(
@@ -287,20 +286,9 @@ pub const Response = struct {
             .init = this.init.clone(globalThis),
             .url = this.url.clone(),
             .redirected = this.redirected,
-            .original_response = this.original_response orelse this,
         };
-        if (this.body.value == .Locked) {
-            if (this.original_response == null and this.response_clones == null)
-                this.response_clones = ArrayList(*Response).init(default_allocator);
 
-            var clones = if (this.original_response) |req|
-                &req.response_clones
-            else
-                &this.response_clones;
-            if (clones.* != null) {
-                clones.*.?.append(new_response) catch unreachable;
-            }
-        }
+        this.body.maybeAddClone(&new_response.body);
     }
 
     pub fn clone(this: *Response, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) *Response {
@@ -320,36 +308,21 @@ pub const Response = struct {
     pub fn finalize(
         this: *Response,
     ) callconv(.C) void {
-        if (this.original_response) |req| {
-            var clones = &req.response_clones;
-            if (clones.* != null) {
-                for (clones.*.?.items, 0..) |other, i| {
-                    if (other == this) {
-                        _ = clones.*.?.orderedRemove(i);
-                        break;
-                    }
-                }
-            }
-        }
-
         this.body.deinit(this.allocator);
+
+        if (this.refs.capacity > 0) {
+            for (this.refs.items) |*e| {
+                e.deinit();
+            }
+            this.refs.deinit();
+            this.refs.capacity = 0;
+        }
 
         var allocator = this.allocator;
 
         this.init.deinit(allocator);
         this.body.deinit(allocator);
         this.url.deref();
-        if (this.response_clones) |clones| {
-            for (clones.items) |other| {
-                if (other.js_value) |js_value| {
-                    js_value.unprotect();
-                    other.js_value = null;
-                }
-                if (other.original_response == this)
-                    other.original_response = null;
-            }
-            clones.deinit();
-        }
 
         allocator.destroy(this);
     }
@@ -863,6 +836,7 @@ pub const Fetch = struct {
         is_waiting_body: bool = false,
         is_waiting_abort: bool = false,
         mutex: Mutex,
+        need_entire_buffer: bool = false,
 
         tracker: JSC.AsyncTaskTracker,
         stream_offset: usize = 0,
@@ -975,23 +949,22 @@ pub const Fetch = struct {
 
             if (this.response.get()) |response_js| {
                 if (response_js.as(Response)) |response| {
-                    const clones_len = if (response.response_clones) |clones|
-                        clones.items.len
+                    const clones_len = if (response.body.body_clones.capacity > 0)
+                        response.body.body_clones.items.len
                     else
                         0;
-                    const response_list = bun.default_allocator.alloc(*Response, 1 + clones_len) catch unreachable;
+                    const response_list = bun.default_allocator.alloc(*Body, 1 + clones_len) catch @panic("OOM");
                     defer bun.default_allocator.free(response_list);
-                    response_list[0] = response;
-                    if (response.response_clones) |clones| {
-                        for (clones.items, 0..) |clone, i| {
+                    response_list[0] = &response.body;
+                    if (response.body.body_clones.capacity > 0) {
+                        for (response.body.body_clones.items, 0..) |clone, i| {
                             response_list[1 + i] = clone;
                         }
                     }
 
                     if (!success) {
                         for (0..1 + clones_len) |i| {
-                            var entry = response_list[i];
-                            var body = entry.body;
+                            var body = response_list[i];
                             const err = this.onReject();
                             err.ensureStillAlive();
                             if (body.value == .Locked) {
@@ -1007,11 +980,7 @@ pub const Fetch = struct {
                                         const promise = promise_.asAnyPromise().?;
                                         promise.reject(globalThis, err);
                                     }
-                                    entry.body.value.toErrorInstance(err, globalThis);
-                                    if (entry.js_value) |js_value| {
-                                        js_value.unprotect();
-                                        entry.js_value = null;
-                                    }
+                                    body.value.toErrorInstance(err, globalThis);
                                 }
                             }
                         }
@@ -1026,12 +995,10 @@ pub const Fetch = struct {
                     if (!this.result.has_more) {
                         this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
                     }
-                    var need_entire_buffer = false;
                     const has_copies = clones_len > 0;
                     const stream_subset = chunk[this.stream_offset..];
                     for (0..1 + clones_len) |i| {
-                        var entry = response_list[i];
-                        var body = entry.body;
+                        var body = response_list[i];
                         if (body.value == .Locked) {
                             if (body.value.Locked.readable) |readable| {
                                 if (readable.ptr == .Bytes) {
@@ -1051,10 +1018,6 @@ pub const Fetch = struct {
                                             },
                                             bun.default_allocator,
                                         );
-                                        if (entry.js_value) |js_value| {
-                                            js_value.unprotect();
-                                            entry.js_value = null;
-                                        }
                                     }
 
                                     continue;
@@ -1062,7 +1025,7 @@ pub const Fetch = struct {
                             } else {
                                 body.value.Locked.size_hint = this.getSizeHint();
                                 // we have a body without a readable and need to store everything since it might call json/text/arrayBuffer
-                                need_entire_buffer = true;
+                                this.need_entire_buffer = true;
                             }
                             if (!this.result.has_more) {
                                 var old = body.value;
@@ -1071,26 +1034,28 @@ pub const Fetch = struct {
                                         .bytes = if (has_copies) (list.?.clone() catch unreachable) else list.?,
                                     },
                                 };
-                                entry.body.value = body_value;
+                                body.value = body_value;
                                 if (old == .Locked) {
-                                    old.resolve(&entry.body.value, this.global_this);
+                                    old.resolve(&body.value, this.global_this);
                                 }
                             }
                         }
-                        if (!this.result.has_more) {
-                            if (entry.js_value) |js_value| {
-                                js_value.unprotect();
-                                entry.js_value = null;
-                            }
-                        }
                     }
-                    if (need_entire_buffer)
+                    if (this.need_entire_buffer)
                         this.stream_offset = chunk.len;
-                    if (this.result.has_more and !need_entire_buffer) {
+                    if (this.result.has_more and !this.need_entire_buffer) {
                         // clean for reuse later
                         this.scheduled_response_buffer.reset();
                     }
                     if (!this.result.has_more) {
+                        // this is required as when the promise resolves otherwise the request and bodies are freed prematurely
+                        if (response.refs.capacity > 0) {
+                            for (response.refs.items) |*e| {
+                                e.deinit();
+                            }
+                            response.refs.deinit();
+                            response.refs.capacity = 0;
+                        }
                         if (has_copies) {
                             // we might have cloned the list so deinit it
                             list.?.deinit();

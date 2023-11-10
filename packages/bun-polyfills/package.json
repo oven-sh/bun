@@ -19,7 +19,7 @@
     "@types/ws": "^8.5.8",
     "bun-types": "^1.0.6",
     "copyfiles": "^2.4.1",
-    "tsx": "^3.14.0",
+    "tsx": "^4.1.0",
     "typings-esm-loader": "^2.0.1"
   },
   "peerDependencies": {

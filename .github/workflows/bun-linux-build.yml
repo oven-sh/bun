@@ -45,12 +45,32 @@ jobs:
             build_arch: amd64
             runner: big-ubuntu
             build_machine_arch: x86_64
+            assertions: "OFF"
+            zig_optimize: "ReleaseFast"
           - cpu: nehalem
             tag: linux-x64-baseline
             arch: x86_64
             build_arch: amd64
             runner: big-ubuntu
             build_machine_arch: x86_64
+            assertions: "OFF"
+            zig_optimize: "ReleaseFast"
+          - cpu: haswell
+            tag: linux-x64-assertions
+            arch: x86_64
+            build_arch: amd64
+            runner: big-ubuntu
+            build_machine_arch: x86_64
+            assertions: "ON"
+            zig_optimize: "ReleaseSafe"
+          - cpu: nehalem
+            tag: linux-x64-baseline-assertions
+            arch: x86_64
+            build_arch: amd64
+            runner: big-ubuntu
+            build_machine_arch: x86_64
+            assertions: "ON"
+            zig_optimize: "ReleaseSafe"
 
     steps:
       - uses: actions/checkout@v3
@@ -84,7 +104,8 @@ jobs:
             BUILD_MACHINE_ARCH=${{matrix.build_machine_arch}}
             CPU_TARGET=${{matrix.cpu}}
             GIT_SHA=${{github.sha}}
-
+            ASSERTIONS=${{matrix.assertions}}
+            ZIG_OPTIMIZE=${{matrix.zig_optimize}}
             SCCACHE_BUCKET=bun
             SCCACHE_REGION=auto
             SCCACHE_S3_USE_SSL=true
@@ -187,6 +208,8 @@ jobs:
         include:
           - tag: linux-x64
           - tag: linux-x64-baseline
+          - tag: linux-x64-assertions
+          - tag: linux-x64-baseline-assertions
     steps:
       - id: checkout
         name: Checkout

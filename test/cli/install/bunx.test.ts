@@ -156,3 +156,80 @@ console.log(
   expect(await exited).toBe(0);
   expect(await readdirSorted(x_dir)).toEqual(["test.js"]);
 });
+
+it("should work for github repository", async () => {
+  await rm(join(await realpath(tmpdir()), "github:piuccio"), { force: true, recursive: true });
+  // without cache
+  const withoutCache = spawn({
+    cmd: [bunExe(), "x", "github:piuccio/cowsay", "--help"],
+    cwd: x_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  expect(withoutCache.stderr).toBeDefined();
+  let err = await new Response(withoutCache.stderr).text();
+  expect(err).not.toContain("error");
+  expect(withoutCache.stdout).toBeDefined();
+  let out = await new Response(withoutCache.stdout).text();
+  expect(out.trim()).toContain("Usage: cowsay");
+  expect(await withoutCache.exited).toBe(0);
+
+  // cached
+  const cached = spawn({
+    cmd: [bunExe(), "x", "github:piuccio/cowsay", "--help"],
+    cwd: x_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  expect(cached.stderr).toBeDefined();
+  err = await new Response(cached.stderr).text();
+  expect(err).not.toContain("error");
+  expect(cached.stdout).toBeDefined();
+  out = await new Response(cached.stdout).text();
+  expect(out.trim()).toContain("Usage: cowsay");
+  expect(await cached.exited).toBe(0);
+});
+
+it("should work for github repository with committish", async () => {
+  await rm(join(await realpath(tmpdir()), "github:piuccio"), { force: true, recursive: true });
+  const withoutCache = spawn({
+    cmd: [bunExe(), "x", "github:piuccio/cowsay#HEAD", "hello bun!"],
+    cwd: x_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  expect(withoutCache.stderr).toBeDefined();
+  let err = await new Response(withoutCache.stderr).text();
+  expect(err).not.toContain("error");
+  expect(withoutCache.stdout).toBeDefined();
+  let out = await new Response(withoutCache.stdout).text();
+  expect(out.trim()).toContain("hello bun!");
+  expect(await withoutCache.exited).toBe(0);
+
+  // cached
+  const cached = spawn({
+    cmd: [bunExe(), "x", "github:piuccio/cowsay#HEAD", "hello bun!"],
+    cwd: x_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  expect(cached.stderr).toBeDefined();
+  err = await new Response(cached.stderr).text();
+  expect(err).not.toContain("error");
+  expect(cached.stdout).toBeDefined();
+  out = await new Response(cached.stdout).text();
+  expect(out.trim()).toContain("hello bun!");
+  expect(await cached.exited).toBe(0);
+});

@@ -1,0 +1,45 @@
+{
+	"name": "@scoped/create-test-app",
+	"versions": {
+		"1.0.0": {
+			"name": "@scoped/create-test-app",
+			"version": "1.0.0",
+			"bin": {
+				"create-test-app": "bin.js"
+			},
+			"dependencies": {
+				"no-deps": "1.0.0"
+			},
+			"_id": "@scoped/create-test-app@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-rZ3msf72EI7Hop5zaThhRsErB2GBVbfhVLxL+kG7SZIWRNss7DQp0VsHd5pFW7ARwqJpiBS//Qe5C9VanlosMw==",
+				"shasum": "31608cdce5e82f2fcb9790c1f26696e1c72c2441",
+				"tarball": "http://localhost:4873/@scoped/create-test-app/-/@scoped/create-test-app-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:04:57.919Z",
+		"created": "2023-11-01T22:04:57.919Z",
+		"1.0.0": "2023-11-01T22:04:57.919Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"create-test-app-1.0.0.tgz": {
+			"shasum": "31608cdce5e82f2fcb9790c1f26696e1c72c2441",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-937e84f151b9d21c",
+	"_id": "@scoped/create-test-app",
+	"readme": "ERROR: No README data found!"
+}

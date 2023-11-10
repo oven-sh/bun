@@ -638,7 +638,7 @@ export namespace DAP {
    */
   export type BreakpointLocationsRequest = {
     /**
-     * The source location of the breakpoints; either `source.path` or `source.reference` must be specified.
+     * The source location of the breakpoints; either `source.path` or `source.sourceReference` must be specified.
      */
     source: Source;
     /**
@@ -1139,6 +1139,12 @@ export namespace DAP {
      * The value should be less than or equal to 2147483647 (2^31-1).
      */
     indexedVariables?: number;
+    /**
+     * A memory reference to a location appropriate for this result.
+     * For pointer type eval results, this is generally a reference to the memory address contained in the pointer.
+     * This attribute may be returned by a debug adapter if corresponding capability `supportsMemoryReferences` is true.
+     */
+    memoryReference?: string;
   };
   /**
    * Arguments for `source` request.
@@ -1286,7 +1292,7 @@ export namespace DAP {
     /**
      * A memory reference to a location appropriate for this result.
      * For pointer type eval results, this is generally a reference to the memory address contained in the pointer.
-     * This attribute should be returned by a debug adapter if corresponding capability `supportsMemoryReferences` is true.
+     * This attribute may be returned by a debug adapter if corresponding capability `supportsMemoryReferences` is true.
      */
     memoryReference?: string;
   };
@@ -1344,6 +1350,12 @@ export namespace DAP {
      * The value should be less than or equal to 2147483647 (2^31-1).
      */
     indexedVariables?: number;
+    /**
+     * A memory reference to a location appropriate for this result.
+     * For pointer type eval results, this is generally a reference to the memory address contained in the pointer.
+     * This attribute may be returned by a debug adapter if corresponding capability `supportsMemoryReferences` is true.
+     */
+    memoryReference?: string;
   };
   /**
    * Arguments for `stepInTargets` request.
@@ -2064,8 +2076,10 @@ export namespace DAP {
      */
     indexedVariables?: number;
     /**
-     * The memory reference for the variable if the variable represents executable code, such as a function pointer.
-     * This attribute is only required if the corresponding capability `supportsMemoryReferences` is true.
+     * A memory reference associated with this variable.
+     * For pointer type variables, this is generally a reference to the memory address contained in the pointer.
+     * For executable data, this reference may later be used in a `disassemble` request.
+     * This attribute may be returned by a debug adapter if corresponding capability `supportsMemoryReferences` is true.
      */
     memoryReference?: string;
   };

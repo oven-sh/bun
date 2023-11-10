@@ -1,14 +1,16 @@
 #include "root.h"
 #include "headers-handwritten.h"
-#include "JavaScriptCore/JSCJSValueInlines.h"
+#include <JavaScriptCore/JSCJSValueInlines.h>
 #include "helpers.h"
 #include "simdutf.h"
-#include "wtf/text/ExternalStringImpl.h"
+#include <wtf/Seconds.h>
+#include <wtf/text/ExternalStringImpl.h>
 #include "GCDefferalContext.h"
 #include <JavaScriptCore/JSONObject.h>
 #include <wtf/text/AtomString.h>
 
 using namespace JSC;
+extern "C" BunString BunString__fromBytes(const char* bytes, size_t length);
 
 extern "C" bool Bun__WTFStringImpl__hasPrefix(const WTF::StringImpl* impl, const char* bytes, size_t length)
 {
@@ -74,7 +76,10 @@ JSC::JSValue toJS(JSC::JSGlobalObject* globalObject, BunString bunString, size_t
 #endif
     return jsSubstring(globalObject, jsUndefined(), Bun::toWTFString(bunString), 0, length);
 }
-
+BunString toString(const char* bytes, size_t length)
+{
+    return BunString__fromBytes(bytes, length);
+}
 WTF::String toWTFString(const BunString& bunString)
 {
     if (bunString.tag == BunStringTag::ZigString) {
@@ -190,22 +195,6 @@ BunString toStringRef(WTF::StringImpl* wtfString)
     return { BunStringTag::WTFStringImpl, { .wtf = wtfString } };
 }
 
-BunString fromString(WTF::String& wtfString)
-{
-    if (wtfString.isEmpty())
-        return { BunStringTag::Empty };
-
-    return { BunStringTag::WTFStringImpl, { .wtf = wtfString.impl() } };
-}
-
-BunString fromString(WTF::StringImpl* wtfString)
-{
-    if (wtfString->isEmpty())
-        return { BunStringTag::Empty };
-
-    return { BunStringTag::WTFStringImpl, { .wtf = wtfString } };
-}
-
 }
 
 extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject* globalObject, BunString* bunString)
@@ -252,7 +241,7 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
 
     auto str = WTF::String::fromUTF8ReplacingInvalidSequences(reinterpret_cast<const LChar*>(bytes), length);
     str.impl()->ref();
-    return Bun::fromString(str);
+    return Bun::toString(str);
 }
 
 extern "C" BunString BunString__fromLatin1(const char* bytes, size_t length)
@@ -278,7 +267,7 @@ extern "C" BunString BunString__createExternal(const char* bytes, size_t length,
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }
 
-extern "C" EncodedJSValue BunString__toJSON(
+extern "C" JSC::EncodedJSValue BunString__toJSON(
     JSC::JSGlobalObject* globalObject,
     BunString* bunString)
 {
@@ -291,7 +280,7 @@ extern "C" EncodedJSValue BunString__toJSON(
     return JSC::JSValue::encode(result);
 }
 
-extern "C" EncodedJSValue BunString__createArray(
+extern "C" JSC::EncodedJSValue BunString__createArray(
     JSC::JSGlobalObject* globalObject,
     const BunString* ptr, size_t length)
 {
@@ -381,7 +370,17 @@ extern "C" BunString URL__getHref(BunString* input)
     return Bun::toStringRef(url.string());
 }
 
-extern "C" BunString URL__getHrefJoin(BunString* baseStr, BunString *relativeStr)
+extern "C" BunString URL__pathFromFileURL(BunString* input)
+{
+    auto&& str = Bun::toWTFString(*input);
+    auto url = WTF::URL(str);
+    if (!url.isValid() || url.isEmpty())
+        return { BunStringTag::Dead };
+
+    return Bun::toStringRef(url.fileSystemPath());
+}
+
+extern "C" BunString URL__getHrefJoin(BunString* baseStr, BunString* relativeStr)
 {
     auto base = Bun::toWTFString(*baseStr);
     auto relative = Bun::toWTFString(*relativeStr);
@@ -455,4 +454,16 @@ extern "C" uint32_t URL__port(WTF::URL* url)
 extern "C" BunString URL__pathname(WTF::URL* url)
 {
     return Bun::toStringRef(url->path().toStringWithoutCopying());
+}
+
+size_t BunString::utf8ByteLength(const WTF::String& str)
+{
+    if (str.isEmpty())
+        return 0;
+
+    if (str.is8Bit()) {
+        return simdutf::utf8_length_from_latin1(reinterpret_cast<const char*>(str.characters8()), static_cast<size_t>(str.length()));
+    } else {
+        return simdutf::utf8_length_from_utf16(reinterpret_cast<const char16_t*>(str.characters16()), static_cast<size_t>(str.length()));
+    }
 }

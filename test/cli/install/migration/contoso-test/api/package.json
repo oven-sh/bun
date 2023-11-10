@@ -1,0 +1,42 @@
+{
+  "name": "api",
+  "version": "1.0.0",
+  "description": "",
+  "scripts": {
+    "env": "azd env get-values --no-prompt > .env",
+    "build": "tsc",
+    "watch": "tsc --w",
+    "prestart": "tsc && func extensions install",
+    "start:host": "func start",
+    "start": "npm-run-all --parallel start:host watch",
+    "lint": "eslint --config ../../.eslintrc.js",
+    "lint:fix": "npm run lint -- --fix"
+  },
+  "dependencies": {
+    "@azure/identity": "^2.1.0",
+    "@azure/keyvault-secrets": "^4.5.1",
+    "applicationinsights": "^2.3.4",
+    "dotenv": "^16.0.1",
+    "mongodb": "^4.7.0",
+    "mongoose": "^6.5.3",
+    "pg": "^8.8.0",
+    "swagger-ui-dist": "^4.14.0",
+    "winston": "^3.8.1",
+    "winston-transport": "^4.5.0",
+    "yamljs": "^0.3.0"
+  },
+  "devDependencies": {
+    "@azure/functions": "^1.2.3",
+    "@types/node": "^18.11.18",
+    "@types/pg": "^8.6.6",
+    "@types/swagger-ui-dist": "^3.30.1",
+    "@types/yamljs": "^0.2.31",
+    "@typescript-eslint/eslint-plugin": "^5.48.1",
+    "@typescript-eslint/parser": "^5.48.1",
+    "azure-functions-core-tools": "4.0.5095",
+    "eslint": "^8.31.0",
+    "eslint-config-prettier": "^8.6.0",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^4.8.4"
+  }
+}

@@ -185,6 +185,7 @@ plugin({
 
 // This is to test that it works when imported from a separate file
 import "../../third_party/svelte";
+import "./module-plugins";
 
 describe("require", () => {
   it("SSRs `<h1>Hello world!</h1>` with Svelte", () => {
@@ -207,6 +208,83 @@ describe("require", () => {
     expect(result.there).toBe(undefined);
     expect(result2.there).toBe(objectModuleResult.there);
     expect(result2.there).toBe(true);
+  });
+});
+
+describe("module", () => {
+  it("throws with require()", () => {
+    expect(() => require("my-virtual-module-async")).toThrow();
+  });
+
+  it("async module works with async import", async () => {
+    // @ts-expect-error
+    const { hello } = await import("my-virtual-module-async");
+
+    expect(hello).toBe("world");
+    delete require.cache["my-virtual-module-async"];
+  });
+
+  it("sync module module works with require()", async () => {
+    const { hello } = require("my-virtual-module-sync");
+
+    expect(hello).toBe("world");
+    delete require.cache["my-virtual-module-sync"];
+  });
+
+  it("sync module module works with require.resolve()", async () => {
+    expect(require.resolve("my-virtual-module-sync")).toBe("my-virtual-module-sync");
+    delete require.cache["my-virtual-module-sync"];
+  });
+
+  it("sync module module works with import", async () => {
+    // @ts-expect-error
+    const { hello } = await import("my-virtual-module-sync");
+
+    expect(hello).toBe("world");
+    delete require.cache["my-virtual-module-sync"];
+  });
+
+  it("modules are overridable", async () => {
+    // @ts-expect-error
+    let { hello, there } = await import("my-virtual-module-sync");
+    expect(there).toBeUndefined();
+    expect(hello).toBe("world");
+
+    Bun.plugin({
+      setup(builder) {
+        builder.module("my-virtual-module-sync", () => ({
+          exports: {
+            there: true,
+          },
+          loader: "object",
+        }));
+      },
+    });
+
+    {
+      const { there, hello } = require("my-virtual-module-sync");
+      expect(there).toBe(true);
+      expect(hello).toBeUndefined();
+    }
+
+    Bun.plugin({
+      setup(builder) {
+        builder.module("my-virtual-module-sync", () => ({
+          exports: {
+            yo: true,
+          },
+          loader: "object",
+        }));
+      },
+    });
+
+    {
+      // @ts-expect-error
+      const { there, hello, yo } = await import("my-virtual-module-sync");
+      expect(yo).toBe(true);
+      expect(hello).toBeUndefined();
+      expect(there).toBeUndefined();
+    }
   });
 });
 

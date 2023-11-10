@@ -51,7 +51,6 @@ const Request = JSC.WebCore.Request;
 
 // https://developer.mozilla.org/en-US/docs/Web/API/Body
 pub const Body = struct {
-    init: Init = Init{ .headers = null, .status_code = 200 },
     value: Value, // = Value.empty,
 
     pub inline fn len(this: *const Body) Blob.SizeType {
@@ -68,7 +67,6 @@ pub const Body = struct {
 
     pub fn clone(this: *Body, globalThis: *JSGlobalObject) Body {
         return Body{
-            .init = this.init.clone(globalThis),
             .value = this.value.clone(globalThis),
         };
     }
@@ -79,19 +77,7 @@ pub const Body = struct {
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>bodyUsed<d>:<r> ", enable_ansi_colors));
         formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.value == .Used), .BooleanObject, enable_ansi_colors);
-        formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
-        try writer.writeAll("\n");
 
-        // if (this.init.headers) |headers| {
-        //     try formatter.writeIndent(Writer, writer);
-        //     try writer.writeAll("headers: ");
-        //     try headers.leak().writeFormat(formatter, writer, comptime enable_ansi_colors);
-        //     try writer.writeAll("\n");
-        // }
-
-        try formatter.writeIndent(Writer, writer);
-        try writer.writeAll(comptime Output.prettyFmt("<r>status<d>:<r> ", enable_ansi_colors));
-        formatter.printAs(.Double, Writer, writer, JSC.JSValue.jsNumber(this.init.status_code), .NumberObject, enable_ansi_colors);
         if (this.value == .Blob) {
             try formatter.printComma(Writer, writer, enable_ansi_colors);
             try writer.writeAll("\n");
@@ -113,86 +99,8 @@ pub const Body = struct {
     }
 
     pub fn deinit(this: *Body, _: std.mem.Allocator) void {
-        if (this.init.headers) |headers| {
-            this.init.headers = null;
-
-            headers.deref();
-        }
         this.value.deinit();
     }
-
-    pub const Init = struct {
-        headers: ?*FetchHeaders = null,
-        status_code: u16,
-        method: Method = Method.GET,
-
-        pub fn clone(this: Init, ctx: *JSGlobalObject) Init {
-            var that = this;
-            var headers = this.headers;
-            if (headers) |head| {
-                that.headers = head.cloneThis(ctx);
-            }
-
-            return that;
-        }
-
-        pub fn init(allocator: std.mem.Allocator, ctx: *JSGlobalObject, response_init: JSC.JSValue) !?Init {
-            var result = Init{ .status_code = 200 };
-
-            if (!response_init.isCell())
-                return null;
-
-            if (response_init.jsType() == .DOMWrapper) {
-                // fast path: it's a Request object or a Response object
-                // we can skip calling JS getters
-                if (response_init.as(Request)) |req| {
-                    if (req.headers) |headers| {
-                        if (!headers.isEmpty()) {
-                            result.headers = headers.cloneThis(ctx);
-                        }
-                    }
-
-                    result.method = req.method;
-                    return result;
-                }
-
-                if (response_init.as(Response)) |req| {
-                    return req.body.init.clone(ctx);
-                }
-            }
-
-            if (response_init.fastGet(ctx, .headers)) |headers| {
-                if (headers.as(FetchHeaders)) |orig| {
-                    if (!orig.isEmpty()) {
-                        result.headers = orig.cloneThis(ctx);
-                    }
-                } else {
-                    result.headers = FetchHeaders.createFromJS(ctx.ptr(), headers);
-                }
-            }
-
-            if (response_init.fastGet(ctx, .status)) |status_value| {
-                const number = status_value.coerceToInt64(ctx);
-                if ((200 <= number and number < 600) or number == 101) {
-                    result.status_code = @as(u16, @truncate(@as(u32, @intCast(number))));
-                } else {
-                    const err = ctx.createRangeErrorInstance("The status provided ({d}) must be 101 or in the range of [200, 599]", .{number});
-                    ctx.throwValue(err);
-                    return null;
-                }
-            }
-
-            if (response_init.fastGet(ctx, .method)) |method_value| {
-                var method_str = method_value.toSlice(ctx, allocator);
-                defer method_str.deinit();
-                if (method_str.len > 0) {
-                    result.method = Method.which(method_str.slice()) orelse .GET;
-                }
-            }
-
-            return result;
-        }
-    };
 
     pub const PendingValue = struct {
         promise: ?JSValue = null,
@@ -466,7 +374,10 @@ pub const Body = struct {
             JSC.markBinding(@src());
 
             switch (this.*) {
-                .Used, .Empty => {
+                .Used => {
+                    return JSC.WebCore.ReadableStream.used(globalThis);
+                },
+                .Empty => {
                     return JSC.WebCore.ReadableStream.empty(globalThis);
                 },
                 .Null => {
@@ -492,6 +403,9 @@ pub const Body = struct {
                     var locked = &this.Locked;
                     if (locked.readable) |readable| {
                         return readable.value;
+                    }
+                    if (locked.promise != null) {
+                        return JSC.WebCore.ReadableStream.used(globalThis);
                     }
                     var drain_result: JSC.WebCore.DrainResult = .{
                         .estimated_size = 0,
@@ -998,72 +912,12 @@ pub const Body = struct {
         }
     };
 
-    pub fn @"404"(_: js.JSContextRef) Body {
-        return Body{
-            .init = Init{
-                .headers = null,
-                .status_code = 404,
-            },
-            .value = Value{ .Null = {} },
-        };
-    }
-
-    pub fn @"200"(_: js.JSContextRef) Body {
-        return Body{
-            .init = Init{
-                .status_code = 200,
-            },
-            .value = Value{ .Null = {} },
-        };
-    }
-
+    // https://github.com/WebKit/webkit/blob/main/Source/WebCore/Modules/fetch/FetchBody.cpp#L45
     pub fn extract(
         globalThis: *JSGlobalObject,
         value: JSValue,
     ) ?Body {
-        return extractBody(
-            globalThis,
-            value,
-            false,
-            JSValue.zero,
-        );
-    }
-
-    pub fn extractWithInit(
-        globalThis: *JSGlobalObject,
-        value: JSValue,
-        init: JSValue,
-    ) ?Body {
-        return extractBody(
-            globalThis,
-            value,
-            true,
-            init,
-        );
-    }
-
-    // https://github.com/WebKit/webkit/blob/main/Source/WebCore/Modules/fetch/FetchBody.cpp#L45
-    inline fn extractBody(
-        globalThis: *JSGlobalObject,
-        value: JSValue,
-        comptime has_init: bool,
-        init: JSValue,
-    ) ?Body {
-        var body = Body{
-            .value = Value{ .Null = {} },
-            .init = Init{ .headers = null, .status_code = 200 },
-        };
-        var allocator = getAllocator(globalThis);
-
-        if (comptime has_init) {
-            if (Init.init(allocator, globalThis, init)) |maybeInit| {
-                if (maybeInit) |init_| {
-                    body.init = init_;
-                }
-            } else |_| {
-                return null;
-            }
-        }
+        var body = Body{ .value = Value{ .Null = {} } };
 
         body.value = Value.fromJS(globalThis, value) orelse return null;
         if (body.value == .Blob)
@@ -1104,8 +958,7 @@ pub fn BodyMixin(comptime Type: type) type {
             var body: *Body.Value = this.getBodyValue();
 
             if (body.* == .Used) {
-                // TODO: make this closed
-                return JSC.WebCore.ReadableStream.empty(globalThis);
+                return JSC.WebCore.ReadableStream.used(globalThis);
             }
 
             return body.toReadableStream(globalThis);

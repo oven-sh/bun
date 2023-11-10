@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "CryptoKeyHMAC.h"
+#include "../wtf-bindings.h"
 
 #if ENABLE(WEB_CRYPTO)
 
@@ -34,6 +35,7 @@
 #include "JsonWebKey.h"
 #include <wtf/text/Base64.h>
 #include <wtf/text/WTFString.h>
+#include "Bun_base64URLEncodeToString.h"
 
 namespace WebCore {
 
@@ -68,6 +70,13 @@ CryptoKeyHMAC::CryptoKeyHMAC(Vector<uint8_t>&& key, CryptoAlgorithmIdentifier ha
 }
 
 CryptoKeyHMAC::~CryptoKeyHMAC() = default;
+
+RefPtr<CryptoKeyHMAC> CryptoKeyHMAC::generateFromBytes(void* data, size_t byteLength, CryptoAlgorithmIdentifier hash, bool extractable, CryptoKeyUsageBitmap usages)
+{
+
+    Vector<uint8_t> vec_data((uint8_t*)data, byteLength);
+    return adoptRef(new CryptoKeyHMAC(vec_data, hash, extractable, usages));
+}
 
 RefPtr<CryptoKeyHMAC> CryptoKeyHMAC::generate(size_t lengthBits, CryptoAlgorithmIdentifier hash, bool extractable, CryptoKeyUsageBitmap usages)
 {
@@ -120,9 +129,10 @@ RefPtr<CryptoKeyHMAC> CryptoKeyHMAC::importJwk(size_t lengthBits, CryptoAlgorith
 
 JsonWebKey CryptoKeyHMAC::exportJwk() const
 {
+
     JsonWebKey result;
     result.kty = "oct"_s;
-    result.k = base64URLEncodeToString(m_key);
+    result.k = Bun::base64URLEncodeToString(m_key);
     result.key_ops = usages();
     result.ext = extractable();
     return result;

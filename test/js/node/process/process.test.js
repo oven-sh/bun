@@ -263,6 +263,15 @@ describe("process.exitCode", () => {
   });
 });
 
+it("process exitCode range (#6284)", () => {
+  const { exitCode, stdout } = spawnSync({
+    cmd: [bunExe(), join(import.meta.dir, "process-exitCode-fixture.js"), "255"],
+    env: bunEnv,
+  });
+  expect(exitCode).toBe(255);
+  expect(stdout.toString().trim()).toBe("PASS");
+});
+
 it("process.exit", () => {
   const { exitCode, stdout } = spawnSync({
     cmd: [bunExe(), join(import.meta.dir, "process-exit-fixture.js")],
@@ -407,7 +416,8 @@ describe("signal", () => {
       stdout: "pipe",
     });
     const prom = child.exited;
-    process.kill(child.pid, "SIGTERM");
+    const ret = process.kill(child.pid, "SIGTERM");
+    expect(ret).toBe(true);
     await prom;
     expect(child.signalCode).toBe("SIGTERM");
   });
@@ -418,7 +428,8 @@ describe("signal", () => {
       stdout: "pipe",
     });
     const prom = child.exited;
-    process.kill(child.pid, 9);
+    const ret = process.kill(child.pid, 9);
+    expect(ret).toBe(true);
     await prom;
     expect(child.signalCode).toBe("SIGKILL");
   });

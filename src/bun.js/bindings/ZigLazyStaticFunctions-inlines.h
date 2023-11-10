@@ -25,7 +25,7 @@ static void DOMCall__FFI__ptr__put(JSC::JSGlobalObject* globalObject, JSC::Encod
         globalObject->vm(),
         Identifier::fromString(globalObject->vm(), "ptr"_s),
         function,
-        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | 0);
+        0);
 }
 
 /* -- END DOMCall DEFINITIONS-- */

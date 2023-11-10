@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, beforeEach } from
 import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { mkfifo } from "mkfifo";
 import { tmpdir } from "os";
+import { gzipSync } from "zlib";
 import { join } from "path";
 import { gc, withoutAggressiveGC, gcTick } from "harness";
 import net from "net";
@@ -346,6 +347,27 @@ describe("Headers", () => {
     expect(headers.getAll("set-cookie")).toEqual(["foo=bar; Path=/; HttpOnly"]);
   });
 
+  it("presence of content-encoding header(issue #5668)", async () => {
+    startServer({
+      fetch(req) {
+        const content = gzipSync(JSON.stringify({ message: "Hello world" }));
+        return new Response(content, {
+          status: 200,
+          headers: {
+            "content-encoding": "gzip",
+            "content-type": "application/json",
+          },
+        });
+      },
+    });
+    const result = await fetch(`http://${server.hostname}:${server.port}/`);
+    const value = result.headers.get("content-encoding");
+    const body = await result.json();
+    expect(value).toBe("gzip");
+    expect(body).toBeDefined();
+    expect(body.message).toBe("Hello world");
+  });
+
   it(".getSetCookie() with array", () => {
     const headers = new Headers([
       ["content-length", "123"],
@@ -373,6 +395,19 @@ describe("Headers", () => {
       ["set-cookie", "bar=baz"],
     ]);
     expect([...headers.values()]).toEqual(["abc, def", "foo=bar", "bar=baz"]);
+  });
+
+  it("Set-Cookies toJSON", () => {
+    const headers = new Headers([
+      ["Set-Cookie", "foo=bar"],
+      ["Set-Cookie", "bar=baz"],
+      ["X-bun", "abc"],
+      ["X-bun", "def"],
+    ]).toJSON();
+    expect(headers).toEqual({
+      "x-bun": "abc, def",
+      "set-cookie": ["foo=bar", "bar=baz"],
+    });
   });
 
   it("Headers append multiple", () => {
@@ -1241,6 +1276,16 @@ describe("Request", () => {
     expect(req.signal.aborted).toBe(true);
   });
 
+  it("copies method (#6144)", () => {
+    const request = new Request("http://localhost:1337/test", {
+      method: "POST",
+    });
+    const new_req = new Request(request, {
+      body: JSON.stringify({ message: "Hello world" }),
+    });
+    expect(new_req.method).toBe("POST");
+  });
+
   it("cloned signal", async () => {
     gc();
     const controller = new AbortController();
@@ -1690,5 +1735,97 @@ it("should throw RedirectURLTooLong when location is too long", async () => {
   expect(err).not.toBeUndefined();
   expect(err).toBeInstanceOf(Error);
   expect(err.code).toStrictEqual("RedirectURLTooLong");
+  server.stop(true);
+});
+
+it("304 not modified with missing content-length does not cause a request timeout", async () => {
+  const server = await Bun.listen({
+    socket: {
+      open(socket) {
+        socket.write("HTTP/1.1 304 Not Modified\r\n\r\n");
+        socket.flush();
+        setTimeout(() => {
+          socket.end();
+        }, 9999).unref();
+      },
+      data() {},
+      close() {},
+    },
+    port: 0,
+    hostname: "localhost",
+  });
+
+  const response = await fetch(`http://${server.hostname}:${server.port}/`);
+  expect(response.status).toBe(304);
+  expect(await response.arrayBuffer()).toHaveLength(0);
+  server.stop(true);
+});
+
+it("304 not modified with missing content-length and connection close does not cause a request timeout", async () => {
+  const server = await Bun.listen({
+    socket: {
+      open(socket) {
+        socket.write("HTTP/1.1 304 Not Modified\r\nConnection: close\r\n\r\n");
+        socket.flush();
+        setTimeout(() => {
+          socket.end();
+        }, 9999).unref();
+      },
+      data() {},
+      close() {},
+    },
+    port: 0,
+    hostname: "localhost",
+  });
+
+  const response = await fetch(`http://${server.hostname}:${server.port}/`);
+  expect(response.status).toBe(304);
+  expect(await response.arrayBuffer()).toHaveLength(0);
+  server.stop(true);
+});
+
+it("304 not modified with content-length 0 and connection close does not cause a request timeout", async () => {
+  const server = await Bun.listen({
+    socket: {
+      open(socket) {
+        socket.write("HTTP/1.1 304 Not Modified\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+        socket.flush();
+        setTimeout(() => {
+          socket.end();
+        }, 9999).unref();
+      },
+      data() {},
+      close() {},
+    },
+    port: 0,
+    hostname: "localhost",
+  });
+
+  const response = await fetch(`http://${server.hostname}:${server.port}/`);
+  expect(response.status).toBe(304);
+  expect(await response.arrayBuffer()).toHaveLength(0);
+  server.stop(true);
+});
+
+it("304 not modified with 0 content-length does not cause a request timeout", async () => {
+  const server = await Bun.listen({
+    socket: {
+      open(socket) {
+        socket.write("HTTP/1.1 304 Not Modified\r\nContent-Length: 0\r\n\r\n");
+        socket.flush();
+        setTimeout(() => {
+          socket.end();
+        }, 9999).unref();
+      },
+      data() {},
+      close() {},
+    },
+    port: 0,
+    hostname: "localhost",
+  });
+
+  const response = await fetch(`http://${server.hostname}:${server.port}/`);
+  expect(response.status).toBe(304);
+  expect(await response.arrayBuffer()).toHaveLength(0);
   server.stop(true);
 });

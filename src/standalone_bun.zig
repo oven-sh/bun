@@ -562,17 +562,34 @@ pub const StandaloneModuleGraph = struct {
         // heuristic: `bun build --compile` won't be supported if the name is "bun" or "bunx".
         // this is a cheap way to avoid the extra overhead of opening the executable
         // and also just makes sense.
-        if (bun.argv().len > 0) {
-            const argv0_len = bun.len(bun.argv()[0]);
-            if (argv0_len == 3) {
-                if (bun.strings.eqlComptimeIgnoreLen(bun.argv()[0][0..argv0_len], "bun")) {
-                    return null;
-                }
-            }
+        const argv = bun.argv();
+        if (argv.len > 0) {
+            const argv0_len = bun.len(argv[0]);
+            if (argv0_len > 0) {
+                const argv0 = argv[0][0..argv0_len];
 
-            if (argv0_len == 4) {
-                if (bun.strings.eqlComptimeIgnoreLen(bun.argv()[0][0..argv0_len], "bunx")) {
-                    return null;
+                if (argv0_len == 3) {
+                    if (bun.strings.eqlComptimeIgnoreLen(argv0, "bun")) {
+                        return null;
+                    }
+                }
+
+                if (comptime Environment.isDebug) {
+                    if (bun.strings.eqlComptime(argv0, "bun-debug")) {
+                        return null;
+                    }
+                }
+
+                if (argv0_len == 4) {
+                    if (bun.strings.eqlComptimeIgnoreLen(argv0, "bunx")) {
+                        return null;
+                    }
+                }
+
+                if (comptime Environment.isDebug) {
+                    if (bun.strings.eqlComptime(argv0, "bun-debugx")) {
+                        return null;
+                    }
                 }
             }
         }

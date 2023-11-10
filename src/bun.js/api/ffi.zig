@@ -50,7 +50,6 @@ const MarkedArrayBuffer = @import("../base.zig").MarkedArrayBuffer;
 const getAllocator = @import("../base.zig").getAllocator;
 const JSValue = @import("root").bun.JSC.JSValue;
 
-const Microtask = @import("root").bun.JSC.Microtask;
 const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
 const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;
 const JSPrivateDataPtr = @import("root").bun.JSC.JSPrivateDataPtr;
@@ -317,9 +316,9 @@ pub const FFI = struct {
                 };
             };
         };
-        
+
         var size = symbols.values().len;
-        if(size >= 63) {
+        if (size >= 63) {
             size = 0;
         }
         var obj = JSC.JSValue.createEmptyObject(global, size);
@@ -672,7 +671,9 @@ pub const FFI = struct {
             val.arg_types.clearAndFree(allocator);
 
             if (val.state) |state| {
-                TCC.tcc_delete(state);
+                if (comptime !Environment.isWindows) {
+                    TCC.tcc_delete(state);
+                }
                 val.state = null;
             }
 
@@ -772,6 +773,9 @@ pub const FFI = struct {
             this: *Function,
             allocator: std.mem.Allocator,
         ) !void {
+            if (comptime Environment.isWindows) {
+                return;
+            }
             var source_code = std.ArrayList(u8).init(allocator);
             var source_code_writer = source_code.writer();
             try this.printSourceCode(&source_code_writer);
@@ -786,7 +790,9 @@ pub const FFI = struct {
             this.state = state;
             defer {
                 if (this.step == .failed) {
-                    TCC.tcc_delete(state);
+                    if (comptime !Environment.isWindows) {
+                        TCC.tcc_delete(state);
+                    }
                     this.state = null;
                 }
             }
@@ -895,6 +901,9 @@ pub const FFI = struct {
             }
 
             pub fn inject(state: *TCC.TCCState) void {
+                if (comptime Environment.isWindows) {
+                    return;
+                }
                 JSC.markBinding(@src());
                 _ = TCC.tcc_add_symbol(state, "memset", &memset);
                 _ = TCC.tcc_add_symbol(state, "memcpy", &memcpy);
@@ -935,6 +944,9 @@ pub const FFI = struct {
             js_function: JSValue,
             is_threadsafe: bool,
         ) !void {
+            if (comptime Environment.isWindows) {
+                return;
+            }
             JSC.markBinding(@src());
             var source_code = std.ArrayList(u8).init(allocator);
             var source_code_writer = source_code.writer();
@@ -958,7 +970,9 @@ pub const FFI = struct {
             this.state = state;
             defer {
                 if (this.step == .failed) {
-                    TCC.tcc_delete(state);
+                    if (comptime !Environment.isWindows) {
+                        TCC.tcc_delete(state);
+                    }
                     this.state = null;
                 }
             }
@@ -1083,12 +1097,11 @@ pub const FFI = struct {
                     try writer.writeAll(", ");
                 }
                 first = false;
-                try arg.typename(writer);
+                try arg.paramTypename(writer);
                 try writer.print(" arg{d}", .{i});
             }
             try writer.writeAll(
                 \\);
-                \\
                 \\
                 \\/* ---- Your Wrapper Function ---- */
                 \\ZIG_REPR_TYPE JSFunctionCall(void* JS_GLOBAL_OBJECT, void* callFrame) {
@@ -1532,7 +1545,10 @@ pub const FFI = struct {
                     .char, .int8_t, .uint8_t, .int16_t, .uint16_t, .int32_t => {
                         try writer.print("INT32_TO_JSVALUE((int32_t){s})", .{self.symbol});
                     },
-                    .uint32_t, .i64_fast => {
+                    .uint32_t => {
+                        try writer.print("UINT32_TO_JSVALUE({s})", .{self.symbol});
+                    },
+                    .i64_fast => {
                         try writer.print("INT64_TO_JSVALUE(JS_GLOBAL_OBJECT, (int64_t){s})", .{self.symbol});
                     },
                     .int64_t => {
@@ -1589,6 +1605,31 @@ pub const FFI = struct {
                 .uint16_t => "uint16_t",
                 .int32_t => "int32_t",
                 .uint32_t => "uint32_t",
+                .i64_fast, .int64_t => "int64_t",
+                .u64_fast, .uint64_t => "uint64_t",
+                .double => "double",
+                .float => "float",
+                .char => "char",
+                .void => "void",
+            };
+        }
+
+        pub fn paramTypename(this: ABIType, writer: anytype) !void {
+            try writer.writeAll(this.typenameLabel());
+        }
+
+        pub fn paramTypenameLabel(this: ABIType) []const u8 {
+            return switch (this) {
+                .function, .cstring, .ptr => "void*",
+                .bool => "bool",
+                .int8_t => "int8_t",
+                .uint8_t => "uint8_t",
+                .int16_t => "int16_t",
+                .uint16_t => "uint16_t",
+                // see the comment in ffi.ts about why `uint32_t` acts as `int32_t`
+                .int32_t,
+                .uint32_t,
+                => "int32_t",
                 .i64_fast, .int64_t => "int64_t",
                 .u64_fast, .uint64_t => "uint64_t",
                 .double => "double",

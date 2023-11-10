@@ -5,9 +5,9 @@
 #include "helpers.h"
 #include "IDLTypes.h"
 #include "DOMURL.h"
-#include "JavaScriptCore/JSPromise.h"
-#include "JavaScriptCore/JSBase.h"
-#include "JavaScriptCore/BuiltinNames.h"
+#include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/JSBase.h>
+#include <JavaScriptCore/BuiltinNames.h>
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/JSFunction.h>
@@ -20,7 +20,7 @@
 #include "headers.h"
 #include "BunObject.h"
 #include "WebCoreJSBuiltins.h"
-#include "JavaScriptCore/JSObject.h"
+#include <JavaScriptCore/JSObject.h>
 #include "DOMJITIDLConvert.h"
 #include "DOMJITIDLType.h"
 #include "DOMJITIDLTypeFilter.h"
@@ -46,7 +46,7 @@ static JSValue constructEnvObject(VM& vm, JSObject* object)
     return jsCast<Zig::GlobalObject*>(object->globalObject())->processEnvObject();
 }
 
-static inline EncodedJSValue flattenArrayOfBuffersIntoArrayBuffer(JSGlobalObject* lexicalGlobalObject, JSValue arrayValue)
+static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBuffer(JSGlobalObject* lexicalGlobalObject, JSValue arrayValue)
 {
     auto& vm = lexicalGlobalObject->vm();
 
@@ -190,12 +190,12 @@ static JSValue constructPluginObject(VM& vm, JSObject* bunObject)
     auto* globalObject = bunObject->globalObject();
     JSFunction* pluginFunction = JSFunction::create(vm, globalObject, 1, String("plugin"_s), jsFunctionBunPlugin, ImplementationVisibility::Public, NoIntrinsic);
     pluginFunction->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "clearAll"_s), 1, jsFunctionBunPluginClear, ImplementationVisibility::Public, NoIntrinsic,
-        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        JSC::PropertyAttribute::DontDelete | 0);
 
     return pluginFunction;
 }
 
-extern "C" EncodedJSValue JSPasswordObject__create(JSGlobalObject*);
+extern "C" JSC::EncodedJSValue JSPasswordObject__create(JSGlobalObject*);
 
 static JSValue constructPasswordObject(VM& vm, JSObject* bunObject)
 {
@@ -222,33 +222,33 @@ static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
     JSGlobalObject* globalObject = bunObject->globalObject();
     JSC::JSObject* dnsObject = JSC::constructEmptyObject(globalObject);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "lookup"_s), 2, Bun__DNSResolver__lookup, ImplementationVisibility::Public, NoIntrinsic,
-        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolve"_s), 2, Bun__DNSResolver__resolve, ImplementationVisibility::Public, NoIntrinsic,
-        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveSrv"_s), 2, Bun__DNSResolver__resolveSrv, ImplementationVisibility::Public, NoIntrinsic,
-        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveTxt"_s), 2, Bun__DNSResolver__resolveTxt, ImplementationVisibility::Public, NoIntrinsic,
-        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveSoa"_s), 2, Bun__DNSResolver__resolveSoa, ImplementationVisibility::Public, NoIntrinsic,
-        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveNaptr"_s), 2, Bun__DNSResolver__resolveNaptr, ImplementationVisibility::Public, NoIntrinsic,
-        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveMx"_s), 2, Bun__DNSResolver__resolveMx, ImplementationVisibility::Public, NoIntrinsic,
-        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveCaa"_s), 2, Bun__DNSResolver__resolveCaa, ImplementationVisibility::Public, NoIntrinsic,
-        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveNs"_s), 2, Bun__DNSResolver__resolveNs, ImplementationVisibility::Public, NoIntrinsic,
-        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolvePtr"_s), 2, Bun__DNSResolver__resolvePtr, ImplementationVisibility::Public, NoIntrinsic,
-        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveCname"_s), 2, Bun__DNSResolver__resolveCname, ImplementationVisibility::Public, NoIntrinsic,
-        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getServers"_s), 2, Bun__DNSResolver__getServers, ImplementationVisibility::Public, NoIntrinsic,
-        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "reverse"_s), 2, Bun__DNSResolver__reverse, ImplementationVisibility::Public, NoIntrinsic,
-        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "lookupService"_s), 2, Bun__DNSResolver__lookupService, ImplementationVisibility::Public, NoIntrinsic,
-        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        JSC::PropertyAttribute::DontDelete | 0);
     return dnsObject;
 }
 
@@ -258,7 +258,7 @@ static JSValue constructBunPeekObject(VM& vm, JSObject* bunObject)
     JSC::Identifier identifier = JSC::Identifier::fromString(vm, "peek"_s);
     JSFunction* peekFunction = JSFunction::create(vm, globalObject, 2, WTF::String("peek"_s), functionBunPeek, ImplementationVisibility::Public, NoIntrinsic);
     JSFunction* peekStatus = JSFunction::create(vm, globalObject, 1, WTF::String("status"_s), functionBunPeekStatus, ImplementationVisibility::Public, NoIntrinsic);
-    peekFunction->putDirect(vm, PropertyName(JSC::Identifier::fromString(vm, "status"_s)), peekStatus, JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+    peekFunction->putDirect(vm, PropertyName(JSC::Identifier::fromString(vm, "status"_s)), peekStatus, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
 
     return peekFunction;
 }
@@ -390,8 +390,8 @@ JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
     return JSC::JSValue::encode(promise);
 }
 
-extern "C" EncodedJSValue Bun__escapeHTML8(JSGlobalObject* globalObject, EncodedJSValue input, const LChar* ptr, size_t length);
-extern "C" EncodedJSValue Bun__escapeHTML16(JSGlobalObject* globalObject, EncodedJSValue input, const UChar* ptr, size_t length);
+extern "C" JSC::EncodedJSValue Bun__escapeHTML8(JSGlobalObject* globalObject, JSC::EncodedJSValue input, const LChar* ptr, size_t length);
+extern "C" JSC::EncodedJSValue Bun__escapeHTML16(JSGlobalObject* globalObject, JSC::EncodedJSValue input, const UChar* ptr, size_t length);
 
 // JSC_DEFINE_JIT_OPERATION(functionBunEscapeHTMLWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSObject* castedglobalObject, JSString* string))
 // {
@@ -429,7 +429,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunEscapeHTML, (JSC::JSGlobalObject * lexicalGl
         RELEASE_AND_RETURN(scope, JSValue::encode(string));
 
     auto resolvedString = string->value(lexicalGlobalObject);
-    EncodedJSValue encodedInput = JSValue::encode(string);
+    JSC::EncodedJSValue encodedInput = JSValue::encode(string);
     if (!resolvedString.is8Bit()) {
         RELEASE_AND_RETURN(scope, Bun__escapeHTML16(lexicalGlobalObject, encodedInput, resolvedString.characters16(), length));
     } else {
@@ -628,6 +628,7 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     resolve                                        BunObject_callback_resolve                                          DontDelete|Function 1
     resolveSync                                    BunObject_callback_resolveSync                                      DontDelete|Function 1
     revision                                       constructBunRevision                                                ReadOnly|DontDelete|PropertyCallback
+    semver                                         BunObject_getter_wrap_semver                                        ReadOnly|DontDelete|PropertyCallback
     serve                                          BunObject_callback_serve                                            DontDelete|Function 1
     sha                                            BunObject_callback_sha                                              DontDelete|Function 1
     shrink                                         BunObject_callback_shrink                                           DontDelete|Function 1
@@ -663,6 +664,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBunObject, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -673,15 +675,14 @@ public:
     void finishCreation(JSC::VM& vm)
     {
         Base::finishCreation(vm);
-
         JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
     }
 
     static JSBunObject* create(JSC::VM& vm, JSGlobalObject* globalObject)
     {
-        auto* object = new (NotNull, JSC::allocateCell<JSBunObject>(vm)) JSBunObject(vm, createStructure(vm, globalObject, globalObject->objectPrototype()));
+        auto structure = createStructure(vm, globalObject, globalObject->objectPrototype());
+        auto* object = new (NotNull, JSC::allocateCell<JSBunObject>(vm)) JSBunObject(vm, structure);
         object->finishCreation(vm);
-
         return object;
     }
 };
@@ -702,11 +703,11 @@ public:
 #undef bunObjectReadableStreamToJSONCodeGenerator
 #undef bunObjectReadableStreamToTextCodeGenerator
 
-const JSC::ClassInfo JSBunObject::s_info = { "Bun"_s, &JSNonFinalObject::s_info, &bunObjectTable, nullptr, CREATE_METHOD_TABLE(JSBunObject) };
+const JSC::ClassInfo JSBunObject::s_info = { "Bun"_s, &Base::s_info, &bunObjectTable, nullptr, CREATE_METHOD_TABLE(JSBunObject) };
 
 JSC::JSObject* createBunObject(VM& vm, JSObject* globalObject)
 {
-    return JSBunObject::create(vm, static_cast<Zig::GlobalObject*>(globalObject));
+    return JSBunObject::create(vm, jsCast<Zig::GlobalObject*>(globalObject));
 }
 
 }

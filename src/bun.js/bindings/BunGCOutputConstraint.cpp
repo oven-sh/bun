@@ -25,11 +25,11 @@
 
 #include "config.h"
 
-#include "JavaScriptCore/WeakInlines.h"
-#include "JavaScriptCore/AbstractSlotVisitorInlines.h"
+#include <JavaScriptCore/WeakInlines.h>
+#include <JavaScriptCore/AbstractSlotVisitorInlines.h>
 
-#include "JavaScriptCore/VM.h"
-#include "JavaScriptCore/MarkingConstraint.h"
+#include <JavaScriptCore/VM.h>
+#include <JavaScriptCore/MarkingConstraint.h>
 
 // namespace JSC {
 
@@ -134,10 +134,10 @@
 #include "BunGCOutputConstraint.h"
 
 #include "WebCoreJSClientData.h"
-#include "JavaScriptCore/BlockDirectoryInlines.h"
-#include "JavaScriptCore/HeapInlines.h"
-#include "JavaScriptCore/MarkedBlockInlines.h"
-#include "JavaScriptCore/SubspaceInlines.h"
+#include <JavaScriptCore/BlockDirectoryInlines.h>
+#include <JavaScriptCore/HeapInlines.h>
+#include <JavaScriptCore/MarkedBlockInlines.h>
+#include <JavaScriptCore/SubspaceInlines.h>
 
 namespace WebCore {
 

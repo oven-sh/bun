@@ -10,7 +10,7 @@
 //
 // This means context tracking is *kind-of* manual. If we recieve a callback in native code
 // - In Zig, call jsValue.withAsyncContextIfNeeded(); which returns another JSValue. Store that and
-//   then run .call() on it later.
+//   then run .$call() on it later.
 // - In C++, call AsyncContextFrame::withAsyncContextIfNeeded(jsValue). Then to call it,
 //   use AsyncContextFrame:: call(...) instead of JSC:: call.
 //
@@ -51,11 +51,13 @@ function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<an
 
 // Only run during debug
 function debugFormatContextValue(value: ReadonlyArray<any> | undefined) {
-  if (value === undefined) return "{}";
+  if (value === undefined) return "undefined";
   let str = "{\n";
   for (var i = 0; i < value.length; i += 2) {
-    str += `  ${value[i].__id__}: ${Bun.inspect(value[i + 1], { depth: 1, colors: Bun.enableANSIColors })}\n`;
+    str += `  ${value[i].__id__}: typeof = ${typeof value[i + 1]}\n`;
   }
+  str += "}";
+  return str;
 }
 
 function get(): ReadonlyArray<any> | undefined {
@@ -70,17 +72,19 @@ function set(contextValue: ReadonlyArray<any> | undefined) {
 }
 
 class AsyncLocalStorage {
-  #disableCalled = false;
+  #disabled = false;
 
   constructor() {
     setAsyncHooksEnabled(true);
 
     // In debug mode assign every AsyncLocalStorage a unique ID
     if (IS_BUN_DEVELOPMENT) {
-      (this as any).__id__ =
-        Math.random().toString(36).slice(2, 8) +
-        "@" +
-        require("node:path").basename(require("bun:jsc").callerSourceOrigin());
+      const uid = Math.random().toString(36).slice(2, 8);
+      const source = require("bun:jsc").callerSourceOrigin();
+
+      (this as any).__id__ = uid + "@" + require("node:path").basename(source);
+
+      $debug("new AsyncLocalStorage uid=", (this as any).__id__, source);
     }
   }
 
@@ -105,6 +109,8 @@ class AsyncLocalStorage {
 
   enterWith(store) {
     cleanupLater();
+    // we must renable it when asyncLocalStorage.enterWith() is called https://nodejs.org/api/async_context.html#asynclocalstoragedisable
+    this.#disabled = false;
     var context = get();
     if (!context) {
       set([this, store]);
@@ -133,11 +139,15 @@ class AsyncLocalStorage {
   // This function is literred with $asserts to ensure that everything that
   // is assumed to be true is *actually* true.
   run(store_value, callback, ...args) {
+    $debug("run " + (this as any).__id__);
     var context = get() as any[]; // we make sure to .slice() before mutating
     var hasPrevious = false;
     var previous_value;
     var i = 0;
     var contextWasAlreadyInit = !context;
+    // we must renable it when asyncLocalStorage.run() is called https://nodejs.org/api/async_context.html#asynclocalstoragedisable
+    const wasDisabled = this.#disabled;
+    this.#disabled = false;
     if (contextWasAlreadyInit) {
       set((context = [this, store_value]));
     } else {
@@ -166,7 +176,7 @@ class AsyncLocalStorage {
     } finally {
       // Note: early `return` will prevent `throw` above from working. I think...
       // Set AsyncContextFrame to undefined if we are out of context values
-      if (!this.#disableCalled) {
+      if (!wasDisabled) {
         var context2 = get()! as any[]; // we make sure to .slice() before mutating
         if (context2 === context && contextWasAlreadyInit) {
           $assert(context2.length === 2, "context was mutated without copy");
@@ -198,23 +208,24 @@ class AsyncLocalStorage {
   disable() {
     $debug("disable " + (this as any).__id__);
     // In this case, we actually do want to mutate the context state
-    if (!this.#disableCalled) {
-      var context = get() as any[];
-      if (context) {
-        var { length } = context;
-        for (var i = 0; i < length; i += 2) {
-          if (context[i] === this) {
-            context.splice(i, 2);
-            set(context.length ? context : undefined);
-            break;
-          }
+    if (this.#disabled) return;
+    var context = get() as any[];
+    if (context) {
+      var { length } = context;
+      for (var i = 0; i < length; i += 2) {
+        if (context[i] === this) {
+          context.splice(i, 2);
+          set(context.length ? context : undefined);
+          break;
         }
       }
-      this.#disableCalled = true;
     }
   }
 
   getStore() {
+    $debug("getStore " + (this as any).__id__);
+    // disabled AsyncLocalStorage always returns undefined https://nodejs.org/api/async_context.html#asynclocalstoragedisable
+    if (this.#disabled) return;
     var context = get();
     if (!context) return;
     var { length } = context;
@@ -271,7 +282,7 @@ class AsyncResource {
     var prev = get();
     set(this.#snapshot);
     try {
-      return fn.apply(thisArg, args);
+      return fn.$apply(thisArg, args);
     } catch (error) {
       throw error;
     } finally {

@@ -20,4 +20,14 @@ pub const ArrayIdentityContext = struct {
     pub fn eql(_: @This(), a: u32, b: u32, _: usize) bool {
         return a == b;
     }
+
+    pub const U64 = struct {
+        pub fn hash(_: @This(), key: u64) u32 {
+            return @truncate(key);
+        }
+
+        pub fn eql(_: @This(), a: u64, b: u64, _: usize) bool {
+            return a == b;
+        }
+    };
 };

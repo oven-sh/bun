@@ -1518,7 +1518,7 @@ pub const Expect = struct {
         }
 
         const expected_diff = std.math.pow(f64, 10, -precision) / 2;
-        const actual_diff = std.math.fabs(received - expected);
+        const actual_diff = @abs(received - expected);
         var pass = actual_diff < expected_diff;
 
         const not = this.flags.not;
@@ -1655,6 +1655,10 @@ pub const Expect = struct {
         const result_: ?JSValue = brk: {
             var vm = globalObject.bunVM();
             var return_value: JSValue = .zero;
+
+            // Drain existing unhandled rejections
+            vm.global.handleRejectedPromises();
+
             var scope = vm.unhandledRejectionScope();
             var prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
             vm.unhandled_pending_rejection_to_capture = &return_value;
@@ -1662,12 +1666,14 @@ pub const Expect = struct {
             const return_value_from_fucntion: JSValue = value.call(globalObject, &.{});
             vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
 
+            vm.global.handleRejectedPromises();
+
             if (return_value == .zero) {
                 return_value = return_value_from_fucntion;
             }
 
             if (return_value.asAnyPromise()) |promise| {
-                globalObject.bunVM().waitForPromise(promise);
+                vm.waitForPromise(promise);
                 scope.apply(vm);
                 const promise_result = promise.result(globalObject.vm());
 
@@ -1676,15 +1682,24 @@ pub const Expect = struct {
                         break :brk null;
                     },
                     .Rejected => {
+                        promise.setHandled(globalObject.vm());
+
                         // since we know for sure it rejected, we should always return the error
                         break :brk promise_result.toError() orelse promise_result;
                     },
                     .Pending => unreachable,
                 }
             }
+
+            if (return_value != return_value_from_fucntion) {
+                if (return_value_from_fucntion.asAnyPromise()) |existing| {
+                    existing.setHandled(globalObject.vm());
+                }
+            }
+
             scope.apply(vm);
 
-            break :brk return_value.toError();
+            break :brk return_value.toError() orelse return_value_from_fucntion.toError();
         };
 
         const did_throw = result_ != null;
@@ -2649,6 +2664,83 @@ pub const Expect = struct {
         return .zero;
     }
 
+    pub fn toEqualIgnoringWhitespace(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const _arguments = callFrame.arguments(1);
+        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+
+        if (arguments.len < 1) {
+            globalThis.throwInvalidArguments("toEqualIgnoringWhitespace() requires 1 argument", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const expected = arguments[0];
+        const value: JSValue = this.getValue(globalThis, thisValue, "toEqualIgnoringWhitespace", "<green>expected<r>") orelse return .zero;
+
+        if (!expected.isString()) {
+            globalThis.throw("toEqualIgnoringWhitespace() requires argument to be a string", .{});
+            return .zero;
+        }
+
+        const not = this.flags.not;
+        var pass = value.isString() and expected.isString();
+
+        if (pass) {
+            var valueStr = value.toString(globalThis).toSlice(globalThis, default_allocator).slice();
+            var expectedStr = expected.toString(globalThis).toSlice(globalThis, default_allocator).slice();
+
+            var left: usize = 0;
+            var right: usize = 0;
+
+            // Skip leading whitespaces
+            while (left < valueStr.len and std.ascii.isWhitespace(valueStr[left])) left += 1;
+            while (right < expectedStr.len and std.ascii.isWhitespace(expectedStr[right])) right += 1;
+
+            while (left < valueStr.len and right < expectedStr.len) {
+                const left_char = valueStr[left];
+                const right_char = expectedStr[right];
+
+                if (left_char != right_char) {
+                    pass = false;
+                    break;
+                }
+
+                left += 1;
+                right += 1;
+
+                // Skip trailing whitespaces
+                while (left < valueStr.len and std.ascii.isWhitespace(valueStr[left])) left += 1;
+                while (right < expectedStr.len and std.ascii.isWhitespace(expectedStr[right])) right += 1;
+            }
+
+            if (left < valueStr.len or right < expectedStr.len) {
+                pass = false;
+            }
+        }
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const expected_fmt = expected.toFmt(globalThis, &formatter);
+        const value_fmt = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toEqualIgnoringWhitespace", "<green>expected<r>", true) ++ "\n\n" ++ "Expected: not <green>{any}<r>\n" ++ "Received: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{ expected_fmt, value_fmt });
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toEqualIgnoringWhitespace", "<green>expected<r>", false) ++ "\n\n" ++ "Expected: <green>{any}<r>\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{ expected_fmt, value_fmt });
+        return .zero;
+    }
+
     pub fn toBeSymbol(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
         defer this.postMatch(globalThis);
 
@@ -3271,7 +3363,7 @@ pub const Expect = struct {
             globalObject.throw(Output.prettyFmt(fmt, false), .{calls.toFmt(globalObject, &formatter)});
             return .zero;
         } else {
-            const signature = comptime getSignature("toHaveBeenCalled", "", true);
+            const signature = comptime getSignature("toHaveBeenCalled", "", false);
             const fmt = signature ++ "\n\nExpected <green>{any}<r>\n";
             if (Output.enable_ansi_colors) {
                 globalObject.throw(Output.prettyFmt(fmt, true), .{calls.toFmt(globalObject, &formatter)});
@@ -3326,7 +3418,7 @@ pub const Expect = struct {
             globalObject.throw(Output.prettyFmt(fmt, false), .{calls.toFmt(globalObject, &formatter)});
             return .zero;
         } else {
-            const signature = comptime getSignature("toHaveBeenCalledTimes", "<green>expected<r>", true);
+            const signature = comptime getSignature("toHaveBeenCalledTimes", "<green>expected<r>", false);
             const fmt = signature ++ "\n\nExpected <green>{any}<r>\n";
             if (Output.enable_ansi_colors) {
                 globalObject.throw(Output.prettyFmt(fmt, true), .{calls.toFmt(globalObject, &formatter)});

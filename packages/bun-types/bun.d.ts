@@ -70,6 +70,19 @@ declare module "bun" {
     options?: { PATH?: string; cwd?: string },
   ): string | null;
 
+  interface TOML {
+    /**
+     * Parse a TOML string into a JavaScript object.
+     *
+     * @param {string} command The name of the executable or script
+     * @param {string} options.PATH Overrides the PATH environment variable
+     * @param {string} options.cwd Limits the search to a particular directory in which to searc
+     *
+     */
+    parse(input: string): object;
+  }
+  export const TOML: TOML;
+
   export type Serve<WebSocketDataType = undefined> =
     | ServeOptions
     | TLSServeOptions
@@ -1858,6 +1871,15 @@ declare module "bun" {
     port?: string | number;
 
     /**
+     * If the `SO_REUSEPORT` flag should be set.
+     *
+     * This allows multiple processes to bind to the same port, which is useful for load balancing.
+     *
+     * @default false
+     */
+    reusePort?: boolean;
+
+    /**
      * What hostname should the server listen on?
      *
      * @default
@@ -2359,11 +2381,7 @@ declare module "bun" {
     ): ServerWebSocketSendStatus;
 
     /**
-     * Returns the client IP address of the given Request.
-     *
-     * @param request The incoming request
-     *
-     * @returns An ipv4/ipv6 address string, or null if it couldn't find one.
+     * Returns the client IP address and port of the given Request. If the request was closed or is a unix socket, returns null.
      *
      * @example
      * ```js
@@ -2557,6 +2575,22 @@ declare module "bun" {
    * This is read-only
    */
   const stdin: BunFile;
+
+  type StringLike = string | { toString(): string };
+
+  interface semver {
+    /**
+     * Test if the version satisfies the range. Stringifies both arguments. Returns `true` or `false`.
+     */
+    satisfies(version: StringLike, range: StringLike): boolean;
+
+    /**
+     * Returns 0 if the versions are equal, 1 if `v1` is greater, or -1 if `v2` is greater.
+     * Throws an error if either version is invalid.
+     */
+    order(v1: StringLike, v2: StringLike): -1 | 0 | 1;
+  }
+  export const semver: semver;
 
   interface unsafe {
     /**
@@ -3205,7 +3239,7 @@ declare module "bun" {
     loader: Loader;
   }
 
-  type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject;
+  type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject | undefined;
   type OnLoadCallback = (
     args: OnLoadArgs,
   ) => OnLoadResult | Promise<OnLoadResult>;
@@ -3297,6 +3331,37 @@ declare module "bun" {
      * The config object passed to `Bun.build` as is. Can be mutated.
      */
     config: BuildConfig & { plugins: BunPlugin[] };
+
+    /**
+     * Create a lazy-loaded virtual module that can be `import`ed or `require`d from other modules
+     *
+     * @param specifier The module specifier to register the callback for
+     * @param callback The function to run when the module is imported or required
+     *
+     * ### Example
+     * @example
+     * ```ts
+     * Bun.plugin({
+     *   setup(builder) {
+     *     builder.module("hello:world", () => {
+     *       return { exports: { foo: "bar" }, loader: "object" };
+     *     });
+     *   },
+     * });
+     *
+     * // sometime later
+     * const { foo } = await import("hello:world");
+     * console.log(foo); // "bar"
+     *
+     * // or
+     * const { foo } = require("hello:world");
+     * console.log(foo); // "bar"
+     * ```
+     */
+    module(
+      specifier: string,
+      callback: () => OnLoadResult | Promise<OnLoadResult>,
+    ): void;
   }
 
   interface BunPlugin {
@@ -4028,7 +4093,7 @@ declare module "bun" {
    * Spawn a new process
    *
    * ```js
-   * const {stdout} = Bun.spawn(["echo", "hello"]));
+   * const {stdout} = Bun.spawn(["echo", "hello"]);
    * const text = await readableStreamToText(stdout);
    * console.log(text); // "hello\n"
    * ```
@@ -4090,7 +4155,7 @@ declare module "bun" {
    * Synchronously spawn a new process
    *
    * ```js
-   * const {stdout} = Bun.spawnSync(["echo", "hello"]));
+   * const {stdout} = Bun.spawnSync(["echo", "hello"]);
    * console.log(stdout.toString()); // "hello\n"
    * ```
    *

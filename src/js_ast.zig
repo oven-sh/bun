@@ -1666,8 +1666,8 @@ pub const E = struct {
         /// JSX element children <div>{this_is_a_child_element}</div>
         children: ExprNodeList = ExprNodeList{},
 
-        /// key is the key prop like <ListItem key="foo">
-        key: ?ExprNodeIndex = null,
+        // needed to make sure parse and visit happen in the same order
+        key_prop_index: i32 = -1,
 
         flags: Flags.JSXElement.Bitset = Flags.JSXElement.Bitset{},
 
@@ -1714,7 +1714,7 @@ pub const E = struct {
             if (comptime !Environment.isWasm) {
                 if (value == @trunc(value) and (value < std.math.maxInt(i32) and value > std.math.minInt(i32))) {
                     const int_value = @as(i64, @intFromFloat(value));
-                    const abs = @as(u64, @intCast(std.math.absInt(int_value) catch return null));
+                    const abs = @as(u64, @intCast(@abs(int_value)));
                     if (abs < double_digit.len) {
                         return if (int_value < 0)
                             neg_double_digit[abs]
@@ -7278,8 +7278,9 @@ pub const Macro = struct {
 
             exception_holder = Zig.ZigException.Holder.init();
             var js_args: []JSC.JSValue = &.{};
+            var js_processed_args_len: usize = 0;
             defer {
-                for (js_args[0 .. js_args.len - @as(usize, @intFromBool(!javascript_object.isEmpty()))]) |arg| {
+                for (js_args[0..js_processed_args_len -| @as(usize, @intFromBool(!javascript_object.isEmpty()))]) |arg| {
                     arg.unprotect();
                 }
 
@@ -7292,12 +7293,18 @@ pub const Macro = struct {
                 .e_call => |call| {
                     const call_args: []Expr = call.args.slice();
                     js_args = try allocator.alloc(JSC.JSValue, call_args.len + @as(usize, @intFromBool(!javascript_object.isEmpty())));
+                    js_processed_args_len = js_args.len;
 
-                    for (call_args, js_args[0..call_args.len]) |in, *out| {
-                        const value = try in.toJS(
+                    for (0.., call_args, js_args[0..call_args.len]) |i, in, *out| {
+                        const value = in.toJS(
                             allocator,
                             globalObject,
-                        );
+                        ) catch |e| {
+                            // Keeping a separate variable instead of modifying js_args.len
+                            // due to allocator.free call in defer
+                            js_processed_args_len = i;
+                            return e;
+                        };
                         value.protect();
                         out.* = value;
                     }

@@ -17,6 +17,13 @@ namespace Bun {
 JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateCommonJSModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionLoadModule);
 
+void populateESMExports(
+    JSC::JSGlobalObject* globalObject,
+    JSC::JSValue result,
+    WTF::Vector<JSC::Identifier, 4>& exportNames,
+    JSC::MarkedArgumentBuffer& exportValues,
+    bool ignoreESModuleAnnotation);
+
 class JSCommonJSModule final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
@@ -72,11 +79,21 @@ public:
     JSValue exportsObject();
     JSValue id();
 
+    DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
-    DECLARE_INFO;
     template<typename, SubspaceAccess mode>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return WebCore::subspaceForImpl<JSCommonJSModule, WebCore::UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceForCommonJSModuleRecord.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCommonJSModuleRecord = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForCommonJSModuleRecord.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForCommonJSModuleRecord = std::forward<decltype(space)>(space); });
+    }
 
     bool hasEvaluated = false;
 
@@ -110,7 +127,9 @@ inline std::optional<JSC::SourceCode> createCommonJSModule(
 class RequireResolveFunctionPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
+
     static RequireResolveFunctionPrototype* create(JSC::JSGlobalObject* globalObject);
+    static Structure* createStructure(VM& vm, JSC::JSGlobalObject* globalObject);
 
     DECLARE_INFO;
 
@@ -124,6 +143,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(RequireResolveFunctionPrototype, Base);
         return &vm.plainObjectSpace();
     }
 
@@ -133,7 +153,11 @@ public:
 class RequireFunctionPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
+
     static RequireFunctionPrototype* create(JSC::JSGlobalObject* globalObject);
+    static Structure* createStructure(VM& vm, JSC::JSGlobalObject* globalObject);
+
+    DECLARE_INFO;
 
     RequireFunctionPrototype(
         JSC::VM& vm,
@@ -145,12 +169,11 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(RequireFunctionPrototype, Base);
         return &vm.plainObjectSpace();
     }
 
-    DECLARE_INFO;
-
-    void finishCreation(JSC::VM& vm);
+    void finishCreation(JSC::VM&);
 };
 
 } // namespace Bun

@@ -45,7 +45,7 @@ plugin(
 );
 ```
 
-Bun's plugin API is based on [esbuild](https://esbuild.github.io/plugins). Only [a subset](/docs/bundler/vs-esbuild#plugin-api) of the esbuild API is implemented, but some esbuild plugins "just work" in Bun, like the official [MDX loader](https://mdxjs.com/packages/esbuild/):
+Bun's plugin API is loosely based on [esbuild](https://esbuild.github.io/plugins). Only [a subset](/docs/bundler/vs-esbuild#plugin-api) of the esbuild API is implemented, but some esbuild plugins "just work" in Bun, like the official [MDX loader](https://mdxjs.com/packages/esbuild/):
 
 ```jsx
 import { plugin } from "bun";
@@ -215,6 +215,91 @@ import "./sveltePlugin.ts";
 import MySvelteComponent from "./component.svelte";
 
 console.log(mySvelteComponent.render());
+```
+
+## Virtual Modules
+
+{% note %}
+
+This feature is currently only available at runtime with `Bun.plugin` and not yet supported in the bundler, but you can mimic the behavior using `onResolve` and `onLoad`.
+
+{% /note %}
+
+To create virtual modules at runtime, use `builder.module(specifier, callback)` in the `setup` function of a `Bun.plugin`.
+
+For example:
+
+```js
+import { plugin } from "bun";
+
+plugin({
+  name: "my-virtual-module",
+
+  setup(build) {
+    build.module(
+      // The specifier, which can be any string
+      "my-transpiled-virtual-module",
+      // The callback to run when the module is imported or required for the first time
+      () => {
+        return {
+          contents: "console.log('hello world!')",
+          loader: "js",
+        };
+      },
+    );
+
+    build.module("my-object-virtual-module", () => {
+      return {
+        exports: {
+          foo: "bar",
+        },
+        loader: "object",
+      };
+    });
+  },
+});
+
+// Sometime later
+// All of these work
+import "my-transpiled-virtual-module";
+require("my-transpiled-virtual-module");
+await import("my-transpiled-virtual-module");
+require.resolve("my-transpiled-virtual-module");
+
+import { foo } from "my-object-virtual-module";
+const object = require("my-object-virtual-module");
+await import("my-object-virtual-module");
+require.resolve("my-object-virtual-module");
+```
+
+### Overriding existing modules
+
+You can also override existing modules with `build.module`.
+
+```js
+import { plugin } from "bun";
+build.module("my-object-virtual-module", () => {
+  return {
+    exports: {
+      foo: "bar",
+    },
+    loader: "object",
+  };
+});
+
+require("my-object-virtual-module"); // { foo: "bar" }
+await import("my-object-virtual-module"); // { foo: "bar" }
+
+build.module("my-object-virtual-module", () => {
+  return {
+    exports: {
+      baz: "quix",
+    },
+    loader: "object",
+  };
+});
+require("my-object-virtual-module"); // { baz: "quix" }
+await import("my-object-virtual-module"); // { baz: "quix" }
 ```
 
 ## Reading the config

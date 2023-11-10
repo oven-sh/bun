@@ -981,6 +981,7 @@ fn NewPrinter(
                     p.print("void 0");
                 }
             } else {
+                p.printSpaceBeforeIdentifier();
                 p.addSourceMapping(loc);
                 p.print("undefined");
             }
@@ -2672,7 +2673,7 @@ fn NewPrinter(
                 .e_number => |e| {
                     const value = e.value;
 
-                    const absValue = @fabs(value);
+                    const absValue = @abs(value);
 
                     if (std.math.isNan(value)) {
                         p.printSpaceBeforeIdentifier();

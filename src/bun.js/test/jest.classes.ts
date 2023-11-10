@@ -1,4 +1,4 @@
-import { define } from "../scripts/class-definitions";
+import { define } from "../../codegen/class-definitions";
 
 export default [
   define({
@@ -344,6 +344,10 @@ export default [
       toBeWithin: {
         fn: "toBeWithin",
         length: 2,
+      },
+      toEqualIgnoringWhitespace: {
+        fn: "toEqualIgnoringWhitespace",
+        length: 1,
       },
       toBeSymbol: {
         fn: "toBeSymbol",

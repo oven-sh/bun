@@ -565,34 +565,34 @@ describe("expect()", () => {
     }).not.toThrow(err);
 
     const weirdThings = [
-      /watttt/g,
-      BigInt(123),
-      -42,
-      NaN,
-      Infinity,
-      -Infinity,
-      undefined,
-      null,
-      true,
-      false,
-      0,
-      1,
-      "",
-      "hello",
-      {},
-      [],
-      new Date(),
-      new Error(),
-      new RegExp("foo"),
-      new Map(),
-      new Set(),
-      Promise.resolve(),
-      Promise.reject(Symbol("123")).finally(() => {}),
-      Symbol("123"),
+      () => /watttt/g,
+      () => BigInt(123),
+      () => -42,
+      () => NaN,
+      () => Infinity,
+      () => -Infinity,
+      () => undefined,
+      () => null,
+      () => true,
+      () => false,
+      () => 0,
+      () => 1,
+      () => "",
+      () => "hello",
+      () => {},
+      () => [],
+      () => new Date(),
+      () => new Error(),
+      () => new RegExp("foo"),
+      () => new Map(),
+      () => new Set(),
+      () => Promise.resolve(),
+      () => Promise.reject(Symbol("123")),
+      () => Symbol("123"),
     ];
     for (const weirdThing of weirdThings) {
       expect(() => {
-        throw weirdThing;
+        throw weirdThing();
       }).toThrow();
     }
 
@@ -977,11 +977,17 @@ describe("expect()", () => {
     for (let [first, second] of equals) {
       expect(first).toEqual(second);
       expect(second).toEqual(first);
+
+      expect(first).toStrictEqual(second);
+      expect(second).toStrictEqual(first);
     }
 
     for (let [first, second] of not) {
       expect(first).not.toEqual(second);
       expect(second).not.toEqual(first);
+
+      expect(first).not.toStrictEqual(second);
+      expect(second).not.toStrictEqual(first);
     }
 
     expect(Object.fromEntries(Object.entries(new URL("https://example.com")))).not.toStrictEqual(
@@ -3078,6 +3084,27 @@ describe("expect()", () => {
     // expect("").not.toBeWithin(0, 1);
     expect({}).not.toBeWithin(0, 1);
     expect(Infinity).not.toBeWithin(-Infinity, Infinity);
+  });
+
+  test("toEqualIgnoringWhitespace()", () => {
+    expect("hello world").toEqualIgnoringWhitespace("hello world");
+    expect(" hello world ").toEqualIgnoringWhitespace("hello world");
+    expect(" h e l l o w o r l d ").toEqualIgnoringWhitespace("hello world");
+    expect("  hello\nworld  ").toEqualIgnoringWhitespace("hello\nworld");
+    expect(`h
+    e
+    l
+    l
+    o`).toEqualIgnoringWhitespace("hello");
+    expect(`Lorem ipsum dolor sit amet, consectetur adipiscing elit. Donec nec posuere felis. Aliquam tincidunt elit a nunc hendrerit maximus. Morbi semper tristique lectus, eget ullamcorper velit ullamcorper non. Aenean nibh augue, ultrices id ornare quis, eleifend id metus. Aliquam erat volutpat. Proin maximus, ligula at consequat venenatis, sapien odio auctor mi, sit amet placerat augue odio et orci. Vivamus tempus hendrerit tortor, et interdum est semper malesuada. Ut venenatis iaculis felis eget euismod. Suspendisse sed nisi eget massa fringilla rhoncus non quis enim. Mauris feugiat pellentesque justo, at sagittis augue sollicitudin vel. Pellentesque porttitor consequat mi nec varius. Praesent aliquet at justo nec finibus. Donec ut lorem eu ex dignissim pulvinar at sit amet sem. Ut fringilla sit amet dolor vitae convallis. Ut faucibus a purus sit amet fermentum.
+    Sed sit amet tortor magna. Pellentesque laoreet lorem at pulvinar efficitur. Nulla dictum nibh ac gravida semper. Duis tempus elit in ipsum feugiat porttitor.`).toEqualIgnoringWhitespace(
+      `Lorem ipsum dolor sit amet, consectetur adipiscing elit. Donec nec posuere felis. Aliquam tincidunt elit a nunc hendrerit maximus. Morbi semper tristique lectus, eget ullamcorper velit ullamcorper non. Aenean nibh augue, ultrices id ornare quis, eleifend id metus. Aliquam erat volutpat. Proin maximus, ligula at consequat venenatis, sapien odio auctor mi, sit amet placerat augue odio et orci. Vivamus tempus hendrerit tortor, et interdum est semper malesuada. Ut venenatis iaculis felis eget euismod. Suspendisse sed nisi eget massa fringilla rhoncus non quis enim. Mauris feugiat pellentesque justo, at sagittis augue sollicitudin vel. Pellentesque porttitor consequat mi nec varius. Praesent aliquet at justo nec finibus. Donec ut lorem eu ex dignissim pulvinar at sit amet sem. Ut fringilla sit amet dolor vitae convallis. Ut faucibus a purus sit amet fermentum. Sed sit amet tortor magna. Pellentesque laoreet lorem at pulvinar efficitur. Nulla dictum nibh ac gravida semper. Duis tempus elit in ipsum feugiat porttitor.`,
+    );
+
+    expect("hello world").not.toEqualIgnoringWhitespace("hello world!");
+    expect(() => {
+      expect({}).not.toEqualIgnoringWhitespace({});
+    }).toThrow();
   });
 
   test("toBeSymbol()", () => {

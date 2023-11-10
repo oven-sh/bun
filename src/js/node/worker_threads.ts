@@ -206,7 +206,7 @@ class Worker extends EventEmitter {
   #performance;
 
   // this is used by wt.Worker.terminate();
-  // either is the exit code if exited, a promise resolving to the exit code, or undefined if we havent sent .terminate() yet
+  // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
   #onExitPromise: Promise<number> | number | undefined = undefined;
 
   constructor(filename: string, options: NodeWorkerOptions = {}) {
@@ -222,6 +222,10 @@ class Worker extends EventEmitter {
     this.#worker.addEventListener("message", this.#onMessage.bind(this));
     this.#worker.addEventListener("messageerror", this.#onMessageError.bind(this));
     this.#worker.addEventListener("open", this.#onOpen.bind(this));
+  }
+
+  get threadId() {
+    return this.#worker.threadId;
   }
 
   ref() {
@@ -261,7 +265,7 @@ class Worker extends EventEmitter {
   }
 
   terminate() {
-    var onExitPromise = this.#onExitPromise;
+    const onExitPromise = this.#onExitPromise;
     if (onExitPromise) {
       return $isPromise(onExitPromise) ? onExitPromise : Promise.resolve(onExitPromise);
     }

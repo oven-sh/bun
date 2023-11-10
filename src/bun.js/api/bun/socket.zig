@@ -17,6 +17,7 @@ const uws = @import("root").bun.uws;
 const ZigString = JSC.ZigString;
 const BoringSSL = bun.BoringSSL;
 const X509 = @import("./x509.zig");
+const Async = bun.Async;
 
 fn normalizeListeningHost(host: [:0]const u8) ?[*:0]const u8 {
     if (host.len == 0 or strings.eqlComptime(host, "0.0.0.0")) {
@@ -447,7 +448,7 @@ pub const Listener = struct {
 
     handlers: Handlers,
     listener: ?*uws.ListenSocket = null,
-    poll_ref: JSC.PollRef = JSC.PollRef.init(),
+    poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
     connection: UnixOrHost,
     socket_context: ?*uws.SocketContext = null,
     ssl: bool = false,
@@ -582,7 +583,7 @@ pub const Listener = struct {
 
         var socket_context = uws.us_create_bun_socket_context(
             @intFromBool(ssl_enabled),
-            uws.Loop.get().?,
+            uws.Loop.get(),
             @sizeOf(usize),
             ctx_opts,
         ) orelse {
@@ -771,7 +772,7 @@ pub const Listener = struct {
             Socket.dataSetCached(this_socket.getThisValue(globalObject), globalObject, default_data);
         }
         socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, this_socket);
-        socket.timeout(120000);
+        socket.setTimeout(120000);
     }
 
     // pub fn addServerName(this: *Listener, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
@@ -919,7 +920,16 @@ pub const Listener = struct {
 
         globalObject.bunVM().eventLoop().ensureWaker();
 
-        var socket_context = uws.us_create_bun_socket_context(@intFromBool(ssl_enabled), uws.Loop.get().?, @sizeOf(usize), ctx_opts).?;
+        const socket_context = uws.us_create_bun_socket_context(@intFromBool(ssl_enabled), uws.Loop.get(), @sizeOf(usize), ctx_opts) orelse {
+            const err = JSC.SystemError{
+                .message = bun.String.static("Failed to connect"),
+                .syscall = bun.String.static("connect"),
+                .code = if (port == null) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
+            };
+            exception.* = err.toErrorInstance(globalObject).asObjectRef();
+            return .zero;
+        };
+
         var connection: Listener.UnixOrHost = if (port) |port_| .{
             .host = .{ .host = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice(), .port = port_ },
         } else .{
@@ -1087,7 +1097,7 @@ fn NewSocket(comptime ssl: bool) type {
         wrapped: WrappedType = .none,
         handlers: *Handlers,
         this_value: JSC.JSValue = .zero,
-        poll_ref: JSC.PollRef = JSC.PollRef.init(),
+        poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
         reffer: JSC.Ref = JSC.Ref.init(),
         last_4: [4]u8 = .{ 0, 0, 0, 0 },
         authorized: bool = false,
@@ -1599,7 +1609,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return .zero;
             }
 
-            this.socket.timeout(@as(c_uint, @intCast(t)));
+            this.socket.setTimeout(@as(c_uint, @intCast(t)));
 
             return JSValue.jsUndefined();
         }
@@ -1929,7 +1939,7 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn finalize(this: *This) callconv(.C) void {
-            log("finalize()", .{});
+            log("finalize() {d}", .{@intFromPtr(this)});
             if (!this.detached) {
                 this.detached = true;
                 if (!this.socket.isClosed()) {
@@ -2952,6 +2962,17 @@ pub fn NewWrappedHandler(comptime tls: bool) type {
             }
         }
         pub fn onTimeout(
+            this: WrappedSocket,
+            socket: Socket,
+        ) void {
+            if (comptime tls) {
+                TLSSocket.onTimeout(this.tls, socket);
+            } else {
+                TLSSocket.onTimeout(this.tcp, socket);
+            }
+        }
+
+        pub fn onLongTimeout(
             this: WrappedSocket,
             socket: Socket,
         ) void {

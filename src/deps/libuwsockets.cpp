@@ -5,6 +5,8 @@
 #include <bun-usockets/src/internal/internal.h>
 #include <string_view>
 
+extern "C" const char* ares_inet_ntop(int af, const char *src, char *dst, size_t size);
+
 extern "C"
 {
 
@@ -1140,21 +1142,46 @@ extern "C"
     }
   }
 
-  void uws_res_end_without_body(int ssl, uws_res_t *res)
+  void uws_res_end_without_body(int ssl, uws_res_t *res, bool close_connection)
   {
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
       auto *data = uwsRes->getHttpResponseData();
+      if (close_connection)
+      {
+        if (!(data->state & uWS::HttpResponseData<true>::HTTP_CONNECTION_CLOSE))
+        {
+          uwsRes->writeHeader("Connection", "close");
+        }
+        data->state |= uWS::HttpResponseData<true>::HTTP_CONNECTION_CLOSE;
+      }
+      if (!(data->state & uWS::HttpResponseData<true>::HTTP_END_CALLED))
+      {
+        uwsRes->AsyncSocket<true>::write("\r\n", 2);
+      }
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
       data->markDone();
       us_socket_timeout(true, (us_socket_t *)uwsRes, uWS::HTTP_TIMEOUT_S);
     }
     else
     {
-
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
       auto *data = uwsRes->getHttpResponseData();
+      if (close_connection)
+      {
+        if (!(data->state & uWS::HttpResponseData<false>::HTTP_CONNECTION_CLOSE))
+        {
+          uwsRes->writeHeader("Connection", "close");
+        }
+        data->state |= uWS::HttpResponseData<false>::HTTP_CONNECTION_CLOSE;
+      }
+      if (!(data->state & uWS::HttpResponseData<false>::HTTP_END_CALLED))
+      {
+        // Some HTTP clients require the complete "<header>\r\n\r\n" to be sent.
+        // If not, they may throw a ConnectionError.
+        uwsRes->AsyncSocket<false>::write("\r\n", 2);
+      }
       data->state |= uWS::HttpResponseData<false>::HTTP_END_CALLED;
       data->markDone();
       us_socket_timeout(false, (us_socket_t *)uwsRes, uWS::HTTP_TIMEOUT_S);
@@ -1465,7 +1492,6 @@ extern "C"
                    LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
   }
 
- 
   void uws_res_override_write_offset(int ssl, uws_res_t *res, uintmax_t offset)
   {
     if (ssl)
@@ -1477,7 +1503,7 @@ extern "C"
       uwsRes->setWriteOffset(offset); //TODO: when updated to master this will bechanged to overrideWriteOffset
     }
   }
-  
+
   void uws_res_cork(int ssl, uws_res_t *res, void *ctx,
                     void (*corker)(void *ctx))
   {
@@ -1577,28 +1603,29 @@ extern "C"
     us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
   }
 
+  // Gets the remote address and port
+  // Returns 0 if failure / unix socket
   uint64_t uws_res_get_remote_address_info(uws_res_t *res, const char **dest, int *port, bool *is_ipv6)
   {
     // This function is manual inlining + modification of
     //      us_socket_remote_address
     //      AsyncSocket::getRemoteAddress
-    // To get { ip, port, is_ipv6 } for Bun.serve().requestIP()
     //      AsyncSocket::addressAsText
+    // To get { ip, port, is_ipv6 } for Bun.serve().requestIP()
     static thread_local char b[64];
     auto length = us_get_remote_address_info(b, (us_socket_t *)res, dest, port, (int*)is_ipv6);
 
+    if (length == 0) return 0;
     if (length == 4) {
-        length = sprintf(b, "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
-        *is_ipv6 = false;
+      ares_inet_ntop(AF_INET, b, &b[4], 64 - 4);
+      *dest = &b[4];
+      *is_ipv6 = false;
+      return strlen(*dest);
     } else {
-        length = sprintf(b, "%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
-            b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11],
-            b[12], b[13], b[14], b[15]);
-        *is_ipv6 = true;
+      ares_inet_ntop(AF_INET6, b, &b[16], 64 - 16);
+      *dest = &b[16];
+      *is_ipv6 = true;
+      return strlen(*dest);
     }
-
-    *dest = b;
-
-    return (unsigned int) length;
   }
 }

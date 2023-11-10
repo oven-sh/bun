@@ -20,7 +20,7 @@
 
 #include "root.h"
 
-#include "wtf/EnumTraits.h"
+#include <wtf/EnumTraits.h>
 
 namespace WebCore {
 

@@ -97,7 +97,7 @@ pub const StatWatcherScheduler = struct {
                 prev = next;
             } else {
                 if (this.head.load(.Monotonic) == null) {
-                    this.timer.?.deinit();
+                    this.timer.?.deinit(false);
                     this.timer = null;
                     // The scheduler is not deinit here, but it will get reused.
                 }
@@ -156,7 +156,7 @@ pub const StatWatcher = struct {
     globalThis: *JSC.JSGlobalObject,
     js_this: JSC.JSValue,
 
-    poll_ref: JSC.PollRef = .{},
+    poll_ref: bun.Async.KeepAlive = .{},
 
     last_stat: bun.Stat,
     last_jsvalue: JSC.Strong,
@@ -197,6 +197,12 @@ pub const StatWatcher = struct {
         global_this: JSC.C.JSContextRef,
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Arguments {
+            if (comptime Environment.isWindows) {
+                bun.todo(@src(), void{});
+                ctx.throwTODO("Windows support not implemented yet! Sorry!!");
+                return null;
+            }
+
             const vm = ctx.vm();
             const path = PathLike.fromJSWithAllocator(ctx, arguments, bun.default_allocator, exception) orelse {
                 if (exception.* == null) {

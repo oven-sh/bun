@@ -29,10 +29,10 @@ pub usingnamespace JSC.Codegen.JSGlob;
 pattern: []const u8,
 pattern_codepoints: ?std.ArrayList(u32) = null,
 is_ascii: bool,
-has_pending_activity: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
+has_pending_activity: std.atomic.Atomic(usize) = std.atomic.Atomic(usize).init(0),
 
 const ScanOpts = struct {
-    cwd: ?BunString,
+    cwd: ?[]const u8,
     dot: bool,
     absolute: bool,
     only_files: bool,
@@ -77,7 +77,48 @@ const ScanOpts = struct {
                 return null;
             }
 
-            var cwd_str_raw = cwdVal.toSlice(globalThis, arena.allocator());
+            const cwd_str_raw = cwd_str_raw: {
+                // Windows wants utf-16
+                if (comptime bun.Environment.isWindows) {
+                    const cwd_zig_str = cwdVal.getZigString(globalThis);
+                    // Dupe if already utf-16
+                    if (cwd_zig_str.is16Bit()) {
+                        var duped = arena.allocator().dupe(u8, cwd_zig_str.slice()) catch {
+                            globalThis.throwOutOfMemory();
+                            return null;
+                        };
+
+                        break :cwd_str_raw ZigString.Slice.from(duped, arena.allocator());
+                    }
+
+                    // Conver to utf-16
+                    const utf16 = (bun.strings.toUTF16Alloc(
+                        arena.allocator(),
+                        cwd_zig_str.slice(),
+                        // Let windows APIs handle errors with invalid surrogate pairs, etc.
+                        false,
+                    ) catch {
+                        globalThis.throwOutOfMemory();
+                        return null;
+                    }) orelse brk: {
+                        // All ascii
+                        var output = arena.allocator().alloc(u16, cwd_zig_str.len) catch {
+                            globalThis.throwOutOfMemory();
+                            return null;
+                        };
+
+                        bun.strings.copyU8IntoU16(output, cwd_zig_str.slice());
+                        break :brk output;
+                    };
+
+                    const ptr: [*]u8 = @ptrCast(utf16.ptr);
+                    break :cwd_str_raw ZigString.Slice.from(ptr[0 .. utf16.len * 2], arena.allocator());
+                }
+
+                // `.toSlice()` internally converts to WTF-8
+                break :cwd_str_raw cwdVal.toSlice(globalThis, arena.allocator());
+            };
+
             if (cwd_str_raw.len == 0) break :parse_cwd;
 
             const cwd_str = cwd_str: {
@@ -128,7 +169,7 @@ const ScanOpts = struct {
                 return null;
             }
 
-            out.cwd = BunString.fromBytes(cwd_str);
+            out.cwd = cwd_str;
         }
 
         if (optsObj.getTruthy(globalThis, "dot")) |dot| {
@@ -144,7 +185,7 @@ pub const WalkTask = struct {
     alloc: Allocator,
     err: ?Err = null,
     global: *JSC.JSGlobalObject,
-    has_pending_activity: *std.atomic.Atomic(bool),
+    has_pending_activity: *std.atomic.Atomic(usize),
 
     pub const Err = union(enum) {
         syscall: Syscall.Error,
@@ -164,7 +205,7 @@ pub const WalkTask = struct {
         globalThis: *JSC.JSGlobalObject,
         alloc: Allocator,
         globWalker: *GlobWalker,
-        has_pending_activity: *std.atomic.Atomic(bool),
+        has_pending_activity: *std.atomic.Atomic(usize),
     ) !*AsyncGlobWalkTask {
         var walkTask = try alloc.create(WalkTask);
         walkTask.* = .{
@@ -177,7 +218,7 @@ pub const WalkTask = struct {
     }
 
     pub fn run(this: *WalkTask) void {
-        defer updateHasPendingActivityFlag(this.has_pending_activity, false);
+        defer decrPendingActivityFlag(this.has_pending_activity);
         const result = this.walker.walk() catch |err| {
             this.err = .{ .unknown = err };
             return;
@@ -338,12 +379,17 @@ pub fn finalize(
 
 pub fn hasPendingActivity(this: *Glob) callconv(.C) bool {
     @fence(.SeqCst);
-    return this.has_pending_activity.load(.SeqCst);
+    return this.has_pending_activity.load(.SeqCst) > 0;
 }
 
-fn updateHasPendingActivityFlag(has_pending_activity: *std.atomic.Atomic(bool), value: bool) void {
+fn incrPendingActivityFlag(has_pending_activity: *std.atomic.Atomic(usize)) void {
     @fence(.SeqCst);
-    has_pending_activity.store(value, .SeqCst);
+    _ = has_pending_activity.fetchAdd(1, .SeqCst);
+}
+
+fn decrPendingActivityFlag(has_pending_activity: *std.atomic.Atomic(usize)) void {
+    @fence(.SeqCst);
+    _ = has_pending_activity.fetchSub(1, .SeqCst);
 }
 
 pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -359,9 +405,9 @@ pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFram
         return .undefined;
     };
 
-    updateHasPendingActivityFlag(&this.has_pending_activity, true);
+    incrPendingActivityFlag(&this.has_pending_activity);
     var task = WalkTask.create(globalThis, alloc, globWalker, &this.has_pending_activity) catch {
-        updateHasPendingActivityFlag(&this.has_pending_activity, false);
+        decrPendingActivityFlag(&this.has_pending_activity);
         globalThis.throw("Out of memory", .{});
         return .undefined;
     };

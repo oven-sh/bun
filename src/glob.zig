@@ -1,3 +1,25 @@
+// Portions of this file are derived from works under the MIT License:
+//
+// Copyright (c) 2023 Devon Govett
+// Copyright (c) 2023 Stephen Gregoratto
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
 const std = @import("std");
 const math = std.math;
 const mem = std.mem;
@@ -87,8 +109,6 @@ const CursorState = struct {
     }
 };
 
-var dummyu32 = [_]u32{ 105, 102, 32, 121, 111, 117, 32, 115, 101, 101, 32, 116, 104, 105, 115, 44, 32, 122, 97, 99, 107, 32, 105, 115, 32, 97, 110, 32, 105, 100, 105, 111, 116 };
-
 pub const GlobWalker = struct {
     pub const Result = Maybe(void);
 
@@ -97,7 +117,7 @@ pub const GlobWalker = struct {
     /// not owned by this struct
     pattern: []const u8 = "",
 
-    pattern_codepoints: []u32 = &dummyu32,
+    pattern_codepoints: []u32 = &[_]u32{},
     cp_len: u32 = 0,
 
     /// If the pattern contains "./" or "../"
@@ -109,12 +129,12 @@ pub const GlobWalker = struct {
 
     dot: bool = false,
     absolute: bool = false,
-    cwd: BunString = undefined,
+    cwd: []const u8 = "",
     follow_symlinks: bool = false,
     error_on_broken_symlinks: bool = false,
     only_files: bool = true,
 
-    root_cwd_slice: []const u8 = undefined,
+    root_cwd_slice: []const u8 = "",
 
     pathBuf: [bun.MAX_PATH_BYTES]u8 = undefined,
 
@@ -192,7 +212,7 @@ pub const GlobWalker = struct {
         only_files: bool,
     ) !Maybe(void) {
         errdefer arena.deinit();
-        var cwd: BunString = undefined;
+        var cwd: []const u8 = undefined;
         switch (Syscall.getcwd(&this.pathBuf)) {
             .err => |err| {
                 return .{ .err = err };
@@ -200,7 +220,7 @@ pub const GlobWalker = struct {
             .result => |result| {
                 var copiedCwd = try arena.allocator().alloc(u8, result.len);
                 @memcpy(copiedCwd, result);
-                cwd = BunString.fromBytes(copiedCwd);
+                cwd = copiedCwd;
             },
         }
         const globWalker = try this.initWithCwd(
@@ -232,7 +252,7 @@ pub const GlobWalker = struct {
         this: *GlobWalker,
         arena: *Arena,
         pattern: []const u8,
-        cwd: BunString,
+        cwd: []const u8,
         dot: bool,
         absolute: bool,
         follow_symlinks: bool,
@@ -277,7 +297,7 @@ pub const GlobWalker = struct {
         if (this.patternComponents.items.len == 0) return .{ .result = 0 };
         var path_buf: [bun.MAX_PATH_BYTES]u8 = std.mem.zeroes([bun.MAX_PATH_BYTES]u8);
 
-        const root_path = this.cwd.toZigString().slice();
+        const root_path = this.cwd;
         @memcpy(path_buf[0..root_path.len], root_path[0..root_path.len]);
         path_buf[root_path.len] = 0;
         this.root_cwd_slice = root_path;
@@ -599,7 +619,6 @@ pub const GlobWalker = struct {
             .result => |fd_| fd_,
         };
         defer {
-            // _ = Syscall.close(fd);
             _ = Syscall.closeAllowingStdoutAndStderr(fd);
         }
 
@@ -611,8 +630,6 @@ pub const GlobWalker = struct {
 
     fn handleDirEntriesImpl(this: *GlobWalker, fd: bun.FileDescriptor, component_idx: u32, dir_path: [:0]const u8) !Maybe(u0) {
         const only_files = this.only_files;
-        const dot = this.dot;
-        _ = dot;
 
         var dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
         var iterator = DirIterator.iterate(dir);
@@ -893,6 +910,7 @@ pub const GlobWalker = struct {
 
     /// NOTE This doesn't check that there is leading dot, use `hasLeadingDot()` to do that
     fn removeLeadingDot(filepath: []const u8, comptime allow_non_utf8: bool) []const u8 {
+        if (comptime bun.Environment.allow_assert) std.debug.assert(hasLeadingDot(filepath, allow_non_utf8));
         if (comptime bun.Environment.isWindows and allow_non_utf8) {
             return filepath[4..];
         } else {

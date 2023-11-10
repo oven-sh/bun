@@ -470,42 +470,6 @@ exports[`fast-glob e2e tests patterns regular relative cwd ./../*: ./../* 1`] = 
 ]
 `;
 
-exports[`fast-glob e2e tests patterns absolute cwd *: * 1`] = `
-[
-  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/file.md",
-]
-`;
-
-exports[`fast-glob e2e tests patterns absolute cwd **: ** 1`] = `
-[
-  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/file.md",
-  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/first/file.md",
-  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/first/nested/directory/file.json",
-  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/first/nested/directory/file.md",
-  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/first/nested/file.md",
-  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/second/file.md",
-  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/second/nested/directory/file.md",
-  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/second/nested/file.md",
-  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/third/library/a/book.md",
-  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/third/library/b/book.md",
-]
-`;
-
-exports[`fast-glob e2e tests patterns absolute cwd **/*: **/* 1`] = `
-[
-  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/file.md",
-  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/first/file.md",
-  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/first/nested/directory/file.json",
-  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/first/nested/directory/file.md",
-  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/first/nested/file.md",
-  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/second/file.md",
-  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/second/nested/directory/file.md",
-  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/second/nested/file.md",
-  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/third/library/a/book.md",
-  "/Users/zackradisic/Code/bun/test/js/bun/glob/fixtures/third/library/b/book.md",
-]
-`;
-
 exports[`fast-glob e2e tests only files fixtures/*: fixtures/* 1`] = `
 [
   "fixtures/file.md",
@@ -575,5 +539,41 @@ exports[`fast-glob e2e tests only files (cwd) **/*: **/* 1`] = `
   "second/nested/file.md",
   "third/library/a/book.md",
   "third/library/b/book.md",
+]
+`;
+
+exports[`fast-glob e2e tests patterns absolute cwd *: * 1`] = `
+[
+  "test/js/bun/glob/fixtures/file.md",
+]
+`;
+
+exports[`fast-glob e2e tests patterns absolute cwd **: ** 1`] = `
+[
+  "test/js/bun/glob/fixtures/file.md",
+  "test/js/bun/glob/fixtures/first/file.md",
+  "test/js/bun/glob/fixtures/first/nested/directory/file.json",
+  "test/js/bun/glob/fixtures/first/nested/directory/file.md",
+  "test/js/bun/glob/fixtures/first/nested/file.md",
+  "test/js/bun/glob/fixtures/second/file.md",
+  "test/js/bun/glob/fixtures/second/nested/directory/file.md",
+  "test/js/bun/glob/fixtures/second/nested/file.md",
+  "test/js/bun/glob/fixtures/third/library/a/book.md",
+  "test/js/bun/glob/fixtures/third/library/b/book.md",
+]
+`;
+
+exports[`fast-glob e2e tests patterns absolute cwd **/*: **/* 1`] = `
+[
+  "test/js/bun/glob/fixtures/file.md",
+  "test/js/bun/glob/fixtures/first/file.md",
+  "test/js/bun/glob/fixtures/first/nested/directory/file.json",
+  "test/js/bun/glob/fixtures/first/nested/directory/file.md",
+  "test/js/bun/glob/fixtures/first/nested/file.md",
+  "test/js/bun/glob/fixtures/second/file.md",
+  "test/js/bun/glob/fixtures/second/nested/directory/file.md",
+  "test/js/bun/glob/fixtures/second/nested/file.md",
+  "test/js/bun/glob/fixtures/third/library/a/book.md",
+  "test/js/bun/glob/fixtures/third/library/b/book.md",
 ]
 `;

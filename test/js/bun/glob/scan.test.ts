@@ -1,3 +1,25 @@
+// Portions of this file are derived from works under the MIT License:
+//
+// Copyright (c) Denis Malinochkin
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+
 import { expect, test, describe } from "bun:test";
 import fg from "fast-glob";
 import { Glob, GlobScanOptions } from "bun";
@@ -267,6 +289,7 @@ tempFixturesDir();
  * In practice this discrepancy makes no difference, so the snapshots were changed accordingly to match Bun.Glob / Unix bash shell style.
  */
 describe("fast-glob e2e tests", async () => {
+  const absoluteCwd = process.cwd();
   const cwd = "test/js/bun/glob";
 
   regular.regular.forEach(pattern =>
@@ -303,7 +326,7 @@ describe("fast-glob e2e tests", async () => {
       const testCwd = secondHalf ? path.join(cwd, secondHalf) : cwd;
       // let entries = fg.globSync(pattern, { cwd: testCwd, absolute: true });
       let entries = Array.from(new Glob(pattern).scanSync({ cwd: testCwd, followSymlinks: true, absolute: true }));
-      entries = entries.sort();
+      entries = entries.sort().map(entry => entry.slice(absoluteCwd.length + 1));
       expect(entries).toMatchSnapshot(pattern);
     }),
   );

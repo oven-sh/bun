@@ -19,6 +19,9 @@ ARG GIT_SHA=""
 ARG BUN_VERSION="bun-v1.0.7"
 ARG BUN_DOWNLOAD_URL_BASE="https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${BUN_VERSION}"
 ARG CANARY=0
+ARG ASSERTIONS=OFF
+ARG ZIG_OPTIMIZE=ReleaseFast
+ARG CMAKE_BUILD_TYPE=Release
 
 ARG NODE_VERSION="20"
 ARG LLVM_VERSION="16"
@@ -178,6 +181,7 @@ FROM bun-base as mimalloc
 
 ARG BUN_DIR
 ARG CPU_TARGET
+ARG ASSERTIONS
 ENV CPU_TARGET=${CPU_TARGET}
 
 COPY Makefile ${BUN_DIR}/Makefile
@@ -185,8 +189,12 @@ COPY src/deps/mimalloc ${BUN_DIR}/src/deps/mimalloc
 
 ENV CCACHE_DIR=/ccache
 
-RUN --mount=type=cache,target=/ccache cd ${BUN_DIR} && \
-  make mimalloc && rm -rf src/deps/mimalloc Makefile
+RUN --mount=type=cache,target=/ccache cd ${BUN_DIR} && \ 
+  if [ "${ASSERTIONS}" = "ON" ]; then \
+  make mimalloc-debug && rm -rf src/deps/mimalloc Makefile; \
+  else \
+  make mimalloc && rm -rf src/deps/mimalloc Makefile; \
+  fi 
 
 FROM bun-base as zlib
 
@@ -322,6 +330,7 @@ RUN mkdir ${BUN_DIR}/bun-webkit \
 FROM bun-base as bun-cpp-objects
 
 ARG CANARY
+ARG ASSERTIONS
 
 COPY --from=bun-webkit ${BUN_DIR}/bun-webkit ${BUN_DIR}/bun-webkit
 
@@ -335,7 +344,7 @@ ENV CCACHE_DIR=/ccache
 RUN --mount=type=cache,target=/ccache  mkdir ${BUN_DIR}/build \
   && cd ${BUN_DIR}/build \
   && mkdir -p tmp_modules tmp_functions js codegen \
-  && cmake .. -GNinja -DCMAKE_BUILD_TYPE=Release -DBUN_CPP_ONLY=1 -DWEBKIT_DIR=/build/bun/bun-webkit -DCANARY=${CANARY} \
+  && cmake .. -GNinja -DCMAKE_BUILD_TYPE=Release -DUSE_DEBUG_JSC=${ASSERTIONS} -DBUN_CPP_ONLY=1 -DWEBKIT_DIR=/build/bun/bun-webkit -DCANARY=${CANARY} \
   && bash compile-cpp-only.sh -v
 
 FROM bun-base-with-zig as bun-codegen-for-zig
@@ -361,6 +370,8 @@ ARG TRIPLET
 ARG GIT_SHA
 ARG CPU_TARGET
 ARG CANARY=0
+ARG ASSERTIONS=OFF
+ARG ZIG_OPTIMIZE=ReleaseFast
 
 COPY *.zig package.json CMakeLists.txt ${BUN_DIR}/
 COPY completions ${BUN_DIR}/completions
@@ -380,6 +391,7 @@ RUN mkdir -p build \
   && cmake .. \
   -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
+  -DZIG_OPTIMIZE="${ZIG_OPTIMIZE}" \
   -DCPU_TARGET="${CPU_TARGET}" \
   -DZIG_TARGET="${TRIPLET}" \
   -DWEBKIT_DIR="omit" \
@@ -400,6 +412,7 @@ FROM bun-base as bun-link
 
 ARG CPU_TARGET
 ARG CANARY
+ARG ASSERTIONS
 
 ENV CPU_TARGET=${CPU_TARGET}
 
@@ -433,6 +446,7 @@ RUN cmake .. \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUN_LINK_ONLY=1 \
   -DBUN_ZIG_OBJ="${BUN_DIR}/build/bun-zig.o" \
+  -DUSE_DEBUG_JSC=${ASSERTIONS} \
   -DBUN_CPP_ARCHIVE="${BUN_DIR}/build/bun-cpp-objects.a" \
   -DWEBKIT_DIR="${BUN_DIR}/bun-webkit" \
   -DBUN_DEPS_OUT_DIR="${BUN_DEPS_OUT_DIR}" \

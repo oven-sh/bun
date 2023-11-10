@@ -62,7 +62,8 @@ try {
   if (!(Test-Path "${BunBin}\$Target\bun.exe")) {
     throw "The file '${BunBin}\$Target\bun.exe' does not exist. Did an antivirus delete it?`n"
   }
-} catch {
+}
+catch {
   Write-Output "Install Failed - could not unzip $ZipPath"
   Write-Error $_
   exit 1
@@ -80,8 +81,16 @@ if ($LASTEXITCODE -ne 0) {
 }
 $DisplayVersion = if ($BunRevision -like "*-canary.*") {
   "${BunRevision}"
-} else {
+}
+else {
   "$(& "${BunBin}\bun.exe" --version)"
+}
+
+try {
+  New-Item -ItemType SymbolicLink -Path "${BunBin}\bunx.exe" -Target "${BunBin}\bun.exe" -Force
+}
+catch {
+  Write-Warning "Could not symlink"
 }
 
 $C_RESET = [char]27 + "[0m"
@@ -99,7 +108,8 @@ try {
     Write-Warning "Note: Another bun.exe is already in %PATH% at $($existing.Source)`nTyping 'bun' in your terminal will not use what was just installed.`n"
     $hasExistingOther = $true;
   }
-} catch {}
+}
+catch {}
 
 $User = [System.EnvironmentVariableTarget]::User
 $Path = [System.Environment]::GetEnvironmentVariable('Path', $User) -split ';'
@@ -108,10 +118,11 @@ if ($Path -notcontains $BunBin) {
   [System.Environment]::SetEnvironmentVariable('Path', "${env:Path}", $User)
 }
 
-if(!$hasExistingOther) {
-  if((Get-Command -ErrorAction SilentlyContinue bun) -eq $null) {
+if (!$hasExistingOther) {
+  if ((Get-Command -ErrorAction SilentlyContinue bun) -eq $null) {
     Write-Output "To get started, restart your terminal session, then type ``bun```n"
-  } else {
+  }
+  else {
     Write-Output "Type ``bun`` in your terminal to get started`n"
   }
 }

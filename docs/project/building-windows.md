@@ -3,6 +3,7 @@
 ### System Dependencies
 
 - [Visual Studio](https://visualstudio.microsoft.com) with the "Desktop Development with C++" workload. You should install Git and CMake from here, if not already installed.
+- LLVM 16
 - Ninja
 - Go
 - Rust
@@ -16,6 +17,18 @@ TODO: missing the rest of the things
 ```
 winget install OpenJS.NodeJS.LTS
 ``` -->
+
+Make sure to use powershell with the proper shell environment loaded. To
+
+```ps1
+.\scripts\env.ps1
+```
+
+To verify, you can check for a command line such as `mt.exe`
+
+```ps1
+Get-Command cl
+```
 
 ### Enable Scripts
 
@@ -73,3 +86,9 @@ If this was successful, you should have a `bun-debug.exe` in the `build` folder.
 ```ps1
 .\bun-debug.exe --version
 ```
+
+## Troubleshooting
+
+### .rc file fails to build
+
+`llvm-rc.exe` is odd. don't use it. use `rc.exe`, to do this make sure you are in a visual studio dev terminal, check `rc /?` to ensure it is `Microsoft Resource Compiler`

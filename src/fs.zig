@@ -1356,7 +1356,8 @@ pub const NodeJSPathName = struct {
     filename: string,
 
     pub fn init(_path: string, comptime isWindows: bool) NodeJSPathName {
-        const sep = if (isWindows) std.fs.path.sep_windows else std.fs.path.sep_posix;
+        const platform: path_handler.Platform = if (isWindows) .windows else .posix;
+        const getLastSep = comptime platform.getLastSeparatorFunc();
 
         var path = _path;
         var base = path;
@@ -1364,7 +1365,7 @@ pub const NodeJSPathName = struct {
         var ext: string = "";
         var dir = path;
         var is_absolute = true;
-        var _i = strings.lastIndexOfChar(path, sep);
+        var _i = getLastSep(path);
         var first = true;
         while (_i) |i| {
             // Stop if we found a non-trailing slash
@@ -1387,11 +1388,11 @@ pub const NodeJSPathName = struct {
 
             path = path[0..i];
 
-            _i = strings.lastIndexOfChar(path, sep);
+            _i = getLastSep(path);
         }
 
         // clean trailing slashs
-        if (base.len > 1 and base[base.len - 1] == sep) {
+        if (base.len > 1 and platform.isSeparator(base[base.len - 1])) {
             base = base[0 .. base.len - 1];
         }
 

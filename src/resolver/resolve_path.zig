@@ -682,7 +682,7 @@ pub const Platform = enum {
 
     pub fn getSeparatorFunc(comptime _platform: Platform) IsSeparatorFunc {
         switch (comptime _platform.resolve()) {
-            .auto => unreachable,
+            .auto => comptime unreachable,
             .loose => {
                 return isSepAny;
             },
@@ -697,7 +697,7 @@ pub const Platform = enum {
 
     pub fn getLastSeparatorFunc(comptime _platform: Platform) LastSeparatorFunction {
         switch (comptime _platform.resolve()) {
-            .auto => unreachable,
+            .auto => comptime unreachable,
             .loose => {
                 return lastIndexOfSeparatorLoose;
             },
@@ -712,7 +712,7 @@ pub const Platform = enum {
 
     pub inline fn isSeparator(comptime _platform: Platform, char: u8) bool {
         switch (comptime _platform.resolve()) {
-            .auto => unreachable,
+            .auto => comptime unreachable,
             .loose => {
                 return isSepAny(char);
             },

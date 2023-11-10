@@ -2295,11 +2295,7 @@ pub const Path = struct {
         var path_slice: JSC.ZigString.Slice = args_ptr[0].toSlice(globalThis, heap_allocator);
         defer path_slice.deinit();
         var path = path_slice.slice();
-        const path_name = Fs.NodeJSPathName.init(
-            path,
-            win32,
-        );
-        var dir = JSC.ZigString.init(path_name.dir);
+
         const is_absolute =
             switch (win32) {
             true => path.len > 0 and std.fs.path.isAbsoluteWindows(path),
@@ -2353,11 +2349,6 @@ pub const Path = struct {
                 // Unix does not make it possible to have a root that isnt `/`
                 std.fs.path.sep_str_posix,
             );
-
-            // if is absolute and dir is empty, then dir = root
-            if (path_name.dir.len == 0) {
-                dir = root;
-            }
         } else if (win32) {
             if (path.len > 1 and path[1] == ':') {
                 // for input "C:hello" which is not considered absolute
@@ -2366,6 +2357,18 @@ pub const Path = struct {
                 root = JSC.ZigString.init(path[0..2]);
             }
         }
+
+        const path_name = Fs.NodeJSPathName.init(
+            if (win32) path[root.len..] else path,
+            win32,
+        );
+        var dir = JSC.ZigString.init(path_name.dir);
+
+        // if is absolute and dir is empty, then dir = root
+        if (is_absolute and path_name.dir.len == 0) {
+            dir = root;
+        }
+
         var base = JSC.ZigString.init(path_name.base);
         var name_ = JSC.ZigString.init(path_name.filename);
         var ext = JSC.ZigString.init(path_name.ext);

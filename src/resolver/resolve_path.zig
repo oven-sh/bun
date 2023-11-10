@@ -596,7 +596,10 @@ pub fn normalizeStringGeneric(
     }
 
     var r: usize = 0;
-    var path = if (isWindows) path_[buf_i..] else path_;
+    var path, const buf_start = if (isWindows)
+        .{ path_[buf_i..], buf_i }
+    else
+        .{ path_, 0 };
 
     const n = path.len;
 
@@ -610,6 +613,7 @@ pub fn normalizeStringGeneric(
         }
 
         if (path[r] == '.' and (r + 1 == n or isSeparator(path[r + 1]))) {
+            // skipping two is a windows-specific bugfix
             r += 1;
             continue;
         }
@@ -623,7 +627,7 @@ pub fn normalizeStringGeneric(
                     buf_i -= 1;
                 }
             } else if (allow_above_root) {
-                if (buf_i > 0) {
+                if (buf_i > buf_start) {
                     buf[buf_i..][0..3].* = [_]u8{ separator, '.', '.' };
                     buf_i += 3;
                 } else {
@@ -638,7 +642,7 @@ pub fn normalizeStringGeneric(
 
         // real path element.
         // add slash if needed
-        if (buf_i != 0 and !isSeparator(buf[buf_i - 1])) {
+        if (buf_i != buf_start and !isSeparator(buf[buf_i - 1])) {
             buf[buf_i] = separator;
             buf_i += 1;
         }
@@ -652,7 +656,7 @@ pub fn normalizeStringGeneric(
 
     if (preserve_trailing_slash) {
         // Was there a trailing slash? Let's keep it.
-        if (buf_i > 0 and path[path.len - 1] == separator and buf[buf_i] != separator) {
+        if (buf_i > 0 and path_[path_.len - 1] == separator and buf[buf_i] != separator) {
             buf[buf_i] = separator;
             buf_i += 1;
         }
@@ -661,7 +665,7 @@ pub fn normalizeStringGeneric(
     if (isWindows and buf_i == 2 and buf[1] == ':') {
         // If the original path is just a relative path with a drive letter,
         // add .
-        buf[buf_i] = '.';
+        buf[buf_i] = if (path.len > 0 and path[0] == '\\') '\\' else '.';
         buf_i += 1;
     }
 

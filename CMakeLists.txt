@@ -216,6 +216,11 @@ if(DEFINED ENV{CI} OR DEFINED ENV{GITHUB_ACTIONS})
 endif()
 
 set(DEFAULT_USE_STATIC_LIBATOMIC ON)
+set(DEFAULT_USE_DEBUG_JSC, OFF)
+
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(DEFAULT_USE_DEBUG_JSC ON)
+endif()
 
 if(UNIX AND NOT APPLE)
     execute_process(COMMAND cat /etc/os-release COMMAND head -n1 OUTPUT_VARIABLE LINUX_DISTRO)
@@ -239,7 +244,7 @@ option(USE_CUSTOM_TINYCC "Use Bun's recommended version of tinycc" ON)
 option(USE_CUSTOM_LIBUV "Use Bun's recommended version of libuv (Windows only)" ON)
 option(USE_BASELINE_BUILD "Build Bun for baseline (older) CPUs" OFF)
 
-option(USE_DEBUG_JSC "Enable assertions and use a debug build of JavaScriptCore" OFF)
+option(USE_DEBUG_JSC "Enable assertions and use a debug build of JavaScriptCore" ${DEFAULT_USE_DEBUG_JSC})
 option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
 option(USE_STATIC_LIBATOMIC "Statically link libatomic, requires the presence of libatomic.a" ${DEFAULT_USE_STATIC_LIBATOMIC})
 

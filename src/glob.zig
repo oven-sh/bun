@@ -930,7 +930,7 @@ pub const GlobWalker = struct {
         }
 
         const syntax_tokens = comptime [_]u8{ '*', '[', '{', '?', '!' };
-        const needles: [syntax_tokens.len]@Vector(16, u8) = needles: {
+        const needles: [syntax_tokens.len]@Vector(16, u8) = comptime needles: {
             var needles: [syntax_tokens.len]@Vector(16, u8) = undefined;
             inline for (syntax_tokens, 0..) |tok, i| {
                 needles[i] = @splat(tok);
@@ -1055,9 +1055,6 @@ pub const GlobWalker = struct {
         var prevIsBackslash = false;
         while (iter.next(&cursor)) : (cp_len += 1) {
             const c = cursor.c;
-
-            const cu8: u8 = @truncate(c);
-            _ = cu8;
 
             switch (c) {
                 '\\' => {
@@ -1276,10 +1273,6 @@ pub fn matchImpl(glob: []const u32, path: []const u8) bool {
 
     while (state.glob_index < glob.len or state.path_index.cursor.i < path.len) {
         if (state.glob_index < glob.len) {
-            const gu8: u8 = @truncate(glob[state.glob_index]);
-            _ = gu8;
-            const pu8: u8 = @truncate(state.path_index.cursor.c);
-            _ = pu8;
             switch (glob[state.glob_index]) {
                 '*' => {
                     const is_globstar = state.glob_index + 1 < glob.len and glob[state.glob_index + 1] == '*';

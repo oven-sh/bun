@@ -10,6 +10,8 @@ import * as ffi from './modules/ffi.js';
 globalThis.Bun = bun as typeof bun & {
     // TODO: Missing polyfills
     build: typeof import('bun').build;
+    TOML: typeof import('bun').TOML;
+    semver: typeof import('bun').semver;
     FileSystemRouter: typeof import('bun').FileSystemRouter;
 };
 

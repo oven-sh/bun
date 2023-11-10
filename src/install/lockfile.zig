@@ -175,7 +175,15 @@ pub const Scripts = struct {
             manager.pending_tasks = @truncate(items.len);
 
             for (items) |entry| {
-                try RunCommand.spawnPackageScript(manager, entry.script, hook, entry.package_name, entry.cwd, &.{}, log_level == .silent);
+                try RunCommand.spawnPackageScript(
+                    manager,
+                    entry.script,
+                    hook,
+                    entry.package_name,
+                    entry.cwd,
+                    &.{},
+                    log_level == .silent,
+                );
             }
 
             while (manager.pending_tasks > 0) {
@@ -2345,8 +2353,40 @@ pub const Package = extern struct {
             return false;
         }
 
-        pub fn enqueue(this: *const Package.Scripts, lockfile: *Lockfile, buf: []const u8, cwd: string, package_name: string) void {
-            inline for (Package.Scripts.Hooks) |hook| {
+        pub fn enqueue(
+            this: *const Package.Scripts,
+            lockfile: *Lockfile,
+            buf: []const u8,
+            cwd: string,
+            package_name: string,
+            comptime is_root: bool,
+        ) void {
+            const install_scripts = .{
+                "preinstall",
+                "install",
+                "postinstall",
+            };
+
+            inline for (install_scripts) |hook| {
+                const script = @field(this, hook);
+                if (!script.isEmpty()) {
+                    @field(lockfile.scripts, hook).append(lockfile.allocator, .{
+                        .cwd = lockfile.allocator.dupe(u8, cwd) catch unreachable,
+                        .script = lockfile.allocator.dupe(u8, script.slice(buf)) catch unreachable,
+                        .package_name = package_name,
+                    }) catch unreachable;
+                }
+            }
+
+            if (comptime !is_root) return;
+
+            const prepare_scripts = .{
+                "preprepare",
+                "prepare",
+                "postprepare",
+            };
+
+            inline for (prepare_scripts) |hook| {
                 const script = @field(this, hook);
                 if (!script.isEmpty()) {
                     @field(lockfile.scripts, hook).append(lockfile.allocator, .{
@@ -2422,7 +2462,7 @@ pub const Package = extern struct {
             try builder.allocate();
             this.parseAlloc(lockfile.allocator, &builder, json);
 
-            this.enqueue(lockfile, tmp.buffers.string_bytes.items, cwd, name);
+            this.enqueue(lockfile, tmp.buffers.string_bytes.items, cwd, name, false);
         }
     };
 
@@ -2882,6 +2922,8 @@ pub const Package = extern struct {
             update: u32 = 0,
             overrides_changed: bool = false,
 
+            new_trusted_dependencies: NameHashSet = .{},
+
             pub inline fn sum(this: *Summary, that: Summary) void {
                 this.add += that.add;
                 this.remove += that.remove;
@@ -2922,6 +2964,15 @@ pub const Package = extern struct {
                     if ((from_k != to_k) or (!from_override.eql(to_override, from_lockfile.buffers.string_bytes.items, to_lockfile.buffers.string_bytes.items))) {
                         summary.overrides_changed = true;
                         break;
+                    }
+                }
+            }
+
+            {
+                var to_lockfile_itr = to_lockfile.trusted_dependencies.iterator();
+                while (to_lockfile_itr.next()) |entry| {
+                    if (!from_lockfile.trusted_dependencies.contains(entry.key_ptr.*)) {
+                        try summary.new_trusted_dependencies.put(allocator, entry.key_ptr.*, {});
                     }
                 }
             }

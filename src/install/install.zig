@@ -7526,56 +7526,12 @@ pub const PackageManager = struct {
                         }
 
                         if (resolution.tag == .workspace or this.lockfile.hasTrustedDependency(name)) {
-                            var scripts = this.lockfile.packages.items(.scripts)[package_id];
-                            if (scripts.hasAny()) {
-                                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                                const path_str = Path.joinAbsString(
-                                    bun.getFdPath(bun.toFD(this.node_modules_folder.dir.fd), &path_buf) catch unreachable,
-                                    &[_]string{destination_dir_subpath},
-                                    .posix,
-                                );
-
-                                scripts.enqueue(this.lockfile, buf, path_str, name);
-                            } else if (!scripts.filled) {
-                                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                                const path_str = Path.joinAbsString(
-                                    bun.getFdPath(bun.toFD(this.node_modules_folder.dir.fd), &path_buf) catch unreachable,
-                                    &[_]string{destination_dir_subpath},
-                                    .auto,
-                                );
-
-                                scripts.enqueueFromPackageJSON(
-                                    this.manager.log,
-                                    this.lockfile,
-                                    this.node_modules_folder.dir,
-                                    destination_dir_subpath,
-                                    path_str,
-                                    name,
-                                ) catch |err| {
-                                    if (comptime log_level != .silent) {
-                                        const fmt = "\n<r><red>error:<r> failed to parse life-cycle scripts for <b>{s}<r>: {s}\n";
-                                        const args = .{ name, @errorName(err) };
-
-                                        if (comptime log_level.showProgress()) {
-                                            switch (Output.enable_ansi_colors) {
-                                                inline else => |enable_ansi_colors| {
-                                                    this.progress.log(comptime Output.prettyFmt(fmt, enable_ansi_colors), args);
-                                                },
-                                            }
-                                        } else {
-                                            Output.prettyErrorln(fmt, args);
-                                        }
-                                    }
-
-                                    if (this.manager.options.enable.fail_early) {
-                                        Global.exit(1);
-                                    }
-
-                                    Output.flush();
-                                    this.summary.fail += 1;
-                                    return;
-                                };
-                            }
+                            try this.enqueuePackageScriptsToLockfile(
+                                name,
+                                log_level,
+                                package_id,
+                                destination_dir_subpath,
+                            );
                         }
                     },
                     .fail => |cause| {
@@ -7650,6 +7606,77 @@ pub const PackageManager = struct {
                     },
                     else => {},
                 }
+            } else {
+                if (this.manager.summary.new_trusted_dependencies.contains(@truncate(String.Builder.stringHash(name)))) {
+                    // these are packages that are installed but haven't run lifecycle scripts because they weren't
+                    // in `trustedDependencies`
+                    try this.enqueuePackageScriptsToLockfile(
+                        name,
+                        log_level,
+                        package_id,
+                        destination_dir_subpath,
+                    );
+                }
+            }
+        }
+
+        fn enqueuePackageScriptsToLockfile(
+            this: *PackageInstaller,
+            name: string,
+            comptime log_level: Options.LogLevel,
+            package_id: PackageID,
+            destination_dir_subpath: [:0]const u8,
+        ) !void {
+            const buf = this.lockfile.buffers.string_bytes.items;
+            var scripts = this.lockfile.packages.items(.scripts)[package_id];
+            if (scripts.hasAny()) {
+                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                const path_str = Path.joinAbsString(
+                    bun.getFdPath(bun.toFD(this.node_modules_folder.dir.fd), &path_buf) catch unreachable,
+                    &[_]string{destination_dir_subpath},
+                    .posix,
+                );
+
+                scripts.enqueue(this.lockfile, buf, path_str, name, false);
+            } else if (!scripts.filled) {
+                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                const path_str = Path.joinAbsString(
+                    bun.getFdPath(bun.toFD(this.node_modules_folder.dir.fd), &path_buf) catch unreachable,
+                    &[_]string{destination_dir_subpath},
+                    .auto,
+                );
+
+                scripts.enqueueFromPackageJSON(
+                    this.manager.log,
+                    this.lockfile,
+                    this.node_modules_folder.dir,
+                    destination_dir_subpath,
+                    path_str,
+                    name,
+                ) catch |err| {
+                    if (comptime log_level != .silent) {
+                        const fmt = "\n<r><red>error:<r> failed to parse life-cycle scripts for <b>{s}<r>: {s}\n";
+                        const args = .{ name, @errorName(err) };
+
+                        if (comptime log_level.showProgress()) {
+                            switch (Output.enable_ansi_colors) {
+                                inline else => |enable_ansi_colors| {
+                                    this.progress.log(comptime Output.prettyFmt(fmt, enable_ansi_colors), args);
+                                },
+                            }
+                        } else {
+                            Output.prettyErrorln(fmt, args);
+                        }
+                    }
+
+                    if (this.manager.options.enable.fail_early) {
+                        Global.exit(1);
+                    }
+
+                    Output.flush();
+                    this.summary.fail += 1;
+                    return;
+                };
             }
         }
 
@@ -8256,6 +8283,10 @@ pub const PackageManager = struct {
                         Global.crash();
                     }
 
+                    if (manager.summary.new_trusted_dependencies.count() > 0) {
+                        needs_new_lockfile = needs_new_lockfile or true;
+                    }
+
                     if (had_any_diffs) {
                         var builder_ = manager.lockfile.stringBuilder();
                         // ensure we use one pointer to reference it instead of creating new ones and potentially aliasing
@@ -8576,6 +8607,7 @@ pub const PackageManager = struct {
                 manager.lockfile.buffers.string_bytes.items,
                 strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir),
                 root.name.slice(manager.lockfile.buffers.string_bytes.items),
+                true,
             );
         }
 
@@ -8585,34 +8617,6 @@ pub const PackageManager = struct {
                 manager.lockfile,
                 log_level,
             );
-        }
-
-        // Install script order for npm 8.3.0:
-        // 1. preinstall
-        // 2. install
-        // 3. postinstall
-        // 4. preprepare
-        // 5. prepare
-        // 6. postprepare
-        const run_lifecycle_scripts = manager.options.do.run_scripts and manager.lockfile.scripts.hasAny() and manager.options.do.install_packages;
-        if (run_lifecycle_scripts) {
-            // We need to figure out the PATH and other environment variables
-            // to do that, we re-use the code from bun run
-            // this is expensive, it traverses the entire directory tree going up to the root
-            // so we really only want to do it when strictly necessary
-            var this_bundler: bundler.Bundler = undefined;
-            var ORIGINAL_PATH: string = "";
-            _ = try RunCommand.configureEnvForRun(
-                ctx,
-                &this_bundler,
-                manager.env,
-                &ORIGINAL_PATH,
-                log_level != .silent,
-                false,
-            );
-
-            // 1. preinstall
-            try manager.lockfile.scripts.spawnAllPackageScripts(manager, log_level, "preinstall");
         }
 
         if (needs_new_lockfile) {
@@ -8721,15 +8725,40 @@ pub const PackageManager = struct {
             }
         }
 
-        if (run_lifecycle_scripts and install_summary.fail == 0) {
-            // 2. install
-            // 3. postinstall
+        // Install script order for npm 8.3.0:
+        // 1. preinstall
+        // 2. install
+        // 3. postinstall
+        //
+        // if root:
+        // 4. preprepare
+        // 5. prepare
+        // 6. postprepare
+        const run_lifecycle_scripts = manager.options.do.run_scripts and
+            manager.lockfile.scripts.hasAny() and
+            manager.options.do.install_packages and
+            install_summary.fail == 0;
+
+        if (run_lifecycle_scripts) {
+            // We need to figure out the PATH and other environment variables
+            // to do that, we re-use the code from bun run
+            // this is expensive, it traverses the entire directory tree going up to the root
+            // so we really only want to do it when strictly necessary
+            var this_bundler: bundler.Bundler = undefined;
+            var ORIGINAL_PATH: string = "";
+
+            _ = try RunCommand.configureEnvForRun(
+                ctx,
+                &this_bundler,
+                manager.env,
+                &ORIGINAL_PATH,
+                log_level != .silent,
+                false,
+            );
+
+            try manager.lockfile.scripts.spawnAllPackageScripts(manager, log_level, "preinstall");
             try manager.lockfile.scripts.spawnAllPackageScripts(manager, log_level, "install");
             try manager.lockfile.scripts.spawnAllPackageScripts(manager, log_level, "postinstall");
-
-            // 4. preprepare
-            // 5. prepare
-            // 6. postprepare
             try manager.lockfile.scripts.spawnAllPackageScripts(manager, log_level, "preprepare");
             try manager.lockfile.scripts.spawnAllPackageScripts(manager, log_level, "prepare");
             try manager.lockfile.scripts.spawnAllPackageScripts(manager, log_level, "postprepare");

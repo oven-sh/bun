@@ -1,5 +1,6 @@
 import { expect, test, describe } from "bun:test";
 import { Glob } from "bun";
+import { tempFixturesDir } from "./util";
 
 const paths = [
   "test/js/bun/glob/fixtures/file.md",
@@ -14,12 +15,16 @@ const paths = [
   "test/js/bun/glob/fixtures/first/nested/directory/file.json",
 ];
 
+tempFixturesDir();
+
 test("Glob.scan stress test", async () => {
+  const cwd = "test/js/bun/glob";
+
   await Promise.all(
     Array(1000)
       .fill(null)
       .map(() =>
-        Array.fromAsync(new Glob("src/**/*.zig").scan()).then(results => {
+        Array.fromAsync(new Glob("src/**/*.zig").scan({ cwd })).then(results => {
           const set = new Set(results);
           return set.size == paths.length && paths.every(path => set.has(path));
         }),

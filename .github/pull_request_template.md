@@ -19,7 +19,6 @@ This adds a new flag --bail to bun test. When set, it will stop running tests af
 
 <!-- If JavaScript/TypeScript modules or builtins changed:
 
-- [ ] I ran `make js` and committed the transpiled changes
 - [ ] I or my editor ran Prettier on the changed files (or I ran `bun fmt`)
 - [ ] I included a test for the new code, or an existing test covers it
 
@@ -41,17 +40,6 @@ This adds a new flag --bail to bun test. When set, it will stop running tests af
 <!-- If dependencies in tests changed:
 
 - [ ] I made sure that specific versions of dependencies are used instead of ranged or tagged versions
--->
-
-<!-- If functions were added to exports.zig or bindings.zig
-
-- [ ] I ran `make headers` to regenerate the C header file
-
--->
-
-<!-- If \*.classes.ts files were added or changed:
-
-- [ ] I ran `make codegen` to regenerate the C++ and Zig code
 -->
 
 <!-- If a new builtin ESM/CJS module was added:

@@ -282,22 +282,24 @@ pub const StoredFileDescriptorType = if (Environment.isBrowser) u0 else FileDesc
 pub const PlatformIOVec = if (Environment.isWindows)
     windows.libuv.uv_buf_t
 else
-    extern struct {
-        native: std.os.iovec,
+    std.os.iovec;
 
-        pub fn init(input: []const u8) @This() {
-            if (Environment.allow_assert) {
-                if (input.len > @as(usize, std.math.maxInt(u32))) {
-                    Output.prettyWarnln("debug warn: bun.PlatformIOVec.init: Buffer overflow, this write will fail on windows.");
-                }
-            }
-            return .{ .native = .{ .iov_len = @intCast(input.len), .iov_base = @constCast(input.ptr) } };
+pub fn platformIOVecCreate(input: []const u8) PlatformIOVec {
+    if (Environment.isWindows) return windows.libuv.uv_buf_t.init(input);
+    if (Environment.allow_assert) {
+        if (input.len > @as(usize, std.math.maxInt(u32))) {
+            Output.prettyWarnln("debug warn: call to bun.PlatformIOVec.init with len {d}, this will overflow on windows.", .{
+                input.len,
+            });
         }
+    }
+    return .{ .iov_len = @intCast(input.len), .iov_base = @constCast(input.ptr) };
+}
 
-        pub fn slice(this: *const @This()) []u8 {
-            return this.base[0..this.len];
-        }
-    };
+pub fn platformIOVecToSlice(iovec: PlatformIOVec) []u8 {
+    if (Environment.isWindows) return windows.libuv.uv_buf_t.slice(iovec);
+    return iovec.base[0..iovec.len];
+}
 
 pub const StringTypes = @import("string_types.zig");
 pub const stringZ = StringTypes.stringZ;
@@ -1198,6 +1200,8 @@ pub fn getcwd(buf_: []u8) ![]u8 {
 
     var temp: [MAX_PATH_BYTES]u8 = undefined;
     var temp_slice = try std.os.getcwd(&temp);
+    // Paths are normalized to use / to make more things reliable, but eventually this will have to change to be the true file sep
+    // It is possible to expose this value to JS land
     return path.normalizeBuf(temp_slice, buf_, .loose);
 }
 

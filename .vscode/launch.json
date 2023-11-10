@@ -337,6 +337,19 @@
       "args": ["abc"],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug REPL",
+      "program": "${workspaceFolder}/build/bun-debug",
+      "args": ["/Users/dave/.bun/bin/bun-repl"],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole",
+      "env": {
+        "BUN_DEBUG_QUIET_LOGS": "1"
+      },
+      "terminal": "integrated"
     }
   ]
 }

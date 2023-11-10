@@ -712,8 +712,23 @@ pub inline fn endsWithChar(self: string, char: u8) bool {
 pub fn withoutTrailingSlash(this: string) []const u8 {
     var href = this;
     while (href.len > 1 and (switch (href[href.len - 1]) {
-        '/' => true,
-        '\\' => true,
+        '/', '\\' => true,
+        else => false,
+    })) {
+        href.len -= 1;
+    }
+
+    return href;
+}
+
+/// Does not strip the C:\
+pub fn withoutTrailingSlashWindowsPath(this: string) []const u8 {
+    if (this.len < 3 or
+        this[1] != ':') return withoutTrailingSlash(this);
+
+    var href = this;
+    while (href.len > 3 and (switch (href[href.len - 1]) {
+        '/', '\\' => true,
         else => false,
     })) {
         href.len -= 1;
@@ -4989,4 +5004,8 @@ pub fn convertUTF16toUTF8InBuffer(
         .surrogate => @panic("TODO: handle surrogate in convertUTF8toUTF16"),
         else => @panic("TODO: handle error in convertUTF16toUTF8InBuffer"),
     }
+}
+
+pub inline fn charIsAnySlash(char: u8) bool {
+    return char == '/' or char == '\\';
 }

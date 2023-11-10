@@ -4,7 +4,6 @@ pub const keep_alive = false;
 
 // it just doesn't work well.
 pub const use_std_path_relative = false;
-pub const use_std_path_join = false;
 
 // Debug helpers
 pub const print_ast = false;

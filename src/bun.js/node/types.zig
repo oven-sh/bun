@@ -2221,7 +2221,7 @@ pub const Path = struct {
         args_len: u16,
     ) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
-        if (args_len == 0) return JSC.ZigString.init("").toValue(globalThis);
+        if (args_len == 0) return JSC.ZigString.init(".").toValue(globalThis);
         var arena = @import("root").bun.ArenaAllocator.init(heap_allocator);
         defer arena.deinit();
 
@@ -2234,12 +2234,20 @@ pub const Path = struct {
 
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var count: usize = 0;
+        var i: u16 = 0;
         var to_join = allocator.alloc(string, args_len) catch unreachable;
-        for (args_ptr[0..args_len], 0..) |arg, i| {
+        for (args_ptr[0..args_len]) |arg| {
             const zig_str: JSC.ZigString = arg.getZigString(globalThis);
-            to_join[i] = zig_str.toSlice(allocator).slice();
-            count += to_join[i].len;
+            // Windows path joining code expects the first path to exist
+            // to be used for UNC path detection.
+            if (zig_str.len > 0) {
+                to_join[i] = zig_str.toSlice(allocator).slice();
+                count += to_join[i].len;
+                i += 1;
+            }
         }
+
+        if (count == 0) return JSC.ZigString.init(".").toValue(globalThis);
 
         var buf_to_use: []u8 = &buf;
         if (count * 2 >= buf.len) {
@@ -2250,9 +2258,9 @@ pub const Path = struct {
         }
 
         const out = if (!isWindows)
-            PathHandler.joinStringBuf(buf_to_use, to_join, .posix)
+            PathHandler.joinStringBuf(buf_to_use, to_join[0..i], .posix)
         else
-            PathHandler.joinStringBuf(buf_to_use, to_join, .windows);
+            PathHandler.joinStringBuf(buf_to_use, to_join[0..i], .windows);
 
         var str = bun.String.create(out);
         defer str.deref();

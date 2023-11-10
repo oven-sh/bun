@@ -2,6 +2,7 @@
 const types = require("node:util/types");
 /** @type {import('node-inspect-extracted')} */
 const utl = require("internal/util/inspect");
+var { kCustomPromisifiedSymbol } = require("internal/symbols");
 
 var cjs_exports = {};
 
@@ -147,7 +148,7 @@ var _extend = function (origin, add) {
   }
   return origin;
 };
-var kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
+const GlobalPromise = globalThis.Promise;
 var promisify = function promisify(original) {
   if (typeof original !== "function") throw new TypeError('The "original" argument must be of type Function');
   if (kCustomPromisifiedSymbol && original[kCustomPromisifiedSymbol]) {
@@ -164,22 +165,17 @@ var promisify = function promisify(original) {
     return fn;
   }
   function fn() {
-    var promiseResolve, promiseReject;
-    var promise = new Promise(function (resolve, reject) {
-      promiseResolve = resolve;
-      promiseReject = reject;
-    });
-    var args = [];
-    for (var i = 0; i < arguments.length; i++) {
-      args.push(arguments[i]);
-    }
-    args.push(function (err, value) {
-      if (err) {
-        promiseReject(err);
-      } else {
-        promiseResolve(value);
-      }
-    });
+    var { promise, resolve: promiseResolve, reject: promiseReject } = $newPromiseCapability(GlobalPromise);
+    var args = [
+      ...arguments,
+      function (err, value) {
+        if (err) {
+          promiseReject(err);
+        } else {
+          promiseResolve(value);
+        }
+      },
+    ];
     try {
       original.$apply(this, args);
     } catch (err) {

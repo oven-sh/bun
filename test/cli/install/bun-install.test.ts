@@ -7833,3 +7833,19 @@ describe("Registry URLs", () => {
     expect(await exited).toBe(0);
   });
 });
+
+it("should handle @scoped name that contains tilde, issue#7045", async () => {
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "@~39/empty"],
+    cwd: package_dir,
+    stdin: null,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(await exited).toBe(0);
+  expect(stdout).toBeDefined();
+  expect(await new Response(stdout).text()).toContain("installed @~39/empty");
+  expect(stderr).toBeDefined();
+  expect(await new Response(stderr).text()).toContain("Saved lockfile");
+});

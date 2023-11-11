@@ -7843,9 +7843,9 @@ it("should handle @scoped name that contains tilde, issue#7045", async () => {
     stderr: "pipe",
     env,
   });
-  expect(await exited).toBe(0);
-  expect(stdout).toBeDefined();
-  expect(await new Response(stdout).text()).toContain("installed @~39/empty");
   expect(stderr).toBeDefined();
   expect(await new Response(stderr).text()).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  expect(await new Response(stdout).text()).toContain("installed @~39/empty@1.0.0");
+  expect(await exited).toBe(0);
 });

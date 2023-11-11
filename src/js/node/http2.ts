@@ -20,6 +20,7 @@ const bunHTTP2StreamResponded = Symbol.for("::bunhttp2hasResponded::");
 const bunHTTP2StreamReadQueue = Symbol.for("::bunhttp2ReadQueue::");
 const bunHTTP2Closed = Symbol.for("::bunhttp2closed::");
 const bunHTTP2Socket = Symbol.for("::bunhttp2socket::");
+const bunHTTP2WantTrailers = Symbol.for("::bunhttp2WantTrailers::");
 const bunHTTP2Session = Symbol.for("::bunhttp2session::");
 
 const ReflectGetPrototypeOf = Reflect.getPrototypeOf;
@@ -385,6 +386,7 @@ class ClientHttp2Stream extends Duplex {
   #id: number;
   [bunHTTP2Session]: ClientHttp2Session | null = null;
   #endStream: boolean = false;
+  [bunHTTP2WantTrailers]: boolean = false;
   [bunHTTP2Closed]: boolean = false;
   rstCode: number | undefined = undefined;
   [bunHTTP2StreamReadQueue]: Array<Buffer> = $createFIFO();
@@ -430,7 +432,6 @@ class ClientHttp2Stream extends Duplex {
   }
 
   sendTrailers(headers) {
-    if (this.#sentTrailers) return;
     const session = this[bunHTTP2Session];
     assertSession(session);
 
@@ -440,9 +441,17 @@ class ClientHttp2Stream extends Duplex {
       throw error;
     }
 
-    if (this.sentTrailers) {
+    if (this.#sentTrailers) {
       const error = new Error(`ERR_HTTP2_TRAILERS_ALREADY_SENT: Trailing headers have already been sent`);
       error.code = "ERR_HTTP2_TRAILERS_ALREADY_SENT";
+      throw error;
+    }
+
+    if (!this[bunHTTP2WantTrailers]) {
+      const error = new Error(
+        `ERR_HTTP2_TRAILERS_NOT_READY: Trailing headers cannot be sent until after the wantTrailers event is emitted`,
+      );
+      error.code = "ERR_HTTP2_TRAILERS_NOT_READY";
       throw error;
     }
 
@@ -454,7 +463,7 @@ class ClientHttp2Stream extends Duplex {
     const sensitiveNames = {};
     if (sensitives) {
       if (!isArray(sensitives)) {
-        const error = new TypeError("headers[http2.neverIndex]");
+        const error = new TypeError("ERR_INVALID_ARG_VALUE: The argument headers[http2.neverIndex] is invalid");
         error.code = "ERR_INVALID_ARG_VALUE";
         throw error;
       }
@@ -619,6 +628,7 @@ function connectWithProtocol(protocol: string, options: Http2ConnectOptions | st
 function emitWantTrailersNT(streams, streamId) {
   const stream = streams.get(streamId);
   if (stream) {
+    stream[bunHTTP2WantTrailers] = true;
     stream.emit("wantTrailers");
   }
 }
@@ -816,6 +826,7 @@ class ClientHttp2Session extends Http2Session {
     wantTrailers(self: ClientHttp2Session, streamId: number) {
       var stream = self.#streams.get(streamId);
       if (stream) {
+        stream[bunHTTP2WantTrailers] = true;
         stream.emit("wantTrailers");
       } else {
         process.nextTick(emitWantTrailersNT, self.#streams, streamId);
@@ -1130,14 +1141,27 @@ class ClientHttp2Session extends Http2Session {
   }
 
   request(headers: any, options?: any) {
-    if (!(headers instanceof Object)) {
-      throw new Error("ERROR_HTTP2: Invalid headers");
+    if (this.destroyed || this.closed) {
+      const error = new Error(`ERR_HTTP2_INVALID_STREAM: The stream has been destroyed`);
+      error.code = "ERR_HTTP2_INVALID_STREAM";
+      throw error;
     }
+
+    if (this.sentTrailers) {
+      const error = new Error(`ERR_HTTP2_TRAILERS_ALREADY_SENT: Trailing headers have already been sent`);
+      error.code = "ERR_HTTP2_TRAILERS_ALREADY_SENT";
+      throw error;
+    }
+
+    if (!(headers instanceof Object)) {
+      throw new Error("ERR_HTTP2_INVALID_HEADERS: headers must be an object");
+    }
+
     const sensitives = headers[sensitiveHeaders];
     const sensitiveNames = {};
     if (sensitives) {
       if (!isArray(sensitives)) {
-        const error = new TypeError("headers[http2.neverIndex]");
+        const error = new TypeError("ERR_INVALID_ARG_VALUE: The arguments headers[http2.neverIndex] is invalid");
         error.code = "ERR_INVALID_ARG_VALUE";
         throw error;
       }

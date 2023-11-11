@@ -115,6 +115,31 @@ declare module "bun" {
   /**
    * Match files using [glob patterns](https://en.wikipedia.org/wiki/Glob_(programming)).
    *
+   * The supported pattern syntax for is:
+   *
+   * - `?`
+   *     Matches any single character.
+   * - `*`
+   *     Matches zero or more characters, except for path separators ('/' or '\').
+   * - `**`
+   *     Matches zero or more characters, including path separators.
+   *     Must match a complete path segment, i.e. followed by a path separator or
+   *     at the end of the pattern.
+   * - `[ab]`
+   *     Matches one of the characters contained in the brackets.
+   *     Character ranges (e.g. "[a-z]") are also supported.
+   *     Use "[!ab]" or "[^ab]" to match any character *except* those contained
+   *     in the brackets.
+   * - `{a,b}`
+   *     Match one of the patterns contained in the braces.
+   *     Any of the wildcards listed above can be used in the sub patterns.
+   *     Braces may be nested up to 10 levels deep.
+   * - `!`
+   *     Negates the result when at the start of the pattern.
+   *     Multiple "!" characters negate the pattern multiple times.
+   * - `\`
+   *     Used to escape any of the special characters above.
+   *
    * @example
    * ```js
    * const glob = new Glob("*.{ts,tsx}");

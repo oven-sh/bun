@@ -603,6 +603,15 @@ pub fn normalizeStringGeneric(
 
     const n = path.len;
 
+    if (isWindows and (allow_above_root or volLen > 0)) {
+        // consume leading slashes on windows
+        if (r < n and isSeparator(path[r])) {
+            r += 1;
+            buf[buf_i] = separator;
+            buf_i += 1;
+        }
+    }
+
     while (r < n) {
         // empty path element
         // or
@@ -976,8 +985,6 @@ pub fn joinStringBuf(buf: []u8, parts: anytype, comptime _platform: Platform) []
         return buf[0..1];
     }
 
-    std.debug.print("debug: '{s}'\n", .{temp_buf[0..written]});
-
     return normalizeStringNode(temp_buf[0..written], buf, platform);
 }
 
@@ -989,7 +996,9 @@ pub fn joinAbsStringBufZ(cwd: []const u8, buf: []u8, _parts: anytype, comptime _
     return _joinAbsStringBuf(true, [:0]const u8, cwd, buf, _parts, _platform);
 }
 
-fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd: []const u8, buf: []u8, _parts: anytype, comptime platform: Platform) ReturnType {
+fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) ReturnType {
+    if (_platform.resolve() == .windows) return _joinAbsStringBufWindows(is_sentinel, ReturnType, _cwd, buf, _parts);
+
     var parts: []const []const u8 = _parts;
     var temp_buf: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
     if (parts.len == 0) {
@@ -999,7 +1008,7 @@ fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd
         return _cwd;
     }
 
-    if ((comptime platform == .loose or platform == .posix) and
+    if ((comptime _platform == .loose or _platform == .posix) and
         parts.len == 1 and
         parts[0].len == 1 and
         parts[0][0] == std.fs.path.sep_posix)
@@ -1008,82 +1017,30 @@ fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd
     }
 
     var out: usize = 0;
-    // cwd: posix is the cwd, windows is the text after the :
-    // driveLetter: "/" to represent no drive letter, otherwise the drive letter
-    var cwd, var driveLetter: if (platform == .windows) u8 else u0 = if (platform == .windows) cwdAndDrive: {
-        if (_cwd.len >= 3 and _cwd[1] == ':' and strings.charIsAnySlash(_cwd[2])) {
-            break :cwdAndDrive .{ _cwd[2..], _cwd[0] };
-        }
-        break :cwdAndDrive .{ _cwd, '/' };
-    } else .{
-        // When on windows, posix path resolve has to remove drive label from cwd
-        if (bun.Environment.isWindows and _cwd.len >= 3 and _cwd[1] == ':')
-            _cwd[2..]
-        else
-            _cwd,
-        0,
-    };
+    var cwd = if (bun.Environment.isWindows and _cwd.len >= 3 and _cwd[1] == ':')
+        _cwd[2..]
+    else
+        _cwd;
 
     {
         var part_i: u16 = 0;
         var part_len: u16 = @as(u16, @truncate(parts.len));
 
         while (part_i < part_len) {
-            if (platform.isAbsolute(parts[part_i])) {
-                if (platform == .windows and strings.charIsAnySlash(parts[part_i][0])) {
-                    cwd = parts[part_i];
-                } else if (platform == .windows) {
-                    cwd = parts[part_i][2..];
-                    driveLetter = parts[part_i][0];
-                } else {
-                    cwd = parts[part_i];
-                }
-
+            if (_platform.isAbsolute(parts[part_i])) {
+                cwd = parts[part_i];
                 parts = parts[part_i + 1 ..];
+
                 part_len = @as(u16, @truncate(parts.len));
                 part_i = 0;
-
                 continue;
-            }
-            // Relative Drive Letters
-            // If CWD is on "C:\...", then "D:./relative" must act as an absolute path,
-            // But if they match, the drive letter is ignored and it is a relative path.
-            if ((platform == .windows) and
-                parts[part_i].len > 2 and
-                parts[part_i][1] == ':' and
-                switch (parts[part_i][0]) {
-                'a'...'z', 'A'...'Z' => true,
-                else => false,
-            }) {
-                if (cwd.len == 0 or parts[part_i][0] != driveLetter) {
-                    cwd = parts[part_i][2..];
-                    driveLetter = parts[part_i][0];
-                    parts = parts[part_i + 1 ..];
-
-                    part_len = @as(u16, @truncate(parts.len));
-                    part_i = 0;
-                    continue;
-                }
             }
             part_i += 1;
         }
     }
 
-    if (platform == .windows and driveLetter != '/') {
-        temp_buf[0] = driveLetter;
-        temp_buf[1] = ':';
-        if (cwd.len > 0 and cwd[0] != '/') {
-            temp_buf[2] = '\\';
-            @memcpy(temp_buf[3 .. 3 + cwd.len], cwd);
-            out = cwd.len + 3;
-        } else {
-            @memcpy(temp_buf[2 .. 2 + cwd.len], cwd);
-            out = cwd.len + 2;
-        }
-    } else {
-        @memcpy(temp_buf[0..cwd.len], cwd);
-        out = cwd.len;
-    }
+    bun.copy(u8, &temp_buf, cwd);
+    out = cwd.len;
 
     for (parts) |_part| {
         if (_part.len == 0) {
@@ -1092,49 +1049,33 @@ fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd
 
         var part = _part;
 
-        if (out > 0 and temp_buf[out - 1] != platform.separator()) {
-            temp_buf[out] = platform.separator();
+        if (out > 0 and temp_buf[out - 1] != _platform.separator()) {
+            temp_buf[out] = _platform.separator();
             out += 1;
         }
 
-        // I do not like that the relative drive stuff is checked a second time, but it is only done on windows.
-        const to_copy = if (platform == .windows and part.len >= 2 and
-            part[1] == ':' and
-            switch (part[0]) {
-            'a'...'z', 'A'...'Z' => true,
-            else => false,
-        })
-            part[2..]
-        else
-            part;
-        bun.copy(u8, temp_buf[out..], to_copy);
-        out += to_copy.len;
+        bun.copy(u8, temp_buf[out..], part);
+        out += part.len;
     }
 
-    const leading_separator: []const u8 = if (platform.leadingSeparatorIndex(temp_buf[0..out])) |i| brk: {
+    const leading_separator: []const u8 = if (_platform.leadingSeparatorIndex(temp_buf[0..out])) |i| brk: {
         var outdir = temp_buf[0 .. i + 1];
-        const this_sep = comptime platform.separator();
-        const other_sep = comptime switch (this_sep) {
-            '/' => '\\',
-            '\\' => '/',
-            else => unreachable,
-        };
-        if (platform == .loose or platform == .windows) {
+        if (_platform == .windows or _platform == .loose) {
             for (outdir) |*c| {
-                if (c.* == other_sep) {
-                    c.* = this_sep;
+                if (c.* == '\\') {
+                    c.* = '/';
                 }
             }
         }
 
         break :brk outdir;
-    } else comptime platform.separatorString();
+    } else "/";
 
     const result = normalizeStringBuf(
         temp_buf[leading_separator.len..out],
         buf[leading_separator.len..],
         false,
-        platform,
+        _platform,
         true,
     );
 
@@ -1145,6 +1086,123 @@ fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd
         return buf[0 .. result.len + leading_separator.len :0];
     } else {
         return buf[0 .. result.len + leading_separator.len];
+    }
+}
+
+fn _joinAbsStringBufWindows(
+    comptime is_sentinel: bool,
+    comptime ReturnType: type,
+    cwd: []const u8,
+    buf: []u8,
+    parts: []const []const u8,
+) ReturnType {
+    std.debug.assert(std.fs.path.isAbsoluteWindows(cwd));
+
+    if (parts.len == 0) {
+        if (comptime is_sentinel) {
+            unreachable;
+        }
+        return cwd;
+    }
+
+    // path.resolve is a bit different on windows, as there are multiple possible filesystem roots
+    // when you resolve(`C:\hello`, `C:world`), the second arg is a drive letter relative path, so
+    // the result of such is `C:\hello\world`, but if you used D:world, you would switch roots and
+    // end up with `D:\world`. this root handling basically means a different algorithm.
+    //
+    // to complicate things, it seems node.js will first figure out what the last root is, then
+    // in a separate search, figure out the last absolute path.
+    //
+    // Given the case `resolve("/one", "D:two", "three", "F:four", "five")`
+    // Root is "F:", cwd is "/one", then join all paths that dont exist on other drives.
+    //
+    // Also, the special root "/" can match into anything, but we have to resolve it to a real
+    // root at some point. That is what the `root_of_part.len == 0` check is doing.
+    const root, const set_cwd, const n_start = base: {
+        const root = root: {
+            var n = parts.len;
+            while (n > 0) {
+                n -= 1;
+                const len = windowsVolumeNameLen(parts[n])[0];
+                if (len > 0) {
+                    break :root parts[n][0..len];
+                }
+            }
+            // use cwd
+            const len = windowsVolumeNameLen(cwd)[0];
+            break :root cwd[0..len];
+        };
+
+        var n = parts.len;
+        while (n > 0) {
+            n -= 1;
+            if (std.fs.path.isAbsoluteWindows(parts[n])) {
+                const root_of_part = parts[n][0..windowsVolumeNameLen(parts[n])[0]];
+                if (root_of_part.len == 0 or strings.eql(root_of_part, root)) {
+                    break :base .{ root, parts[n][root_of_part.len..], n + 1 };
+                }
+            }
+        }
+        // use cwd only if the root matches
+        const cwd_root = cwd[0..windowsVolumeNameLen(cwd)[0]];
+        if (strings.eql(cwd_root, root)) {
+            break :base .{ root, cwd[cwd_root.len..], 0 };
+        } else {
+            break :base .{ root, "/", 0 };
+        }
+    };
+
+    if (set_cwd.len > 0)
+        std.debug.assert(isSepAny(set_cwd[0]));
+
+    var temp_buf: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
+
+    @memcpy(temp_buf[0..root.len], root);
+    @memcpy(temp_buf[root.len .. root.len + set_cwd.len], set_cwd);
+    var out: usize = root.len + set_cwd.len;
+
+    if (set_cwd.len == 0) {
+        // when cwd is `//server/share` without a suffix `/`, the path is considered absolute
+        temp_buf[out] = '\\';
+        out += 1;
+    }
+
+    for (parts[n_start..]) |part| {
+        if (part.len == 0) continue;
+
+        if (out > 0 and temp_buf[out - 1] != '\\') {
+            temp_buf[out] = '\\';
+            out += 1;
+        }
+
+        // skip over volume name
+        const volume = part[0..windowsVolumeNameLen(part)[0]];
+        if (volume.len > 0 and !strings.eql(volume, root))
+            continue;
+
+        const part_without_vol = part[volume.len..];
+        @memcpy(temp_buf[out .. out + part_without_vol.len], part_without_vol);
+        out += part_without_vol.len;
+    }
+
+    if (out > 0 and temp_buf[out - 1] != '\\') {
+        temp_buf[out] = '\\';
+        out += 1;
+    }
+
+    const result = normalizeStringBuf(
+        temp_buf[0..out],
+        buf,
+        false,
+        .windows,
+        true,
+    );
+
+    if (comptime is_sentinel) {
+        buf.ptr[result.len] = 0;
+        return buf[0..result.len :0];
+    } else {
+        return buf[0..result.len];
     }
 }
 

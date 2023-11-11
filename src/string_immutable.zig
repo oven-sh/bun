@@ -5009,3 +5009,10 @@ pub fn convertUTF16toUTF8InBuffer(
 pub inline fn charIsAnySlash(char: u8) bool {
     return char == '/' or char == '\\';
 }
+
+pub inline fn startsWithWindowsDriveLetter(s: []const u8) bool {
+    return s.len >= 2 and s[0] == ':' and switch (s[1]) {
+        'a'...'z', 'A'...'Z' => true,
+        else => false,
+    };
+}

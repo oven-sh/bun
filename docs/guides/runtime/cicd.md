@@ -35,7 +35,7 @@ jobs:
       # ...
       - uses: oven-sh/setup-bun@v1
 +       with:
-+         bun-version: 0.7.0 # or "canary"
++         bun-version: 1.0.11 # or "latest", "canary", <sha>
 ```
 
 ---

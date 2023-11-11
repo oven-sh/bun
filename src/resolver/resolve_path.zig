@@ -172,10 +172,10 @@ pub fn longestCommonPathGeneric(input: []const []const u8, comptime platform: Pl
         inline 2, 3, 4, 5, 6, 7, 8 => |n| {
             // If volume IDs do not match on windows, we can't have a common path
             if (platform == .windows) {
-                const first_root = input[0][0..windowsVolumeNameLen(input[0])[0]];
+                const first_root = windowsVolumeNameForRelative(input[0]);
                 comptime var i = 1;
                 inline while (i < n) : (i += 1) {
-                    const root = input[i][0..windowsVolumeNameLen(input[i])[0]];
+                    const root = windowsVolumeNameForRelative(input[i]);
                     if (!strings.eqlCaseInsensitiveASCIIICheckLength(first_root, root)) {
                         return "";
                     }
@@ -194,10 +194,10 @@ pub fn longestCommonPathGeneric(input: []const []const u8, comptime platform: Pl
         else => {
             // If volume IDs do not match on windows, we can't have a common path
             if (platform == .windows) {
-                const first_root = input[0][0..windowsVolumeNameLen(input[0])[0]];
+                const first_root = windowsVolumeNameForRelative(input[0]);
                 var i: usize = 1;
                 while (i < input.len) : (i += 1) {
-                    const root = input[i][0..windowsVolumeNameLen(input[i])[0]];
+                    const root = windowsVolumeNameForRelative(input[i]);
                     if (!strings.eqlCaseInsensitiveASCIIICheckLength(first_root, root)) {
                         return "";
                     }
@@ -278,24 +278,57 @@ threadlocal var relative_to_common_path_buf: [4096]u8 = undefined;
 // Loosely based on Node.js' implementation of path.relative
 // https://github.com/nodejs/node/blob/9a7cbe25de88d87429a69050a1a1971234558d97/lib/path.js#L1250-L1259
 pub fn relativeToCommonPath(
-    _common_path: []const u8,
-    normalized_from: []const u8,
-    normalized_to: []const u8,
+    common_path_: []const u8,
+    normalized_from_: []const u8,
+    normalized_to_: []const u8,
     buf: []u8,
-    comptime separator: u8,
     comptime always_copy: bool,
+    comptime platform: Platform,
 ) []const u8 {
-    const has_leading_separator = _common_path.len > 0 and _common_path[0] == separator;
+    var normalized_from = normalized_from_;
+    var normalized_to = normalized_to_;
+    const win_root_len = if (platform == .windows) k: {
+        const from_root = windowsVolumeNameForRelative(normalized_from_);
+        const to_root = windowsVolumeNameForRelative(normalized_to_);
 
-    const common_path = if (has_leading_separator) _common_path[1..] else _common_path;
+        if (common_path_.len == 0) {
+            // the only case path.relative can return not a relative string
+            if (!strings.eqlCaseInsensitiveASCIIICheckLength(from_root, to_root)) {
+                if (normalized_to_.len > to_root.len and normalized_to_[normalized_to_.len - 1] == '\\') {
+                    return normalized_to_[0 .. normalized_to_.len - 1];
+                } else {
+                    return normalized_to_;
+                }
+            }
+        }
+
+        normalized_from = normalized_from_[from_root.len..];
+        normalized_to = normalized_to_[to_root.len..];
+
+        break :k from_root.len;
+    } else null;
+
+    const separator = comptime platform.separator();
+
+    const common_path = if (platform == .windows)
+        common_path_[win_root_len..]
+    else if (std.fs.path.isAbsolutePosix(common_path_))
+        common_path_[1..]
+    else
+        common_path_;
 
     const shortest = @min(normalized_from.len, normalized_to.len);
 
-    const last_common_separator = strings.lastIndexOfChar(_common_path, separator) orelse 0;
-
     if (shortest == common_path.len) {
-        if (normalized_to.len > normalized_from.len) {
+        if (normalized_to.len >= normalized_from.len) {
             if (common_path.len == 0) {
+                if (platform == .windows and
+                    normalized_to.len > 3 and
+                    normalized_to[normalized_to.len - 1] == separator)
+                {
+                    normalized_to.len -= 1;
+                }
+
                 // We get here if `from` is the root
                 // For example: from='/'; to='/foo'
                 if (always_copy) {
@@ -309,17 +342,29 @@ pub fn relativeToCommonPath(
             if (normalized_to[common_path.len - 1] == separator) {
                 const slice = normalized_to[common_path.len..];
 
+                const without_trailing_slash = if (platform == .windows and
+                    slice.len > 3 and
+                    slice[slice.len - 1] == separator)
+                    slice[0 .. slice.len - 1]
+                else
+                    slice;
+
                 if (always_copy) {
                     // We get here if `from` is the exact base path for `to`.
                     // For example: from='/foo/bar'; to='/foo/bar/baz'
-                    bun.copy(u8, buf, slice);
-                    return buf[0..slice.len];
+                    bun.copy(u8, buf, without_trailing_slash);
+                    return buf[0..without_trailing_slash.len];
                 } else {
-                    return slice;
+                    return without_trailing_slash;
                 }
             }
         }
     }
+
+    const last_common_separator = strings.lastIndexOfChar(
+        if (platform == .windows) common_path else common_path_,
+        separator,
+    ) orelse 0;
 
     // Generate the relative path based on the path difference between `to`
     // and `from`.
@@ -363,6 +408,10 @@ pub fn relativeToCommonPath(
         out_slice.len += tail.len;
     }
 
+    if (out_slice.len > 3 and out_slice[out_slice.len - 1] == separator) {
+        out_slice.len -= 1;
+    }
+
     return out_slice;
 }
 
@@ -374,7 +423,7 @@ pub fn relativeNormalized(from: []const u8, to: []const u8, comptime platform: P
     const two = [_][]const u8{ from, to };
     const common_path = longestCommonPathGeneric(&two, platform);
 
-    return relativeToCommonPath(common_path, from, to, &relative_to_common_path_buf, comptime platform.separator(), always_copy);
+    return relativeToCommonPath(common_path, from, to, &relative_to_common_path_buf, always_copy, platform);
 }
 
 pub fn dirname(str: []const u8, comptime platform: Platform) []const u8 {
@@ -476,6 +525,32 @@ fn windowsVolumeNameLen(path: []const u8) struct { usize, usize } {
         }
     }
     return .{ 0, 0 };
+}
+
+// path.relative lets you do relative across different share drives
+fn windowsVolumeNameForRelative(path: []const u8) []const u8 {
+    if (path.len < 3) return path[0..0];
+    // with drive letter
+    var c = path[0];
+    if (path[1] == ':' and isSepAny(path[2])) {
+        if ('a' <= c and c <= 'z' or 'A' <= c and c <= 'Z') {
+            return path[0..3];
+        }
+    }
+    // UNC
+    if (path.len >= 5 and
+        Platform.windows.isSeparator(path[0]) and
+        Platform.windows.isSeparator(path[1]) and
+        !Platform.windows.isSeparator(path[2]) and
+        path[2] != '.')
+    {
+        if (strings.indexOfAny(path[3..], "/\\")) |idx| {
+            // TODO: handle input "//abc//def" should be picked up as a unc path
+            return path[0 .. idx + 4];
+        }
+    }
+    if (isSepAny(path[0])) return path[0..1];
+    return path[0..0];
 }
 
 // This function is based on Go's filepath.Clean function

@@ -514,7 +514,7 @@ RUN cmake .. \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUN_LINK_ONLY=1 \
   -DBUN_ZIG_OBJ="${BUN_DIR}/build/bun-zig.o" \
-  -DUSE_DEBUG_JSC=${ASSERTIONS} \
+  -DUSE_DEBUG_JSC=ON \
   -DBUN_CPP_ARCHIVE="${BUN_DIR}/build/bun-cpp-objects.a" \
   -DWEBKIT_DIR="${BUN_DIR}/bun-webkit" \
   -DBUN_DEPS_OUT_DIR="${BUN_DEPS_OUT_DIR}" \

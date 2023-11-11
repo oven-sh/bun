@@ -816,12 +816,13 @@ add_compile_definitions(
     "NOMINMAX"
     "IS_BUILD"
     "BUILDING_JSCONLY__"
-    "ASSERT_ENABLED=$<IF:$<CONFIG:ASSERT_ENABLED>,1,0>"
     "BUN_DYNAMIC_JS_LOAD_PATH=\"${BUN_WORKDIR}/js\""
 )
 
 if(NOT ASSERT_ENABLED)
     add_compile_definitions("NDEBUG=1")
+else()
+    add_compile_definitions("ASSERT_ENABLED=1")
 endif()
 
 include_directories(

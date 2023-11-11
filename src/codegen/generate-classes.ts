@@ -600,7 +600,7 @@ function renderCachedFieldsHeader(typeName, klass, proto, values) {
 function renderCallbacksHeader(typeName, callbacks: Record<string, string>) {
   const rows: string[] = [];
   for (const name in callbacks) {
-    rows.push(`mutable WriteBarrier<JSObject*> m_callback_${name};`);
+    rows.push(`mutable WriteBarrier<JSObject> m_callback_${name};`);
   }
 
   return rows.join("\n");
@@ -640,17 +640,18 @@ function renderCallbacksCppImpl(typeName, callbacks: Record<string, string>) {
   }
 
   rows.push(`
-  extern "C" void ${symbolName(
-    typeName,
-    "_setAllCallbacks",
-  )}(JSC::EncodedJSValue encodedThisValue, JSC::EncodedJSValue encodedCallbacks[${Object.keys(callbacks).length}]) {
+  extern "C" void ${symbolName(typeName, "_setAllCallbacks")}(JSC::EncodedJSValue encodedThisValue, ${Object.keys(
+    callbacks,
+  )
+    .map((_, i) => `JSC::EncodedJSValue encodedCallback${i}`)
+    .join(", ")}) {
     auto* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
     ${Object.keys(callbacks)
       .map(
         (name, i) => `
-      JSValue callback${i} = JSValue::decode(encodedCallbacks[${i}]);
+      JSValue callback${i} = JSValue::decode(encodedCallback${i});
       if (!callback${i}.isEmpty()) {
-        thisObject->m_callback_${name}.set(thisObject->vm(), thisObject, callback${i}.getObject()),
+        thisObject->m_callback_${name}.set(thisObject->vm(), thisObject, callback${i}.getObject());
       }
       `,
       )
@@ -689,18 +690,18 @@ function renderCallbacksZig(typeName, callbacks: Record<string, string>) {
   out = out.trim();
 
   out += `
-  extern fn ${symbolName(typeName, "_setAllCallbacks")}(JSC.JSValue, *[${
-    Object.keys(callbacks).length
-  }]JSC.JSValue) void;
+  extern fn ${symbolName(typeName, "_setAllCallbacks")}(JSC.JSValue, ${Object.keys(callbacks)
+    .map((a, i) => `callback${i}: JSC.JSValue`)
+    .join(", ")}) void;
 
   pub inline fn set(this: @This(), values: struct {
     ${Object.keys(callbacks)
       .map((name, i) => `${camelCase(name)}: JSC.JSValue = .zero,`)
       .join("\n")}
   }) void {
-    ${symbolName(typeName, "_setAllCallbacks")}(this.instance, &[_]JSC.JSValue{${Object.keys(callbacks)
+    ${symbolName(typeName, "_setAllCallbacks")}(this.instance, ${Object.keys(callbacks)
     .map((name, i) => `values.${camelCase(name)}`)
-    .join(", ")},});
+    .join(", ")},);
   }
   `;
 

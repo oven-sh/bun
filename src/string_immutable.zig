@@ -4961,3 +4961,68 @@ pub fn concatIfNeeded(
     }
     std.debug.assert(remain.len == 0);
 }
+
+pub const HostFormatter = struct {
+    host: string,
+    port: ?u16 = null,
+    is_https: bool = false,
+
+    pub fn format(formatter: HostFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        if (strings.indexOfChar(formatter.host, ':') != null) {
+            try writer.writeAll(formatter.host);
+            return;
+        }
+
+        try writer.writeAll(formatter.host);
+
+        const is_port_optional = formatter.port == null or (formatter.is_https and formatter.port == 443) or
+            (!formatter.is_https and formatter.port == 80);
+        if (!is_port_optional) {
+            try writer.print(":{d}", .{formatter.port.?});
+            return;
+        }
+    }
+};
+
+const Proto = enum {
+    http,
+    https,
+    unix,
+};
+
+pub const URLFormatter = struct {
+    proto: Proto = .http,
+    hostname: ?string = null,
+    port: ?u16 = null,
+
+    pub fn format(this: URLFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try writer.print("{s}://", .{switch (this.proto) {
+            .http => "http",
+            .https => "https",
+            .unix => "unix",
+        }});
+
+        if (this.hostname) |hostname| {
+            const needs_brackets = hostname[0] != '[' and strings.isIPV6Address(hostname);
+            if (needs_brackets) {
+                try writer.print("[{s}]", .{hostname});
+            } else {
+                try writer.writeAll(hostname);
+            }
+        } else {
+            try writer.writeAll("localhost");
+        }
+
+        if (this.proto == .unix) {
+            return;
+        }
+
+        const is_port_optional = this.port == null or (this.proto == .https and this.port == 443) or
+            (this.proto == .http and this.port == 80);
+        if (is_port_optional) {
+            try writer.writeAll("/");
+        } else {
+            try writer.print(":{d}/", .{this.port.?});
+        }
+    }
+};

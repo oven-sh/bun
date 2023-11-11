@@ -318,12 +318,14 @@ RUN cd $BUN_DIR/src/node-fallbacks \
 FROM bun-base as bun-webkit
 
 ARG BUILDARCH
+ARG ASSERTIONS
 
 COPY CMakeLists.txt ${BUN_DIR}/CMakeLists.txt
 
 RUN mkdir ${BUN_DIR}/bun-webkit \
   && WEBKIT_TAG=$(grep 'set(WEBKIT_TAG' "${BUN_DIR}/CMakeLists.txt" | awk '{print $2}' | cut -f 1 -d ')') \
-  && WEBKIT_URL="https://github.com/oven-sh/WebKit/releases/download/autobuild-${WEBKIT_TAG}/bun-webkit-linux-${BUILDARCH}-lto.tar.gz" \
+  && WEBKIT_SUFFIX=$(if [ "${ASSERTIONS}" = "ON" ]; then echo "debug"; else echo "lto"; fi) \
+  && WEBKIT_URL="https://github.com/oven-sh/WebKit/releases/download/autobuild-${WEBKIT_TAG}/bun-webkit-linux-${BUILDARCH}-${WEBKIT_SUFFIX}.tar.gz" \
   && echo "Downloading ${WEBKIT_URL}" \
   && curl -fsSL "${WEBKIT_URL}" | tar -xz -C ${BUN_DIR}/bun-webkit --strip-components=1
 
@@ -462,3 +464,58 @@ RUN cmake .. \
 FROM scratch as artifact
 
 COPY --from=bun-link /build/out /
+
+FROM bun-base as bun-link-assertions
+
+ARG CPU_TARGET
+ARG CANARY
+ARG ASSERTIONS
+
+ENV CPU_TARGET=${CPU_TARGET}
+
+WORKDIR $BUN_DIR
+
+RUN mkdir -p build bun-webkit
+
+# lol
+COPY src/bun.js/bindings/sqlite/sqlite3.c ${BUN_DIR}/src/bun.js/bindings/sqlite/sqlite3.c
+
+COPY src/symbols.dyn src/linker.lds ${BUN_DIR}/src/
+
+COPY CMakeLists.txt ${BUN_DIR}/CMakeLists.txt
+COPY --from=zlib ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
+COPY --from=base64 ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
+COPY --from=libarchive ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
+COPY --from=boringssl ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
+COPY --from=lolhtml ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
+COPY --from=mimalloc-debug ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
+COPY --from=zstd ${BUN_DEPS_OUT_DIR}/*  ${BUN_DEPS_OUT_DIR}/
+COPY --from=tinycc ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
+COPY --from=c-ares ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
+COPY --from=bun-compile-zig-obj /tmp/bun-zig.o ${BUN_DIR}/build/bun-zig.o
+COPY --from=bun-cpp-objects ${BUN_DIR}/build/bun-cpp-objects.a ${BUN_DIR}/build/bun-cpp-objects.a
+COPY --from=bun-cpp-objects ${BUN_DIR}/bun-webkit/lib ${BUN_DIR}/bun-webkit/lib
+
+WORKDIR $BUN_DIR/build
+
+RUN cmake .. \
+  -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DBUN_LINK_ONLY=1 \
+  -DBUN_ZIG_OBJ="${BUN_DIR}/build/bun-zig.o" \
+  -DUSE_DEBUG_JSC=${ASSERTIONS} \
+  -DBUN_CPP_ARCHIVE="${BUN_DIR}/build/bun-cpp-objects.a" \
+  -DWEBKIT_DIR="${BUN_DIR}/bun-webkit" \
+  -DBUN_DEPS_OUT_DIR="${BUN_DEPS_OUT_DIR}" \
+  -DCPU_TARGET="${CPU_TARGET}" \
+  -DNO_CONFIGURE_DEPENDS=1 \
+  -DCANARY="${CANARY}" \
+  && ninja -v \
+  && ./bun --revision \
+  && mkdir -p /build/out \
+  && mv bun bun-profile /build/out \
+  && rm -rf ${BUN_DIR} ${BUN_DEPS_OUT_DIR}
+
+FROM scratch as artifact-assertions
+
+COPY --from=bun-link-assertions /build/out /

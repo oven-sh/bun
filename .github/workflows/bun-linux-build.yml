@@ -47,6 +47,7 @@ jobs:
             build_machine_arch: x86_64
             assertions: "OFF"
             zig_optimize: "ReleaseFast"
+            target: "artifact"
           - cpu: nehalem
             tag: linux-x64-baseline
             arch: x86_64
@@ -55,6 +56,7 @@ jobs:
             build_machine_arch: x86_64
             assertions: "OFF"
             zig_optimize: "ReleaseFast"
+            target: "artifact"
           - cpu: haswell
             tag: linux-x64-assertions
             arch: x86_64
@@ -63,6 +65,7 @@ jobs:
             build_machine_arch: x86_64
             assertions: "ON"
             zig_optimize: "ReleaseSafe"
+            target: "artifact-assertions"
           - cpu: nehalem
             tag: linux-x64-baseline-assertions
             arch: x86_64
@@ -71,6 +74,7 @@ jobs:
             build_machine_arch: x86_64
             assertions: "ON"
             zig_optimize: "ReleaseSafe"
+            target: "artifact-assertions"
 
     steps:
       - uses: actions/checkout@v3
@@ -113,7 +117,7 @@ jobs:
             AWS_ACCESS_KEY_ID=${{ secrets.CACHE_S3_ACCESS_KEY_ID }}
             AWS_SECRET_ACCESS_KEY=${{ secrets.CACHE_S3_SECRET_ACCESS_KEY }}
           platforms: linux/${{matrix.build_arch}}
-          target: artifact
+          target: ${{matrix.target}}
           outputs: type=local,dest=${{runner.temp}}/release
       - name: Zip
         run: |

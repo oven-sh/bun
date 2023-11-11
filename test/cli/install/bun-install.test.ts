@@ -7835,6 +7835,13 @@ describe("Registry URLs", () => {
 });
 
 it("should handle @scoped name that contains tilde, issue#7045", async () => {
+  await writeFile(
+    join(package_dir, "bunfig.toml"),
+    `
+[install]
+cache = false
+`,
+  );
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install", "@~39/empty"],
     cwd: package_dir,

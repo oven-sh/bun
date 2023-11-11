@@ -4290,7 +4290,10 @@ pub const JSValue = enum(JSValueReprInt) {
     // intended to be more lightweight than ZigString
     pub fn fastGet(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) ?JSValue {
         const result = fastGet_(this, global, @intFromEnum(builtin_name));
-        if (result == .zero) {
+        if (result == .zero or
+            // JS APIs treat {}.a as mostly the same as though it was not defined
+            result == .undefined)
+        {
             return null;
         }
 

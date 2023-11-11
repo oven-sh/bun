@@ -21,6 +21,18 @@ inline fn nqlAtIndex(comptime string_count: comptime_int, index: usize, input: [
     return false;
 }
 
+inline fn nqlAtIndexCaseInsensitive(comptime string_count: comptime_int, index: usize, input: []const []const u8) bool {
+    comptime var string_index = 1;
+
+    inline while (string_index < string_count) : (string_index += 1) {
+        if (std.ascii.toLower(input[0][index]) != std.ascii.toLower(input[string_index][index])) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 const IsSeparatorFunc = fn (char: u8) bool;
 const LastSeparatorFunction = fn (slice: []const u8) ?usize;
 
@@ -36,7 +48,15 @@ inline fn @"is ../"(slice: []const u8) bool {
     return strings.hasPrefixComptime(slice, "../");
 }
 
-pub fn getIfExistsLongestCommonPathGeneric(input: []const []const u8, comptime separator: u8, comptime isPathSeparator: IsSeparatorFunc) ?[]const u8 {
+pub fn getIfExistsLongestCommonPathGeneric(input: []const []const u8, comptime platform: Platform) ?[]const u8 {
+    const separator = comptime platform.separator();
+    const isPathSeparator = comptime platform.getSeparatorFunc();
+
+    const nqlAtIndexFn = switch (platform) {
+        else => nqlAtIndex,
+        .windows => nqlAtIndexCaseInsensitive,
+    };
+
     var min_length: usize = std.math.maxInt(usize);
     for (input) |str| {
         min_length = @min(str.len, min_length);
@@ -64,9 +84,9 @@ pub fn getIfExistsLongestCommonPathGeneric(input: []const []const u8, comptime s
                 }
             }
         },
-        3 => {
+        inline 3, 4, 5, 6, 7, 8 => |N| {
             while (index < min_length) : (index += 1) {
-                if (nqlAtIndex(3, index, input)) {
+                if (nqlAtIndexFn(comptime N, index, input)) {
                     if (last_common_separator == null) return null;
                     break;
                 }
@@ -75,61 +95,7 @@ pub fn getIfExistsLongestCommonPathGeneric(input: []const []const u8, comptime s
                 }
             }
         },
-        4 => {
-            while (index < min_length) : (index += 1) {
-                if (nqlAtIndex(4, index, input)) {
-                    if (last_common_separator == null) return null;
-                    break;
-                }
-                if (@call(.always_inline, isPathSeparator, .{input[0][index]})) {
-                    last_common_separator = index;
-                }
-            }
-        },
-        5 => {
-            while (index < min_length) : (index += 1) {
-                if (nqlAtIndex(5, index, input)) {
-                    if (last_common_separator == null) return null;
-                    break;
-                }
-                if (@call(.always_inline, isPathSeparator, .{input[0][index]})) {
-                    last_common_separator = index;
-                }
-            }
-        },
-        6 => {
-            while (index < min_length) : (index += 1) {
-                if (nqlAtIndex(6, index, input)) {
-                    if (last_common_separator == null) return null;
-                    break;
-                }
-                if (@call(.always_inline, isPathSeparator, .{input[0][index]})) {
-                    last_common_separator = index;
-                }
-            }
-        },
-        7 => {
-            while (index < min_length) : (index += 1) {
-                if (nqlAtIndex(7, index, input)) {
-                    if (last_common_separator == null) return null;
-                    break;
-                }
-                if (@call(.always_inline, isPathSeparator, .{input[0][index]})) {
-                    last_common_separator = index;
-                }
-            }
-        },
-        8 => {
-            while (index < min_length) : (index += 1) {
-                if (nqlAtIndex(8, index, input)) {
-                    if (last_common_separator == null) return null;
-                    break;
-                }
-                if (@call(.always_inline, isPathSeparator, .{input[0][index]})) {
-                    last_common_separator = index;
-                }
-            }
-        },
+
         else => {
             var string_index: usize = 1;
             while (string_index < input.len) : (string_index += 1) {
@@ -178,7 +144,15 @@ pub fn getIfExistsLongestCommonPathGeneric(input: []const []const u8, comptime s
 // TODO: is it faster to determine longest_common_separator in the while loop
 // or as an extra step at the end?
 // only boether to check if this function appears in benchmarking
-pub fn longestCommonPathGeneric(input: []const []const u8, comptime separator: u8, comptime isPathSeparator: IsSeparatorFunc) []const u8 {
+pub fn longestCommonPathGeneric(input: []const []const u8, comptime platform: Platform) []const u8 {
+    const separator = comptime platform.separator();
+    const isPathSeparator = comptime platform.getSeparatorFunc();
+
+    const nqlAtIndexFn = switch (platform) {
+        else => nqlAtIndex,
+        .windows => nqlAtIndexCaseInsensitive,
+    };
+
     var min_length: usize = std.math.maxInt(usize);
     for (input) |str| {
         min_length = @min(str.len, min_length);
@@ -195,69 +169,21 @@ pub fn longestCommonPathGeneric(input: []const []const u8, comptime separator: u
         1 => {
             return input[0];
         },
-        2 => {
-            while (index < min_length) : (index += 1) {
-                if (input[0][index] != input[1][index]) {
-                    break;
-                }
-                if (@call(.always_inline, isPathSeparator, .{input[0][index]})) {
-                    last_common_separator = index;
-                }
-            }
-        },
-        3 => {
-            while (index < min_length) : (index += 1) {
-                if (nqlAtIndex(3, index, input)) {
-                    break;
-                }
-                if (@call(.always_inline, isPathSeparator, .{input[0][index]})) {
-                    last_common_separator = index;
+        inline 2, 3, 4, 5, 6, 7, 8 => |n| {
+            // If volume IDs do not match on windows, we can't have a common path
+            if (platform == .windows) {
+                const first_root = input[0][0..windowsVolumeNameLen(input[0])[0]];
+                comptime var i = 1;
+                inline while (i < n) : (i += 1) {
+                    const root = input[i][0..windowsVolumeNameLen(input[i])[0]];
+                    if (!strings.eqlCaseInsensitiveASCIIICheckLength(first_root, root)) {
+                        return "";
+                    }
                 }
             }
-        },
-        4 => {
+
             while (index < min_length) : (index += 1) {
-                if (nqlAtIndex(4, index, input)) {
-                    break;
-                }
-                if (@call(.always_inline, isPathSeparator, .{input[0][index]})) {
-                    last_common_separator = index;
-                }
-            }
-        },
-        5 => {
-            while (index < min_length) : (index += 1) {
-                if (nqlAtIndex(5, index, input)) {
-                    break;
-                }
-                if (@call(.always_inline, isPathSeparator, .{input[0][index]})) {
-                    last_common_separator = index;
-                }
-            }
-        },
-        6 => {
-            while (index < min_length) : (index += 1) {
-                if (nqlAtIndex(6, index, input)) {
-                    break;
-                }
-                if (@call(.always_inline, isPathSeparator, .{input[0][index]})) {
-                    last_common_separator = index;
-                }
-            }
-        },
-        7 => {
-            while (index < min_length) : (index += 1) {
-                if (nqlAtIndex(7, index, input)) {
-                    break;
-                }
-                if (@call(.always_inline, isPathSeparator, .{input[0][index]})) {
-                    last_common_separator = index;
-                }
-            }
-        },
-        8 => {
-            while (index < min_length) : (index += 1) {
-                if (nqlAtIndex(8, index, input)) {
+                if (nqlAtIndexFn(comptime n, index, input)) {
                     break;
                 }
                 if (@call(.always_inline, isPathSeparator, .{input[0][index]})) {
@@ -266,11 +192,29 @@ pub fn longestCommonPathGeneric(input: []const []const u8, comptime separator: u
             }
         },
         else => {
+            // If volume IDs do not match on windows, we can't have a common path
+            if (platform == .windows) {
+                const first_root = input[0][0..windowsVolumeNameLen(input[0])[0]];
+                var i: usize = 1;
+                while (i < input.len) : (i += 1) {
+                    const root = input[i][0..windowsVolumeNameLen(input[i])[0]];
+                    if (!strings.eqlCaseInsensitiveASCIIICheckLength(first_root, root)) {
+                        return "";
+                    }
+                }
+            }
+
             var string_index: usize = 1;
             while (string_index < input.len) : (string_index += 1) {
                 while (index < min_length) : (index += 1) {
-                    if (input[0][index] != input[string_index][index]) {
-                        break;
+                    if (platform == .windows) {
+                        if (std.ascii.toLower(input[0][index]) != std.ascii.toLower(input[string_index][index])) {
+                            break;
+                        }
+                    } else {
+                        if (input[0][index] != input[string_index][index]) {
+                            break;
+                        }
                     }
                 }
                 if (index == min_length) index -= 1;
@@ -313,19 +257,19 @@ pub fn longestCommonPathGeneric(input: []const []const u8, comptime separator: u
 }
 
 pub fn longestCommonPath(input: []const []const u8) []const u8 {
-    return longestCommonPathGeneric(input, '/', isSepAny);
+    return longestCommonPathGeneric(input, .loose);
 }
 
 pub fn getIfExistsLongestCommonPath(input: []const []const u8) ?[]const u8 {
-    return getIfExistsLongestCommonPathGeneric(input, '/', isSepAny);
+    return getIfExistsLongestCommonPathGeneric(input, .loose);
 }
 
 pub fn longestCommonPathWindows(input: []const []const u8) []const u8 {
-    return longestCommonPathGeneric(input, std.fs.path.sep_windows, isSepAny);
+    return longestCommonPathGeneric(input, .windows);
 }
 
 pub fn longestCommonPathPosix(input: []const []const u8) []const u8 {
-    return longestCommonPathGeneric(input, std.fs.path.sep_posix, isSepPosix);
+    return longestCommonPathGeneric(input, .posix);
 }
 
 threadlocal var relative_to_common_path_buf: [4096]u8 = undefined;
@@ -391,7 +335,7 @@ pub fn relativeToCommonPath(
                     buf[0..2].* = "..".*;
                     out_slice.len = 2;
                 } else {
-                    buf[out_slice.len..][0..3].* = "/..".*;
+                    buf[out_slice.len..][0..3].* = (&[_]u8{separator} ++ "..").*;
                     out_slice.len += 3;
                 }
             }
@@ -428,7 +372,7 @@ pub fn relativeNormalized(from: []const u8, to: []const u8, comptime platform: P
     }
 
     const two = [_][]const u8{ from, to };
-    const common_path = longestCommonPathGeneric(&two, comptime platform.separator(), comptime platform.getSeparatorFunc());
+    const common_path = longestCommonPathGeneric(&two, platform);
 
     return relativeToCommonPath(common_path, from, to, &relative_to_common_path_buf, comptime platform.separator(), always_copy);
 }

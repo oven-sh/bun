@@ -293,8 +293,8 @@ pub const GlobWalker = struct {
         return err.withPath(this.pathBuf[0 .. path_buf.len + 1]);
     }
 
-    pub fn walk(this: *GlobWalker) !Maybe(u0) {
-        if (this.patternComponents.items.len == 0) return .{ .result = 0 };
+    pub fn walk(this: *GlobWalker) !Maybe(void) {
+        if (this.patternComponents.items.len == 0) return Maybe(void).success;
         var path_buf: [bun.MAX_PATH_BYTES]u8 = std.mem.zeroes([bun.MAX_PATH_BYTES]u8);
 
         const root_path = this.cwd;
@@ -331,14 +331,14 @@ pub const GlobWalker = struct {
             }
         }
 
-        return .{ .result = 0 };
+        return Maybe(void).success;
     }
 
     pub fn handleSymlink(
         this: *GlobWalker,
         work_item: *const WorkItem,
         scratch_path_buf: *[bun.MAX_PATH_BYTES]u8,
-    ) !Maybe(u0) {
+    ) !Maybe(void) {
         const only_files = this.only_files;
         @memcpy(scratch_path_buf[0..work_item.path.len], work_item.path);
         scratch_path_buf[work_item.path.len] = 0;
@@ -378,7 +378,7 @@ pub const GlobWalker = struct {
                             try this.appendMatchedPathSymlink(symlink_full_path_z);
                         }
                     }
-                    return .{ .result = 0 };
+                    return Maybe(void).success;
                 },
                 .result => |stat| stat,
             };
@@ -392,13 +392,13 @@ pub const GlobWalker = struct {
                     else => {},
                 }
             } else if (comptime bun.Environment.isWindows) {
-                @panic("TODO!");
+                return bun.todo(@src(), Maybe(void).success);
             } else {
                 // wasm?
-                @panic("TODO");
+                return bun.todo(@src(), Maybe(void).success);
             }
 
-            return .{ .result = 0 };
+            return Maybe(void).success;
         };
 
         switch (kind) {
@@ -426,7 +426,7 @@ pub const GlobWalker = struct {
                     try this.appendMatchedPathSymlink(symlink_full_path_z);
                 }
 
-                const recursion_idx_bump = recursion_idx_bump_ orelse return .{ .result = 0 };
+                const recursion_idx_bump = recursion_idx_bump_ orelse return Maybe(void).success;
 
                 try this.workbuf.append(
                     this.arena.allocator(),
@@ -442,7 +442,7 @@ pub const GlobWalker = struct {
             else => {},
         }
 
-        return .{ .result = 0 };
+        return Maybe(void).success;
     }
 
     // NOTE you must check that the pattern at `idx` has `syntax_hint == .Dot` or
@@ -550,7 +550,7 @@ pub const GlobWalker = struct {
         work_item: *const WorkItem,
         scratch_path_buf: *[bun.MAX_PATH_BYTES]u8,
         cwd_fd: bun.FileDescriptor,
-    ) !Maybe(u0) {
+    ) !Maybe(void) {
         scratch_path_buf[0] = 0;
         var dir_path: [:0]u8 = dir_path: {
             // For the root `work_item.path` is absolute, so if absolute is
@@ -581,13 +581,13 @@ pub const GlobWalker = struct {
 
             switch (try this.handleDirEntriesImpl(fd, component_idx, dir_path)) {
                 .err => |err| return .{ .err = err },
-                .result => return .{ .result = 0 },
+                .result => return Maybe(void).success,
             }
         }
 
         switch (try this.handleDirEntriesImpl(cwd_fd, component_idx, dir_path)) {
             .err => |err| return .{ .err = err },
-            .result => return .{ .result = 0 },
+            .result => return Maybe(void).success,
         }
     }
 
@@ -596,7 +596,7 @@ pub const GlobWalker = struct {
         work_item: *const WorkItem,
         scratch_path_buf: *[bun.MAX_PATH_BYTES]u8,
         cwd_fd: bun.FileDescriptor,
-    ) !Maybe(u0) {
+    ) !Maybe(void) {
 
         // TODO Optimization: On posix systems filepaths are already null byte terminated so we can skip this if thats the case
         @memcpy(scratch_path_buf[0..work_item.path.len], work_item.path);
@@ -624,11 +624,11 @@ pub const GlobWalker = struct {
 
         switch (try this.handleDirEntriesImpl(fd, component_idx, dir_path)) {
             .err => |err| return .{ .err = err },
-            .result => return .{ .result = 0 },
+            .result => return Maybe(void).success,
         }
     }
 
-    fn handleDirEntriesImpl(this: *GlobWalker, fd: bun.FileDescriptor, component_idx: u32, dir_path: [:0]const u8) !Maybe(u0) {
+    fn handleDirEntriesImpl(this: *GlobWalker, fd: bun.FileDescriptor, component_idx: u32, dir_path: [:0]const u8) !Maybe(void) {
         const only_files = this.only_files;
 
         var dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
@@ -714,7 +714,7 @@ pub const GlobWalker = struct {
             }
         }
 
-        return .{ .result = 0 };
+        return Maybe(void).success;
     }
 
     fn matchPatternDir(

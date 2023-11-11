@@ -20,7 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-import { expect, test, describe } from "bun:test";
+import { expect, test, describe, beforeAll } from "bun:test";
 import fg from "fast-glob";
 import { Glob, GlobScanOptions } from "bun";
 import * as path from "path";
@@ -278,7 +278,9 @@ const onlyFilesPatterns = {
   ],
 };
 
-tempFixturesDir();
+beforeAll(() => {
+  tempFixturesDir();
+});
 
 /**
  * These are the e2e tests from fast-glob, with some omitted because we don't support features like ignored patterns

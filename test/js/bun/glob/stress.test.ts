@@ -1,4 +1,4 @@
-import { expect, test, describe } from "bun:test";
+import { expect, test, describe, beforeAll } from "bun:test";
 import { Glob } from "bun";
 import { tempFixturesDir } from "./util";
 
@@ -15,7 +15,9 @@ const paths = [
   "test/js/bun/glob/fixtures/first/nested/directory/file.json",
 ];
 
-tempFixturesDir();
+beforeAll(() => {
+  tempFixturesDir();
+});
 
 test("Glob.scan stress test", async () => {
   const cwd = "test/js/bun/glob";
@@ -34,6 +36,8 @@ test("Glob.scan stress test", async () => {
 
 test("Glob.match stress test", () => {
   for (let i = 0; i < 10000; i++) {
-    new Glob("src/**/*.zig").match("src/cli/package_manager_command.zig");
+    if (!new Glob("src/**/*.zig").match("src/cli/package_manager_command.zig")) {
+      throw new Error("test failed on run " + i);
+    }
   }
 });

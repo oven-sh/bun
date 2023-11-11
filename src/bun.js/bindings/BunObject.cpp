@@ -507,13 +507,7 @@ JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGl
     auto& vm = globalObject.vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto path = JSC::JSValue::encode(callFrame->argument(0));
-    // NOTE(Liz3): this is supposed to be replaced with a runtime call at some point maybe.
-#if OS(WINDOWS)
-    path = Bun__Path__resolve(lexicalGlobalObject, true, reinterpret_cast<JSC__JSValue*>(&path), 1);
-#else
-    path = Bun__Path__resolve(lexicalGlobalObject, false, reinterpret_cast<JSC__JSValue*>(&path), 1);
-#endif
-    RETURN_IF_EXCEPTION(throwScope, {});
+
     JSC::JSString* pathString = JSC::JSValue::decode(path).toString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
 
@@ -634,6 +628,7 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     resolve                                        BunObject_callback_resolve                                          DontDelete|Function 1
     resolveSync                                    BunObject_callback_resolveSync                                      DontDelete|Function 1
     revision                                       constructBunRevision                                                ReadOnly|DontDelete|PropertyCallback
+    semver                                         BunObject_getter_wrap_semver                                        ReadOnly|DontDelete|PropertyCallback
     serve                                          BunObject_callback_serve                                            DontDelete|Function 1
     sha                                            BunObject_callback_sha                                              DontDelete|Function 1
     shrink                                         BunObject_callback_shrink                                           DontDelete|Function 1

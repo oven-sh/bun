@@ -4367,6 +4367,19 @@ pub fn trim(slice: anytype, comptime values_to_strip: []const u8) @TypeOf(slice)
     return slice[begin..end];
 }
 
+pub fn lengthOfLeadingWhitespaceASCII(slice: string) usize {
+    for (slice) |*c| {
+        switch (c.*) {
+            ' ', '\t', '\n', '\r', std.ascii.control_code.vt, std.ascii.control_code.ff => {},
+            else => {
+                return @intFromPtr(c) - @intFromPtr(slice.ptr);
+            },
+        }
+    }
+
+    return slice.len;
+}
+
 pub fn containsNonBmpCodePointUTF16(_text: []const u16) bool {
     const n = _text.len;
     if (n > 0) {
@@ -4948,3 +4961,68 @@ pub fn concatIfNeeded(
     }
     std.debug.assert(remain.len == 0);
 }
+
+pub const HostFormatter = struct {
+    host: string,
+    port: ?u16 = null,
+    is_https: bool = false,
+
+    pub fn format(formatter: HostFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        if (strings.indexOfChar(formatter.host, ':') != null) {
+            try writer.writeAll(formatter.host);
+            return;
+        }
+
+        try writer.writeAll(formatter.host);
+
+        const is_port_optional = formatter.port == null or (formatter.is_https and formatter.port == 443) or
+            (!formatter.is_https and formatter.port == 80);
+        if (!is_port_optional) {
+            try writer.print(":{d}", .{formatter.port.?});
+            return;
+        }
+    }
+};
+
+const Proto = enum {
+    http,
+    https,
+    unix,
+};
+
+pub const URLFormatter = struct {
+    proto: Proto = .http,
+    hostname: ?string = null,
+    port: ?u16 = null,
+
+    pub fn format(this: URLFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try writer.print("{s}://", .{switch (this.proto) {
+            .http => "http",
+            .https => "https",
+            .unix => "unix",
+        }});
+
+        if (this.hostname) |hostname| {
+            const needs_brackets = hostname[0] != '[' and strings.isIPV6Address(hostname);
+            if (needs_brackets) {
+                try writer.print("[{s}]", .{hostname});
+            } else {
+                try writer.writeAll(hostname);
+            }
+        } else {
+            try writer.writeAll("localhost");
+        }
+
+        if (this.proto == .unix) {
+            return;
+        }
+
+        const is_port_optional = this.port == null or (this.proto == .https and this.port == 443) or
+            (this.proto == .http and this.port == 80);
+        if (is_port_optional) {
+            try writer.writeAll("/");
+        } else {
+            try writer.print(":{d}/", .{this.port.?});
+        }
+    }
+};

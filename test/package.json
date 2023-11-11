@@ -32,7 +32,7 @@
     "prisma": "5.1.1",
     "prompts": "2.4.2",
     "reflect-metadata": "0.1.13",
-    "sinon": "16.1.0",
+    "sinon": "6.0.0",
     "socket.io": "4.7.1",
     "socket.io-client": "4.7.1",
     "supertest": "6.3.3",

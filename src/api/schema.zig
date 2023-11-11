@@ -1729,6 +1729,9 @@ pub const Api = struct {
         /// serve
         serve: ?bool = null,
 
+        /// env_files
+        env_files: []const []const u8,
+
         /// extension_order
         extension_order: []const []const u8,
 

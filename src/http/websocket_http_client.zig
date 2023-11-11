@@ -836,8 +836,8 @@ const Copy = union(enum) {
         // Write extended length if needed
         switch (how_big_is_the_length_integer) {
             0 => {},
-            2 => std.mem.writeIntBig(u16, buf[2..][0..2], @as(u16, @truncate(content_byte_len))),
-            8 => std.mem.writeIntBig(u64, buf[2..][0..8], @as(u64, @truncate(content_byte_len))),
+            2 => std.mem.writeInt(u16, buf[2..][0..2], @as(u16, @truncate(content_byte_len)), .big),
+            8 => std.mem.writeInt(u64, buf[2..][0..8], @as(u64, @truncate(content_byte_len)), .big),
             else => unreachable,
         }
 
@@ -1266,8 +1266,8 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
                         // Multibyte length quantities are expressed in network byte order
                         receive_body_remain = switch (byte_size) {
-                            8 => @as(usize, std.mem.readIntBig(u64, data[0..8])),
-                            2 => @as(usize, std.mem.readIntBig(u16, data[0..2])),
+                            8 => @as(usize, std.mem.readInt(u64, data[0..8], .big)),
+                            2 => @as(usize, std.mem.readInt(u16, data[0..2], .big)),
                             else => unreachable,
                         };
                         data = data[byte_size..];
@@ -1483,7 +1483,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             header.len = @as(u7, @truncate(body_len + 2));
             final_body_bytes[0..2].* = @as([2]u8, @bitCast(@as(u16, @bitCast(header))));
             var mask_buf: *[4]u8 = final_body_bytes[2..6];
-            std.mem.writeIntSliceBig(u16, final_body_bytes[6..8], code);
+            final_body_bytes[6..8].* = @bitCast(@byteSwap(code));
 
             var reason = bun.String.empty;
             if (body) |data| {

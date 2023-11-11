@@ -1582,7 +1582,7 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
     tmpname_buf[0..8].* = "bunlock-".*;
     var tmpfile = FileSystem.RealFS.Tmpfile{};
     var secret: [32]u8 = undefined;
-    std.mem.writeIntNative(u64, secret[0..8], @as(u64, @intCast(std.time.milliTimestamp())));
+    std.mem.writeInt(u64, secret[0..8], @as(u64, @intCast(std.time.milliTimestamp())), .little);
     var base64_bytes: [16]u8 = undefined;
     std.crypto.random.bytes(&base64_bytes);
 
@@ -4288,13 +4288,13 @@ pub const Package = extern struct {
         const AlignmentType = sizes.Types[sizes.fields[0]];
 
         pub fn save(list: Lockfile.Package.List, comptime StreamType: type, stream: StreamType, comptime Writer: type, writer: Writer) !void {
-            try writer.writeIntLittle(u64, list.len);
-            try writer.writeIntLittle(u64, @alignOf(@TypeOf(list.bytes)));
-            try writer.writeIntLittle(u64, sizes.Types.len);
+            try writer.writeInt(u64, list.len, .little);
+            try writer.writeInt(u64, @alignOf(@TypeOf(list.bytes)), .little);
+            try writer.writeInt(u64, sizes.Types.len, .little);
             const begin_at = try stream.getPos();
-            try writer.writeIntLittle(u64, 0);
+            try writer.writeInt(u64, 0, .little);
             const end_at = try stream.getPos();
-            try writer.writeIntLittle(u64, 0);
+            try writer.writeInt(u64, 0, .little);
 
             _ = try Aligner.write(@TypeOf(list.bytes), Writer, writer, try stream.getPos());
 
@@ -4323,11 +4323,11 @@ pub const Package = extern struct {
         ) !Lockfile.Package.List {
             var reader = stream.reader();
 
-            const list_len = try reader.readIntLittle(u64);
+            const list_len = try reader.readInt(u64, .little);
             if (list_len > std.math.maxInt(u32) - 1)
                 return error.@"Lockfile validation failed: list is impossibly long";
 
-            const input_alignment = try reader.readIntLittle(u64);
+            const input_alignment = try reader.readInt(u64, .little);
 
             var list = Lockfile.Package.List{};
             const Alingee = @TypeOf(list.bytes);
@@ -4336,7 +4336,7 @@ pub const Package = extern struct {
                 return error.@"Lockfile validation failed: alignment mismatch";
             }
 
-            const field_count = try reader.readIntLittle(u64);
+            const field_count = try reader.readInt(u64, .little);
             switch (field_count) {
                 sizes.Types.len => {},
                 // "scripts" field is absent before v0.6.8
@@ -4347,8 +4347,8 @@ pub const Package = extern struct {
                 },
             }
 
-            const begin_at = try reader.readIntLittle(u64);
-            const end_at = try reader.readIntLittle(u64);
+            const begin_at = try reader.readInt(u64, .little);
+            const end_at = try reader.readInt(u64, .little);
             if (begin_at > end or end_at > end or begin_at > end_at) {
                 return error.@"Lockfile validation failed: invalid package list range";
             }
@@ -4472,8 +4472,8 @@ const Buffers = struct {
         const PointerType = std.meta.Child(@TypeOf(arraylist.items.ptr));
 
         var reader = stream.reader();
-        const start_pos = try reader.readIntLittle(u64);
-        const end_pos = try reader.readIntLittle(u64);
+        const start_pos = try reader.readInt(u64, .little);
+        const end_pos = try reader.readInt(u64, .little);
 
         stream.pos = end_pos;
         const byte_len = end_pos - start_pos;
@@ -4500,8 +4500,8 @@ const Buffers = struct {
         const bytes = std.mem.sliceAsBytes(array);
 
         const start_pos = try stream.getPos();
-        try writer.writeIntLittle(u64, 0xDEADBEEF);
-        try writer.writeIntLittle(u64, 0xDEADBEEF);
+        try writer.writeInt(u64, 0xDEADBEEF, .little);
+        try writer.writeInt(u64, 0xDEADBEEF, .little);
 
         const prefix = comptime std.fmt.comptimePrint(
             "\n<{s}> {d} sizeof, {d} alignof\n",
@@ -4700,16 +4700,16 @@ pub const Serializer = struct {
 
         var writer = stream.writer();
         try writer.writeAll(header_bytes);
-        try writer.writeIntLittle(u32, @intFromEnum(this.format));
+        try writer.writeInt(u32, @intFromEnum(this.format), .little);
 
         try writer.writeAll(&this.meta_hash);
 
         const pos = try stream.getPos();
-        try writer.writeIntLittle(u64, 0);
+        try writer.writeInt(u64, 0, .little);
 
         try Lockfile.Package.Serializer.save(this.packages, StreamType, stream, @TypeOf(&writer), &writer);
         try Lockfile.Buffers.save(this.buffers, z_allocator, StreamType, stream, @TypeOf(&writer), &writer);
-        try writer.writeIntLittle(u64, 0);
+        try writer.writeInt(u64, 0, .little);
 
         // < Bun v1.0.4 stopped right here when reading the lockfile
         // So we add an extra 8 byte tag to say "hey, there's more data here"
@@ -4815,7 +4815,7 @@ pub const Serializer = struct {
             return error.InvalidLockfile;
         }
 
-        var format = try reader.readIntLittle(u32);
+        var format = try reader.readInt(u32, .little);
         if (format != @intFromEnum(Lockfile.FormatVersion.current)) {
             return error.@"Outdated lockfile version";
         }
@@ -4825,7 +4825,7 @@ pub const Serializer = struct {
 
         _ = try reader.readAll(&lockfile.meta_hash);
 
-        const total_buffer_size = try reader.readIntLittle(u64);
+        const total_buffer_size = try reader.readInt(u64, .little);
         if (total_buffer_size > stream.buffer.len) {
             return error.@"Lockfile is missing data";
         }
@@ -4836,7 +4836,7 @@ pub const Serializer = struct {
             allocator,
         );
         lockfile.buffers = try Lockfile.Buffers.load(stream, allocator, log);
-        if ((try stream.reader().readIntLittle(u64)) != 0) {
+        if ((try stream.reader().readInt(u64, .little)) != 0) {
             return error.@"Lockfile is malformed (expected 0 at the end)";
         }
 
@@ -4847,7 +4847,7 @@ pub const Serializer = struct {
             const remaining_in_buffer = total_buffer_size -| stream.pos;
 
             if (remaining_in_buffer > 8 and total_buffer_size <= stream.buffer.len) {
-                const next_num = try reader.readIntLittle(u64);
+                const next_num = try reader.readInt(u64, .little);
                 if (next_num == has_workspace_package_ids_tag) {
                     {
                         var workspace_package_name_hashes = try Lockfile.Buffers.readArray(
@@ -4909,7 +4909,7 @@ pub const Serializer = struct {
             const remaining_in_buffer = total_buffer_size -| stream.pos;
 
             if (remaining_in_buffer > 8 and total_buffer_size <= stream.buffer.len) {
-                const next_num = try reader.readIntLittle(u64);
+                const next_num = try reader.readInt(u64, .little);
                 if (next_num == has_trusted_dependencies_tag) {
                     var trusted_dependencies_hashes = try Lockfile.Buffers.readArray(
                         stream,
@@ -4933,7 +4933,7 @@ pub const Serializer = struct {
             const remaining_in_buffer = total_buffer_size -| stream.pos;
 
             if (remaining_in_buffer > 8 and total_buffer_size <= stream.buffer.len) {
-                const next_num = try reader.readIntLittle(u64);
+                const next_num = try reader.readInt(u64, .little);
                 if (next_num == has_overrides_tag) {
                     var overrides_name_hashes = try Lockfile.Buffers.readArray(
                         stream,
@@ -4995,7 +4995,7 @@ pub const Serializer = struct {
 
         if (comptime Environment.allow_assert) std.debug.assert(stream.pos == total_buffer_size);
 
-        // const end = try reader.readIntLittle(u64);
+        // const end = try reader.readInt(u64, .little);
     }
 };
 

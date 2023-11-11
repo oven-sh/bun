@@ -53,7 +53,6 @@ pub const Cli = struct {
 
         var panicker = MainPanicHandler.init(log);
         MainPanicHandler.Singleton = &panicker;
-
         Command.start(allocator, log) catch |err| {
             switch (err) {
                 error.MissingEntryPoint => {

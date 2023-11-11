@@ -306,7 +306,7 @@ pub const GlobWalker = struct {
             .result => |fd| fd,
         };
         defer {
-            _ = Syscall.closeAllowingStdoutAndStderr(cwd_fd);
+            _ = Syscall.close(cwd_fd);
         }
         // Handle root first
         {
@@ -576,7 +576,7 @@ pub const GlobWalker = struct {
                 .result => |fd_| fd_,
             };
             defer {
-                _ = Syscall.closeAllowingStdoutAndStderr(fd);
+                _ = Syscall.close(fd);
             }
 
             switch (try this.handleDirEntriesImpl(fd, component_idx, dir_path)) {
@@ -619,7 +619,7 @@ pub const GlobWalker = struct {
             .result => |fd_| fd_,
         };
         defer {
-            _ = Syscall.closeAllowingStdoutAndStderr(fd);
+            _ = Syscall.close(fd);
         }
 
         switch (try this.handleDirEntriesImpl(fd, component_idx, dir_path)) {

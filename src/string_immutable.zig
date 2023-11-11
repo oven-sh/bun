@@ -154,6 +154,11 @@ pub inline fn isNPMPackageName(target: string) bool {
                 if (slash_index > 0) return false;
                 slash_index = i + 1;
             },
+            // issue#7045, package "@~3/svelte_mount"
+            '~' => {
+                // must before slash
+                if (!scoped or slash_index > 0) return false;
+            },
             else => return false,
         }
     }

@@ -280,7 +280,7 @@ export function generateHashTable(nameToUse, symbolName, typeName, obj, props = 
   }
 
   for (const name in props) {
-    if ("internal" in props[name] || "value" in props[name]) continue;
+    if ("privateSymbol" in props[name] || "internal" in props[name] || "value" in props[name]) continue;
     if (name.startsWith("@@")) continue;
 
     rows.push(propRow(symbolName, typeName, name, props[name], wrapped, defaultPropertyAttributes));
@@ -308,6 +308,21 @@ function generatePrototype(typeName, obj) {
       this->putDirect(vm, ${toIdentifier(name)}, jsString(vm, String(${JSON.stringify(
         value,
       )}_s)), PropertyAttribute::ReadOnly | 0);`;
+    }
+
+    if (protoFields[name].privateSymbol !== undefined) {
+      const privateSymbol = protoFields[name].privateSymbol;
+      const fn = protoFields[name].fn;
+      if (!fn) throw Error(`(field: ${name}) private field needs 'fn' key `);
+
+      specialSymbols += `
+    this->putDirect(vm, WebCore::clientData(vm)->builtinNames().${privateSymbol}PrivateName(), JSFunction::create(vm, globalObject, ${
+        protoFields[name].length || 0
+      }, String("${fn}"_s), ${protoSymbolName(
+        typeName,
+        fn,
+      )}Callback, ImplementationVisibility::Private), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);`;
+      continue;
     }
 
     if (!name.startsWith("@@")) {

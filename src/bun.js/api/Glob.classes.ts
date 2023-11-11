@@ -21,10 +21,14 @@ export default [
       __scan: {
         fn: "__scan",
         length: 1,
+        // Wanted to use `resolve` and `resolveSync` but for some reason the
+        // resolve symbol was not working, even though `resolveSync` was.
+        privateSymbol: "pull",
       },
       __scanSync: {
         fn: "__scanSync",
         length: 1,
+        privateSymbol: "resolveSync",
       },
       match: {
         fn: "match",

@@ -1,6 +1,12 @@
 interface PropertyAttribute {
   enumerable?: boolean;
   configurable?: boolean;
+  /**
+   * The name for a private symbol to use as the property name. The value should
+   * be a private symbol from `BunBuiltinNames.h`. This will omit the property
+   * from the prototype hash table, instead setting it using `putDirect()`.
+   */
+  privateSymbol?: string;
 }
 
 export type Field =

@@ -2962,6 +2962,9 @@ pub const Parser = struct {
     }
 
     pub fn parse(self: *Parser) !js_ast.Result {
+        self.lexer.preserve_all_comments_before = !self.options.jsx.remove_comments;
+        self.lexer.track_comments = !self.options.jsx.remove_comments;
+
         if (comptime Environment.isWasm) {
             self.options.ts = true;
             self.options.jsx.parse = true;

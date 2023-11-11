@@ -973,6 +973,7 @@ pub const JSX = struct {
 
         development: bool = true,
         parse: bool = true,
+        remove_comments: bool = true,
 
         pub const ImportSource = struct {
             development: string = "react/jsx-dev-runtime",

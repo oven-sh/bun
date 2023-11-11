@@ -5348,8 +5348,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 },
             };
 
-            var value = bun.String.init(std.fmt.allocPrint(default_allocator, "{any}", .{fmt}) catch unreachable);
-            defer value.deref();
+            var buf = std.fmt.allocPrint(default_allocator, "{any}", .{fmt}) catch @panic("Out of memory");
+            defer default_allocator.free(buf);
+
+            var value = bun.String.create(buf);
             return value.toJSDOMURL(globalThis);
         }
 

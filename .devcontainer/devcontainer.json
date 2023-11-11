@@ -1,0 +1,22 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options
+{
+	"name": "Bun Development Environment",
+	"image": "oven/bun-devcontainer:1.0.11",
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"ziglang.vscode-zig",
+				"ms-vscode.cpptools",
+				"esbenp.prettier-vscode",
+				"vadimcn.vscode-lldb",
+				"ms-azuretools.vscode-docker"
+			]
+		}
+	},
+	"mounts": [
+		"source=${localWorkspaceFolderBasename}-node_modules,target=${containerWorkspaceFolder}/node_modules,type=volume",
+		"source=${localWorkspaceFolderBasename}-build,target=${containerWorkspaceFolder}/build,type=volume"
+	],
+	"postCreateCommand": ".devcontainer/postCreate.sh",
+	"containerUser": "vscode"
+}

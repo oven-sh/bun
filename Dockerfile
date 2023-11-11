@@ -190,11 +190,22 @@ COPY src/deps/mimalloc ${BUN_DIR}/src/deps/mimalloc
 ENV CCACHE_DIR=/ccache
 
 RUN --mount=type=cache,target=/ccache cd ${BUN_DIR} && \ 
-  if [ "${ASSERTIONS}" = "ON" ]; then \
-  make mimalloc-debug && rm -rf src/deps/mimalloc Makefile; \
-  else \
-  make mimalloc && rm -rf src/deps/mimalloc Makefile; \
-  fi 
+  make mimalloc && rm -rf src/deps/mimalloc Makefile;
+
+FROM bun-base as mimalloc-debug
+
+ARG BUN_DIR
+ARG CPU_TARGET
+ARG ASSERTIONS
+ENV CPU_TARGET=${CPU_TARGET}
+
+COPY Makefile ${BUN_DIR}/Makefile
+COPY src/deps/mimalloc ${BUN_DIR}/src/deps/mimalloc
+
+ENV CCACHE_DIR=/ccache
+
+RUN --mount=type=cache,target=/ccache cd ${BUN_DIR} && \ 
+  make mimalloc-debug && rm -rf src/deps/mimalloc Makefile;
 
 FROM bun-base as zlib
 

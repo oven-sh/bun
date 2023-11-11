@@ -1007,41 +1007,41 @@ bool Bun__deepMatch(JSValue objValue, JSValue subsetValue, JSGlobalObject* globa
         }
     }
 
-    for (size_t i = 0; i < subsetProps.size(); i++) {
-        JSValue prop = obj->getIfPropertyExists(globalObject, subsetProps[i]);
+    for (const auto& property : subsetProps) {
+        JSValue prop = obj->getIfPropertyExists(globalObject, property);
         RETURN_IF_EXCEPTION(*throwScope, false);
 
         if (prop.isEmpty()) {
             return false;
         }
 
-        JSValue subsetProp = subsetObj->get(globalObject, subsetProps[i]);
+        JSValue subsetProp = subsetObj->get(globalObject, property);
         RETURN_IF_EXCEPTION(*throwScope, false);
 
-        JSCell* subsetPropCell = subsetProp.asCell();
-        JSCell* propCell = prop.asCell();
+        JSCell* subsetPropCell = !subsetProp.isEmpty() && subsetProp.isCell() ? subsetProp.asCell() : nullptr;
+        JSCell* propCell = prop.isCell() ? prop.asCell() : nullptr;
 
         if constexpr (enableAsymmetricMatchers) {
-            if (subsetProp.isCell() && !subsetProp.isEmpty() && subsetPropCell->type() == JSC::JSType(JSDOMWrapperType)) {
+            if (subsetPropCell && subsetPropCell->type() == JSC::JSType(JSDOMWrapperType)) {
                 switch (matchAsymmetricMatcher(globalObject, subsetPropCell, prop, throwScope)) {
                 case AsymmetricMatcherResult::FAIL:
                     return false;
                 case AsymmetricMatcherResult::PASS:
                     if (replacePropsWithAsymmetricMatchers) {
-                        obj->putDirect(vm, subsetProps[i], subsetProp);
+                        obj->putDirectMayBeIndex(globalObject, property, subsetProp);
                     }
                     // continue to next subset prop
                     continue;
                 case AsymmetricMatcherResult::NOT_MATCHER:
                     break;
                 }
-            } else if (prop.isCell() && !prop.isEmpty() && propCell->type() == JSC::JSType(JSDOMWrapperType)) {
+            } else if (propCell && propCell->type() == JSC::JSType(JSDOMWrapperType)) {
                 switch (matchAsymmetricMatcher(globalObject, propCell, subsetProp, throwScope)) {
                 case AsymmetricMatcherResult::FAIL:
                     return false;
                 case AsymmetricMatcherResult::PASS:
                     if (replacePropsWithAsymmetricMatchers) {
-                        subsetObj->putDirect(vm, subsetProps[i], prop);
+                        subsetObj->putDirectMayBeIndex(globalObject, property, prop);
                     }
                     // continue to next subset prop
                     continue;

@@ -209,14 +209,14 @@ Structure* RequireFunctionPrototype::createStructure(
     JSC::VM& vm,
     JSC::JSGlobalObject* globalObject)
 {
-    return Structure::create(vm, globalObject, globalObject->functionPrototype(), TypeInfo(JSFunctionType, StructureFlags), info());
+    return Structure::create(vm, globalObject, globalObject->functionPrototype(), TypeInfo(ObjectType, StructureFlags), info());
 }
 
 Structure* RequireResolveFunctionPrototype::createStructure(
     JSC::VM& vm,
     JSC::JSGlobalObject* globalObject)
 {
-    return Structure::create(vm, globalObject, globalObject->functionPrototype(), TypeInfo(JSFunctionType, StructureFlags), info());
+    return Structure::create(vm, globalObject, globalObject->functionPrototype(), TypeInfo(ObjectType, StructureFlags), info());
 }
 
 RequireResolveFunctionPrototype* RequireResolveFunctionPrototype::create(JSC::JSGlobalObject* globalObject)

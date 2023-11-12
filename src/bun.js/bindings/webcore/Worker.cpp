@@ -380,6 +380,7 @@ void Worker::forEachWorker(const Function<Function<void(ScriptExecutionContext&)
 
 extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker* worker, int32_t exitCode)
 {
+
     worker->dispatchExit(exitCode);
 
     if (globalObject) {
@@ -387,17 +388,14 @@ extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker*
         if (ctx) {
             ctx->removeFromContextsMap();
         }
+        JSC::VM& vm = globalObject->vm();
 
-        auto& vm = globalObject->vm();
+        vm.apiLock().unlock(globalObject);
         vm.notifyNeedTermination();
-        if (JSC::JSObject* obj = JSC::jsDynamicCast<JSC::JSObject*>(globalObject->moduleLoader())) {
-            auto id = JSC::Identifier::fromString(globalObject->vm(), "registry"_s);
-            auto registryValue = obj->getIfPropertyExists(globalObject, id);
-            if (registryValue) {
-                if (auto* registry = JSC::jsDynamicCast<JSC::JSMap*>(registryValue)) {
-                    registry->clear(vm);
-                }
-            }
+        vm.apiLock().lock(globalObject);
+
+        if (JSC::JSMap* registry = globalObject->esmRegistryMap()) {
+            registry->clear(vm);
         }
         gcUnprotect(globalObject);
         vm.deleteAllCode(JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);

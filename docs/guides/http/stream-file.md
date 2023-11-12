@@ -5,7 +5,7 @@ name: Stream a file as an HTTP Response
 This snippet reads a file from disk using [`Bun.file()`](/docs/api/file-io#reading-files-bun-file). This returns a `BunFile` instance, which can be passed directly into the `new Response` constructor.
 
 ```ts
-const path = "/path/to/file.txt";
+const path = "./path/to/file.txt";
 const file = Bun.file(path);
 const resp = new Response(file);
 ```
@@ -37,7 +37,7 @@ Putting it all together with [`Bun.serve()`](/docs/api/http#bun-serve).
 Bun.serve({
   async fetch(req) {
     const path = new URL(req.url).pathname;
-    const file = Bun.file(path);
+    const file = Bun.file("." + path);
     return new Response(file);
   },
 });

@@ -64,6 +64,7 @@
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
+#include <JavaScriptCore/HeapAnalyzer.h>
 
 extern "C" bool Bun__isBunMain(JSC::JSGlobalObject* global, const char* input_ptr, uint64_t input_len);
 
@@ -855,6 +856,20 @@ void JSCommonJSModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_CHILDREN(JSCommonJSModule);
+
+void JSCommonJSModule::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = jsCast<JSCommonJSModule*>(cell);
+
+    if (auto* id = thisObject->m_id.get()) {
+        if (!id->isRope()) {
+            auto label = id->tryGetValue(false);
+            analyzer.setLabelForCell(cell, label);
+        }
+    }
+    Base::analyzeHeap(cell, analyzer);
+}
+
 const JSC::ClassInfo JSCommonJSModule::s_info = { "Module"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCommonJSModule) };
 const JSC::ClassInfo RequireResolveFunctionPrototype::s_info = { "resolve"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(RequireResolveFunctionPrototype) };
 const JSC::ClassInfo RequireFunctionPrototype::s_info = { "require"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(RequireFunctionPrototype) };

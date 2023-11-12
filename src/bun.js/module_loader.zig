@@ -2049,7 +2049,7 @@ pub const ModuleLoader = struct {
                 .allocator = null,
                 .source_code = String.init(Runtime.Runtime.sourceContentBun()),
                 .specifier = specifier,
-                .source_url = String.init(Runtime.Runtime.Imports.Name),
+                .source_url = specifier,
                 .hash = Runtime.Runtime.versionHash(),
             };
         } else if (HardcodedModule.Map.getWithEql(specifier, bun.String.eqlComptime)) |hardcoded| {
@@ -2059,7 +2059,7 @@ pub const ModuleLoader = struct {
                         .allocator = null,
                         .source_code = bun.String.create(jsc_vm.entry_point.source.contents),
                         .specifier = specifier,
-                        .source_url = String.init(bun.asByteSlice(JSC.VirtualMachine.main_file_name)),
+                        .source_url = specifier,
                         .hash = 0,
                         .tag = .esm,
                         .needs_deref = true,

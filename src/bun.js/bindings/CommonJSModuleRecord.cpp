@@ -91,6 +91,16 @@ static bool canPerformFastEnumeration(Structure* s)
 
 static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename, WTF::NakedPtr<Exception>& exception)
 {
+    JSSourceCode* code = moduleObject->sourceCode.get();
+
+    // If an exception occurred somewhere else, we might have cleared the source code.
+    if (UNLIKELY(code == nullptr)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwException(globalObject, throwScope, createError(globalObject, "Failed to evaluate module"_s));
+        exception = throwScope.exception();
+        return false;
+    }
+
     JSC::Structure* thisObjectStructure = globalObject->commonJSFunctionArgumentsStructure();
 
     JSFunction* resolveFunction = JSC::JSBoundFunction::create(vm,
@@ -118,7 +128,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     // there is some possible GC issue where `thisObject` is gc'd before it should be
     globalObject->m_BunCommonJSModuleValue.set(vm, globalObject, thisObject);
 
-    JSValue empty = JSC::evaluate(globalObject, moduleObject->sourceCode.get()->sourceCode(), thisObject, exception);
+    JSValue empty = JSC::evaluate(globalObject, code->sourceCode(), thisObject, exception);
 
     ensureStillAliveHere(thisObject);
     globalObject->m_BunCommonJSModuleValue.clear();

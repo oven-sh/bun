@@ -4,448 +4,227 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ## Built-in modules
 
-### [`node:assert`](https://nodejs.org/api/assert.html)
+🟨 **[`node:assert`](https://nodejs.org/api/assert.html):** Missing `doesNotMatch`
 
-🟡 Missing `doesNotMatch`
+🟨 **[`node:async_hooks`](https://nodejs.org/api/async_hooks.html):** Only `AsyncLocalStorage`, and `AsyncResource` are implemented. `AsyncResource` is missing `bind`.
 
-### [`node:async_hooks`](https://nodejs.org/api/async_hooks.html)
+✅ **[`node:buffer`](https://nodejs.org/api/buffer.html):** Fully implemented.
 
-🟡 Only `AsyncLocalStorage`, and `AsyncResource` are implemented. `AsyncResource` is missing `bind`.
+🟨 **[`node:child_process`](https://nodejs.org/api/child_process.html):** Missing `Stream` stdio, `proc.gid` `proc.uid`. IPC has partial support and only currently works with other `bun` processes.
 
-### [`node:buffer`](https://nodejs.org/api/buffer.html)
+❌ **[`node:cluster`](https://nodejs.org/api/cluster.html):** Not implemented.
 
-🟢 Fully implemented.
+✅ **[`node:console`](https://nodejs.org/api/console.html):** Fully implemented.
 
-### [`node:child_process`](https://nodejs.org/api/child_process.html)
+🟨 **[`node:crypto`](https://nodejs.org/api/crypto.html):** Missing `Certificate` `ECDH` `X509Certificate` `checkPrime` `checkPrimeSync` `diffieHellman` `generatePrime` `generatePrimeSync` `getCipherInfo` `getFips` `hkdf` `hkdfSync` `secureHeapUsed` `setEngine` `setFips`. Some methods are not optimized yet.
 
-🟡 Missing `Stream` stdio, `proc.gid` `proc.uid`. IPC has partial support and only current only works with other `bun` processes.
+❌ **[`node:dgram`](https://nodejs.org/api/dgram.html):** Not implemented.
 
-### [`node:cluster`](https://nodejs.org/api/cluster.html)
+✅ **[`node:diagnostics_channel`](https://nodejs.org/api/diagnostics_channel.html):** Fully implemented.
 
-🔴 Not implemented.
+🟨 **[`node:dns`](https://nodejs.org/api/dns.html):** Missing `cancel` `setServers` `getDefaultResultOrder`
 
-### [`node:console`](https://nodejs.org/api/console.html)
+🟨 **[`node:domain`](https://nodejs.org/api/domain.html):** Missing `Domain` `active`
 
-🟢 Fully implemented.
+🟨 **[`node:events`](https://nodejs.org/api/events.html):** Missing `on` `addAbortListener` `getMaxListeners`
 
-### [`node:crypto`](https://nodejs.org/api/crypto.html)
+🟨 **[`node:fs`](https://nodejs.org/api/fs.html):** Missing `Dir` `fdatasync` `fdatasyncSync` `openAsBlob` `opendir` `opendirSync` `statfs` `statfsSync`. `fs.promises.open` incorrectly returns a file descriptor instead of a `FileHandle`.
 
-🟡 Missing `Certificate` `ECDH` `X509Certificate` `checkPrime` `checkPrimeSync` `diffieHellman` `generatePrime` `generatePrimeSync` `getCipherInfo` `getFips` `hkdf` `hkdfSync` `secureHeapUsed` `setEngine` `setFips`
+✅ **[`node:http`](https://nodejs.org/api/http.html):** Fully implemented.
 
-Some methods are not optimized yet.
+❌ **[`node:http2`](https://nodejs.org/api/http2.html):** Not implemented.
 
-### [`node:dgram`](https://nodejs.org/api/dgram.html)
+✅ **[`node:https`](https://nodejs.org/api/https.html):** Fully implemented.
 
-🔴 Not implemented.
+❌ **[`node:inspector`](https://nodejs.org/api/inspector.html):** Not implemented.
 
-### [`node:diagnostics_channel`](https://nodejs.org/api/diagnostics_channel.html)
+🟨 **[`node:module`](https://nodejs.org/api/module.html):** Missing `runMain` `syncBuiltinESMExports`, `Module#load()`. Attempts to override or patch the module cache will fail.
 
-🟢 Fully implemented.
+🟨 **[`node:net`](https://nodejs.org/api/net.html):** Missing `BlockList` `SocketAddress` `Stream` `getDefaultAutoSelectFamily` `getDefaultAutoSelectFamilyAttemptTimeout` `setDefaultAutoSelectFamily` `setDefaultAutoSelectFamilyAttemptTimeout` `Server#ref()` `Server#unref()` `Socket#ref()` `Socket#unref()`.
 
-### [`node:dns`](https://nodejs.org/api/dns.html)
+✅ **[`node:os`](https://nodejs.org/api/os.html):** Fully implemented.
 
-🟡 Missing `cancel` `setServers` `getDefaultResultOrder`
+✅ **[`node:path`](https://nodejs.org/api/path.html):** Fully implemented.
 
-### [`node:domain`](https://nodejs.org/api/domain.html)
+🟨 **[`node:perf_hooks`](https://nodejs.org/api/perf_hooks.html):** Only `perf_hooks.performance.now()` and `perf_hooks.performance.timeOrigin` are implemented. Missing `Performance` `PerformanceMark` `PerformanceMeasure` `PerformanceObserverEntryList` `PerformanceResourceTiming` `createHistogram` `monitorEventLoopDelay`. It's recommended to use `performance` global instead of `perf_hooks.performance`.
 
-🟡 Missing `Domain` `active`
+🟨 **[`node:process`](https://nodejs.org/api/process.html):** See [`process`](#process) Global.
 
-### [`node:events`](https://nodejs.org/api/events.html)
+✅ **[`node:punycode`](https://nodejs.org/api/punycode.html):** Fully implemented. _Deprecated by Node.js._
 
-🟡 Missing `on` `addAbortListener` `getMaxListeners`
+✅ **[`node:querystring`](https://nodejs.org/api/querystring.html):** Fully implemented.
 
-### [`node:fs`](https://nodejs.org/api/fs.html)
+✅ **[`node:readline`](https://nodejs.org/api/readline.html):** Fully implemented.
 
-🟡 Missing `Dir` `fdatasync` `fdatasyncSync` `openAsBlob` `opendir` `opendirSync` `statfs` `statfsSync`. `fs.promises.open` incorrectly returns a file descriptor instead of a `FileHandle`.
+❌ **[`node:repl`](https://nodejs.org/api/repl.html):** Not implemented.
 
-### [`node:http`](https://nodejs.org/api/http.html)
+🟨 **[`node:stream`](https://nodejs.org/api/stream.html):** Missing `getDefaultHighWaterMark` `setDefaultHighWaterMark`
 
-🟢 Fully implemented.
+✅ **[`node:string_decoder`](https://nodejs.org/api/string_decoder.html):** Fully implemented.
 
-### [`node:http2`](https://nodejs.org/api/http2.html)
+🟨 **[`node:sys`](https://nodejs.org/api/util.html):** See [`node:util`](#node-util).
 
-🔴 Not implemented.
+✅ **[`node:timers`](https://nodejs.org/api/timers.html):** Recommended to use global `setTimeout`, et. al. instead.
 
-### [`node:https`](https://nodejs.org/api/https.html)
+🟨 **[`node:tls`](https://nodejs.org/api/tls.html):** Missing `tls.createSecurePair`.
 
-🟢 Fully implemented.
+❌ **[`node:trace_events`](https://nodejs.org/api/tracing.html):** Not implemented.
 
-### [`node:inspector`](https://nodejs.org/api/inspector.html)
+✅ **[`node:tty`](https://nodejs.org/api/tty.html):** Fully implemented.
 
-🔴 Not implemented.
+🟨 **[`node:url`](https://nodejs.org/api/url.html):** Missing `domainToASCII` `domainToUnicode`. It's recommended to use `URL` and `URLSearchParams` globals instead.
 
-### [`node:module`](https://nodejs.org/api/module.html)
+🟨 **[`node:util`](https://nodejs.org/api/util.html):** Missing `MIMEParams` `MIMEType` `aborted` `debug` `getSystemErrorMap` `getSystemErrorName` `parseArgs` `transferableAbortController` `transferableAbortSignal` `stripVTControlCharacters`
 
-🟢 Missing `runMain` `syncBuiltinESMExports`, `Module#load()`. Attempts to override or patch the module cache will fail.
+❌ **[`node:v8`](https://nodejs.org/api/v8.html):** `serialize` and `deserialize` use JavaScriptCore's wire format instead of V8's. Otherwise, not implemented. For profiling, use [`bun:jsc`](/docs/project/benchmarking#bunjsc) instead.
 
-### [`node:net`](https://nodejs.org/api/net.html)
+🟨 **[`node:vm`](https://nodejs.org/api/vm.html):** Core functionality works, but experimental VM ES modules are not implemented, including `vm.Module`, `vm.SourceTextModule`, `vm.SyntheticModule`,`importModuleDynamically`, and `vm.measureMemory`. Options like `timeout`, `breakOnSigint`, `cachedData` are not implemented yet. There is a bug with `this` value for contextified options not having the correct prototype.
 
-🟡 Missing `BlockList` `SocketAddress` `Stream` `getDefaultAutoSelectFamily` `getDefaultAutoSelectFamilyAttemptTimeout` `setDefaultAutoSelectFamily` `setDefaultAutoSelectFamilyAttemptTimeout` `Server#ref()` `Server#unref()` `Socket#ref()` `Socket#unref()`.
+🟨 **[`node:wasi`](https://nodejs.org/api/wasi.html):** Partially implemented.
 
-### [`node:os`](https://nodejs.org/api/os.html)
+🟨 **[`node:worker_threads`](https://nodejs.org/api/worker_threads.html):** `Worker` doesn't support the following options: `eval` `argv` `execArgv` `stdin` `stdout` `stderr` `tracked
 
-🟢 Fully implemented.
+UnmanagedFds` `resourceLimits`. Missing `markAsUntransferable` `moveMessagePortToContext` `getHeapSnapshot`.
 
-### [`node:path`](https://nodejs.org/api/path.html)
+🟨 **[`node:zlib`](https://nodejs.org/api/zlib.html):** Missing `BrotliCompress` `BrotliDecompress` `brotliCompressSync` `brotliDecompress` `brotliDecompressSync` `createBrotliCompress` `createBrotliDecompress`. Unoptimized.
 
-🟢 Fully implemented.
+### Globals
 
-### [`node:perf_hooks`](https://nodejs.org/api/perf_hooks.html)
+✅ **[`AbortController`](https://developer.mozilla.org/en-US/docs/Web/API/AbortController):** Fully implemented.
 
-🟡 Only `perf_hooks.performance.now()` and `perf_hooks.performance.timeOrigin` are implemented. Missing `Performance` `PerformanceMark` `PerformanceMeasure` `PerformanceObserverEntryList` `PerformanceResourceTiming` `createHistogram` `monitorEventLoopDelay`. It's recommended to use `performance` global instead of `perf_hooks.performance`.
+✅ **[`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal):** Fully implemented.
 
-### [`node:process`](https://nodejs.org/api/process.html)
+✅ **[`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob):** Fully implemented.
 
-🟡 See [`process`](#process) Global.
+🟨 **[`Buffer`](https://nodejs.org/api/buffer.html#class-buffer):** Incomplete implementation of `base64` and `base64url` encodings.
 
-### [`node:punycode`](https://nodejs.org/api/punycode.html)
+✅ **[`ByteLengthQueuingStrategy`](https://developer.mozilla.org/en-US/docs/Web/API/ByteLengthQueuingStrategy):** Fully implemented.
 
-🟢 Fully implemented. _Deprecated by Node.js._
+✅ **[`__dirname`](https://nodejs.org/api/globals.html#__dirname):** Fully implemented.
 
-### [`node:querystring`](https://nodejs.org/api/querystring.html)
+✅ **[`__filename`](https://nodejs.org/api/globals.html#__filename):** Fully implemented.
 
-🟢 Fully implemented.
+✅ **[`atob()`](https://developer.mozilla.org/en-US/docs/Web/API/atob):** Fully implemented.
 
-### [`node:readline`](https://nodejs.org/api/readline.html)
+✅ **[`BroadcastChannel`](https://developer.mozilla.org/en-US/docs/Web/API/BroadcastChannel):** Fully implemented.
 
-🟢 Fully implemented.
+✅ **[`btoa()`](https://developer.mozilla.org/en-US/docs/Web/API/btoa):** Fully implemented.
 
-### [`node:repl`](https://nodejs.org/api/repl.html)
+✅ **[`clearImmediate()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/clearImmediate):** Fully implemented.
 
-🔴 Not implemented.
+✅ **[`clearInterval()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/clearInterval):** Fully implemented.
 
-### [`node:stream`](https://nodejs.org/api/stream.html)
+✅ **[`clearTimeout()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/clearTimeout):** Fully implemented.
 
-🟡 Missing `getDefaultHighWaterMark` `setDefaultHighWaterMark`
+❌ **[`CompressionStream`](https://developer.mozilla.org/en-US/docs/Web/API/CompressionStream):** Not implemented.
 
-### [`node:string_decoder`](https://nodejs.org/api/string_decoder.html)
+✅ **[`console`](https://developer.mozilla.org/en-US/docs/Web/API/console):** Fully implemented.
 
-🟢 Fully implemented.
+✅ **[`CountQueuingStrategy`](https://developer.mozilla.org/en-US/docs/Web/API/CountQueuingStrategy):** Fully implemented.
 
-### [`node:sys`](https://nodejs.org/api/util.html)
+✅ **[`Crypto`](https://developer.mozilla.org/en-US/docs/Web/API/Crypto):** Fully implemented.
 
-🟡 See [`node:util`](#node-util).
+✅ **[`SubtleCrypto (crypto)`](https://developer.mozilla.org/en-US/docs/Web/API/crypto):** Fully implemented.
 
-### [`node:timers`](https://nodejs.org/api/timers.html)
+✅ **[`CryptoKey`](https://developer.mozilla.org/en-US/docs/Web/API/CryptoKey):** Fully implemented.
 
-🟢 Recommended to use global `setTimeout`, et. al. instead.
+✅ **[`CustomEvent`](https://developer.mozilla.org/en-US/docs/Web/API/CustomEvent):** Fully implemented.
 
-### [`node:tls`](https://nodejs.org/api/tls.html)
+❌ **[`DecompressionStream`](https://developer.mozilla.org/en-US/docs/Web/API/DecompressionStream):** Not implemented.
 
-🟡 Missing `tls.createSecurePair`.
+✅ **[`Event`](https://developer.mozilla.org/en-US/docs/Web/API/Event):** Fully implemented.
 
-### [`node:trace_events`](https://nodejs.org/api/tracing.html)
+✅ **[`EventTarget`](https://developer.mozilla.org/en-US/docs/Web/API/EventTarget):** Fully implemented.
 
-🔴 Not implemented.
+✅ **[`exports`](https://nodejs.org/api/globals.html#exports):** Fully implemented.
 
-### [`node:tty`](https://nodejs.org/api/tty.html)
+✅ **[`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/fetch):** Fully implemented.
 
-🟢 Fully implemented.
+✅ **[`FormData`](https://developer.mozilla.org/en-US/docs/Web/API/FormData):** Fully implemented.
 
-### [`node:url`](https://nodejs.org/api/url.html)
+✅ **[`global`](https://nodejs.org/api/globals.html#global):** Implemented. This is an object containing all objects in the global namespace. It's rarely referenced directly, as its contents are available without an additional prefix, e.g. `__dirname` instead of `global.__dirname`.
 
-🟡 Missing `domainToASCII` `domainToUnicode`. It's recommended to use `URL` and `URLSearchParams` globals instead.
+✅ **[`globalThis`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/globalThis):** Aliases to `global`.
 
-### [`node:util`](https://nodejs.org/api/util.html)
+✅ **[`Headers`](https://developer.mozilla.org/en-US/docs/Web/API/Headers):** Fully implemented.
 
-🟡 Missing `MIMEParams` `MIMEType` `aborted` `debug` `getSystemErrorMap` `getSystemErrorName` `parseArgs` `transferableAbortController` `transferableAbortSignal` `stripVTControlCharacters`
+✅ **[`MessageChannel`](https://developer.mozilla.org/en-US/docs/Web/API/MessageChannel):** Fully implemented.
 
-### [`node:v8`](https://nodejs.org/api/v8.html)
+✅ **[`MessageEvent`](https://developer.mozilla.org/en-US/docs/Web/API/MessageEvent):** Fully implemented.
 
-🔴 `serialize` and `deserialize` use JavaScriptCore's wire format instead of V8's. Otherwise, not implemented. For profiling, use [`bun:jsc`](/docs/project/benchmarking#bunjsc) instead.
+✅ **[`MessagePort`](https://developer.mozilla.org/en-US/docs/Web/API/MessagePort):** Fully implemented.
 
-### [`node:vm`](https://nodejs.org/api/vm.html)
+✅ **[`module`](https://nodejs.org/api/globals.html#module):** Fully implemented.
 
-🟡 Core functionality works, but experimental VM ES modules are not implemented, including `vm.Module`, `vm.SourceTextModule`, `vm.SyntheticModule`,`importModuleDynamically`, and `vm.measureMemory`. Options like `timeout`, `breakOnSigint`, `cachedData` are not implemented yet. There is a bug with `this` value for contextified options not having the correct prototype.
+❌ **[`PerformanceEntry`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceEntry):** Not implemented.
 
-### [`node:wasi`](https://nodejs.org/api/wasi.html)
+❌ **[`PerformanceMark`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceMark):** Not implemented.
 
-🟡 Partially implemented.
+❌ **[`PerformanceMeasure`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceMeasure):** Not implemented.
 
-### [`node:worker_threads`](https://nodejs.org/api/worker_threads.html)
+❌ **[`PerformanceObserver`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceObserver):** Not implemented.
 
-🟡 `Worker` doesn't support the following options: `eval` `argv` `execArgv` `stdin` `stdout` `stderr` `trackedUnmanagedFds` `resourceLimits`. Missing `markAsUntransferable` `moveMessagePortToContext` `getHeapSnapshot`.
+❌ **[`PerformanceObserverEntryList`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceObserverEntryList):** Not implemented.
 
-### [`node:zlib`](https://nodejs.org/api/zlib.html)
+❌ **[`PerformanceResourceTiming`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceResourceTiming):** Not implemented.
 
-🟡 Missing `BrotliCompress` `BrotliDecompress` `brotliCompressSync` `brotliDecompress` `brotliDecompressSync` `createBrotliCompress` `createBrotliDecompress`. Unoptimized.
+✅ **[`performance`](https://developer.mozilla.org/en-US/docs/Web/API/performance):** Fully implemented.
 
-## Globals
+🟨 **[`process`](https://nodejs.org/api/process.html):** Missing `domain` `hasUncaughtExceptionCaptureCallback` `initgroups` `report` `resourceUsage` `setUncaughtExceptionCaptureCallback` `setegid` `seteuid` `setgid` `setgroups` `setuid` `allowedNodeEnvironmentFlags` `getActiveResourcesInfo` `setActiveResourcesInfo` `moduleLoadList` `setSourceMapsEnabled` `channel`. `process.binding` is partially implemented.
 
-The table below lists all globals implemented by Node.js and Bun's current compatibility status.
+✅ **[`queueMicrotask()`](https://developer.mozilla.org/en-US/docs/Web/API/queueMicrotask):** Fully implemented.
 
-### [`AbortController`](https://developer.mozilla.org/en-US/docs/Web/API/AbortController)
+✅ **[`ReadableByteStreamController`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableByteStreamController):** Fully implemented.
 
-🟢 Fully implemented.
+✅ **[`ReadableStream`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream):** Fully implemented.
 
-### [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal)
+❌ **[`ReadableStreamBYOBReader`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStreamBYOBReader):** Not implemented.
 
-🟢 Fully implemented.
+❌ **[`ReadableStreamBYOBRequest`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStreamBYOBRequest):** Not implemented.
 
-### [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob)
+✅ **[`ReadableStreamDefaultController`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStreamDefaultController):** Fully implemented.
 
-🟢 Fully implemented.
+✅ **[`ReadableStreamDefaultReader`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStreamDefaultReader):** Fully implemented.
 
-### [`Buffer`](https://nodejs.org/api/buffer.html#class-buffer)
+✅ **[`require()`](https://nodejs.org/api/globals.html#require):** Fully implemented, including [`require.main`](https://nodejs.org/api/modules.html#requiremain), [`require.cache`](https://nodejs.org/api/modules.html#requirecache), [`require.resolve`](https://nodejs.org/api/modules.html#requireresolverequest-options)
 
-🟡 Incomplete implementation of `base64` and `base64url` encodings.
+✅ **[`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response):** Fully implemented.
 
-### [`ByteLengthQueuingStrategy`](https://developer.mozilla.org/en-US/docs/Web/API/ByteLengthQueuingStrategy)
+✅ **[`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request):** Fully implemented.
 
-🟢 Fully implemented.
+✅ **[`setImmediate()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/setImmediate):** Fully implemented.
 
-### [`__dirname`](https://nodejs.org/api/globals.html#__dirname)
+✅ **[`setInterval()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/setInterval):** Fully implemented.
 
-🟢 Fully implemented.
+✅ **[`setTimeout()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/setTimeout):** Fully implemented.
 
-### [`__filename`](https://nodejs.org/api/globals.html#__filename)
+✅ **[`structuredClone()`](https://developer.mozilla.org/en-US/docs/Web/API/structuredClone):** Fully implemented.
 
-🟢 Fully implemented.
+✅ **[`SubtleCrypto`](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto):** Fully implemented.
 
-### [`atob()`](https://developer.mozilla.org/en-US/docs/Web/API/atob)
+✅ **[`DOMException`](https://developer.mozilla.org/en-US/docs/Web/API/DOMException):** Fully implemented.
 
-🟢 Fully implemented.
+✅ **[`TextDecoder`](https://developer.mozilla.org/en-US/docs/Web/API/TextDecoder):** Fully implemented.
 
-### [`BroadcastChannel`](https://developer.mozilla.org/en-US/docs/Web/API/BroadcastChannel)
+❌ **[`TextDecoderStream`](https://developer.mozilla.org/en-US/docs/Web/API/TextDecoderStream):** Not implemented.
 
-🟢 Fully implemented.
+✅ **[`TextEncoder`](https://developer.mozilla.org/en-US/docs/Web/API/TextEncoder):** Fully implemented.
 
-### [`btoa()`](https://developer.mozilla.org/en-US/docs/Web/API/btoa)
+❌ **[`TextEncoderStream`](https://developer.mozilla.org/en-US/docs/Web/API/TextEncoderStream):** Not implemented.
 
-🟢 Fully implemented.
+✅ **[`TransformStream`](https://developer.mozilla.org/en-US/docs/Web/API/TransformStream):** Fully implemented.
 
-### [`clearImmediate()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/clearImmediate)
+✅ **[`TransformStreamDefaultController`](https://developer.mozilla.org/en-US/docs/Web/API/TransformStreamDefaultController):** Fully implemented.
 
-🟢 Fully implemented.
+✅ **[`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL):** Fully implemented.
 
-### [`clearInterval()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/clearInterval)
+✅ **[`URLSearchParams`](https://developer.mozilla.org/en-US/docs/Web/API/URLSearchParams):** Fully implemented.
 
-🟢 Fully implemented.
+✅ **[`WebAssembly`](https://nodejs.org/api/globals.html#webassembly):** Fully implemented.
 
-### [`clearTimeout()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/clearTimeout)
+✅ **[`WritableStream`](https://developer.mozilla.org/en-US/docs/Web/API/WritableStream):** Fully implemented.
 
-🟢 Fully implemented.
+✅ **[`WritableStreamDefaultController`](https://developer.mozilla.org/en-US/docs/Web/API/WritableStreamDefaultController):** Fully implemented.
 
-### [`CompressionStream`](https://developer.mozilla.org/en-US/docs/Web/API/CompressionStream)
+✅ **[`WritableStreamDefaultWriter`](https://developer.mozilla.org/en-US/docs/Web/API/WritableStreamDefaultWriter):** Fully implemented.
 
-🔴 Not implemented.
-
-### [`console`](https://developer.mozilla.org/en-US/docs/Web/API/console)
-
-🟢 Fully implemented.
-
-### [`CountQueuingStrategy`](https://developer.mozilla.org/en-US/docs/Web/API/CountQueuingStrategy)
-
-🟢 Fully implemented.
-
-### [`Crypto`](https://developer.mozilla.org/en-US/docs/Web/API/Crypto)
-
-🟢 Fully implemented.
-
-### [`SubtleCrypto (crypto)`](https://developer.mozilla.org/en-US/docs/Web/API/crypto)
-
-🟢 Fully implemented.
-
-### [`CryptoKey`](https://developer.mozilla.org/en-US/docs/Web/API/CryptoKey)
-
-🟢 Fully implemented.
-
-### [`CustomEvent`](https://developer.mozilla.org/en-US/docs/Web/API/CustomEvent)
-
-🟢 Fully implemented.
-
-### [`DecompressionStream`](https://developer.mozilla.org/en-US/docs/Web/API/DecompressionStream)
-
-🔴 Not implemented.
-
-### [`Event`](https://developer.mozilla.org/en-US/docs/Web/API/Event)
-
-🟢 Fully implemented.
-
-### [`EventTarget`](https://developer.mozilla.org/en-US/docs/Web/API/EventTarget)
-
-🟢 Fully implemented.
-
-### [`exports`](https://nodejs.org/api/globals.html#exports)
-
-🟢 Fully implemented.
-
-### [`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/fetch)
-
-🟢 Fully implemented.
-
-### [`FormData`](https://developer.mozilla.org/en-US/docs/Web/API/FormData)
-
-🟢 Fully implemented.
-
-### [`global`](https://nodejs.org/api/globals.html#global)
-
-🟢 Implemented. This is an object containing all objects in the global namespace. It's rarely referenced directly, as its contents are available without an additional prefix, e.g. `__dirname` instead of `global.__dirname`.
-
-### [`globalThis`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/globalThis)
-
-🟢 Aliases to `global`.
-
-### [`Headers`](https://developer.mozilla.org/en-US/docs/Web/API/Headers)
-
-🟢 Fully implemented.
-
-### [`MessageChannel`](https://developer.mozilla.org/en-US/docs/Web/API/MessageChannel)
-
-🟢 Fully implemented.
-
-### [`MessageEvent`](https://developer.mozilla.org/en-US/docs/Web/API/MessageEvent)
-
-🟢 Fully implemented.
-
-### [`MessagePort`](https://developer.mozilla.org/en-US/docs/Web/API/MessagePort)
-
-🟢 Fully implemented.
-
-### [`module`](https://nodejs.org/api/globals.html#module)
-
-🟢 Fully implemented.
-
-### [`PerformanceEntry`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceEntry)
-
-🔴 Not implemented.
-
-### [`PerformanceMark`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceMark)
-
-🔴 Not implemented.
-
-### [`PerformanceMeasure`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceMeasure)
-
-🔴 Not implemented.
-
-### [`PerformanceObserver`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceObserver)
-
-🔴 Not implemented.
-
-### [`PerformanceObserverEntryList`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceObserverEntryList)
-
-🔴 Not implemented.
-
-### [`PerformanceResourceTiming`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceResourceTiming)
-
-🔴 Not implemented.
-
-### [`performance`](https://developer.mozilla.org/en-US/docs/Web/API/performance)
-
-🟢 Fully implemented.
-
-### [`process`](https://nodejs.org/api/process.html)
-
-🟡 Missing `domain` `hasUncaughtExceptionCaptureCallback` `initgroups` `report` `resourceUsage` `setUncaughtExceptionCaptureCallback` `setegid` `seteuid` `setgid` `setgroups` `setuid` `allowedNodeEnvironmentFlags` `getActiveResourcesInfo` `setActiveResourcesInfo` `moduleLoadList` `setSourceMapsEnabled` `channel`. `process.binding` is partially implemented.
-
-### [`queueMicrotask()`](https://developer.mozilla.org/en-US/docs/Web/API/queueMicrotask)
-
-🟢 Fully implemented.
-
-### [`ReadableByteStreamController`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableByteStreamController)
-
-🟢 Fully implemented.
-
-### [`ReadableStream`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream)
-
-🟢 Fully implemented.
-
-### [`ReadableStreamBYOBReader`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStreamBYOBReader)
-
-🔴 Not implemented.
-
-### [`ReadableStreamBYOBRequest`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStreamBYOBRequest)
-
-🔴 Not implemented.
-
-### [`ReadableStreamDefaultController`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStreamDefaultController)
-
-🟢 Fully implemented.
-
-### [`ReadableStreamDefaultReader`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStreamDefaultReader)
-
-🟢 Fully implemented.
-
-### [`require()`](https://nodejs.org/api/globals.html#require)
-
-🟢 Fully implemented, including [`require.main`](https://nodejs.org/api/modules.html#requiremain), [`require.cache`](https://nodejs.org/api/modules.html#requirecache), [`require.resolve`](https://nodejs.org/api/modules.html#requireresolverequest-options)
-
-### [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response)
-
-🟢 Fully implemented.
-
-### [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request)
-
-🟢 Fully implemented.
-
-### [`setImmediate()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/setImmediate)
-
-🟢 Fully implemented.
-
-### [`setInterval()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/setInterval)
-
-🟢 Fully implemented.
-
-### [`setTimeout()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/setTimeout)
-
-🟢 Fully implemented.
-
-### [`structuredClone()`](https://developer.mozilla.org/en-US/docs/Web/API/structuredClone)
-
-🟢 Fully implemented.
-
-### [`SubtleCrypto`](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto)
-
-🟢 Fully implemented.
-
-### [`DOMException`](https://developer.mozilla.org/en-US/docs/Web/API/DOMException)
-
-🟢 Fully implemented.
-
-### [`TextDecoder`](https://developer.mozilla.org/en-US/docs/Web/API/TextDecoder)
-
-🟢 Fully implemented.
-
-### [`TextDecoderStream`](https://developer.mozilla.org/en-US/docs/Web/API/TextDecoderStream)
-
-🔴 Not implemented.
-
-### [`TextEncoder`](https://developer.mozilla.org/en-US/docs/Web/API/TextEncoder)
-
-🟢 Fully implemented.
-
-### [`TextEncoderStream`](https://developer.mozilla.org/en-US/docs/Web/API/TextEncoderStream)
-
-🔴 Not implemented.
-
-### [`TransformStream`](https://developer.mozilla.org/en-US/docs/Web/API/TransformStream)
-
-🟢 Fully implemented.
-
-### [`TransformStreamDefaultController`](https://developer.mozilla.org/en-US/docs/Web/API/TransformStreamDefaultController)
-
-🟢 Fully implemented.
-
-### [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL)
-
-🟢 Fully implemented.
-
-### [`URLSearchParams`](https://developer.mozilla.org/en-US/docs/Web/API/URLSearchParams)
-
-🟢 Fully implemented.
-
-### [`WebAssembly`](https://nodejs.org/api/globals.html#webassembly)
-
-🟢 Fully implemented.
-
-### [`WritableStream`](https://developer.mozilla.org/en-US/docs/Web/API/WritableStream)
-
-🟢 Fully implemented.
-
-### [`WritableStreamDefaultController`](https://developer.mozilla.org/en-US/docs/Web/API/WritableStreamDefaultController)
-
-🟢 Fully implemented.
-
-### [`WritableStreamDefaultWriter`](https://developer.mozilla.org/en-US/docs/Web/API/WritableStreamDefaultWriter)
-
-🟢 Fully implemented.

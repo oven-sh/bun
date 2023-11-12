@@ -94,6 +94,8 @@ static void uv__tty_make_raw(struct termios* tio)
 
 #endif
 
+extern "C" void Bun__atExit(void (*func)(void));
+
 extern "C" int Bun__ttySetMode(int fd, int mode)
 {
 #if !OS(WINDOWS)
@@ -138,7 +140,7 @@ extern "C" int Bun__ttySetMode(int fd, int mode)
         tmp.c_cc[VTIME] = 0;
 
         std::call_once(reset_once_flag, [] {
-            atexit([] {
+            Bun__atExit([] {
                 uv_tty_reset_mode();
             });
         });
@@ -147,7 +149,7 @@ extern "C" int Bun__ttySetMode(int fd, int mode)
         uv__tty_make_raw(&tmp);
 
         std::call_once(reset_once_flag, [] {
-            atexit([] {
+            Bun__atExit([] {
                 uv_tty_reset_mode();
             });
         });

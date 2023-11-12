@@ -40,3 +40,5 @@ docs/**/* linguist-documentation
 
 # Don't count tests in the language stats - https://github.com/github-linguist/linguist/blob/master/docs/overrides.md
 test/**/* linguist-documentation
+bench/**/* linguist-documentation
+examples/**/* linguist-documentation

@@ -822,7 +822,6 @@ void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,
     auto result = this->exportsObject();
 
     auto& vm = globalObject->vm();
-    Identifier esModuleMarker = builtinNames(vm).__esModulePublicName();
     populateESMExports(globalObject, result, exportNames, exportValues, this->ignoreESModuleAnnotation);
 }
 

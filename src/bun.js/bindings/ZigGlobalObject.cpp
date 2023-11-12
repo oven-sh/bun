@@ -2025,7 +2025,7 @@ extern "C" void ReadableStream__cancel(JSC__JSValue possibleReadableStream, Zig:
     if (UNLIKELY(!readableStream))
         return;
 
-    if (!ReadableStream(*globalObject, *readableStream).isLocked()) {
+    if (!ReadableStream::isLocked(globalObject, readableStream)) {
         return;
     }
 

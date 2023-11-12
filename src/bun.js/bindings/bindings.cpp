@@ -2558,10 +2558,19 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject* globalObject,
 }
 #pragma mark - JSC::JSPromise
 
-void JSC__JSPromise__reject(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1,
+void JSC__JSPromise__reject(JSC__JSPromise* arg0, JSC__JSGlobalObject* globalObject,
     JSC__JSValue JSValue2)
 {
-    arg0->reject(arg1, JSC::JSValue::decode(JSValue2));
+    JSValue value = JSC::JSValue::decode(JSValue2);
+    auto& vm = globalObject->vm();
+    JSC::Exception* exception = nullptr;
+    if (!value.inherits<JSC::Exception>()) {
+        exception = JSC::Exception::create(vm, value, JSC::Exception::StackCaptureAction::CaptureStack);
+    } else {
+        exception = jsCast<JSC::Exception*>(value);
+    }
+
+    arg0->reject(globalObject, exception);
 }
 void JSC__JSPromise__rejectAsHandled(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1,
     JSC__JSValue JSValue2)
@@ -2702,10 +2711,19 @@ JSC__JSInternalPromise* JSC__JSInternalPromise__create(JSC__JSGlobalObject* glob
     return JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
 }
 
-void JSC__JSInternalPromise__reject(JSC__JSInternalPromise* arg0, JSC__JSGlobalObject* arg1,
+void JSC__JSInternalPromise__reject(JSC__JSInternalPromise* arg0, JSC__JSGlobalObject* globalObject,
     JSC__JSValue JSValue2)
 {
-    arg0->reject(arg1, JSC::JSValue::decode(JSValue2));
+    JSValue value = JSC::JSValue::decode(JSValue2);
+    auto& vm = globalObject->vm();
+    JSC::Exception* exception = nullptr;
+    if (!value.inherits<JSC::Exception>()) {
+        exception = JSC::Exception::create(vm, value, JSC::Exception::StackCaptureAction::CaptureStack);
+    } else {
+        exception = jsCast<JSC::Exception*>(value);
+    }
+
+    arg0->reject(globalObject, exception);
 }
 void JSC__JSInternalPromise__rejectAsHandled(JSC__JSInternalPromise* arg0,
     JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2)

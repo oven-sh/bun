@@ -2525,8 +2525,7 @@ JSC__JSInternalPromise*
 JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject* globalObject,
     const BunString* arg1)
 {
-    auto name = Bun::toWTFString(*arg1);
-    name.impl()->ref();
+    auto name = arg1->toWTFString();
 
     auto* promise = JSC::loadAndEvaluateModule(globalObject, name, JSC::jsUndefined(), JSC::jsUndefined());
     if (!promise) {
@@ -4024,7 +4023,16 @@ bool JSC__VM__isEntered(JSC__VM* arg0) { return (*arg0).isEntered(); }
 void JSC__VM__setExecutionForbidden(JSC__VM* arg0, bool arg1) { (*arg0).setExecutionForbidden(); }
 
 // These may be called concurrently from another thread.
-void JSC__VM__notifyNeedTermination(JSC__VM* arg0) { (*arg0).notifyNeedTermination(); }
+void JSC__VM__notifyNeedTermination(JSC__VM* arg0)
+{
+    JSC::VM& vm = *arg0;
+    bool didEnter = vm.currentThreadIsHoldingAPILock();
+    if (didEnter)
+        vm.apiLock().unlock();
+    vm.notifyNeedTermination();
+    if (didEnter)
+        vm.apiLock().lock();
+}
 void JSC__VM__notifyNeedDebuggerBreak(JSC__VM* arg0) { (*arg0).notifyNeedDebuggerBreak(); }
 void JSC__VM__notifyNeedShellTimeoutCheck(JSC__VM* arg0) { (*arg0).notifyNeedShellTimeoutCheck(); }
 void JSC__VM__notifyNeedWatchdogCheck(JSC__VM* arg0) { (*arg0).notifyNeedWatchdogCheck(); }

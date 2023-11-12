@@ -8,6 +8,7 @@
 #include "GCDefferalContext.h"
 #include <JavaScriptCore/JSONObject.h>
 #include <wtf/text/AtomString.h>
+#include <wtf/text/WTFString.h>
 
 using namespace JSC;
 extern "C" BunString BunString__fromBytes(const char* bytes, size_t length);
@@ -466,4 +467,21 @@ size_t BunString::utf8ByteLength(const WTF::String& str)
     } else {
         return simdutf::utf8_length_from_utf16(reinterpret_cast<const char16_t*>(str.characters16()), static_cast<size_t>(str.length()));
     }
+}
+
+WTF::String BunString::toWTFString() const
+{
+    if (this->tag == BunStringTag::ZigString) {
+        if (Zig::isTaggedExternalPtr(this->impl.zig.ptr)) {
+            return Zig::toString(this->impl.zig);
+        } else {
+            return Zig::toStringCopy(this->impl.zig);
+        }
+    } else if (this->tag == BunStringTag::StaticZigString) {
+        return Zig::toStringCopy(this->impl.zig);
+    } else if (this->tag == BunStringTag::WTFStringImpl) {
+        return WTF::String(this->impl.wtf);
+    }
+
+    return WTF::String();
 }

@@ -6,6 +6,10 @@ typedef struct VirtualMachine VirtualMachine;
 // exists to make headers.h happy
 typedef struct CppWebSocket CppWebSocket;
 
+namespace WTF {
+class String;
+}
+
 typedef struct ZigString {
     const unsigned char* ptr;
     size_t len;
@@ -45,6 +49,7 @@ typedef struct BunString {
     inline void ref();
     inline void deref();
     static size_t utf8ByteLength(const WTF::String&);
+    WTF::String toWTFString() const;
 } BunString;
 
 typedef struct ZigErrorType {

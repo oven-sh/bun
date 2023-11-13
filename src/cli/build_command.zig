@@ -36,10 +36,10 @@ var estimated_input_lines_of_code_: usize = undefined;
 
 pub const BuildCommand = struct {
     pub fn exec(
-        ctx_: Command.Context,
+        ctx: *Command.Context,
     ) !void {
         Global.configureAllocator(.{ .long_running = true });
-        var ctx = ctx_;
+
         var allocator = ctx.allocator;
         var log = ctx.log;
         estimated_input_lines_of_code_ = 0;

@@ -406,7 +406,7 @@ pub const UpgradeCommand = struct {
         else => "TODO",
     };
 
-    pub fn exec(ctx: Command.Context) !void {
+    pub fn exec(ctx: *Command.Context) !void {
         @setCold(true);
 
         _exec(ctx) catch |err| {
@@ -422,7 +422,7 @@ pub const UpgradeCommand = struct {
         };
     }
 
-    fn _exec(ctx: Command.Context) !void {
+    fn _exec(ctx: *Command.Context) !void {
         try HTTP.HTTPThread.init();
 
         var filesystem = try fs.FileSystem.init(null);

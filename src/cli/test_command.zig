@@ -557,7 +557,7 @@ pub const TestCommand = struct {
         fail_on_low_coverage: bool = false,
     };
 
-    pub fn exec(ctx: Command.Context) !void {
+    pub fn exec(ctx: *Command.Context) !void {
         if (comptime is_bindgen) unreachable;
 
         Output.is_github_action = Output.isGithubAction();

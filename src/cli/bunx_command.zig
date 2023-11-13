@@ -160,8 +160,7 @@ pub const BunxCommand = struct {
         Global.exit(1);
     }
 
-    pub fn exec(ctx_: bun.CLI.Command.Context, argv: [][*:0]const u8) !void {
-        var ctx = ctx_;
+    pub fn exec(ctx: *bun.CLI.Command.Context, argv: [][*:0]const u8) !void {
         var requests_buf = bun.PackageManager.UpdateRequest.Array.init(0) catch unreachable;
         var run_in_bun = ctx.debug.run_in_bun;
 

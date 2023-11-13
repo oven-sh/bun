@@ -45,7 +45,7 @@ const ByName = struct {
 
 pub const PackageManagerCommand = struct {
     pub fn printHelp(_: std.mem.Allocator) void {}
-    pub fn printHash(ctx: Command.Context, lockfile_: []const u8) !void {
+    pub fn printHash(ctx: *Command.Context, lockfile_: []const u8) !void {
         @setCold(true);
         var lockfile_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
         @memcpy(lockfile_buffer[0..lockfile_.len], lockfile_);
@@ -83,23 +83,17 @@ pub const PackageManagerCommand = struct {
         return subcommand;
     }
 
-    pub fn exec(ctx: Command.Context) !void {
+    pub fn exec(ctx: *Command.Context) !void {
         var args = try std.process.argsAlloc(ctx.allocator);
         args = args[1..];
 
         var pm = PackageManager.init(ctx, PackageManager.Subcommand.pm) catch |err| {
-            // TODO: error messages here
-            // if (err == error.MissingPackageJSON) {
-            //     // TODO: error messages
-            //     // var cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, PackageManager.Subcommand.pm, &_ctx);
-            // }
-
             return err;
         };
 
         const subcommand = getSubcommand(&pm.options.positionals);
         if (pm.options.global) {
-            try pm.setupGlobalDir(&ctx);
+            try pm.setupGlobalDir(ctx);
         }
 
         if (strings.eqlComptime(subcommand, "bin")) {

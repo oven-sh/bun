@@ -198,7 +198,7 @@ const CreateOptions = struct {
         clap.parseParam("<POS>...                   ") catch unreachable,
     };
 
-    pub fn parse(ctx: Command.Context, comptime print_flags_only: bool) !CreateOptions {
+    pub fn parse(ctx: *Command.Context, comptime print_flags_only: bool) !CreateOptions {
         var diag = clap.Diagnostic{};
 
         var args = clap.parse(clap.Help, &params, .{ .diagnostic = &diag, .allocator = ctx.allocator }) catch |err| {
@@ -247,7 +247,7 @@ const CreateOptions = struct {
 const BUN_CREATE_DIR = ".bun-create";
 var home_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 pub const CreateCommand = struct {
-    pub fn exec(ctx: Command.Context, example_tag: Example.Tag, template: []const u8) !void {
+    pub fn exec(ctx: *Command.Context, example_tag: Example.Tag, template: []const u8) !void {
         @setCold(true);
 
         Global.configureAllocator(.{ .long_running = false });
@@ -1580,7 +1580,7 @@ pub const CreateCommand = struct {
             }
         }
     }
-    pub fn extractInfo(ctx: Command.Context) !struct { example_tag: Example.Tag, template: []const u8 } {
+    pub fn extractInfo(ctx: *Command.Context) !struct { example_tag: Example.Tag, template: []const u8 } {
         var example_tag = Example.Tag.unknown;
         var filesystem = try fs.FileSystem.init(null);
 
@@ -1733,7 +1733,7 @@ pub const Example = struct {
         }
     }
 
-    pub fn fetchAllLocalAndRemote(ctx: Command.Context, node: ?*std.Progress.Node, env_loader: *DotEnv.Loader, filesystem: *fs.FileSystem) !std.ArrayList(Example) {
+    pub fn fetchAllLocalAndRemote(ctx: *Command.Context, node: ?*std.Progress.Node, env_loader: *DotEnv.Loader, filesystem: *fs.FileSystem) !std.ArrayList(Example) {
         const remote_examples = try Example.fetchAll(ctx, env_loader, node);
         if (node) |node_| node_.end();
 
@@ -1816,7 +1816,7 @@ pub const Example = struct {
 
     var github_repository_url_buf: [1024]u8 = undefined;
     pub fn fetchFromGitHub(
-        ctx: Command.Context,
+        ctx: *Command.Context,
         env_loader: *DotEnv.Loader,
         name: string,
         refresher: *std.Progress,
@@ -1940,7 +1940,7 @@ pub const Example = struct {
         return mutable.*;
     }
 
-    pub fn fetch(ctx: Command.Context, env_loader: *DotEnv.Loader, name: string, refresher: *std.Progress, progress: *std.Progress.Node) !MutableString {
+    pub fn fetch(ctx: *Command.Context, env_loader: *DotEnv.Loader, name: string, refresher: *std.Progress, progress: *std.Progress.Node) !MutableString {
         progress.name = "Fetching package.json";
         refresher.refresh();
 
@@ -2078,7 +2078,7 @@ pub const Example = struct {
         return mutable.*;
     }
 
-    pub fn fetchAll(ctx: Command.Context, env_loader: *DotEnv.Loader, progress_node: ?*std.Progress.Node) ![]Example {
+    pub fn fetchAll(ctx: *Command.Context, env_loader: *DotEnv.Loader, progress_node: ?*std.Progress.Node) ![]Example {
         url = URL.parse(examples_url);
 
         var http_proxy: ?URL = env_loader.getHttpProxy(url);
@@ -2175,7 +2175,7 @@ pub const Example = struct {
 };
 
 pub const CreateListExamplesCommand = struct {
-    pub fn exec(ctx: Command.Context) !void {
+    pub fn exec(ctx: *Command.Context) !void {
         var filesystem = try fs.FileSystem.init(null);
         var env_loader: DotEnv.Loader = brk: {
             var map = try ctx.allocator.create(DotEnv.Map);

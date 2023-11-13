@@ -230,10 +230,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_getAll, (JSGlobalObject
              initializationScope, &deferralContext,
              lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
              count))) {
+
         for (unsigned i = 0; i < count; ++i) {
             array->initializeIndex(initializationScope, i, strings.at(i));
-            RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
         }
+
     } else {
         array = constructEmptyArray(lexicalGlobalObject, nullptr, count);
         RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
@@ -245,9 +246,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_getAll, (JSGlobalObject
             array->putDirectIndex(lexicalGlobalObject, i, strings.at(i));
             RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
         }
-        RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
     }
 
+    RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
     return JSValue::encode(array);
 }
 

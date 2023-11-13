@@ -1,0 +1,41 @@
+name: format
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - main
+
+env:
+  ZIG_VERSION: 0.12.0-dev.1297+a9e66ed73
+
+permissions:
+  contents: read
+
+jobs:
+  format:
+    name: format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@c7b6cdd3adba8f8b96984640ff172c37c93f73ee
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Install Dependencies
+        run: |
+          bun install
+      - name: Format
+        run: |
+          bun fmt
+          bun fmt:zig
+      - name: Commit # https://autofix.ci/
+        uses: autofix-ci/action@d3e591514b99d0fca6779455ff8338516663f7cc

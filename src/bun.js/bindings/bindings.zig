@@ -4669,6 +4669,7 @@ pub const JSValue = enum(JSValueReprInt) {
             std.debug.assert(!this.isCell()); // use coerce() instead
         }
 
+        // TODO: this shouldn't be reachable.
         return cppFn("toInt32", .{
             this,
         });

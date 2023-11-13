@@ -236,9 +236,17 @@ pub const ZigString = extern struct {
     }
 
     extern fn ZigString__toJSONObject(this: *const ZigString, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+
     pub fn toJSONObject(this: ZigString, globalThis: *JSC.JSGlobalObject) JSValue {
         JSC.markBinding(@src());
         return ZigString__toJSONObject(&this, globalThis);
+    }
+
+    extern fn BunString__toURL(this: *const ZigString, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+
+    pub fn toURL(this: ZigString, globalThis: *JSC.JSGlobalObject) JSValue {
+        JSC.markBinding(@src());
+        return BunString__toURL(&this, globalThis);
     }
 
     pub fn hasPrefixChar(this: ZigString, char: u8) bool {
@@ -4282,7 +4290,10 @@ pub const JSValue = enum(JSValueReprInt) {
     // intended to be more lightweight than ZigString
     pub fn fastGet(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) ?JSValue {
         const result = fastGet_(this, global, @intFromEnum(builtin_name));
-        if (result == .zero) {
+        if (result == .zero or
+            // JS APIs treat {}.a as mostly the same as though it was not defined
+            result == .undefined)
+        {
             return null;
         }
 

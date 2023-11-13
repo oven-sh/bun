@@ -5422,8 +5422,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this: *ThisServer,
             _: *JSC.JSGlobalObject,
         ) callconv(.C) JSC.JSValue {
-            if (this.config.address != .tcp) {
-                return JSValue.undefined;
+            switch (this.config.address) {
+                .unix => return .undefined,
+                else => {},
             }
 
             var listener = this.listener orelse return JSC.JSValue.jsNumber(this.config.address.tcp.port);
@@ -5484,7 +5485,38 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
         }
 
+        pub fn getURL(this: *ThisServer, globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {
+            const fmt = switch (this.config.address) {
+                .unix => |unix| strings.URLFormatter{
+                    .proto = .unix,
+                    .hostname = bun.sliceTo(@constCast(unix), 0),
+                },
+                .tcp => |tcp| blk: {
+                    var port: u16 = tcp.port;
+                    if (this.listener) |listener| {
+                        port = @intCast(listener.getLocalPort());
+                    }
+                    break :blk strings.URLFormatter{
+                        .proto = if (comptime ssl_enabled_) .https else .http,
+                        .hostname = if (tcp.hostname) |hostname| bun.sliceTo(@constCast(hostname), 0) else null,
+                        .port = port,
+                    };
+                },
+            };
+
+            var buf = std.fmt.allocPrint(default_allocator, "{any}", .{fmt}) catch @panic("Out of memory");
+            defer default_allocator.free(buf);
+
+            var value = bun.String.create(buf);
+            return value.toJSDOMURL(globalThis);
+        }
+
         pub fn getHostname(this: *ThisServer, globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {
+            switch (this.config.address) {
+                .unix => return .undefined,
+                else => {},
+            }
+
             if (this.cached_hostname.isEmpty()) {
                 if (this.listener) |listener| {
                     var buf: [1024]u8 = [_]u8{0} ** 1024;

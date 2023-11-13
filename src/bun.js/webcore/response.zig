@@ -305,8 +305,6 @@ pub const Response = struct {
     pub fn finalize(
         this: *Response,
     ) callconv(.C) void {
-        this.body.deinit(this.allocator);
-
         var allocator = this.allocator;
 
         this.init.deinit(allocator);

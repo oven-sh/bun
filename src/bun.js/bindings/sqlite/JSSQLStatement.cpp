@@ -236,11 +236,11 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
     castedThis->_prototype.clear();
 
     int count = sqlite3_column_count(stmt);
-    if (count == 0)
+    if (count < 1)
         return;
 
     // Fast path:
-    if (count < 64) {
+    if (count <= JSFinalObject::maxInlineCapacity) {
         // 64 is the maximum we can preallocate here
         // see https://github.com/oven-sh/bun/issues/987
         // also see https://github.com/oven-sh/bun/issues/1646
@@ -292,7 +292,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
 
     // 64 is the maximum we can preallocate here
     // see https://github.com/oven-sh/bun/issues/987
-    JSC::JSObject* object = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), std::min(count, 64));
+    JSC::JSObject* object = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), std::min(static_cast<unsigned>(count), JSFinalObject::maxInlineCapacity));
 
     for (int i = 0; i < count; i++) {
         const char* name = sqlite3_column_name(stmt, i);
@@ -1147,10 +1147,10 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
         }
 
     } else {
-        if (count <= 64) {
+        if (count <= JSFinalObject::maxInlineCapacity) {
             result = JSC::JSFinalObject::create(vm, castedThis->_prototype.get()->structure());
         } else {
-            result = JSC::JSFinalObject::create(vm, JSC::JSFinalObject::createStructure(vm, lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), std::min(count, 64)));
+            result = JSC::JSFinalObject::create(vm, JSC::JSFinalObject::createStructure(vm, lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), JSFinalObject::maxInlineCapacity));
         }
 
         for (int i = 0; i < count; i++) {

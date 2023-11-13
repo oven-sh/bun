@@ -1341,6 +1341,7 @@ pub const Bundler = struct {
                 opts.features.jsx_optimization_hoist = bundler.options.jsx_optimization_hoist orelse opts.features.jsx_optimization_inline;
                 opts.features.inject_jest_globals = this_parse.inject_jest_globals;
                 opts.features.minify_syntax = bundler.options.minify_syntax;
+                opts.features.minify_whitespace = bundler.options.minify_whitespace;
                 opts.features.minify_identifiers = bundler.options.minify_identifiers;
                 opts.features.dead_code_elimination = bundler.options.dead_code_elimination;
 

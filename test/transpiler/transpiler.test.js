@@ -3225,9 +3225,10 @@ console.log(foo, array);
   });
 
   describe("parse removeComments", () => {
-    const transpiler = removeComments =>
+    const transpiler = (removeComments, minifyWhitespace = false) =>
       new Bun.Transpiler({
         loader: "ts",
+        minifyWhitespace,
         ...(removeComments === null
           ? {}
           : {
@@ -3236,10 +3237,10 @@ console.log(foo, array);
       });
     const tsCodeWithComments = `import { Foo } from "./foo";
 // Single-line comment
-/**
- * Multi-line comment
- * with multiple lines
- */
+  /*
+     Multi-line comment
+         with multiple lines
+    */
 /** Inline doc comment */
 class Example extends Foo{
   // Single-line comment inside a class
@@ -3250,8 +3251,8 @@ class Example extends Foo{
     console.log('Constructor'); // Comment at the end of a line
   }
   /**
-   * Method description
-   * @returns void
+           * Method description
+* @returns void
    */
   exampleMethod(): void {
     // Test
@@ -3273,9 +3274,9 @@ class Example extends Foo {
 `;
     const jsCodeWithComments = `import {Foo} from "./foo";
 // Single-line comment
-/**
- * Multi-line comment
- * with multiple lines
+/*
+ Multi-line comment
+ with multiple lines
  */
 /** Inline doc comment */
 
@@ -3291,14 +3292,16 @@ class Example extends Foo {
   }
   exampleMethod() {
     /**
-       * Method description
-       * @returns void
-       */
+     * Method description
+     * @returns void
+     */
     // Test
   }
 }
 // Comment after class declaration
 `;
+    const jsCodeMinified =
+      'import{Foo} from"./foo";class Example extends Foo{exampleProperty;constructor(){super();console.log("Constructor")}exampleMethod(){}}';
     it("parse ts default config (without comment)", () => {
       const code = transpiler(null).transformSync(tsCodeWithComments);
       expect(code).toEqual(jsCodeWithoutComment);
@@ -3310,6 +3313,13 @@ class Example extends Foo {
     it("parse ts without comment", () => {
       const code = transpiler(true).transformSync(tsCodeWithComments);
       expect(code).toEqual(jsCodeWithoutComment);
+    });
+    it("parse ts minified", () => {
+      let code = transpiler(true, true).transformSync(tsCodeWithComments);
+      expect(code).toEqual(jsCodeMinified);
+
+      code = transpiler(false, true).transformSync(tsCodeWithComments);
+      expect(code).toEqual(jsCodeMinified);
     });
   });
 });

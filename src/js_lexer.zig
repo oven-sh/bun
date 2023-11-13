@@ -1837,7 +1837,7 @@ fn NewLexer_(
         }
 
         fn scanCommentText(lexer: *LexerType) void {
-            const text = lexer.source.contents[lexer.start..lexer.end];
+            var text = lexer.source.contents[lexer.start..lexer.end];
             const has_legal_annotation = text.len > 2 and text[2] == '!';
             const is_multiline_comment = text.len > 1 and text[1] == '*';
 
@@ -1846,16 +1846,9 @@ fn NewLexer_(
                 // character frequency analysis used by symbol minification
                 lexer.all_comments.append(lexer.range()) catch unreachable;
 
-            // Omit the trailing "*/" from the checks below
-            const end_comment_text =
-                if (is_multiline_comment)
-                text.len - 2
-            else
-                text.len;
-
             if (has_legal_annotation or lexer.preserve_all_comments_before) {
                 if (is_multiline_comment) {
-                    // text = lexer.removeMultilineCommentIndent(lexer.source.contents[0..lexer.start], text);
+                    text = lexer.removeMultilineCommentIndent(text);
                 }
 
                 lexer.comments_to_preserve_before.append(js_ast.G.Comment{
@@ -1863,6 +1856,13 @@ fn NewLexer_(
                     .loc = lexer.loc(),
                 }) catch unreachable;
             }
+
+            // Omit the trailing "*/" from the checks below
+            const end_comment_text =
+                if (is_multiline_comment)
+                text.len - 2
+            else
+                text.len;
 
             // tsconfig.json doesn't care about annotations
             if (comptime is_json)
@@ -1981,9 +1981,25 @@ fn NewLexer_(
             }
         }
 
-        // TODO: implement this
-        pub fn removeMultilineCommentIndent(_: *LexerType, _: string, text: string) string {
-            return text;
+        pub fn removeMultilineCommentIndent(lexer: *LexerType, text: string) string {
+            var bytes = MutableString.init(lexer.allocator, text.len) catch unreachable;
+            var startC = false;
+            var firstLine = true;
+            for (text) |c| {
+                if (c == '\n') {
+                    startC = false;
+                    if (firstLine) firstLine = false;
+                } else if (!firstLine and !startC) {
+                    if (c == ' ' or c == '\t') {
+                        continue;
+                    } else {
+                        startC = true;
+                        bytes.appendChar(' ') catch unreachable;
+                    }
+                }
+                bytes.appendChar(c) catch unreachable;
+            }
+            return bytes.toOwnedSlice();
         }
 
         pub fn range(self: *LexerType) logger.Range {

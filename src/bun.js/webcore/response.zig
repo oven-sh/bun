@@ -954,6 +954,9 @@ pub const Fetch = struct {
                     if (!success) {
                         for (0..1 + clones_len) |i| {
                             var body = response_list[i];
+                            defer {
+                                body.is_waiting = false;
+                            }
                             const err = this.onReject();
                             err.ensureStillAlive();
                             if (body.value == .Locked) {

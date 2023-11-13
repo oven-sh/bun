@@ -1,4 +1,4 @@
-name: format
+name: autofix.ci # Must be named this for autofix.ci to work
 
 on:
   workflow_dispatch:
@@ -21,7 +21,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          sparse-checkout: |
+            src
+            packages
+            test
+            bench
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:

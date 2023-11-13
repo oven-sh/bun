@@ -1496,7 +1496,7 @@ JSC__JSValue JSC__JSValue__createEmptyObject(JSC__JSGlobalObject* globalObject,
     size_t initialCapacity)
 {
     return JSC::JSValue::encode(
-        JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), initialCapacity));
+        JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(static_cast<unsigned int>(initialCapacity), JSFinalObject::maxInlineCapacity)));
 }
 
 extern "C" uint64_t Bun__Blob__getSizeForBindings(void* blob);

@@ -618,7 +618,7 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
         obj = constructEmptyObject(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(throwScope, {});
         RELEASE_AND_RETURN(throwScope, obj);
-    } else if (size < 64) {
+    } else if (size < JSFinalObject::maxInlineCapacity) {
         obj = constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), size + 1);
     } else {
         obj = constructEmptyObject(lexicalGlobalObject);

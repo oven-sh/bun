@@ -5438,7 +5438,7 @@ pub const S = struct {
     pub const Comment = struct { text: string };
 
     pub const Directive = struct {
-        value: []const u16,
+        value: []const u8,
     };
 
     pub const ExportClause = struct { items: []ClauseItem, is_single_line: bool = false };

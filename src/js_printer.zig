@@ -4601,12 +4601,9 @@ fn NewPrinter(
                     if (comptime is_json)
                         unreachable;
 
-                    const c = bestQuoteCharForString(u16, s.value, false);
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
-                    p.print(c);
-                    p.printQuotedUTF16(s.value, c);
-                    p.print(c);
+                    p.printQuotedUTF8(s.value, false);
                     p.printSemicolonAfterStatement();
                 },
                 .s_break => |s| {

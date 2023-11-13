@@ -1031,7 +1031,7 @@ if(APPLE)
 endif()
 
 # --- Stripped Binary "bun"
-if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32)
+if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32 AND NOT ASSERT_ENABLED)
     # add_custom_command(
     # TARGET ${bun}
     # POST_BUILD

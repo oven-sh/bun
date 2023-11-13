@@ -12,11 +12,7 @@ const { stdout, exited } = spawn({
   stdout: "pipe",
   stderr: "inherit",
 });
-const procResult = await exited;
-if (procResult.exitCode !== 0) {
-  console.log("Failed to generate " + output + ", create_hash_table exited with " + procResult);
-  process.exit(1);
-}
+await exited;
 let str = await new Response(stdout).text();
 str = str.replaceAll(/^\/\/.*$/gm, "");
 str = str.replaceAll(/^#include.*$/gm, "");

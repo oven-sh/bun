@@ -68,6 +68,7 @@ export default [
     JSType: "0b11101110",
     configurable: false,
     estimatedSize: true,
+    hasPendingActivity: true,
     klass: {
       json: {
         fn: "constructJSON",

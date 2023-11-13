@@ -1,5 +1,4 @@
 const std = @import("std");
-const ArrayList = std.ArrayList;
 const Api = @import("../../api/schema.zig").Api;
 const bun = @import("root").bun;
 const RequestContext = @import("../../bun_dev_http_server.zig").RequestContext;
@@ -68,7 +67,6 @@ pub const Response = struct {
     init: Init,
     url: bun.String = bun.String.empty,
     redirected: bool = false,
-    refs: ArrayList(JSC.Strong) = ArrayList(JSC.Strong){ .allocator = undefined, .capacity = 0, .items = undefined },
 
     // We must report a consistent value for this
     reported_estimated_size: ?u63 = null,
@@ -96,6 +94,10 @@ pub const Response = struct {
             );
             break :brk this.reported_estimated_size.?;
         };
+    }
+
+    pub fn hasPendingActivity(this: *Response) callconv(.C) bool {
+        return this.body.value == .Locked and this.body.original_body != null;
     }
 
     pub fn getBodyValue(
@@ -262,11 +264,6 @@ pub const Response = struct {
         }
         var cloned = this.clone(getAllocator(globalThis), globalThis);
         var js_value = Response.makeMaybePooled(globalThis, cloned);
-        if (this.body.value == .Locked) {
-            if (this.refs.capacity == 0)
-                this.refs = ArrayList(JSC.Strong).init(bun.default_allocator);
-            this.refs.append(JSC.Strong.create(js_value, globalThis)) catch @panic("oom");
-        }
         return js_value;
     }
 
@@ -309,14 +306,6 @@ pub const Response = struct {
         this: *Response,
     ) callconv(.C) void {
         this.body.deinit(this.allocator);
-
-        if (this.refs.capacity > 0) {
-            for (this.refs.items) |*e| {
-                e.deinit();
-            }
-            this.refs.deinit();
-            this.refs.capacity = 0;
-        }
 
         var allocator = this.allocator;
 
@@ -1049,13 +1038,6 @@ pub const Fetch = struct {
                     }
                     if (!this.result.has_more) {
                         // this is required as when the promise resolves otherwise the request and bodies are freed prematurely
-                        if (response.refs.capacity > 0) {
-                            for (response.refs.items) |*e| {
-                                e.deinit();
-                            }
-                            response.refs.deinit();
-                            response.refs.capacity = 0;
-                        }
                         if (has_copies) {
                             // we might have cloned the list so deinit it
                             list.?.deinit();

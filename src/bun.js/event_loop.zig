@@ -1286,6 +1286,11 @@ pub const EventLoop = struct {
     }
     pub fn enqueueTaskConcurrent(this: *EventLoop, task: *ConcurrentTask) void {
         JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            if (this.virtual_machine.has_terminated) {
+                @panic("EventLoop.enqueueTaskConcurrent: VM has terminated");
+            }
+        }
 
         this.concurrent_tasks.push(task);
         this.wakeup();

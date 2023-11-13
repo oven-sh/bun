@@ -590,6 +590,7 @@ pub const VirtualMachine = struct {
 
     debugger: ?Debugger = null,
     has_started_debugger: bool = false,
+    has_terminated: bool = false,
 
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
 
@@ -2038,6 +2039,7 @@ pub const VirtualMachine = struct {
     // TODO:
     pub fn deinit(this: *VirtualMachine) void {
         this.source_mappings.deinit();
+        this.has_terminated = true;
     }
 
     pub const ExceptionList = std.ArrayList(Api.JsException);

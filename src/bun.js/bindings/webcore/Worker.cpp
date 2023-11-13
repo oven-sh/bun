@@ -384,24 +384,15 @@ extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker*
     worker->dispatchExit(exitCode);
 
     if (globalObject) {
-        auto* ctx = globalObject->scriptExecutionContext();
-        if (ctx) {
-            ctx->removeFromContextsMap();
-        }
         JSC::VM& vm = globalObject->vm();
-
         vm.apiLock().unlock(globalObject);
         vm.notifyNeedTermination();
         vm.apiLock().lock(globalObject);
 
-        if (JSC::JSMap* registry = globalObject->esmRegistryMap()) {
-            registry->clear(vm);
-        }
-        gcUnprotect(globalObject);
-        vm.deleteAllCode(JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);
-        vm.heap.reportAbandonedObjectGraph();
-        WTF::releaseFastMallocFreeMemoryForThisThread();
-        vm.deferredWorkTimer->doWork(vm);
+        while (!vm.hasOneRef())
+            vm.deref();
+
+        vm.deref();
     }
 }
 extern "C" void WebWorker__dispatchOnline(Worker* worker, Zig::GlobalObject* globalObject)

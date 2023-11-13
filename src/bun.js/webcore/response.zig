@@ -990,6 +990,29 @@ pub const Fetch = struct {
                     const has_copies = clones_len > 0;
                     const stream_subset = chunk[this.stream_offset..];
                     for (0..1 + clones_len) |i| {
+                        if (i == 0 and this.readable_stream_ref.get() != null) {
+                            var readable = this.readable_stream_ref.get().?;
+                            if (readable.ptr == .Bytes) {
+                                readable.ptr.Bytes.size_hint = this.getSizeHint();
+
+                                if (this.result.has_more) {
+                                    readable.ptr.Bytes.onData(
+                                        .{
+                                            .temporary = bun.ByteList.initConst(stream_subset),
+                                        },
+                                        bun.default_allocator,
+                                    );
+                                } else {
+                                    readable.ptr.Bytes.onData(
+                                        .{
+                                            .temporary_and_done = bun.ByteList.initConst(stream_subset),
+                                        },
+                                        bun.default_allocator,
+                                    );
+                                }
+                                continue;
+                            }
+                        }
                         var body = response_list[i];
                         if (body.value == .Locked) {
                             if (body.value.Locked.readable) |readable| {

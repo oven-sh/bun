@@ -102,7 +102,7 @@ Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, Reso
 
     bool shouldGenerateCodeCoverage = isCodeCoverageEnabled && !isBuiltin && BunTest__shouldGenerateCodeCoverage(resolvedSource.source_url);
 
-    if (resolvedSource.needsDeref) {
+    if (resolvedSource.needsDeref && !isBuiltin) {
         resolvedSource.source_code.deref();
         resolvedSource.specifier.deref();
         // source_url gets deref'd by the WTF::String above.

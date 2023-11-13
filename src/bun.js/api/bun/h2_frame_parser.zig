@@ -819,7 +819,7 @@ pub const H2FrameParser = struct {
         }
         const chunk = this.handlers.binary_type.toJS(debug_data, this.handlers.globalObject);
         if (rstCode != .NO_ERROR) {
-            this.dispatchWith2Extra(.onError, JSC.JSValue.jsNumber(value), JSC.JSValue.jsNumber(this.lastStreamID), chunk);
+            this.dispatchWith2Extra(.onError, JSC.JSValue.jsNumber(@intFromEnum(rstCode)), JSC.JSValue.jsNumber(this.lastStreamID), chunk);
         }
         this.dispatchWithExtra(.onEnd, JSC.JSValue.jsNumber(this.lastStreamID), chunk);
     }

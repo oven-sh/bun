@@ -764,7 +764,7 @@ ZIG_DECL void Zig__ConsoleClient__screenshot(void* arg0, JSC__JSGlobalObject* ar
 ZIG_DECL void Zig__ConsoleClient__takeHeapSnapshot(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
 ZIG_DECL void Zig__ConsoleClient__time(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
 ZIG_DECL void Zig__ConsoleClient__timeEnd(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
-ZIG_DECL void Zig__ConsoleClient__timeLog(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3, ScriptArguments* arg4);
+ZIG_DECL void Zig__ConsoleClient__timeLog(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3, JSC__JSValue* arg4, size_t arg5);
 ZIG_DECL void Zig__ConsoleClient__timeStamp(void* arg0, JSC__JSGlobalObject* arg1, ScriptArguments* arg2);
 
 #endif

@@ -49,7 +49,6 @@ test("node async_hooks.AsyncLocalStorage enable disable multiple times", done =>
     expect(asyncLocalStorage.getStore()).toBe("first run value");
     asyncLocalStorage.disable();
     expect(asyncLocalStorage.getStore()).toBe(undefined);
-
     asyncLocalStorage.run("second run value", () => {
       expect(asyncLocalStorage.getStore()).toBe("second run value");
       asyncLocalStorage.disable();

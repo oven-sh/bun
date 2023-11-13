@@ -850,7 +850,7 @@ class ClientHttp2Session extends Http2Session {
     end(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       self[bunHTTP2Socket]?.end();
       self[bunHTTP2Socket] = null;
-      self.#parser.detach();
+      self.#parser?.detach();
       self.#parser = null;
     },
     write(self: ClientHttp2Session, buffer: Buffer) {

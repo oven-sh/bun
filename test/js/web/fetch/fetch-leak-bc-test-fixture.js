@@ -17,8 +17,10 @@ const baseline = await (async function runAll() {
     throw new Error("Content-Length header is not set");
   }
   const clone = resp.clone().clone();
+  const clone2 = resp.clone();
   (await clone.arrayBuffer()).byteLength;
   (await resp.arrayBuffer()).byteLength;
+  (await Bun.readableStreamToArrayBuffer(clone2.body)).byteLength;
   return process.memoryUsage.rss();
 })();
 
@@ -28,7 +30,8 @@ for (let j = 0; j < COUNT; j++) {
   await (async function runAll() {
     const res = await fetch(SERVER);
     const clone = res.clone().clone();
-    oks += !!(await clone.arrayBuffer())?.byteLength;
+    const clone2 = res.clone();
+    oks += !!(await clone.arrayBuffer())?.byteLength && !!(await Bun.readableStreamToArrayBuffer(clone2.body))?.byteLength;
     await res.arrayBuffer();
   })();
 }

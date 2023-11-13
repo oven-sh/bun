@@ -97,7 +97,7 @@ pub const Response = struct {
     }
 
     pub fn hasPendingActivity(this: *Response) callconv(.C) bool {
-        return this.body.value == .Locked and this.body.original_body != null;
+        return this.body.is_waiting;
     }
 
     pub fn getBodyValue(
@@ -1007,6 +1007,7 @@ pub const Fetch = struct {
                                             },
                                             bun.default_allocator,
                                         );
+                                        body.is_waiting = false;
                                     }
 
                                     continue;
@@ -1026,6 +1027,7 @@ pub const Fetch = struct {
                                 body.value = body_value;
                                 if (old == .Locked) {
                                     old.resolve(&body.value, this.global_this);
+                                    body.is_waiting = false;
                                 }
                             }
                         }

@@ -55,6 +55,7 @@ pub const Body = struct {
     value: Value, // = Value.empty,
     body_clones: ArrayList(*Body) = ArrayList(*Body){ .capacity = 0, .items = undefined, .allocator = undefined },
     original_body: ?*Body = null,
+    is_waiting: bool = false,
     pub inline fn len(this: *const Body) Blob.SizeType {
         return this.value.size();
     }
@@ -123,6 +124,7 @@ pub const Body = struct {
                 if (this.body_clones.capacity == 0)
                     this.body_clones = ArrayList(*Body).init(bun.default_allocator);
                 this.body_clones.append(other) catch @panic("oom!");
+                other.is_waiting = true;
             }
         }
     }

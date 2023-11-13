@@ -1213,7 +1213,7 @@ describe("Client Basics", () => {
     });
   });
 
-  it("should handle bad CONTINUATION_FRAME server frame size (more than allowed)", done => {
+  it("should handle bad CONTINUATION_FRAME server frame size", done => {
     const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers();
     const server = net.createServer(async socket => {
       const settings = new http2utils.SettingsFrame(true);
@@ -1240,6 +1240,40 @@ describe("Client Basics", () => {
         expect(result).toBeDefined();
         expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
         expect(result.message).toBe("Session closed with error code 1");
+        done();
+      } catch (err) {
+        done(err);
+      } finally {
+        server.close();
+      }
+    });
+  });
+
+  it("should handle bad PRIOTITY_FRAME server frame size", done => {
+    const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers();
+    const server = net.createServer(async socket => {
+      const settings = new http2utils.SettingsFrame(true);
+      socket.write(settings.data);
+      await waitToWrite;
+
+      const frame = new http2utils.Frame(4, 2, 0, 1).data;
+      socket.end(Buffer.concat([frame, Buffer.alloc(4)]));
+    });
+    server.listen(0, "localhost", async () => {
+      const url = `http://localhost:${server.address().port}`;
+      try {
+        const { promise, resolve } = Promise.withResolvers();
+        const client = http2.connect(url);
+        client.on("error", resolve);
+        client.on("connect", () => {
+          const req = client.request({ ":path": "/" });
+          req.end();
+          allowWrite();
+        });
+        const result = await promise;
+        expect(result).toBeDefined();
+        expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
+        expect(result.message).toBe("Session closed with error code 6");
         done();
       } catch (err) {
         done(err);

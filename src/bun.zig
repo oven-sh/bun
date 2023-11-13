@@ -2005,3 +2005,18 @@ pub inline fn pathLiteral(comptime literal: anytype) *const [literal.len:0]u8 {
         return &buf;
     };
 }
+
+pub fn exitThread() noreturn {
+    const exiter = struct {
+        pub extern "C" fn pthread_exit(?*anyopaque) noreturn;
+        pub extern "kernel32" fn ExitThread(windows.DWORD) noreturn;
+    };
+
+    if (comptime Environment.isWindows) {
+        exiter.ExitThread(0);
+    } else if (comptime Environment.isPosix) {
+        exiter.pthread_exit(null);
+    } else {
+        @panic("Unsupported platform");
+    }
+}

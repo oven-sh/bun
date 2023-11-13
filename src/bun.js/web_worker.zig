@@ -346,9 +346,8 @@ pub const WebWorker = struct {
         }
 
         arena.deinit();
-        pthread_exit(null);
+        bun.exitThread();
     }
-    extern "C" fn pthread_exit(?*anyopaque) noreturn;
 
     comptime {
         if (!JSC.is_bindgen) {

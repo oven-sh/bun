@@ -2141,26 +2141,12 @@ pub const Arguments = struct {
 
             if (arguments.next()) |current| {
                 arguments.eat();
-                if (current.isNumber() or current.isBigInt()) {
-                    args.offset = current.to(u52);
-
-                    if (arguments.remaining.len < 2) {
+                if (current.isNumber() and arguments.remaining.len != 0) {
+                    var offset = current.to(i54);
+                    if (offset < 0) {
                         JSC.throwInvalidArguments(
-                            "length and position are required",
-                            .{},
-                            ctx,
-                            exception,
-                        );
-
-                        return null;
-                    }
-                    if (arguments.remaining[0].isNumber() or arguments.remaining[0].isBigInt())
-                        args.length = arguments.remaining[0].to(u52);
-
-                    if (args.length == 0) {
-                        JSC.throwInvalidArguments(
-                            "length must be greater than 0",
-                            .{},
+                            "The value of \"offset\" is out of range. It must be >= 0 && <= {}. Received {}",
+                            .{ std.math.maxInt(i54), offset },
                             ctx,
                             exception,
                         );
@@ -2168,28 +2154,227 @@ pub const Arguments = struct {
                         return null;
                     }
 
-                    if (arguments.remaining[1].isNumber() or arguments.remaining[1].isBigInt())
-                        args.position = @as(ReadPosition, @intCast(arguments.remaining[1].to(i52)));
+                    args.offset = current.to(u53);
+                    if (args.offset > args.buffer.buffer.len) {
+                        JSC.throwInvalidArguments(
+                            "The value of \"offset\" should be lesser than buffer length",
+                            .{},
+                            ctx,
+                            exception,
+                        );
 
-                    arguments.remaining = arguments.remaining[2..];
+                        return null;
+                    }
+
+                    //length
+                    if (arguments.remaining.len >= 1) {
+                        if (arguments.remaining[0].isNumber()) {
+                            var length = arguments.remaining[0].to(i54);
+                            if (length < 0) {
+                                JSC.throwInvalidArguments(
+                                    "The value of \"length\" is out of range. It must be >= 0. Received {}",
+                                    .{length},
+                                    ctx,
+                                    exception,
+                                );
+
+                                return null;
+                            }
+
+                            args.length = @as(u53, @truncate(@as(u53, @intCast(length))));
+
+                            var diff = @subWithOverflow(args.buffer.buffer.len, args.offset);
+                            if (diff[1] == 1) {
+                                JSC.throwInvalidArguments(
+                                    "The value of \"length\" is out of range. It must be <= {}. Received {}",
+                                    .{ std.math.maxInt(u52) - diff[0], args.length },
+                                    ctx,
+                                    exception,
+                                );
+
+                                return null;
+                            }
+
+                            if (args.length > diff[0]) {
+                                JSC.throwInvalidArguments(
+                                    "The value of \"length\" is out of range. It must be <= {}. Received {}",
+                                    .{ diff[0], args.length },
+                                    ctx,
+                                    exception,
+                                );
+
+                                return null;
+                            }
+                        } else {
+                            JSC.throwInvalidArguments(
+                                "The \"offset\" argument must be of type number. Received type {s}",
+                                .{@tagName(arguments.remaining[0].jsType())},
+                                ctx,
+                                exception,
+                            );
+
+                            return null;
+                        }
+
+                        arguments.remaining = arguments.remaining[0..];
+                    }
+                    arguments.eat();
+
+                    //position
+                    if (arguments.remaining.len == 1) {
+                        if (arguments.remaining[0].isNumber() or arguments.remaining[0].isBigInt() or arguments.remaining[0].isNull()) {
+                            if (!arguments.remaining[0].isNull()) {
+                                var position = @as(ReadPosition, @intCast(arguments.remaining[0].to(i54)));
+                                if (position < -1) {
+                                    JSC.throwInvalidArguments(
+                                        "Postion should be >=-1 && <= {}. Received {}",
+                                        .{ std.math.maxInt(i54), position },
+                                        ctx,
+                                        exception,
+                                    );
+
+                                    return null;
+                                }
+
+                                args.position = if (position == -1) null else position;
+                            }
+                        } else {
+                            JSC.throwInvalidArguments(
+                                "The \"position\" argument must be of type number or BigInt. Received type {s}",
+                                .{@tagName(arguments.remaining[0].jsType())},
+                                ctx,
+                                exception,
+                            );
+
+                            return null;
+                        }
+                        arguments.remaining = arguments.remaining[0..];
+                    }
                 } else if (current.isObject()) {
                     if (current.getTruthy(ctx.ptr(), "offset")) |num| {
-                        if (num.isNumber() or num.isBigInt()) {
-                            args.offset = num.to(u52);
+                        if (num.isNumber()) {
+                            var offset = num.to(i54);
+                            if (offset < 0) {
+                                JSC.throwInvalidArguments(
+                                    "The value of \"offset\" is out of range. It must be >= 0 && <= {}. Received {}",
+                                    .{ std.math.maxInt(i54), offset },
+                                    ctx,
+                                    exception,
+                                );
+
+                                return null;
+                            }
+
+                            args.offset = current.to(u53);
+                            if (args.offset > args.buffer.buffer.len) {
+                                JSC.throwInvalidArguments(
+                                    "The value of \"offset\" should be less than buffer length",
+                                    .{},
+                                    ctx,
+                                    exception,
+                                );
+
+                                return null;
+                            }
+                        } else {
+                            JSC.throwInvalidArguments(
+                                "The \"offset\" argument must be of type number. Received type {s}",
+                                .{@tagName(num.jsType())},
+                                ctx,
+                                exception,
+                            );
+
+                            return null;
                         }
                     }
 
                     if (current.getTruthy(ctx.ptr(), "length")) |num| {
-                        if (num.isNumber() or num.isBigInt()) {
-                            args.length = num.to(u52);
+                        if (num.isNumber()) {
+                            var length = num.to(i54);
+                            if (length < 0) {
+                                JSC.throwInvalidArguments(
+                                    "The value of \"length\" is out of range. It must be >= 0. Received {}",
+                                    .{length},
+                                    ctx,
+                                    exception,
+                                );
+
+                                return null;
+                            }
+
+                            args.length = @as(u53, @truncate(@as(u53, @intCast(length))));
+
+                            var diff = @subWithOverflow(args.buffer.buffer.len, args.offset);
+                            if (diff[1] == 1) {
+                                JSC.throwInvalidArguments(
+                                    "The value of \"length\" is out of range. It must be <= {}. Received {}",
+                                    .{ std.math.maxInt(u52) - diff[0], args.length },
+                                    ctx,
+                                    exception,
+                                );
+
+                                return null;
+                            }
+
+                            if (args.length > diff[0]) {
+                                JSC.throwInvalidArguments(
+                                    "The value of \"length\" is out of range. It must be <= {}. Received {}",
+                                    .{ diff[0], args.length },
+                                    ctx,
+                                    exception,
+                                );
+
+                                return null;
+                            }
+                        } else {
+                            JSC.throwInvalidArguments(
+                                "The \"length\" argument must be of type number. Received type {s}",
+                                .{@tagName(num.jsType())},
+                                ctx,
+                                exception,
+                            );
+
+                            return null;
                         }
                     }
 
                     if (current.getTruthy(ctx.ptr(), "position")) |num| {
-                        if (num.isNumber() or num.isBigInt()) {
-                            args.position = num.to(i52);
+                        if (num.isNumber() or num.isBigInt() or num.isNull()) {
+                            if (!num.isNull()) {
+                                var position = @as(ReadPosition, @intCast(num.to(i54)));
+                                if (position < -1) {
+                                    JSC.throwInvalidArguments(
+                                        "Postion should be >=-1 && <= {}. Received {}",
+                                        .{ std.math.maxInt(i54), position },
+                                        ctx,
+                                        exception,
+                                    );
+
+                                    return null;
+                                }
+
+                                args.position = if (position == -1) null else position;
+                            }
+                        } else {
+                            JSC.throwInvalidArguments(
+                                "The \"position\" argument must be of type number or BigInt. Received type {s}",
+                                .{@tagName(num.jsType())},
+                                ctx,
+                                exception,
+                            );
+
+                            return null;
                         }
                     }
+                } else {
+                    JSC.throwInvalidArguments(
+                        "The \"offset\" argument must be of type object. Received type {s}",
+                        .{@tagName(current.jsType())},
+                        ctx,
+                        exception,
+                    );
+
+                    return null;
                 }
             }
 

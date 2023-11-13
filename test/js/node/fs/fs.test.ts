@@ -566,6 +566,74 @@ describe("readSync", () => {
     rmSync(dest, { force: true });
   });
 
+  it("works without options object", () => {
+    const dest = join(tmpdir(), "readSync-large-file.txt");
+    rmSync(dest, { force: true });
+
+    const writefd = openSync(dest, "w");
+    writeSync(writefd, Buffer.from([0x10]));
+    closeSync(writefd);
+
+    const fd = openSync(dest, "r");
+    const out = Buffer.alloc(1);
+    const bytes = readSync(fd, out);
+    expect(bytes).toBe(1);
+    expect(out[0]).toBe(0x10);
+    closeSync(fd);
+    rmSync(dest, { force: true });
+  });
+
+  it("works with options object", () => {
+    const dest = join(tmpdir(), "readSync-large-file.txt");
+    rmSync(dest, { force: true });
+
+    const writefd = openSync(dest, "w");
+    writeSync(writefd, Buffer.from([0x10]), 0, 1, 4_900_000_000);
+    closeSync(writefd);
+
+    const fd = openSync(dest, "r");
+    const out = Buffer.alloc(1);
+    const bytes = readSync(fd, out, { offset: 0, length: 1, position: 4_900_000_000 });
+    expect(bytes).toBe(1);
+    expect(out[0]).toBe(0x10);
+    closeSync(fd);
+    rmSync(dest, { force: true });
+  });
+
+  it("works with options object without position", () => {
+    const dest = join(tmpdir(), "readSync-large-file.txt");
+    rmSync(dest, { force: true });
+
+    const writefd = openSync(dest, "w");
+    writeSync(writefd, Buffer.from([0x10]), 0, 1);
+    closeSync(writefd);
+
+    const fd = openSync(dest, "r");
+    const out = Buffer.alloc(1);
+    const bytes = readSync(fd, out, { offset: 0, length: 1 });
+    expect(bytes).toBe(1);
+    expect(out[0]).toBe(0x10);
+    closeSync(fd);
+    rmSync(dest, { force: true });
+  });
+
+  it("works with options object without position and length", () => {
+    const dest = join(tmpdir(), "readSync-large-file.txt");
+    rmSync(dest, { force: true });
+
+    const writefd = openSync(dest, "w");
+    writeSync(writefd, Buffer.from([0x10]), 0, 1);
+    closeSync(writefd);
+
+    const fd = openSync(dest, "r");
+    const out = Buffer.alloc(1);
+    const bytes = readSync(fd, out, { offset: 0 });
+    expect(bytes).toBe(1);
+    expect(out[0]).toBe(0x10);
+    closeSync(fd);
+    rmSync(dest, { force: true });
+  });
+
   it("works with bigint on read", () => {
     const dest = join(tmpdir(), "readSync-large-file-bigint.txt");
     rmSync(dest, { force: true });
@@ -595,11 +663,26 @@ describe("readSync", () => {
     }
     closeSync(fd);
   });
+
+  it("works with a position set to null", () => {
+    const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
+    const four = new Uint8Array(4);
+
+    {
+      const count = readSync(fd, four, 0, 4, null);
+      const u32 = new Uint32Array(four.buffer)[0];
+      expect(u32).toBe(firstFourBytes);
+      expect(count).toBe(4);
+    }
+    closeSync(fd);
+  });
+
   it("works without position set", () => {
     const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
     const four = new Uint8Array(4);
+
     {
-      const count = readSync(fd, four);
+      const count = readSync(fd, four, 0, 4);
       const u32 = new Uint32Array(four.buffer)[0];
       expect(u32).toBe(firstFourBytes);
       expect(count).toBe(4);

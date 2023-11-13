@@ -582,7 +582,7 @@ pub const VirtualMachine = struct {
     modules: ModuleLoader.AsyncModule.Queue = .{},
     aggressive_garbage_collection: GCLevel = GCLevel.none,
 
-    parser_arena: ?@import("root").bun.ArenaAllocator = null,
+    parser_arena: ?*@import("root").bun.ArenaAllocator = null,
 
     gc_controller: JSC.GarbageCollectionController = .{},
     worker: ?*JSC.WebWorker = null,
@@ -875,6 +875,20 @@ pub const VirtualMachine = struct {
         }
     }
 
+    pub fn scriptExecutionStatus(this: *VirtualMachine) callconv(.C) JSC.ScriptExecutionStatus {
+        if (this.worker) |worker| {
+            if (worker.requested_terminate) {
+                return .stopped;
+            }
+        }
+
+        return .running;
+    }
+
+    comptime {
+        @export(scriptExecutionStatus, .{ .name = "Bun__VM__scriptExecutionStatus" });
+    }
+
     pub fn onExit(this: *VirtualMachine) void {
         this.exit_handler.dispatchOnExit();
 
@@ -1160,7 +1174,7 @@ pub const VirtualMachine = struct {
             .ref_strings_mutex = Lock.init(),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
             .standalone_module_graph = opts.graph.?,
-            .parser_arena = @import("root").bun.ArenaAllocator.init(allocator),
+            .parser_arena = null,
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -1269,7 +1283,7 @@ pub const VirtualMachine = struct {
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = Lock.init(),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
-            .parser_arena = @import("root").bun.ArenaAllocator.init(allocator),
+            .parser_arena = null,
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -1406,7 +1420,7 @@ pub const VirtualMachine = struct {
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = Lock.init(),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
-            .parser_arena = @import("root").bun.ArenaAllocator.init(allocator),
+            .parser_arena = null,
             .standalone_module_graph = worker.parent.standalone_module_graph,
             .worker = worker,
         };
@@ -1451,7 +1465,7 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.global = vm.global;
         vm.regular_event_loop.virtual_machine = vm;
         vm.jsc = vm.global.vm();
-
+        vm.bundler.setAllocator(allocator);
         if (source_code_printer == null) {
             var writer = try js_printer.BufferWriter.init(allocator);
             source_code_printer = allocator.create(js_printer.BufferPrinter) catch unreachable;
@@ -2183,12 +2197,12 @@ pub const VirtualMachine = struct {
                 return promise;
             }
 
-            var promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(main_file_name));
+            var promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(main_file_name)) orelse return error.JSError;
             this.pending_internal_promise = promise;
             JSC.JSValue.fromCell(promise).ensureStillAlive();
             return promise;
         } else {
-            var promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(this.main));
+            var promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(this.main)) orelse return error.JSError;
             this.pending_internal_promise = promise;
             JSC.JSValue.fromCell(promise).ensureStillAlive();
 
@@ -2217,7 +2231,7 @@ pub const VirtualMachine = struct {
             }
         }
 
-        var promise = JSModuleLoader.import(this.global, &String.fromBytes(this.main));
+        var promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.fromBytes(this.main)) orelse return error.JSError;
         this.pending_internal_promise = promise;
         JSC.JSValue.fromCell(promise).ensureStillAlive();
 
@@ -2228,9 +2242,14 @@ pub const VirtualMachine = struct {
     pub fn loadEntryPointForWebWorker(this: *VirtualMachine, entry_path: string) anyerror!*JSInternalPromise {
         var promise = try this.reloadEntryPoint(entry_path);
         this.eventLoop().performGC();
-        this.waitForPromise(JSC.AnyPromise{
+        this.eventLoop().waitForPromiseWithTermination(JSC.AnyPromise{
             .Internal = promise,
         });
+        if (this.worker) |worker| {
+            if (worker.requested_terminate) {
+                return error.WorkerTerminated;
+            }
+        }
         return this.pending_internal_promise;
     }
 
@@ -2332,7 +2351,7 @@ pub const VirtualMachine = struct {
         };
 
         this.runWithAPILock(MacroEntryPointLoader, &loader, MacroEntryPointLoader.load);
-        return loader.promise;
+        return loader.promise orelse return error.JSError;
     }
 
     /// A subtlelty of JavaScriptCore:
@@ -2346,16 +2365,16 @@ pub const VirtualMachine = struct {
 
     const MacroEntryPointLoader = struct {
         path: string,
-        promise: *JSInternalPromise = undefined,
+        promise: ?*JSInternalPromise = null,
         pub fn load(this: *MacroEntryPointLoader) void {
             this.promise = VirtualMachine.get()._loadMacroEntryPoint(this.path);
         }
     };
 
-    pub inline fn _loadMacroEntryPoint(this: *VirtualMachine, entry_path: string) *JSInternalPromise {
+    pub inline fn _loadMacroEntryPoint(this: *VirtualMachine, entry_path: string) ?*JSInternalPromise {
         var promise: *JSInternalPromise = undefined;
 
-        promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(entry_path));
+        promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(entry_path)) orelse return null;
         this.waitForPromise(JSC.AnyPromise{
             .Internal = promise,
         });

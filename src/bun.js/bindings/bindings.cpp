@@ -2533,24 +2533,19 @@ JSC__JSInternalPromise*
 JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject* globalObject,
     const BunString* arg1)
 {
-    auto name = arg1->toWTFString();
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto name = makeAtomString(arg1->toWTFString());
 
     auto* promise = JSC::loadAndEvaluateModule(globalObject, name, JSC::jsUndefined(), JSC::jsUndefined());
     if (!promise) {
-        // usually this is a GC issue
-        return jsCast<JSC::JSInternalPromise*>(JSC::JSInternalPromise::rejectedPromise(globalObject, JSC::jsUndefined()));
+        return nullptr;
     }
 
     JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(
-        globalObject->vm(), globalObject, 1, String(), resolverFunctionCallback);
-    JSC::JSNativeStdFunction* rejecterFunction = JSC::JSNativeStdFunction::create(
-        globalObject->vm(), globalObject, 1, String(),
-        [&arg1](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
-            return JSC::JSValue::encode(
-                JSC::JSInternalPromise::rejectedPromise(globalObject, callFrame->argument(0)));
-        });
+        vm, globalObject, 1, String(), resolverFunctionCallback);
 
-    auto result = promise->then(globalObject, resolverFunction, rejecterFunction);
+    auto result = promise->then(globalObject, resolverFunction, nullptr);
 
     // if (promise->status(globalObject->vm()) ==
     // JSC::JSPromise::Status::Fulfilled) {

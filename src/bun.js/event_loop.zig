@@ -1180,6 +1180,22 @@ pub const EventLoop = struct {
         }
     }
 
+    pub fn waitForPromiseWithTermination(this: *EventLoop, promise: JSC.AnyPromise) void {
+        var worker = this.virtual_machine.worker orelse @panic("EventLoop.waitForPromiseWithTermination: worker is not initialized");
+        switch (promise.status(this.virtual_machine.jsc)) {
+            JSC.JSPromise.Status.Pending => {
+                while (!worker.requested_terminate and promise.status(this.virtual_machine.jsc) == .Pending) {
+                    this.tick();
+
+                    if (!worker.requested_terminate and promise.status(this.virtual_machine.jsc) == .Pending) {
+                        this.autoTick();
+                    }
+                }
+            },
+            else => {},
+        }
+    }
+
     // TODO: this implementation is terrible
     // we should not be checking the millitimestamp every time
     pub fn waitForPromiseWithTimeout(this: *EventLoop, promise: JSC.AnyPromise, timeout: u32) bool {

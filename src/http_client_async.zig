@@ -482,7 +482,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
                 const active = ActiveSocket.from(bun.cast(**anyopaque, ptr).*);
                 if (active.get(HTTPClient)) |client| {
-                    if (handshake_error.error_no != 0 and (client.reject_unauthorized or !authorized) and (client.tls_props == null or client.tls_props.?.ca == null)) {
+                    if (handshake_error.error_no != 0 and (client.reject_unauthorized or !authorized)) {
                         client.closeAndFail(BoringSSL.getCertErrorFromNo(handshake_error.error_no), comptime ssl, socket);
                         return;
                     }

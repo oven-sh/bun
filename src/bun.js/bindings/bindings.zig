@@ -1857,6 +1857,11 @@ pub const JSModuleLoader = extern struct {
         });
     }
 
+    extern fn JSModuleLoader__import(*JSGlobalObject, *const bun.String) *JSInternalPromise;
+    pub fn import(globalObject: *JSGlobalObject, module_name: *const bun.String) *JSInternalPromise {
+        return JSModuleLoader__import(globalObject, module_name);
+    }
+
     // pub fn dependencyKeysIfEvaluated(this: *JSModuleLoader, globalObject: *JSGlobalObject, moduleRecord: *JSModuleRecord) *JSValue {
     //     return shim.cppFn("dependencyKeysIfEvaluated", .{ this, globalObject, moduleRecord });
     // }

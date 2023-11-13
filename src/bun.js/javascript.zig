@@ -2120,7 +2120,7 @@ pub const VirtualMachine = struct {
                     return error.ModuleNotFound;
                 },
             };
-            var promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.fromBytes(result.path().?.text));
+            var promise = JSModuleLoader.import(this.global, &String.fromBytes(result.path().?.text));
 
             this.pending_internal_promise = promise;
             JSValue.fromCell(promise).protect();
@@ -2171,27 +2171,29 @@ pub const VirtualMachine = struct {
         );
         this.eventLoop().ensureWaker();
 
-        var promise: *JSInternalPromise = undefined;
-
         if (this.debugger != null) {
             try Debugger.create(this, this.global);
         }
 
         if (!this.bundler.options.disable_transpilation) {
-            if (try this.loadPreloads()) |prom| {
-                promise = prom;
+            if (try this.loadPreloads()) |promise| {
+                JSC.JSValue.fromCell(promise).ensureStillAlive();
+                JSC.JSValue.fromCell(promise).protect();
+                this.pending_internal_promise = promise;
+                return promise;
             }
 
-            promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(main_file_name));
+            var promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(main_file_name));
             this.pending_internal_promise = promise;
             JSC.JSValue.fromCell(promise).ensureStillAlive();
+            return promise;
         } else {
-            promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(this.main));
+            var promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(this.main));
             this.pending_internal_promise = promise;
             JSC.JSValue.fromCell(promise).ensureStillAlive();
-        }
 
-        return promise;
+            return promise;
+        }
     }
 
     pub fn reloadEntryPointForTestRunner(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
@@ -2201,19 +2203,21 @@ pub const VirtualMachine = struct {
 
         this.eventLoop().ensureWaker();
 
-        var promise: *JSInternalPromise = undefined;
-
         if (this.debugger != null) {
             try Debugger.create(this, this.global);
         }
 
         if (!this.bundler.options.disable_transpilation) {
-            if (try this.loadPreloads()) |prom| {
-                promise = prom;
+            if (try this.loadPreloads()) |promise| {
+                JSC.JSValue.fromCell(promise).ensureStillAlive();
+                this.pending_internal_promise = promise;
+                JSC.JSValue.fromCell(promise).protect();
+
+                return promise;
             }
         }
 
-        promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.fromBytes(this.main));
+        var promise = JSModuleLoader.import(this.global, &String.fromBytes(this.main));
         this.pending_internal_promise = promise;
         JSC.JSValue.fromCell(promise).ensureStillAlive();
 
@@ -2249,6 +2253,10 @@ pub const VirtualMachine = struct {
                 else => {},
             }
         } else {
+            if (promise.status(this.global.vm()) == .Rejected) {
+                return promise;
+            }
+
             this.eventLoop().performGC();
             this.waitForPromise(JSC.AnyPromise{
                 .Internal = promise,
@@ -2279,6 +2287,10 @@ pub const VirtualMachine = struct {
                 else => {},
             }
         } else {
+            if (promise.status(this.global.vm()) == .Rejected) {
+                return promise;
+            }
+
             this.eventLoop().performGC();
             this.waitForPromise(JSC.AnyPromise{
                 .Internal = promise,

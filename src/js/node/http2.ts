@@ -373,7 +373,12 @@ function streamErrorFromCode(code: number) {
   error.errno = code;
   return error;
 }
-
+function sessionErrorFromCode(code: number) {
+  const error = new Error(`Session closed with error code ${code}`);
+  error.code = "ERR_HTTP2_SESSION_ERROR";
+  error.errno = code;
+  return error;
+}
 function assertSession(session) {
   if (!session) {
     const error = new Error(`ERR_HTTP2_INVALID_SESSION: The session has been destroyed`);
@@ -801,7 +806,8 @@ class ClientHttp2Session extends Http2Session {
       }
     },
     error(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
-      self.emit("error", new Error(`ERR_HTTP2_SESSION_ERROR: error code ${errorCode}`));
+      self.emit("error", sessionErrorFromCode(errorCode));
+
       self[bunHTTP2Socket]?.end();
       self[bunHTTP2Socket] = null;
       self.#parser?.detach();
@@ -838,7 +844,7 @@ class ClientHttp2Session extends Http2Session {
         for (let [_, stream] of self.#streams) {
           if (!stream[bunHTTP2Closed]) {
             stream[bunHTTP2Closed] = true;
-            stream.destroy(new Error(`ERR_HTTP2_SESSION_ERROR: Session closed with error code ${errorCode}`));
+            stream.destroy(sessionErrorFromCode(errorCode));
           }
         }
       }

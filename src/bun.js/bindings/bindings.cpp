@@ -2036,7 +2036,15 @@ JSC__JSObject* JSC__JSString__toObject(JSC__JSString* arg0, JSC__JSGlobalObject*
 // JSC__JSGlobalObject* arg1, JSC__JSModuleRecord* arg2) {
 //     arg2->depen
 // }
+extern "C" JSC::JSInternalPromise* JSModuleLoader__import(JSC::JSGlobalObject* globalObject, const BunString* moduleNameStr)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto* promise = JSC::importModule(globalObject, JSC::Identifier::fromString(globalObject->vm(), moduleNameStr->toWTFString()), jsUndefined(), jsUndefined(), jsUndefined());
 
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return promise;
+}
 JSC__JSValue JSC__JSModuleLoader__evaluate(JSC__JSGlobalObject* globalObject, const unsigned char* arg1,
     size_t arg2, const unsigned char* originUrlPtr, size_t originURLLen, const unsigned char* referrerUrlPtr, size_t referrerUrlLen,
     JSC__JSValue JSValue5, JSC__JSValue* arg6)

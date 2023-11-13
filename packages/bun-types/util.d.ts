@@ -126,8 +126,7 @@ declare module "util" {
    * // when printed to a terminal.
    * ```
    */
-  // FIXME: util.formatWithOptions is typed, but is not defined in the polyfill
-  // export function formatWithOptions(inspectOptions: InspectOptions, format?: any, ...param: any[]): string;
+  export function formatWithOptions(inspectOptions: InspectOptions, format?: any, ...param: any[]): string;
   /**
    * Returns the string name for a numeric error code that comes from a Node.js API.
    * The mapping between error codes and error names is platform-dependent.

@@ -44,6 +44,7 @@ typedef struct BunString {
 
     inline void ref();
     inline void deref();
+    static size_t utf8ByteLength(const WTF::String&);
 } BunString;
 
 typedef struct ZigErrorType {

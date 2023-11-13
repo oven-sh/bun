@@ -969,7 +969,7 @@ pub const TestCommand = struct {
             const file_end = reporter.jest.files.len;
 
             for (file_start..file_end) |module_id| {
-                const module = reporter.jest.files.items(.module_scope)[module_id];
+                const module: *jest.DescribeScope = reporter.jest.files.items(.module_scope)[module_id];
 
                 vm.onUnhandledRejectionCtx = null;
                 vm.onUnhandledRejection = jest.TestRunnerTask.onUnhandledRejection;

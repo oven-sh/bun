@@ -101,29 +101,8 @@ pub const URL = struct {
         return "localhost";
     }
 
-    pub const HostFormatter = struct {
-        host: string,
-        port: ?u16 = null,
-        is_https: bool = false,
-
-        pub fn format(formatter: HostFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            if (strings.indexOfChar(formatter.host, ':') != null) {
-                try writer.writeAll(formatter.host);
-                return;
-            }
-
-            try writer.writeAll(formatter.host);
-
-            const is_port_optional = formatter.port == null or (formatter.is_https and formatter.port == 443) or
-                (!formatter.is_https and formatter.port == 80);
-            if (!is_port_optional) {
-                try writer.print(":{d}", .{formatter.port.?});
-                return;
-            }
-        }
-    };
-    pub fn displayHost(this: *const URL) HostFormatter {
-        return HostFormatter{
+    pub fn displayHost(this: *const URL) strings.HostFormatter {
+        return strings.HostFormatter{
             .host = if (this.host.len > 0) this.host else this.displayHostname(),
             .port = if (this.port.len > 0) this.getPort() else null,
             .is_https = this.isHTTPS(),

@@ -1,7 +1,7 @@
 "use strict";
 
 import jwt from "jsonwebtoken";
-import { expect, describe, it, beforeEach } from "bun:test";
+import { expect, describe, it, beforeEach, afterEach } from "bun:test";
 import util from "util";
 import testUtils from "./test-utils";
 import jws from "jws";

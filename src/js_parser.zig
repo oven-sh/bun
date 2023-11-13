@@ -87,13 +87,13 @@ const SkipTypeParameterResult = enum {
 
 const TypeParameterFlag = packed struct {
     /// TypeScript 4.7
-    allow_in_out_variance_annoatations: bool = false,
+    allow_in_out_variance_annotations: bool = false,
 
     /// TypeScript 5.0
     allow_const_modifier: bool = false,
 
     pub const all = TypeParameterFlag{
-        .allow_in_out_variance_annoatations = true,
+        .allow_in_out_variance_annotations = true,
         .allow_const_modifier = true,
     };
 };
@@ -8196,7 +8196,7 @@ fn NewParser_(
                     }
 
                     if (p.lexer.token == .t_in) {
-                        if (invalid_modifier_range.len == 0 and (!flags.allow_in_out_variance_annoatations or has_in or has_out)) {
+                        if (invalid_modifier_range.len == 0 and (!flags.allow_in_out_variance_annotations or has_in or has_out)) {
                             // Valid:
                             //   "type Foo<in T> = T"
                             // Invalid:
@@ -8213,7 +8213,7 @@ fn NewParser_(
 
                     if (p.lexer.isContextualKeyword("out")) {
                         const r = p.lexer.range();
-                        if (invalid_modifier_range.len == 0 and !flags.allow_in_out_variance_annoatations) {
+                        if (invalid_modifier_range.len == 0 and !flags.allow_in_out_variance_annotations) {
                             // Valid:
                             //   "type Foo<out T> = T"
                             // Invalid:
@@ -8369,7 +8369,7 @@ fn NewParser_(
             // Even anonymous classes can have TypeScript type parameters
             if (is_typescript_enabled) {
                 _ = try p.skipTypeScriptTypeParameters(.{
-                    .allow_in_out_variance_annoatations = true,
+                    .allow_in_out_variance_annotations = true,
                     .allow_const_modifier = true,
                 });
             }
@@ -9804,7 +9804,7 @@ fn NewParser_(
                 p.local_type_names.put(p.allocator, name, true) catch unreachable;
             }
 
-            _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annoatations = true });
+            _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annotations = true });
 
             try p.lexer.expect(.t_equals);
             try p.skipTypeScriptType(.lowest);
@@ -9932,7 +9932,7 @@ fn NewParser_(
                 p.local_type_names.put(p.allocator, name, true) catch unreachable;
             }
 
-            _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annoatations = true });
+            _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annotations = true });
 
             if (p.lexer.token == .t_extends) {
                 try p.lexer.next();
@@ -13677,7 +13677,7 @@ fn NewParser_(
 
                     // Even anonymous classes can have TypeScript type parameters
                     if (is_typescript_enabled) {
-                        _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annoatations = true, .allow_const_modifier = true });
+                        _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annotations = true, .allow_const_modifier = true });
                     }
 
                     const class = try p.parseClass(classKeyword, name, ParseClassOptions{});
@@ -14131,7 +14131,6 @@ fn NewParser_(
 
             var previous_string_with_backslash_loc = logger.Loc{};
             var properties = G.Property.List{};
-            var key_prop: ?G.Property = null;
             var key_prop_i: i32 = -1;
             var flags = Flags.JSXElement.Bitset{};
             var start_tag: ?ExprNodeIndex = null;
@@ -14183,12 +14182,7 @@ fn NewParser_(
                                 value = try p.parseJSXPropValueIdentifier(&previous_string_with_backslash_loc);
                             }
 
-                            if (special_prop == .key) {
-                                // defer appending key prop
-                                key_prop = G.Property{ .key = prop_name, .value = value };
-                            } else {
-                                try props.append(G.Property{ .key = prop_name, .value = value });
-                            }
+                            try props.append(G.Property{ .key = prop_name, .value = value });
                         },
                         .t_open_brace => {
                             defer i += 1;
@@ -14271,9 +14265,6 @@ fn NewParser_(
                     try p.log.addWarning(p.source, spread_loc, "\"key\" prop before a {...spread} is deprecated in JSX. Falling back to classic runtime.");
                     p.has_classic_runtime_warned = true;
                 }
-                if (key_prop) |_key_prop| {
-                    try props.append(_key_prop);
-                }
                 properties = G.Property.List.fromList(props);
             }
 
@@ -14315,7 +14306,7 @@ fn NewParser_(
                 return p.newExpr(E.JSXElement{
                     .tag = start_tag,
                     .properties = properties,
-                    .original_key_prop_i = key_prop_i,
+                    .key_prop_index = key_prop_i,
                     .flags = flags,
                     .close_tag_loc = close_tag_loc,
                 }, loc);
@@ -14390,7 +14381,7 @@ fn NewParser_(
                             .tag = end_tag.data.asExpr(),
                             .children = ExprNodeList.fromList(children),
                             .properties = properties,
-                            .original_key_prop_i = key_prop_i,
+                            .key_prop_index = key_prop_i,
                             .flags = flags,
                             .close_tag_loc = end_tag.range.loc,
                         }, loc);
@@ -14919,30 +14910,18 @@ fn NewParser_(
                                 }
                             };
 
-                            const jsx_props = brk: {
-                                const slice = e_.properties.slice();
-                                if (e_.original_key_prop_i != -1) break :brk slice[0 .. slice.len - 1];
-                                break :brk slice;
-                            };
-                            for (jsx_props, 0..) |property, i| {
-                                // make sure key is visited in the same order it was parsed
-                                if (i == e_.original_key_prop_i) {
-                                    const last = e_.properties.len - 1;
-                                    if (e_.properties.ptr[last].value != null) {
-                                        e_.properties.ptr[last].value = p.visitExpr(e_.properties.ptr[last].value.?);
-                                    }
-                                }
-
+                            const all_props: []G.Property = e_.properties.slice();
+                            for (all_props) |*property| {
                                 if (property.kind != .spread) {
-                                    e_.properties.ptr[i].key = p.visitExpr(e_.properties.ptr[i].key.?);
+                                    property.key = p.visitExpr(property.key.?);
                                 }
 
                                 if (property.value != null) {
-                                    e_.properties.ptr[i].value = p.visitExpr(e_.properties.ptr[i].value.?);
+                                    property.value = p.visitExpr(property.value.?);
                                 }
 
                                 if (property.initializer != null) {
-                                    e_.properties.ptr[i].initializer = p.visitExpr(e_.properties.ptr[i].initializer.?);
+                                    property.initializer = p.visitExpr(property.initializer.?);
                                 }
                             }
 
@@ -15009,6 +14988,10 @@ fn NewParser_(
                                     // --- These must be done in all cases --
                                     const allocator = p.allocator;
                                     var props: std.ArrayListUnmanaged(G.Property) = e_.properties.list();
+
+                                    const maybe_key_value: ?ExprNodeIndex =
+                                        if (e_.key_prop_index > -1) props.orderedRemove(@intCast(e_.key_prop_index)).value else null;
+
                                     // arguments needs to be like
                                     // {
                                     //    ...props,
@@ -15043,11 +15026,7 @@ fn NewParser_(
                                     const is_static_jsx = e_.children.len > 1;
 
                                     // if (p.options.jsx.development) {
-                                    const maybe_key_value: ?ExprNodeIndex = if (e_.original_key_prop_i != -1) brk: {
-                                        var value = props.items[props.items.len - 1].value;
-                                        props.items.len -= 1;
-                                        break :brk value;
-                                    } else null;
+
                                     switch (e_.children.len) {
                                         0 => {},
                                         1 => {
@@ -15105,6 +15084,7 @@ fn NewParser_(
                                             };
                                         } else p.newExpr(E.Null{}, expr.loc);
                                         var jsx_element = p.allocator.alloc(G.Property, 6) catch unreachable;
+
                                         const props_object = p.newExpr(
                                             E.Object{
                                                 .properties = G.Property.List.fromList(props),

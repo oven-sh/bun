@@ -2404,6 +2404,8 @@ declare module "bun" {
      */
     readonly pendingWebSockets: number;
 
+    readonly url: URL;
+
     readonly port: number;
     /**
      * The hostname the server is listening on. Does not include the port
@@ -2575,6 +2577,22 @@ declare module "bun" {
    * This is read-only
    */
   const stdin: BunFile;
+
+  type StringLike = string | { toString(): string };
+
+  interface semver {
+    /**
+     * Test if the version satisfies the range. Stringifies both arguments. Returns `true` or `false`.
+     */
+    satisfies(version: StringLike, range: StringLike): boolean;
+
+    /**
+     * Returns 0 if the versions are equal, 1 if `v1` is greater, or -1 if `v2` is greater.
+     * Throws an error if either version is invalid.
+     */
+    order(v1: StringLike, v2: StringLike): -1 | 0 | 1;
+  }
+  export const semver: semver;
 
   interface unsafe {
     /**

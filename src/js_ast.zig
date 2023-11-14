@@ -6791,37 +6791,44 @@ pub const Macro = struct {
 
             std.debug.assert(!isMacroPath(import_record_path_without_macro_prefix));
 
-            const resolve_result = this.resolver.resolve(source_dir, import_record_path_without_macro_prefix, .stmt) catch |err| {
-                switch (err) {
-                    error.ModuleNotFound => {
-                        log.addResolveError(
-                            source,
-                            import_range,
-                            log.msgs.allocator,
-                            "Macro \"{s}\" not found",
-                            .{import_record_path},
-                            .stmt,
-                            err,
-                        ) catch unreachable;
-                        return error.MacroNotFound;
-                    },
-                    else => {
-                        log.addRangeErrorFmt(
-                            source,
-                            import_range,
-                            log.msgs.allocator,
-                            "{s} resolving macro \"{s}\"",
-                            .{ @errorName(err), import_record_path },
-                        ) catch unreachable;
-                        return err;
-                    },
+            const input_specifier = brk: {
+                if (JSC.HardcodedModule.Aliases.get(import_record_path, .bun)) |replacement| {
+                    break :brk replacement.path;
                 }
+
+                const resolve_result = this.resolver.resolve(source_dir, import_record_path_without_macro_prefix, .stmt) catch |err| {
+                    switch (err) {
+                        error.ModuleNotFound => {
+                            log.addResolveError(
+                                source,
+                                import_range,
+                                log.msgs.allocator,
+                                "Macro \"{any}\" not found",
+                                .{import_record_path},
+                                .stmt,
+                                err,
+                            ) catch unreachable;
+                            return error.MacroNotFound;
+                        },
+                        else => {
+                            log.addRangeErrorFmt(
+                                source,
+                                import_range,
+                                log.msgs.allocator,
+                                "{s} resolving macro \"{s}\"",
+                                .{ @errorName(err), import_record_path },
+                            ) catch unreachable;
+                            return err;
+                        },
+                    }
+                };
+                break :brk resolve_result.path_pair.primary.text;
             };
 
             var specifier_buf: [64]u8 = undefined;
             var specifier_buf_len: u32 = 0;
             const hash = MacroEntryPoint.generateID(
-                resolve_result.path_pair.primary.text,
+                input_specifier,
                 function_name,
                 &specifier_buf,
                 &specifier_buf_len,
@@ -6832,7 +6839,7 @@ pub const Macro = struct {
                 macro_entry.value_ptr.* = Macro.init(
                     default_allocator,
                     this.resolver,
-                    resolve_result,
+                    input_specifier,
                     log,
                     this.env,
                     function_name,
@@ -6883,15 +6890,13 @@ pub const Macro = struct {
     pub fn init(
         _: std.mem.Allocator,
         resolver: *Resolver,
-        resolved: ResolveResult,
+        input_specifier: []const u8,
         log: *logger.Log,
         env: *DotEnv.Loader,
         function_name: string,
         specifier: string,
         hash: i32,
     ) !Macro {
-        const path = resolved.path_pair.primary;
-
         var vm: *JavaScript.VirtualMachine = if (JavaScript.VirtualMachine.isLoaded())
             JavaScript.VirtualMachine.get()
         else brk: {
@@ -6917,7 +6922,7 @@ pub const Macro = struct {
 
         vm.enableMacroMode();
 
-        var loaded_result = try vm.loadMacroEntryPoint(path.text, function_name, specifier, hash);
+        var loaded_result = try vm.loadMacroEntryPoint(input_specifier, function_name, specifier, hash);
 
         if (loaded_result.status(vm.global.vm()) == JSC.JSPromise.Status.Rejected) {
             vm.runErrorHandler(loaded_result.result(vm.global.vm()), null);
@@ -6931,7 +6936,6 @@ pub const Macro = struct {
 
         return Macro{
             .vm = vm,
-            .resolved = resolved,
             .resolver = resolver,
         };
     }

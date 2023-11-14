@@ -1596,12 +1596,38 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
     };
 
     var file = tmpfile.file();
+    {
+        var bytes = std.ArrayList(u8).init(bun.default_allocator);
+        defer bytes.deinit();
+        var total_size: usize = 0;
+        var end_pos: usize = 0;
+        Lockfile.Serializer.save(this, &bytes, &total_size, &end_pos) catch |err| {
+            tmpfile.dir().deleteFileZ(tmpname) catch {};
+            Output.prettyErrorln("<r><red>error:<r> failed to serialize lockfile: {s}", .{@errorName(err)});
+            Global.crash();
+        };
+        if (bytes.items.len >= end_pos)
+            bytes.items[end_pos..][0..@sizeOf(usize)].* = @bitCast(total_size);
 
-    Lockfile.Serializer.save(this, std.fs.File, file) catch |err| {
-        tmpfile.dir().deleteFileZ(tmpname) catch {};
-        Output.prettyErrorln("<r><red>error:<r> failed to serialize lockfile: {s}", .{@errorName(err)});
-        Global.crash();
-    };
+        var node_fs: bun.JSC.Node.NodeFS = undefined;
+        switch (node_fs.writeFile(
+            .{
+                .file = .{
+                    .fd = bun.fdcast(file.handle),
+                },
+                .dirfd = bun.invalid_fd,
+                .data = .{ .string = bytes.items },
+            },
+            .sync,
+        )) {
+            .err => |e| {
+                tmpfile.dir().deleteFileZ(tmpname) catch {};
+                Output.prettyErrorln("<r><red>error:<r> failed to write lockfile\n{}", .{e});
+                Global.crash();
+            },
+            .result => {},
+        }
+    }
 
     if (comptime Environment.isWindows) {
         // TODO: make this executable
@@ -4312,8 +4338,8 @@ pub const Package = extern struct {
 
             const really_end_at = try stream.getPos();
 
-            _ = try std.os.pwrite(stream.handle, std.mem.asBytes(&really_begin_at), begin_at);
-            _ = try std.os.pwrite(stream.handle, std.mem.asBytes(&really_end_at), end_at);
+            _ = stream.pwrite(std.mem.asBytes(&really_begin_at), begin_at);
+            _ = stream.pwrite(std.mem.asBytes(&really_end_at), end_at);
         }
 
         pub fn load(
@@ -4522,14 +4548,14 @@ const Buffers = struct {
             const positioned = [2]u64{ real_start_pos, real_end_pos };
             var written: usize = 0;
             while (written < 16) {
-                written += try std.os.pwrite(stream.handle, std.mem.asBytes(&positioned)[written..], start_pos + written);
+                written += stream.pwrite(std.mem.asBytes(&positioned)[written..], start_pos + written);
             }
         } else {
             const real_end_pos = try stream.getPos();
             const positioned = [2]u64{ real_end_pos, real_end_pos };
             var written: usize = 0;
             while (written < 16) {
-                written += try std.os.pwrite(stream.handle, std.mem.asBytes(&positioned)[written..], start_pos + written);
+                written += stream.pwrite(std.mem.asBytes(&positioned)[written..], start_pos + written);
             }
         }
     }
@@ -4693,22 +4719,39 @@ pub const Serializer = struct {
     const has_trusted_dependencies_tag: u64 = @bitCast([_]u8{ 't', 'R', 'u', 'S', 't', 'E', 'D', 'd' });
     const has_overrides_tag: u64 = @bitCast([_]u8{ 'o', 'V', 'e', 'R', 'r', 'i', 'D', 's' });
 
-    pub fn save(this: *Lockfile, comptime StreamType: type, stream: StreamType) !void {
+    pub fn save(this: *Lockfile, bytes: *std.ArrayList(u8), total_size: *usize, end_pos: *usize) !void {
         var old_package_list = this.packages;
         this.packages = try this.packages.clone(z_allocator);
         old_package_list.deinit(this.allocator);
 
-        var writer = stream.writer();
+        var writer = bytes.writer();
         try writer.writeAll(header_bytes);
         try writer.writeInt(u32, @intFromEnum(this.format), .little);
 
         try writer.writeAll(&this.meta_hash);
 
-        const pos = try stream.getPos();
+        end_pos.* = bytes.items.len;
         try writer.writeInt(u64, 0, .little);
 
-        try Lockfile.Package.Serializer.save(this.packages, StreamType, stream, @TypeOf(&writer), &writer);
-        try Lockfile.Buffers.save(this.buffers, z_allocator, StreamType, stream, @TypeOf(&writer), &writer);
+        const StreamType = struct {
+            bytes: *std.ArrayList(u8),
+            pub inline fn getPos(s: @This()) anyerror!usize {
+                return s.bytes.items.len;
+            }
+
+            pub fn pwrite(
+                s: @This(),
+                data: []const u8,
+                index: usize,
+            ) usize {
+                @memcpy(s.bytes.items[index..][0..data.len], data);
+                return data.len;
+            }
+        };
+        const stream = StreamType{ .bytes = bytes };
+
+        try Lockfile.Package.Serializer.save(this.packages, StreamType, stream, @TypeOf(writer), writer);
+        try Lockfile.Buffers.save(this.buffers, z_allocator, StreamType, stream, @TypeOf(writer), writer);
         try writer.writeInt(u64, 0, .little);
 
         // < Bun v1.0.4 stopped right here when reading the lockfile
@@ -4721,16 +4764,16 @@ pub const Serializer = struct {
             try Lockfile.Buffers.writeArray(
                 StreamType,
                 stream,
-                @TypeOf(&writer),
-                &writer,
+                @TypeOf(writer),
+                writer,
                 []PackageNameHash,
                 this.workspace_versions.keys(),
             );
             try Lockfile.Buffers.writeArray(
                 StreamType,
                 stream,
-                @TypeOf(&writer),
-                &writer,
+                @TypeOf(writer),
+                writer,
                 []Semver.Version,
                 this.workspace_versions.values(),
             );
@@ -4738,16 +4781,16 @@ pub const Serializer = struct {
             try Lockfile.Buffers.writeArray(
                 StreamType,
                 stream,
-                @TypeOf(&writer),
-                &writer,
+                @TypeOf(writer),
+                writer,
                 []PackageNameHash,
                 this.workspace_paths.keys(),
             );
             try Lockfile.Buffers.writeArray(
                 StreamType,
                 stream,
-                @TypeOf(&writer),
-                &writer,
+                @TypeOf(writer),
+                writer,
                 []String,
                 this.workspace_paths.values(),
             );
@@ -4759,8 +4802,8 @@ pub const Serializer = struct {
             try Lockfile.Buffers.writeArray(
                 StreamType,
                 stream,
-                @TypeOf(&writer),
-                &writer,
+                @TypeOf(writer),
+                writer,
                 []u32,
                 this.trusted_dependencies.keys(),
             );
@@ -4772,8 +4815,8 @@ pub const Serializer = struct {
             try Lockfile.Buffers.writeArray(
                 StreamType,
                 stream,
-                @TypeOf(&writer),
-                &writer,
+                @TypeOf(writer),
+                writer,
                 []PackageNameHash,
                 this.overrides.map.keys(),
             );
@@ -4787,19 +4830,16 @@ pub const Serializer = struct {
             try Lockfile.Buffers.writeArray(
                 StreamType,
                 stream,
-                @TypeOf(&writer),
-                &writer,
+                @TypeOf(writer),
+                writer,
                 []Dependency.External,
                 external_overrides.items,
             );
         }
 
-        const end = try stream.getPos();
+        total_size.* = try stream.getPos();
 
         try writer.writeAll(&alignment_bytes_to_repeat_buffer);
-
-        _ = try std.os.pwrite(stream.handle, std.mem.asBytes(&end), pos);
-        try std.os.ftruncate(stream.handle, try stream.getPos());
     }
     pub fn load(
         lockfile: *Lockfile,

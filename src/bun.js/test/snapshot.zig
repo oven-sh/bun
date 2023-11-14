@@ -127,6 +127,7 @@ pub const Snapshots = struct {
             &temp_log,
             &source,
             vm.bundler.options.define,
+            vm.bundler.env.map,
             this.allocator,
         );
 

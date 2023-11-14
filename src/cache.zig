@@ -17,6 +17,7 @@ const js_parser = bun.js_parser;
 const json_parser = bun.JSON;
 const options = @import("./options.zig");
 const Define = @import("./defines.zig").Define;
+const EnvMap = @import("./env_loader.zig").Map;
 const std = @import("std");
 const fs = @import("./fs.zig");
 const sync = @import("sync.zig");
@@ -244,11 +245,12 @@ pub const JavaScript = struct {
         allocator: std.mem.Allocator,
         opts: js_parser.Parser.Options,
         defines: *Define,
+        env: *EnvMap,
         log: *logger.Log,
         source: *const logger.Source,
     ) anyerror!?js_ast.Result {
         var temp_log = logger.Log.init(allocator);
-        var parser = js_parser.Parser.init(opts, &temp_log, source, defines, allocator) catch {
+        var parser = js_parser.Parser.init(opts, &temp_log, source, defines, env, allocator) catch {
             temp_log.appendToMaybeRecycled(log, source) catch {};
             return null;
         };
@@ -272,6 +274,7 @@ pub const JavaScript = struct {
         scan_pass_result: *js_parser.ScanPassResult,
         opts: js_parser.Parser.Options,
         defines: *Define,
+        env: *EnvMap,
         log: *logger.Log,
         source: *const logger.Source,
     ) anyerror!void {
@@ -282,7 +285,7 @@ pub const JavaScript = struct {
         var temp_log = logger.Log.init(allocator);
         defer temp_log.appendToMaybeRecycled(log, source) catch {};
 
-        var parser = js_parser.Parser.init(opts, &temp_log, source, defines, allocator) catch return;
+        var parser = js_parser.Parser.init(opts, &temp_log, source, defines, env, allocator) catch return;
 
         return try parser.scanImports(scan_pass_result);
     }

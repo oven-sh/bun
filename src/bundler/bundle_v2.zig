@@ -2386,7 +2386,7 @@ pub const ParseTask = struct {
 
     fn getEmptyAST(log: *Logger.Log, bundler: *Bundler, opts: js_parser.Parser.Options, allocator: std.mem.Allocator, source: Logger.Source, comptime RootType: type) !JSAst {
         const root = Expr.init(RootType, RootType{}, Logger.Loc.Empty);
-        return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
+        return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, bundler.env.map, opts, log, root, &source, "")).?);
     }
 
     fn getAST(
@@ -2408,6 +2408,7 @@ pub const ParseTask = struct {
                     bundler.allocator,
                     opts,
                     bundler.options.define,
+                    bundler.env.map,
                     log,
                     &source,
                 )) |res|
@@ -2427,20 +2428,20 @@ pub const ParseTask = struct {
                 const trace = tracer(@src(), "ParseJSON");
                 defer trace.end();
                 const root = (try resolver.caches.json.parseJSON(log, source, allocator)) orelse Expr.init(E.Object, E.Object{}, Logger.Loc.Empty);
-                return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
+                return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, bundler.env.map, opts, log, root, &source, "")).?);
             },
             .toml => {
                 const trace = tracer(@src(), "ParseTOML");
                 defer trace.end();
                 const root = try TOML.parse(&source, log, allocator);
-                return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
+                return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, bundler.env.map, opts, log, root, &source, "")).?);
             },
             .text => {
                 const root = Expr.init(E.String, E.String{
                     .data = source.contents,
                     .prefer_template = true,
                 }, Logger.Loc{ .start = 0 });
-                return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
+                return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, bundler.env.map, opts, log, root, &source, "")).?);
             },
             // TODO: css
             else => {
@@ -2449,7 +2450,7 @@ pub const ParseTask = struct {
                     .data = unique_key,
                 }, Logger.Loc{ .start = 0 });
                 unique_key_for_additional_file.* = unique_key;
-                return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
+                return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, bundler.env.map, opts, log, root, &source, "")).?);
             },
         }
     }

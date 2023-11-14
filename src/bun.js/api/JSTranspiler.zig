@@ -1313,6 +1313,7 @@ pub fn scanImports(
         &this.scan_pass_result,
         opts,
         bundler.options.define,
+        bundler.env.map,
         &log,
         &source,
     ) catch |err| {

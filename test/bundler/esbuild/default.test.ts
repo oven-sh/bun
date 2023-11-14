@@ -2786,6 +2786,37 @@ describe("bundler", () => {
       bunArgs: ["--define", 'import.meta.url="url_here"', "--define", 'import.meta.path="path_here"'],
     },
   });
+  itBundled("default/ImportMetaEnv", {
+    files: {
+      "/entry.js":
+        "console.log([" +
+        "import.meta.env.BUN_A," + // basic access
+        "import.meta['env'].BUN_A," + // access the env object with ['']
+        "import.meta['env']['BUN_A']," + // access both with ['']
+        "import.meta.env['BUN_A']," + // access env with ['']
+        'import.meta.env["BUN_A"],' + // access env with [""]
+        "import.meta.env[`BUN_A`]," + // access env with [``]
+        "import.meta.env.BUN_A.length," + // access a subproperty
+        "import.meta.env['BUN_A'].length," +
+        "import.meta.env.BUN_A['length']," +
+        "import.meta.env['BUN_A']['length']," +
+        "import.meta.env.BUN_B," +
+        "import.meta.env.BUN_C," + // access undefined env, should return undefined
+        "import.meta.env.BUN_C?.length," + // access undefined env subproperty
+        "import.meta.env.SECRET," + // access an env which should be hidden and act as if didn't exist
+        "import.meta.env.BUN_DEFINED," + // access an env that has also exists as a define
+        "import.meta.env[0]," + // indexing the env object with a non-string value, should leave it as is
+        "].map(x => '' + x).join(','))",
+    },
+    env: { "BUN_A": "A", "BUN_B": "B", "SECRET": "S", "BUN_DEFINED": "0" },
+    bundling: false,
+    run: {
+      stdout: "A,A,A,A,A,A,1,1,1,1,B,undefined,undefined,undefined,D,undefined",
+    },
+    define: {
+      "import.meta.env.BUN_DEFINED": "'D'",
+    },
+  });
   itBundled("default/LegalCommentsNone", {
     files: {
       "/entry.js": /* js */ `

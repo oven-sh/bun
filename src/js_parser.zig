@@ -22,6 +22,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const G = js_ast.G;
+const EnvMap = @import("./env_loader.zig").Map;
 const Define = @import("./defines.zig").Define;
 const DefineData = @import("./defines.zig").DefineData;
 const FeatureFlags = @import("./feature_flags.zig");
@@ -2793,6 +2794,7 @@ pub const Parser = struct {
     log: *logger.Log,
     source: *const logger.Source,
     define: *Define,
+    env: *EnvMap,
     allocator: Allocator,
 
     pub const Options = struct {
@@ -2847,7 +2849,7 @@ pub const Parser = struct {
     fn _scanImports(self: *Parser, comptime ParserType: type, scan_pass: *ScanPassResult) anyerror!void {
         var p: ParserType = undefined;
 
-        try ParserType.init(self.allocator, self.log, self.source, self.define, self.lexer, self.options, &p);
+        try ParserType.init(self.allocator, self.log, self.source, self.define, self.env, self.lexer, self.options, &p);
         p.import_records = &scan_pass.import_records;
         p.named_imports = &scan_pass.named_imports;
 
@@ -2915,7 +2917,7 @@ pub const Parser = struct {
 
     pub fn toLazyExportAST(this: *Parser, expr: Expr, comptime runtime_api_call: []const u8) !js_ast.Result {
         var p: JavaScriptParser = undefined;
-        try JavaScriptParser.init(this.allocator, this.log, this.source, this.define, this.lexer, this.options, &p);
+        try JavaScriptParser.init(this.allocator, this.log, this.source, this.define, this.env, this.lexer, this.options, &p);
         p.lexer.track_comments = this.options.features.minify_identifiers;
         p.should_fold_typescript_constant_expressions = this.options.features.should_fold_typescript_constant_expressions;
         defer p.lexer.deinit();
@@ -3050,7 +3052,7 @@ pub const Parser = struct {
     fn _parse(self: *Parser, comptime ParserType: type) !js_ast.Result {
         var p: ParserType = undefined;
         const orig_error_count = self.log.errors;
-        try ParserType.init(self.allocator, self.log, self.source, self.define, self.lexer, self.options, &p);
+        try ParserType.init(self.allocator, self.log, self.source, self.define, self.env, self.lexer, self.options, &p);
         p.should_fold_typescript_constant_expressions = self.options.features.should_fold_typescript_constant_expressions;
         defer p.lexer.deinit();
         var result: js_ast.Result = undefined;
@@ -3895,12 +3897,13 @@ pub const Parser = struct {
         return js_ast.Result{ .ast = try p.toAST(parts_slice, exports_kind, wrapper_expr, hashbang) };
     }
 
-    pub fn init(_options: Options, log: *logger.Log, source: *const logger.Source, define: *Define, allocator: Allocator) !Parser {
+    pub fn init(_options: Options, log: *logger.Log, source: *const logger.Source, define: *Define, env: *EnvMap, allocator: Allocator) !Parser {
         return Parser{
             .options = _options,
             .allocator = allocator,
             .lexer = try js_lexer.Lexer.init(log, source.*, allocator),
             .define = define,
+            .env = env,
             .source = source,
             .log = log,
         };
@@ -4382,6 +4385,7 @@ fn NewParser_(
         options: Parser.Options,
         log: *logger.Log,
         define: *Define,
+        env: *EnvMap,
         source: *const logger.Source,
         lexer: js_lexer.Lexer,
         allow_in: bool = false,
@@ -14706,6 +14710,16 @@ fn NewParser_(
             return if (was_anonymous_named_expr) p.keepExprSymbolName(expr, original_name) else expr;
         }
 
+        /// To prevent accidentally leaking env variables to the client,
+        /// filter which env variables can be accessed by reading import.meta.env
+        ///  during build-time
+        fn shouldExposeEnvVariable(name: string) bool {
+            if (strings.hasPrefixComptime(name, "BUN_") or strings.hasPrefixComptime(name, "VITE_")) {
+                return true;
+            }
+            return false;
+        }
+
         fn valueForThis(p: *P, loc: logger.Loc) ?Expr {
             // Substitute "this" if we're inside a static class property initializer
             if (p.fn_only_data_visit.should_replace_this_with_class_name_ref) {
@@ -15766,6 +15780,28 @@ fn NewParser_(
                                     }
                                 }
                             }
+
+                            // replace env vars from import.meta.env.BUN_SOMEENV
+                            var is_env_access = false;
+                            switch (e_.target.data) {
+                                .e_dot => |ee| {
+                                    is_env_access = (ee.target.data == .e_import_meta and strings.eqlComptime(ee.name, "env"));
+                                },
+                                .e_index => |ee| {
+                                    if (ee.target.data == .e_import_meta and ee.index.data == .e_string and ee.index.data.e_string.isUTF8()) {
+                                        is_env_access = (strings.eqlComptime(ee.index.data.e_string.slice(p.allocator), "env"));
+                                    }
+                                },
+                                else => {},
+                            }
+                            if (is_env_access) {
+                                if (shouldExposeEnvVariable(literal)) {
+                                    if (p.env.get(literal)) |value| {
+                                        return p.newExpr(E.String.init(value), expr.loc);
+                                    }
+                                }
+                                return p.newExpr(E.Undefined{}, expr.loc);
+                            }
                         }
                         // "foo"[2]
                     } else if ((comptime FeatureFlags.inline_properties_in_transpiler) and
@@ -15954,6 +15990,28 @@ fn NewParser_(
                                 break;
                             }
                         }
+                    }
+
+                    // replace env vars from import.meta.env.BUN_SOMEENV
+                    var is_env_access = false;
+                    switch (e_.target.data) {
+                        .e_dot => |ee| {
+                            is_env_access = (ee.target.data == .e_import_meta and strings.eqlComptime(ee.name, "env"));
+                        },
+                        .e_index => |ee| {
+                            if (ee.target.data == .e_import_meta and ee.index.data == .e_string and ee.index.data.e_string.isUTF8()) {
+                                is_env_access = (strings.eqlComptime(ee.index.data.e_string.slice(p.allocator), "env"));
+                            }
+                        },
+                        else => {},
+                    }
+                    if (is_env_access) {
+                        if (shouldExposeEnvVariable(e_.name)) {
+                            if (p.env.get(e_.name)) |value| {
+                                return p.newExpr(E.String.init(value), expr.loc);
+                            }
+                        }
+                        return p.newExpr(E.Undefined{}, expr.loc);
                     }
 
                     // Track ".then().catch()" chains
@@ -21948,6 +22006,7 @@ fn NewParser_(
             log: *logger.Log,
             source: *const logger.Source,
             define: *Define,
+            env: *EnvMap,
             lexer: js_lexer.Lexer,
             opts: Parser.Options,
             this: *P,
@@ -21976,6 +22035,7 @@ fn NewParser_(
                 .expr_list = .{},
                 .loop_body = nullStmtData,
                 .define = define,
+                .env = env,
                 .import_records = undefined,
                 .named_imports = undefined,
                 .named_exports = js_ast.Ast.NamedExports.init(allocator),
@@ -22096,6 +22156,7 @@ const DeferredArrowArgErrors = struct {
 pub fn newLazyExportAST(
     allocator: std.mem.Allocator,
     define: *Define,
+    env: *EnvMap,
     opts: Parser.Options,
     log_to_copy_into: *logger.Log,
     expr: Expr,
@@ -22109,6 +22170,7 @@ pub fn newLazyExportAST(
         .allocator = allocator,
         .lexer = js_lexer.Lexer.initWithoutReading(log, source.*, allocator),
         .define = define,
+        .env = env,
         .source = source,
         .log = log,
     };

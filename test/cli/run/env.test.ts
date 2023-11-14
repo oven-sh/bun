@@ -1,4 +1,5 @@
 import { describe, expect, test, beforeAll, afterAll } from "bun:test";
+import vm from "node:vm";
 import { bunRun, bunRunAsScript, bunTest, tempDirWithFiles, bunExe, bunEnv } from "harness";
 import path from "path";
 
@@ -473,6 +474,8 @@ describe("access from different apis", () => {
       "index3.ts": "console.log(import.meta.env.FOO);",
       "index4.ts": "console.log(import.meta.env.FOO + Bun.env.FOO);",
       "index5.ts": "console.log(Bun.env.FOO + import.meta.env.FOO);",
+      "overwrite.ts":
+        "import.meta.env.FOO = '2'; import.meta.env.BAR = '2'; console.log(import.meta.env.FOO + import.meta.env.BAR + Bun.env.BAR);",
     });
   });
 
@@ -481,6 +484,17 @@ describe("access from different apis", () => {
   test("only import.meta.env", () => expect(bunRun(`${dir}/index3.ts`).stdout).toBe("1"));
   test("import.meta.env as 1st access", () => expect(bunRun(`${dir}/index4.ts`).stdout).toBe("11"));
   test("import.meta.env as 2nd access", () => expect(bunRun(`${dir}/index5.ts`).stdout).toBe("11"));
+
+  test("values in import.meta.env can be modified", () => {
+    expect(bunRun(`${dir}/overwrite.ts`).stdout).toBe("222");
+  });
+
+  //test("import.meta.env works inside node:vm", () => {
+  //  const context = { out: '0' };
+  //  vm.createContext(context);
+  //  vm.runInContext("out = import.meta.env.FOO", context);
+  //  expect(context.out).toBe(undefined);
+  //});
 });
 
 describe("--env-file", () => {

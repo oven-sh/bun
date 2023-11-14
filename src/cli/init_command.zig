@@ -41,6 +41,9 @@ pub const InitCommand = struct {
 
         const input = try std.io.getStdIn().reader().readUntilDelimiterAlloc(alloc, '\n', 1024);
         if (input.len > 0) {
+            if (strings.endsWithChar(input, '\r')) {
+                return input[0 .. input.len - 1];
+            }
             return input;
         } else {
             return default;

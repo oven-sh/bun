@@ -912,7 +912,7 @@ if(WIN32)
 
     set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
     target_compile_options(${bun} PUBLIC "/EHsc" "/GR-")
-    target_link_options(${bun} PUBLIC "/STACK:4194304,2097152")
+    target_link_options(${bun} PUBLIC "/STACK:0x1200000,0x100000")
 else()
     target_compile_options(${bun} PUBLIC
         -fPIC

@@ -452,7 +452,7 @@ it("path.relative", () => {
   const failures = [];
   const cwd = process.cwd();
   const cwdParent = path.dirname(cwd);
-  const parentIsRoot = cwdParent == "/";
+  const parentIsRoot = process.platform === "win32" ? cwdParent.match(/^[A-Z]:\\$/) : cwdParent === "/";
 
   const relativeTests = [
     [
@@ -503,7 +503,7 @@ it("path.relative", () => {
         ["/baz-quux", "/baz", "../baz"],
         ["/baz", "/baz-quux", "../baz-quux"],
         ["/page1/page2/foo", "/", "../../.."],
-        [process.cwd(), "foo", "foo"],
+        [path.posix.resolve("."), "foo", "foo"],
         ["/webpack", "/webpack", ""],
         ["/webpack/", "/webpack", ""],
         ["/webpack", "/webpack/", ""],
@@ -512,12 +512,12 @@ it("path.relative", () => {
         ["/webp4ck-hot-middleware", "/webpack/buildin/module.js", "../webpack/buildin/module.js"],
         ["/webpack-hot-middleware", "/webp4ck/buildin/module.js", "../webp4ck/buildin/module.js"],
         ["/var/webpack-hot-middleware", "/var/webpack/buildin/module.js", "../webpack/buildin/module.js"],
-        ["/app/node_modules/pkg", "../static", `../../..${parentIsRoot ? "" : cwdParent}/static`],
-        ["/app/node_modules/pkg", "../../static", `../../..${parentIsRoot ? "" : path.dirname(cwdParent)}/static`],
-        ["/app", "../static", `..${parentIsRoot ? "" : cwdParent}/static`],
+        ["/app/node_modules/pkg", "../static", `../../..${parentIsRoot ? "" : path.posix.resolve("../")}/static`],
+        ["/app/node_modules/pkg", "../../static", `../../..${parentIsRoot ? "" : path.posix.resolve("../../")}/static`],
+        ["/app", "../static", `..${parentIsRoot ? "" : path.posix.resolve("../")}/static`],
         ["/app", "../".repeat(64) + "static", "../static"],
         [".", "../static", cwd == "/" ? "static" : "../static"],
-        ["/", "../static", parentIsRoot ? "static" : `${cwdParent}/static`.slice(1)],
+        ["/", "../static", parentIsRoot ? "static" : `${path.posix.resolve("../")}/static`.slice(1)],
         ["../", "../", ""],
         ["../", "../../", parentIsRoot ? "" : ".."],
         ["../../", "../", parentIsRoot ? "" : path.basename(cwdParent)],

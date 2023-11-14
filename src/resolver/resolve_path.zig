@@ -179,10 +179,10 @@ pub fn longestCommonPathGeneric(input: []const []const u8, comptime platform: Pl
         inline 2, 3, 4, 5, 6, 7, 8 => |n| {
             // If volume IDs do not match on windows, we can't have a common path
             if (platform == .windows) {
-                const first_root = windowsVolumeNameForRelative(input[0]);
+                const first_root = windowsFilesystemRoot(input[0]);
                 comptime var i = 1;
                 inline while (i < n) : (i += 1) {
-                    const root = windowsVolumeNameForRelative(input[i]);
+                    const root = windowsFilesystemRoot(input[i]);
                     if (!strings.eqlCaseInsensitiveASCIIICheckLength(first_root, root)) {
                         return "";
                     }
@@ -201,10 +201,10 @@ pub fn longestCommonPathGeneric(input: []const []const u8, comptime platform: Pl
         else => {
             // If volume IDs do not match on windows, we can't have a common path
             if (platform == .windows) {
-                const first_root = windowsVolumeNameForRelative(input[0]);
+                const first_root = windowsFilesystemRoot(input[0]);
                 var i: usize = 1;
                 while (i < input.len) : (i += 1) {
-                    const root = windowsVolumeNameForRelative(input[i]);
+                    const root = windowsFilesystemRoot(input[i]);
                     if (!strings.eqlCaseInsensitiveASCIIICheckLength(first_root, root)) {
                         return "";
                     }
@@ -295,8 +295,8 @@ pub fn relativeToCommonPath(
     var normalized_from = normalized_from_;
     var normalized_to = normalized_to_;
     const win_root_len = if (platform == .windows) k: {
-        const from_root = windowsVolumeNameForRelative(normalized_from_);
-        const to_root = windowsVolumeNameForRelative(normalized_to_);
+        const from_root = windowsFilesystemRoot(normalized_from_);
+        const to_root = windowsFilesystemRoot(normalized_to_);
 
         if (common_path_.len == 0) {
             // the only case path.relative can return not a relative string
@@ -541,9 +541,14 @@ fn windowsVolumeNameLen(path: []const u8) struct { usize, usize } {
     return .{ 0, 0 };
 }
 
+pub fn windowsVolumeName(path: []const u8) []const u8 {
+    return path[0..@call(.always_inline, windowsVolumeNameLen, .{path})[0]];
+}
+
 // path.relative lets you do relative across different share drives
-fn windowsVolumeNameForRelative(path: []const u8) []const u8 {
-    if (path.len < 3) return path[0..0];
+pub fn windowsFilesystemRoot(path: []const u8) []const u8 {
+    if (path.len < 3)
+        return if (isSepAny(path[0])) path[0..1] else path[0..0];
     // with drive letter
     var c = path[0];
     if (path[1] == ':' and isSepAny(path[2])) {
@@ -1218,10 +1223,10 @@ fn _joinAbsStringBufWindows(
         out += part_without_vol.len;
     }
 
-    if (out > 0 and temp_buf[out - 1] != '\\') {
-        temp_buf[out] = '\\';
-        out += 1;
-    }
+    // if (out > 0 and temp_buf[out - 1] != '\\') {
+    //     temp_buf[out] = '\\';
+    //     out += 1;
+    // }
 
     const result = normalizeStringBuf(
         temp_buf[0..out],
@@ -1772,3 +1777,54 @@ pub fn nextDirname(path_: []const u8) ?[]const u8 {
 
     return path[0 .. end_index + 1];
 }
+
+/// The use case of this is when you do
+///     "import '/hello/world'"
+/// The windows disk designator is missing!
+///
+/// Defaulting to C would work but the correct behavior is to use a known disk designator,
+/// via an absolute path from the referrer or what not.
+///
+/// I've made it so that trying to read a file with a posix path is a debug assertion failure.
+///
+/// To use this, stack allocate the following struct, and then call `resolve`.
+///
+///     var normalizer = PosixToWinNormalizer{};
+///     var result = normalizer.resolve("C:\\dev\\bun", "/dev/bun/test/etc.js");
+///
+/// This API does nothing on Linux (it has a size of zero)
+pub const PosixToWinNormalizer = struct {
+    const Buf = if (bun.Environment.isWindows) bun.PathBuffer else void;
+
+    _raw_bytes: Buf = undefined,
+
+    pub inline fn resolve(
+        this: *PosixToWinNormalizer,
+        source_dir: []const u8,
+        maybe_posix_path: []const u8,
+    ) []const u8 {
+        return internalResolve(&this._raw_bytes, source_dir, maybe_posix_path);
+    }
+
+    fn internalResolve(
+        buf: *Buf,
+        source_dir: []const u8,
+        maybe_posix_path: []const u8,
+    ) []const u8 {
+        std.debug.assert(std.fs.path.isAbsolute(source_dir));
+        std.debug.assert(std.fs.path.isAbsolute(maybe_posix_path));
+
+        if (!bun.Environment.isWindows)
+            return maybe_posix_path;
+
+        const root = windowsFilesystemRoot(maybe_posix_path);
+        if (root.len == 1) {
+            std.debug.assert(isSepAny(root[0]));
+            const source_root = windowsFilesystemRoot(source_dir);
+            @memcpy(buf[0..source_root.len], source_root);
+            @memcpy(buf[source_root.len..][0 .. maybe_posix_path.len - 1], maybe_posix_path[1..]);
+            return buf[0 .. source_root.len + maybe_posix_path.len - 1];
+        }
+        return maybe_posix_path;
+    }
+};

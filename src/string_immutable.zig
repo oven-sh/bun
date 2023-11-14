@@ -1617,6 +1617,11 @@ pub fn utf16Codepoint(comptime Type: type, input: Type) UTF16Replacement {
     }
 }
 
+fn _hasWindowsDiskDesignator(utf8: []const u8) bool {
+    const disk = std.fs.path.diskDesignatorWindows(utf8);
+    return disk.len > 0 and !bun.strings.eqlComptime(disk, "/");
+}
+
 pub fn fromWPath(buf: []u8, utf16: []const u16) [:0]const u8 {
     std.debug.assert(buf.len > 0);
     const encode_into_result = copyUTF16IntoUTF8(buf[0 .. buf.len - 1], []const u16, utf16, false);
@@ -1700,6 +1705,13 @@ pub fn toWDirPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
 
 pub fn toWPathMaybeDir(wbuf: []u16, utf8: []const u8, comptime add_trailing_lash: bool) [:0]const u16 {
     std.debug.assert(wbuf.len > 0);
+
+    if (Environment.allow_assert) {
+        if (Environment.isWindows and !_hasWindowsDiskDesignator(utf8)) {
+            std.debug.panic("Do not pass posix paths to windows APIs, was given '{s}' (missing a root like 'C:\\', see PosixToWinNormalizer for why this is an assertion)", .{utf8});
+        }
+    }
+
     var result = bun.simdutf.convert.utf8.to.utf16.with_errors.le(
         utf8,
         wbuf[0..wbuf.len -| (1 + @as(usize, @intFromBool(add_trailing_lash)))],

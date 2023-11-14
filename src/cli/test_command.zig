@@ -531,8 +531,6 @@ const Scanner = struct {
 
                 this.search_count += 1;
 
-                std.debug.print("scan; name={s}, dir_path={s}\n", .{ entry.base_.slice(), entry.dir });
-
                 this.dirs_to_scan.writeItem(.{
                     .relative_dir = fd,
                     .name = entry.base_,

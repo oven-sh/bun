@@ -1143,6 +1143,7 @@ pub const Resolver = struct {
             }
 
             // Run node's resolution rules (e.g. adding ".js")
+            // var normalizer = ResolvePath.PosixToWinNormalizer{};
             if (r.loadAsFileOrDirectory(import_path, kind)) |entry| {
                 return .{
                     .success = Result{
@@ -2430,11 +2431,18 @@ pub const Resolver = struct {
         return r.dir_cache.get(path);
     }
 
+    inline fn isDotSlash(path: string) bool {
+        return switch (Environment.os) {
+            else => strings.eqlComptime(path, "./"),
+            .windows => path.len == 2 and path[0] == '.' and strings.charIsAnySlash(path[1]),
+        };
+    }
+
     fn dirInfoCachedMaybeLog(r: *ThisResolver, __path: string, comptime enable_logging: bool, comptime follow_symlinks: bool) !?*DirInfo {
         r.mutex.lock();
         defer r.mutex.unlock();
         var _path = __path;
-        if (strings.eqlComptime(_path, "./") or strings.eqlComptime(_path, "."))
+        if (isDotSlash(_path) or strings.eqlComptime(_path, "."))
             _path = r.fs.top_level_dir;
 
         const top_result = try r.dir_cache.getOrPut(_path);
@@ -2457,8 +2465,7 @@ pub const Resolver = struct {
             .status = .not_found,
         };
         const root_path = if (comptime Environment.isWindows)
-            // std.fs.path.diskDesignator(path)
-            path[0..3]
+            ResolvePath.windowsFilesystemRoot(path)
         else
             // we cannot just use "/"
             // we will write to the buffer past the ptr len so it must be a non-const buffer
@@ -3934,27 +3941,18 @@ pub const Resolver = struct {
 };
 
 pub const Dirname = struct {
-    pub fn dirname(path_: string) string {
-        var path = path_;
+    pub fn dirname(path: string) string {
+        if (path.len == 0)
+            return std.fs.path.sep_str;
+
         const root = brk: {
             if (Environment.isWindows) {
-                if (path.len > 1 and path[1] == ':' and switch (path[0]) {
-                    'A'...'Z', 'a'...'z' => true,
-                    else => false,
-                }) {
-                    break :brk path[0..2];
-                }
-
-                // TODO: UNC paths
-                // TODO: NT paths
-                break :brk "/c/";
+                const root = ResolvePath.windowsFilesystemRoot(path);
+                std.debug.assert(root.len > 0);
+                break :brk root;
             }
-
             break :brk "/";
         };
-
-        if (path.len == 0)
-            return root;
 
         var end_index: usize = path.len - 1;
         while (bun.path.isSepAny(path[end_index])) {

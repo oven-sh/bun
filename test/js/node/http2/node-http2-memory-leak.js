@@ -29,7 +29,6 @@ const PAYLOAD = "a".repeat(1024 * 1024);
 function assertBaselineWithAVG(baseline, avg) {
   const a = Math.max(baseline, avg);
   const b = Math.min(baseline, avg);
-  console.log("leaked", a / b);
   if (a / b > BASELINE_THRESHOLD) {
     // leak detected
     process.exit(97);

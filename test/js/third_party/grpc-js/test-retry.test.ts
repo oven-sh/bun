@@ -148,7 +148,10 @@ import { describe, it, afterAll, afterEach, beforeAll, beforeEach } from "bun:te
         client.echo({ value: "test value", value2: 3 }, metadata, (error: grpc.ServiceError, response: any) => {
           assert(error);
           //RST_STREAM is a graceful close
-          assert(error.details === "Failed on retry 2" || error.details === "RST_STREAM with code 0", error.details);
+          assert(
+            error.details === "Failed on retry 2" || error.details.indexOf("RST_STREAM with code 0") !== -1,
+            error.details,
+          );
           done();
         });
       });

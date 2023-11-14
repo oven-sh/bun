@@ -173,6 +173,7 @@ const Handlers = struct {
 
     pub fn markActive(this: *Handlers) void {
         Listener.log("markActive", .{});
+
         this.active_connections += 1;
     }
 
@@ -839,7 +840,6 @@ pub const Listener = struct {
             ctx.deinit(this.ssl);
         }
 
-        this.handlers.unprotect();
         this.connection.deinit();
         if (this.protos) |protos| {
             this.protos = null;

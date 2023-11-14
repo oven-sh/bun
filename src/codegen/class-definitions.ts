@@ -51,6 +51,7 @@ export interface ClassDefinition {
   estimatedSize?: boolean;
   hasPendingActivity?: boolean;
   isEventEmitter?: boolean;
+  supportsObjectCreate?: boolean;
 
   getInternalProperties?: boolean;
 
@@ -59,6 +60,8 @@ export interface ClassDefinition {
   configurable?: boolean;
   enumerable?: boolean;
   structuredClone?: boolean | { transferable: boolean; tag: number };
+
+  callbacks?: Record<string, string>;
 }
 
 export interface CustomField {

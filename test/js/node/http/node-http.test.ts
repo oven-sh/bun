@@ -147,7 +147,7 @@ describe("node:http", () => {
       res.setHeader("Set-Cookie", ["swag=true", "yolo=true"]);
       res.setHeader("test", "test");
       expect(res.getHeaders()).toEqual({
-        "Set-Cookie": ["swag=true", "yolo=true"],
+        "set-cookie": ["swag=true", "yolo=true"],
         "test": "test",
       });
     });
@@ -1409,9 +1409,9 @@ it("IncomingMessage with a RequestLike object", () => {
     "text/plain",
     "user-agent",
     "Bun",
-    "Set-Cookie",
+    "set-cookie",
     "foo=bar",
-    "Set-Cookie",
+    "set-cookie",
     "bar=baz",
     "x-test",
     "test",

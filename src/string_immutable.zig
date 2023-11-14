@@ -418,7 +418,7 @@ pub const StringOrTinyString = struct {
         // This is a switch expression instead of a statement to make sure it uses the faster assembly
         return switch (this.is_tiny_string) {
             1 => this.remainder_buf[0..this.remainder_len],
-            0 => @as([*]const u8, @ptrFromInt(std.mem.readIntNative(usize, this.remainder_buf[0..@sizeOf(usize)])))[0..std.mem.readIntNative(usize, this.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2])],
+            0 => @as([*]const u8, @ptrFromInt(std.mem.readInt(usize, this.remainder_buf[0..@sizeOf(usize)], .little)))[0..std.mem.readInt(usize, this.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2], .little)],
         };
     }
 
@@ -464,8 +464,8 @@ pub const StringOrTinyString = struct {
                     .is_tiny_string = 0,
                     .remainder_len = 0,
                 };
-                std.mem.writeIntNative(usize, tiny.remainder_buf[0..@sizeOf(usize)], @intFromPtr(stringy.ptr));
-                std.mem.writeIntNative(usize, tiny.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2], stringy.len);
+                std.mem.writeInt(usize, tiny.remainder_buf[0..@sizeOf(usize)], @intFromPtr(stringy.ptr), .little);
+                std.mem.writeInt(usize, tiny.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2], stringy.len, .little);
                 return tiny;
             },
         }
@@ -490,8 +490,8 @@ pub const StringOrTinyString = struct {
                     .is_tiny_string = 0,
                     .remainder_len = 0,
                 };
-                std.mem.writeIntNative(usize, tiny.remainder_buf[0..@sizeOf(usize)], @intFromPtr(stringy.ptr));
-                std.mem.writeIntNative(usize, tiny.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2], stringy.len);
+                std.mem.writeInt(usize, tiny.remainder_buf[0..@sizeOf(usize)], @intFromPtr(stringy.ptr), .little);
+                std.mem.writeInt(usize, tiny.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2], stringy.len, .little);
                 return tiny;
             },
         }
@@ -5106,4 +5106,80 @@ pub fn concatIfNeeded(
         remain = remain[arg.len..];
     }
     std.debug.assert(remain.len == 0);
+}
+
+pub const HostFormatter = struct {
+    host: string,
+    port: ?u16 = null,
+    is_https: bool = false,
+
+    pub fn format(formatter: HostFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        if (strings.indexOfChar(formatter.host, ':') != null) {
+            try writer.writeAll(formatter.host);
+            return;
+        }
+
+        try writer.writeAll(formatter.host);
+
+        const is_port_optional = formatter.port == null or (formatter.is_https and formatter.port == 443) or
+            (!formatter.is_https and formatter.port == 80);
+        if (!is_port_optional) {
+            try writer.print(":{d}", .{formatter.port.?});
+            return;
+        }
+    }
+};
+
+const Proto = enum {
+    http,
+    https,
+    unix,
+};
+
+pub const URLFormatter = struct {
+    proto: Proto = .http,
+    hostname: ?string = null,
+    port: ?u16 = null,
+
+    pub fn format(this: URLFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try writer.print("{s}://", .{switch (this.proto) {
+            .http => "http",
+            .https => "https",
+            .unix => "unix",
+        }});
+
+        if (this.hostname) |hostname| {
+            const needs_brackets = hostname[0] != '[' and strings.isIPV6Address(hostname);
+            if (needs_brackets) {
+                try writer.print("[{s}]", .{hostname});
+            } else {
+                try writer.writeAll(hostname);
+            }
+        } else {
+            try writer.writeAll("localhost");
+        }
+
+        if (this.proto == .unix) {
+            return;
+        }
+
+        const is_port_optional = this.port == null or (this.proto == .https and this.port == 443) or
+            (this.proto == .http and this.port == 80);
+        if (is_port_optional) {
+            try writer.writeAll("/");
+        } else {
+            try writer.print(":{d}/", .{this.port.?});
+        }
+    }
+};
+
+pub fn mustEscapeYAMLString(contents: []const u8) bool {
+    if (contents.len == 0) return true;
+    
+    return switch (contents[0]) {
+        'A'...'Z', 'a'...'z' => strings.hasPrefixComptime(contents, "Yes") or strings.hasPrefixComptime(contents, "No") or strings.hasPrefixComptime(contents, "true") or
+            strings.hasPrefixComptime(contents, "false") or
+            std.mem.indexOfAnyPos(u8, contents, 1, ": \t\r\n\x0B\x0C\\\",[]") != null,
+        else => true,
+    };
 }

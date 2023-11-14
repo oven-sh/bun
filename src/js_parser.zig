@@ -87,13 +87,13 @@ const SkipTypeParameterResult = enum {
 
 const TypeParameterFlag = packed struct {
     /// TypeScript 4.7
-    allow_in_out_variance_annoatations: bool = false,
+    allow_in_out_variance_annotations: bool = false,
 
     /// TypeScript 5.0
     allow_const_modifier: bool = false,
 
     pub const all = TypeParameterFlag{
-        .allow_in_out_variance_annoatations = true,
+        .allow_in_out_variance_annotations = true,
         .allow_const_modifier = true,
     };
 };
@@ -958,7 +958,6 @@ pub const ImportScanner = struct {
                     //
                     var did_remove_star_loc = false;
                     const keep_unused_imports = !p.options.features.trim_unused_imports;
-
                     // TypeScript always trims unused imports. This is important for
                     // correctness since some imports might be fake (only in the type
                     // system and used for type-only imports).
@@ -8196,7 +8195,7 @@ fn NewParser_(
                     }
 
                     if (p.lexer.token == .t_in) {
-                        if (invalid_modifier_range.len == 0 and (!flags.allow_in_out_variance_annoatations or has_in or has_out)) {
+                        if (invalid_modifier_range.len == 0 and (!flags.allow_in_out_variance_annotations or has_in or has_out)) {
                             // Valid:
                             //   "type Foo<in T> = T"
                             // Invalid:
@@ -8213,7 +8212,7 @@ fn NewParser_(
 
                     if (p.lexer.isContextualKeyword("out")) {
                         const r = p.lexer.range();
-                        if (invalid_modifier_range.len == 0 and !flags.allow_in_out_variance_annoatations) {
+                        if (invalid_modifier_range.len == 0 and !flags.allow_in_out_variance_annotations) {
                             // Valid:
                             //   "type Foo<out T> = T"
                             // Invalid:
@@ -8369,7 +8368,7 @@ fn NewParser_(
             // Even anonymous classes can have TypeScript type parameters
             if (is_typescript_enabled) {
                 _ = try p.skipTypeScriptTypeParameters(.{
-                    .allow_in_out_variance_annoatations = true,
+                    .allow_in_out_variance_annotations = true,
                     .allow_const_modifier = true,
                 });
             }
@@ -9804,7 +9803,7 @@ fn NewParser_(
                 p.local_type_names.put(p.allocator, name, true) catch unreachable;
             }
 
-            _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annoatations = true });
+            _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annotations = true });
 
             try p.lexer.expect(.t_equals);
             try p.skipTypeScriptType(.lowest);
@@ -9932,7 +9931,7 @@ fn NewParser_(
                 p.local_type_names.put(p.allocator, name, true) catch unreachable;
             }
 
-            _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annoatations = true });
+            _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annotations = true });
 
             if (p.lexer.token == .t_extends) {
                 try p.lexer.next();
@@ -10951,6 +10950,10 @@ fn NewParser_(
                                         } else if (str.eqlComptime("use asm")) {
                                             skip = true;
                                             stmt.data = Prefill.Data.SEmpty;
+                                        } else {
+                                            stmt = Stmt.alloc(S.Directive, S.Directive{
+                                                .value = str.slice(p.allocator),
+                                            }, stmt.loc);
                                         }
                                     }
                                 },
@@ -13677,7 +13680,7 @@ fn NewParser_(
 
                     // Even anonymous classes can have TypeScript type parameters
                     if (is_typescript_enabled) {
-                        _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annoatations = true, .allow_const_modifier = true });
+                        _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annotations = true, .allow_const_modifier = true });
                     }
 
                     const class = try p.parseClass(classKeyword, name, ParseClassOptions{});
@@ -16553,7 +16556,7 @@ fn NewParser_(
                         continue;
                     },
                     .s_directive => |dir| {
-                        if (strings.utf16EqlString(dir.value, "use strict")) {
+                        if (strings.eqlComptime(dir.value, "use strict")) {
                             return stmt.loc;
                         }
                     },
@@ -17583,10 +17586,6 @@ fn NewParser_(
                 },
                 .s_directive => {
                     p.current_scope.is_after_const_local_prefix = was_after_after_const_local_prefix;
-                    //         	if p.isStrictMode() && s.LegacyOctalLoc.Start > 0 {
-                    // 	p.markStrictModeFeature(legacyOctalEscape, p.source.RangeOfLegacyOctalEscape(s.LegacyOctalLoc), "")
-                    // }
-                    return;
                 },
                 .s_import => |data| {
                     try p.recordDeclaredSymbol(data.namespace_ref);

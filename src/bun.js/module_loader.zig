@@ -601,7 +601,7 @@ pub const ModuleLoader = struct {
         loader: Api.Loader,
         hash: u32 = std.math.maxInt(u32),
         globalThis: *JSC.JSGlobalObject = undefined,
-        arena: bun.ArenaAllocator,
+        arena: *bun.ArenaAllocator,
 
         // This is the specific state for making it async
         poll_ref: Async.KeepAlive = .{},
@@ -1314,6 +1314,7 @@ pub const ModuleLoader = struct {
             this.promise.deinit();
             this.parse_result.deinit();
             this.arena.deinit();
+            this.globalThis.bunVM().allocator.destroy(this.arena);
             // bun.default_allocator.free(this.stmt_blocks);
             // bun.default_allocator.free(this.expr_blocks);
 
@@ -1367,37 +1368,41 @@ pub const ModuleLoader = struct {
                     jsc_vm.main_hash == hash and
                     strings.eqlLong(jsc_vm.main, path.text, false);
 
-                var arena: bun.ArenaAllocator = undefined;
+                var arena: ?*bun.ArenaAllocator = brk: {
+                    // Attempt to reuse the Arena from the parser when we can
+                    // This code is potentially re-entrant, so only one Arena can be reused at a time
+                    // That's why we have to check if the Arena is null
+                    //
+                    // Using an Arena here is a significant memory optimization when loading many files
+                    if (jsc_vm.parser_arena) |shared| {
+                        jsc_vm.parser_arena = null;
+                        break :brk shared;
+                    }
+                    // we must allocate the arena so that the pointer it points to is always valid.
+                    var arena = try jsc_vm.allocator.create(bun.ArenaAllocator);
+                    arena.* = bun.ArenaAllocator.init(bun.default_allocator);
+                    break :brk arena;
+                };
 
-                // Attempt to reuse the Arena from the parser when we can
-                // This code is potentially re-entrant, so only one Arena can be reused at a time
-                // That's why we have to check if the Arena is null
-                //
-                // Using an Arena here is a significant memory optimization when loading many files
-                if (jsc_vm.parser_arena) |shared| {
-                    arena = shared;
-                    jsc_vm.parser_arena = null;
-                } else {
-                    arena = bun.ArenaAllocator.init(bun.default_allocator);
-                }
                 var give_back_arena = true;
                 defer {
                     if (give_back_arena) {
                         if (jsc_vm.parser_arena == null) {
                             if (jsc_vm.smol) {
-                                _ = arena.reset(.free_all);
+                                _ = arena.?.reset(.free_all);
                             } else {
-                                _ = arena.reset(.{ .retain_with_limit = 8 * 1024 * 1024 });
+                                _ = arena.?.reset(.{ .retain_with_limit = 8 * 1024 * 1024 });
                             }
 
                             jsc_vm.parser_arena = arena;
                         } else {
-                            arena.deinit();
+                            arena.?.deinit();
+                            jsc_vm.allocator.destroy(arena.?);
                         }
                     }
                 }
 
-                var allocator = arena.allocator();
+                var allocator = arena.?.allocator();
 
                 var fd: ?StoredFileDescriptorType = null;
                 var package_json: ?*PackageJSON = null;
@@ -1623,10 +1628,10 @@ pub const ModuleLoader = struct {
                             .promise_ptr = promise_ptr,
                             .specifier = specifier,
                             .referrer = referrer,
-                            .arena = arena,
+                            .arena = arena.?,
                         },
                     );
-                    arena = bun.ArenaAllocator.init(bun.default_allocator);
+                    arena = null;
                     give_back_arena = false;
                     return error.AsyncModule;
                 }
@@ -2049,7 +2054,7 @@ pub const ModuleLoader = struct {
                 .allocator = null,
                 .source_code = String.init(Runtime.Runtime.sourceContentBun()),
                 .specifier = specifier,
-                .source_url = String.init(Runtime.Runtime.Imports.Name),
+                .source_url = specifier,
                 .hash = Runtime.Runtime.versionHash(),
             };
         } else if (HardcodedModule.Map.getWithEql(specifier, bun.String.eqlComptime)) |hardcoded| {
@@ -2059,7 +2064,7 @@ pub const ModuleLoader = struct {
                         .allocator = null,
                         .source_code = bun.String.create(jsc_vm.entry_point.source.contents),
                         .specifier = specifier,
-                        .source_url = String.init(bun.asByteSlice(JSC.VirtualMachine.main_file_name)),
+                        .source_url = specifier,
                         .hash = 0,
                         .tag = .esm,
                         .needs_deref = true,

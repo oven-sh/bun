@@ -221,7 +221,13 @@ public:
         FunctionRareData* rareData = targetFunction->ensureRareData(vm);
         auto* prototype = newTarget->get(globalObject, vm.propertyNames->prototype).getObject();
         RETURN_IF_EXCEPTION(scope, nullptr);
-        auto* structure = rareData->createInternalFunctionAllocationStructureFromBase(vm, globalObject, prototype, this->structure());
+
+        // This must be kept in-sync with InternalFunction::createSubclassStructure
+        Structure* structure = rareData->internalFunctionAllocationStructure();
+        if (UNLIKELY(!(structure && structure->classInfoForCells() == this->structure()->classInfoForCells() && structure->globalObject() == globalObject))) {
+            structure = rareData->createInternalFunctionAllocationStructureFromBase(vm, globalObject, prototype, this->structure());
+        }
+
         RETURN_IF_EXCEPTION(scope, nullptr);
         NapiPrototype* footprint = new (NotNull, allocateCell<NapiPrototype>(vm)) NapiPrototype(vm, structure);
         footprint->finishCreation(vm);

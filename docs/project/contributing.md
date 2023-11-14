@@ -2,6 +2,30 @@ Configuring a development environment for Bun can take 10-30 minutes depending o
 
 If you are using Windows, you must use a WSL environment as Bun does not yet compile on Windows natively.
 
+## Install Dependencies
+
+Using your system's package manager, install the Bun's dependencies:
+
+{% codetabs %}
+
+```bash#macOS (Homebrew)
+$ brew install automake ccache cmake coreutils gnu-sed go libiconv libtool ninja pkg-config rust
+```
+
+```bash#Ubuntu/Debian
+$ sudo apt install cargo ccache cmake git golang libtool ninja-build pkg-config rustc ruby-full xz-utils
+```
+
+```bash#Arch
+$ sudo pacman -S base-devel ccache cmake git go libiconv libtool make ninja pkg-config python rust sed unzip ruby
+```
+
+```bash#Fedora
+$ sudo dnf install cargo ccache cmake git golang libtool ninja-build pkg-config rustc libatomic-static libstdc++-static sed unzip which libicu-devel
+```
+
+{% /codetabs %}
+
 Before starting, you will need to already have a release build of Bun installed, as we use our bundler to transpile and minify our code, as well as for code generation scripts.
 
 {% codetabs %}
@@ -81,37 +105,13 @@ $ export PATH="$PATH:/usr/lib/llvm16/bin"
 
 {% /codetabs %}
 
-## Install Dependencies
-
-Using your system's package manager, install the rest of Bun's dependencies:
-
-{% codetabs %}
-
-```bash#macOS (Homebrew)
-$ brew install automake ccache cmake coreutils gnu-sed go libiconv libtool ninja pkg-config rust
-```
-
-```bash#Ubuntu/Debian
-$ sudo apt install cargo ccache cmake git golang libtool ninja-build pkg-config rustc ruby-full
-```
-
-```bash#Arch
-$ sudo pacman -S base-devel ccache cmake git go libiconv libtool make ninja pkg-config python rust sed unzip ruby
-```
-
-```bash#Fedora
-$ sudo dnf install cargo ccache cmake git golang libtool ninja-build pkg-config rustc libatomic-static libstdc++-static sed unzip
-```
-
-{% /codetabs %}
-
 ## Install Zig
 
 Zig can be installed either with our npm package [`@oven/zig`](https://www.npmjs.com/package/@oven/zig), or by using [zigup](https://github.com/marler8997/zigup).
 
 ```bash
 $ bun install -g @oven/zig
-$ zigup 0.12.0-dev.1297+a9e66ed73
+$ zigup 0.12.0-dev.1604+caae40c21
 ```
 
 {% callout %}

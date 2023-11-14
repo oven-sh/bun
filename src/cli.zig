@@ -53,7 +53,6 @@ pub const Cli = struct {
 
         var panicker = MainPanicHandler.init(log);
         MainPanicHandler.Singleton = &panicker;
-
         Command.start(allocator, log) catch |err| {
             switch (err) {
                 error.MissingEntryPoint => {
@@ -170,6 +169,7 @@ pub const Arguments = struct {
         clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
         clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
         clap.parseParam("-c, --config <PATH>?              Config file to load Bun from (e.g. -c bunfig.toml") catch unreachable,
+        clap.parseParam("--env-file <STR>...               Load environment variables from the specified file(s)") catch unreachable,
         clap.parseParam("--extension-order <STR>...        Defaults to: .tsx,.ts,.jsx,.js,.json ") catch unreachable,
         clap.parseParam("--jsx-factory <STR>               Changes the function called when compiling JSX elements using the classic JSX runtime") catch unreachable,
         clap.parseParam("--jsx-fragment <STR>              Changes the function called when compiling JSX fragments") catch unreachable,
@@ -526,6 +526,7 @@ pub const Arguments = struct {
         opts.main_fields = args.options("--main-fields");
         // we never actually supported inject.
         // opts.inject = args.options("--inject");
+        opts.env_files = args.options("--env-file");
         opts.extension_order = args.options("--extension-order");
 
         ctx.passthrough = args.remaining();
@@ -1220,6 +1221,12 @@ pub const Command = struct {
     };
 
     pub fn start(allocator: std.mem.Allocator, log: *logger.Log) !void {
+        if (comptime Environment.allow_assert) {
+            if (bun.getenvZ("MI_VERBOSE") == null) {
+                bun.Mimalloc.mi_option_set_enabled(.verbose, false);
+            }
+        }
+
         const BuildCommand = @import("./cli/build_command.zig").BuildCommand;
 
         const AddCommand = @import("./cli/add_command.zig").AddCommand;

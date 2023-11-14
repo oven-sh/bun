@@ -1729,6 +1729,9 @@ pub const Api = struct {
         /// serve
         serve: ?bool = null,
 
+        /// env_files
+        env_files: []const []const u8,
+
         /// extension_order
         extension_order: []const []const u8,
 
@@ -1811,27 +1814,30 @@ pub const Api = struct {
                         this.serve = try reader.readValue(bool);
                     },
                     17 => {
-                        this.extension_order = try reader.readArray([]const u8);
+                        this.env_files = try reader.readArray([]const u8);
                     },
                     18 => {
-                        this.framework = try reader.readValue(FrameworkConfig);
+                        this.extension_order = try reader.readArray([]const u8);
                     },
                     19 => {
-                        this.router = try reader.readValue(RouteConfig);
+                        this.framework = try reader.readValue(FrameworkConfig);
                     },
                     20 => {
-                        this.no_summary = try reader.readValue(bool);
+                        this.router = try reader.readValue(RouteConfig);
                     },
                     21 => {
-                        this.disable_hmr = try reader.readValue(bool);
+                        this.no_summary = try reader.readValue(bool);
                     },
                     22 => {
-                        this.port = try reader.readValue(u16);
+                        this.disable_hmr = try reader.readValue(bool);
                     },
                     23 => {
-                        this.log_level = try reader.readValue(MessageLevel);
+                        this.port = try reader.readValue(u16);
                     },
                     24 => {
+                        this.log_level = try reader.readValue(MessageLevel);
+                    },
+                    25 => {
                         this.source_map = try reader.readValue(SourceMapMode);
                     },
                     else => {
@@ -1907,36 +1913,40 @@ pub const Api = struct {
                 try writer.writeFieldID(16);
                 try writer.writeInt(@as(u8, @intFromBool(serve)));
             }
-            if (this.extension_order) |extension_order| {
+            if (this.env_files) |env_files| {
                 try writer.writeFieldID(17);
+                try writer.writeArray([]const u8, env_files);
+            }
+            if (this.extension_order) |extension_order| {
+                try writer.writeFieldID(18);
                 try writer.writeArray([]const u8, extension_order);
             }
             if (this.framework) |framework| {
-                try writer.writeFieldID(18);
+                try writer.writeFieldID(19);
                 try writer.writeValue(@TypeOf(framework), framework);
             }
             if (this.router) |router| {
-                try writer.writeFieldID(19);
+                try writer.writeFieldID(20);
                 try writer.writeValue(@TypeOf(router), router);
             }
             if (this.no_summary) |no_summary| {
-                try writer.writeFieldID(20);
+                try writer.writeFieldID(21);
                 try writer.writeInt(@as(u8, @intFromBool(no_summary)));
             }
             if (this.disable_hmr) |disable_hmr| {
-                try writer.writeFieldID(21);
+                try writer.writeFieldID(22);
                 try writer.writeInt(@as(u8, @intFromBool(disable_hmr)));
             }
             if (this.port) |port| {
-                try writer.writeFieldID(22);
+                try writer.writeFieldID(23);
                 try writer.writeInt(port);
             }
             if (this.log_level) |log_level| {
-                try writer.writeFieldID(23);
+                try writer.writeFieldID(24);
                 try writer.writeEnum(log_level);
             }
             if (this.source_map) |source_map| {
-                try writer.writeFieldID(24);
+                try writer.writeFieldID(25);
                 try writer.writeEnum(source_map);
             }
             try writer.endMessage();

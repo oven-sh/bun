@@ -209,6 +209,7 @@ class AsyncLocalStorage {
     $debug("disable " + (this as any).__id__);
     // In this case, we actually do want to mutate the context state
     if (this.#disabled) return;
+    this.#disabled = true;
     var context = get() as any[];
     if (context) {
       var { length } = context;

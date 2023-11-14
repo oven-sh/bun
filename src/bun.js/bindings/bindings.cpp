@@ -1419,6 +1419,20 @@ extern "C" JSC__JSValue ZigString__toJSONObject(const ZigString* strPtr, JSC::JS
     return JSValue::encode(result);
 }
 
+// TODO: Move this to BunString.cpp
+extern "C" JSC__JSValue BunString__toJSDOMURL(JSC::JSGlobalObject* lexicalGlobalObject, BunString* bunString)
+{
+    auto& globalObject = *reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto& vm = globalObject.vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    auto str = Bun::toWTFString(*bunString);
+
+    auto object = WebCore::DOMURL::create(str, String());
+    auto jsValue = WebCore::toJSNewlyCreated<IDLInterface<DOMURL>>(*lexicalGlobalObject, globalObject, throwScope, WTFMove(object));
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(jsValue));
+}
+
 JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
     JSC__JSGlobalObject* globalObject)
 {

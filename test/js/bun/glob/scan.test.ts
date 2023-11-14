@@ -110,7 +110,7 @@ describe("glob.match", async () => {
 
   test("invalid surrogate pairs", async () => {
     const pattern = `**/*.{md,\uD83D\uD800}`;
-    const cwd = "test/js/bun/glob";
+    const cwd = import.meta.dir;
 
     const glob = new Glob(pattern);
     const entries = await Array.fromAsync(glob.scan({ cwd }));
@@ -292,7 +292,7 @@ beforeAll(() => {
  */
 describe("fast-glob e2e tests", async () => {
   const absoluteCwd = process.cwd();
-  const cwd = "test/js/bun/glob";
+  const cwd = import.meta.dir;
 
   regular.regular.forEach(pattern =>
     test(`patterns regular ${pattern}`, () => {

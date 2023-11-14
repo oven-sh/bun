@@ -767,14 +767,14 @@ declare module "bun:test" {
      */
     toBeNull(): void;
     /**
-     * Asserts that a value can be coerced to `NaN`.
+     * Asserts that a value is `NaN`.
      *
      * Same as using `Number.isNaN()`.
      *
      * @example
      * expect(NaN).toBeNaN();
-     * expect(Infinity).toBeNaN();
-     * expect("notanumber").toBeNaN();
+     * expect(Infinity).toBeNaN(); // fail
+     * expect("notanumber").toBeNaN(); // fail
      */
     toBeNaN(): void;
     /**

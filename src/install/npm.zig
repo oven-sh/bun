@@ -587,12 +587,12 @@ pub const PackageManifest = struct {
         pub fn writeArray(comptime Writer: type, writer: Writer, comptime Type: type, array: []const Type, pos: *u64) !void {
             const bytes = std.mem.sliceAsBytes(array);
             if (bytes.len == 0) {
-                try writer.writeIntNative(u64, 0);
+                try writer.writeInt(u64, 0, .little);
                 pos.* += 8;
                 return;
             }
 
-            try writer.writeIntNative(u64, bytes.len);
+            try writer.writeInt(u64, bytes.len, .little);
             pos.* += 8;
             pos.* += try Aligner.write(Type, Writer, writer, pos.*);
 
@@ -604,7 +604,7 @@ pub const PackageManifest = struct {
 
         pub fn readArray(stream: *std.io.FixedBufferStream([]const u8), comptime Type: type) ![]const Type {
             var reader = stream.reader();
-            const byte_len = try reader.readIntNative(u64);
+            const byte_len = try reader.readInt(u64, .little);
             if (byte_len == 0) {
                 return &[_]Type{};
             }
@@ -768,7 +768,7 @@ pub const PackageManifest = struct {
                     version,
                     version,
                 )) catch return null;
-                return this.findBestVersion(group);
+                return this.findBestVersion(group, version);
             },
             .dist_tag => {
                 return this.findByDistTag(version);
@@ -801,7 +801,7 @@ pub const PackageManifest = struct {
         return null;
     }
 
-    pub fn findBestVersion(this: *const PackageManifest, group: Semver.Query.Group) ?FindResult {
+    pub fn findBestVersion(this: *const PackageManifest, group: Semver.Query.Group, group_buf: string) ?FindResult {
         const left = group.head.head.range.left;
         // Fast path: exact version
         if (left.op == .eql) {
@@ -809,9 +809,9 @@ pub const PackageManifest = struct {
         }
 
         if (this.findByDistTag("latest")) |result| {
-            if (group.satisfies(result.version, this.string_buf)) {
+            if (group.satisfies(result.version, group_buf, this.string_buf)) {
                 if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
-                    if (left.version.order(result.version, this.string_buf, this.string_buf) == .eq) {
+                    if (left.version.order(result.version, group_buf, this.string_buf) == .eq) {
                         // if prerelease, use latest if semver+tag match range exactly
                         return result;
                     }
@@ -829,8 +829,11 @@ pub const PackageManifest = struct {
             while (i > 0) : (i -= 1) {
                 const version = releases[i - 1];
 
-                if (group.satisfies(version, this.string_buf)) {
-                    return .{ .version = version, .package = &this.pkg.releases.values.get(this.package_versions)[i - 1] };
+                if (group.satisfies(version, group_buf, this.string_buf)) {
+                    return .{
+                        .version = version,
+                        .package = &this.pkg.releases.values.get(this.package_versions)[i - 1],
+                    };
                 }
             }
         }
@@ -842,9 +845,12 @@ pub const PackageManifest = struct {
                 const version = prereleases[i - 1];
 
                 // This list is sorted at serialization time.
-                if (group.satisfies(version, this.string_buf)) {
+                if (group.satisfies(version, group_buf, this.string_buf)) {
                     const packages = this.pkg.prereleases.values.get(this.package_versions);
-                    return .{ .version = version, .package = &packages[i - 1] };
+                    return .{
+                        .version = version,
+                        .package = &packages[i - 1],
+                    };
                 }
             }
         }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { dirname } from "node:path";
+import { promisify } from "node:util";
 import { bunEnv, bunExe, gc } from "harness";
 import fs, {
   closeSync,
@@ -55,6 +56,13 @@ if (!import.meta.dir) {
 function mkdirForce(path: string) {
   if (!existsSync(path)) mkdirSync(path, { recursive: true });
 }
+
+it("Dirent.name setter", () => {
+  const dirent = Object.create(Dirent.prototype);
+  expect(dirent.name).toBeUndefined();
+  dirent.name = "hello";
+  expect(dirent.name).toBe("hello");
+});
 
 it("writeFileSync in append should not truncate the file", () => {
   const path = join(tmpdir(), "writeFileSync-should-not-append-" + (Date.now() * 10000).toString(16));
@@ -1955,6 +1963,102 @@ it("createReadStream on a large file emits readable event correctly", () => {
   });
 });
 
+describe("fs.write", () => {
+  it("should work with (fd, buffer, offset, length, position, callback)", done => {
+    const path = `${tmpdir()}/bun-fs-write-1-${Date.now()}.txt`;
+    const fd = fs.openSync(path, "w");
+    const buffer = Buffer.from("bun");
+    fs.write(fd, buffer, 0, buffer.length, 0, err => {
+      try {
+        expect(err).toBeNull();
+        expect(readFileSync(path, "utf8")).toStrictEqual("bun");
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+        closeSync(fd);
+      }
+      done();
+    });
+  });
+
+  it("should work with (fd, buffer, offset, length, callback)", done => {
+    const path = `${tmpdir()}/bun-fs-write-2-${Date.now()}.txt`;
+    const fd = fs.openSync(path, "w");
+    const buffer = Buffer.from("bun");
+    fs.write(fd, buffer, 0, buffer.length, (err, written, buffer) => {
+      try {
+        expect(err).toBeNull();
+        expect(written).toBe(3);
+        expect(buffer.slice(0, written).toString()).toStrictEqual("bun");
+        expect(Buffer.isBuffer(buffer)).toBe(true);
+        expect(readFileSync(path, "utf8")).toStrictEqual("bun");
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+        closeSync(fd);
+      }
+      done();
+    });
+  });
+
+  it("should work with (fd, string, position, encoding, callback)", done => {
+    const path = `${tmpdir()}/bun-fs-write-3-${Date.now()}.txt`;
+    const fd = fs.openSync(path, "w");
+    const string = "bun";
+    fs.write(fd, string, 0, "utf8", (err, written, string) => {
+      try {
+        expect(err).toBeNull();
+        expect(written).toBe(3);
+        expect(string.slice(0, written).toString()).toStrictEqual("bun");
+        expect(string).toBeTypeOf("string");
+        expect(readFileSync(path, "utf8")).toStrictEqual("bun");
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+        closeSync(fd);
+      }
+      done();
+    });
+  });
+
+  it("should work with (fd, string, position, callback)", done => {
+    const path = `${tmpdir()}/bun-fs-write-4-${Date.now()}.txt`;
+    const fd = fs.openSync(path, "w");
+    const string = "bun";
+    fs.write(fd, string, 0, (err, written, string) => {
+      try {
+        expect(err).toBeNull();
+        expect(written).toBe(3);
+        expect(string.slice(0, written).toString()).toStrictEqual("bun");
+        expect(string).toBeTypeOf("string");
+        expect(readFileSync(path, "utf8")).toStrictEqual("bun");
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+        closeSync(fd);
+      }
+      done();
+    });
+  });
+
+  it("should work with util.promisify", async () => {
+    const path = `${tmpdir()}/bun-fs-write-5-${Date.now()}.txt`;
+    const fd = fs.openSync(path, "w");
+    const string = "bun";
+    const fswrite = promisify(fs.write);
+    const ret = await fswrite(fd, string, 0);
+    expect(typeof ret === "object").toBeTrue();
+    expect(ret.bytesWritten === 3).toBeTrue();
+    expect(ret.buffer === string).toBeTrue();
+    expect(readFileSync(path, "utf8")).toStrictEqual("bun");
+    fs.closeSync(fd);
+  });
+});
+
 describe("fs.read", () => {
   it("should work with (fd, callback)", done => {
     const path = `${tmpdir()}/bun-fs-read-1-${Date.now()}.txt`;
@@ -1970,6 +2074,7 @@ describe("fs.read", () => {
         return done(e);
       } finally {
         unlinkSync(path);
+        closeSync(fd);
       }
       done();
     });
@@ -1989,6 +2094,7 @@ describe("fs.read", () => {
         return done(e);
       } finally {
         unlinkSync(path);
+        closeSync(fd);
       }
       done();
     });
@@ -2008,6 +2114,7 @@ describe("fs.read", () => {
         return done(e);
       } finally {
         unlinkSync(path);
+        closeSync(fd);
       }
       done();
     });
@@ -2027,6 +2134,7 @@ describe("fs.read", () => {
         return done(e);
       } finally {
         unlinkSync(path);
+        closeSync(fd);
       }
       done();
     });
@@ -2046,6 +2154,7 @@ describe("fs.read", () => {
         return done(e);
       } finally {
         unlinkSync(path);
+        closeSync(fd);
       }
       done();
     });
@@ -2065,9 +2174,24 @@ describe("fs.read", () => {
         return done(e);
       } finally {
         unlinkSync(path);
+        closeSync(fd);
       }
       done();
     });
+  });
+  it("should work with util.promisify", async () => {
+    const path = `${tmpdir()}/bun-fs-read-6-${Date.now()}.txt`;
+    fs.writeFileSync(path, "bun bun bun bun");
+
+    const fd = fs.openSync(path, "r");
+    const buffer = Buffer.alloc(15);
+    const fsread = promisify(fs.read);
+
+    const ret = await fsread(fd, buffer, 0, 15, 0);
+    expect(typeof ret === "object").toBeTrue();
+    expect(ret.bytesRead === 15).toBeTrue();
+    expect(buffer.slice().toString() === "bun bun bun bun").toBeTrue();
+    fs.closeSync(fd);
   });
 });
 

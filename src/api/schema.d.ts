@@ -546,6 +546,7 @@ export interface TransformOptions {
   main_fields?: string[];
   target?: Target;
   serve?: boolean;
+  env_files?: string[];
   extension_order?: string[];
   framework?: FrameworkConfig;
   router?: RouteConfig;

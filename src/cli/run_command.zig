@@ -543,9 +543,9 @@ pub const RunCommand = struct {
             if (root_dir_info.getEntries(0)) |dir| {
                 // Run .env again if it exists in a parent dir
                 if (this_bundler.options.production) {
-                    this_bundler.env.load(dir, .production) catch {};
+                    this_bundler.env.load(dir, this_bundler.options.env.files, .production) catch {};
                 } else {
-                    this_bundler.env.load(dir, .development) catch {};
+                    this_bundler.env.load(dir, this_bundler.options.env.files, .development) catch {};
                 }
             }
         }
@@ -1067,7 +1067,7 @@ pub const RunCommand = struct {
                                     temp_script_buffer[1..],
                                     this_bundler.fs.top_level_dir,
                                     this_bundler.env,
-                                    passthrough,
+                                    &.{},
                                     ctx.debug.silent,
                                 )) {
                                     return false;
@@ -1093,7 +1093,7 @@ pub const RunCommand = struct {
                                     temp_script_buffer,
                                     this_bundler.fs.top_level_dir,
                                     this_bundler.env,
-                                    passthrough,
+                                    &.{},
                                     ctx.debug.silent,
                                 )) {
                                     return false;

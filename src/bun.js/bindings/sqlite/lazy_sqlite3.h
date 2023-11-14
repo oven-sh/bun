@@ -162,7 +162,7 @@ static lazy_sqlite3_compileoption_used_type lazy_sqlite3_compileoption_used;
 #define sqlite3_deserialize lazy_sqlite3_deserialize
 #define sqlite3_stmt_readonly lazy_sqlite3_stmt_readonly
 #define sqlite3_column_int64 lazy_sqlite3_column_int64
-#define sqlite3_compileoption_used lazy_sqlite3_compileoption_used;
+#define sqlite3_compileoption_used lazy_sqlite3_compileoption_used
 
 #if !OS(WINDOWS)
 #define HMODULE void*

@@ -46,10 +46,26 @@ typedef struct BunString {
     BunStringTag tag;
     BunStringImpl impl;
 
+    enum ZeroCopyTag { ZeroCopy };
+
+    // If it's not a WTFStringImpl, this does nothing
     inline void ref();
+
+    // If it's not a WTFStringImpl, this does nothing
     inline void deref();
+
     static size_t utf8ByteLength(const WTF::String&);
+
+    // Zero copy is kind of a lie.
+    // We clone it if it's non-ASCII UTF-8.
+    // We don't clone it if it was marked as static
+    // if it was a ZigString, it still allocates a WTF::StringImpl.
+    // It's only truly zero-copy if it was already a WTFStringImpl (which it is if it came from JS and we didn't use ZigString)
+    WTF::String toWTFString(ZeroCopyTag) const;
+
+    // This one usually will clone the raw bytes.
     WTF::String toWTFString() const;
+
 } BunString;
 
 typedef struct ZigErrorType {
@@ -253,7 +269,6 @@ namespace Bun {
 JSC::JSValue toJS(JSC::JSGlobalObject*, BunString);
 BunString toString(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
 BunString toString(const char* bytes, size_t length);
-WTF::String toWTFString(const BunString& bunString);
 BunString toString(WTF::String& wtfString);
 BunString toString(const WTF::String& wtfString);
 BunString toString(WTF::StringImpl* wtfString);

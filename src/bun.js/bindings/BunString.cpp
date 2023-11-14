@@ -75,33 +75,11 @@ JSC::JSValue toJS(JSC::JSGlobalObject* globalObject, BunString bunString, size_t
         RELEASE_ASSERT(bunString.impl.wtf->refCount() > 0);
     }
 #endif
-    return jsSubstring(globalObject, jsUndefined(), Bun::toWTFString(bunString), 0, length);
+    return jsSubstring(globalObject, jsUndefined(), bunString.toWTFString(BunString::ZeroCopy), 0, length);
 }
 BunString toString(const char* bytes, size_t length)
 {
     return BunString__fromBytes(bytes, length);
-}
-WTF::String toWTFString(const BunString& bunString)
-{
-    if (bunString.tag == BunStringTag::ZigString) {
-        if (Zig::isTaggedUTF8Ptr(bunString.impl.zig.ptr)) {
-            return Zig::toStringCopy(bunString.impl.zig);
-        } else {
-            return Zig::toString(bunString.impl.zig);
-        }
-
-    } else if (bunString.tag == BunStringTag::StaticZigString) {
-        return Zig::toStringStatic(bunString.impl.zig);
-    }
-
-    if (bunString.tag == BunStringTag::WTFStringImpl) {
-#if BUN_DEBUG
-        RELEASE_ASSERT(bunString.impl.wtf->refCount() > 0);
-#endif
-        return WTF::String(bunString.impl.wtf);
-    }
-
-    return WTF::String();
 }
 
 BunString fromJS(JSC::JSGlobalObject* globalObject, JSValue value)
@@ -272,7 +250,7 @@ extern "C" JSC::EncodedJSValue BunString__toJSON(
     JSC::JSGlobalObject* globalObject,
     BunString* bunString)
 {
-    JSC::JSValue result = JSC::JSONParse(globalObject, Bun::toWTFString(*bunString));
+    JSC::JSValue result = JSC::JSONParse(globalObject, bunString->toWTFString());
 
     if (!result) {
         result = JSC::JSValue(JSC::createSyntaxError(globalObject, "Failed to parse JSON"_s));
@@ -324,7 +302,7 @@ extern "C" void BunString__toWTFString(BunString* bunString)
 
 extern "C" BunString URL__getFileURLString(BunString* filePath)
 {
-    return Bun::toStringRef(WTF::URL::fileURLWithFileSystemPath(Bun::toWTFString(*filePath)).stringWithoutFragmentIdentifier());
+    return Bun::toStringRef(WTF::URL::fileURLWithFileSystemPath(filePath->toWTFString()).stringWithoutFragmentIdentifier());
 }
 
 extern "C" WTF::URL* URL__fromJS(EncodedJSValue encodedValue, JSC::JSGlobalObject* globalObject)
@@ -363,7 +341,7 @@ extern "C" BunString URL__getHrefFromJS(EncodedJSValue encodedValue, JSC::JSGlob
 
 extern "C" BunString URL__getHref(BunString* input)
 {
-    auto&& str = Bun::toWTFString(*input);
+    auto&& str = input->toWTFString();
     auto url = WTF::URL(str);
     if (!url.isValid() || url.isEmpty())
         return { BunStringTag::Dead };
@@ -373,7 +351,7 @@ extern "C" BunString URL__getHref(BunString* input)
 
 extern "C" BunString URL__pathFromFileURL(BunString* input)
 {
-    auto&& str = Bun::toWTFString(*input);
+    auto&& str = input->toWTFString();
     auto url = WTF::URL(str);
     if (!url.isValid() || url.isEmpty())
         return { BunStringTag::Dead };
@@ -383,8 +361,8 @@ extern "C" BunString URL__pathFromFileURL(BunString* input)
 
 extern "C" BunString URL__getHrefJoin(BunString* baseStr, BunString* relativeStr)
 {
-    auto base = Bun::toWTFString(*baseStr);
-    auto relative = Bun::toWTFString(*relativeStr);
+    auto base = baseStr->toWTFString();
+    auto relative = relativeStr->toWTFString();
     auto url = WTF::URL(WTF::URL(base), relative);
     if (!url.isValid() || url.isEmpty())
         return { BunStringTag::Dead };
@@ -394,7 +372,7 @@ extern "C" BunString URL__getHrefJoin(BunString* baseStr, BunString* relativeStr
 
 extern "C" WTF::URL* URL__fromString(BunString* input)
 {
-    auto&& str = Bun::toWTFString(*input);
+    auto&& str = input->toWTFString();
     auto url = WTF::URL(str);
     if (!url.isValid())
         return nullptr;
@@ -480,6 +458,29 @@ WTF::String BunString::toWTFString() const
     } else if (this->tag == BunStringTag::StaticZigString) {
         return Zig::toStringCopy(this->impl.zig);
     } else if (this->tag == BunStringTag::WTFStringImpl) {
+        return WTF::String(this->impl.wtf);
+    }
+
+    return WTF::String();
+}
+
+WTF::String BunString::toWTFString(ZeroCopyTag) const
+{
+    if (this->tag == BunStringTag::ZigString) {
+        if (Zig::isTaggedUTF8Ptr(this->impl.zig.ptr)) {
+            return Zig::toStringCopy(this->impl.zig);
+        } else {
+            return Zig::toString(this->impl.zig);
+        }
+
+    } else if (this->tag == BunStringTag::StaticZigString) {
+        return Zig::toStringStatic(this->impl.zig);
+    }
+
+    if (this->tag == BunStringTag::WTFStringImpl) {
+#if BUN_DEBUG
+        RELEASE_ASSERT(this->impl.wtf->refCount() > 0);
+#endif
         return WTF::String(this->impl.wtf);
     }
 

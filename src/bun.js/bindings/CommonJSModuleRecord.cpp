@@ -960,7 +960,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     bool isBuiltIn)
 {
     JSCommonJSModule* moduleObject;
-    WTF::String sourceURL = Bun::toWTFString(source.source_url);
+    WTF::String sourceURL = source.source_url.toWTFString();
 
     JSValue specifierValue = Bun::toJS(globalObject, source.specifier);
     JSValue entry = globalObject->requireMap()->get(globalObject, specifierValue);
@@ -983,13 +983,10 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             dirname = JSC::jsSubstring(globalObject, requireMapKey, 0, index);
         }
 
-        JSC::SourceCode rawInputSource(
-            WTFMove(sourceProvider));
-
         moduleObject = JSCommonJSModule::create(
             vm,
             globalObject->CommonJSModuleObjectStructure(),
-            requireMapKey, filename, dirname, JSC::JSSourceCode::create(vm, WTFMove(rawInputSource)));
+            requireMapKey, filename, dirname, JSC::JSSourceCode::create(vm, SourceCode(WTFMove(sourceProvider))));
 
         moduleObject->putDirect(vm,
             WebCore::clientData(vm)->builtinNames().exportsPublicName(),

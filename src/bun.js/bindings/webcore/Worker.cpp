@@ -162,7 +162,7 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
         static_cast<uint32_t>(worker->m_clientIdentifier), miniMode, unrefByDefault);
 
     if (!impl) {
-        return Exception { TypeError, Bun::toWTFString(errorMessage) };
+        return Exception { TypeError, errorMessage.toWTFString(BunString::ZeroCopy) };
     }
 
     worker->impl_ = impl;
@@ -404,13 +404,13 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
 {
     JSValue error = JSC::JSValue::decode(errorValue);
     ErrorEvent::Init init;
-    init.message = Bun::toWTFString(message).isolatedCopy();
+    init.message = message.toWTFString(BunString::ZeroCopy).isolatedCopy();
     init.error = error;
     init.cancelable = false;
     init.bubbles = false;
 
     globalObject->globalEventScope.dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
-    worker->dispatchError(Bun::toWTFString(message));
+    worker->dispatchError(message.toWTFString(BunString::ZeroCopy));
 }
 
 } // namespace WebCore

@@ -7062,11 +7062,9 @@ pub const Macro = struct {
 
                             if (value.jsType() == .DOMWrapper) {
                                 if (value.as(JSC.WebCore.Response)) |resp| {
-                                    mime_type = HTTP.MimeType.init(resp.mimeType(null), null, null);
-                                    blob_ = resp.body.use();
+                                    return this.run(resp.getBlobWithoutCallFrame(this.global));
                                 } else if (value.as(JSC.WebCore.Request)) |resp| {
-                                    mime_type = HTTP.MimeType.init(resp.mimeType(), null, null);
-                                    blob_ = resp.body.value.use();
+                                    return this.run(resp.getBlobWithoutCallFrame(this.global));
                                 } else if (value.as(JSC.WebCore.Blob)) |resp| {
                                     blob_ = resp.*;
                                     blob_.?.allocator = null;

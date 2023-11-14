@@ -1,7 +1,7 @@
 import { file, listen, Socket, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, describe, test } from "bun:test";
 import { bunExe, bunEnv as env } from "harness";
-import { access, mkdir, readlink, realpath, rm, writeFile } from "fs/promises";
+import { access, mkdir, readlink, realpath, rm, writeFile, exists } from "fs/promises";
 import { join } from "path";
 import {
   dummyAfterAll,
@@ -15,7 +15,7 @@ import {
   root_url,
   setHandler,
 } from "./dummy.registry.js";
-
+import { tmpdirSync } from "./dummy.registry.js";
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
 beforeEach(dummyBeforeEach);
@@ -7833,3 +7833,160 @@ describe("Registry URLs", () => {
     expect(await exited).toBe(0);
   });
 });
+
+for (let BUN_INSTALLEnvVarSet of [true, false]) {
+  describe(BUN_INSTALLEnvVarSet ? "Buninstall env set" : "Buninstall env not set", () => {
+    for (let BUN_INSTALLED_CACHE_DIR_EnvVarSet of [true, false]) {
+      describe(
+        BUN_INSTALLED_CACHE_DIR_EnvVarSet ? "Buninstallcachedir env set" : "Buninstallcachedir env not set",
+        () => {
+          for (let XDGConfigBunfig of [true, false]) {
+            describe(XDGConfigBunfig ? "Global bunfig cache.dir set" : "Global bunfig cache.dir not set", () => {
+              for (let localBunfig of [true, false]) {
+                describe(localBunfig ? "Local bunfig cache.dir set" : "Local bunfig cache.dir not set", () => {
+                  for (let localBunfigOverride of [true, false]) {
+                    describe(localBunfigOverride ? "-c set" : "-c not set", () => {
+                      test.only("shouldn't use the wrong directoy for installing package cache", async () => {
+                        const packageName = "/bar";
+                        const regURL = root_url;
+                        const fakeHomeDirectory = tmpdirSync("my-home");
+                        const XDGConfig = join(fakeHomeDirectory, "global-cache");
+                        const XDGConfigCache = join(fakeHomeDirectory, "global-cache", ".cache");
+                        const localDir = join(package_dir, "local-cache");
+                        const localOverrideDir = join(package_dir, "local-override-cache/.cache");
+                        const BUN_INSTALL_path = join(fakeHomeDirectory, "global-cache-env");
+                        const BUN_INSTALL_pathCache = join(fakeHomeDirectory, "global-cache-env", ".cache");
+                        const BUN_INSTALL_CACHE_DIR_Env = join(package_dir, "local-cache-env");
+                        const bunfigOverrideFile = join(package_dir, "bunfig-override-test/bunfig.toml");
+
+                        await rm(XDGConfig, { force: true, recursive: true });
+                        await rm(localDir, { force: true, recursive: true });
+                        await rm(BUN_INSTALL_path, { force: true, recursive: true });
+                        await rm(BUN_INSTALL_pathCache, { force: true, recursive: true });
+                        await rm(BUN_INSTALL_CACHE_DIR_Env, { force: true, recursive: true });
+                        await rm(localOverrideDir, { force: true, recursive: true });
+                        await rm(bunfigOverrideFile, { force: true, recursive: true });
+                        const urls: string[] = [];
+                        setHandler(dummyRegistry(urls));
+                        await writeFile(
+                          join(package_dir, "package.json"),
+                          JSON.stringify({
+                            name: "foo",
+                            version: "0.0.1",
+                            dependencies: {
+                              bar: "*",
+                            },
+                          }),
+                        );
+
+                        await writeFile(
+                          join(package_dir, "bunfig.toml"),
+                          `
+        [install]
+        registry = "${regURL}"
+        ${localBunfig ? `cache.dir = ${JSON.stringify(localDir)}` : ""}    
+        cache.enable = true             
+         `,
+                        );
+
+                        await mkdir(join(package_dir, "bunfig-override-test"), { recursive: true });
+                        await writeFile(
+                          bunfigOverrideFile,
+                          `
+        [install]
+        registry = "${regURL}"
+        cache.dir = ${JSON.stringify(localOverrideDir)}   
+        cache.enable = true             
+         `,
+                        );
+
+                        if (XDGConfigBunfig) {
+                          await mkdir(XDGConfig, { recursive: true });
+                          await writeFile(
+                            join(XDGConfig, ".bunfig.toml"),
+                            `
+        [install]
+        registry = "${regURL}"
+        cache.dir = ${JSON.stringify(XDGConfigCache)}
+    `,
+                          );
+                        }
+
+                        console.log(XDGConfig);
+                        console.log(XDGConfigCache);
+
+                        const overridePath = localBunfigOverride ? "--config=" + bunfigOverrideFile : "";
+                        const { stdout, stderr, exited } = spawn({
+                          cmd: [bunExe(), "install", "--verbose", overridePath],
+                          cwd: package_dir,
+                          stdout: null,
+                          stdin: "pipe",
+                          stderr: "pipe",
+                          env: {
+                            ...env,
+                            "BUN_INSTALL_CACHE_DIR": BUN_INSTALLED_CACHE_DIR_EnvVarSet
+                              ? BUN_INSTALL_CACHE_DIR_Env
+                              : undefined,
+                            "BUN_INSTALL": BUN_INSTALLEnvVarSet ? BUN_INSTALL_path : undefined,
+
+                            // for the global bunfig.toml directory
+                            "XDG_CONFIG_HOME": XDGConfig,
+                            "XDG_CACHE_HOME": fakeHomeDirectory,
+                          },
+                        });
+
+                        expect(stdout).toBeDefined();
+                        expect(stderr).toBeDefined();
+                        const err = await new Response(stderr).text();
+                        const out = await new Response(stdout).text();
+                        console.log(err);
+                        console.log(out);
+                        expect(out).toContain("bar");
+                        expect(await exited).toBe(0);
+
+                        const result = {
+                          localOverrideDir: await exists(join(localOverrideDir, packageName)),
+                          localDir: await exists(join(localDir, packageName)),
+                          BUN_INSTALL_Env: await exists(join(BUN_INSTALL_path, "install", "cache", packageName)),
+                          XDGConfig: await exists(join(XDGConfigCache, packageName)),
+                          BUN_INSTALL_CACHE_DIR_Env: await exists(join(BUN_INSTALL_CACHE_DIR_Env, packageName)),
+
+                          fallback: await exists(join(fakeHomeDirectory, ".bun/", "install/", "cache/")),
+                        };
+                        const expected = {
+                          localOverrideDir: false,
+                          localDir: false,
+                          BUN_INSTALL_Env: false,
+                          XDGConfig: false,
+                          BUN_INSTALL_CACHE_DIR_Env: false,
+                          fallback: false,
+                        };
+
+                        if (localBunfigOverride) {
+                          expected.localOverrideDir = true;
+                        } else if (localBunfig) {
+                          expected.localDir = true;
+                        } else if (XDGConfigBunfig) {
+                          expected.XDGConfig = true;
+                        } else if (BUN_INSTALLED_CACHE_DIR_EnvVarSet) {
+                          expected.BUN_INSTALL_CACHE_DIR_Env = true;
+                        } else if (BUN_INSTALLEnvVarSet) {
+                          expected.BUN_INSTALL_Env = true;
+                        } else {
+                          expected.fallback = true;
+                        }
+
+                        console.log(err);
+                        expect(result).toEqual(expected);
+                      });
+                    });
+                  }
+                });
+              }
+            });
+          }
+        },
+      );
+    }
+  });
+}

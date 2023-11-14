@@ -2165,7 +2165,8 @@ pub const PackageManager = struct {
     noinline fn ensureCacheDirectory(this: *PackageManager) std.fs.IterableDir {
         loop: while (true) {
             if (this.options.enable.cache) {
-                const cache_dir = fetchCacheDirectoryPath(this.env);
+                const cache_dir = fetchCacheDirectoryPath(this);
+
                 return std.fs.cwd().makeOpenPathIterable(cache_dir.path, .{}) catch {
                     this.options.enable.cache = false;
                     continue :loop;
@@ -4207,22 +4208,25 @@ pub const PackageManager = struct {
     }
 
     const CacheDir = struct { path: string, is_node_modules: bool };
-    pub fn fetchCacheDirectoryPath(env: *DotEnv.Loader) CacheDir {
-        if (env.map.get("BUN_INSTALL_CACHE_DIR")) |dir| {
+    pub fn fetchCacheDirectoryPath(this: *PackageManager) CacheDir {
+        if (this.options.cache_directory.len > 0) {
+            return CacheDir{ .path = this.options.cache_directory, .is_node_modules = false };
+        }
+        if (this.env.map.get("BUN_INSTALL_CACHE_DIR")) |dir| {
             return CacheDir{ .path = dir, .is_node_modules = false };
         }
 
-        if (env.map.get("BUN_INSTALL")) |dir| {
+        if (this.env.map.get("BUN_INSTALL")) |dir| {
             var parts = [_]string{ dir, "install/", "cache/" };
             return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
         }
 
-        if (env.map.get("XDG_CACHE_HOME")) |dir| {
+        if (this.env.map.get("XDG_CACHE_HOME")) |dir| {
             var parts = [_]string{ dir, ".bun/", "install/", "cache/" };
             return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
         }
 
-        if (env.map.get(bun.DotEnv.home_env)) |dir| {
+        if (this.env.map.get(bun.DotEnv.home_env)) |dir| {
             var parts = [_]string{ dir, ".bun/", "install/", "cache/" };
             return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
         }
@@ -5129,6 +5133,10 @@ pub const PackageManager = struct {
                 if (bun_install.save_optional) |save| {
                     this.remote_package_features.optional_dependencies = save;
                     this.local_package_features.optional_dependencies = save;
+                }
+
+                if (bun_install.cache_directory) |cache_directory| {
+                    this.cache_directory = cache_directory;
                 }
 
                 this.explicit_global_directory = bun_install.global_dir orelse this.explicit_global_directory;

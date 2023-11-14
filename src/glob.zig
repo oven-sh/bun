@@ -238,10 +238,10 @@ pub const GlobWalker = struct {
 
     pub fn convertUtf8ToCodepoints(codepoints: []u32, pattern: []const u8) void {
         switch (comptime @import("builtin").target.cpu.arch.endian()) {
-            .Big => {
+            .big => {
                 _ = bun.simdutf.convert.utf8.to.utf32.be(pattern, codepoints);
             },
-            .Little => {
+            .little => {
                 _ = bun.simdutf.convert.utf8.to.utf32.le(pattern, codepoints);
             },
         }

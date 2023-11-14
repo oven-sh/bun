@@ -1613,7 +1613,7 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
         switch (node_fs.writeFile(
             .{
                 .file = .{
-                    .fd = bun.fdcast(file.handle),
+                    .fd = bun.toFD(file.handle),
                 },
                 .dirfd = bun.invalid_fd,
                 .data = .{ .string = bytes.items },

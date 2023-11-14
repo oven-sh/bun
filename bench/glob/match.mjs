@@ -1,7 +1,6 @@
 import { run, bench, group } from "mitata";
 import fg from "fast-glob";
 import { fdir } from "fdir";
-import { Glob } from "bun";
 
 const normalPattern = "*.ts";
 const recursivePattern = "**/*.ts";
@@ -23,14 +22,17 @@ const fgOpts = {
   absolute: true,
 };
 
+const Glob = "Bun" in globalThis ? globalThis.Bun.Glob : undefined;
+
 group({ name: `async pattern="${normalPattern}"`, summary: true }, () => {
   bench("fast-glob", async () => {
     const entries = await fg.glob([normalPattern], fgOpts);
   });
 
-  bench("Bun.Glob", async () => {
-    const entries = await Array.fromAsync(new Glob(normalPattern).scan(bunOpts));
-  });
+  if (Glob)
+    bench("Bun.Glob", async () => {
+      const entries = await Array.fromAsync(new Glob(normalPattern).scan(bunOpts));
+    });
 
   if (benchFdir)
     bench("fdir", async () => {
@@ -43,9 +45,10 @@ group({ name: `async-recursive pattern="${recursivePattern}"`, summary: true }, 
     const entries = await fg.glob([recursivePattern], fgOpts);
   });
 
-  bench("Bun.Glob", async () => {
-    const entries = await Array.fromAsync(new Glob(recursivePattern).scan(bunOpts));
-  });
+  if (Glob)
+    bench("Bun.Glob", async () => {
+      const entries = await Array.fromAsync(new Glob(recursivePattern).scan(bunOpts));
+    });
 
   if (benchFdir)
     bench("fdir", async () => {
@@ -58,9 +61,10 @@ group({ name: `sync pattern="${normalPattern}"`, summary: true }, () => {
     const entries = fg.globSync([normalPattern], fgOpts);
   });
 
-  bench("Bun.Glob", () => {
-    const entries = Array.from(new Glob(normalPattern).scanSync(bunOpts));
-  });
+  if (Glob)
+    bench("Bun.Glob", () => {
+      const entries = [...new Glob(normalPattern).scanSync(bunOpts)];
+    });
 
   if (benchFdir)
     bench("fdir", async () => {
@@ -73,9 +77,10 @@ group({ name: `sync-recursive pattern="${recursivePattern}"`, summary: true }, (
     const entries = fg.globSync([recursivePattern], fgOpts);
   });
 
-  bench("Bun.Glob", () => {
-    const entries = Array.from(new Glob(recursivePattern).scanSync(bunOpts));
-  });
+  if (Glob)
+    bench("Bun.Glob", () => {
+      const entries = [...new Glob(recursivePattern).scanSync(bunOpts)];
+    });
 
   if (benchFdir)
     bench("fdir", async () => {
@@ -88,9 +93,10 @@ group({ name: `node_modules pattern="${nodeModulesPattern}"`, summary: true }, (
     const entries = await fg.glob([nodeModulesPattern], fgOpts);
   });
 
-  bench("Bun.Glob", async () => {
-    const entries = await Array.fromAsync(new Glob(nodeModulesPattern).scan(bunOpts));
-  });
+  if (Glob)
+    bench("Bun.Glob", async () => {
+      const entries = await Array.fromAsync(new Glob(nodeModulesPattern).scan(bunOpts));
+    });
 
   if (benchFdir)
     bench("fdir", async () => {
@@ -100,7 +106,7 @@ group({ name: `node_modules pattern="${nodeModulesPattern}"`, summary: true }, (
 
 await run({
   avg: true,
-  colors: true,
+  colors: false,
   min_max: true,
   collect: true,
   percentiles: true,

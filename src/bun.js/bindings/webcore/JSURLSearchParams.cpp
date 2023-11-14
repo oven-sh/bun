@@ -404,7 +404,7 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlob
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     JSObject* obj;
-    if (impl.size() + 1 < JSFinalObject::maxInlineCapacity) {
+    if (impl.size() + 1 <= JSFinalObject::maxInlineCapacity) {
         obj = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), impl.size() + 1);
     } else {
         obj = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype());

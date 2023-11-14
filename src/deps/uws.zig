@@ -2413,8 +2413,13 @@ pub const UVLoop = extern struct {
     pre: *uv.uv_prepare_t,
     check: *uv.uv_check_t,
 
+    threadlocal var threadlocal_loop: ?*UVLoop = null;
+
     pub fn init() *UVLoop {
-        return uws_get_loop_with_native(bun.windows.libuv.Loop.get());
+        if (threadlocal_loop) |loop| return loop;
+        const loop = uws_get_loop_with_native(bun.windows.libuv.Loop.init());
+        threadlocal_loop = loop;
+        return loop;
     }
 
     extern fn uws_get_loop_with_native(*anyopaque) *UVLoop;

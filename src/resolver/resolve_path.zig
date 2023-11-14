@@ -447,12 +447,7 @@ pub fn dirname(str: []const u8, comptime platform: Platform) []const u8 {
 threadlocal var relative_from_buf: [4096]u8 = undefined;
 threadlocal var relative_to_buf: [4096]u8 = undefined;
 pub fn relative(from: []const u8, to: []const u8) []const u8 {
-    if (comptime FeatureFlags.use_std_path_relative) {
-        var relative_allocator = std.heap.FixedBufferAllocator.init(&relative_from_buf);
-        return relativeAlloc(&relative_allocator.allocator, from, to) catch unreachable;
-    } else {
-        return relativePlatform(from, to, .auto, false);
-    }
+    return relativePlatform(from, to, .auto, false);
 }
 
 pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
@@ -486,12 +481,8 @@ pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Pla
 }
 
 pub fn relativeAlloc(allocator: std.mem.Allocator, from: []const u8, to: []const u8) ![]const u8 {
-    if (comptime FeatureFlags.use_std_path_relative) {
-        return try std.fs.path.relative(allocator, from, to);
-    } else {
-        const result = relativePlatform(from, to, Platform.current, false);
-        return try allocator.dupe(u8, result);
-    }
+    const result = relativePlatform(from, to, Platform.current, false);
+    return try allocator.dupe(u8, result);
 }
 
 // This function is based on Go's volumeNameLen function

@@ -531,6 +531,25 @@ pub const Loop = extern struct {
         return uv_loop_alive(this) != 0;
     }
 
+    pub fn init(ptr: *Loop) ?bun.C.E {
+        if (uv_loop_init(ptr).errEnum()) |err| return err;
+    }
+
+    pub fn close(ptr: *Loop) void {
+        uv_loop_close(ptr);
+    }
+
+    pub fn new() ?bun.C.E {
+        var ptr = bun.default_allocator.create(Loop);
+        if (init(ptr)) |e| return e;
+        return ptr;
+    }
+
+    pub fn delete(ptr: *Loop) void {
+        close(ptr);
+        bun.default_allocator.destroy(ptr);
+    }
+
     pub fn get() *Loop {
         return uv_default_loop();
     }
@@ -1692,7 +1711,7 @@ pub const uv_free_func = ?*const fn (?*anyopaque) callconv(.C) void;
 pub extern fn uv_library_shutdown() void;
 pub extern fn uv_replace_allocator(malloc_func: uv_malloc_func, realloc_func: uv_realloc_func, calloc_func: uv_calloc_func, free_func: uv_free_func) c_int;
 pub extern fn uv_default_loop() *uv_loop_t;
-pub extern fn uv_loop_init(loop: *uv_loop_t) c_int;
+pub extern fn uv_loop_init(loop: *uv_loop_t) ReturnCode;
 pub extern fn uv_loop_close(loop: *uv_loop_t) c_int;
 pub extern fn uv_loop_new() *uv_loop_t;
 pub extern fn uv_loop_delete(*uv_loop_t) void;
@@ -2310,7 +2329,7 @@ pub const ReturnCode = extern struct {
             null;
     }
 
-    pub inline fn errEnum(this: ReturnCode) ?bun.C.E.ACCES {
+    pub inline fn errEnum(this: ReturnCode) ?bun.C.E {
         return if (this.value < 0)
             (translateUVErrorToE(this.value))
         else

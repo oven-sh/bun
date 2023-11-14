@@ -2,9 +2,6 @@ const env = @import("env.zig");
 pub const strong_etags_for_built_files = true;
 pub const keep_alive = false;
 
-// it just doesn't work well.
-pub const use_std_path_relative = false;
-
 // Debug helpers
 pub const print_ast = false;
 pub const disable_printing_null = false;

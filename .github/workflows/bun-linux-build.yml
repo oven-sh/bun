@@ -80,7 +80,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          ref: ${{github.ref}}
+          ref: ${{github.sha}}
           clean: true
       - uses: docker/setup-buildx-action@v2
         id: buildx

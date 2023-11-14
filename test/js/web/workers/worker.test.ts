@@ -181,6 +181,7 @@ describe("worker_threads", () => {
         expect(code).toBe(2);
       } catch (e) {
         done(e);
+        return;
       }
       done();
     });

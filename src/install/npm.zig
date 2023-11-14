@@ -587,12 +587,12 @@ pub const PackageManifest = struct {
         pub fn writeArray(comptime Writer: type, writer: Writer, comptime Type: type, array: []const Type, pos: *u64) !void {
             const bytes = std.mem.sliceAsBytes(array);
             if (bytes.len == 0) {
-                try writer.writeIntNative(u64, 0);
+                try writer.writeInt(u64, 0, .little);
                 pos.* += 8;
                 return;
             }
 
-            try writer.writeIntNative(u64, bytes.len);
+            try writer.writeInt(u64, bytes.len, .little);
             pos.* += 8;
             pos.* += try Aligner.write(Type, Writer, writer, pos.*);
 
@@ -604,7 +604,7 @@ pub const PackageManifest = struct {
 
         pub fn readArray(stream: *std.io.FixedBufferStream([]const u8), comptime Type: type) ![]const Type {
             var reader = stream.reader();
-            const byte_len = try reader.readIntNative(u64);
+            const byte_len = try reader.readInt(u64, .little);
             if (byte_len == 0) {
                 return &[_]Type{};
             }

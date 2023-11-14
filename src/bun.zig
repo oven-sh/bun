@@ -448,15 +448,15 @@ pub const BabyList = @import("./baby_list.zig").BabyList;
 pub const ByteList = BabyList(u8);
 
 pub fn DebugOnly(comptime Type: type) type {
-    if (comptime Environment.isDebug) {
+    if (comptime Environment.allow_assert) {
         return Type;
     }
 
     return void;
 }
 
-pub fn DebugOnlyDefault(comptime val: anytype) if (Environment.isDebug) @TypeOf(val) else void {
-    if (comptime Environment.isDebug) {
+pub fn DebugOnlyDefault(comptime val: anytype) if (Environment.allow_assert) @TypeOf(val) else void {
+    if (comptime Environment.allow_assert) {
         return val;
     }
 
@@ -2005,4 +2005,19 @@ pub inline fn pathLiteral(comptime literal: anytype) *const [literal.len:0]u8 {
         buf[buf.len] = 0;
         return &buf;
     };
+}
+
+pub fn exitThread() noreturn {
+    const exiter = struct {
+        pub extern "C" fn pthread_exit(?*anyopaque) noreturn;
+        pub extern "kernel32" fn ExitThread(windows.DWORD) noreturn;
+    };
+
+    if (comptime Environment.isWindows) {
+        exiter.ExitThread(0);
+    } else if (comptime Environment.isPosix) {
+        exiter.pthread_exit(null);
+    } else {
+        @panic("Unsupported platform");
+    }
 }

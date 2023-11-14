@@ -3,6 +3,8 @@
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include "helpers.h"
 #include "simdutf.h"
+#include "DOMURL.h"
+
 #include <wtf/Seconds.h>
 #include <wtf/text/ExternalStringImpl.h>
 #include "GCDefferalContext.h"
@@ -303,6 +305,19 @@ extern "C" void BunString__toWTFString(BunString* bunString)
 extern "C" BunString URL__getFileURLString(BunString* filePath)
 {
     return Bun::toStringRef(WTF::URL::fileURLWithFileSystemPath(filePath->toWTFString()).stringWithoutFragmentIdentifier());
+}
+
+extern "C" JSC__JSValue BunString__toJSDOMURL(JSC::JSGlobalObject* lexicalGlobalObject, BunString* bunString)
+{
+    auto& globalObject = *reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto& vm = globalObject.vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    auto str = bunString->toWTFString(BunString::ZeroCopy);
+
+    auto object = WebCore::DOMURL::create(str, String());
+    auto jsValue = WebCore::toJSNewlyCreated<IDLInterface<DOMURL>>(*lexicalGlobalObject, globalObject, throwScope, WTFMove(object));
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(jsValue));
 }
 
 extern "C" WTF::URL* URL__fromJS(EncodedJSValue encodedValue, JSC::JSGlobalObject* globalObject)

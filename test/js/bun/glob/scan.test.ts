@@ -20,13 +20,22 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-import { expect, test, describe, beforeAll } from "bun:test";
+import { expect, test, describe, beforeAll, afterAll } from "bun:test";
 import fg from "fast-glob";
 import { Glob, GlobScanOptions } from "bun";
 import * as path from "path";
-import { tempDirWithFiles } from "harness";
+import { tempDirWithFiles, withoutAggressiveGC } from "harness";
 import { i } from "../http/js-sink-sourmap-fixture/index.mjs";
 import { tempFixturesDir } from "./util";
+
+let origAggressiveGC = Bun.unsafe.gcAggressionLevel();
+beforeAll(() => {
+  tempFixturesDir();
+  Bun.unsafe.gcAggressionLevel(0);
+});
+afterAll(() => {
+  Bun.unsafe.gcAggressionLevel(origAggressiveGC);
+});
 
 const followSymlinks = true;
 

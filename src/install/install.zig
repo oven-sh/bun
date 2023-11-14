@@ -5925,7 +5925,17 @@ pub const PackageManager = struct {
             subcommand,
         );
 
-        manager.timestamp_for_manifest_cache_control = @as(u32, @truncate(@as(u64, @intCast(@max(std.time.timestamp(), 0)))));
+        manager.timestamp_for_manifest_cache_control = brk: {
+            if (comptime bun.Environment.allow_assert) {
+                if (env.map.get("BUN_CONFIG_MANIFEST_CACHE_CONTROL_TIMESTAMP")) |cache_control| {
+                    if (std.fmt.parseInt(u32, cache_control, 10)) |int| {
+                        break :brk int;
+                    } else |_| {}
+                }
+            }
+
+            break :brk @as(u32, @truncate(@as(u64, @intCast(@max(std.time.timestamp(), 0)))));
+        };
         return manager;
     }
 

@@ -40,7 +40,7 @@ afterAll(() => {
   }
 });
 
-[101, 418, 599, 200, 200n, 101n, 599n].forEach(statusCode => {
+[200, 200n, 303, 418, 599, 599n].forEach(statusCode => {
   it(`should response with HTTP status code (${statusCode})`, async () => {
     await runTest(
       {

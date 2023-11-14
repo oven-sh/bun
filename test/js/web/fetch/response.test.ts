@@ -6,6 +6,16 @@ test("zero args returns an otherwise empty 200 response", () => {
   expect(response.statusText).toBe("");
 });
 
+test("undefined args don't throw", () => {
+  const response = new Response("", {
+    status: undefined,
+    statusText: undefined,
+    headers: undefined,
+  });
+  expect(response.status).toBe(200);
+  expect(response.statusText).toBe("");
+});
+
 test("1-arg form returns a 200 response", () => {
   const response = new Response("body text");
 

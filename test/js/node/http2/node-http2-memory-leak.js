@@ -20,16 +20,18 @@ async function nodeEchoServer() {
   const url = `https://${address.family === "IPv6" ? `[${address.address}]` : address.address}:${address.port}`;
   return { address, url, subprocess };
 }
-const BASELINE_THRESHOLD = 1.5;
-// 500 iterations should be enough to detect a leak
-const ITERATIONS = 500;
-const PAYLOAD = JSON.stringify({ hello: "world" });
+const BASELINE_THRESHOLD = 1.1;
+// 100 iterations should be enough to detect a leak
+const ITERATIONS = 100;
+// lets send a big payload
+const PAYLOAD = "a".repeat(1024 * 1024);
 
 function assertBaselineWithAVG(baseline, avg) {
   const a = Math.max(baseline, avg);
   const b = Math.min(baseline, avg);
+  console.log("leaked", a / b);
   if (a / b > BASELINE_THRESHOLD) {
-    // more than 50% difference
+    // leak detected
     process.exit(97);
   }
 }
@@ -77,7 +79,7 @@ try {
 
   averageDiff /= ITERATIONS;
   // we use the last leak as a baseline and compare with the average of all leaks
-  // if is growing more than 50% (BASELINE_THRESHOLD) we consider it a leak
+  // if is growing more than BASELINE_THRESHOLD we consider it a leak
   assertBaselineWithAVG(baseLine, averageDiff);
   // last GC to collect all H2FrameParser objects
   Bun.gc(true);

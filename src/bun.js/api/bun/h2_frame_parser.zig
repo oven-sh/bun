@@ -1960,7 +1960,7 @@ pub const H2FrameParser = struct {
 
             while (offset < payload.len) {
                 const size = @min(payload.len - offset, max_size);
-                const slice = payload[offset..size];
+                const slice = payload[offset..(size + offset)];
                 offset += size;
                 var dataHeader: FrameHeader = .{
                     .type = @intFromEnum(FrameType.HTTP_FRAME_DATA),

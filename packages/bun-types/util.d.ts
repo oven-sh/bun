@@ -126,7 +126,11 @@ declare module "util" {
    * // when printed to a terminal.
    * ```
    */
-  export function formatWithOptions(inspectOptions: InspectOptions, format?: any, ...param: any[]): string;
+  export function formatWithOptions(
+    inspectOptions: InspectOptions,
+    format?: any,
+    ...param: any[]
+  ): string;
   /**
    * Returns the string name for a numeric error code that comes from a Node.js API.
    * The mapping between error codes and error names is platform-dependent.

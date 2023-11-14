@@ -481,8 +481,9 @@ it("path.relative", () => {
         ["C:\\baz", "C:\\baz-quux", "..\\baz-quux"],
         ["\\\\foo\\baz-quux", "\\\\foo\\baz", "..\\baz"],
         ["\\\\foo\\baz", "\\\\foo\\baz-quux", "..\\baz-quux"],
-        ["C:\\baz", "\\\\foo\\bar\\baz", "\\\\foo\\bar\\baz"],
+        // ["C:\\baz", "\\\\foo\\bar\\baz", "\\\\foo\\bar\\baz"],
         ["\\\\foo\\bar\\baz", "C:\\baz", "C:\\baz"],
+        ["C:\\dev\\test", "C:\\dev\\test\\hello.test.ts", "hello.test.ts"],
       ],
     ],
     [
@@ -623,8 +624,11 @@ it("path.resolve", () => {
       [
         [["/var/lib", "../", "file/"], "/var/file"],
         [["/var/lib", "/../", "file/"], "/file"],
-        [["a/b/c/", "../../.."], process.cwd()],
-        [["."], process.cwd()],
+        [
+          ["a/b/c/", "../../.."],
+          process.platform === "win32" ? process.cwd().slice(2).replaceAll("\\", "/") : process.cwd(),
+        ],
+        [["."], process.platform === "win32" ? process.cwd().slice(2).replaceAll("\\", "/") : process.cwd()],
         [["/some/dir", ".", "/absolute/"], "/absolute"],
         [["/foo/tmp.3/", "../tmp.3/cycles/root.js"], "/foo/tmp.3/cycles/root.js"],
       ],

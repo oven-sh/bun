@@ -100,9 +100,16 @@ pub fn getIfExistsLongestCommonPathGeneric(input: []const []const u8, comptime p
             var string_index: usize = 1;
             while (string_index < input.len) : (string_index += 1) {
                 while (index < min_length) : (index += 1) {
-                    if (input[0][index] != input[string_index][index]) {
-                        if (last_common_separator == null) return null;
-                        break;
+                    if (platform == .windows) {
+                        if (std.ascii.toLower(input[0][index]) != std.ascii.toLower(input[string_index][index])) {
+                            if (last_common_separator == null) return null;
+                            break;
+                        }
+                    } else {
+                        if (input[0][index] != input[string_index][index]) {
+                            if (last_common_separator == null) return null;
+                            break;
+                        }
                     }
                 }
                 if (index == min_length) index -= 1;
@@ -295,9 +302,19 @@ pub fn relativeToCommonPath(
             // the only case path.relative can return not a relative string
             if (!strings.eqlCaseInsensitiveASCIIICheckLength(from_root, to_root)) {
                 if (normalized_to_.len > to_root.len and normalized_to_[normalized_to_.len - 1] == '\\') {
-                    return normalized_to_[0 .. normalized_to_.len - 1];
+                    if (always_copy) {
+                        bun.copy(u8, buf, normalized_to_[0 .. normalized_to_.len - 1]);
+                        return buf[0 .. normalized_to_.len - 1];
+                    } else {
+                        return normalized_to_[0 .. normalized_to_.len - 1];
+                    }
                 } else {
-                    return normalized_to_;
+                    if (always_copy) {
+                        bun.copy(u8, buf, normalized_to_);
+                        return buf[0..normalized_to_.len];
+                    } else {
+                        return normalized_to_;
+                    }
                 }
             }
         }
@@ -416,7 +433,11 @@ pub fn relativeToCommonPath(
 }
 
 pub fn relativeNormalized(from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
-    if (from.len == to.len and strings.eqlLong(from, to, true)) {
+    if ((if (platform == .windows)
+        strings.eqlCaseInsensitiveASCII(from, to, true)
+    else
+        from.len == to.len and strings.eqlLong(from, to, true)))
+    {
         return "";
     }
 
@@ -453,6 +474,7 @@ pub fn relative(from: []const u8, to: []const u8) []const u8 {
 pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
     const normalized_from = if (platform.isAbsolute(from)) brk: {
         var path = normalizeStringBuf(from, relative_from_buf[1..], true, platform, true);
+        if (platform == .windows) break :brk path;
         relative_from_buf[0] = platform.separator();
         break :brk relative_from_buf[0 .. path.len + 1];
     } else joinAbsStringBuf(
@@ -466,6 +488,7 @@ pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Pla
 
     const normalized_to = if (platform.isAbsolute(to)) brk: {
         var path = normalizeStringBuf(to, relative_to_buf[1..], true, platform, true);
+        if (platform == .windows) break :brk path;
         relative_to_buf[0] = platform.separator();
         break :brk relative_to_buf[0 .. path.len + 1];
     } else joinAbsStringBuf(

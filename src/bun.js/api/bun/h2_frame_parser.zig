@@ -86,7 +86,7 @@ const UInt31WithReserved = packed struct(u32) {
     pub inline fn fromBytes(src: []const u8) UInt31WithReserved {
         var dst: u32 = 0;
         @memcpy(@as(*[4]u8, @ptrCast(&dst)), src);
-        if (native_endian != .Big) {
+        if (native_endian != .big) {
             dst = @byteSwap(dst);
         }
         return @bitCast(dst);
@@ -94,7 +94,7 @@ const UInt31WithReserved = packed struct(u32) {
 
     pub inline fn write(this: UInt31WithReserved, comptime Writer: type, writer: Writer) void {
         var value: u32 = @bitCast(this);
-        if (native_endian != .Big) {
+        if (native_endian != .big) {
             value = @byteSwap(value);
         }
 
@@ -109,7 +109,7 @@ const StreamPriority = packed struct(u40) {
     pub const byteSize: usize = 5;
     pub inline fn write(this: *StreamPriority, comptime Writer: type, writer: Writer) void {
         var swap = this.*;
-        if (native_endian != .Big) {
+        if (native_endian != .big) {
             std.mem.byteSwapAllFields(StreamPriority, &swap);
         }
 
@@ -118,7 +118,7 @@ const StreamPriority = packed struct(u40) {
 
     pub inline fn from(dst: *StreamPriority, src: []const u8) void {
         @memcpy(@as(*[StreamPriority.byteSize]u8, @ptrCast(dst)), src);
-        if (native_endian != .Big) {
+        if (native_endian != .big) {
             std.mem.byteSwapAllFields(StreamPriority, dst);
         }
     }
@@ -133,7 +133,7 @@ const FrameHeader = packed struct(u72) {
     pub const byteSize: usize = 9;
     pub inline fn write(this: *FrameHeader, comptime Writer: type, writer: Writer) void {
         var swap = this.*;
-        if (native_endian != .Big) {
+        if (native_endian != .big) {
             std.mem.byteSwapAllFields(FrameHeader, &swap);
         }
 
@@ -143,7 +143,7 @@ const FrameHeader = packed struct(u72) {
     pub inline fn from(dst: *FrameHeader, src: []const u8, offset: usize, comptime end: bool) void {
         @memcpy(@as(*[FrameHeader.byteSize]u8, @ptrCast(dst))[offset .. src.len + offset], src);
         if (comptime end) {
-            if (native_endian != .Big) {
+            if (native_endian != .big) {
                 std.mem.byteSwapAllFields(FrameHeader, dst);
             }
         }
@@ -157,7 +157,7 @@ const SettingsPayloadUnit = packed struct(u48) {
     pub inline fn from(dst: *SettingsPayloadUnit, src: []const u8, offset: usize, comptime end: bool) void {
         @memcpy(@as(*[SettingsPayloadUnit.byteSize]u8, @ptrCast(dst))[offset .. src.len + offset], src);
         if (comptime end) {
-            if (native_endian != .Big) {
+            if (native_endian != .big) {
                 std.mem.byteSwapAllFields(SettingsPayloadUnit, dst);
             }
         }
@@ -205,7 +205,7 @@ const FullSettingsPayload = packed struct(u288) {
     pub fn write(this: *FullSettingsPayload, comptime Writer: type, writer: Writer) void {
         var swap = this.*;
 
-        if (native_endian != .Big) {
+        if (native_endian != .big) {
             std.mem.byteSwapAllFields(FullSettingsPayload, &swap);
         }
         _ = writer.write(std.mem.asBytes(&swap)[0..FullSettingsPayload.byteSize]) catch 0;
@@ -411,7 +411,7 @@ pub export fn BUN__HTTP2_getPackedSettings(globalObject: *JSC.JSGlobalObject, ca
         }
     }
 
-    if (native_endian != .Big) {
+    if (native_endian != .big) {
         std.mem.byteSwapAllFields(FullSettingsPayload, &settings);
     }
     const bytes = std.mem.asBytes(&settings)[0..FullSettingsPayload.byteSize];
@@ -776,7 +776,7 @@ pub const H2FrameParser = struct {
         frame.write(@TypeOf(writer), writer);
         var value: u32 = @intFromEnum(rstCode);
         stream.rstCode = value;
-        if (native_endian != .Big) {
+        if (native_endian != .big) {
             value = @byteSwap(value);
         }
         _ = writer.write(std.mem.asBytes(&value)) catch 0;
@@ -807,7 +807,7 @@ pub const H2FrameParser = struct {
         var last_id = UInt31WithReserved.from(lastStreamID);
         last_id.write(@TypeOf(writer), writer);
         var value: u32 = @intFromEnum(rstCode);
-        if (native_endian != .Big) {
+        if (native_endian != .big) {
             value = @byteSwap(value);
         }
         _ = writer.write(std.mem.asBytes(&value)) catch 0;

@@ -533,6 +533,7 @@ pub const Loop = extern struct {
 
     pub fn init(ptr: *Loop) ?bun.C.E {
         if (uv_loop_init(ptr).errEnum()) |err| return err;
+        return null;
     }
 
     pub fn close(ptr: *Loop) void {

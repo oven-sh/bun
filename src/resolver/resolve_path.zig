@@ -451,7 +451,7 @@ pub fn relative(from: []const u8, to: []const u8) []const u8 {
 }
 
 pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
-    const normalized_from = if (from.len > 0 and from[0] == platform.separator()) brk: {
+    const normalized_from = if (platform.isAbsolute(from)) brk: {
         var path = normalizeStringBuf(from, relative_from_buf[1..], true, platform, true);
         relative_from_buf[0] = platform.separator();
         break :brk relative_from_buf[0 .. path.len + 1];
@@ -464,7 +464,7 @@ pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Pla
         platform,
     );
 
-    const normalized_to = if (to.len > 0 and to[0] == platform.separator()) brk: {
+    const normalized_to = if (platform.isAbsolute(to)) brk: {
         var path = normalizeStringBuf(to, relative_to_buf[1..], true, platform, true);
         relative_to_buf[0] = platform.separator();
         break :brk relative_to_buf[0 .. path.len + 1];
@@ -917,7 +917,7 @@ pub fn joinAbs(_cwd: []const u8, comptime _platform: Platform, part: anytype) []
 
 // Convert parts of potentially invalid file paths into a single valid filpeath
 // without querying the filesystem
-// This is the equivalent of
+// This is the equivalent of path.resolve
 pub fn joinAbsString(_cwd: []const u8, parts: anytype, comptime _platform: Platform) []const u8 {
     return joinAbsStringBuf(
         _cwd,

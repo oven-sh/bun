@@ -3288,14 +3288,30 @@ pub const ZigConsoleClient = struct {
             0 => {},
             else => Output.printError(" {s}", .{chars[0..len]}),
         }
+        Output.flush();
+
         // print the arguments
+        var fmt = ZigConsoleClient.Formatter{
+            .remaining_values = &[_]JSValue{},
+            .globalThis = global,
+            .ordered_properties = false,
+            .quote_strings = false,
+        };
+        var console = global.bunVM().console;
+        var writer = console.error_writer.writer();
+        const Writer = @TypeOf(writer);
         for (0..args_len) |i| {
             const arg = args[i];
-            const arg_str = arg.toBunString(global);
-            Output.printError(" {s}", .{arg_str});
+            const tag = ZigConsoleClient.Formatter.Tag.get(arg, global);
+            _ = writer.write(" ") catch 0;
+            if (Output.enable_ansi_colors_stderr) {
+                fmt.format(tag, Writer, writer, arg, global, true);
+            } else {
+                fmt.format(tag, Writer, writer, arg, global, false);
+            }
         }
-        Output.printErrorln("\n", .{});
-        Output.flush();
+        _ = writer.write("\n") catch 0;
+        writer.context.flush() catch {};
     }
     pub fn profile(
         // console

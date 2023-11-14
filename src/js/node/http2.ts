@@ -724,9 +724,9 @@ class ClientHttp2Session extends Http2Session {
       }
     },
     streamEnd(self: ClientHttp2Session, streamId: number) {
-      self.#connections--;
       var stream = self.#streams.get(streamId);
       if (stream) {
+        self.#connections--;
         stream.destroy();
         stream.emit("end");
         stream.emit("close");

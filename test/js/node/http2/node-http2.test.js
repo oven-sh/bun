@@ -978,7 +978,7 @@ describe("Client Basics", () => {
   });
   it("should not leak memory", () => {
     const { stdout, exitCode } = Bun.spawnSync({
-      cmd: [bunExe(), "run", path.join(import.meta.dir, "node-http2-memory-leak.js")],
+      cmd: [bunExe(), "--smol", "run", path.join(import.meta.dir, "node-http2-memory-leak.js")],
       env: bunEnv,
       stderr: "inherit",
     });

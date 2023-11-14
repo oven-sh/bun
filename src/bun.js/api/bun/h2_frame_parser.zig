@@ -446,7 +446,6 @@ const Handlers = struct {
     globalObject: *JSC.JSGlobalObject,
     strong_ctx: JSC.Strong = .{},
 
-
     pub fn callEventHandler(this: *Handlers, comptime event: @Type(.EnumLiteral), thisValue: JSValue, data: []const JSValue) bool {
         const callback = @field(this, @tagName(event));
         if (callback == .zero) {
@@ -533,7 +532,7 @@ const Handlers = struct {
                 return null;
             };
         }
-        
+
         handlers.strong_ctx.set(globalObject, opts);
 
         return handlers;
@@ -883,21 +882,21 @@ pub const H2FrameParser = struct {
 
     pub fn dispatch(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue) void {
         JSC.markBinding(@src());
-        const ctx_value = this.strong_ctx.get() orelse JSC.JSValue.jsUndefined();
+        const ctx_value = this.strong_ctx.get() orelse return;
         value.ensureStillAlive();
         _ = this.handlers.callEventHandler(event, ctx_value, &[_]JSC.JSValue{ ctx_value, value });
     }
 
     pub fn dispatchWithExtra(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue, extra: JSC.JSValue) void {
         JSC.markBinding(@src());
-        const ctx_value = this.strong_ctx.get() orelse JSC.JSValue.jsUndefined();
+        const ctx_value = this.strong_ctx.get() orelse return;
         value.ensureStillAlive();
         _ = this.handlers.callEventHandler(event, ctx_value, &[_]JSC.JSValue{ ctx_value, value, extra });
     }
 
     pub fn dispatchWith2Extra(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue, extra: JSC.JSValue, extra2: JSC.JSValue) void {
         JSC.markBinding(@src());
-        const ctx_value = this.strong_ctx.get() orelse JSC.JSValue.jsUndefined();
+        const ctx_value = this.strong_ctx.get() orelse return;
         value.ensureStillAlive();
         _ = this.handlers.callEventHandler(event, ctx_value, &[_]JSC.JSValue{ ctx_value, value, extra, extra2 });
     }

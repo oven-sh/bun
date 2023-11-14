@@ -53,7 +53,6 @@ pub const Cli = struct {
 
         var panicker = MainPanicHandler.init(log);
         MainPanicHandler.Singleton = &panicker;
-
         Command.start(allocator, log) catch |err| {
             switch (err) {
                 error.MissingEntryPoint => {
@@ -1222,6 +1221,12 @@ pub const Command = struct {
     };
 
     pub fn start(allocator: std.mem.Allocator, log: *logger.Log) !void {
+        if (comptime Environment.allow_assert) {
+            if (bun.getenvZ("MI_VERBOSE") == null) {
+                bun.Mimalloc.mi_option_set_enabled(.verbose, false);
+            }
+        }
+
         const BuildCommand = @import("./cli/build_command.zig").BuildCommand;
 
         const AddCommand = @import("./cli/add_command.zig").AddCommand;

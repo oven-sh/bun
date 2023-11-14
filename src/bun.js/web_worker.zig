@@ -314,7 +314,7 @@ pub const WebWorker = struct {
         this.setRef(false);
         this.requested_terminate = true;
         if (this.vm) |vm| {
-            vm.global.vm().notifyNeedTermination();
+            vm.jsc.notifyNeedTermination();
             vm.eventLoop().wakeup();
         }
     }
@@ -322,22 +322,31 @@ pub const WebWorker = struct {
     /// This handles cleanup, emitting the "close" event, and deinit.
     /// Only call after the VM is initialized AND on the same thread as the worker.
     /// Otherwise, call `requestTerminate` to cause the event loop to safely terminate after the next tick.
-    fn exitAndDeinit(this: *WebWorker) void {
+    pub fn exitAndDeinit(this: *WebWorker) noreturn {
         JSC.markBinding(@src());
         log("[{d}] exitAndDeinit", .{this.execution_context_id});
         var cpp_worker = this.cpp_worker;
         var exit_code: i32 = 0;
         var globalObject: ?*JSC.JSGlobalObject = null;
+        var vm_to_deinit: ?*JSC.VirtualMachine = null;
         if (this.vm) |vm| {
             this.vm = null;
             vm.onExit();
             exit_code = vm.exit_handler.exit_code;
             globalObject = vm.global;
-            this.arena.deinit();
-            vm.deinit(); // NOTE: deinit here isn't implemented, so freeing workers will leak the vm.
+            vm_to_deinit = vm;
         }
+        var arena = this.arena;
+
         WebWorker__dispatchExit(globalObject, cpp_worker, exit_code);
         this.deinit();
+
+        if (vm_to_deinit) |vm| {
+            vm.deinit(); // NOTE: deinit here isn't implemented, so freeing workers will leak the vm.
+        }
+
+        arena.deinit();
+        bun.exitThread();
     }
 
     comptime {

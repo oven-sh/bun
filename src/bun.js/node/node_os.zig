@@ -281,10 +281,10 @@ pub const Os = struct {
         JSC.markBinding(@src());
 
         switch (comptime builtin.target.cpu.arch.endian()) {
-            .Big => {
+            .big => {
                 return JSC.ZigString.init("BE").withEncoding().toValue(globalThis);
             },
-            .Little => {
+            .little => {
                 return JSC.ZigString.init("LE").withEncoding().toValue(globalThis);
             },
         }

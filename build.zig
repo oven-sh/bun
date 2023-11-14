@@ -1,4 +1,4 @@
-const recommended_zig_version = "0.12.0-dev.1297+a9e66ed73";
+const recommended_zig_version = "0.12.0-dev.1571+03adafd80";
 const zig_version = @import("builtin").zig_version;
 const std = @import("std");
 
@@ -169,7 +169,7 @@ const fmt = struct {
 };
 
 var x64 = "x64";
-var optimize: std.builtin.OptimizeMode = undefined;
+var optimize: std.builtin.OptimizeMode = .Debug;
 
 const Build = std.Build;
 const CrossTarget = std.zig.CrossTarget;
@@ -219,7 +219,11 @@ pub fn build_(b: *Build) !void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     optimize = b.standardOptimizeOption(.{});
 
-    const generated_code_directory = b.option([]const u8, "generated-code", "Set the generated code directory") orelse "./build";
+    var generated_code_directory = b.option([]const u8, "generated-code", "Set the generated code directory") orelse "";
+
+    if (generated_code_directory.len == 0) {
+        generated_code_directory = b.pathFromRoot("build/codegen");
+    }
 
     var output_dir_buf = std.mem.zeroes([4096]u8);
     var bin_label = if (optimize == std.builtin.OptimizeMode.Debug) "packages/debug-bun-" else "packages/bun-";
@@ -403,11 +407,11 @@ pub fn build_(b: *Build) !void {
 
         // Generated Code
         // TODO: exit with a better error early if these files do not exist. it is an indication someone ran `zig build` directly without the code generators.
-        obj.addModule("generated/ZigGeneratedClasses.zig", b.createModule(.{
-            .source_file = .{ .path = b.fmt("{s}/ZigGeneratedClasses.zig", .{generated_code_directory}) },
+        obj.addModule("ZigGeneratedClasses", b.createModule(.{
+            .source_file = .{ .path = b.pathJoin(&.{ generated_code_directory, "ZigGeneratedClasses.zig" }) },
         }));
-        obj.addModule("generated/ResolvedSourceTag.zig", b.createModule(.{
-            .source_file = .{ .path = b.fmt("{s}/ResolvedSourceTag.zig", .{generated_code_directory}) },
+        obj.addModule("ResolvedSourceTag", b.createModule(.{
+            .source_file = .{ .path = b.pathJoin(&.{ generated_code_directory, "ResolvedSourceTag.zig" }) },
         }));
 
         obj.linkLibC();
@@ -415,6 +419,7 @@ pub fn build_(b: *Build) !void {
         obj.strip = false;
         obj.omit_frame_pointer = optimize != .Debug;
         obj.subsystem = .Console;
+
         // Disable stack probing on x86 so we don't need to include compiler_rt
         if (target.getCpuArch().isX86() or target.isWindows()) obj.disable_stack_probing = true;
 

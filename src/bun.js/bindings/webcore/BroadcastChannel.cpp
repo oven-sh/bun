@@ -61,7 +61,6 @@ static HashMap<BroadcastChannelIdentifier, BroadcastChannel*>& allBroadcastChann
 static Lock channelToContextIdentifierLock;
 static HashMap<BroadcastChannelIdentifier, ScriptExecutionContextIdentifier>& channelToContextIdentifier()
 {
-    ASSERT(isMainThread());
     static NeverDestroyed<HashMap<BroadcastChannelIdentifier, ScriptExecutionContextIdentifier>> map;
     return map;
 }

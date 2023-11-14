@@ -958,7 +958,6 @@ pub const ImportScanner = struct {
                     //
                     var did_remove_star_loc = false;
                     const keep_unused_imports = !p.options.features.trim_unused_imports;
-
                     // TypeScript always trims unused imports. This is important for
                     // correctness since some imports might be fake (only in the type
                     // system and used for type-only imports).
@@ -10954,6 +10953,10 @@ fn NewParser_(
                                         } else if (str.eqlComptime("use asm")) {
                                             skip = true;
                                             stmt.data = Prefill.Data.SEmpty;
+                                        } else {
+                                            stmt = Stmt.alloc(S.Directive, S.Directive{
+                                                .value = str.slice(p.allocator),
+                                            }, stmt.loc);
                                         }
                                     }
                                 },
@@ -16556,7 +16559,7 @@ fn NewParser_(
                         continue;
                     },
                     .s_directive => |dir| {
-                        if (strings.utf16EqlString(dir.value, "use strict")) {
+                        if (strings.eqlComptime(dir.value, "use strict")) {
                             return stmt.loc;
                         }
                     },
@@ -17586,10 +17589,6 @@ fn NewParser_(
                 },
                 .s_directive => {
                     p.current_scope.is_after_const_local_prefix = was_after_after_const_local_prefix;
-                    //         	if p.isStrictMode() && s.LegacyOctalLoc.Start > 0 {
-                    // 	p.markStrictModeFeature(legacyOctalEscape, p.source.RangeOfLegacyOctalEscape(s.LegacyOctalLoc), "")
-                    // }
-                    return;
                 },
                 .s_import => |data| {
                     try p.recordDeclaredSymbol(data.namespace_ref);

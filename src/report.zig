@@ -312,7 +312,7 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
     if (error_return_trace) |trace| {
         std.debug.dumpStackTrace(trace.*);
     }
-
+    Global.runExitCallbacks();
     std.c._exit(128 + @as(u8, @truncate(@as(u8, @intCast(@max(signal, 0))))));
 }
 

@@ -12,7 +12,7 @@ try {
 
   Run cmake --build . --clean-first --config Release
 
-  Copy-Item ls-hpack.lib $BUN_DEPS_OUT_DIR/lshpack.lib
+  Copy-Item Release/ls-hpack.lib $BUN_DEPS_OUT_DIR/lshpack.lib
 
   Write-Host "-> lshpack.lib"
 } finally { Pop-Location }

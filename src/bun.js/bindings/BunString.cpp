@@ -3,7 +3,23 @@
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include "helpers.h"
 #include "simdutf.h"
+#include "JSDOMURL.h"
 #include "DOMURL.h"
+#include "ZigGlobalObject.h"
+#include "IDLTypes.h"
+#include "JSDOMWrapperCache.h"
+
+#include "JSDOMAttribute.h"
+#include "JSDOMBinding.h"
+#include "JSDOMConstructor.h"
+#include "JSDOMConvertAny.h"
+#include "JSDOMConvertBase.h"
+#include "JSDOMConvertBoolean.h"
+#include "JSDOMConvertInterface.h"
+#include "JSDOMConvertStrings.h"
+#include "JSDOMExceptionHandling.h"
+#include "JSDOMGlobalObjectInlines.h"
+#include "JSDOMOperation.h"
 
 #include <wtf/Seconds.h>
 #include <wtf/text/ExternalStringImpl.h>
@@ -309,14 +325,14 @@ extern "C" BunString URL__getFileURLString(BunString* filePath)
 
 extern "C" JSC__JSValue BunString__toJSDOMURL(JSC::JSGlobalObject* lexicalGlobalObject, BunString* bunString)
 {
-    auto& globalObject = *reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto& globalObject = *jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto& vm = globalObject.vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     auto str = bunString->toWTFString(BunString::ZeroCopy);
 
     auto object = WebCore::DOMURL::create(str, String());
-    auto jsValue = WebCore::toJSNewlyCreated<IDLInterface<DOMURL>>(*lexicalGlobalObject, globalObject, throwScope, WTFMove(object));
+    auto jsValue = WebCore::toJSNewlyCreated<WebCore::IDLInterface<WebCore::DOMURL>>(*lexicalGlobalObject, globalObject, throwScope, WTFMove(object));
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(jsValue));
 }
 

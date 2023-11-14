@@ -192,7 +192,13 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
 
     // constructed "resolved" urls
     var resolved_urls = ResolvedURLsMap{};
-    defer resolved_urls.deinit(allocator);
+    defer {
+        var itr = resolved_urls.iterator();
+        while (itr.next()) |entry| {
+            allocator.free(entry.value_ptr.*);
+        }
+        resolved_urls.deinit(allocator);
+    }
 
     // Counting Phase
     // This "IdMap" is used to make object key lookups faster for the `packages` object

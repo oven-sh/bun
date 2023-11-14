@@ -582,7 +582,7 @@ pub const VirtualMachine = struct {
     modules: ModuleLoader.AsyncModule.Queue = .{},
     aggressive_garbage_collection: GCLevel = GCLevel.none,
 
-    parser_arena: ?@import("root").bun.ArenaAllocator = null,
+    parser_arena: ?*@import("root").bun.ArenaAllocator = null,
 
     gc_controller: JSC.GarbageCollectionController = .{},
     worker: ?*JSC.WebWorker = null,
@@ -590,6 +590,7 @@ pub const VirtualMachine = struct {
 
     debugger: ?Debugger = null,
     has_started_debugger: bool = false,
+    has_terminated: bool = false,
 
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
 
@@ -873,6 +874,20 @@ pub const VirtualMachine = struct {
 
             break;
         }
+    }
+
+    pub fn scriptExecutionStatus(this: *VirtualMachine) callconv(.C) JSC.ScriptExecutionStatus {
+        if (this.worker) |worker| {
+            if (worker.requested_terminate) {
+                return .stopped;
+            }
+        }
+
+        return .running;
+    }
+
+    comptime {
+        @export(scriptExecutionStatus, .{ .name = "Bun__VM__scriptExecutionStatus" });
     }
 
     pub fn onExit(this: *VirtualMachine) void {
@@ -1160,7 +1175,7 @@ pub const VirtualMachine = struct {
             .ref_strings_mutex = Lock.init(),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
             .standalone_module_graph = opts.graph.?,
-            .parser_arena = @import("root").bun.ArenaAllocator.init(allocator),
+            .parser_arena = null,
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -1269,7 +1284,7 @@ pub const VirtualMachine = struct {
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = Lock.init(),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
-            .parser_arena = @import("root").bun.ArenaAllocator.init(allocator),
+            .parser_arena = null,
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -1406,7 +1421,7 @@ pub const VirtualMachine = struct {
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = Lock.init(),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
-            .parser_arena = @import("root").bun.ArenaAllocator.init(allocator),
+            .parser_arena = null,
             .standalone_module_graph = worker.parent.standalone_module_graph,
             .worker = worker,
         };
@@ -1451,7 +1466,7 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.global = vm.global;
         vm.regular_event_loop.virtual_machine = vm;
         vm.jsc = vm.global.vm();
-
+        vm.bundler.setAllocator(allocator);
         if (source_code_printer == null) {
             var writer = try js_printer.BufferWriter.init(allocator);
             source_code_printer = allocator.create(js_printer.BufferPrinter) catch unreachable;
@@ -2024,6 +2039,7 @@ pub const VirtualMachine = struct {
     // TODO:
     pub fn deinit(this: *VirtualMachine) void {
         this.source_mappings.deinit();
+        this.has_terminated = true;
     }
 
     pub const ExceptionList = std.ArrayList(Api.JsException);
@@ -2082,6 +2098,82 @@ pub const VirtualMachine = struct {
         this.global.deleteModuleRegistryEntry(&str);
     }
 
+    fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
+        this.is_in_preload = true;
+        defer this.is_in_preload = false;
+
+        for (this.preload) |preload| {
+            var result = switch (this.bundler.resolver.resolveAndAutoInstall(
+                this.bundler.fs.top_level_dir,
+                normalizeSource(preload),
+                .stmt,
+                .read_only,
+            )) {
+                .success => |r| r,
+                .failure => |e| {
+                    this.log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        this.allocator,
+                        "{s} resolving preload {any}",
+                        .{
+                            @errorName(e),
+                            js_printer.formatJSONString(preload),
+                        },
+                    ) catch unreachable;
+                    return e;
+                },
+                .pending, .not_found => {
+                    this.log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        this.allocator,
+                        "preload not found {any}",
+                        .{
+                            js_printer.formatJSONString(preload),
+                        },
+                    ) catch unreachable;
+                    return error.ModuleNotFound;
+                },
+            };
+            var promise = JSModuleLoader.import(this.global, &String.fromBytes(result.path().?.text));
+
+            this.pending_internal_promise = promise;
+            JSValue.fromCell(promise).protect();
+            defer JSValue.fromCell(promise).unprotect();
+
+            // pending_internal_promise can change if hot module reloading is enabled
+            if (this.isWatcherEnabled()) {
+                this.eventLoop().performGC();
+                switch (this.pending_internal_promise.status(this.global.vm())) {
+                    JSC.JSPromise.Status.Pending => {
+                        while (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                            this.eventLoop().tick();
+
+                            if (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                                this.eventLoop().autoTick();
+                            }
+                        }
+                    },
+                    else => {},
+                }
+            } else {
+                this.eventLoop().performGC();
+                this.waitForPromise(JSC.AnyPromise{
+                    .Internal = promise,
+                });
+            }
+
+            if (promise.status(this.global.vm()) == .Rejected)
+                return promise;
+        }
+
+        // only load preloads once
+        this.preload.len = 0;
+
+        return null;
+    }
+
     pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
         this.has_loaded = false;
         this.main = entry_path;
@@ -2095,94 +2187,55 @@ pub const VirtualMachine = struct {
         );
         this.eventLoop().ensureWaker();
 
-        var promise: *JSInternalPromise = undefined;
+        if (this.debugger != null) {
+            try Debugger.create(this, this.global);
+        }
+
+        if (!this.bundler.options.disable_transpilation) {
+            if (try this.loadPreloads()) |promise| {
+                JSC.JSValue.fromCell(promise).ensureStillAlive();
+                JSC.JSValue.fromCell(promise).protect();
+                this.pending_internal_promise = promise;
+                return promise;
+            }
+
+            var promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(main_file_name)) orelse return error.JSError;
+            this.pending_internal_promise = promise;
+            JSC.JSValue.fromCell(promise).ensureStillAlive();
+            return promise;
+        } else {
+            var promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(this.main)) orelse return error.JSError;
+            this.pending_internal_promise = promise;
+            JSC.JSValue.fromCell(promise).ensureStillAlive();
+
+            return promise;
+        }
+    }
+
+    pub fn reloadEntryPointForTestRunner(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
+        this.has_loaded = false;
+        this.main = entry_path;
+        this.main_hash = bun.JSC.Watcher.getHash(entry_path);
+
+        this.eventLoop().ensureWaker();
 
         if (this.debugger != null) {
             try Debugger.create(this, this.global);
         }
 
         if (!this.bundler.options.disable_transpilation) {
-            {
-                this.is_in_preload = true;
-                defer this.is_in_preload = false;
-                for (this.preload) |preload| {
-                    var result = switch (this.bundler.resolver.resolveAndAutoInstall(
-                        this.bundler.fs.top_level_dir,
-                        normalizeSource(preload),
-                        .stmt,
-                        .read_only,
-                    )) {
-                        .success => |r| r,
-                        .failure => |e| {
-                            this.log.addErrorFmt(
-                                null,
-                                logger.Loc.Empty,
-                                this.allocator,
-                                "{s} resolving preload {any}",
-                                .{
-                                    @errorName(e),
-                                    js_printer.formatJSONString(preload),
-                                },
-                            ) catch unreachable;
-                            return e;
-                        },
-                        .pending, .not_found => {
-                            this.log.addErrorFmt(
-                                null,
-                                logger.Loc.Empty,
-                                this.allocator,
-                                "preload not found {any}",
-                                .{
-                                    js_printer.formatJSONString(preload),
-                                },
-                            ) catch unreachable;
-                            return error.ModuleNotFound;
-                        },
-                    };
-                    promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.fromBytes(result.path().?.text));
+            if (try this.loadPreloads()) |promise| {
+                JSC.JSValue.fromCell(promise).ensureStillAlive();
+                this.pending_internal_promise = promise;
+                JSC.JSValue.fromCell(promise).protect();
 
-                    this.pending_internal_promise = promise;
-                    JSValue.fromCell(promise).protect();
-                    defer JSValue.fromCell(promise).unprotect();
-
-                    // pending_internal_promise can change if hot module reloading is enabled
-                    if (this.isWatcherEnabled()) {
-                        this.eventLoop().performGC();
-                        switch (this.pending_internal_promise.status(this.global.vm())) {
-                            JSC.JSPromise.Status.Pending => {
-                                while (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
-                                    this.eventLoop().tick();
-
-                                    if (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
-                                        this.eventLoop().autoTick();
-                                    }
-                                }
-                            },
-                            else => {},
-                        }
-                    } else {
-                        this.eventLoop().performGC();
-                        this.waitForPromise(JSC.AnyPromise{
-                            .Internal = promise,
-                        });
-                    }
-
-                    if (promise.status(this.global.vm()) == .Rejected)
-                        return promise;
-                }
+                return promise;
             }
-
-            // only load preloads once
-            this.preload.len = 0;
-
-            promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(main_file_name));
-            this.pending_internal_promise = promise;
-            JSC.JSValue.fromCell(promise).ensureStillAlive();
-        } else {
-            promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(this.main));
-            this.pending_internal_promise = promise;
-            JSC.JSValue.fromCell(promise).ensureStillAlive();
         }
+
+        var promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.fromBytes(this.main)) orelse return error.JSError;
+        this.pending_internal_promise = promise;
+        JSC.JSValue.fromCell(promise).ensureStillAlive();
 
         return promise;
     }
@@ -2191,9 +2244,48 @@ pub const VirtualMachine = struct {
     pub fn loadEntryPointForWebWorker(this: *VirtualMachine, entry_path: string) anyerror!*JSInternalPromise {
         var promise = try this.reloadEntryPoint(entry_path);
         this.eventLoop().performGC();
-        this.waitForPromise(JSC.AnyPromise{
+        this.eventLoop().waitForPromiseWithTermination(JSC.AnyPromise{
             .Internal = promise,
         });
+        if (this.worker) |worker| {
+            if (worker.requested_terminate) {
+                return error.WorkerTerminated;
+            }
+        }
+        return this.pending_internal_promise;
+    }
+
+    pub fn loadEntryPointForTestRunner(this: *VirtualMachine, entry_path: string) anyerror!*JSInternalPromise {
+        var promise = try this.reloadEntryPointForTestRunner(entry_path);
+
+        // pending_internal_promise can change if hot module reloading is enabled
+        if (this.isWatcherEnabled()) {
+            this.eventLoop().performGC();
+            switch (this.pending_internal_promise.status(this.global.vm())) {
+                JSC.JSPromise.Status.Pending => {
+                    while (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                        this.eventLoop().tick();
+
+                        if (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                            this.eventLoop().autoTick();
+                        }
+                    }
+                },
+                else => {},
+            }
+        } else {
+            if (promise.status(this.global.vm()) == .Rejected) {
+                return promise;
+            }
+
+            this.eventLoop().performGC();
+            this.waitForPromise(JSC.AnyPromise{
+                .Internal = promise,
+            });
+        }
+
+        this.eventLoop().autoTick();
+
         return this.pending_internal_promise;
     }
 
@@ -2216,6 +2308,10 @@ pub const VirtualMachine = struct {
                 else => {},
             }
         } else {
+            if (promise.status(this.global.vm()) == .Rejected) {
+                return promise;
+            }
+
             this.eventLoop().performGC();
             this.waitForPromise(JSC.AnyPromise{
                 .Internal = promise,
@@ -2257,7 +2353,7 @@ pub const VirtualMachine = struct {
         };
 
         this.runWithAPILock(MacroEntryPointLoader, &loader, MacroEntryPointLoader.load);
-        return loader.promise;
+        return loader.promise orelse return error.JSError;
     }
 
     /// A subtlelty of JavaScriptCore:
@@ -2271,16 +2367,16 @@ pub const VirtualMachine = struct {
 
     const MacroEntryPointLoader = struct {
         path: string,
-        promise: *JSInternalPromise = undefined,
+        promise: ?*JSInternalPromise = null,
         pub fn load(this: *MacroEntryPointLoader) void {
             this.promise = VirtualMachine.get()._loadMacroEntryPoint(this.path);
         }
     };
 
-    pub inline fn _loadMacroEntryPoint(this: *VirtualMachine, entry_path: string) *JSInternalPromise {
+    pub inline fn _loadMacroEntryPoint(this: *VirtualMachine, entry_path: string) ?*JSInternalPromise {
         var promise: *JSInternalPromise = undefined;
 
-        promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(entry_path));
+        promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(entry_path)) orelse return null;
         this.waitForPromise(JSC.AnyPromise{
             .Internal = promise,
         });

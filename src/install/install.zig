@@ -3151,7 +3151,7 @@ pub const PackageManager = struct {
         tmpname_buf[0..8].* = "tmplock-".*;
         var tmpfile = FileSystem.RealFS.Tmpfile{};
         var secret: [32]u8 = undefined;
-        std.mem.writeIntNative(u64, secret[0..8], @as(u64, @intCast(std.time.milliTimestamp())));
+        std.mem.writeInt(u64, secret[0..8], @as(u64, @intCast(std.time.milliTimestamp())), .little);
         var base64_bytes: [64]u8 = undefined;
         std.crypto.random.bytes(&base64_bytes);
 

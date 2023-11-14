@@ -935,7 +935,7 @@ pub const TestCommand = struct {
             }
             Output.flush();
 
-            var promise = try vm.loadEntryPoint(file_path);
+            var promise = try vm.loadEntryPointForTestRunner(file_path);
             reporter.summary.files += 1;
 
             switch (promise.status(vm.global.vm())) {

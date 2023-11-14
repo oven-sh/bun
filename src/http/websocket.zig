@@ -53,14 +53,14 @@ pub const WebsocketHeader = packed struct {
         if (comptime Environment.allow_assert) {
             var buf_ = [2]u8{ 0, 0 };
             var stream = std.io.fixedBufferStream(&buf_);
-            stream.writer().writeIntBig(u16, @as(u16, @bitCast(header))) catch unreachable;
+            stream.writer().writeInt(u16, @as(u16, @bitCast(header)), .big) catch unreachable;
             stream.pos = 0;
-            const casted = stream.reader().readIntBig(u16) catch unreachable;
+            const casted = stream.reader().readInt(u16, .big) catch unreachable;
             std.debug.assert(casted == @as(u16, @bitCast(header)));
             std.debug.assert(std.meta.eql(@as(WebsocketHeader, @bitCast(casted)), header));
         }
 
-        try writer.writeIntBig(u16, @as(u16, @bitCast(header)));
+        try writer.writeInt(u16, @as(u16, @bitCast(header)), .big);
         std.debug.assert(header.len == packLength(n));
     }
 
@@ -230,14 +230,14 @@ pub const Websocket = struct {
 
         if (!dataframe.isValid()) return error.InvalidMessage;
 
-        try stream.writeIntBig(u16, @as(u16, @bitCast(dataframe.header)));
+        try stream.writeInt(u16, @as(u16, @bitCast(dataframe.header)), .big);
 
         // Write extended length if needed
         const n = dataframe.data.len;
         switch (n) {
             0...126 => {}, // Included in header
-            127...0xFFFF => try stream.writeIntBig(u16, @as(u16, @truncate(n))),
-            else => try stream.writeIntBig(u64, n),
+            127...0xFFFF => try stream.writeInt(u16, @as(u16, @truncate(n)), .big),
+            else => try stream.writeInt(u64, n, .big),
         }
 
         // TODO: Handle compression
@@ -301,11 +301,11 @@ pub const Websocket = struct {
 
         switch (header.len) {
             126 => {
-                length = std.mem.readIntBig(u16, buf[2..4]);
+                length = std.mem.readInt(u16, buf[2..4], .big);
                 buf = buf[4..];
             },
             127 => {
-                length = std.mem.readIntBig(u64, buf[2..10]);
+                length = std.mem.readInt(u64, buf[2..10], .big);
                 // Most significant bit must be 0
                 if (length >> 63 == 1) {
                     return error.InvalidMessage;

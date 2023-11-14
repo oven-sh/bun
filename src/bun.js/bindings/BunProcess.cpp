@@ -54,7 +54,8 @@ using namespace JSC;
 
 #define REPORTED_NODE_VERSION "20.8.0"
 #define processObjectBindingCodeGenerator processObjectInternalsBindingCodeGenerator
-#define processObjectMainModuleCodeGenerator moduleMainCodeGenerator
+#define setProcessObjectInternalsMainModuleCodeGenerator processObjectInternalsSetMainModuleCodeGenerator
+#define setProcessObjectMainModuleCodeGenerator setMainModuleCodeGenerator
 
 #if !defined(BUN_WEBKIT_VERSION)
 #define BUN_WEBKIT_VERSION "unknown"
@@ -1990,6 +1991,7 @@ extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSVa
 {
     auto* process = static_cast<Process*>(global->processObject());
     auto& vm = global->vm();
+
     auto ident = Identifier::fromString(vm, "message"_s);
     if (process->wrapped().hasEventListeners(ident)) {
         JSC::MarkedArgumentBuffer args;
@@ -2011,72 +2013,72 @@ extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
 
 /* Source for Process.lut.h
 @begin processObjectTable
-  abort                            Process_functionAbort                    Function 1
-  allowedNodeEnvironmentFlags      Process_stubEmptySet                     PropertyCallback
-  arch                             constructArch                            PropertyCallback
-  argv                             constructArgv                            PropertyCallback
-  argv0                            constructArgv0                           PropertyCallback
-  assert                           Process_functionAssert                   Function 1
-  binding                          Process_functionBinding                  Function 1
-  browser                          constructBrowser                         PropertyCallback
-  chdir                            Process_functionChdir                    Function 1
-  config                           constructProcessConfigObject             PropertyCallback
-  connected                        processConnected                         CustomAccessor
-  constrainedMemory                Process_functionConstrainedMemory        Function 0
-  cpuUsage                         Process_functionCpuUsage                 Function 1
-  cwd                              Process_functionCwd                      Function 1
-  debugPort                        processDebugPort                         CustomAccessor
-  disconnect                       constructProcessDisconnect               PropertyCallback
-  dlopen                           Process_functionDlopen                   Function 1
-  emitWarning                      Process_emitWarning                      Function 1
-  env                              constructEnv                             PropertyCallback
-  execArgv                         constructExecArgv                        PropertyCallback
-  execPath                         constructExecPath                        PropertyCallback
-  exit                             Process_functionExit                     Function 1
-  exitCode                         processExitCode                          CustomAccessor
-  features                         constructFeatures                        PropertyCallback
-  getActiveResourcesInfo           Process_stubFunctionReturningArray       Function 0
-  getegid                          Process_functiongetegid                  Function 0
-  geteuid                          Process_functiongeteuid                  Function 0
-  getgid                           Process_functiongetgid                   Function 0
-  getgroups                        Process_functiongetgroups                Function 0
-  getuid                           Process_functiongetuid                   Function 0
-  hrtime                           constructProcessHrtimeObject             PropertyCallback
-  isBun                            constructIsBun                           PropertyCallback
-  kill                             Process_functionKill                     Function 2
-  mainModule                       JSBuiltin                                ReadOnly|Builtin|Accessor|Function 0
-  memoryUsage                      constructMemoryUsage                     PropertyCallback
-  moduleLoadList                   Process_stubEmptyArray                   PropertyCallback
-  nextTick                         constructProcessNextTickFn               PropertyCallback
-  openStdin                        Process_functionOpenStdin                Function 0
-  pid                              constructPid                             PropertyCallback
-  platform                         constructPlatform                        PropertyCallback
-  ppid                             constructPpid                            PropertyCallback
-  reallyExit                       Process_functionReallyExit               Function 1
-  release                          constructProcessReleaseObject            PropertyCallback
-  revision                         constructRevision                        PropertyCallback
-  setSourceMapsEnabled             Process_stubEmptyFunction                Function 1
-  send                             constructProcessSend                     PropertyCallback
-  stderr                           constructStderr                          PropertyCallback
-  stdin                            constructStdin                           PropertyCallback
-  stdout                           constructStdout                          PropertyCallback
-  title                            processTitle                             CustomAccessor
-  umask                            Process_functionUmask                    Function 1
-  uptime                           Process_functionUptime                   Function 1
-  version                          constructVersion                         PropertyCallback
-  versions                         constructVersions                        PropertyCallback
-  _debugEnd                        Process_stubEmptyFunction                Function 0
-  _debugProcess                    Process_stubEmptyFunction                Function 0
-  _fatalException                  Process_stubEmptyFunction                Function 1
-  _getActiveRequests               Process_stubFunctionReturningArray       Function 0
-  _getActiveHandles                Process_stubFunctionReturningArray       Function 0
-  _linkedBinding                   Process_stubEmptyFunction                Function 0
-  _preload_modules                 Process_stubEmptyArray                   PropertyCallback
-  _rawDebug                        Process_stubEmptyFunction                Function 0
-  _startProfilerIdleNotifier       Process_stubEmptyFunction                Function 0
-  _stopProfilerIdleNotifier        Process_stubEmptyFunction                Function 0
-  _tickCallback                    Process_stubEmptyFunction                Function 0
-  _kill                            Process_functionReallyKill               Function 2
+  abort                            Process_functionAbort                               Function 1
+  allowedNodeEnvironmentFlags      Process_stubEmptySet                                PropertyCallback
+  arch                             constructArch                                       PropertyCallback
+  argv                             constructArgv                                       PropertyCallback
+  argv0                            constructArgv0                                      PropertyCallback
+  assert                           Process_functionAssert                              Function 1
+  binding                          Process_functionBinding                             Function 1
+  browser                          constructBrowser                                    PropertyCallback
+  chdir                            Process_functionChdir                               Function 1
+  config                           constructProcessConfigObject                        PropertyCallback
+  connected                        processConnected                                    CustomAccessor
+  constrainedMemory                Process_functionConstrainedMemory                   Function 0
+  cpuUsage                         Process_functionCpuUsage                            Function 1
+  cwd                              Process_functionCwd                                 Function 1
+  debugPort                        processDebugPort                                    CustomAccessor
+  disconnect                       constructProcessDisconnect                          PropertyCallback
+  dlopen                           Process_functionDlopen                              Function 1
+  emitWarning                      Process_emitWarning                                 Function 1
+  env                              constructEnv                                        PropertyCallback
+  execArgv                         constructExecArgv                                   PropertyCallback
+  execPath                         constructExecPath                                   PropertyCallback
+  exit                             Process_functionExit                                Function 1
+  exitCode                         processExitCode                                     CustomAccessor
+  features                         constructFeatures                                   PropertyCallback
+  getActiveResourcesInfo           Process_stubFunctionReturningArray                  Function 0
+  getegid                          Process_functiongetegid                             Function 0
+  geteuid                          Process_functiongeteuid                             Function 0
+  getgid                           Process_functiongetgid                              Function 0
+  getgroups                        Process_functiongetgroups                           Function 0
+  getuid                           Process_functiongetuid                              Function 0
+  hrtime                           constructProcessHrtimeObject                        PropertyCallback
+  isBun                            constructIsBun                                      PropertyCallback
+  kill                             Process_functionKill                                Function 2
+  mainModule                       processObjectInternalsMainModuleCodeGenerator       Builtin|Accessor
+  memoryUsage                      constructMemoryUsage                                PropertyCallback
+  moduleLoadList                   Process_stubEmptyArray                              PropertyCallback
+  nextTick                         constructProcessNextTickFn                          PropertyCallback
+  openStdin                        Process_functionOpenStdin                           Function 0
+  pid                              constructPid                                        PropertyCallback
+  platform                         constructPlatform                                   PropertyCallback
+  ppid                             constructPpid                                       PropertyCallback
+  reallyExit                       Process_functionReallyExit                          Function 1
+  release                          constructProcessReleaseObject                       PropertyCallback
+  revision                         constructRevision                                   PropertyCallback
+  setSourceMapsEnabled             Process_stubEmptyFunction                           Function 1
+  send                             constructProcessSend                                PropertyCallback
+  stderr                           constructStderr                                     PropertyCallback
+  stdin                            constructStdin                                      PropertyCallback
+  stdout                           constructStdout                                     PropertyCallback
+  title                            processTitle                                        CustomAccessor
+  umask                            Process_functionUmask                               Function 1
+  uptime                           Process_functionUptime                              Function 1
+  version                          constructVersion                                    PropertyCallback
+  versions                         constructVersions                                   PropertyCallback
+  _debugEnd                        Process_stubEmptyFunction                           Function 0
+  _debugProcess                    Process_stubEmptyFunction                           Function 0
+  _fatalException                  Process_stubEmptyFunction                           Function 1
+  _getActiveRequests               Process_stubFunctionReturningArray                  Function 0
+  _getActiveHandles                Process_stubFunctionReturningArray                  Function 0
+  _linkedBinding                   Process_stubEmptyFunction                           Function 0
+  _preload_modules                 Process_stubEmptyArray                              PropertyCallback
+  _rawDebug                        Process_stubEmptyFunction                           Function 0
+  _startProfilerIdleNotifier       Process_stubEmptyFunction                           Function 0
+  _stopProfilerIdleNotifier        Process_stubEmptyFunction                           Function 0
+  _tickCallback                    Process_stubEmptyFunction                           Function 0
+  _kill                            Process_functionReallyKill                          Function 2
 @end
 */
 #include "BunProcess.lut.h"

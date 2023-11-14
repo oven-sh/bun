@@ -564,16 +564,15 @@ static void resetOnEachMicrotaskTick(JSC::VM& vm, Zig::GlobalObject* globalObjec
 
 extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, void* worker_ptr)
 {
+
     auto heapSize = miniMode ? JSC::HeapType::Small : JSC::HeapType::Large;
-
     JSC::VM& vm = JSC::VM::create(heapSize).leakRef();
-
     // This must happen before JSVMClientData::create
     vm.heap.acquireAccess();
+    JSC::JSLockHolder locker(vm);
 
     WebCore::JSVMClientData::create(&vm, Bun__getVM());
 
-    JSC::JSLockHolder locker(vm);
     Zig::GlobalObject* globalObject;
 
     if (UNLIKELY(executionContextId > -1)) {
@@ -584,14 +583,19 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
 
         if (auto* worker = static_cast<WebCore::Worker*>(worker_ptr)) {
             auto& options = worker->options();
+
+            // ensure remote termination works.
+            vm.ensureTerminationException();
+            vm.forbidExecutionOnTermination();
+
             if (options.bun.env) {
-                auto map = *options.bun.env;
-                auto size = map.size();
-                auto env = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), size > 63 ? 63 : size);
-                for (auto k : map) {
+                auto map = WTFMove(options.bun.env);
+                auto size = map->size();
+                auto env = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), size >= JSFinalObject::maxInlineCapacity ? JSFinalObject::maxInlineCapacity : size);
+                for (auto k : *map) {
                     env->putDirect(vm, JSC::Identifier::fromString(vm, WTFMove(k.key)), JSC::jsString(vm, WTFMove(k.value)));
                 }
-                map.clear();
+                map->clear();
                 globalObject->m_processEnvObject.set(vm, globalObject, env);
             }
         }
@@ -619,7 +623,6 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
         }
     });
 
-    vm.ref();
     return globalObject;
 }
 
@@ -777,6 +780,22 @@ extern "C" JSC__JSValue JSC__JSValue__makeWithNameAndPrototype(JSC__JSGlobalObje
     return JSC::JSValue::encode(JSC::JSValue(object));
 }
 
+extern "C" int Bun__VM__scriptExecutionStatus(void*);
+JSC::ScriptExecutionStatus Zig::GlobalObject::scriptExecutionStatus(JSC::JSGlobalObject* globalObject, JSC::JSObject*)
+{
+    switch (Bun__VM__scriptExecutionStatus(jsCast<Zig::GlobalObject*>(globalObject)->bunVM())) {
+    case 0:
+        return JSC::ScriptExecutionStatus::Running;
+    case 1:
+        return JSC::ScriptExecutionStatus::Suspended;
+    case 2:
+        return JSC::ScriptExecutionStatus::Stopped;
+    default: {
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    }
+}
+
 const JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
     &supportsRichSourceInfo,
     &shouldInterruptScript,
@@ -813,6 +832,8 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure)
     // m_scriptExecutionContext = globalEventScope.m_context;
     mockModule = Bun::JSMockModule::create(this);
     globalEventScope.m_context = m_scriptExecutionContext;
+    // FIXME: is there a better way to do this? this event handler should always be tied to the global object
+    globalEventScope.relaxAdoptionRequirement();
 }
 
 GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::ScriptExecutionContextIdentifier contextId)
@@ -828,6 +849,8 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
     // m_scriptExecutionContext = globalEventScope.m_context;
     mockModule = Bun::JSMockModule::create(this);
     globalEventScope.m_context = m_scriptExecutionContext;
+    // FIXME: is there a better way to do this? this event handler should always be tied to the global object
+    globalEventScope.relaxAdoptionRequirement();
 }
 
 GlobalObject::~GlobalObject()
@@ -2017,12 +2040,12 @@ extern "C" void ReadableStream__cancel(JSC__JSValue possibleReadableStream, Zig:
     if (UNLIKELY(!readableStream))
         return;
 
-    if (!ReadableStream(*globalObject, *readableStream).isLocked()) {
+    if (!ReadableStream::isLocked(globalObject, readableStream)) {
         return;
     }
 
     WebCore::Exception exception { AbortError };
-    ReadableStream(*globalObject, *readableStream).cancel(exception);
+    ReadableStream::cancel(*globalObject, readableStream, exception);
 }
 
 extern "C" void ReadableStream__detach(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject);
@@ -4085,10 +4108,10 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
 
     if (res.success) {
         if (queryString.len > 0) {
-            return JSC::Identifier::fromString(globalObject->vm(), makeString(Bun::toWTFString(res.result.value), Zig::toString(queryString)));
+            return JSC::Identifier::fromString(globalObject->vm(), makeString(res.result.value.toWTFString(BunString::ZeroCopy), Zig::toString(queryString)));
         }
 
-        return Identifier::fromString(globalObject->vm(), toWTFString(res.result.value));
+        return Identifier::fromString(globalObject->vm(), res.result.value.toWTFString(BunString::ZeroCopy));
     } else {
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         throwException(scope, res.result.err, globalObject);
@@ -4157,9 +4180,9 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
 
     JSC::Identifier resolvedIdentifier;
     if (queryString.len == 0) {
-        resolvedIdentifier = JSC::Identifier::fromString(vm, Bun::toWTFString(resolved.result.value));
+        resolvedIdentifier = JSC::Identifier::fromString(vm, resolved.result.value.toWTFString(BunString::ZeroCopy));
     } else {
-        resolvedIdentifier = JSC::Identifier::fromString(vm, makeString(Bun::toWTFString(resolved.result.value), Zig::toString(queryString)));
+        resolvedIdentifier = JSC::Identifier::fromString(vm, makeString(resolved.result.value.toWTFString(BunString::ZeroCopy), Zig::toString(queryString)));
     }
 
     auto result = JSC::importModule(globalObject, resolvedIdentifier,

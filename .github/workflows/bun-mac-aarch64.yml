@@ -239,7 +239,11 @@ jobs:
             artifact: bun-obj-darwin-aarch64
             runner: macos-arm64
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          ref: ${{github.sha}}
+          clean: true
       - name: Checkout submodules
         run: git submodule update --init --recursive --depth=1 --progress --force
 

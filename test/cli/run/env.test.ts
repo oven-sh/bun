@@ -463,6 +463,26 @@ describe("boundary tests", () => {
   });
 });
 
+describe("access from different apis", () => {
+  let dir = "";
+  beforeAll(() => {
+    dir = tempDirWithFiles("dotenv", {
+      ".env": "FOO=1\n",
+      "index1.ts": "console.log(Bun.env.FOO);",
+      "index2.ts": "console.log(process.env.FOO); ",
+      "index3.ts": "console.log(import.meta.env.FOO);",
+      "index4.ts": "console.log(import.meta.env.FOO + Bun.env.FOO);",
+      "index5.ts": "console.log(Bun.env.FOO + import.meta.env.FOO);",
+    });
+  });
+
+  test("only Bun.env", () => expect(bunRun(`${dir}/index1.ts`).stdout).toBe("1"));
+  test("only process.env", () => expect(bunRun(`${dir}/index2.ts`).stdout).toBe("1"));
+  test("only import.meta.env", () => expect(bunRun(`${dir}/index3.ts`).stdout).toBe("1"));
+  test("import.meta.env as 1st access", () => expect(bunRun(`${dir}/index4.ts`).stdout).toBe("11"));
+  test("import.meta.env as 2nd access", () => expect(bunRun(`${dir}/index5.ts`).stdout).toBe("11"));
+});
+
 describe("--env-file", () => {
   let dir = "";
   beforeAll(() => {

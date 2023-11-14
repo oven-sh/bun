@@ -30,7 +30,7 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy Unrestricted
 Bun pins a version of Zig. As the compiler is still in development, breaking changes happen often that will break the build. It is recommended to use [Zigup](https://github.com/marler8997/zigup/releases) as it can quickly switch to any version by name, but you can also [manually download Zig](https://ziglang.org/download/).
 
 ```bash
-$ zigup 0.12.0-dev.1297+a9e66ed73
+$ zigup 0.12.0-dev.1571+03adafd80
 ```
 
 {% callout %}

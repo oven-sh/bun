@@ -14,11 +14,11 @@ const requireValidators = __commonJS({
     // Every addition or modification to this file must be evaluated
     // during the PR review.
 
-    const { ArrayIsArray, ArrayPrototypeIncludes, ArrayPrototypeJoin } = require("./primordials");
+    const { ArrayIsArray, ArrayPrototypeIncludes, ArrayPrototypeJoin } = require("./primordials").default;
 
     const {
       codes: { ERR_INVALID_ARG_TYPE },
-    } = require("./errors");
+    } = require("./errors").default;
 
     function validateString(value, name) {
       if (typeof value !== "string") {

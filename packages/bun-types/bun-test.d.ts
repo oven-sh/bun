@@ -515,7 +515,7 @@ declare module "bun:test" {
     <T = unknown>(actual: T): Expect<T>;
     <T = unknown>(actual?: T): Expect<T>;
     any: (
-      constructor: ((..._: any[]) => any) | { new(..._: any[]): any },
+      constructor: ((..._: any[]) => any) | { new (..._: any[]): any },
     ) => Expect;
     anything: () => Expect;
     stringContaining: (str: string) => Expect<string>;
@@ -1135,7 +1135,7 @@ declare namespace JestMock {
    * LICENSE file in the root directory of this source tree.
    */
   export type ClassLike = {
-    new(...args: any): any;
+    new (...args: any): any;
   };
 
   export type ConstructorLikeKeys<T> = keyof {
@@ -1453,13 +1453,13 @@ declare namespace JestMock {
     K_2 extends Exclude<
       keyof T,
       | keyof {
-        [K in keyof T as Required<T>[K] extends ClassLike ? K : never]: T[K];
-      }
+          [K in keyof T as Required<T>[K] extends ClassLike ? K : never]: T[K];
+        }
       | keyof {
-        [K_1 in keyof T as Required<T>[K_1] extends FunctionLike
-        ? K_1
-        : never]: T[K_1];
-      }
+          [K_1 in keyof T as Required<T>[K_1] extends FunctionLike
+            ? K_1
+            : never]: T[K_1];
+        }
     >,
     V extends T[K_2],
   >(
@@ -1489,7 +1489,7 @@ declare namespace JestMock {
   export type SpiedSetter<T> = MockInstance<(arg: T) => void>;
 
   export interface SpyInstance<T extends FunctionLike = UnknownFunction>
-    extends MockInstance<T> { }
+    extends MockInstance<T> {}
 
   export const spyOn: {
     <
@@ -1497,15 +1497,15 @@ declare namespace JestMock {
       K_2 extends Exclude<
         keyof T,
         | keyof {
-          [K in keyof T as Required<T>[K] extends ClassLike
-          ? K
-          : never]: T[K];
-        }
+            [K in keyof T as Required<T>[K] extends ClassLike
+              ? K
+              : never]: T[K];
+          }
         | keyof {
-          [K_1 in keyof T as Required<T>[K_1] extends FunctionLike
-          ? K_1
-          : never]: T[K_1];
-        }
+            [K_1 in keyof T as Required<T>[K_1] extends FunctionLike
+              ? K_1
+              : never]: T[K_1];
+          }
       >,
       V extends Required<T>[K_2],
       A extends "set" | "get",
@@ -1521,16 +1521,16 @@ declare namespace JestMock {
     <
       T_1 extends object,
       K_5 extends
-      | keyof {
-        [K_3 in keyof T_1 as Required<T_1>[K_3] extends ClassLike
-        ? K_3
-        : never]: T_1[K_3];
-      }
-      | keyof {
-        [K_4 in keyof T_1 as Required<T_1>[K_4] extends FunctionLike
-        ? K_4
-        : never]: T_1[K_4];
-      },
+        | keyof {
+            [K_3 in keyof T_1 as Required<T_1>[K_3] extends ClassLike
+              ? K_3
+              : never]: T_1[K_3];
+          }
+        | keyof {
+            [K_4 in keyof T_1 as Required<T_1>[K_4] extends FunctionLike
+              ? K_4
+              : never]: T_1[K_4];
+          },
       V_1 extends Required<T_1>[K_5],
     >(
       object: T_1,
@@ -1539,10 +1539,10 @@ declare namespace JestMock {
   };
 
   export type UnknownClass = {
-    new(...args: Array<unknown>): unknown;
+    new (...args: Array<unknown>): unknown;
   };
 
   export type UnknownFunction = (...args: Array<unknown>) => unknown;
 
-  export { };
+  export {};
 }

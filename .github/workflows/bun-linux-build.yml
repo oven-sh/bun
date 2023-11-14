@@ -77,9 +77,11 @@ jobs:
             target: "artifact-assertions"
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           submodules: recursive
+          ref: ${{github.ref}}
+          clean: true
       - uses: docker/setup-buildx-action@v2
         id: buildx
         with:
@@ -217,9 +219,10 @@ jobs:
     steps:
       - id: checkout
         name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           submodules: false
+          clean: true
       - id: download
         name: Download
         uses: actions/download-artifact@v3

@@ -179,10 +179,10 @@ void bun_on_tick_after(void* ctx);
 
 
 void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs, void* tickCallbackContext) {
-    us_loop_integrate(loop);
-
     if (loop->num_polls == 0)
         return;
+
+    us_loop_integrate(loop);
 
     if (tickCallbackContext) {
         bun_on_tick_before(tickCallbackContext);
@@ -194,6 +194,9 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs, void* tickC
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
     if (timeoutMs > 0) {
+        if (timeoutMs == INT64_MAX) {
+            timeoutMs = 0;
+        }
         loop->num_ready_polls = epoll_wait(loop->fd, loop->ready_polls, 1024, (int)timeoutMs);
     } else {
         loop->num_ready_polls = epoll_wait(loop->fd, loop->ready_polls, 1024, -1);
@@ -201,8 +204,10 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs, void* tickC
 #else
     if (timeoutMs > 0) {
         struct timespec ts = {0, 0};
-        ts.tv_sec = timeoutMs / 1000;
-        ts.tv_nsec = (timeoutMs % 1000) * 1000000;
+        if (timeoutMs != INT64_MAX) {
+            ts.tv_sec = timeoutMs / 1000;
+            ts.tv_nsec = (timeoutMs % 1000) * 1000000;
+        }
         loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, &ts);
     } else {
         loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, NULL);

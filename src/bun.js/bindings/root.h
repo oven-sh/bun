@@ -40,7 +40,7 @@
 
 #include <wtf/ExportMacros.h>
 
-#define JS_EXPORT_PRIVATE 
+#define JS_EXPORT_PRIVATE
 
 #ifdef __cplusplus
 #undef new
@@ -56,9 +56,6 @@
 */
 #if COMPILER(MSVC)
 #pragma warning(disable : 4206)
-
-// __builtin_unreachable() polyfill
-static __declspec(noreturn) void __builtin_unreachable() { __assume(0); }
 #endif
 
 #ifndef WEBCORE_EXPORT

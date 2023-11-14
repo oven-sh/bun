@@ -49,6 +49,10 @@ function generate(name) {
         getter: "getAddress",
         cache: true,
       },
+      url: {
+        getter: "getURL",
+        cache: true,
+      },
       protocol: {
         getter: "getProtocol",
       },

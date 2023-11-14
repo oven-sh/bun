@@ -149,7 +149,7 @@ var _extend = function (origin, add) {
   }
   return origin;
 };
-var kCustomPromisifiedSymbol = Symbol.for("util.promisify.custom");
+var kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
 var promisify = function promisify(original) {
   if (typeof original !== "function") throw new TypeError('The "original" argument must be of type Function');
   if (kCustomPromisifiedSymbol && original[kCustomPromisifiedSymbol]) {

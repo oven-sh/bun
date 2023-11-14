@@ -1,3 +1,7 @@
+param(
+  [bool] $CloneOnly = $false
+)
+
 $ErrorActionPreference = 'Stop' # Setting strict mode, similar to 'set -euo pipefail' in bash
 . (Join-Path $PSScriptRoot "env.ps1")
 $CWD = Get-Location
@@ -27,14 +31,16 @@ if (!(Test-Path -PathType Container $Source)) {
   } finally { Pop-Location }
 }
 
-Push-Location $Source
-try {
-  $null = mkdir build -ErrorAction SilentlyContinue
-  Set-Location build
-  
-  Run cmake .. @CMAKE_FLAGS "-DCMAKE_C_FLAGS=/DWIN32 /D_WINDOWS -Wno-int-conversion"
-  Run cmake --build . --clean-first --config Release
+if(!($CloneOnly)) { 
+  Push-Location $Source
+  try {
+    $null = mkdir build -ErrorAction SilentlyContinue
+    Set-Location build
+    
+    Run cmake .. @CMAKE_FLAGS "-DCMAKE_C_FLAGS=/DWIN32 /D_WINDOWS -Wno-int-conversion"
+    Run cmake --build . --clean-first --config Release
 
-  Copy-Item libuv.lib $BUN_DEPS_OUT_DIR
-  Write-Host "-> libuv.lib"
-} finally { Pop-Location }
+    Copy-Item libuv.lib $BUN_DEPS_OUT_DIR
+    Write-Host "-> libuv.lib"
+  } finally { Pop-Location }
+}

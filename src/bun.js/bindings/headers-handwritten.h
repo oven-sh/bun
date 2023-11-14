@@ -44,6 +44,7 @@ typedef struct BunString {
 
     inline void ref();
     inline void deref();
+    static size_t utf8ByteLength(const WTF::String&);
 } BunString;
 
 typedef struct ZigErrorType {
@@ -69,12 +70,13 @@ typedef struct ErrorableString {
 typedef struct ResolvedSource {
     BunString specifier;
     BunString source_code;
-    ZigString source_url;
+    BunString source_url;
     ZigString* commonJSExports;
     uint32_t commonJSExportsLen;
     uint32_t hash;
     void* allocator;
     uint32_t tag;
+    bool needsDeref;
 } ResolvedSource;
 static const uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {

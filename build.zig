@@ -82,7 +82,8 @@ fn addInternalPackages(b: *Build, step: *CompileStep, _: std.mem.Allocator, _: [
 }
 
 const BunBuildOptions = struct {
-    canary: bool = false,
+    is_canary: bool = false,
+    canary_revision: u32 = 0,
     sha: [:0]const u8 = "",
     version: []const u8 = "",
     baseline: bool = false,
@@ -125,7 +126,8 @@ const BunBuildOptions = struct {
 
     pub fn step(this: BunBuildOptions, b: anytype) *std.build.OptionsStep {
         var opts = b.addOptions();
-        opts.addOption(@TypeOf(this.canary), "is_canary", this.canary);
+        opts.addOption(@TypeOf(this.is_canary), "is_canary", this.is_canary);
+        opts.addOption(@TypeOf(this.canary_revision), "canary_revision", this.canary_revision);
         opts.addOption(
             std.SemanticVersion,
             "version",
@@ -333,11 +335,16 @@ pub fn build_(b: *Build) !void {
             }
         }
 
-        const is_canary =
-            b.option(bool, "canary", "Treat this as a canary build") orelse
-            ((b.env_map.get("BUN_CANARY") orelse "0")[0] == '1');
+        const is_canary, const canary_revision = if (b.option(u32, "canary", "Treat this as a canary build")) |rev|
+            if (rev == 0)
+                .{ false, 0 }
+            else
+                .{ true, rev }
+        else
+            .{ false, 0 };
         break :brk .{
-            .canary = is_canary,
+            .is_canary = is_canary,
+            .canary_revision = canary_revision,
             .version = b.option([]const u8, "version", "Value of `Bun.version`") orelse "0.0.0",
             .sha = git_sha,
             .baseline = is_baseline,

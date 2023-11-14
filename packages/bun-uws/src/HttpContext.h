@@ -64,6 +64,33 @@ private:
 
     /* Init the HttpContext by registering libusockets event handlers */
     HttpContext<SSL> *init() {
+        
+        if(SSL) {
+            // if we are SSL we need to handle the handshake properly
+            us_socket_context_on_handshake(SSL, getSocketContext(), [](us_socket_t *s, int success,  struct us_bun_verify_error_t verify_error, void* custom_data) {
+                // if we are closing or already closed, we don't need to do anything
+                if (!us_socket_is_closed(SSL, s) && !us_socket_is_shut_down(SSL, s)) {        
+                    HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
+                    
+                    if(httpContextData->rejectUnauthorized) {
+                        if(!success || verify_error.error != 0) {
+                            // we failed to handshake, close the socket
+                            us_socket_close(SSL, s, 0, nullptr);
+                            return;
+                        }
+                    }
+
+                    /* Any connected socket should timeout until it has a request */
+                    us_socket_timeout(SSL, s, HTTP_IDLE_TIMEOUT_S);
+
+                    /* Call filter */
+                    for (auto &f : httpContextData->filterHandlers) {
+                        f((HttpResponse<SSL> *) s, 1);
+                    }
+                }
+            }, nullptr);
+        }
+            
         /* Handle socket connections */
         us_socket_context_on_open(SSL, getSocketContext(), [](us_socket_t *s, int /*is_client*/, char */*ip*/, int /*ip_length*/) {
             /* Any connected socket should timeout until it has a request */
@@ -72,10 +99,12 @@ private:
             /* Init socket ext */
             new (us_socket_ext(SSL, s)) HttpResponseData<SSL>;
 
-            /* Call filter */
-            HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
-            for (auto &f : httpContextData->filterHandlers) {
-                f((HttpResponse<SSL> *) s, 1);
+            if(!SSL) {
+                /* Call filter */
+                HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
+                for (auto &f : httpContextData->filterHandlers) {
+                    f((HttpResponse<SSL> *) s, 1);
+                }
             }
 
             return s;
@@ -396,9 +425,13 @@ public:
         if (!httpContext) {
             return nullptr;
         }
-
+        // for servers this is only valid when request cert is enabled
+        
         /* Init socket context data */
-        new ((HttpContextData<SSL> *) us_socket_context_ext(SSL, (us_socket_context_t *) httpContext)) HttpContextData<SSL>();
+        auto* httpContextData = new ((HttpContextData<SSL> *) us_socket_context_ext(SSL, (us_socket_context_t *) httpContext)) HttpContextData<SSL>();
+        if(options.request_cert && options.reject_unauthorized) {
+            httpContextData->rejectUnauthorized = true;
+        }
         return httpContext->init();
     }
 

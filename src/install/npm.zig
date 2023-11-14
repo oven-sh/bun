@@ -768,7 +768,7 @@ pub const PackageManifest = struct {
                     version,
                     version,
                 )) catch return null;
-                return this.findBestVersion(group);
+                return this.findBestVersion(group, version);
             },
             .dist_tag => {
                 return this.findByDistTag(version);
@@ -801,7 +801,7 @@ pub const PackageManifest = struct {
         return null;
     }
 
-    pub fn findBestVersion(this: *const PackageManifest, group: Semver.Query.Group) ?FindResult {
+    pub fn findBestVersion(this: *const PackageManifest, group: Semver.Query.Group, group_buf: string) ?FindResult {
         const left = group.head.head.range.left;
         // Fast path: exact version
         if (left.op == .eql) {
@@ -809,9 +809,9 @@ pub const PackageManifest = struct {
         }
 
         if (this.findByDistTag("latest")) |result| {
-            if (group.satisfies(result.version)) {
+            if (group.satisfies(result.version, group_buf, this.string_buf)) {
                 if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
-                    if (left.version.order(result.version, this.string_buf, this.string_buf) == .eq) {
+                    if (left.version.order(result.version, group_buf, this.string_buf) == .eq) {
                         // if prerelease, use latest if semver+tag match range exactly
                         return result;
                     }
@@ -829,8 +829,11 @@ pub const PackageManifest = struct {
             while (i > 0) : (i -= 1) {
                 const version = releases[i - 1];
 
-                if (group.satisfies(version)) {
-                    return .{ .version = version, .package = &this.pkg.releases.values.get(this.package_versions)[i - 1] };
+                if (group.satisfies(version, group_buf, this.string_buf)) {
+                    return .{
+                        .version = version,
+                        .package = &this.pkg.releases.values.get(this.package_versions)[i - 1],
+                    };
                 }
             }
         }
@@ -842,9 +845,12 @@ pub const PackageManifest = struct {
                 const version = prereleases[i - 1];
 
                 // This list is sorted at serialization time.
-                if (group.satisfies(version)) {
+                if (group.satisfies(version, group_buf, this.string_buf)) {
                     const packages = this.pkg.prereleases.values.get(this.package_versions);
-                    return .{ .version = version, .package = &packages[i - 1] };
+                    return .{
+                        .version = version,
+                        .package = &packages[i - 1],
+                    };
                 }
             }
         }

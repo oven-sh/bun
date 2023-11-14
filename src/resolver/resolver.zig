@@ -3694,7 +3694,7 @@ pub const Resolver = struct {
                         }
 
                         const this_dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
-                        var file = this_dir.openDirZ("node_modules/.bin", .{}, true) catch break :append_bin_dir;
+                        var file = this_dir.openDirZ(bun.pathLiteral("node_modules/.bin"), .{}, true) catch break :append_bin_dir;
                         defer file.close();
                         var bin_path = bun.getFdPath(file.fd, bufs(.node_bin_path)) catch break :append_bin_dir;
                         bin_folders_lock.lock();

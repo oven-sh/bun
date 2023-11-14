@@ -1,18 +1,18 @@
 import { expect, test, describe, beforeAll } from "bun:test";
 import { Glob } from "bun";
 import { tempFixturesDir } from "./util";
-
+import path from "path";
 const paths = [
-  "test/js/bun/glob/fixtures/file.md",
-  "test/js/bun/glob/fixtures/second/file.md",
-  "test/js/bun/glob/fixtures/second/nested/file.md",
-  "test/js/bun/glob/fixtures/second/nested/directory/file.md",
-  "test/js/bun/glob/fixtures/third/library/b/book.md",
-  "test/js/bun/glob/fixtures/third/library/a/book.md",
-  "test/js/bun/glob/fixtures/first/file.md",
-  "test/js/bun/glob/fixtures/first/nested/file.md",
-  "test/js/bun/glob/fixtures/first/nested/directory/file.md",
-  "test/js/bun/glob/fixtures/first/nested/directory/file.json",
+  path.join(import.meta.dir, "fixtures/file.md"),
+  path.join(import.meta.dir, "fixtures/second/file.md"),
+  path.join(import.meta.dir, "fixtures/second/nested/file.md"),
+  path.join(import.meta.dir, "fixtures/second/nested/directory/file.md"),
+  path.join(import.meta.dir, "fixtures/third/library/b/book.md"),
+  path.join(import.meta.dir, "fixtures/third/library/a/book.md"),
+  path.join(import.meta.dir, "fixtures/first/file.md"),
+  path.join(import.meta.dir, "fixtures/first/nested/file.md"),
+  path.join(import.meta.dir, "fixtures/first/nested/directory/file.md"),
+  path.join(import.meta.dir, "fixtures/first/nested/directory/file.json"),
 ];
 
 beforeAll(() => {
@@ -20,7 +20,7 @@ beforeAll(() => {
 });
 
 test("Glob.scan stress test", async () => {
-  const cwd = "test/js/bun/glob";
+  const cwd = import.meta.dir;
 
   await Promise.all(
     Array(1000)

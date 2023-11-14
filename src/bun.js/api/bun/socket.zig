@@ -169,8 +169,11 @@ const Handlers = struct {
     is_server: bool = false,
     promise: JSC.Strong = .{},
 
+    protection_count: bun.DebugOnly(u32) = bun.DebugOnlyDefault(0),
+
     pub fn markActive(this: *Handlers) void {
         Listener.log("markActive", .{});
+
         this.active_connections += 1;
     }
 
@@ -298,6 +301,10 @@ const Handlers = struct {
     }
 
     pub fn unprotect(this: *Handlers) void {
+        if (comptime Environment.allow_assert) {
+            std.debug.assert(this.protection_count > 0);
+            this.protection_count -= 1;
+        }
         this.onOpen.unprotect();
         this.onClose.unprotect();
         this.onData.unprotect();
@@ -310,6 +317,9 @@ const Handlers = struct {
     }
 
     pub fn protect(this: *Handlers) void {
+        if (comptime Environment.allow_assert) {
+            this.protection_count += 1;
+        }
         this.onOpen.protect();
         this.onClose.protect();
         this.onData.protect();
@@ -830,7 +840,6 @@ pub const Listener = struct {
             ctx.deinit(this.ssl);
         }
 
-        this.handlers.unprotect();
         this.connection.deinit();
         if (this.protos) |protos| {
             this.protos = null;
@@ -1120,10 +1129,14 @@ fn NewSocket(comptime ssl: bool) type {
             },
         };
 
-        pub usingnamespace JSSocketType(ssl);
+        pub usingnamespace if (!ssl)
+            JSC.Codegen.JSTCPSocket
+        else
+            JSC.Codegen.JSTLSSocket;
 
         pub fn hasPendingActivity(this: *This) callconv(.C) bool {
             @fence(.Acquire);
+
             return this.has_pending_activity.load(.Acquire);
         }
 

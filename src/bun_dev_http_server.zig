@@ -2057,11 +2057,11 @@ const PosixRequestContext = struct {
                 weak_etag_buffer[0] = 'W';
                 weak_etag_buffer[1] = '/';
                 weak_etag.update(result.file.src_path.text);
-                std.mem.writeIntNative(u64, weak_etag_tmp_buffer[0..8], result.file.size);
+                std.mem.writeInt(u64, weak_etag_tmp_buffer[0..8], result.file.size, .little);
                 weak_etag.update(weak_etag_tmp_buffer[0..8]);
 
                 if (result.file.mtime) |mtime| {
-                    std.mem.writeIntNative(i128, weak_etag_tmp_buffer[0..16], mtime);
+                    std.mem.writeInt(i128, weak_etag_tmp_buffer[0..16], mtime, .little);
                     weak_etag.update(weak_etag_tmp_buffer[0..16]);
                 }
 

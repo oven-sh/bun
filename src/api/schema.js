@@ -1664,35 +1664,41 @@ function decodeTransformOptions(bb) {
 
       case 17:
         var length = bb.readVarUint();
-        var values = (result["extension_order"] = Array(length));
+        var values = (result["env_files"] = Array(length));
         for (var i = 0; i < length; i++) values[i] = bb.readString();
         break;
 
       case 18:
-        result["framework"] = decodeFrameworkConfig(bb);
+        var length = bb.readVarUint();
+        var values = (result["extension_order"] = Array(length));
+        for (var i = 0; i < length; i++) values[i] = bb.readString();
         break;
 
       case 19:
-        result["router"] = decodeRouteConfig(bb);
+        result["framework"] = decodeFrameworkConfig(bb);
         break;
 
       case 20:
-        result["no_summary"] = !!bb.readByte();
+        result["router"] = decodeRouteConfig(bb);
         break;
 
       case 21:
-        result["disable_hmr"] = !!bb.readByte();
+        result["no_summary"] = !!bb.readByte();
         break;
 
       case 22:
-        result["port"] = bb.readUint16();
+        result["disable_hmr"] = !!bb.readByte();
         break;
 
       case 23:
-        result["logLevel"] = MessageLevel[bb.readVarUint()];
+        result["port"] = bb.readUint16();
         break;
 
       case 24:
+        result["logLevel"] = MessageLevel[bb.readVarUint()];
+        break;
+
+      case 25:
         result["source_map"] = SourceMapMode[bb.readByte()];
         break;
 
@@ -1827,7 +1833,7 @@ function encodeTransformOptions(message, bb) {
     bb.writeByte(value);
   }
 
-  var value = message["extension_order"];
+  var value = message["env_files"];
   if (value != null) {
     bb.writeByte(17);
     var values = value,
@@ -1839,39 +1845,51 @@ function encodeTransformOptions(message, bb) {
     }
   }
 
-  var value = message["framework"];
+  var value = message["extension_order"];
   if (value != null) {
     bb.writeByte(18);
+    var values = value,
+      n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      bb.writeString(value);
+    }
+  }
+
+  var value = message["framework"];
+  if (value != null) {
+    bb.writeByte(19);
     encodeFrameworkConfig(value, bb);
   }
 
   var value = message["router"];
   if (value != null) {
-    bb.writeByte(19);
+    bb.writeByte(20);
     encodeRouteConfig(value, bb);
   }
 
   var value = message["no_summary"];
   if (value != null) {
-    bb.writeByte(20);
+    bb.writeByte(21);
     bb.writeByte(value);
   }
 
   var value = message["disable_hmr"];
   if (value != null) {
-    bb.writeByte(21);
+    bb.writeByte(22);
     bb.writeByte(value);
   }
 
   var value = message["port"];
   if (value != null) {
-    bb.writeByte(22);
+    bb.writeByte(23);
     bb.writeUint16(value);
   }
 
   var value = message["logLevel"];
   if (value != null) {
-    bb.writeByte(23);
+    bb.writeByte(24);
     var encoded = MessageLevel[value];
     if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "MessageLevel"');
     bb.writeVarUint(encoded);
@@ -1879,7 +1897,7 @@ function encodeTransformOptions(message, bb) {
 
   var value = message["source_map"];
   if (value != null) {
-    bb.writeByte(24);
+    bb.writeByte(25);
     var encoded = SourceMapMode[value];
     if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "SourceMapMode"');
     bb.writeByte(encoded);

@@ -229,6 +229,7 @@ export default [
     finalize: true,
     klass: {},
     JSType: "0b11101110",
+    supportsObjectCreate: true,
     proto: {
       isBlockDevice: {
         fn: "isBlockDevice_",
@@ -378,6 +379,7 @@ export default [
     finalize: true,
 
     klass: {},
+    supportsObjectCreate: true,
 
     proto: {
       isBlockDevice: {

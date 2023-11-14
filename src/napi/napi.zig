@@ -67,11 +67,10 @@ pub const Ref = opaque {
 pub const napi_handle_scope = napi_env;
 pub const napi_escapable_handle_scope = napi_env;
 pub const napi_callback_info = *JSC.CallFrame;
-pub const napi_deferred = *JSC.napi.Ref;
+pub const napi_deferred = *JSC.JSPromise.Strong;
 
 pub const napi_value = JSC.JSValue;
 pub const struct_napi_escapable_handle_scope__ = opaque {};
-pub const struct_napi_deferred__ = opaque {};
 
 const char16_t = u16;
 pub const napi_default: c_int = 0;
@@ -808,24 +807,25 @@ pub export fn napi_get_version(_: napi_env, result: *u32) napi_status {
 }
 pub export fn napi_create_promise(env: napi_env, deferred: *napi_deferred, promise: *napi_value) napi_status {
     log("napi_create_promise", .{});
-    var js_promise = JSC.JSPromise.create(env);
-    var promise_value = js_promise.asValue(env);
-    deferred.* = Ref.create(env, promise_value);
-    promise.* = promise_value;
+    deferred.* = bun.default_allocator.create(JSC.JSPromise.Strong) catch @panic("failed to allocate napi_deferred");
+    deferred.*.* = JSC.JSPromise.Strong.init(env);
+    promise.* = deferred.*.get().asValue(env);
     return .ok;
 }
 pub export fn napi_resolve_deferred(env: napi_env, deferred: napi_deferred, resolution: napi_value) napi_status {
     log("napi_resolve_deferred", .{});
-    var prom = deferred.get().asPromise() orelse return .object_expected;
+    var prom = deferred.get();
     prom.resolve(env, resolution);
-    deferred.destroy();
+    deferred.*.strong.deinit();
+    bun.default_allocator.destroy(deferred);
     return .ok;
 }
 pub export fn napi_reject_deferred(env: napi_env, deferred: napi_deferred, rejection: napi_value) napi_status {
     log("napi_reject_deferred", .{});
-    var prom = deferred.get().asPromise() orelse return .object_expected;
+    var prom = deferred.get();
     prom.reject(env, rejection);
-    deferred.destroy();
+    deferred.*.strong.deinit();
+    bun.default_allocator.destroy(deferred);
     return .ok;
 }
 pub export fn napi_is_promise(_: napi_env, value: napi_value, is_promise: *bool) napi_status {

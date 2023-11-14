@@ -57,6 +57,8 @@ How JSX constructs are transformed into vanilla JavaScript internally. The table
   jsx("Box", { width: 5 }, "Hello");
   ```
 
+This will work only when `NODE_ENV` is set to `production` otherwise this defaults to using the development version of React.
+
 ---
 
 - ```json

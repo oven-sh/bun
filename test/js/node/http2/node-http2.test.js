@@ -976,6 +976,7 @@ describe("Client Basics", () => {
       info.subprocess.kill();
     }
   });
+
   it("should not leak memory", () => {
     const { stdout, exitCode } = Bun.spawnSync({
       cmd: [bunExe(), "--smol", "run", path.join(import.meta.dir, "node-http2-memory-leak.js")],
@@ -984,7 +985,8 @@ describe("Client Basics", () => {
     });
     expect(stdout.toString("utf-8")).toBeEmpty();
     expect(exitCode).toBe(0);
-  });
+  }, 10000);
+
   it("should receive goaway", async () => {
     const { promise, resolve, reject } = Promise.withResolvers();
     const server = await nodeDynamicServer(

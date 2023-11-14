@@ -25,12 +25,49 @@ test("node async_hooks.AsyncLocalStorage enable disable", async done => {
         assert.strictEqual(asyncLocalStorage.getStore(), undefined);
         asyncLocalStorage.run(new Map().set("bar", "foo"), () => {
           assert.strictEqual(asyncLocalStorage.getStore()!.get("bar"), "foo");
-
           done();
         });
       });
     });
   });
+});
+
+test("node async_hooks.AsyncLocalStorage enable disable multiple times", async () => {
+  const asyncLocalStorage = new AsyncLocalStorage();
+
+  asyncLocalStorage.enterWith("first value");
+  expect(asyncLocalStorage.getStore()).toBe("first value");
+  asyncLocalStorage.disable();
+  expect(asyncLocalStorage.getStore()).toBe(undefined);
+
+  asyncLocalStorage.enterWith("second value");
+  expect(asyncLocalStorage.getStore()).toBe("second value");
+  asyncLocalStorage.disable();
+  expect(asyncLocalStorage.getStore()).toBe(undefined);
+
+  const { promise, resolve, reject } = Promise.withResolvers();
+  asyncLocalStorage.run("first run value", () => {
+    try {
+      expect(asyncLocalStorage.getStore()).toBe("first run value");
+      asyncLocalStorage.disable();
+      expect(asyncLocalStorage.getStore()).toBe(undefined);
+      asyncLocalStorage.run("second run value", () => {
+        try {
+          expect(asyncLocalStorage.getStore()).toBe("second run value");
+          asyncLocalStorage.disable();
+          expect(asyncLocalStorage.getStore()).toBe(undefined);
+
+          resolve(undefined);
+        } catch (e) {
+          reject(e);
+        }
+      });
+    } catch (e) {
+      reject(e);
+    }
+  });
+
+  await promise;
 });
 
 test("AsyncResource.prototype.bind", () => {

@@ -2404,6 +2404,8 @@ declare module "bun" {
      */
     readonly pendingWebSockets: number;
 
+    readonly url: URL;
+
     readonly port: number;
     /**
      * The hostname the server is listening on. Does not include the port

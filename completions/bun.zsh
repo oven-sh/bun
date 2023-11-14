@@ -406,6 +406,7 @@ _bun_run_completion() {
         '--cwd[Absolute path to resolve files & entry points from. This just changes the process cwd]:cwd' \
         '--config[Config file to load bun from (e.g. -c bunfig.toml]: :->config' \
         '-c[Config file to load bun from (e.g. -c bunfig.toml]: :->config' \
+        '--env-file[Load environment variables from the specified file(s)]:env-file' \
         '--extension-order[Defaults to: .tsx,.ts,.jsx,.js,.json]:extension-order' \
         '--jsx-factory[Changes the function called when compiling JSX elements using the classic JSX runtime]:jsx-factory' \
         '--jsx-fragment[Changes the function called when compiling JSX fragments]:jsx-fragment' \
@@ -572,6 +573,7 @@ _bun_test_completion() {
         '--cwd[Set a specific cwd]:cwd' \
         '-c[Load config(bunfig.toml)]: :->config' \
         '--config[Load config(bunfig.toml)]: :->config' \
+        '--env-file[Load environment variables from the specified file(s)]:env-file' \
         '--extension-order[Defaults to: .tsx,.ts,.jsx,.js,.json]:extension-order' \
         '--jsx-factory[Changes the function called when compiling JSX elements using the classic JSX runtime]:jsx-factory' \
         '--jsx-fragment[Changes the function called when compiling JSX fragments]:jsx-fragment' \

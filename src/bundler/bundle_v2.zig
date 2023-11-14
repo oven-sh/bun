@@ -1609,6 +1609,7 @@ pub const BundleV2 = struct {
                 .external = config.external.keys(),
                 .main_fields = &.{},
                 .extension_order = &.{},
+                .env_files = &.{},
             },
             completion.env,
         );

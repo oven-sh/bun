@@ -18,6 +18,12 @@ const URL = @import("./url.zig").URL;
 const Api = @import("./api/schema.zig").Api;
 const which = @import("./which.zig").which;
 
+const DotEnvFileSuffix = enum {
+    development,
+    production,
+    @"test",
+};
+
 pub const Loader = struct {
     map: *Map,
     allocator: std.mem.Allocator,
@@ -30,6 +36,9 @@ pub const Loader = struct {
     @".env.production.local": ?logger.Source = null,
     @".env.test.local": ?logger.Source = null,
     @".env": ?logger.Source = null,
+
+    // only populated with files specified explicitely (e.g. --env-file arg)
+    custom_files_loaded: std.StringArrayHashMap(logger.Source),
 
     quiet: bool = false,
 
@@ -359,6 +368,7 @@ pub const Loader = struct {
         return Loader{
             .map = map,
             .allocator = allocator,
+            .custom_files_loaded = std.StringArrayHashMap(logger.Source).init(allocator),
         };
     }
 
@@ -397,16 +407,52 @@ pub const Loader = struct {
         std.mem.doNotOptimizeAway(&source);
     }
 
+    pub fn load(
+        this: *Loader,
+        dir: *Fs.FileSystem.DirEntry,
+        env_files: []const []const u8,
+        comptime suffix: DotEnvFileSuffix,
+    ) !void {
+        const start = std.time.nanoTimestamp();
+
+        if (env_files.len > 0) {
+            try this.loadExplicitFiles(env_files);
+        } else {
+            try this.loadDefaultFiles(dir, suffix);
+        }
+
+        if (!this.quiet) this.printLoaded(start);
+    }
+
+    fn loadExplicitFiles(
+        this: *Loader,
+        env_files: []const []const u8,
+    ) !void {
+        // iterate backwards, so the latest entry in the latest arg instance assumes the highest priority
+        var i: usize = env_files.len;
+        while (i > 0) : (i -= 1) {
+            var arg_value = std.mem.trim(u8, env_files[i - 1], " ");
+            if (arg_value.len > 0) { // ignore blank args
+                var iter = std.mem.splitBackwardsScalar(u8, arg_value, ',');
+                while (iter.next()) |file_path| {
+                    if (file_path.len > 0) {
+                        try this.loadEnvFileDynamic(file_path, false, true);
+                        Analytics.Features.dotenv = true;
+                    }
+                }
+            }
+        }
+    }
+
     // .env.local goes first
     // Load .env.development if development
     // Load .env.production if !development
     // .env goes last
-    pub fn load(
+    fn loadDefaultFiles(
         this: *Loader,
         dir: *Fs.FileSystem.DirEntry,
-        comptime suffix: enum { development, production, @"test" },
+        comptime suffix: DotEnvFileSuffix,
     ) !void {
-        const start = std.time.nanoTimestamp();
         var dir_handle: std.fs.Dir = std.fs.cwd();
 
         switch (comptime suffix) {
@@ -462,8 +508,6 @@ pub const Loader = struct {
             try this.loadEnvFile(dir_handle, ".env", false, false);
             Analytics.Features.dotenv = true;
         }
-
-        if (!this.quiet) this.printLoaded(start);
     }
 
     pub fn printLoaded(this: *Loader, start: i128) void {
@@ -475,7 +519,8 @@ pub const Loader = struct {
             @as(u8, @intCast(@intFromBool(this.@".env.development" != null))) +
             @as(u8, @intCast(@intFromBool(this.@".env.production" != null))) +
             @as(u8, @intCast(@intFromBool(this.@".env.test" != null))) +
-            @as(u8, @intCast(@intFromBool(this.@".env" != null)));
+            @as(u8, @intCast(@intFromBool(this.@".env" != null))) +
+            this.custom_files_loaded.count();
 
         if (count == 0) return;
         const elapsed = @as(f64, @floatFromInt((std.time.nanoTimestamp() - start))) / std.time.ns_per_ms;
@@ -515,6 +560,17 @@ pub const Loader = struct {
                 }
             }
         }
+
+        var iter = this.custom_files_loaded.iterator();
+        while (iter.next()) |e| {
+            loaded_i += 1;
+            if (count == 1 or (loaded_i >= count and count > 1)) {
+                Output.prettyError("\"{s}\"", .{e.key_ptr.*});
+            } else {
+                Output.prettyError("\"{s}\", ", .{e.key_ptr.*});
+            }
+        }
+
         Output.prettyErrorln("<r>\n", .{});
         Output.flush();
     }
@@ -606,6 +662,78 @@ pub const Loader = struct {
         );
 
         @field(this, base) = source;
+    }
+
+    pub fn loadEnvFileDynamic(
+        this: *Loader,
+        file_path: []const u8,
+        comptime override: bool,
+        comptime conditional: bool,
+    ) !void {
+        if (this.custom_files_loaded.contains(file_path)) {
+            return;
+        }
+
+        var file = bun.openFile(file_path, .{ .mode = .read_only }) catch {
+            // prevent retrying
+            try this.custom_files_loaded.put(file_path, logger.Source.initPathString(file_path, ""));
+            return;
+        };
+        defer file.close();
+
+        const end = brk: {
+            if (comptime Environment.isWindows) {
+                const pos = try file.getEndPos();
+                if (pos == 0) {
+                    try this.custom_files_loaded.put(file_path, logger.Source.initPathString(file_path, ""));
+                    return;
+                }
+
+                break :brk pos;
+            }
+
+            const stat = try file.stat();
+
+            if (stat.size == 0 or stat.kind != .file) {
+                try this.custom_files_loaded.put(file_path, logger.Source.initPathString(file_path, ""));
+                return;
+            }
+
+            break :brk stat.size;
+        };
+
+        var buf = try this.allocator.alloc(u8, end + 1);
+        errdefer this.allocator.free(buf);
+        const amount_read = file.readAll(buf[0..end]) catch |err| switch (err) {
+            error.Unexpected, error.SystemResources, error.OperationAborted, error.BrokenPipe, error.AccessDenied, error.IsDir => {
+                if (!this.quiet) {
+                    Output.prettyErrorln("<r><red>{s}<r> error loading {s} file", .{ @errorName(err), file_path });
+                }
+
+                // prevent retrying
+                try this.custom_files_loaded.put(file_path, logger.Source.initPathString(file_path, ""));
+                return;
+            },
+            else => {
+                return err;
+            },
+        };
+
+        // The null byte here is mostly for debugging purposes.
+        buf[end] = 0;
+
+        const source = logger.Source.initPathString(file_path, buf[0..amount_read]);
+
+        Parser.parse(
+            &source,
+            this.allocator,
+            this.map,
+            override,
+            false,
+            conditional,
+        );
+
+        try this.custom_files_loaded.put(file_path, source);
     }
 };
 

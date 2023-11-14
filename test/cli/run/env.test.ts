@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, beforeAll, afterAll } from "bun:test";
 import { bunRun, bunRunAsScript, bunTest, tempDirWithFiles, bunExe, bunEnv } from "harness";
 import path from "path";
 
@@ -460,6 +460,123 @@ describe("boundary tests", () => {
     // should be truncated
     expect(stdout).toBe(expected);
     expect(stdout2).toBe(expected);
+  });
+});
+
+describe("access from different apis", () => {
+  let dir = "";
+  beforeAll(() => {
+    dir = tempDirWithFiles("dotenv", {
+      ".env": "FOO=1\n",
+      "index1.ts": "console.log(Bun.env.FOO);",
+      "index2.ts": "console.log(process.env.FOO); ",
+      "index3.ts": "console.log(import.meta.env.FOO);",
+      "index4.ts": "console.log(import.meta.env.FOO + Bun.env.FOO);",
+      "index5.ts": "console.log(Bun.env.FOO + import.meta.env.FOO);",
+    });
+  });
+
+  test("only Bun.env", () => expect(bunRun(`${dir}/index1.ts`).stdout).toBe("1"));
+  test("only process.env", () => expect(bunRun(`${dir}/index2.ts`).stdout).toBe("1"));
+  test("only import.meta.env", () => expect(bunRun(`${dir}/index3.ts`).stdout).toBe("1"));
+  test("import.meta.env as 1st access", () => expect(bunRun(`${dir}/index4.ts`).stdout).toBe("11"));
+  test("import.meta.env as 2nd access", () => expect(bunRun(`${dir}/index5.ts`).stdout).toBe("11"));
+});
+
+describe("--env-file", () => {
+  let dir = "";
+  beforeAll(() => {
+    dir = tempDirWithFiles("dotenv-arg", {
+      ".env": "BUNTEST_DOTENV=1",
+      ".env.a": "BUNTEST_A=1",
+      ".env.b": "BUNTEST_B=1",
+      ".env.c": "BUNTEST_C=1",
+      ".env.a2": "BUNTEST_A=2",
+      ".env.invalid":
+        "BUNTEST_A=1\nBUNTEST_B =1\n BUNTEST_C =  1 \n...BUNTEST_invalid1\nBUNTEST_invalid2\nBUNTEST_D=\nBUNTEST_E=1",
+      "subdir/.env.s": "BUNTEST_S=1",
+      "index.ts":
+        "console.log(Object.entries(process.env).flatMap(([k, v]) => k.startsWith('BUNTEST_') ? [`${k}=${v}`] : []).sort().join(','));",
+    });
+  });
+
+  function bunRun(bunArgs: string[], envOverride?: Record<string, string>) {
+    const file = `${dir}/index.ts`;
+    const result = Bun.spawnSync([bunExe(), ...bunArgs, file], {
+      cwd: path.dirname(file),
+      env: {
+        ...bunEnv,
+        NODE_ENV: undefined,
+        ...envOverride,
+      },
+    });
+    if (!result.success) throw new Error(result.stderr.toString("utf8"));
+    return {
+      stdout: result.stdout.toString("utf8").trim(),
+      stderr: result.stderr.toString("utf8").trim(),
+    };
+  }
+
+  test("single arg", () => {
+    expect(bunRun(["--env-file", ".env.a"]).stdout).toBe("BUNTEST_A=1");
+    expect(bunRun(["--env-file=.env.a"]).stdout).toBe("BUNTEST_A=1");
+  });
+
+  test("multiple args", () => {
+    expect(bunRun(["--env-file", ".env.a", "--env-file=.env.b"]).stdout).toBe("BUNTEST_A=1,BUNTEST_B=1");
+  });
+
+  test("single arg with multiple files", () => {
+    expect(bunRun(["--env-file", ".env.a,.env.b,.env.c"]).stdout).toBe("BUNTEST_A=1,BUNTEST_B=1,BUNTEST_C=1");
+  });
+
+  test("priority on multi-file single arg", () => {
+    expect(bunRun(["--env-file", ".env.a,.env.a2"]).stdout).toBe("BUNTEST_A=2");
+  });
+
+  test("priority on multiple args", () => {
+    expect(bunRun(["--env-file", ".env.a", "--env-file", ".env.a2"]).stdout).toBe("BUNTEST_A=2");
+  });
+
+  test("priority on process env", () => {
+    expect(
+      bunRun(["--env-file=.env.a", "--env-file=.env.b"], {
+        BUNTEST_PROCESS: "P",
+        BUNTEST_A: "P",
+      }).stdout,
+    ).toBe("BUNTEST_A=P,BUNTEST_B=1,BUNTEST_PROCESS=P");
+  });
+
+  test("absolute filepath", () => {
+    expect(bunRun(["--env-file", `${dir}/.env.a`]).stdout).toBe("BUNTEST_A=1");
+  });
+
+  test("explicit relative filepath", () => {
+    expect(bunRun(["--env-file", "./.env.a"]).stdout).toBe("BUNTEST_A=1");
+  });
+
+  test("subdirectory filepath", () => {
+    expect(bunRun(["--env-file", "subdir/.env.s"]).stdout).toBe("BUNTEST_S=1");
+    expect(bunRun(["--env-file", "./subdir/.env.s"]).stdout).toBe("BUNTEST_S=1");
+  });
+
+  test("when arg missing, fallback to default dotenv behavior", () => {
+    // if --env-file missing, it should fallback to the default builtin behavior (.env, .env.production, etc.)
+    expect(bunRun([]).stdout).toBe("BUNTEST_DOTENV=1");
+  });
+
+  test("empty string disables default dotenv behavior", () => {
+    expect(bunRun(["--env-file=''"]).stdout).toBe("");
+  });
+
+  test("should correctly ignore invalid values and parse the rest", () => {
+    const res = bunRun(["--env-file=.env.invalid"]);
+    expect(res.stdout).toBe("BUNTEST_A=1,BUNTEST_B=1,BUNTEST_C=1,BUNTEST_D=,BUNTEST_E=1");
+  });
+
+  test("should ignore a file that doesn't exist", () => {
+    const res = bunRun(["--env-file=.env.nonexisting"]);
+    expect(res.stdout).toBe("");
   });
 });
 

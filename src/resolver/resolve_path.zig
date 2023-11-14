@@ -1115,8 +1115,8 @@ fn _joinAbsStringBufWindows(
         return cwd;
     }
 
-    // path.resolve is a bit different on windows, as there are multiple possible filesystem roots
-    // when you resolve(`C:\hello`, `C:world`), the second arg is a drive letter relative path, so
+    // path.resolve is a bit different on Windows, as there are multiple possible filesystem roots.
+    // When you resolve(`C:\hello`, `C:world`), the second arg is a drive letter relative path, so
     // the result of such is `C:\hello\world`, but if you used D:world, you would switch roots and
     // end up with `D:\world`. this root handling basically means a different algorithm.
     //

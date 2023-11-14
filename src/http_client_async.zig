@@ -800,6 +800,7 @@ pub const HTTPThread = struct {
                 start_time = std.time.nanoTimestamp();
             }
             Output.flush();
+            // TODO(@paperdave): this does not wait any time on windows
             this.loop.run();
             if (comptime Environment.isDebug) {
                 var end = std.time.nanoTimestamp();

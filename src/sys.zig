@@ -377,6 +377,7 @@ pub fn openDirAtWindows(
 
     if (comptime Environment.allow_assert) {
         log("NtCreateFile({d}, {}) = {d} (dir)", .{ dirFd, bun.strings.fmtUTF16(path), rc });
+        log("result={d}", .{fd});
     }
 
     switch (windows.Win32Error.fromNTStatus(rc)) {
@@ -488,6 +489,7 @@ pub fn openatWindows(dirfD: bun.FileDescriptor, path_: []const u16, flags: bun.M
 
         if (comptime Environment.allow_assert) {
             log("NtCreateFile({d}, {}) = {d} (file)", .{ dirfD, bun.strings.fmtUTF16(path), rc });
+            log("result={d}", .{result});
         }
 
         switch (windows.Win32Error.fromNTStatus(rc)) {

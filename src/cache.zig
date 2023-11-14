@@ -184,6 +184,7 @@ pub const Fs = struct {
                     }
                 };
             } else {
+                std.debug.print("hello {s}\n", .{path});
                 file_handle = try std.fs.cwd().openFile(path, .{ .mode = .read_only });
             }
         }

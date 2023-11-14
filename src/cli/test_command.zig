@@ -409,17 +409,29 @@ const Scanner = struct {
         }
 
         while (this.dirs_to_scan.readItem()) |entry| {
-            var dir = std.fs.Dir{ .fd = bun.fdcast(entry.relative_dir) };
-            std.debug.assert(bun.toFD(dir.fd) != bun.invalid_fd);
+            if (!Environment.isWindows) {
+                var dir = std.fs.Dir{ .fd = bun.fdcast(entry.relative_dir) };
+                std.debug.assert(bun.toFD(dir.fd) != bun.invalid_fd);
 
-            var parts2 = &[_]string{ entry.dir_path, entry.name.slice() };
-            var path2 = this.fs.absBuf(parts2, &this.open_dir_buf);
-            this.open_dir_buf[path2.len] = 0;
-            var pathZ = this.open_dir_buf[path2.len - entry.name.slice().len .. path2.len :0];
-            var child_dir = bun.openDir(dir, pathZ) catch continue;
-            path2 = this.fs.dirname_store.append(string, path2) catch unreachable;
-            FileSystem.setMaxFd(child_dir.dir.fd);
-            _ = this.readDirWithName(path2, child_dir.dir) catch continue;
+                var parts2 = &[_]string{ entry.dir_path, entry.name.slice() };
+                var path2 = this.fs.absBuf(parts2, &this.open_dir_buf);
+                this.open_dir_buf[path2.len] = 0;
+                var pathZ = this.open_dir_buf[path2.len - entry.name.slice().len .. path2.len :0];
+                var child_dir = bun.openDir(dir, pathZ) catch continue;
+                path2 = this.fs.dirname_store.append(string, path2) catch unreachable;
+                FileSystem.setMaxFd(child_dir.dir.fd);
+                _ = this.readDirWithName(path2, child_dir.dir) catch continue;
+            } else {
+                var dir = std.fs.Dir{ .fd = bun.fdcast(entry.relative_dir) };
+                std.debug.assert(bun.toFD(dir.fd) != bun.invalid_fd);
+
+                var parts2 = &[_]string{ entry.dir_path, entry.name.slice() };
+                var path2 = this.fs.absBuf(parts2, &this.open_dir_buf);
+                var child_dir = bun.openDirAbsolute(path2) catch continue;
+                path2 = this.fs.dirname_store.append(string, path2) catch unreachable;
+                FileSystem.setMaxFd(child_dir.fd);
+                _ = this.readDirWithName(path2, child_dir) catch continue;
+            }
         }
     }
 
@@ -518,6 +530,8 @@ const Scanner = struct {
                 }
 
                 this.search_count += 1;
+
+                std.debug.print("scan; name={s}, dir_path={s}\n", .{ entry.base_.slice(), entry.dir });
 
                 this.dirs_to_scan.writeItem(.{
                     .relative_dir = fd,

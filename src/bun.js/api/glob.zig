@@ -344,7 +344,7 @@ pub fn constructor(
         return null;
     }
 
-    var pat_str: []u8 = pat_arg.getZigString(globalThis).toOwnedSlice(globalThis.bunVM().allocator) catch @panic("OOM");
+    var pat_str: []u8 = pat_arg.toBunString(globalThis).toOwnedSlice(bun.default_allocator) catch @panic("OOM");
 
     const all_ascii = isAllAscii(pat_str);
 
@@ -374,6 +374,9 @@ pub fn finalize(
 ) callconv(.C) void {
     const alloc = JSC.VirtualMachine.get().allocator;
     alloc.free(this.pattern);
+    if (this.pattern_codepoints) |*codepoints| {
+        codepoints.deinit();
+    }
     alloc.destroy(this);
 }
 

@@ -1918,6 +1918,16 @@ JSC_DEFINE_CUSTOM_GETTER(getterSubtleCrypto, (JSGlobalObject * lexicalGlobalObje
     return JSValue::encode(reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject)->subtleCrypto());
 }
 
+// Do nothing.
+// This is consistent with Node.js
+// This makes libraries polyfilling `globalThis.crypto.subtle` not throw.
+JSC_DEFINE_CUSTOM_SETTER(setterSubtleCrypto,
+    (JSC::JSGlobalObject*, JSC::EncodedJSValue,
+        JSC::EncodedJSValue, JSC::PropertyName))
+{
+    return true;
+}
+
 JSC_DECLARE_HOST_FUNCTION(makeThisTypeErrorForBuiltins);
 JSC_DECLARE_HOST_FUNCTION(makeGetterTypeErrorForBuiltins);
 JSC_DECLARE_HOST_FUNCTION(makeDOMExceptionForBuiltins);
@@ -2773,12 +2783,11 @@ void GlobalObject::finishCreation(VM& vm)
         [](const Initializer<JSObject>& init) {
             JSC::JSGlobalObject* globalObject = init.owner;
             JSObject* crypto = JSValue::decode(CryptoObject__create(globalObject)).getObject();
-            // this should technically go on the prototype i think?
             crypto->putDirectCustomAccessor(
                 init.vm,
                 Identifier::fromString(init.vm, "subtle"_s),
-                JSC::CustomGetterSetter::create(init.vm, getterSubtleCrypto, nullptr),
-                PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | 0);
+                JSC::CustomGetterSetter::create(init.vm, getterSubtleCrypto, setterSubtleCrypto),
+                PropertyAttribute::DontDelete | 0);
 
             init.set(crypto);
         });

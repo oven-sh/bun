@@ -1400,12 +1400,7 @@ pub const Printer = struct {
                     const dependency_versions = requested_versions.get(i).?;
 
                     // https://github.com/yarnpkg/yarn/blob/158d96dce95313d9a00218302631cd263877d164/src/lockfile/stringify.js#L9
-                    const always_needs_quote = switch (name[0]) {
-                        'A'...'Z', 'a'...'z' => strings.hasPrefixComptime(name, "true") or
-                            strings.hasPrefixComptime(name, "false") or
-                            std.mem.indexOfAnyPos(u8, name, 1, ": \t\r\n\x0B\x0C\\\",[]") != null,
-                        else => true,
-                    };
+                    const always_needs_quote = strings.mustEscapeYAMLString(name);
 
                     var prev_dependency_version: ?Dependency.Version = null;
                     var needs_comma = false;
@@ -1487,7 +1482,9 @@ pub const Printer = struct {
 
                             try writer.writeAll("    ");
                             const dependency_name = dep.name.slice(string_buf);
-                            const needs_quote = dependency_name[0] == '@';
+
+                            const needs_quote = strings.mustEscapeYAMLString(dependency_name);
+
                             if (needs_quote) {
                                 try writer.writeByte('"');
                             }

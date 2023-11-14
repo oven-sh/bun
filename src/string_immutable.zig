@@ -5026,3 +5026,14 @@ pub const URLFormatter = struct {
         }
     }
 };
+
+pub fn mustEscapeYAMLString(contents: []const u8) bool {
+    if (contents.len == 0) return true;
+    
+    return switch (contents[0]) {
+        'A'...'Z', 'a'...'z' => strings.hasPrefixComptime(contents, "Yes") or strings.hasPrefixComptime(contents, "No") or strings.hasPrefixComptime(contents, "true") or
+            strings.hasPrefixComptime(contents, "false") or
+            std.mem.indexOfAnyPos(u8, contents, 1, ": \t\r\n\x0B\x0C\\\",[]") != null,
+        else => true,
+    };
+}

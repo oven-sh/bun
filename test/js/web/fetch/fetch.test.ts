@@ -1695,8 +1695,9 @@ describe("should handle relative location in the redirect, issue#5635", () => {
         });
       },
     });
-
-    const resp = await fetch(`${server.url.href}/${pathname}`);
+    let url = new URL(server.url.href);
+    url.pathname = pathname;
+    const resp = await fetch(url);
     expect(resp.redirected).toBe(true);
     expect(new URL(resp.url).pathname).toStrictEqual(expected);
     expect(resp.status).toBe(200);
@@ -1755,7 +1756,7 @@ it("304 not modified with missing content-length does not cause a request timeou
     hostname: "localhost",
   });
 
-  const response = await fetch(server.url);
+  const response = await fetch(`http://${server.hostname}:${server.port}`);
   expect(response.status).toBe(304);
   expect(await response.arrayBuffer()).toHaveLength(0);
   server.stop(true);
@@ -1778,7 +1779,7 @@ it("304 not modified with missing content-length and connection close does not c
     hostname: "localhost",
   });
 
-  const response = await fetch(server.url);
+  const response = await fetch(`http://${server.hostname}:${server.port}`);
   expect(response.status).toBe(304);
   expect(await response.arrayBuffer()).toHaveLength(0);
   server.stop(true);
@@ -1801,7 +1802,7 @@ it("304 not modified with content-length 0 and connection close does not cause a
     hostname: "localhost",
   });
 
-  const response = await fetch(server.url);
+  const response = await fetch(`http://${server.hostname}:${server.port}`);
   expect(response.status).toBe(304);
   expect(await response.arrayBuffer()).toHaveLength(0);
   server.stop(true);
@@ -1824,7 +1825,7 @@ it("304 not modified with 0 content-length does not cause a request timeout", as
     hostname: "localhost",
   });
 
-  const response = await fetch(server.url);
+  const response = await fetch(`http://${server.hostname}:${server.port}`);
   expect(response.status).toBe(304);
   expect(await response.arrayBuffer()).toHaveLength(0);
   server.stop(true);

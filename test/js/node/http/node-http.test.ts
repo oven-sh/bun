@@ -12,17 +12,15 @@ import {
   IncomingMessage,
   OutgoingMessage,
 } from "node:http";
-
-import https from "node:https";
 import { EventEmitter } from "node:events";
-import { createServer as createHttpsServer } from "node:https";
+import https, { createServer as createHttpsServer } from "node:https";
 import { createTest } from "node-harness";
 import url from "node:url";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
-import nodefs from "node:fs";
 import { join as joinPath } from "node:path";
-import { unlinkSync } from "node:fs";
+import nodefs, { unlinkSync } from "node:fs";
+import { Writable } from "node:stream";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll } = createTest(import.meta.path);
 
 function listen(server: Server, protocol: string = "http"): Promise<URL> {
@@ -1621,6 +1619,61 @@ it("IncomingMessage with a RequestLike object", () => {
     "header-63",
     "value-63",
   ]);
+});
+
+describe("IncomingMessage", () => {
+  class Collector extends Writable {
+    public bufferedBytes: Uint8Array[] = [];
+
+    _write(chunk: Uint8Array, encoding: string, callback: () => void) {
+      this.bufferedBytes.push(chunk);
+      callback();
+    }
+  }
+
+  const chunkSize = 1024 * 16; // 16 kb
+  const bigData = Buffer.from(Array(chunkSize * 5).fill("a"));
+
+  const createStream = () =>
+    new Response(
+      new ReadableStream({
+        async start(controller) {
+          const chunksNum = Math.ceil(bigData.length / chunkSize);
+
+          for (let i = 0; i < chunksNum; i++) {
+            const start = i * chunkSize;
+            controller.enqueue(bigData.subarray(start, start + chunkSize));
+          }
+
+          controller.close();
+        },
+      }),
+      {
+        headers: {
+          "content-length": bigData.length.toString(),
+        },
+      },
+    );
+
+  it(`.pipe()`, async () => {
+    const data = await new Promise<string>((resolve, reject) => {
+      const collector = new Collector();
+      const response = new IncomingMessage(createStream());
+      response.pipe(collector);
+      response.on("error", err => {
+        collector.end();
+        reject(err);
+      });
+      collector.on("error", reject);
+      collector.on("finish", () => {
+        const result = Buffer.concat(collector.bufferedBytes).toString("utf8");
+        resolve(result);
+      });
+    });
+
+    expect(data).toBeDefined();
+    expect(data.length).toEqual(chunkSize * 5);
+  });
 });
 
 it("#6892", () => {

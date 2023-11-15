@@ -7,6 +7,7 @@ const { getHeader, setHeader, assignHeaders: assignHeadersFast } = $lazy("http")
 const GlobalPromise = globalThis.Promise;
 let warnNotImplementedOnce;
 const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
+
 /**
  * True if val contains an invalid field-vchar
  *  field-value    = *( field-content / obs-fold )
@@ -123,6 +124,7 @@ function validateMsecs(numberlike: any, field: string) {
 
   return numberlike;
 }
+
 function validateFunction(callable: any, field: string) {
   if (typeof callable !== "function") {
     throw new ERR_INVALID_ARG_TYPE(field, "Function", callable);
@@ -141,6 +143,7 @@ var FakeSocket = class Socket extends Duplex {
   isServer = false;
 
   #address;
+
   address() {
     // Call server.requestIP() without doing any propety getter twice.
     var internalData;
@@ -336,6 +339,7 @@ class Agent extends EventEmitter {
     $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.destroy is a no-op");
   }
 }
+
 function emitListeningNextTick(self, onListen, err, hostname, port) {
   if (typeof onListen === "function") {
     try {
@@ -664,6 +668,7 @@ function assignHeaders(object, req) {
     return false;
   }
 }
+
 function destroyBodyStreamNT(bodyStream) {
   bodyStream.destroy();
 }
@@ -689,6 +694,8 @@ var isNextIncomingMessageHTTPS = false;
 
 var typeSymbol = Symbol("type");
 var reqSymbol = Symbol("req");
+var pendingChunksSymbol = Symbol("pendingChunks");
+var bodyReaderSymbol = Symbol("bodyReader");
 var bodyStreamSymbol = Symbol("bodyStream");
 var noBodySymbol = Symbol("noBody");
 var abortedSymbol = Symbol("aborted");
@@ -703,8 +710,6 @@ function IncomingMessage(req, defaultIncomingOpts) {
 
   this[reqSymbol] = req;
   this[typeSymbol] = type;
-
-  this[bodyStreamSymbol] = undefined;
 
   this.req = nodeReq;
 
@@ -728,6 +733,9 @@ function IncomingMessage(req, defaultIncomingOpts) {
       ? requestHasNoBody(this.method, this)
       : false;
 
+  this[pendingChunksSymbol] = [];
+  this[bodyReaderSymbol] = undefined;
+  this[bodyStreamSymbol] = this[noBodySymbol] ? undefined : this[reqSymbol].body!;
   this.complete = !!this[noBodySymbol];
 }
 
@@ -752,17 +760,60 @@ IncomingMessage.prototype._construct = function (callback) {
   callback();
 };
 
+function drainPending(self) {
+  let pendingChunks = self[pendingChunksSymbol],
+    pendingChunksI = 0,
+    pendingChunksCount = pendingChunks.length;
+
+  for (; pendingChunksI < pendingChunksCount; pendingChunksI++) {
+    const chunk = pendingChunks[pendingChunksI];
+    pendingChunks[pendingChunksI] = undefined;
+    if (!self.push(chunk, undefined)) {
+      self[pendingChunksSymbol] = pendingChunks.slice(pendingChunksI + 1);
+      return true;
+    }
+  }
+
+  if (pendingChunksCount > 0) {
+    self[pendingChunksSymbol] = [];
+  }
+
+  return false;
+}
+
 async function consumeStream(self, reader: ReadableStreamDefaultReader) {
   while (true) {
-    var { done, value } = await reader.readMany();
-    if (self[abortedSymbol]) return;
-    if (done) {
-      self.push(null);
-      process.nextTick(destroyBodyStreamNT, self);
-      break;
+    if (self[abortedSymbol] || self.complete) return;
+
+    let done, value;
+    const result = await self[bodyReaderSymbol].readMany();
+
+    if ($isPromise(result)) {
+      ({ done, value } = await result);
+
+      if (self.complete) {
+        self[pendingChunksSymbol].push(...value);
+        return;
+      }
+    } else {
+      ({ done, value } = result);
     }
-    for (var v of value) {
-      self.push(v);
+
+    if (done) {
+      handleDone(self);
+      return;
+    }
+
+    if (!self.push(value[0])) {
+      self[pendingChunksSymbol] = value.slice(1);
+      return;
+    }
+
+    for (let i = 1, count = value.length; i < count; i++) {
+      if (!self.push(value[i])) {
+        self[pendingChunksSymbol] = value.slice(i + 1);
+        return;
+      }
     }
   }
 }
@@ -771,15 +822,22 @@ IncomingMessage.prototype._read = function (size) {
   if (this[noBodySymbol]) {
     this.push(null);
     this.complete = true;
-  } else if (this[bodyStreamSymbol] == null) {
-    const reader = this[reqSymbol].body?.getReader() as ReadableStreamDefaultReader;
+    return;
+  }
+
+  let reader = this[bodyReaderSymbol];
+  if (reader == null) {
+    reader = this[reqSymbol].body?.getReader() as ReadableStreamDefaultReader;
     if (!reader) {
       this.push(null);
       return;
     }
-    this[bodyStreamSymbol] = reader;
-    consumeStream(this, reader);
+    this[bodyReaderSymbol] = reader;
+  } else if (drainPending(this)) {
+    return;
   }
+
+  consumeStream(this, reader);
 };
 
 Object.defineProperty(IncomingMessage.prototype, "aborted", {
@@ -787,6 +845,16 @@ Object.defineProperty(IncomingMessage.prototype, "aborted", {
     return this[abortedSymbol];
   },
 });
+
+function handleDone(self) {
+  if (self[bodyReaderSymbol]) {
+    self[bodyReaderSymbol].releaseLock();
+    self[bodyReaderSymbol] = undefined;
+  }
+
+  self.complete = true;
+  self.push(null);
+}
 
 function abort(self) {
   if (self[abortedSymbol]) return;
@@ -796,6 +864,7 @@ function abort(self) {
   bodyStream.cancel();
   self.complete = true;
   self[bodyStreamSymbol] = undefined;
+  self[bodyReaderSymbol] = undefined;
   self.push(null);
 }
 
@@ -1819,6 +1888,7 @@ function validateHost(host, name) {
 }
 
 const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
+
 /**
  * Verifies that the given val is a valid HTTP token
  * per the rules defined in RFC 7230

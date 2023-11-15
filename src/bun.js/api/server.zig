@@ -5449,7 +5449,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
         pub fn deinitIfWeCan(this: *ThisServer) void {
             httplog("deinitIfWeCan", .{});
-            if (this.pending_requests == 0 and this.listener == null and this.flags.has_js_deinited and !this.hasActiveWebSockets()) {
+            if (this.pending_requests == 0 and this.listener == null and !this.hasActiveWebSockets()) {
                 if (this.config.websocket) |*ws| {
                     ws.handler.app = null;
                 }

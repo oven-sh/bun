@@ -39,17 +39,14 @@ $ proto install bun
 
 ### Windows
 
-Bun provides a _limited, experimental_ native build for Windows. At the moment, only the Bun runtime is supported.
+Bun provides a _limited, experimental_ native build for Windows. It is recommended to use Bun within [Windows Subsystem for Linux](https://learn.microsoft.com/en-us/windows/wsl/install) and follow the above instructions.
 
-- `bun <file>`
-- `bun run <file>`
+```ps1
+# WARNING: No stability is guaranteed on the experimental Windows builds
+powershell -c 'iwr bun.sh/install.ps1 | iex'
+```
 
-The test runner, package manager, and bundler are still under development. The following commands have been disabled.
-
-- `bun test`
-- `bun install/add/remove`
-- `bun link/unlink`
-- `bun build`
+For support and discussion, please join the [#windows channel on our Discord](http://bun.sh/discord).
 
 ## Docker
 

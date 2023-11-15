@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { expect, it } from "bun:test";
-import { bunExe } from "harness";
+import { bunExe, bunEnv } from "harness";
 
 it("should log to console correctly", async () => {
   const { stderr, exited } = spawn({
@@ -8,7 +8,7 @@ it("should log to console correctly", async () => {
     stdin: null,
     stdout: "pipe",
     stderr: "pipe",
-    env: {
+    env: bunEnv,
       BUN_DEBUG_QUIET_LOGS: "1",
     },
   });

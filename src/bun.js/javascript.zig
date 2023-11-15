@@ -1564,6 +1564,9 @@ pub const VirtualMachine = struct {
         if (try ModuleLoader.fetchBuiltinModule(jsc_vm, _specifier)) |builtin| {
             return builtin;
         }
+
+        var virtual_source: ?*logger.Source = null;
+
         var display_specifier = _specifier.toUTF8(bun.default_allocator);
         defer display_specifier.deinit();
         var specifier_clone = _specifier.toUTF8(bun.default_allocator);
@@ -1573,13 +1576,20 @@ pub const VirtualMachine = struct {
         const referrer_clone = referrer.toUTF8(bun.default_allocator);
         defer referrer_clone.deinit();
         var path = Fs.Path.init(specifier_clone.slice());
-        const loader = jsc_vm.bundler.options.loaders.get(path.name.ext) orelse brk: {
+        var loader = jsc_vm.bundler.options.loaders.get(path.name.ext) orelse brk: {
             if (strings.eqlLong(specifier, jsc_vm.main, true)) {
                 break :brk options.Loader.js;
             }
 
             break :brk options.Loader.file;
         };
+
+        if (jsc_vm.eval_script) |eval_script| {
+            if (strings.endsWithComptime(specifier, "/[bun:eval]")) {
+                virtual_source = eval_script;
+                loader = .tsx;
+            }
+        }
 
         return try ModuleLoader.transpileSourceCode(
             jsc_vm,
@@ -1590,7 +1600,7 @@ pub const VirtualMachine = struct {
             path,
             loader,
             log,
-            null,
+            virtual_source,
             null,
             VirtualMachine.source_code_printer.?,
             globalObject,

@@ -246,10 +246,16 @@ pub const Run = struct {
         run.any_unhandled = true;
     }
 
+    extern fn Bun__ExposeNodeModuleGlobals(*JSC.JSGlobalObject) void;
+
     pub fn start(this: *Run) void {
         var vm = this.vm;
         vm.hot_reload = this.ctx.debug.hot_reload;
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
+
+        if (this.ctx.runtime_options.eval_script.len > 0) {
+            Bun__ExposeNodeModuleGlobals(vm.global);
+        }
 
         switch (this.ctx.debug.hot_reload) {
             .hot => JSC.HotReloader.enableHotModuleReloading(vm),

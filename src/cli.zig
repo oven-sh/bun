@@ -188,8 +188,7 @@ pub const Arguments = struct {
     };
 
     const build_only_params = [_]ParamType{
-        clap.parseParam("-e, --external <STR>...           Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
-        clap.parseParam("--format <STR>                   Specifies the module format to build to. Only esm is supported.") catch unreachable,
+        clap.parseParam("--format <STR>                   Specifies the module format to build to. Only \"esm\" is supported.") catch unreachable,
         clap.parseParam("--target <STR>                   The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\"") catch unreachable,
         clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
         clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
@@ -198,16 +197,17 @@ pub const Arguments = struct {
         clap.parseParam("--splitting                      Enable code splitting") catch unreachable,
         clap.parseParam("--public-path <STR>              A prefix to be appended to any import paths in bundled code") catch unreachable,
         clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'inline', 'external', or 'none'") catch unreachable,
+        clap.parseParam("-e, --external <STR>...          Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
         clap.parseParam("--entry-naming <STR>             Customize entry point filenames. Defaults to \"[dir]/[name].[ext]\"") catch unreachable,
         clap.parseParam("--chunk-naming <STR>             Customize chunk filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
         clap.parseParam("--asset-naming <STR>             Customize asset filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
         clap.parseParam("--server-components              Enable React Server Components (experimental)") catch unreachable,
         clap.parseParam("--no-bundle                      Transpile file only, do not bundle") catch unreachable,
-        clap.parseParam("--compile                       Generate a standalone Bun executable containing your bundled code") catch unreachable,
-        clap.parseParam("--minify                          Minify (experimental)") catch unreachable,
-        clap.parseParam("--minify-syntax                   Minify syntax and inline data (experimental)") catch unreachable,
-        clap.parseParam("--minify-whitespace               Minify whitespace (experimental)") catch unreachable,
-        clap.parseParam("--minify-identifiers              Minify identifiers") catch unreachable,
+        clap.parseParam("--compile                        Generate a standalone Bun executable containing your bundled code") catch unreachable,
+        clap.parseParam("--minify                         Enable all minification flags") catch unreachable,
+        clap.parseParam("--minify-syntax                  Minify syntax and inline data") catch unreachable,
+        clap.parseParam("--minify-whitespace              Minify whitespace") catch unreachable,
+        clap.parseParam("--minify-identifiers             Minify identifiers") catch unreachable,
         clap.parseParam("--dump-environment-variables") catch unreachable,
     };
     pub const build_params = build_only_params ++ transpiler_params_ ++ base_params_;

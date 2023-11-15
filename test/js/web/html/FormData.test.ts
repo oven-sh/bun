@@ -311,7 +311,7 @@ describe("FormData", () => {
       },
     });
 
-    const reqBody = new Request(`http://${server.hostname}:${server.port}`, {
+    const reqBody = new Request(server.url, {
       body: '--foo\r\nContent-Disposition: form-data; name="foo"; filename="bar"\r\n\r\nbaz\r\n--foo--\r\n\r\n',
       headers: {
         "Content-Type": "multipart/form-data; boundary=foo",
@@ -335,7 +335,7 @@ describe("FormData", () => {
       },
     });
 
-    const reqBody = new Request(`http://${server.hostname}:${server.port}`, {
+    const reqBody = new Request(server.url, {
       body: '--foo\r\nContent-Disposition: form-data; name="foo"; filename="bar"\r\n\r\nbaz\r\n--foo--\r\n\r\n',
       headers: {
         "Content-Type": "multipart/form-data; boundary=foo",
@@ -379,7 +379,7 @@ describe("FormData", () => {
 
             // @ts-ignore
             const reqBody: FetchURLArgs = [
-              `http://${server.hostname}:${server.port}`,
+              server.url,
               {
                 body: form,
                 headers,
@@ -412,7 +412,7 @@ describe("FormData", () => {
             form.append("bar", "baz");
 
             const reqBody = [
-              `http://${server.hostname}:${server.port}`,
+              server.url,
               {
                 body: form,
 
@@ -448,7 +448,7 @@ describe("FormData", () => {
 
             // @ts-ignore
             const reqBody = [
-              `http://${server.hostname}:${server.port}`,
+              server.url,
               {
                 body: form,
 

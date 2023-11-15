@@ -19,13 +19,13 @@ describe("WebSocket", () => {
         return new Response();
       },
       websocket: {
-        open(ws) {},
+        open(ws) { },
         message(ws) {
           ws.close();
         },
       },
     });
-    const ws = new WebSocket(`ws://${server.hostname}:${server.port}`, {});
+    const ws = new WebSocket(server.url.href.replace("http:", "ws:"), {});
     await new Promise(resolve => {
       ws.onopen = resolve;
     });
@@ -268,13 +268,13 @@ describe("WebSocket", () => {
         return new Response();
       },
       websocket: {
-        open(ws) {},
+        open(ws) { },
         message(ws) {
           ws.close();
         },
       },
     });
-    new WebSocket(`http://${server.hostname}:${server.port}`, {});
+    new WebSocket(server.url, {});
   });
   describe("nodebuffer", () => {
     it("should support 'nodebuffer' binaryType", done => {
@@ -293,7 +293,7 @@ describe("WebSocket", () => {
           },
         },
       });
-      const ws = new WebSocket(`http://${server.hostname}:${server.port}`, {});
+      const ws = new WebSocket(server.url, {});
       ws.binaryType = "nodebuffer";
       expect(ws.binaryType).toBe("nodebuffer");
       Bun.gc(true);
@@ -331,7 +331,7 @@ describe("WebSocket", () => {
           },
         },
       });
-      client = new WebSocket(`http://${server.hostname}:${server.port}`, {});
+      client = new WebSocket(server.url, {});
       client.binaryType = "nodebuffer";
       expect(client.binaryType).toBe("nodebuffer");
     });
@@ -357,7 +357,7 @@ describe("WebSocket", () => {
         remain--;
 
         if (remain <= 0) {
-          ws.onmessage = () => {};
+          ws.onmessage = () => { };
           resolve();
         }
       };
@@ -389,8 +389,8 @@ describe("WebSocket", () => {
     }
     gc(true);
     for (let i = 0; i < count; i++) await waitForEcho();
-    ws.onclose = () => {};
-    ws.onerror = () => {};
+    ws.onclose = () => { };
+    ws.onerror = () => { };
     ws.close();
     gc(true);
   });
@@ -416,11 +416,11 @@ describe("websocket in subprocess", () => {
           messageReceived = true;
           ws.close();
         },
-        close(ws) {},
+        close(ws) { },
       },
     });
     const subprocess = Bun.spawn({
-      cmd: [bunExe(), import.meta.dir + "/websocket-subprocess.ts", `http://${server.hostname}:${server.port}`],
+      cmd: [bunExe(), import.meta.dir + "/websocket-subprocess.ts", server.url.href],
       stderr: "pipe",
       stdin: "pipe",
       stdout: "pipe",
@@ -480,11 +480,11 @@ describe("websocket in subprocess", () => {
           expect(performance.now() - start >= 300).toBe(true);
           ws.close();
         },
-        close(ws) {},
+        close(ws) { },
       },
     });
     const subprocess = Bun.spawn({
-      cmd: [bunExe(), import.meta.dir + "/websocket-subprocess.ts", `http://${server.hostname}:${server.port}`],
+      cmd: [bunExe(), import.meta.dir + "/websocket-subprocess.ts", server.url.href],
       stderr: "pipe",
       stdin: "pipe",
       stdout: "pipe",
@@ -507,14 +507,14 @@ describe("websocket in subprocess", () => {
         return new Response("http response");
       },
       websocket: {
-        open(ws) {},
-        message(ws, message) {},
-        close(ws) {},
+        open(ws) { },
+        message(ws, message) { },
+        close(ws) { },
       },
     });
 
     const subprocess = Bun.spawn({
-      cmd: [bunExe(), import.meta.dir + "/websocket-subprocess.ts", `http://${server.hostname}:${server.port}`],
+      cmd: [bunExe(), import.meta.dir + "/websocket-subprocess.ts", server.url.href],
       stderr: "pipe",
       stdin: "pipe",
       stdout: "pipe",

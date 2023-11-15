@@ -1143,8 +1143,8 @@ pub const Resolver = struct {
             }
 
             // Run node's resolution rules (e.g. adding ".js")
-            // var normalizer = ResolvePath.PosixToWinNormalizer{};
-            if (r.loadAsFileOrDirectory(import_path, kind)) |entry| {
+            var normalizer = ResolvePath.PosixToWinNormalizer{};
+            if (r.loadAsFileOrDirectory(normalizer.resolve(source_dir, import_path), kind)) |entry| {
                 return .{
                     .success = Result{
                         .dirname_fd = entry.dirname_fd,

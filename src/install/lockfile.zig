@@ -1612,7 +1612,7 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
                 .file = .{
                     .fd = bun.toFD(file.handle),
                 },
-                .dirfd = bun.invalid_fd,
+                .dirfd = if (!Environment.isWindows) bun.invalid_fd else @panic("TODO"),
                 .data = .{ .string = bytes.items },
             },
             .sync,

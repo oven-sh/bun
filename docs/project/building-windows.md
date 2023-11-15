@@ -2,7 +2,8 @@
 
 ### System Dependencies
 
-- [Visual Studio](https://visualstudio.microsoft.com) with the "Desktop Development with C++" workload. You should install Git and CMake from here, if not already installed.
+- [Visual Studio](https://visualstudio.microsoft.com) with the "Desktop Development with C++" workload.
+  - Install Git and CMake from here, if not already installed.
 - LLVM 16
 - Ninja
 - Go
@@ -10,7 +11,7 @@
 - NASM
 - Perl
 - Ruby
-- Node.js (until bun runs stably on windows)
+- Node.js (until Bun itself runs stable on windows)
 
 <!--
 TODO: missing the rest of the things
@@ -18,7 +19,7 @@ TODO: missing the rest of the things
 winget install OpenJS.NodeJS.LTS
 ``` -->
 
-Make sure to use powershell with the proper shell environment loaded. To
+Make sure to use powershell with the proper shell environment loaded. To do so, you can run:
 
 ```ps1
 .\scripts\env.ps1

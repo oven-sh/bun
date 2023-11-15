@@ -4808,38 +4808,53 @@ pub const NodeFS = struct {
     pub fn writeFileWithPathBuffer(pathbuf: *[bun.MAX_PATH_BYTES]u8, args: Arguments.WriteFile) Maybe(Return.WriteFile) {
         var path: [:0]const u8 = undefined;
 
-        const fd = switch (args.file) {
+        const fd: bun.FileDescriptor = switch (args.file) {
             .path => brk: {
                 path = args.file.path.sliceZ(pathbuf);
 
-                const open_result = if (!Environment.isWindows)
-                    Syscall.openat(
-                        args.dirfd,
-                        path,
-                        @intFromEnum(args.flag) | os.O.NOCTTY,
-                        args.mode,
-                    )
-                else
-                    Syscall.open(
-                        path,
-                        @intFromEnum(args.flag) | os.O.NOCTTY,
-                        args.mode,
-                    );
+                const open_result = bun.sys.openat(
+                    @intCast(args.dirfd),
+                    path,
+                    @intFromEnum(args.flag) | os.O.NOCTTY,
+                    args.mode,
+                );
 
                 break :brk switch (open_result) {
                     .err => |err| return .{
                         .err = err.withPath(path),
                     },
-                    .result => |fd_| fd_,
+                    .result => |fd_| @intCast(fd_),
                 };
             },
-            // TODO(@paperdave): This cast is incorrect on Windows
-            .fd => |_fd| @as(FileDescriptor, @intCast(_fd)),
+            .fd => |_fd| fdcast(@intCast(_fd)),
         };
 
         defer {
             if (args.file == .path)
-                _ = Syscall.close(fd);
+                _ = bun.sys.close(fd);
+        }
+
+        if (Environment.isWindows) {
+            var data = args.data.slice();
+
+            // "WriteFile sets this value to zero before doing any work or error checking."
+            var bytes_written: u32 = undefined;
+
+            while (data.len > 0) {
+                const adjusted_len = @min(data.len, std.math.maxInt(u32));
+                const bytes = std.os.windows.kernel32.WriteFile(bun.fdcast(fd), data.ptr, adjusted_len, &bytes_written, null);
+                if (bytes == 0) {
+                    return .{
+                        .err = Syscall.Error{
+                            .errno = @intFromEnum(std.os.windows.kernel32.GetLastError()),
+                            .syscall = .WriteFile,
+                            .fd = fd,
+                        },
+                    };
+                }
+                data = data[bytes_written..];
+            }
+            return Maybe(Return.WriteFile).success;
         }
 
         var buf = args.data.slice();

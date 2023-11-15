@@ -33,6 +33,10 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
     if(WIN32)
         # lld-link will strip it for you, so we can build directly to bun.exe
         set(bun "bun")
+
+        # TODO(@paperdave): Remove this
+        # it is enabled for the time being to make sure to catch more bugs in the experimental windows builds
+        set(DEFAULT_ZIG_OPTIMIZE "ReleaseSafe")
     else()
         set(bun "bun-profile")
     endif()

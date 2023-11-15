@@ -1617,9 +1617,11 @@ pub fn utf16Codepoint(comptime Type: type, input: Type) UTF16Replacement {
     }
 }
 
-fn _hasWindowsDiskDesignator(utf8: []const u8) bool {
-    const disk = std.fs.path.diskDesignatorWindows(utf8);
-    return disk.len > 0 and !bun.strings.eqlComptime(disk, "/");
+fn windowsPathIsPosixAbsolute(utf8: []const u8) bool {
+    if (utf8.len == 0) return true;
+    if (!charIsAnySlash(utf8[0])) return false;
+    if (utf8.len > 1 and charIsAnySlash(utf8[1])) return false;
+    return true;
 }
 
 pub fn fromWPath(buf: []u8, utf16: []const u16) [:0]const u8 {
@@ -1707,7 +1709,7 @@ pub fn toWPathMaybeDir(wbuf: []u16, utf8: []const u8, comptime add_trailing_lash
     std.debug.assert(wbuf.len > 0);
 
     if (Environment.allow_assert) {
-        if (Environment.isWindows and !_hasWindowsDiskDesignator(utf8)) {
+        if (Environment.isWindows and windowsPathIsPosixAbsolute(utf8)) {
             std.debug.panic("Do not pass posix paths to windows APIs, was given '{s}' (missing a root like 'C:\\', see PosixToWinNormalizer for why this is an assertion)", .{utf8});
         }
     }

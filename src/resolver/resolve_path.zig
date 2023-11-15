@@ -1790,7 +1790,11 @@ pub fn nextDirname(path_: []const u8) ?[]const u8 {
 /// To use this, stack allocate the following struct, and then call `resolve`.
 ///
 ///     var normalizer = PosixToWinNormalizer{};
-///     var result = normalizer.resolve("C:\\dev\\bun", "/dev/bun/test/etc.js");
+///     const result = normalizer.resolve("C:\\dev\\bun", "/dev/bun/test/etc.js");
+///
+/// When you are certain that using the current working directory is fine, you can use
+///
+///     const result = normalizer.resolveCWD("/dev/bun/test/etc.js");
 ///
 /// This API does nothing on Linux (it has a size of zero)
 pub const PosixToWinNormalizer = struct {
@@ -1806,24 +1810,51 @@ pub const PosixToWinNormalizer = struct {
         return internalResolve(&this._raw_bytes, source_dir, maybe_posix_path);
     }
 
+    pub inline fn resolveCWD(
+        this: *PosixToWinNormalizer,
+        maybe_posix_path: []const u8,
+    ) ![]const u8 {
+        return internalResolveCWD(&this._raw_bytes, maybe_posix_path);
+    }
+
     fn internalResolve(
         buf: *Buf,
         source_dir: []const u8,
         maybe_posix_path: []const u8,
     ) []const u8 {
-        std.debug.assert(std.fs.path.isAbsolute(source_dir));
-        std.debug.assert(std.fs.path.isAbsolute(maybe_posix_path));
+        std.debug.assert(std.fs.path.isAbsoluteWindows(maybe_posix_path));
 
-        if (!bun.Environment.isWindows)
-            return maybe_posix_path;
+        if (bun.Environment.isWindows) {
+            const root = windowsFilesystemRoot(maybe_posix_path);
+            if (root.len == 1) {
+                std.debug.assert(isSepAny(root[0]));
+                const source_root = windowsFilesystemRoot(source_dir);
+                @memcpy(buf[0..source_root.len], source_root);
+                @memcpy(buf[source_root.len..][0 .. maybe_posix_path.len - 1], maybe_posix_path[1..]);
+                return buf[0 .. source_root.len + maybe_posix_path.len - 1];
+            }
+        }
+        return maybe_posix_path;
+    }
 
-        const root = windowsFilesystemRoot(maybe_posix_path);
-        if (root.len == 1) {
-            std.debug.assert(isSepAny(root[0]));
-            const source_root = windowsFilesystemRoot(source_dir);
-            @memcpy(buf[0..source_root.len], source_root);
-            @memcpy(buf[source_root.len..][0 .. maybe_posix_path.len - 1], maybe_posix_path[1..]);
-            return buf[0 .. source_root.len + maybe_posix_path.len - 1];
+    fn internalResolveCWD(
+        buf: *Buf,
+        maybe_posix_path: []const u8,
+    ) ![]const u8 {
+        std.debug.assert(std.fs.path.isAbsoluteWindows(maybe_posix_path));
+
+        if (bun.Environment.isWindows) {
+            const root = windowsFilesystemRoot(maybe_posix_path);
+            if (root.len == 1) {
+                std.debug.assert(isSepAny(root[0]));
+                // note: bun.getcwd will return forward slashes, not what we want.
+                const cwd = try std.os.getcwd(buf);
+                std.debug.assert(cwd.ptr == buf.ptr);
+                const source_root = windowsFilesystemRoot(cwd);
+                std.debug.assert(source_root.ptr == source_root.ptr);
+                @memcpy(buf[source_root.len..][0 .. maybe_posix_path.len - 1], maybe_posix_path[1..]);
+                return buf[0 .. source_root.len + maybe_posix_path.len - 1];
+            }
         }
         return maybe_posix_path;
     }

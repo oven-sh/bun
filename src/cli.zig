@@ -1720,7 +1720,11 @@ pub const Command = struct {
         var file_path = script_name_to_search;
         const file_: anyerror!std.fs.File = brk: {
             if (std.fs.path.isAbsoluteWindows(script_name_to_search)) {
-                break :brk bun.openFile(script_name_to_search, .{ .mode = .read_only });
+                var winResolver = resolve_path.PosixToWinNormalizer{};
+                break :brk bun.openFile(
+                    winResolver.resolveCWD(script_name_to_search) catch @panic("Could not resolve path"),
+                    .{ .mode = .read_only },
+                );
             } else if (!strings.hasPrefix(script_name_to_search, "..") and script_name_to_search[0] != '~') {
                 const file_pathZ = brk2: {
                     @memcpy(script_name_buf[0..file_path.len], file_path);

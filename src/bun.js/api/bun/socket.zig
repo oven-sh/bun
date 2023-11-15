@@ -1497,6 +1497,7 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn onClose(this: *This, socket: Socket, err: c_int, _: ?*anyopaque) void {
             JSC.markBinding(@src());
             log("onClose", .{});
+            if (this.detached) return;
             this.detached = true;
             defer this.markInactive();
             const handlers = this.handlers;
@@ -2849,6 +2850,7 @@ fn NewSocket(comptime ssl: bool) type {
                 .wrapped = .tcp,
                 .protos = null,
             };
+            raw_handlers_ptr.protect();
 
             var raw_js_value = raw.getThisValue(globalObject);
             if (JSSocketType(ssl).dataGetCached(this.getThisValue(globalObject))) |raw_default_data| {

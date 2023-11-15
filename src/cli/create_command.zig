@@ -1565,7 +1565,7 @@ pub const CreateCommand = struct {
         var example_tag = Example.Tag.unknown;
         var filesystem = try fs.FileSystem.init(null);
 
-        var create_options = try CreateOptions.parse(ctx, false);
+        var create_options = try CreateOptions.parse(ctx);
         const positionals = create_options.positionals;
 
         var env_loader: DotEnv.Loader = brk: {

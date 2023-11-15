@@ -920,7 +920,7 @@ pub const HelpCommand = struct {
 
         switch (reason) {
             .explicit => Output.pretty(
-                "<r><b><magenta>Bun<r> is a fast JavaScript runtime, package manager, bundler, and test runner. <d>(" ++ Global.package_json_version_with_revision ++ ")<r>\n\n" ++ cli_helptext_fmt,
+                "<r><b><magenta>Bun<r> is a fast JavaScript runtime, package manager, bundler, and test runner. <d>(" ++ Global.package_json_version_with_sha ++ ")<r>\n\n" ++ cli_helptext_fmt,
                 args,
             ),
             .invalid_command => Output.prettyError(

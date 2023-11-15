@@ -583,7 +583,7 @@ pub const VirtualMachine = struct {
     modules: ModuleLoader.AsyncModule.Queue = .{},
     aggressive_garbage_collection: GCLevel = GCLevel.none,
 
-    module_loader: ModuleLoader = .{},
+    parser_arena: ?*bun.ArenaAllocator = null,
 
     gc_controller: JSC.GarbageCollectionController = .{},
     worker: ?*JSC.WebWorker = null,

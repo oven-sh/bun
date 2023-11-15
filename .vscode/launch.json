@@ -124,7 +124,7 @@
       "request": "launch",
       "name": "bun run [file]",
       "program": "bun-debug",
-      "args": ["-e", "throw new Error/\\"],
+      "args": ["run", "${file}"],
       "cwd": "${fileDirname}",
       "env": {
         "FORCE_COLOR": "1",

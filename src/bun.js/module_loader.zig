@@ -584,8 +584,6 @@ pub const RuntimeTranspilerStore = struct {
 };
 
 pub const ModuleLoader = struct {
-    arena: ?*bun.ArenaAllocator = null,
-
     const debug = Output.scoped(.ModuleLoader, true);
 
     pub const AsyncModule = struct {
@@ -1344,45 +1342,6 @@ pub const ModuleLoader = struct {
         return loader;
     }
 
-    const ModuleLoaderArena = struct {
-        arena: bun.ArenaAllocator,
-
-        pub fn allocator(this: *ModuleLoaderArena) std.mem.Allocator {
-            return this.arena.allocator();
-        }
-    };
-
-    pub fn getParserArena(this: *ModuleLoader, jsc_vm: *VirtualMachine) !*bun.ArenaAllocator {
-        // Attempt to reuse the Arena from the parser when we can
-        // This code is potentially re-entrant, so only one Arena can be reused at a time
-        // That's why we have to check if the Arena is null
-        //
-        // Using an Arena here is a significant memory optimization when loading many files
-        if (this.arena) |shared| {
-            this.arena = null;
-            return shared;
-        }
-
-        // we must allocate the arena so that the pointer it points to is always valid.
-        var arena = try jsc_vm.allocator.create(bun.ArenaAllocator);
-        arena.* = bun.ArenaAllocator.init(jsc_vm.allocator);
-        return arena;
-    }
-
-    pub fn freeArena(this: *ModuleLoader, arena: *bun.ArenaAllocator, jsc_vm: *VirtualMachine) void {
-        if (this.arena) |_| {
-            if (jsc_vm.smol) {
-                _ = arena.reset(.free_all);
-            } else {
-                _ = arena.reset(.{ .retain_with_limit = 8 * 1024 * 1024 });
-            }
-            this.arena = arena;
-        } else {
-            arena.deinit();
-            jsc_vm.allocator.destroy(arena);
-        }
-    }
-
     pub fn transpileSourceCode(
         jsc_vm: *VirtualMachine,
         specifier: string,
@@ -1398,7 +1357,6 @@ pub const ModuleLoader = struct {
         globalObject: ?*JSC.JSGlobalObject,
         comptime flags: FetchFlags,
     ) !ResolvedSource {
-        var this = jsc_vm.module_loader;
         const disable_transpilying = comptime flags.disableTranspiling();
 
         switch (loader) {
@@ -1410,18 +1368,42 @@ pub const ModuleLoader = struct {
                     jsc_vm.main_hash == hash and
                     strings.eqlLong(jsc_vm.main, path.text, false);
 
-                var arena: *bun.ArenaAllocator = try this.getParserArena(jsc_vm);
-                var allocator = arena.allocator();
+                var arena_: ?*bun.ArenaAllocator = brk: {
+                    // Attempt to reuse the Arena from the parser when we can
+                    // This code is potentially re-entrant, so only one Arena can be reused at a time
+                    // That's why we have to check if the Arena is null
+                    //
+                    // Using an Arena here is a significant memory optimization when loading many files
+                    if (jsc_vm.parser_arena) |shared| {
+                        jsc_vm.parser_arena = null;
+                        break :brk shared;
+                    }
+                    // we must allocate the arena so that the pointer it points to is always valid.
+                    var arena = try jsc_vm.allocator.create(bun.ArenaAllocator);
+                    arena.* = bun.ArenaAllocator.init(bun.default_allocator);
+                    break :brk arena;
+                };
 
                 var give_back_arena = true;
-                errdefer give_back_arena = false;
-                // not freeing the arena in some cases is a memory leak
-                // have to handle to handle after printing error logs
                 defer {
                     if (give_back_arena) {
-                        defer this.freeArena(arena, jsc_vm);
-                    }
+                        if (jsc_vm.parser_arena == null) {
+                            if (jsc_vm.smol) {
+                                _ = arena_.?.reset(.free_all);
+                            } else {
+                                _ = arena_.?.reset(.{ .retain_with_limit = 8 * 1024 * 1024 });
+                            }
+
+                            jsc_vm.parser_arena = arena_;
+                        } else {
+                            arena_.?.deinit();
+                            jsc_vm.allocator.destroy(arena_.?);
+                        }
+                    } else {}
                 }
+
+                var arena = arena_.?;
+                var allocator = arena.allocator();
 
                 var fd: ?StoredFileDescriptorType = null;
                 var package_json: ?*PackageJSON = null;

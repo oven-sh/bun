@@ -7644,7 +7644,10 @@ pub const PackageManager = struct {
                 var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 const node_modules_path = bun.getFdPath(bun.toFD(this.node_modules_folder.dir.fd), &path_buf) catch unreachable;
 
-                const add_node_gyp_rebuild_script = if (scripts.install.isEmpty() and scripts.postinstall.isEmpty()) brk: {
+                const add_node_gyp_rebuild_script = if (this.lockfile.hasTrustedDependency(name) and
+                    scripts.install.isEmpty() and
+                    scripts.postinstall.isEmpty())
+                brk: {
                     const binding_dot_gyp_path = Path.joinAbsStringZ(
                         node_modules_path,
                         &[_]string{ destination_dir_subpath, "binding.gyp" },
@@ -7665,7 +7668,10 @@ pub const PackageManager = struct {
                 var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 const node_modules_path = bun.getFdPath(bun.toFD(this.node_modules_folder.dir.fd), &path_buf) catch unreachable;
 
-                const add_node_gyp_rebuild_script = if (scripts.install.isEmpty() and scripts.postinstall.isEmpty()) brk: {
+                const add_node_gyp_rebuild_script = if (this.lockfile.hasTrustedDependency(name) and
+                    scripts.install.isEmpty() and
+                    scripts.postinstall.isEmpty())
+                brk: {
                     const binding_dot_gyp_path = Path.joinAbsStringZ(
                         node_modules_path,
                         &[_]string{ destination_dir_subpath, "binding.gyp" },
@@ -8638,14 +8644,41 @@ pub const PackageManager = struct {
         }
 
         if (root.scripts.hasAny()) {
+            const add_node_gyp_rebuild_scripts = if (root.scripts.install.isEmpty() and root.scripts.postinstall.isEmpty()) brk: {
+                const binding_dot_gyp_path = Path.joinAbsStringZ(
+                    Fs.FileSystem.instance.top_level_dir,
+                    &[_]string{"binding.gyp"},
+                    .posix,
+                );
+
+                break :brk std.os.system.access(binding_dot_gyp_path, std.os.F_OK) == 0;
+            } else false;
+
             root.scripts.enqueue(
                 manager.lockfile,
                 manager.lockfile.buffers.string_bytes.items,
                 strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir),
                 root.name.slice(manager.lockfile.buffers.string_bytes.items),
                 true,
-                false,
+                add_node_gyp_rebuild_scripts,
             );
+        } else {
+            const binding_dot_gyp_path = Path.joinAbsStringZ(
+                Fs.FileSystem.instance.top_level_dir,
+                &[_]string{"binding.gyp"},
+                .posix,
+            );
+
+            if (std.os.system.access(binding_dot_gyp_path, std.os.F_OK) == 0) {
+                root.scripts.enqueue(
+                    manager.lockfile,
+                    manager.lockfile.buffers.string_bytes.items,
+                    strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir),
+                    root.name.slice(manager.lockfile.buffers.string_bytes.items),
+                    true,
+                    true,
+                );
+            }
         }
 
         var install_summary = PackageInstall.Summary{};

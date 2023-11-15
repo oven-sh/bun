@@ -738,6 +738,100 @@ process.env.INIT_CWD || "does not exist"
     expect(await exited).toBe(0);
     expect(await exists(join(packageDir, "node_modules", "binding-gyp-scripts", "build.node"))).toBeTrue();
   });
+
+  test("automatic node-gyp scripts work in package root", async () => {
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "node-gyp": "1.5.0",
+        },
+      }),
+    );
+
+    await writeFile(join(packageDir, "binding.gyp"), "");
+
+    var { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await new Response(stderr).text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("error:");
+    const out = await new Response(stdout).text();
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      " + node-gyp@1.5.0",
+      "",
+      expect.stringContaining("1 package installed"),
+      "",
+      expect.stringContaining("[1/1] lifecycle scripts..."),
+    ]);
+    expect(await exited).toBe(0);
+    expect(await exists(join(packageDir, "build.node"))).toBeTrue();
+
+    await rm(join(packageDir, "build.node"));
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    }));
+
+    expect(await exited).toBe(0);
+    expect(await exists(join(packageDir, "build.node"))).toBeTrue();
+  });
+
+  for (const script of ["install", "postinstall"]) {
+    test(`does not add auto node-gyp script when ${script} script exists`, async () => {
+      const packageJSON: any = {
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "node-gyp": "1.5.0",
+        },
+        scripts: {
+          [script]: "exit 0",
+        },
+      };
+      await writeFile(join(packageDir, "package.json"), JSON.stringify(packageJSON));
+      await writeFile(join(packageDir, "binding.gyp"), "");
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+
+      const err = await new Response(stderr).text();
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+      const out = await new Response(stdout).text();
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        " + node-gyp@1.5.0",
+        "",
+        expect.stringContaining("1 package installed"),
+        "",
+        expect.stringContaining("[1/1] lifecycle scripts..."),
+      ]);
+      expect(await exited).toBe(0);
+      expect(await exists(join(packageDir, "build.node"))).toBeFalse();
+    });
+  }
 });
 
 describe("semver", () => {

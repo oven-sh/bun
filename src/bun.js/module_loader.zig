@@ -1399,7 +1399,7 @@ pub const ModuleLoader = struct {
                             arena_.?.deinit();
                             jsc_vm.allocator.destroy(arena_.?);
                         }
-                    } else {}
+                    }
                 }
 
                 var arena = arena_.?;

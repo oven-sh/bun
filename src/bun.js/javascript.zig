@@ -1918,6 +1918,16 @@ pub const VirtualMachine = struct {
     }
 
     pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, referrer: bun.String, log: *logger.Log, ret: *ErrorableResolvedSource, err: anyerror) void {
+        defer {
+            var vm = globalThis.bunVM();
+            if (vm.parser_arena) |parser_arena| {
+                if (vm.smol) {
+                    _ = parser_arena.reset(.free_all);
+                } else {
+                    _ = parser_arena.reset(.{ .retain_with_limit = 8 * 1024 * 1024 });
+                }
+            }
+        }
         switch (log.msgs.items.len) {
             0 => {
                 const msg: logger.Msg = brk: {

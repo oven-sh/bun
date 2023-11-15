@@ -792,6 +792,50 @@ process.env.INIT_CWD || "does not exist"
     expect(await exists(join(packageDir, "build.node"))).toBeTrue();
   });
 
+  test("auto node-gyp scripts work when scripts exists other than `install` and `postinstall`", async () => {
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "node-gyp": "1.5.0",
+        },
+        scripts: {
+          preinstall: "exit 0",
+          prepare: "exit 0",
+          postprepare: "exit 0",
+        },
+      }),
+    );
+
+    await writeFile(join(packageDir, "binding.gyp"), "");
+
+    var { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await new Response(stderr).text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("error:");
+    const out = await new Response(stdout).text();
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      " + node-gyp@1.5.0",
+      "",
+      expect.stringContaining("1 package installed"),
+      "",
+      expect.stringContaining("[4/4] lifecycle scripts..."),
+    ]);
+    expect(await exited).toBe(0);
+    expect(await exists(join(packageDir, "build.node"))).toBeTrue();
+  });
+
   for (const script of ["install", "postinstall"]) {
     test(`does not add auto node-gyp script when ${script} script exists`, async () => {
       const packageJSON: any = {

@@ -583,7 +583,7 @@ pub const VirtualMachine = struct {
     modules: ModuleLoader.AsyncModule.Queue = .{},
     aggressive_garbage_collection: GCLevel = GCLevel.none,
 
-    parser_arena: ?*@import("root").bun.ArenaAllocator = null,
+    module_loader: ModuleLoader = .{},
 
     gc_controller: JSC.GarbageCollectionController = .{},
     worker: ?*JSC.WebWorker = null,
@@ -592,6 +592,8 @@ pub const VirtualMachine = struct {
     debugger: ?Debugger = null,
     has_started_debugger: bool = false,
     has_terminated: bool = false,
+
+    eval_script: ?*logger.Source = null,
 
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
 
@@ -1176,7 +1178,6 @@ pub const VirtualMachine = struct {
             .ref_strings_mutex = Lock.init(),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
             .standalone_module_graph = opts.graph.?,
-            .parser_arena = null,
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -1285,7 +1286,6 @@ pub const VirtualMachine = struct {
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = Lock.init(),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
-            .parser_arena = null,
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -1422,7 +1422,6 @@ pub const VirtualMachine = struct {
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = Lock.init(),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
-            .parser_arena = null,
             .standalone_module_graph = worker.parent.standalone_module_graph,
             .worker = worker,
         };
@@ -1558,7 +1557,6 @@ pub const VirtualMachine = struct {
         _specifier: String,
         referrer: String,
         log: *logger.Log,
-        ret: *ErrorableResolvedSource,
         comptime flags: FetchFlags,
     ) anyerror!ResolvedSource {
         std.debug.assert(VirtualMachine.isLoaded());
@@ -1593,7 +1591,6 @@ pub const VirtualMachine = struct {
             loader,
             log,
             null,
-            ret,
             null,
             VirtualMachine.source_code_printer.?,
             globalObject,
@@ -1621,7 +1618,6 @@ pub const VirtualMachine = struct {
     threadlocal var specifier_cache_resolver_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
     fn _resolve(
         ret: *ResolveFunctionResult,
-        _: *JSGlobalObject,
         specifier: string,
         source: string,
         is_esm: bool,
@@ -1651,6 +1647,10 @@ pub const VirtualMachine = struct {
         } else if (JSC.HardcodedModule.Aliases.get(specifier, .bun)) |result| {
             ret.result = null;
             ret.path = result.path;
+            return;
+        } else if (jsc_vm.eval_script != null and strings.endsWithComptime(specifier, "/[bun:eval]")) {
+            ret.result = null;
+            ret.path = specifier;
             return;
         }
 
@@ -1846,7 +1846,7 @@ pub const VirtualMachine = struct {
             jsc_vm.bundler.linker.log = old_log;
             jsc_vm.bundler.resolver.log = old_log;
         }
-        _resolve(&result, global, specifier_utf8.slice(), normalizeSource(source_utf8.slice()), is_esm, is_a_file_path) catch |err_| {
+        _resolve(&result, specifier_utf8.slice(), normalizeSource(source_utf8.slice()), is_esm, is_a_file_path) catch |err_| {
             var err = err_;
             const msg: logger.Msg = brk: {
                 var msgs: []logger.Msg = log.msgs.items;
@@ -1902,65 +1902,6 @@ pub const VirtualMachine = struct {
     // }
 
     pub const main_file_name: string = "bun:main";
-
-    pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: bun.String, source: bun.String) callconv(.C) void {
-        var jsc_vm: *VirtualMachine = if (comptime Environment.isLinux)
-            VirtualMachine.get()
-        else
-            global.bunVM();
-
-        var log = logger.Log.init(jsc_vm.bundler.allocator);
-
-        const result = switch (!jsc_vm.bundler.options.disable_transpilation) {
-            inline else => |is_disabled| fetchWithoutOnLoadPlugins(jsc_vm, global, specifier, source, &log, ret, if (comptime is_disabled) .print_source_and_clone else .transpile) catch |err| {
-                processFetchLog(global, specifier, source, &log, ret, err);
-                return;
-            },
-        };
-
-        if (log.errors > 0) {
-            processFetchLog(global, specifier, source, &log, ret, error.LinkError);
-            return;
-        }
-
-        if (log.warnings > 0) {
-            var writer = Output.errorWriter();
-            if (Output.enable_ansi_colors) {
-                for (log.msgs.items) |msg| {
-                    if (msg.kind == .warn) {
-                        msg.writeFormat(writer, true) catch {};
-                    }
-                }
-            } else {
-                for (log.msgs.items) |msg| {
-                    if (msg.kind == .warn) {
-                        msg.writeFormat(writer, false) catch {};
-                    }
-                }
-            }
-        }
-
-        ret.result.value = result;
-        var vm = get();
-
-        if (vm.blobs) |blobs| {
-            const spec = specifier.toUTF8(bun.default_allocator);
-            const specifier_blob = brk: {
-                if (strings.hasPrefix(spec.slice(), VirtualMachine.get().bundler.fs.top_level_dir)) {
-                    break :brk spec.slice()[VirtualMachine.get().bundler.fs.top_level_dir.len..];
-                }
-                break :brk spec.slice();
-            };
-
-            if (vm.has_loaded) {
-                blobs.temporary.put(specifier_blob, .{ .ptr = result.source_code.byteSlice().ptr, .len = result.source_code.length() }) catch {};
-            } else {
-                blobs.persistent.put(specifier_blob, .{ .ptr = result.source_code.byteSlice().ptr, .len = result.source_code.length() }) catch {};
-            }
-        }
-
-        ret.success = true;
-    }
 
     pub fn drainMicrotasks(this: *VirtualMachine) void {
         this.eventLoop().drainMicrotasks();
@@ -2672,8 +2613,7 @@ pub const VirtualMachine = struct {
             @max(top.position.column_start, 0),
         )) |mapping| {
             var log = logger.Log.init(default_allocator);
-            var errorable: ErrorableResolvedSource = undefined;
-            var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, &errorable, .print_source) catch return;
+            var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return;
             const code = original_source.source_code.toUTF8(bun.default_allocator);
             defer code.deinit();
 

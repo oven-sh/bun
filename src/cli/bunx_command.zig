@@ -142,7 +142,7 @@ pub const BunxCommand = struct {
     }
 
     fn exit_with_usage() noreturn {
-        Command.Tag.printHelp(.BunxCommand);
+        Command.Tag.printHelp(.BunxCommand, false);
         Global.exit(1);
     }
 

@@ -129,10 +129,10 @@ pub const Arguments = struct {
     pub const ParamType = clap.Param(clap.Help);
 
     const base_params_ = [_]ParamType{
-        clap.parseParam("-h, --help                        Display this menu and exit") catch unreachable,
+        clap.parseParam("--env-file <STR>...               Load environment variables from the specified file(s)") catch unreachable,
         clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
         clap.parseParam("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml") catch unreachable,
-        clap.parseParam("--env-file <STR>...               Load environment variables from the specified file(s)") catch unreachable,
+        clap.parseParam("-h, --help                        Display this menu and exit") catch unreachable,
         clap.parseParam("<POS>...") catch unreachable,
     };
 
@@ -141,7 +141,6 @@ pub const Arguments = struct {
         clap.parseParam("--extension-order <STR>...        Defaults to: .tsx,.ts,.jsx,.js,.json ") catch unreachable,
         clap.parseParam("--tsconfig-override <STR>         Specify custom tsconfig.json. Default <d>$cwd<r>/tsconfig.json") catch unreachable,
         clap.parseParam("-d, --define <STR>...             Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\". Values are parsed as JSON.") catch unreachable,
-        clap.parseParam("-e, --external <STR>...           Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
         clap.parseParam("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: js, jsx, ts, tsx, json, toml, text, file, wasm, napi") catch unreachable,
         clap.parseParam("--no-macros                       Disable macros from being executed in the bundler, transpiler and runtime") catch unreachable,
         clap.parseParam("--jsx-factory <STR>               Changes the function called when compiling JSX elements using the classic JSX runtime") catch unreachable,
@@ -150,29 +149,30 @@ pub const Arguments = struct {
         clap.parseParam("--jsx-runtime <STR>               \"automatic\" (default) or \"classic\"") catch unreachable,
     };
     const runtime_params_ = [_]ParamType{
-        clap.parseParam("-r, --preload <STR>...            Import a module before other modules are loaded") catch unreachable,
-        clap.parseParam("--hot                             Enable auto reload in the Bun runtime, test runner, or bundler") catch unreachable,
         clap.parseParam("--watch                           Automatically restart the process on file change") catch unreachable,
+        clap.parseParam("--hot                             Enable auto reload in the Bun runtime, test runner, or bundler") catch unreachable,
         clap.parseParam("--smol                            Use less memory, but run garbage collection more often") catch unreachable,
+        clap.parseParam("-r, --preload <STR>...            Import a module before other modules are loaded") catch unreachable,
         clap.parseParam("--inspect <STR>?                  Activate Bun's debugger") catch unreachable,
         clap.parseParam("--inspect-wait <STR>?             Activate Bun's debugger, wait for a connection before executing") catch unreachable,
         clap.parseParam("--inspect-brk <STR>?              Activate Bun's debugger, set breakpoint on first line of code and wait") catch unreachable,
-        clap.parseParam("--if-present                      Exit if the entrypoint does not exist") catch unreachable,
+        clap.parseParam("--if-present                      Exit without an error if the entrypoint does not exist") catch unreachable,
         clap.parseParam("--no-install                      Disable auto install in the Bun runtime") catch unreachable,
         clap.parseParam("--install <STR>                   Configure auto-install behavior. One of \"auto\" (default, auto-installs when no node_modules), \"fallback\" (missing packages only), \"force\" (always).") catch unreachable,
         clap.parseParam("-i                                Auto-install dependencies during execution. Equivalent to --install=fallback.") catch unreachable,
+        clap.parseParam("-e, --eval <STR>                  Evaluate argument as a script") catch unreachable,
         clap.parseParam("--prefer-offline                  Skip staleness checks for packages in the Bun runtime and resolve from disk") catch unreachable,
         clap.parseParam("--prefer-latest                   Use the latest matching versions of packages in the Bun runtime, always checking npm") catch unreachable,
+        clap.parseParam("-p, --port <STR>                  Set the default port for Bun.serve") catch unreachable,
         clap.parseParam("-u, --origin <STR>") catch unreachable,
-        clap.parseParam("-p, --port <STR>") catch unreachable,
     };
 
     const auto_only_params = [_]ParamType{
-        clap.parseParam("--all") catch unreachable,
+        // clap.parseParam("--all") catch unreachable,
+        clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
+        clap.parseParam("--silent                          Don't print the script command") catch unreachable,
         clap.parseParam("-v, --version                     Print version and exit") catch unreachable,
         clap.parseParam("--revision                        Print version with revision and exit") catch unreachable,
-        clap.parseParam("--silent                          Don't print the script command") catch unreachable,
-        clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
     };
     const auto_params = auto_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -188,6 +188,7 @@ pub const Arguments = struct {
     };
 
     const build_only_params = [_]ParamType{
+        clap.parseParam("-e, --external <STR>...           Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
         clap.parseParam("--format <STR>                   Specifies the module format to build to. Only esm is supported.") catch unreachable,
         clap.parseParam("--target <STR>                   The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\"") catch unreachable,
         clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
@@ -355,21 +356,21 @@ pub const Arguments = struct {
         var args = clap.parse(clap.Help, params_to_parse, .{
             .diagnostic = &diag,
             .allocator = allocator,
-            .stop_after_positional_at = if (cmd == .RunCommand) 2 else if (cmd == .AutoCommand)
-                1
-            else
-                0,
+            .stop_after_positional_at = switch (cmd) {
+                .RunCommand => 2,
+                .AutoCommand => 1,
+                else => 0,
+            },
         }) catch |err| {
             // Report useful error and exit
-            clap.help(Output.errorWriter(), params_to_parse) catch {};
-            Output.errorWriter().writeAll("\n") catch {};
             diag.report(Output.errorWriter(), err) catch {};
+            cmd.printHelp(false);
             Global.exit(1);
         };
 
         const print_help = args.flag("--help");
         if (print_help) {
-            cmd.printHelp();
+            cmd.printHelp(true);
             Output.flush();
             Global.exit(0);
         }
@@ -481,14 +482,6 @@ pub const Arguments = struct {
             };
         }
 
-        if (args.options("--external").len > 0) {
-            var externals = try allocator.alloc([]u8, args.options("--external").len);
-            for (args.options("--external"), 0..) |external, i| {
-                externals[i] = constStrToU8(external);
-            }
-            opts.external = externals;
-        }
-
         opts.tsconfig_override = if (args.option("--tsconfig-override")) |ts|
             (Arguments.readFile(allocator, cwd, ts) catch |err| fileReadError(err, Output.errorStream(), ts, "tsconfig.json"))
         else
@@ -555,6 +548,7 @@ pub const Arguments = struct {
                 ctx.preloads = preloads;
             }
 
+            ctx.runtime_options.eval_script = args.option("--eval") orelse "";
             ctx.runtime_options.if_present = args.flag("--if-present");
             ctx.runtime_options.smol = args.flag("--smol");
             if (args.option("--inspect")) |inspect_flag| {
@@ -604,8 +598,15 @@ pub const Arguments = struct {
             ctx.bundler_options.minify_whitespace = minify_flag or args.flag("--minify-whitespace");
             ctx.bundler_options.minify_identifiers = minify_flag or args.flag("--minify-identifiers");
 
-            const TargetMatcher = strings.ExactSizeMatcher(8);
+            if (args.options("--external").len > 0) {
+                var externals = try allocator.alloc([]u8, args.options("--external").len);
+                for (args.options("--external"), 0..) |external, i| {
+                    externals[i] = constStrToU8(external);
+                }
+                opts.external = externals;
+            }
 
+            const TargetMatcher = strings.ExactSizeMatcher(8);
             if (args.option("--target")) |_target| {
                 opts.target = opts.target orelse switch (TargetMatcher.match(_target)) {
                     TargetMatcher.case("browser") => Api.Target.browser,
@@ -896,12 +897,15 @@ pub const HelpCommand = struct {
         \\  <b><cyan>upgrade<r>                        Upgrade to latest version of Bun.
         \\  <d>\<command\><r> <b><cyan>--help<r>               Print help text for command.
         \\
+    ;
+    const cli_helptext_footer =
+        \\
         \\Learn more about Bun:            <magenta>https://bun.sh/docs<r>
         \\Join our Discord community:      <blue>https://bun.sh/discord<r>
         \\
     ;
 
-    pub fn printWithReason(comptime reason: Reason) void {
+    pub fn printWithReason(comptime reason: Reason, show_all_flags: bool) void {
         var rand_state = std.rand.DefaultPrng.init(@as(u64, @intCast(@max(std.time.milliTimestamp(), 0))));
         const rand = rand_state.random();
 
@@ -919,10 +923,23 @@ pub const HelpCommand = struct {
         };
 
         switch (reason) {
-            .explicit => Output.pretty(
-                "<r><b><magenta>Bun<r> is a fast JavaScript runtime, package manager, bundler, and test runner. <d>(" ++ Global.package_json_version_with_sha ++ ")<r>\n\n" ++ cli_helptext_fmt,
-                args,
-            ),
+            .explicit => {
+                Output.pretty(
+                    "<r><b><magenta>Bun<r> is a fast JavaScript runtime, package manager, bundler, and test runner. <d>(" ++
+                        Global.package_json_version_with_sha ++
+                        ")<r>\n\n" ++
+                        cli_helptext_fmt,
+                    args,
+                );
+                if (show_all_flags) {
+                    Output.pretty("\n<b>Flags:<r>", .{});
+
+                    const flags = Arguments.runtime_params_ ++ Arguments.auto_only_params ++ Arguments.base_params_;
+                    clap.simpleHelpBunTopLevel(comptime &flags);
+                    Output.pretty("\n\n(more flags in <b>bun install --help<r>, <b>bun test --help<r>, and <b>bun build --help<r>)\n", .{});
+                }
+                Output.pretty(cli_helptext_footer, .{});
+            },
             .invalid_command => Output.prettyError(
                 "<r><red>Uh-oh<r> not sure what to do with that command.\n\n" ++ cli_helptext_fmt,
                 args,
@@ -933,7 +950,7 @@ pub const HelpCommand = struct {
     }
     pub fn execWithReason(_: std.mem.Allocator, comptime reason: Reason) void {
         @setCold(true);
-        printWithReason(reason);
+        printWithReason(reason, false);
 
         if (reason == .invalid_command) {
             std.process.exit(1);
@@ -1013,6 +1030,7 @@ pub const Command = struct {
         smol: bool = false,
         debugger: Debugger = .{ .unspecified = {} },
         if_present: bool = false,
+        eval_script: []const u8 = "",
     };
 
     pub const Context = struct {
@@ -1109,7 +1127,7 @@ pub const Command = struct {
         }
 
         var next_arg = ((args_iter.next()) orelse return .AutoCommand);
-        while (next_arg[0] == '-') {
+        while (next_arg[0] == '-' and !(next_arg.len > 1 and next_arg[1] == 'e')) {
             next_arg = ((args_iter.next()) orelse return .AutoCommand);
         }
 
@@ -1176,6 +1194,8 @@ pub const Command = struct {
             RootCommandMatcher.case("outdated") => .ReservedCommand,
             RootCommandMatcher.case("list") => .ReservedCommand,
             RootCommandMatcher.case("why") => .ReservedCommand,
+
+            RootCommandMatcher.case("-e") => .AutoCommand,
 
             else => .AutoCommand,
         };
@@ -1474,7 +1494,7 @@ pub const Command = struct {
                 var args = try std.process.argsAlloc(allocator);
 
                 if (args.len <= 2) {
-                    Command.Tag.printHelp(.CreateCommand);
+                    Command.Tag.printHelp(.CreateCommand, false);
                     Global.exit(1);
                     return;
                 }
@@ -1491,7 +1511,7 @@ pub const Command = struct {
                     break :brk false;
                 };
                 if (print_help) {
-                    Command.Tag.printHelp(.CreateCommand);
+                    Command.Tag.printHelp(.CreateCommand, true);
                     Global.exit(0);
                     return;
                 }
@@ -1605,6 +1625,15 @@ pub const Command = struct {
                         },
                     }
                 };
+
+                if (ctx.runtime_options.eval_script.len > 0) {
+                    const trigger = "/[bun:eval]";
+                    var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
+                    const cwd = try bun.getcwd(&entry_point_buf);
+                    @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
+                    try BunJS.Run.boot(ctx, entry_point_buf[0 .. cwd.len + trigger.len]);
+                    return;
+                }
 
                 const extension: []const u8 = if (ctx.args.entry_points.len > 0)
                     std.fs.path.extension(ctx.args.entry_points[0])
@@ -1815,7 +1844,7 @@ pub const Command = struct {
             };
         }
 
-        pub fn printHelp(comptime cmd: Tag) void {
+        pub fn printHelp(comptime cmd: Tag, show_all_flags: bool) void {
             switch (cmd) {
 
                 // these commands do not use Context
@@ -1834,7 +1863,7 @@ pub const Command = struct {
 
                 // fall back to HelpCommand.printWithReason
                 Command.Tag.AutoCommand => {
-                    HelpCommand.printWithReason(.explicit);
+                    HelpCommand.printWithReason(.explicit, show_all_flags);
                 },
                 Command.Tag.RunCommand => {
                     RunCommand_.printHelp(null);
@@ -1848,7 +1877,7 @@ pub const Command = struct {
                         \\
                         \\<b>Flags<r>:
                         \\      <cyan>--help<r>             Print this menu
-                        \\  <cyan>-y, --yes<r>             Accept all default options
+                        \\  <cyan>-y, --yes<r>              Accept all default options
                         \\
                         \\<b>Examples:<r>
                         \\  <b><green>bun init<r>

@@ -98,7 +98,7 @@ pub const InitCommand = struct {
         };
 
         if (print_help) {
-            CLI.Command.Tag.printHelp(.InitCommand);
+            CLI.Command.Tag.printHelp(.InitCommand, true);
             Global.exit(0);
         }
 

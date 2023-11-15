@@ -209,30 +209,36 @@ pub const Diagnostic = struct {
 
     /// Default diagnostics reporter when all you want is English with no colors.
     /// Use this as a reference for implementing your own if needed.
-    pub fn report(diag: Diagnostic, stream: anytype, err: anyerror) !void {
-        const Arg = struct {
-            prefix: []const u8,
-            name: []const u8,
-        };
-        const a = if (diag.name.short) |*c|
-            Arg{ .prefix = "-", .name = @as(*const [1]u8, c)[0..] }
-        else if (diag.name.long) |l|
-            Arg{ .prefix = "--", .name = l }
-        else
-            Arg{ .prefix = "", .name = diag.arg };
+    pub fn report(diag: Diagnostic, _: anytype, err: anyerror) !void {
+        var name_buf: [1024]u8 = undefined;
+        const name = if (diag.name.short) |s| short: {
+            name_buf[0] = '-';
+            name_buf[1] = s;
+            name_buf[2] = 0;
+            break :short name_buf[0..2];
+        } else if (diag.name.long) |l| long: {
+            name_buf[0] = '-';
+            name_buf[1] = '-';
+            const long = l[0..@min(l.len, name_buf.len - 2)];
+            @memcpy(name_buf[2..][0..long.len], long);
+            break :long name_buf[0 .. 2 + long.len];
+        } else diag.arg;
 
-        Output.pretty("Invalid argument '{s}{s}'\n", .{ a.prefix, a.name });
-        Output.pretty("{}", .{err});
-        Output.flush();
         switch (err) {
-            error.DoesntTakeValue => try stream.print("The argument '{s}{s}' does not take a value\n", .{ a.prefix, a.name }),
-            error.MissingValue => try stream.print("The argument '{s}{s}' requires a value but none was supplied\n", .{ a.prefix, a.name }),
-            error.InvalidArgument => if (a.prefix.len > 0 and a.name.len > 0)
-                try stream.print("Invalid argument '{s}{s}'\n", .{ a.prefix, a.name })
-            else
-                try stream.print("Failed to parse argument due to unexpected single dash\n", .{}),
-            else => try stream.print("Error while parsing arguments: {s}\n", .{@errorName(err)}),
+            error.DoesntTakeValue => {
+                Output.pretty("<red>error<r><d>:<r> The argument '{s}' does not take a value.\n", .{name});
+            },
+            error.MissingValue => {
+                Output.pretty("<red>error<r><d>:<r> The argument '{s}' requires a value but none was supplied.\n", .{name});
+            },
+            error.InvalidArgument => {
+                Output.pretty("<red>error<r><d>:<r> Invalid Argument '{s}'\n", .{name});
+            },
+            else => {
+                Output.pretty("<red>error<r><d>:<r> {s} while parsing argument '{s}'\n", .{ @errorName(err), name });
+            },
         }
+        Output.flush();
     }
 };
 
@@ -455,6 +461,7 @@ pub fn simplePrintParam(param: Param(Help)) !void {
         Output.pretty("    ", .{});
     }
 }
+
 pub fn simpleHelp(
     params: []const Param(Help),
 ) void {
@@ -489,6 +496,42 @@ pub fn simpleHelp(
 
         simplePrintParam(param) catch unreachable;
         Output.pretty("  {s}  {s}", .{ spaces_after, desc_text });
+    }
+}
+
+pub fn simpleHelpBunTopLevel(
+    comptime params: []const Param(Help),
+) void {
+    const max_spacing = 25;
+    const space_buf: *const [max_spacing]u8 = " " ** max_spacing;
+
+    const computed_max_spacing = comptime blk: {
+        var res: usize = 2;
+        for (params) |param| {
+            var flags_len = if (param.names.long) |l| l.len else 0;
+            if (res < flags_len)
+                res = flags_len;
+        }
+
+        break :blk res;
+    };
+
+    if (computed_max_spacing > max_spacing) {
+        @compileError("a parameter is too long to be nicely printed in `bun --help`");
+    }
+
+    inline for (params) |param| {
+        if (!(param.names.short == null and param.names.long == null)) {
+            const desc_text = comptime getHelpSimple(param);
+            if (desc_text.len != 0) {
+                simplePrintParam(param) catch unreachable;
+
+                const flags_len = if (param.names.long) |l| l.len else 0;
+                const num_spaces_after = max_spacing - flags_len;
+
+                Output.pretty(space_buf[0..num_spaces_after] ++ desc_text, .{});
+            }
+        }
     }
 }
 

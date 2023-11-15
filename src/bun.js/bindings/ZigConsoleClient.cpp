@@ -1,18 +1,18 @@
 #include "helpers.h"
 #include "headers.h"
 
-#include "JavaScriptCore/ConsoleClient.h"
-#include "JavaScriptCore/ConsoleMessage.h"
-#include "JavaScriptCore/JSString.h"
-#include "JavaScriptCore/ScriptArguments.h"
+#include <JavaScriptCore/ConsoleClient.h>
+#include <JavaScriptCore/ConsoleMessage.h>
+#include <JavaScriptCore/JSString.h>
+#include <JavaScriptCore/ScriptArguments.h>
 #include "ZigConsoleClient.h"
-#include "wtf/text/WTFString.h"
+#include <wtf/text/WTFString.h>
 
 #undef ENABLE_INSPECTOR_ALTERNATE_DISPATCHERS
 
-#include "JavaScriptCore/JSGlobalObjectInspectorController.h"
-#include "JavaScriptCore/JSGlobalObjectDebuggable.h"
-#include "JavaScriptCore/ConsoleClient.h"
+#include <JavaScriptCore/JSGlobalObjectInspectorController.h>
+#include <JavaScriptCore/JSGlobalObjectDebuggable.h>
+#include <JavaScriptCore/ConsoleClient.h>
 
 #include "GCDefferalContext.h"
 

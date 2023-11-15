@@ -39,7 +39,6 @@ endif
 
 MIN_MACOS_VERSION ?= $(DEFAULT_MIN_MACOS_VERSION)
 BUN_BASE_VERSION = 1.0
-
 CI ?= false
 
 AR=
@@ -66,7 +65,7 @@ PACKAGE_JSON_VERSION = $(BUN_BASE_VERSION).$(BUILD_ID)
 BUN_BUILD_TAG = bun-v$(PACKAGE_JSON_VERSION)
 BUN_RELEASE_BIN = $(PACKAGE_DIR)/bun
 PRETTIER ?= $(shell which prettier 2>/dev/null || echo "./node_modules/.bin/prettier")
-ESBUILD = $(shell which esbuild 2>/dev/null || echo "./node_modules/.bin/esbuild")
+ESBUILD = "$(shell which esbuild 2>/dev/null || echo "./node_modules/.bin/esbuild")"
 DSYMUTIL ?= $(shell which dsymutil 2>/dev/null || which dsymutil-15 2>/dev/null)
 WEBKIT_DIR ?= $(realpath src/bun.js/WebKit)
 WEBKIT_RELEASE_DIR ?= $(WEBKIT_DIR)/WebKitBuild/Release
@@ -74,7 +73,7 @@ WEBKIT_DEBUG_DIR ?= $(WEBKIT_DIR)/WebKitBuild/Debug
 WEBKIT_RELEASE_DIR_LTO ?= $(WEBKIT_DIR)/WebKitBuild/ReleaseLTO
 
 
-NPM_CLIENT ?= $(shell which bun 2>/dev/null || which npm 2>/dev/null)
+NPM_CLIENT = "$(shell which bun 2>/dev/null || which npm 2>/dev/null)"
 ZIG ?= $(shell which zig 2>/dev/null || echo -e "error: Missing zig. Please make sure zig is in PATH. Or set ZIG=/path/to-zig-executable")
 
 # We must use the same compiler version for the JavaScriptCore bindings and JavaScriptCore
@@ -186,11 +185,6 @@ CFLAGS_WITHOUT_MARCH = $(MACOS_MIN_FLAG) $(OPTIMIZATION_LEVEL) -fno-exceptions -
 BUN_CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE)  $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
 BUN_TMP_DIR := /tmp/make-bun
 CFLAGS=$(CFLAGS_WITHOUT_MARCH) $(MARCH_NATIVE)
-
-DEFAULT_USE_BMALLOC := 1
-
-
-USE_BMALLOC ?= DEFAULT_USE_BMALLOC
 
 # Set via postinstall
 ifeq (,$(realpath $(JSC_BASE_DIR)))
@@ -380,9 +374,7 @@ ICU_FLAGS ?=
 # Ideally, we could just look up the linker search paths
 ifeq ($(OS_NAME),linux)
 LIB_ICU_PATH ?= $(JSC_LIB)
-	ICU_FLAGS += $(LIB_ICU_PATH)/libicuuc.a $(LIB_ICU_PATH)/libicudata.a $(LIB_ICU_PATH)/libicui18n.a
-else
-LIB_ICU_PATH ?= $(BUN_DEPS_DIR)
+ICU_FLAGS += $(LIB_ICU_PATH)/libicuuc.a $(LIB_ICU_PATH)/libicudata.a $(LIB_ICU_PATH)/libicui18n.a
 endif
 
 ifeq ($(OS_NAME),darwin)
@@ -764,7 +756,7 @@ USOCKETS_DIR = $(BUN_DIR)/packages/bun-usockets
 USOCKETS_SRC_DIR = $(USOCKETS_DIR)/src
 
 usockets:
-	rm -rf $(USOCKETS_DIR)/*.i $(USOCKETS_DIR)/*.bc $(USOCKETS_DIR)/*.o $(USOCKETS_DIR)/*.s $(USOCKETS_DIR)/*.ii $(USOCKETS_DIR)/*.s
+	rm -rf $(USOCKETS_DIR)/*.i $(USOCKETS_DIR)/*.bc $(USOCKETS_DIR)/*.o $(USOCKETS_DIR)/*.s $(USOCKETS_DIR)/*.ii $(USOCKETS_DIR)/*.s  $(BUN_DEPS_OUT_DIR)/libusockets.a
 	cd $(USOCKETS_DIR) && $(CC_WITH_CCACHE) -I$(USOCKETS_SRC_DIR)  -fno-builtin-malloc -fno-builtin-free -fno-builtin-realloc $(EMIT_LLVM_FOR_RELEASE)  $(MACOS_MIN_FLAG) -fPIC $(CFLAGS) $(UWS_CC_FLAGS) -save-temps -I$(BUN_DEPS_DIR)/uws/uSockets/src $(UWS_LDFLAGS) -g $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -c $(wildcard $(USOCKETS_SRC_DIR)/*.c) $(wildcard $(USOCKETS_SRC_DIR)/**/*.c)
 	cd $(USOCKETS_DIR) && $(CXX_WITH_CCACHE)  -I$(USOCKETS_SRC_DIR) -fno-builtin-malloc -fno-builtin-free -fno-builtin-realloc $(EMIT_LLVM_FOR_RELEASE) $(MACOS_MIN_FLAG)  -fPIC $(CXXFLAGS) $(UWS_CXX_FLAGS) -save-temps -I$(BUN_DEPS_DIR)/uws/uSockets/src $(UWS_LDFLAGS) -g $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL)  -c $(wildcard $(USOCKETS_SRC_DIR)/*.cpp) $(wildcard $(USOCKETS_SRC_DIR)/**/*.cpp)
 	cd $(USOCKETS_DIR) && $(AR) rcvs $(BUN_DEPS_OUT_DIR)/libusockets.a $(USOCKETS_DIR)/*.{o,bc}
@@ -833,10 +825,10 @@ fallback_decoder:
 
 .PHONY: runtime_js
 runtime_js:
-	@NODE_ENV=production $(ESBUILD) --define:process.env.NODE_ENV="production" --target=esnext  --bundle src/runtime/index.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.out.js; cat src/runtime.footer.js >> src/runtime.out.js
-	@NODE_ENV=production $(ESBUILD) --define:process.env.NODE_ENV="production" --target=esnext  --bundle src/runtime/index-with-refresh.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.out.refresh.js; cat src/runtime.footer.with-refresh.js >> src/runtime.out.refresh.js
-	@NODE_ENV=production $(ESBUILD) --define:process.env.NODE_ENV="production" --target=esnext  --bundle src/runtime/index-without-hmr.ts --format=iife --platform=node --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.node.pre.out.js; cat src/runtime.node.pre.out.js src/runtime.footer.node.js > src/runtime.node.out.js
-	@NODE_ENV=production $(ESBUILD) --define:process.env.NODE_ENV="production" --target=esnext  --bundle src/runtime/index-without-hmr.ts --format=iife --platform=node --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.bun.pre.out.js; cat src/runtime.bun.pre.out.js src/runtime.footer.bun.js > src/runtime.bun.out.js
+	@NODE_ENV=production $(ESBUILD) --define:process.env.NODE_ENV=\"production\" --target=esnext  --bundle src/runtime/index.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.out.js; cat src/runtime.footer.js >> src/runtime.out.js
+	@NODE_ENV=production $(ESBUILD) --define:process.env.NODE_ENV=\"production\" --target=esnext  --bundle src/runtime/index-with-refresh.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.out.refresh.js; cat src/runtime.footer.with-refresh.js >> src/runtime.out.refresh.js
+	@NODE_ENV=production $(ESBUILD) --define:process.env.NODE_ENV=\"production\" --target=esnext  --bundle src/runtime/index-without-hmr.ts --format=iife --platform=node --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.node.pre.out.js; cat src/runtime.node.pre.out.js src/runtime.footer.node.js > src/runtime.node.out.js
+	@NODE_ENV=production $(ESBUILD) --define:process.env.NODE_ENV=\"production\" --target=esnext  --bundle src/runtime/index-without-hmr.ts --format=iife --platform=node --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.bun.pre.out.js; cat src/runtime.bun.pre.out.js src/runtime.footer.bun.js > src/runtime.bun.out.js
 
 .PHONY: runtime_js_dev
 runtime_js_dev:
@@ -937,6 +929,9 @@ clone-submodules:
 
 .PHONY: headers
 headers:
+	echo please don't run the headers generator anymore. i don't think it works. 
+	echo if you really need it, run make headers2
+headers2: 
 	rm -f /tmp/build-jsc-headers src/bun.js/bindings/headers.zig
 	touch src/bun.js/bindings/headers.zig
 	$(ZIG) build headers-obj
@@ -1326,7 +1321,7 @@ release-bindings: $(OBJ_DIR) $(OBJ_FILES) $(WEBCORE_OBJ_FILES) $(SQLITE_OBJ_FILE
 # Do not add $(DEBUG_DIR) to this list
 # It will break caching, causing you to have to wait for every .cpp file to rebuild.
 .PHONY: bindings
-bindings: $(DEBUG_OBJ_DIR) $(DEBUG_OBJ_FILES) $(DEBUG_WEBCORE_OBJ_FILES) $(DEBUG_SQLITE_OBJ_FILES) $(DEBUG_NODE_OS_OBJ_FILES) $(DEBUG_BUILTINS_OBJ_FILES) $(DEBUG_IO_FILES) $(DEBUG_MODULES_OBJ_FILES) $(DEBUG_WEBCRYPTO_OBJ_FILES)
+bindings-real: $(DEBUG_OBJ_DIR) $(DEBUG_OBJ_FILES) $(DEBUG_WEBCORE_OBJ_FILES) $(DEBUG_SQLITE_OBJ_FILES) $(DEBUG_NODE_OS_OBJ_FILES) $(DEBUG_BUILTINS_OBJ_FILES) $(DEBUG_IO_FILES) $(DEBUG_MODULES_OBJ_FILES) $(DEBUG_WEBCRYPTO_OBJ_FILES)
 
 .PHONY: jsc-bindings-mac
 jsc-bindings-mac: bindings
@@ -1360,7 +1355,7 @@ mimalloc-debug:
 			-GNinja \
 			. \
 			&& ninja
-	cp $(BUN_DEPS_DIR)/mimalloc/$(_MIMALLOC_DEBUG_FILE) $(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE)
+	cp $(BUN_DEPS_DIR)/mimalloc/$(_MIMALLOC_DEBUG_FILE) $(BUN_DEPS_OUT_DIR)/$(_MIMALLOC_DEBUG_FILE)
 
 
 # mimalloc is built as object files so that it can overload the system malloc on linux
@@ -1485,12 +1480,12 @@ wasm-return1:
 	$(ZIG) build-lib -OReleaseSmall test/bun.js/wasm-return-1-test.zig -femit-bin=test/bun.js/wasm-return-1-test.wasm -target wasm32-freestanding
 
 generate-classes:
-	bun src/bun.js/scripts/generate-classes.ts
+	bun src/codegen/generate-classes.ts
 	$(ZIG) fmt src/bun.js/bindings/generated_classes.zig
 	$(CLANG_FORMAT) -i src/bun.js/bindings/ZigGeneratedClasses.h src/bun.js/bindings/ZigGeneratedClasses.cpp
 
 generate-sink:
-	bun src/bun.js/scripts/generate-jssink.js
+	bun src/codegen/generate-jssink.js
 	$(CLANG_FORMAT) -i  src/bun.js/bindings/JSSink.cpp  src/bun.js/bindings/JSSink.h
 	./src/bun.js/scripts/create_hash_table src/bun.js/bindings/JSSink.cpp > src/bun.js/bindings/JSSinkLookupTable.h
 	$(SED) -i -e 's/#include "Lookup.h"//' src/bun.js/bindings/JSSinkLookupTable.h
@@ -1913,46 +1908,30 @@ vendor: assert-deps submodule vendor-without-check
 vendor-dev: assert-deps submodule npm-install-dev vendor-without-npm
 
 .PHONY: bun
-bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release-local
+bun: 
+	@echo 'makefile is deprecated - use `cmake` / `bun run build`'
+	@echo 'See https://bun.sh/docs/project/contributing for more details'
 
-.PHONY: static-hash-table
-static-hash-table:
-	bun src/js/_codegen/static-hash-tables.ts
+cpp:
+	@echo 'makefile is deprecated - use `cmake` / `bun run build`'
+	@echo 'See https://bun.sh/docs/project/contributing for more details'
 
-.PHONY: cpp
-cpp: ## compile src/js/builtins + all c++ code then link
-	@make clean-bindings js
-	@make static-hash-table
-	@make bindings -j$(CPU_COUNT)
-	@make link
+zig:
+	@echo 'makefile is deprecated - use `cmake` / `bun run build`'
+	@echo 'See https://bun.sh/docs/project/contributing for more details'
 
-.PHONY: cpp
-cpp-no-link:
-	@make clean-bindings js
-	@make bindings -j$(CPU_COUNT)
+dev:
+	@echo 'makefile is deprecated - use `cmake` / `bun run build`'
+	@echo 'See https://bun.sh/docs/project/contributing for more details'
 
-.PHONY: zig
-zig: ## compile zig code then link
-	@make mkdir-dev dev-obj link
+setup:
+	@echo 'makefile is deprecated - use `cmake` / `bun run build`'
+	@echo 'See https://bun.sh/docs/project/contributing for more details'
 
-.PHONY: zig-no-link
-zig-no-link:
-	@make mkdir-dev dev-obj
+bindings:
+	@echo 'makefile is deprecated - use `cmake` / `bun run build`'
+	@echo 'See https://bun.sh/docs/project/contributing for more details'
 
-.PHONY: dev
-dev: # combo of `make cpp` and `make zig`
-	@make cpp-no-link zig-no-link -j2
-	@make link
-
-.PHONY: setup
-setup: vendor-dev identifier-cache clean-bindings
-	make jsc-check dev
-	@echo ""
-	@echo "First build complete!"
-	@echo "\"bun-debug\" is available at $(DEBUG_BIN)/bun-debug"
-	@echo ""
-
-.PHONY: help
-help: ## to print this help
-	@echo "For detailed build instructions, see https://bun.sh/docs/project/contributing"
-	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {gsub("\\\\n",sprintf("\n%22c",""), $$2);printf "\033[36m%-20s\033[0m \t\t%s\n", $$1, $$2}' $(MAKEFILE_LIST)
+help:
+	@echo 'makefile is deprecated - use `cmake` / `bun run build`'
+	@echo 'See https://bun.sh/docs/project/contributing for more details'

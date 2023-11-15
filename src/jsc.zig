@@ -85,4 +85,10 @@ pub const Subprocess = @import("./bun.js/api/bun.zig").Subprocess;
 ///        - pub usingnamespace JSC.Codegen.JSMyClassName;
 ///  5. make clean-bindings && make bindings -j10
 ///
-pub const Codegen = @import("./bun.js/bindings/generated_classes.zig");
+pub const Codegen = struct {
+    pub const GeneratedClasses = @import("ZigGeneratedClasses");
+    pub usingnamespace GeneratedClasses;
+    pub usingnamespace @import("./bun.js/bindings/codegen.zig");
+};
+
+pub const GeneratedClassesList = @import("./bun.js/bindings/generated_classes_list.zig").Classes;

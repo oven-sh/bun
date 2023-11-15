@@ -2,6 +2,14 @@ import { spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
+// This is consistent with what Node.js does, probably for polyfills to continue to work.
+it("crypto.subtle setter should not throw", () => {
+  const subtle = globalThis.crypto.subtle;
+  // @ts-expect-error
+  expect(() => (globalThis.crypto.subtle = 123)).not.toThrow();
+  expect(globalThis.crypto.subtle).toBe(subtle);
+});
+
 describe("Web Crypto", () => {
   // https://github.com/oven-sh/bun/issues/3795
   it("keeps event loop alive", () => {

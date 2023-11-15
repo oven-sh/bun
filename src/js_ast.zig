@@ -108,10 +108,10 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
 
         overflow: Overflow = Overflow{},
 
-        pub threadlocal var _self: *Self = undefined;
+        pub threadlocal var _self: ?*Self = null;
 
         pub fn reclaim() []*Block {
-            var overflow = &_self.overflow;
+            var overflow = &_self.?.overflow;
 
             if (overflow.used == 0) {
                 if (overflow.allocated == 0 or overflow.ptrs[0].used == 0) {
@@ -153,7 +153,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
         /// Nested parsing should either use the same store, or call
         /// Store.reclaim.
         pub fn reset() void {
-            const blocks = _self.overflow.slice();
+            const blocks = _self.?.overflow.slice();
             for (blocks) |b| {
                 if (comptime Environment.isDebug) {
                     // ensure we crash if we use a freed value
@@ -162,7 +162,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
                 }
                 b.used = 0;
             }
-            _self.overflow.used = 0;
+            _self.?.overflow.used = 0;
         }
 
         pub fn init(allocator: std.mem.Allocator) *Self {
@@ -174,33 +174,39 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
 
             _self = instance;
 
-            return _self;
+            return _self.?;
+        }
+
+        pub fn onThreadExit(_: *anyopaque) callconv(.C) void {
+            deinit();
         }
 
         fn deinit() void {
-            var sliced = _self.overflow.slice();
-            var allocator = _self.overflow.allocator;
+            if (_self) |this| {
+                _self = null;
+                var sliced = this.overflow.slice();
+                var allocator = this.overflow.allocator;
 
-            if (sliced.len > 1) {
-                var i: usize = 1;
-                const end = sliced.len;
-                while (i < end) {
-                    var ptrs = @as(*[2]Block, @ptrCast(sliced[i]));
-                    allocator.free(ptrs);
-                    i += 2;
+                if (sliced.len > 1) {
+                    var i: usize = 1;
+                    const end = sliced.len;
+                    while (i < end) {
+                        var ptrs = @as(*[2]Block, @ptrCast(sliced[i]));
+                        allocator.free(ptrs);
+                        i += 2;
+                    }
+                    this.overflow.allocated = 1;
                 }
-                _self.overflow.allocated = 1;
+                var base_store = @fieldParentPtr(WithBase, "store", this);
+                if (this.overflow.ptrs[0] == &base_store.head) {
+                    allocator.destroy(base_store);
+                }
             }
-            var base_store = @fieldParentPtr(WithBase, "store", _self);
-            if (_self.overflow.ptrs[0] == &base_store.head) {
-                allocator.destroy(base_store);
-            }
-            _self = undefined;
         }
 
         pub fn append(comptime Disabler: type, comptime ValueType: type, value: ValueType) *ValueType {
             Disabler.assert();
-            return _self._append(ValueType, value);
+            return _self.?._append(ValueType, value);
         }
 
         inline fn _append(self: *Self, comptime ValueType: type, value: ValueType) *ValueType {
@@ -1666,8 +1672,8 @@ pub const E = struct {
         /// JSX element children <div>{this_is_a_child_element}</div>
         children: ExprNodeList = ExprNodeList{},
 
-        /// key is the key prop like <ListItem key="foo">
-        key: ?ExprNodeIndex = null,
+        // needed to make sure parse and visit happen in the same order
+        key_prop_index: i32 = -1,
 
         flags: Flags.JSXElement.Bitset = Flags.JSXElement.Bitset{},
 
@@ -3006,7 +3012,7 @@ pub const Stmt = struct {
             }
 
             pub fn toOwnedSlice() []*Store.All.Block {
-                if (!has_inited or Store.All._self.overflow.used == 0 or disable_reset) return &[_]*Store.All.Block{};
+                if (!has_inited or Store.All._self.?.overflow.used == 0 or disable_reset) return &[_]*Store.All.Block{};
                 return Store.All.reclaim();
             }
         };
@@ -5392,7 +5398,7 @@ pub const Expr = struct {
             }
 
             pub fn toOwnedSlice() []*Store.All.Block {
-                if (!has_inited or Store.All._self.overflow.used == 0 or disable_reset or memory_allocator != null) return &[_]*Store.All.Block{};
+                if (!has_inited or Store.All._self.?.overflow.used == 0 or disable_reset or memory_allocator != null) return &[_]*Store.All.Block{};
                 return Store.All.reclaim();
             }
         };
@@ -5432,7 +5438,7 @@ pub const S = struct {
     pub const Comment = struct { text: string };
 
     pub const Directive = struct {
-        value: []const u16,
+        value: []const u8,
     };
 
     pub const ExportClause = struct { items: []ClauseItem, is_single_line: bool = false };
@@ -7278,8 +7284,9 @@ pub const Macro = struct {
 
             exception_holder = Zig.ZigException.Holder.init();
             var js_args: []JSC.JSValue = &.{};
+            var js_processed_args_len: usize = 0;
             defer {
-                for (js_args[0 .. js_args.len - @as(usize, @intFromBool(!javascript_object.isEmpty()))]) |arg| {
+                for (js_args[0..js_processed_args_len -| @as(usize, @intFromBool(!javascript_object.isEmpty()))]) |arg| {
                     arg.unprotect();
                 }
 
@@ -7292,12 +7299,18 @@ pub const Macro = struct {
                 .e_call => |call| {
                     const call_args: []Expr = call.args.slice();
                     js_args = try allocator.alloc(JSC.JSValue, call_args.len + @as(usize, @intFromBool(!javascript_object.isEmpty())));
+                    js_processed_args_len = js_args.len;
 
-                    for (call_args, js_args[0..call_args.len]) |in, *out| {
-                        const value = try in.toJS(
+                    for (0.., call_args, js_args[0..call_args.len]) |i, in, *out| {
+                        const value = in.toJS(
                             allocator,
                             globalObject,
-                        );
+                        ) catch |e| {
+                            // Keeping a separate variable instead of modifying js_args.len
+                            // due to allocator.free call in defer
+                            js_processed_args_len = i;
+                            return e;
+                        };
                         value.protect();
                         out.* = value;
                     }

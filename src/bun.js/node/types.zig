@@ -83,10 +83,11 @@ pub fn Maybe(comptime ResultType: type) type {
 
         pub const todo: @This() = @This(){ .err = Syscall.Error.todo };
 
-        pub fn throw(this: @This()) !void {
-            if (this == .err) {
-                return bun.AsyncIO.asError(this.err.errno);
-            }
+        pub fn unwrap(this: @This()) !ReturnType {
+            return switch (this) {
+                .err => |err| bun.AsyncIO.asError(err.errno),
+                .result => |result| result,
+            };
         }
 
         pub fn toJS(this: @This(), globalThis: *JSC.JSGlobalObject) JSC.JSValue {
@@ -2553,14 +2554,15 @@ pub const Process = struct {
                 // When we update the cwd from JS, we have to update the bundler's version as well
                 // However, this might be called many times in a row, so we use a pre-allocated buffer
                 // that way we don't have to worry about garbage collector
-                JSC.VirtualMachine.get().bundler.fs.top_level_dir = std.os.getcwd(&JSC.VirtualMachine.get().bundler.fs.top_level_dir_buf) catch {
-                    _ = Syscall.chdir(@as([:0]const u8, @ptrCast(JSC.VirtualMachine.get().bundler.fs.top_level_dir)));
+                var fs = JSC.VirtualMachine.get().bundler.fs;
+                fs.top_level_dir = bun.getcwd(&fs.top_level_dir_buf) catch {
+                    _ = Syscall.chdir(@as([:0]const u8, @ptrCast(fs.top_level_dir)));
                     return JSC.toInvalidArguments("Invalid path", .{}, globalObject.ref());
                 };
 
-                JSC.VirtualMachine.get().bundler.fs.top_level_dir_buf[JSC.VirtualMachine.get().bundler.fs.top_level_dir.len] = std.fs.path.sep;
-                JSC.VirtualMachine.get().bundler.fs.top_level_dir_buf[JSC.VirtualMachine.get().bundler.fs.top_level_dir.len + 1] = 0;
-                JSC.VirtualMachine.get().bundler.fs.top_level_dir = JSC.VirtualMachine.get().bundler.fs.top_level_dir_buf[0 .. JSC.VirtualMachine.get().bundler.fs.top_level_dir.len + 1];
+                fs.top_level_dir_buf[fs.top_level_dir.len] = std.fs.path.sep;
+                fs.top_level_dir_buf[fs.top_level_dir.len + 1] = 0;
+                fs.top_level_dir = fs.top_level_dir_buf[0 .. fs.top_level_dir.len + 1];
 
                 return JSC.JSValue.jsUndefined();
             },

@@ -95,7 +95,7 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSWritableStreamPrototype, JSWritableStreamP
 
 using JSWritableStreamDOMConstructor = JSDOMConstructor<JSWritableStream>;
 
-template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWritableStreamDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
+template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWritableStreamDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     VM& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -192,7 +192,7 @@ void JSWritableStream::destroy(JSC::JSCell* cell)
     thisObject->JSWritableStream::~JSWritableStream();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -210,7 +210,7 @@ static inline JSValue jsWritableStream_lockedGetter(JSGlobalObject& lexicalGloba
     RELEASE_AND_RETURN(throwScope, (toJS<IDLBoolean>(lexicalGlobalObject, throwScope, impl.locked())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsWritableStream_locked, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsWritableStream_locked, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSWritableStream>::get<jsWritableStream_lockedGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }

@@ -108,7 +108,7 @@ pub const Arguments = struct {
         var paths = [_]string{ cwd, filename };
         const outpath = try std.fs.path.resolve(allocator, &paths);
         defer allocator.free(outpath);
-        var file = try std.fs.openFileAbsolute(outpath, std.fs.File.OpenFlags{ .mode = .read_only });
+        var file = try bun.openFileZ(&try std.os.toPosixPath(outpath), std.fs.File.OpenFlags{ .mode = .read_only });
         defer file.close();
         const size = try file.getEndPos();
         return try file.readToEndAlloc(allocator, size);
@@ -132,6 +132,7 @@ pub const Arguments = struct {
         clap.parseParam("-h, --help                        Display this menu and exit") catch unreachable,
         clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
         clap.parseParam("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml") catch unreachable,
+        clap.parseParam("--env-file <STR>...               Load environment variables from the specified file(s)") catch unreachable,
         clap.parseParam("<POS>...") catch unreachable,
     };
 
@@ -236,16 +237,18 @@ pub const Arguments = struct {
     }
 
     pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
-        var config_file = std.fs.File{
-            .handle = std.os.openZ(config_path, std.os.O.RDONLY, 0) catch |err| {
+        var config_file = switch (bun.sys.openA(config_path, std.os.O.RDONLY, 0)) {
+            .result => |fd| std.fs.File{ .handle = bun.fdcast(fd) },
+            .err => |err| {
                 if (auto_loaded) return;
-                Output.prettyErrorln("<r><red>error<r>: {s} opening config \"{s}\"", .{
-                    @errorName(err),
+                Output.prettyErrorln("{}\nwhile opening config \"{s}\"", .{
+                    err,
                     config_path,
                 });
                 Global.exit(1);
             },
         };
+
         defer config_file.close();
         var contents = config_file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
             if (auto_loaded) return;
@@ -271,7 +274,7 @@ pub const Arguments = struct {
     }
 
     fn getHomeConfigPath(buf: *[bun.MAX_PATH_BYTES]u8) ?[:0]const u8 {
-        if (bun.getenvZ("XDG_CONFIG_HOME") orelse bun.getenvZ("HOME")) |data_dir| {
+        if (bun.getenvZ("XDG_CONFIG_HOME") orelse bun.getenvZ(bun.DotEnv.home_env)) |data_dir| {
             var paths = [_]string{".bunfig.toml"};
             return resolve_path.joinAbsStringBufZ(data_dir, buf, &paths, .auto);
         }
@@ -317,9 +320,11 @@ pub const Arguments = struct {
         } else {
             if (ctx.args.absolute_working_dir == null) {
                 var secondbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                var cwd = std.os.getcwd(&secondbuf) catch return;
+                var cwd = bun.getcwd(&secondbuf) catch return;
+
                 ctx.args.absolute_working_dir = try allocator.dupe(u8, cwd);
             }
+
             var parts = [_]string{ ctx.args.absolute_working_dir.?, config_path_ };
             config_path_ = resolve_path.joinAbsStringBuf(
                 ctx.args.absolute_working_dir.?,
@@ -390,7 +395,7 @@ pub const Arguments = struct {
                 break :brk try allocator.dupe(u8, out);
             };
         } else {
-            cwd = try std.process.getCwdAlloc(allocator);
+            cwd = try bun.getcwdAlloc(allocator);
         }
 
         if (cmd == .TestCommand) {
@@ -493,6 +498,7 @@ pub const Arguments = struct {
         opts.main_fields = args.options("--main-fields");
         // we never actually supported inject.
         // opts.inject = args.options("--inject");
+        opts.env_files = args.options("--env-file");
         opts.extension_order = args.options("--extension-order");
 
         ctx.passthrough = args.remaining();
@@ -914,7 +920,7 @@ pub const HelpCommand = struct {
 
         switch (reason) {
             .explicit => Output.pretty(
-                "<r><b><magenta>Bun<r> is a fast JavaScript runtime, package manager, bundler, and test runner. <d>(" ++ Global.package_json_version ++ ")<r>\n\n" ++ cli_helptext_fmt,
+                "<r><b><magenta>Bun<r> is a fast JavaScript runtime, package manager, bundler, and test runner. <d>(" ++ Global.package_json_version_with_revision ++ ")<r>\n\n" ++ cli_helptext_fmt,
                 args,
             ),
             .invalid_command => Output.prettyError(
@@ -1201,10 +1207,17 @@ pub const Command = struct {
     };
 
     pub fn start(allocator: std.mem.Allocator, log: *logger.Log) !void {
+        if (comptime Environment.allow_assert) {
+            if (bun.getenvZ("MI_VERBOSE") == null) {
+                bun.Mimalloc.mi_option_set_enabled(.verbose, false);
+            }
+        }
+
         const BuildCommand = @import("./cli/build_command.zig").BuildCommand;
 
         const AddCommand = @import("./cli/add_command.zig").AddCommand;
         const CreateCommand = @import("./cli/create_command.zig").CreateCommand;
+        const CreateCommandExample = @import("./cli/create_command.zig").Example;
         const CreateListExamplesCommand = @import("./cli/create_command.zig").CreateListExamplesCommand;
         const DiscordCommand = @import("./cli/discord_command.zig").DiscordCommand;
         const InstallCommand = @import("./cli/install_command.zig").InstallCommand;
@@ -1239,29 +1252,33 @@ pub const Command = struct {
             // _ = BunxCommand;
         }
 
-        if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
-            var ctx = Command.Context{
-                .args = std.mem.zeroes(Api.TransformOptions),
-                .log = log,
-                .start_time = start_time,
-                .allocator = bun.default_allocator,
-            };
+        // there's a bug with openSelfExe() on Windows
+        if (comptime !bun.Environment.isWindows) {
+            // bun build --compile entry point
+            if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
+                var ctx = Command.Context{
+                    .args = std.mem.zeroes(Api.TransformOptions),
+                    .log = log,
+                    .start_time = start_time,
+                    .allocator = bun.default_allocator,
+                };
 
-            ctx.args.target = Api.Target.bun;
-            var argv = try bun.default_allocator.alloc(string, bun.argv().len -| 1);
-            if (bun.argv().len > 1) {
-                for (argv, bun.argv()[1..]) |*dest, src| {
-                    dest.* = bun.span(src);
+                ctx.args.target = Api.Target.bun;
+                var argv = try bun.default_allocator.alloc(string, bun.argv().len -| 1);
+                if (bun.argv().len > 1) {
+                    for (argv, bun.argv()[1..]) |*dest, src| {
+                        dest.* = bun.span(src);
+                    }
                 }
-            }
-            ctx.passthrough = argv;
+                ctx.passthrough = argv;
 
-            try @import("./bun_js.zig").Run.bootStandalone(
-                ctx,
-                graph.entryPoint().name,
-                graph,
-            );
-            return;
+                try @import("./bun_js.zig").Run.bootStandalone(
+                    ctx,
+                    graph.entryPoint().name,
+                    graph,
+                );
+                return;
+            }
         }
 
         const tag = which();
@@ -1498,7 +1515,6 @@ pub const Command = struct {
                         }
                     }
                 }
-                var positionals_ = positionals[0..positional_i];
 
                 const template_name = positionals[0];
 
@@ -1536,9 +1552,14 @@ pub const Command = struct {
                     return;
                 }
 
+                const create_command_info = try CreateCommand.extractInfo(ctx);
+                const template = create_command_info.template;
+                var example_tag = create_command_info.example_tag;
+
                 const use_bunx = !HardcodedNonBunXList.has(template_name) and
                     (!strings.containsComptime(template_name, "/") or
-                    strings.startsWithChar(template_name, '@'));
+                    strings.startsWithChar(template_name, '@')) and
+                    example_tag != CreateCommandExample.Tag.local_folder;
 
                 if (use_bunx) {
                     const bunx_args = try allocator.alloc([*:0]const u8, args.len - template_name_start);
@@ -1551,7 +1572,7 @@ pub const Command = struct {
                     return;
                 }
 
-                try CreateCommand.exec(ctx, positionals_);
+                try CreateCommand.exec(ctx, example_tag, template);
                 return;
             },
             .RunCommand => {
@@ -1701,27 +1722,20 @@ pub const Command = struct {
         const script_name_to_search = ctx.args.entry_points[0];
 
         var file_path = script_name_to_search;
-        const file_: std.fs.File.OpenError!std.fs.File = brk: {
-            if (script_name_to_search[0] == std.fs.path.sep) {
-                break :brk std.fs.openFileAbsolute(script_name_to_search, .{ .mode = .read_only });
+        const file_: anyerror!std.fs.File = brk: {
+            if (std.fs.path.isAbsoluteWindows(script_name_to_search)) {
+                break :brk bun.openFile(script_name_to_search, .{ .mode = .read_only });
             } else if (!strings.hasPrefix(script_name_to_search, "..") and script_name_to_search[0] != '~') {
                 const file_pathZ = brk2: {
-                    if (!strings.hasPrefix(file_path, "./")) {
-                        script_name_buf[0..2].* = "./".*;
-                        @memcpy(script_name_buf[2..][0..file_path.len], file_path);
-                        script_name_buf[file_path.len + 2] = 0;
-                        break :brk2 script_name_buf[0 .. file_path.len + 2 :0];
-                    } else {
-                        @memcpy(script_name_buf[0..file_path.len], file_path);
-                        script_name_buf[file_path.len] = 0;
-                        break :brk2 script_name_buf[0..file_path.len :0];
-                    }
+                    @memcpy(script_name_buf[0..file_path.len], file_path);
+                    script_name_buf[file_path.len] = 0;
+                    break :brk2 script_name_buf[0..file_path.len :0];
                 };
 
-                break :brk std.fs.cwd().openFileZ(file_pathZ, .{ .mode = .read_only });
+                break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
             } else {
                 var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const cwd = std.os.getcwd(&path_buf) catch return false;
+                const cwd = bun.getcwd(&path_buf) catch return false;
                 path_buf[cwd.len] = std.fs.path.sep;
                 var parts = [_]string{script_name_to_search};
                 file_path = resolve_path.joinAbsStringBuf(
@@ -1733,7 +1747,7 @@ pub const Command = struct {
                 if (file_path.len == 0) return false;
                 script_name_buf[file_path.len] = 0;
                 var file_pathZ = script_name_buf[0..file_path.len :0];
-                break :brk std.fs.openFileAbsoluteZ(file_pathZ, .{ .mode = .read_only });
+                break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
             }
         };
 

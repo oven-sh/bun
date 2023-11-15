@@ -2,9 +2,9 @@
 
 #include "root.h"
 #include "headers-handwritten.h"
-#include "JavaScriptCore/JSGlobalObject.h"
-#include "JavaScriptCore/Strong.h"
-#include "JavaScriptCore/RegularExpression.h"
+#include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/Strong.h>
+#include <JavaScriptCore/RegularExpression.h>
 #include "helpers.h"
 #include <JavaScriptCore/Yarr.h>
 #include <JavaScriptCore/Strong.h>

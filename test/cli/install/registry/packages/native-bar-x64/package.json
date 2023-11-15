@@ -1,0 +1,45 @@
+{
+	"name": "native-bar-x64",
+	"versions": {
+		"1.0.0": {
+			"name": "native-bar-x64",
+			"version": "1.0.0",
+			"os": [
+				"bar"
+			],
+			"cpu": [
+				"x64"
+			],
+			"_id": "native-bar-x64@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-wNjF++hO2mWgeg1uyFzyTUq1tWiO/1kEjKqvgf344NmKJ3JiUp58dSaes4b26AoUT/rrrHEU9SGUu550E9/sUA==",
+				"shasum": "b76a5293d3a455c48b60646329b74e133c73425f",
+				"tarball": "http://localhost:4873/native-bar-x64/-/native-bar-x64-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:13.056Z",
+		"created": "2023-11-01T22:05:13.056Z",
+		"1.0.0": "2023-11-01T22:05:13.056Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"native-bar-x64-1.0.0.tgz": {
+			"shasum": "b76a5293d3a455c48b60646329b74e133c73425f",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-9caeedeee659da56",
+	"_id": "native-bar-x64",
+	"readme": "ERROR: No README data found!"
+}

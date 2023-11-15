@@ -6,6 +6,20 @@
 var { isBun, test, describe, expect, jest, vi, mock, bunTest, spyOn } = require("./test-interop.js")();
 
 describe("expect()", () => {
+  if (typeof Bun !== "undefined") {
+    test("()", () => {
+      const { withoutAggressiveGC } = require("harness");
+
+      withoutAggressiveGC(() => {
+        expect();
+
+        for (let i = 0; i < 5000; i++) {
+          expect();
+        }
+      });
+    });
+  }
+
   test("rejects", async () => {
     await expect(Promise.reject(1)).rejects.toBe(1);
 
@@ -565,34 +579,34 @@ describe("expect()", () => {
     }).not.toThrow(err);
 
     const weirdThings = [
-      /watttt/g,
-      BigInt(123),
-      -42,
-      NaN,
-      Infinity,
-      -Infinity,
-      undefined,
-      null,
-      true,
-      false,
-      0,
-      1,
-      "",
-      "hello",
-      {},
-      [],
-      new Date(),
-      new Error(),
-      new RegExp("foo"),
-      new Map(),
-      new Set(),
-      Promise.resolve(),
-      Promise.reject(Symbol("123")).finally(() => {}),
-      Symbol("123"),
+      () => /watttt/g,
+      () => BigInt(123),
+      () => -42,
+      () => NaN,
+      () => Infinity,
+      () => -Infinity,
+      () => undefined,
+      () => null,
+      () => true,
+      () => false,
+      () => 0,
+      () => 1,
+      () => "",
+      () => "hello",
+      () => {},
+      () => [],
+      () => new Date(),
+      () => new Error(),
+      () => new RegExp("foo"),
+      () => new Map(),
+      () => new Set(),
+      () => Promise.resolve(),
+      () => Promise.reject(Symbol("123")),
+      () => Symbol("123"),
     ];
     for (const weirdThing of weirdThings) {
       expect(() => {
-        throw weirdThing;
+        throw weirdThing();
       }).toThrow();
     }
 
@@ -1311,12 +1325,12 @@ describe("expect()", () => {
     b = { a: 1, b: 2 };
     expect(a).not.toEqual(b);
 
-    array1 = [1, 2, 3];
+    const array1 = [1, 2, 3];
     expect(array1).toEqual(expect.arrayContaining([]));
     expect(array1).toEqual(expect.arrayContaining([1, 2]));
     expect(array1).not.toEqual(expect.arrayContaining([1, 2, 4]));
 
-    array2 = [{ a: 1, b: 2 }, { a: { a: 1 } }];
+    const array2 = [{ a: 1, b: 2 }, { a: { a: 1 } }];
     expect(array2).toEqual(expect.arrayContaining([{ a: 1, b: 2 }]));
     expect(array2).toEqual(expect.arrayContaining([{ a: { a: 1 } }]));
     expect(array2).not.toEqual(expect.arrayContaining([{ a: 2, b: 3 }]));

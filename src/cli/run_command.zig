@@ -267,7 +267,11 @@ pub const RunCommand = struct {
             combined_script = combined_script_buf;
         }
 
-        var argv = [_]string{ shell_bin, "-c", combined_script };
+        var argv = [_]string{
+            shell_bin,
+            if (Environment.isWindows) "/c" else "-c",
+            combined_script,
+        };
 
         if (!silent) {
             Output.prettyErrorln("<r><d><magenta>$<r> <d><b>{s}<r>", .{combined_script});
@@ -541,9 +545,9 @@ pub const RunCommand = struct {
             if (root_dir_info.getEntries(0)) |dir| {
                 // Run .env again if it exists in a parent dir
                 if (this_bundler.options.production) {
-                    this_bundler.env.load(dir, .production) catch {};
+                    this_bundler.env.load(dir, this_bundler.options.env.files, .production) catch {};
                 } else {
-                    this_bundler.env.load(dir, .development) catch {};
+                    this_bundler.env.load(dir, this_bundler.options.env.files, .development) catch {};
                 }
             }
         }
@@ -597,11 +601,11 @@ pub const RunCommand = struct {
         }
 
         {
-            var needs_colon = false;
+            var needs_delim = false;
             if (package_json_dir.len > 0) {
-                defer needs_colon = true;
-                if (needs_colon) {
-                    try new_path.append(':');
+                defer needs_delim = true;
+                if (needs_delim) {
+                    try new_path.append(std.fs.path.delimiter);
                 }
                 try new_path.appendSlice(package_json_dir);
             }
@@ -611,19 +615,19 @@ pub const RunCommand = struct {
             // Directories are added to bin_dirs in top-down order
             // That means the parent-most node_modules/.bin will be first
             while (bin_dir_i >= 0) : (bin_dir_i -= 1) {
-                defer needs_colon = true;
-                if (needs_colon) {
-                    try new_path.append(':');
+                defer needs_delim = true;
+                if (needs_delim) {
+                    try new_path.append(std.fs.path.delimiter);
                 }
                 try new_path.appendSlice(bin_dirs[@as(usize, @intCast(bin_dir_i))]);
             }
 
-            if (needs_colon) {
-                try new_path.append(':');
+            if (needs_delim) {
+                try new_path.append(std.fs.path.delimiter);
             }
             try new_path.appendSlice(root_dir_info.abs_path);
-            try new_path.appendSlice("node_modules/.bin");
-            try new_path.append(':');
+            try new_path.appendSlice(bun.pathLiteral("node_modules/.bin"));
+            try new_path.append(std.fs.path.delimiter);
             try new_path.appendSlice(PATH);
         }
 
@@ -987,24 +991,25 @@ pub const RunCommand = struct {
                     }
 
                     var file_path = script_name_to_search;
-
-                    const file_: std.fs.File.OpenError!std.fs.File = brk: {
-                        if (script_name_to_search[0] == std.fs.path.sep) {
-                            break :brk std.fs.openFileAbsolute(script_name_to_search, .{ .mode = .read_only });
+                    var must_normalize = false;
+                    const file_: anyerror!std.fs.File = brk: {
+                        if (std.fs.path.isAbsolute(script_name_to_search)) {
+                            must_normalize = Environment.isWindows;
+                            break :brk bun.openFile(script_name_to_search, .{ .mode = .read_only });
                         } else {
-                            const cwd = std.os.getcwd(&path_buf) catch break :possibly_open_with_bun_js;
-                            path_buf[cwd.len] = std.fs.path.sep;
+                            const cwd = bun.getcwd(&path_buf) catch break :possibly_open_with_bun_js;
+                            path_buf[cwd.len] = std.fs.path.sep_posix;
                             var parts = [_]string{script_name_to_search};
                             file_path = resolve_path.joinAbsStringBuf(
                                 path_buf[0 .. cwd.len + 1],
                                 &path_buf2,
                                 &parts,
-                                .auto,
+                                .loose,
                             );
                             if (file_path.len == 0) break :possibly_open_with_bun_js;
                             path_buf2[file_path.len] = 0;
                             var file_pathZ = path_buf2[0..file_path.len :0];
-                            break :brk std.fs.openFileAbsoluteZ(file_pathZ, .{ .mode = .read_only });
+                            break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
                         }
                     };
 
@@ -1046,7 +1051,13 @@ pub const RunCommand = struct {
                     }
 
                     Global.configureAllocator(.{ .long_running = true });
-                    Run.boot(ctx, ctx.allocator.dupe(u8, file_path) catch unreachable) catch |err| {
+                    var out_path = ctx.allocator.dupe(u8, file_path) catch unreachable;
+                    if (must_normalize) {
+                        if (comptime Environment.isWindows) {
+                            std.mem.replaceScalar(u8, out_path, std.fs.path.sep_windows, std.fs.path.sep_posix);
+                        }
+                    }
+                    Run.boot(ctx, out_path) catch |err| {
                         if (Output.enable_ansi_colors) {
                             ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
                         } else {
@@ -1092,7 +1103,7 @@ pub const RunCommand = struct {
                                     temp_script_buffer[1..],
                                     this_bundler.fs.top_level_dir,
                                     this_bundler.env,
-                                    passthrough,
+                                    &.{},
                                     ctx.debug.silent,
                                 )) {
                                     return false;
@@ -1118,7 +1129,7 @@ pub const RunCommand = struct {
                                     temp_script_buffer,
                                     this_bundler.fs.top_level_dir,
                                     this_bundler.env,
-                                    passthrough,
+                                    &.{},
                                     ctx.debug.silent,
                                 )) {
                                     return false;
@@ -1160,10 +1171,10 @@ pub const RunCommand = struct {
         const PATH = this_bundler.env.map.get("PATH") orelse "";
         var path_for_which = PATH;
         if (comptime bin_dirs_only) {
-            path_for_which = "";
-
             if (ORIGINAL_PATH.len < PATH.len) {
                 path_for_which = PATH[0 .. PATH.len - (ORIGINAL_PATH.len + 1)];
+            } else {
+                path_for_which = "";
             }
         }
 

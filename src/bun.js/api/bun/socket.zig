@@ -1417,7 +1417,7 @@ fn NewSocket(comptime ssl: bool) type {
             // the handlers must be kept alive for the duration of the function call
             // that way if we need to call the error handler, we can
             var scope = handlers.enter(socket.context());
-            defer if (!this.detached) scope.exit(ssl, this.wrapped);
+            defer scope.exit(ssl, this.wrapped);
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
@@ -1455,7 +1455,7 @@ fn NewSocket(comptime ssl: bool) type {
             // the handlers must be kept alive for the duration of the function call
             // that way if we need to call the error handler, we can
             var scope = handlers.enter(socket.context());
-            defer if (!this.detached) scope.exit(ssl, this.wrapped);
+            defer scope.exit(ssl, this.wrapped);
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
@@ -1508,7 +1508,7 @@ fn NewSocket(comptime ssl: bool) type {
             // the handlers must be kept alive for the duration of the function call
             // that way if we need to call the error handler, we can
             var scope = handlers.enter(socket.context());
-            defer if (!this.detached) scope.exit(ssl, this.wrapped);
+            defer scope.exit(ssl, this.wrapped);
 
             var globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
@@ -1538,7 +1538,7 @@ fn NewSocket(comptime ssl: bool) type {
             // the handlers must be kept alive for the duration of the function call
             // that way if we need to call the error handler, we can
             var scope = handlers.enter(socket.context());
-            defer if (!this.detached) scope.exit(ssl, this.wrapped);
+            defer scope.exit(ssl, this.wrapped);
 
             // const encoding = handlers.encoding;
             const result = callback.callWithThis(globalObject, this_value, &[_]JSValue{
@@ -2881,9 +2881,10 @@ fn NewSocket(comptime ssl: bool) type {
             if (this.reffer.has) {
                 var vm = this.handlers.vm;
                 this.reffer.unref(vm);
-                old_context.deinit(ssl);
-                bun.default_allocator.destroy(this.handlers);
                 this.poll_ref.unref(vm);
+
+                defer old_context.deinit(ssl);
+                this.handlers.markInactive(ssl, old_context, this.wrapped);
                 this.has_pending_activity.store(false, .Release);
             }
 

@@ -876,6 +876,120 @@ process.env.INIT_CWD || "does not exist"
       expect(await exists(join(packageDir, "build.node"))).toBeFalse();
     });
   }
+
+  // https://github.com/pnpm/pnpm/blob/ee6e0734e911d48f6ff786aa0f05b9b9926e4815/pkg-manager/core/test/install/lifecycleScripts.ts#L262
+  test.todo("it should run lifecycle scripts of dependant packages after running scripts of their deps", async () => {
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "with-postinstall-a": "1.0.0",
+        },
+        trustedDependencies: ["with-postinstall-a", "with-postinstall-b"],
+      }),
+    );
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await new Response(stderr).text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("error:");
+    const out = await new Response(stdout).text();
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      " + with-postinstall-a@1.0.0",
+      "",
+      expect.stringContaining("2 packages installed"),
+      "",
+      expect.stringContaining("[2/2] lifecycle scripts..."),
+    ]);
+    expect(await exited).toBe(0);
+    console.log(await readdirSorted(join(packageDir, "node_modules", "with-postinstall-a")));
+    const a = await file(join(packageDir, "node_modules", "with-postinstall-a", "output.json")).json();
+    const b = await file(join(packageDir, "node_modules", "with-postinstall-b", "output.json")).json();
+    expect(
+      +(await file(join(packageDir, "node_modules", "with-postinstall-a", "output.json")).text()) >
+        +(await file(join(packageDir, "node_modules", "with-postinstall-b", "output.json")).text()),
+    ).toBeTrue();
+  });
+
+  test("git dependencies also run `preprepare`, `prepare`, and `postprepare` scripts", async () => {
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "lifecycle-install-test": "dylan-conway/lifecycle-install-test#3ba6af5b64f2d27456e08df21d750072dffd3eee",
+        },
+      }),
+    );
+
+    var { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await new Response(stderr).text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("error:");
+    const out = await new Response(stdout).text();
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      " + lifecycle-install-test@github:dylan-conway/lifecycle-install-test#3ba6af5",
+      "",
+      expect.stringContaining("1 package installed"),
+    ]);
+    expect(await exited).toBe(0);
+    expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "preprepare.txt"))).toBeFalse();
+    expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "prepare.txt"))).toBeFalse();
+    expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "postprepare.txt"))).toBeFalse();
+    expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "preinstall.txt"))).toBeFalse();
+    expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "install.txt"))).toBeFalse();
+    expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "postinstall.txt"))).toBeFalse();
+
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "lifecycle-install-test": "dylan-conway/lifecycle-install-test#3ba6af5b64f2d27456e08df21d750072dffd3eee",
+        },
+        trustedDependencies: ["lifecycle-install-test"],
+      }),
+    );
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    }));
+
+    expect(await exited).toBe(0);
+    expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "preprepare.txt"))).toBeTrue();
+    expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "prepare.txt"))).toBeTrue();
+    expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "postprepare.txt"))).toBeTrue();
+    expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "preinstall.txt"))).toBeTrue();
+    expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "install.txt"))).toBeTrue();
+    expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "postinstall.txt"))).toBeTrue();
+  });
 });
 
 describe("semver", () => {

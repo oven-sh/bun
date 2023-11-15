@@ -1,0 +1,45 @@
+{
+	"name": "with-postinstall-a",
+	"versions": {
+		"1.0.0": {
+			"name": "with-postinstall-a",
+			"version": "1.0.0",
+			"dependencies": {
+				"with-postinstall-b": "^1.0.0"
+			},
+			"scripts": {
+				"postinstall": "node -e \"process.stdout.write(Number(new Date()).toString())\" >> output.json"
+			},
+			"gitHead": "ee6e0734e911d48f6ff786aa0f05b9b9926e4815",
+			"_id": "with-postinstall-a@1.0.0",
+			"_nodeVersion": "21.1.0",
+			"_npmVersion": "8.19.4",
+			"dist": {
+				"integrity": "sha512-jNHnSlC1/asdVm2mwuHTma7sEdRgkLk/kkp4hsDn75898oo1uZbPPAgJxeoXdAGg42CxHg/AkBXpIShkJsukpw==",
+				"shasum": "e2fe57ea4bb886e734914810467a548b1ec8519f",
+				"tarball": "http://localhost:4873/with-postinstall-a/-/with-postinstall-a-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-15T09:37:10.321Z",
+		"created": "2023-11-15T09:37:10.321Z",
+		"1.0.0": "2023-11-15T09:37:10.321Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"with-postinstall-a-1.0.0.tgz": {
+			"shasum": "e2fe57ea4bb886e734914810467a548b1ec8519f",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "with-postinstall-a",
+	"readme": "ERROR: No README data found!"
+}

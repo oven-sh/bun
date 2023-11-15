@@ -7541,6 +7541,7 @@ pub const PackageManager = struct {
                                 log_level,
                                 package_id,
                                 destination_dir_subpath,
+                                resolution,
                             );
                         }
                     },
@@ -7625,6 +7626,7 @@ pub const PackageManager = struct {
                         log_level,
                         package_id,
                         destination_dir_subpath,
+                        resolution,
                     );
                 }
             }
@@ -7636,6 +7638,7 @@ pub const PackageManager = struct {
             comptime log_level: Options.LogLevel,
             package_id: PackageID,
             destination_dir_subpath: [:0]const u8,
+            resolution: *const Resolution,
         ) !void {
             const buf = this.lockfile.buffers.string_bytes.items;
             var scripts: Package.Scripts = this.lockfile.packages.items(.scripts)[package_id];
@@ -7663,7 +7666,14 @@ pub const PackageManager = struct {
                     .posix,
                 );
 
-                scripts.enqueue(this.lockfile, buf, path_str, name, false, add_node_gyp_rebuild_script);
+                scripts.enqueue(
+                    this.lockfile,
+                    buf,
+                    path_str,
+                    name,
+                    resolution.tag == .git or resolution.tag == .github or resolution.tag == .gitlab,
+                    add_node_gyp_rebuild_script,
+                );
             } else if (!scripts.filled) {
                 var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 const node_modules_path = bun.getFdPath(bun.toFD(this.node_modules_folder.dir.fd), &path_buf) catch unreachable;

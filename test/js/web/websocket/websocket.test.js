@@ -19,7 +19,7 @@ describe("WebSocket", () => {
         return new Response();
       },
       websocket: {
-        open(ws) { },
+        open(ws) {},
         message(ws) {
           ws.close();
         },
@@ -268,7 +268,7 @@ describe("WebSocket", () => {
         return new Response();
       },
       websocket: {
-        open(ws) { },
+        open(ws) {},
         message(ws) {
           ws.close();
         },
@@ -357,7 +357,7 @@ describe("WebSocket", () => {
         remain--;
 
         if (remain <= 0) {
-          ws.onmessage = () => { };
+          ws.onmessage = () => {};
           resolve();
         }
       };
@@ -389,8 +389,8 @@ describe("WebSocket", () => {
     }
     gc(true);
     for (let i = 0; i < count; i++) await waitForEcho();
-    ws.onclose = () => { };
-    ws.onerror = () => { };
+    ws.onclose = () => {};
+    ws.onerror = () => {};
     ws.close();
     gc(true);
   });
@@ -416,7 +416,7 @@ describe("websocket in subprocess", () => {
           messageReceived = true;
           ws.close();
         },
-        close(ws) { },
+        close(ws) {},
       },
     });
     const subprocess = Bun.spawn({
@@ -480,7 +480,7 @@ describe("websocket in subprocess", () => {
           expect(performance.now() - start >= 300).toBe(true);
           ws.close();
         },
-        close(ws) { },
+        close(ws) {},
       },
     });
     const subprocess = Bun.spawn({
@@ -507,9 +507,9 @@ describe("websocket in subprocess", () => {
         return new Response("http response");
       },
       websocket: {
-        open(ws) { },
-        message(ws, message) { },
-        close(ws) { },
+        open(ws) {},
+        message(ws, message) {},
+        close(ws) {},
       },
     });
 

@@ -7638,18 +7638,43 @@ pub const PackageManager = struct {
             destination_dir_subpath: [:0]const u8,
         ) !void {
             const buf = this.lockfile.buffers.string_bytes.items;
-            var scripts = this.lockfile.packages.items(.scripts)[package_id];
+            var scripts: Package.Scripts = this.lockfile.packages.items(.scripts)[package_id];
+
             if (scripts.hasAny()) {
                 var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                const node_modules_path = bun.getFdPath(bun.toFD(this.node_modules_folder.dir.fd), &path_buf) catch unreachable;
+
+                const add_node_gyp_rebuild_script = if (scripts.install.isEmpty() and scripts.postinstall.isEmpty()) brk: {
+                    const binding_dot_gyp_path = Path.joinAbsStringZ(
+                        node_modules_path,
+                        &[_]string{ destination_dir_subpath, "binding.gyp" },
+                        .posix,
+                    );
+
+                    break :brk std.os.system.access(binding_dot_gyp_path, std.os.F_OK) == 0;
+                } else false;
+
                 const path_str = Path.joinAbsString(
-                    bun.getFdPath(bun.toFD(this.node_modules_folder.dir.fd), &path_buf) catch unreachable,
+                    node_modules_path,
                     &[_]string{destination_dir_subpath},
                     .posix,
                 );
 
-                scripts.enqueue(this.lockfile, buf, path_str, name, false);
+                scripts.enqueue(this.lockfile, buf, path_str, name, false, add_node_gyp_rebuild_script);
             } else if (!scripts.filled) {
                 var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                const node_modules_path = bun.getFdPath(bun.toFD(this.node_modules_folder.dir.fd), &path_buf) catch unreachable;
+
+                const add_node_gyp_rebuild_script = if (scripts.install.isEmpty() and scripts.postinstall.isEmpty()) brk: {
+                    const binding_dot_gyp_path = Path.joinAbsStringZ(
+                        node_modules_path,
+                        &[_]string{ destination_dir_subpath, "binding.gyp" },
+                        .posix,
+                    );
+
+                    break :brk std.os.system.access(binding_dot_gyp_path, std.os.F_OK) == 0;
+                } else false;
+
                 const path_str = Path.joinAbsString(
                     bun.getFdPath(bun.toFD(this.node_modules_folder.dir.fd), &path_buf) catch unreachable,
                     &[_]string{destination_dir_subpath},
@@ -7663,6 +7688,7 @@ pub const PackageManager = struct {
                     destination_dir_subpath,
                     path_str,
                     name,
+                    add_node_gyp_rebuild_script,
                 ) catch |err| {
                     if (comptime log_level != .silent) {
                         const fmt = "\n<r><red>error:<r> failed to parse life-cycle scripts for <b>{s}<r>: {s}\n";
@@ -8618,6 +8644,7 @@ pub const PackageManager = struct {
                 strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir),
                 root.name.slice(manager.lockfile.buffers.string_bytes.items),
                 true,
+                false,
             );
         }
 
@@ -8652,6 +8679,11 @@ pub const PackageManager = struct {
                 manager.progress = .{};
             }
         }
+
+        const run_lifecycle_scripts = manager.options.do.run_scripts and
+            manager.lockfile.scripts.hasAny() and
+            manager.options.do.install_packages and
+            install_summary.fail == 0;
 
         var printed_timestamp = false;
         if (comptime log_level != .silent) {
@@ -8735,6 +8767,18 @@ pub const PackageManager = struct {
             }
         }
 
+        if (comptime log_level != .silent) {
+            if (manager.options.do.summary) {
+                if (!printed_timestamp) {
+                    Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
+                    Output.prettyln("<d> done<r>", .{});
+                    printed_timestamp = true;
+                }
+            }
+        }
+
+        Output.flush();
+
         // Install script order for npm 8.3.0:
         // 1. preinstall
         // 2. install
@@ -8744,11 +8788,6 @@ pub const PackageManager = struct {
         // 4. preprepare
         // 5. prepare
         // 6. postprepare
-        const run_lifecycle_scripts = manager.options.do.run_scripts and
-            manager.lockfile.scripts.hasAny() and
-            manager.options.do.install_packages and
-            install_summary.fail == 0;
-
         if (run_lifecycle_scripts) {
             // We need to figure out the PATH and other environment variables
             // to do that, we re-use the code from bun run
@@ -8766,25 +8805,48 @@ pub const PackageManager = struct {
                 false,
             );
 
-            try manager.lockfile.scripts.spawnAllPackageScripts(manager, log_level, "preinstall");
-            try manager.lockfile.scripts.spawnAllPackageScripts(manager, log_level, "install");
-            try manager.lockfile.scripts.spawnAllPackageScripts(manager, log_level, "postinstall");
-            try manager.lockfile.scripts.spawnAllPackageScripts(manager, log_level, "preprepare");
-            try manager.lockfile.scripts.spawnAllPackageScripts(manager, log_level, "prepare");
-            try manager.lockfile.scripts.spawnAllPackageScripts(manager, log_level, "postprepare");
-        }
+            var init_cwd_gop = try manager.env.map.getOrPutWithoutValue("INIT_CWD");
+            if (!init_cwd_gop.found_existing) {
+                init_cwd_gop.value_ptr.* = .{
+                    .value = try ctx.allocator.dupe(u8, FileSystem.instance.top_level_dir),
+                    .conditional = false,
+                };
+            }
 
-        if (comptime log_level != .silent) {
-            if (manager.options.do.summary) {
-                if (!printed_timestamp) {
-                    Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
-                    Output.prettyln("<d> done<r>", .{});
-                    printed_timestamp = true;
+            {
+                // if they have ccache installed, put it in env variable `CMAKE_CXX_COMPILER_LAUNCHER` so
+                // cmake can use it to hopefully speed things up
+                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                const ccache_path = bun.which(
+                    &buf,
+                    ORIGINAL_PATH,
+                    FileSystem.instance.top_level_dir,
+                    "ccache",
+                ) orelse "";
+
+                if (ccache_path.len > 0) {
+                    var cxx_gop = try manager.env.map.getOrPutWithoutValue("CMAKE_CXX_COMPILER_LAUNCHER");
+                    if (!cxx_gop.found_existing) {
+                        cxx_gop.value_ptr.* = .{
+                            .value = try manager.env.allocator.dupe(u8, "ccache"),
+                            .conditional = false,
+                        };
+                    }
+                    var c_gop = try manager.env.map.getOrPutWithoutValue("CMAKE_C_COMPILER_LAUNCHER");
+                    if (!c_gop.found_existing) {
+                        c_gop.value_ptr.* = .{
+                            .value = try manager.env.allocator.dupe(u8, "ccache"),
+                            .conditional = false,
+                        };
+                    }
                 }
             }
-        }
 
-        Output.flush();
+            {
+                Output.println("", .{});
+                try manager.lockfile.scripts.spawnAllPackageScripts(manager, log_level);
+            }
+        }
     }
 };
 

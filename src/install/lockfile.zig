@@ -149,6 +149,14 @@ pub const Scripts = struct {
         return false;
     }
 
+    pub fn count(this: *Scripts) usize {
+        var res: usize = 0;
+        inline for (Package.Scripts.Hooks) |hook| {
+            res += @field(this, hook).items.len;
+        }
+        return res;
+    }
+
     pub fn run(
         this: *Scripts,
         allocator: Allocator,
@@ -2380,24 +2388,53 @@ pub const Package = extern struct {
             this: *const Package.Scripts,
             lockfile: *Lockfile,
             buf: []const u8,
-            cwd: string,
+            _cwd: string,
             package_name: string,
             comptime is_root: bool,
+            add_node_gyp_rebuild_script: bool,
         ) void {
-            const install_scripts = .{
-                "preinstall",
-                "install",
-                "postinstall",
-            };
+            var cwd: ?string = null;
 
-            inline for (install_scripts) |hook| {
-                const script = @field(this, hook);
-                if (!script.isEmpty()) {
-                    @field(lockfile.scripts, hook).append(lockfile.allocator, .{
-                        .cwd = lockfile.allocator.dupe(u8, cwd) catch unreachable,
-                        .script = lockfile.allocator.dupe(u8, script.slice(buf)) catch unreachable,
+            if (add_node_gyp_rebuild_script) {
+                lockfile.scripts.install.append(lockfile.allocator, .{
+                    .cwd = cwd orelse brk: {
+                        cwd = lockfile.allocator.dupe(u8, _cwd) catch unreachable;
+                        break :brk cwd.?;
+                    },
+                    .script = lockfile.allocator.dupe(u8, "node-gyp rebuild") catch unreachable,
+                    .package_name = package_name,
+                }) catch unreachable;
+
+                // missing install and postinstall, only need to check preinstall
+                if (!this.preinstall.isEmpty()) {
+                    lockfile.scripts.preinstall.append(lockfile.allocator, .{
+                        .cwd = cwd orelse brk: {
+                            cwd = lockfile.allocator.dupe(u8, _cwd) catch unreachable;
+                            break :brk cwd.?;
+                        },
+                        .script = lockfile.allocator.dupe(u8, this.preinstall.slice(buf)) catch unreachable,
                         .package_name = package_name,
                     }) catch unreachable;
+                }
+            } else {
+                const install_scripts = .{
+                    "preinstall",
+                    "install",
+                    "postinstall",
+                };
+
+                inline for (install_scripts) |hook| {
+                    const script = @field(this, hook);
+                    if (!script.isEmpty()) {
+                        @field(lockfile.scripts, hook).append(lockfile.allocator, .{
+                            .cwd = cwd orelse brk: {
+                                cwd = lockfile.allocator.dupe(u8, _cwd) catch unreachable;
+                                break :brk cwd.?;
+                            },
+                            .script = lockfile.allocator.dupe(u8, script.slice(buf)) catch unreachable,
+                            .package_name = package_name,
+                        }) catch unreachable;
+                    }
                 }
             }
 
@@ -2413,7 +2450,10 @@ pub const Package = extern struct {
                 const script = @field(this, hook);
                 if (!script.isEmpty()) {
                     @field(lockfile.scripts, hook).append(lockfile.allocator, .{
-                        .cwd = lockfile.allocator.dupe(u8, cwd) catch unreachable,
+                        .cwd = cwd orelse brk: {
+                            cwd = lockfile.allocator.dupe(u8, _cwd) catch unreachable;
+                            break :brk cwd.?;
+                        },
                         .script = lockfile.allocator.dupe(u8, script.slice(buf)) catch unreachable,
                         .package_name = package_name,
                     }) catch unreachable;
@@ -2457,6 +2497,7 @@ pub const Package = extern struct {
             subpath: [:0]const u8,
             cwd: string,
             name: string,
+            add_node_gyp_rebuild_script: bool,
         ) !void {
             var json_file_fd = try bun.sys.openat(
                 bun.toFD(node_modules.fd),
@@ -2485,7 +2526,7 @@ pub const Package = extern struct {
             try builder.allocate();
             this.parseAlloc(lockfile.allocator, &builder, json);
 
-            this.enqueue(lockfile, tmp.buffers.string_bytes.items, cwd, name, false);
+            this.enqueue(lockfile, tmp.buffers.string_bytes.items, cwd, name, false, add_node_gyp_rebuild_script);
         }
     };
 

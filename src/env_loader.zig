@@ -1014,6 +1014,8 @@ pub const Map = struct {
     };
     const HashTable = bun.StringArrayHashMap(HashTableValue);
 
+    const GetOrPutResult = HashTable.GetOrPutResult;
+
     map: HashTable,
 
     pub fn createNullDelimitedEnvMap(this: *Map, arena: std.mem.Allocator) ![:null]?[*:0]u8 {
@@ -1068,6 +1070,10 @@ pub const Map = struct {
             .value = value,
             .conditional = false,
         });
+    }
+
+    pub inline fn getOrPutWithoutValue(this: *Map, key: string) !GetOrPutResult {
+        return this.map.getOrPut(key);
     }
 
     pub fn jsonStringify(self: *const @This(), writer: anytype) !void {

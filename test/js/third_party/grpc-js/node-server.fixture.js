@@ -26,32 +26,32 @@ const cert = readFileSync(join(__dirname, "fixtures", "server1.pem"));
 const serviceImpl =
   process.env.GRPC_SERVICE_TYPE === "1"
     ? {
-        echo: (call, callback) => {
-          const succeedOnRetryAttempt = call.metadata.get("succeed-on-retry-attempt");
-          const previousAttempts = call.metadata.get("grpc-previous-rpc-attempts");
-          if (
-            succeedOnRetryAttempt.length === 0 ||
-            (previousAttempts.length > 0 && previousAttempts[0] === succeedOnRetryAttempt[0])
-          ) {
-            callback(null, call.request);
-          } else {
-            const statusCode = call.metadata.get("respond-with-status");
-            const code = statusCode[0] ? Number.parseInt(statusCode[0]) : grpc.status.UNKNOWN;
-            callback({
-              code: code,
-              details: `Failed on retry ${previousAttempts[0] ?? 0}`,
-            });
-          }
-        },
-      }
-    : {
-        echo: (call, callback) => {
-          if (call.metadata) {
-            call.sendMetadata(call.metadata);
-          }
+      echo: (call, callback) => {
+        const succeedOnRetryAttempt = call.metadata.get("succeed-on-retry-attempt");
+        const previousAttempts = call.metadata.get("grpc-previous-rpc-attempts");
+        if (
+          succeedOnRetryAttempt.length === 0 ||
+          (previousAttempts.length > 0 && previousAttempts[0] === succeedOnRetryAttempt[0])
+        ) {
           callback(null, call.request);
-        },
-      };
+        } else {
+          const statusCode = call.metadata.get("respond-with-status");
+          const code = statusCode[0] ? Number.parseInt(statusCode[0]) : grpc.status.UNKNOWN;
+          callback({
+            code: code,
+            details: `Failed on retry ${previousAttempts[0] ?? 0}`,
+          });
+        }
+      },
+    }
+    : {
+      echo: (call, callback) => {
+        if (call.metadata) {
+          call.sendMetadata(call.metadata);
+        }
+        callback(null, call.request);
+      },
+    };
 
 function main() {
   const options = process.env.GRPC_TEST_OPTIONS;
@@ -73,7 +73,7 @@ function main() {
   } else {
     credentials = grpc.ServerCredentials.createInsecure();
   }
-  server.bindAsync("localhost:0", credentials, () => {
+  server.bindAsync("127.0.0.1:0", credentials, () => {
     server.start();
     process.stdout.write(JSON.stringify(server.http2ServerList[0].server.address()));
   });

@@ -150,9 +150,6 @@ pub inline fn isNPMPackageName(target: string) bool {
         switch (c) {
             // Old packages may have capital letters
             'A'...'Z', 'a'...'z', '0'...'9', '-', '_', '.' => {},
-            '$' => {
-                if (scoped and slash_index == 0) return false;
-            },
             '/' => {
                 if (!scoped) return false;
                 if (slash_index > 0) return false;

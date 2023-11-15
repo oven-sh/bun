@@ -1,8 +1,8 @@
-'use strict';
+"use strict";
 /* eslint max-len: 0 */
 
-const test = require('tape');
-const { parseArgs } = require('../index.js');
+const test = require("tape");
+const { parseArgs } = require("../index.js");
 
 // These tests are not synced upstream with node, in case of possible side-effects.
 // See index.js for tests shared with upstream.
@@ -21,8 +21,8 @@ function restoreObjectPrototype(prop, oldDescriptor) {
   }
 }
 
-test('should not allow __proto__ key to be set on object', (t) => {
-  const args = ['--__proto__=hello'];
+test("should not allow __proto__ key to be set on object", t => {
+  const args = ["--__proto__=hello"];
   const expected = { values: { __proto__: null }, positionals: [] };
 
   const result = parseArgs({ strict: false, args });
@@ -31,57 +31,57 @@ test('should not allow __proto__ key to be set on object', (t) => {
   t.end();
 });
 
-test('when prototype has multiple then ignored', (t) => {
-  const args = ['--foo', '1', '--foo', '2'];
-  const options = { foo: { type: 'string' } };
-  const expectedResult = { values: { __proto__: null, foo: '2' }, positionals: [] };
+test("when prototype has multiple then ignored", t => {
+  const args = ["--foo", "1", "--foo", "2"];
+  const options = { foo: { type: "string" } };
+  const expectedResult = { values: { __proto__: null, foo: "2" }, positionals: [] };
 
-  const holdDescriptor = setObjectPrototype('multiple', true);
+  const holdDescriptor = setObjectPrototype("multiple", true);
   const result = parseArgs({ args, options });
-  restoreObjectPrototype('multiple', holdDescriptor);
+  restoreObjectPrototype("multiple", holdDescriptor);
   t.deepEqual(result, expectedResult);
   t.end();
 });
 
-test('when prototype has type then ignored', (t) => {
-  const args = ['--foo', '1'];
-  const options = { foo: { } };
+test("when prototype has type then ignored", t => {
+  const args = ["--foo", "1"];
+  const options = { foo: {} };
 
-  const holdDescriptor = setObjectPrototype('type', 'string');
+  const holdDescriptor = setObjectPrototype("type", "string");
   t.throws(() => {
     parseArgs({ args, options });
   });
-  restoreObjectPrototype('type', holdDescriptor);
+  restoreObjectPrototype("type", holdDescriptor);
   t.end();
 });
 
-test('when prototype has short then ignored', (t) => {
-  const args = ['-f', '1'];
-  const options = { foo: { type: 'string' } };
+test("when prototype has short then ignored", t => {
+  const args = ["-f", "1"];
+  const options = { foo: { type: "string" } };
 
-  const holdDescriptor = setObjectPrototype('short', 'f');
+  const holdDescriptor = setObjectPrototype("short", "f");
   t.throws(() => {
     parseArgs({ args, options });
   });
-  restoreObjectPrototype('short', holdDescriptor);
+  restoreObjectPrototype("short", holdDescriptor);
   t.end();
 });
 
-test('when prototype has strict then ignored', (t) => {
-  const args = ['-f'];
+test("when prototype has strict then ignored", t => {
+  const args = ["-f"];
 
-  const holdDescriptor = setObjectPrototype('strict', false);
+  const holdDescriptor = setObjectPrototype("strict", false);
   t.throws(() => {
     parseArgs({ args });
   });
-  restoreObjectPrototype('strict', holdDescriptor);
+  restoreObjectPrototype("strict", holdDescriptor);
   t.end();
 });
 
-test('when prototype has args then ignored', (t) => {
-  const holdDescriptor = setObjectPrototype('args', ['--foo']);
+test("when prototype has args then ignored", t => {
+  const holdDescriptor = setObjectPrototype("args", ["--foo"]);
   const result = parseArgs({ strict: false });
-  restoreObjectPrototype('args', holdDescriptor);
+  restoreObjectPrototype("args", holdDescriptor);
   t.false(result.values.foo);
   t.end();
 });

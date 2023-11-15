@@ -398,7 +398,7 @@ To specify an option argument starting with a dash use ${example}.`;
     };
 
     exports.parseArgs = parseArgs;
-  }
+  },
 });
 
 export default requireParseArgs();

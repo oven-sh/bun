@@ -44,9 +44,8 @@ void *sni_find(void *sni, const char *hostname);
 #endif
 
 #include "./root_certs.h"
-static const size_t root_certs_size =
-    sizeof(root_certs) / sizeof(root_certs[0]);
-static X509 *root_cert_instances[root_certs_size] = {NULL};
+static X509 *root_cert_instances[sizeof(root_certs) / sizeof(root_certs[0])] = {
+    NULL};
 
 /* These are in root_certs.cpp */
 extern X509_STORE *us_get_default_ca_store();

@@ -59,6 +59,10 @@ declare module "bun:test" {
      * added to existing import statements. This is due to how ESM works.
      */
     module(id: string, factory: () => any): void | Promise<void>;
+    /**
+     * Restore the previous value of mocks.
+     */
+    restore(): void;
   };
 
   /**

@@ -3223,4 +3223,26 @@ console.log(foo, array);
   it("scanImports on empty file does not segfault", () => {
     new Bun.Transpiler().scanImports("");
   });
+
+  it("preserves exotic directives", () => {
+    expect(
+      new Bun.Transpiler().transformSync(`"use client";
+console.log("boop");
+`),
+    ).toBe(
+      `"use client";
+console.log("boop");
+`,
+    );
+  });
+  it("does not preserve use strict (for now)", () => {
+    expect(
+      new Bun.Transpiler().transformSync(`"use strict";
+  console.log("boop");
+  `),
+    ).toBe(
+      `console.log("boop");
+`,
+    );
+  });
 });

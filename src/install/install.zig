@@ -3151,7 +3151,7 @@ pub const PackageManager = struct {
         tmpname_buf[0..8].* = "tmplock-".*;
         var tmpfile = FileSystem.RealFS.Tmpfile{};
         var secret: [32]u8 = undefined;
-        std.mem.writeIntNative(u64, secret[0..8], @as(u64, @intCast(std.time.milliTimestamp())));
+        std.mem.writeInt(u64, secret[0..8], @as(u64, @intCast(std.time.milliTimestamp())), .little);
         var base64_bytes: [64]u8 = undefined;
         std.crypto.random.bytes(&base64_bytes);
 
@@ -5925,7 +5925,17 @@ pub const PackageManager = struct {
             subcommand,
         );
 
-        manager.timestamp_for_manifest_cache_control = @as(u32, @truncate(@as(u64, @intCast(@max(std.time.timestamp(), 0)))));
+        manager.timestamp_for_manifest_cache_control = brk: {
+            if (comptime bun.Environment.allow_assert) {
+                if (env.map.get("BUN_CONFIG_MANIFEST_CACHE_CONTROL_TIMESTAMP")) |cache_control| {
+                    if (std.fmt.parseInt(u32, cache_control, 10)) |int| {
+                        break :brk int;
+                    } else |_| {}
+                }
+            }
+
+            break :brk @as(u32, @truncate(@as(u64, @intCast(@max(std.time.timestamp(), 0)))));
+        };
         return manager;
     }
 

@@ -18,7 +18,7 @@ it("fetch() with a buffered gzip response works (one chunk)", async () => {
   });
   gcTick(true);
 
-  const res = await fetch(`http://${server.hostname}:${server.port}`, { verbose: true });
+  const res = await fetch(server.url, { verbose: true });
   gcTick(true);
   const arrayBuffer = await res.arrayBuffer();
   const clone = new Buffer(arrayBuffer);
@@ -49,7 +49,7 @@ it("fetch() with a redirect that returns a buffered gzip response works (one chu
     },
   });
 
-  const res = await fetch(`http://${server.hostname}:${server.port}/hey`, { verbose: true });
+  const res = await fetch(`${server.url.href}/hey`, { verbose: true });
   const arrayBuffer = await res.arrayBuffer();
   expect(
     new Buffer(arrayBuffer).equals(new Buffer(await Bun.file(import.meta.dir + "/fixture.html").arrayBuffer())),
@@ -70,12 +70,12 @@ it("fetch() with a protocol-relative redirect that returns a buffered gzip respo
           },
         });
 
-      return Response.redirect(`://${server.hostname}:${server.port}/redirect`);
+      return Response.redirect(`${server.url.href}/redirect`);
     },
   });
 
-  const res = await fetch(`http://${server.hostname}:${server.port}/hey`, { verbose: true });
-  expect(res.url).toBe(`http://${server.hostname}:${server.port}/redirect`);
+  const res = await fetch(`${server.url.href}/hey`, { verbose: true });
+  expect(res.url).toBe(`${server.url.href}/redirect`);
   expect(res.redirected).toBe(true);
   expect(res.status).toBe(200);
   const arrayBuffer = await res.arrayBuffer();
@@ -113,7 +113,7 @@ it("fetch() with a gzip response works (one chunk, streamed, with a delay)", asy
     },
   });
 
-  const res = await fetch(`http://${server.hostname}:${server.port}`, {});
+  const res = await fetch(server.url, {});
   const arrayBuffer = await res.arrayBuffer();
   expect(
     new Buffer(arrayBuffer).equals(new Buffer(await Bun.file(import.meta.dir + "/fixture.html").arrayBuffer())),

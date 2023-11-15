@@ -6381,7 +6381,6 @@ pub const PackageManager = struct {
         clap.parseParam("-y, --yarn                        Write a yarn.lock file (yarn v1)") catch unreachable,
         clap.parseParam("-p, --production                  Don't install devDependencies") catch unreachable,
         clap.parseParam("--no-save                         Don't save a lockfile") catch unreachable,
-        clap.parseParam("--save                            Save to package.json") catch unreachable,
         clap.parseParam("--dry-run                         Don't install anything") catch unreachable,
         clap.parseParam("--frozen-lockfile                 Disallow changes to lockfile") catch unreachable,
         clap.parseParam("-f, --force                       Always request the latest versions from the registry & reinstall all dependencies") catch unreachable,
@@ -6433,10 +6432,12 @@ pub const PackageManager = struct {
     };
 
     const link_params = install_params_ ++ [_]ParamType{
+        clap.parseParam("--save                            Add dependency to package.json") catch unreachable,
         clap.parseParam("<POS> ...                         \"name\" install package as a link") catch unreachable,
     };
 
     const unlink_params = install_params_ ++ [_]ParamType{
+        clap.parseParam("--save                            Add dependency to package.json") catch unreachable,
         clap.parseParam("<POS> ...                         \"name\" uninstall package as a link") catch unreachable,
     };
 

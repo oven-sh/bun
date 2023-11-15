@@ -207,7 +207,7 @@ describe("Server", () => {
 
       try {
         await fetch(server.url, { signal: abortController.signal });
-      } catch { }
+      } catch {}
       expect(signalOnServer).toBe(true);
       server.stop(true);
     }
@@ -230,7 +230,7 @@ describe("Server", () => {
 
       try {
         await fetch(server.url, { signal: abortController.signal });
-      } catch { }
+      } catch {}
       expect(signalOnServer).toBe(false);
       server.stop(true);
     }
@@ -275,7 +275,7 @@ describe("Server", () => {
 
       try {
         await fetch(server.url, { signal: abortController.signal });
-      } catch { }
+      } catch {}
       await Bun.sleep(10);
       expect(signalOnServer).toBe(true);
       server.stop(true);
@@ -353,7 +353,7 @@ describe("Server", () => {
 
       try {
         await fetch(server.url, { signal: abortController.signal });
-      } catch { }
+      } catch {}
       await Bun.sleep(10);
       expect(signalOnServer).toBe(true);
       server.stop(true);

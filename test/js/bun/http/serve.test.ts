@@ -142,9 +142,7 @@ it("request.signal works in leaky case", async () => {
       },
     },
     async server => {
-      expect(async () => fetch(server.url, { signal: aborty.signal })).toThrow(
-        "The operation was aborted.",
-      );
+      expect(async () => fetch(server.url, { signal: aborty.signal })).toThrow("The operation was aborted.");
 
       await Bun.sleep(1);
 
@@ -228,7 +226,7 @@ describe("streaming", () => {
                 pull(controller) {
                   throw new Error("TestPassed");
                 },
-                cancel(reason) { },
+                cancel(reason) {},
               }),
               {
                 status: 402,
@@ -751,7 +749,7 @@ describe("parallel", () => {
         },
       },
       async server => {
-        for (let i = 0; i < count;) {
+        for (let i = 0; i < count; ) {
           let responses = await Promise.all([
             fetch(server.url),
             fetch(server.url),
@@ -777,7 +775,7 @@ describe("parallel", () => {
         },
       },
       async server => {
-        for (let i = 0; i < count;) {
+        for (let i = 0; i < count; ) {
           let responses = await Promise.all([
             fetch(server.url),
             fetch(server.url),

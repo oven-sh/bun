@@ -1065,7 +1065,7 @@ describe("fetch() with streaming", () => {
               await write("Extra Data!");
               socket.flush();
             },
-            drain(socket) { },
+            drain(socket) {},
           },
         });
 
@@ -1143,7 +1143,7 @@ describe("fetch() with streaming", () => {
               }
               socket.flush();
             },
-            drain(socket) { },
+            drain(socket) {},
           },
         });
         try {
@@ -1228,7 +1228,7 @@ describe("fetch() with streaming", () => {
                 }
                 socket.flush();
               },
-              drain(socket) { },
+              drain(socket) {},
             },
           });
 
@@ -1318,7 +1318,7 @@ describe("fetch() with streaming", () => {
               }
               socket.flush();
             },
-            drain(socket) { },
+            drain(socket) {},
           },
         });
 

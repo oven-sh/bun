@@ -298,7 +298,7 @@ describe("AbortSignal", () => {
 
     try {
       await fetch(`http://127.0.0.1:${server.port}`, { signal: signal }).then(res => res.text());
-      expect(() => { }).toThrow();
+      expect(() => {}).toThrow();
     } catch (ex: any) {
       expect(ex.name).toBe("TimeoutError");
     }
@@ -315,7 +315,7 @@ describe("AbortSignal", () => {
     try {
       const request = new Request(`http://127.0.0.1:${server.port}`, { signal });
       await Promise.all([fetch(request).then(res => res.text()), manualAbort()]);
-      expect(() => { }).toThrow();
+      expect(() => {}).toThrow();
     } catch (ex: any) {
       expect(ex.name).toBe("AbortError");
     }
@@ -650,31 +650,33 @@ function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?
         if (withGC) gc();
       });
 
-      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> json${withGC ? " (with gc) " : ""
-        }`, async () => {
-          if (withGC) gc();
-          var response = blobbyConstructor(new TextEncoder().encode(JSON.stringify(jsonObject)));
-          if (withGC) gc();
-          expect(JSON.stringify(await response.json())).toBe(JSON.stringify(jsonObject));
-          if (withGC) gc();
-        });
+      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> json${
+        withGC ? " (with gc) " : ""
+      }`, async () => {
+        if (withGC) gc();
+        var response = blobbyConstructor(new TextEncoder().encode(JSON.stringify(jsonObject)));
+        if (withGC) gc();
+        expect(JSON.stringify(await response.json())).toBe(JSON.stringify(jsonObject));
+        if (withGC) gc();
+      });
 
-      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> invalid json${withGC ? " (with gc) " : ""
-        }`, async () => {
-          if (withGC) gc();
-          var response = blobbyConstructor(
-            new TextEncoder().encode(JSON.stringify(jsonObject) + " NOW WE ARE INVALID JSON"),
-          );
-          if (withGC) gc();
-          var failed = false;
-          try {
-            await response.json();
-          } catch (e) {
-            failed = true;
-          }
-          expect(failed).toBe(true);
-          if (withGC) gc();
-        });
+      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> invalid json${
+        withGC ? " (with gc) " : ""
+      }`, async () => {
+        if (withGC) gc();
+        var response = blobbyConstructor(
+          new TextEncoder().encode(JSON.stringify(jsonObject) + " NOW WE ARE INVALID JSON"),
+        );
+        if (withGC) gc();
+        var failed = false;
+        try {
+          await response.json();
+        } catch (e) {
+          failed = true;
+        }
+        expect(failed).toBe(true);
+        if (withGC) gc();
+      });
 
       it(`${jsonObject.hello === true ? "latin1" : "utf16"} text${withGC ? " (with gc) " : ""}`, async () => {
         if (withGC) gc();
@@ -684,14 +686,15 @@ function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?
         if (withGC) gc();
       });
 
-      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> text${withGC ? " (with gc) " : ""
-        }`, async () => {
-          if (withGC) gc();
-          var response = blobbyConstructor(new TextEncoder().encode(JSON.stringify(jsonObject)));
-          if (withGC) gc();
-          expect(await response.text()).toBe(JSON.stringify(jsonObject));
-          if (withGC) gc();
-        });
+      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> text${
+        withGC ? " (with gc) " : ""
+      }`, async () => {
+        if (withGC) gc();
+        var response = blobbyConstructor(new TextEncoder().encode(JSON.stringify(jsonObject)));
+        if (withGC) gc();
+        expect(await response.text()).toBe(JSON.stringify(jsonObject));
+        if (withGC) gc();
+      });
 
       it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer${withGC ? " (with gc) " : ""}`, async () => {
         if (withGC) gc();
@@ -716,29 +719,30 @@ function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?
         if (withGC) gc();
       });
 
-      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> arrayBuffer${withGC ? " (with gc) " : ""
-        }`, async () => {
-          if (withGC) gc();
+      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> arrayBuffer${
+        withGC ? " (with gc) " : ""
+      }`, async () => {
+        if (withGC) gc();
 
-          var response = blobbyConstructor(new TextEncoder().encode(JSON.stringify(jsonObject)));
-          if (withGC) gc();
+        var response = blobbyConstructor(new TextEncoder().encode(JSON.stringify(jsonObject)));
+        if (withGC) gc();
 
-          const bytes = new TextEncoder().encode(JSON.stringify(jsonObject));
-          if (withGC) gc();
+        const bytes = new TextEncoder().encode(JSON.stringify(jsonObject));
+        if (withGC) gc();
 
-          const compare = new Uint8Array(await response.arrayBuffer());
-          if (withGC) gc();
+        const compare = new Uint8Array(await response.arrayBuffer());
+        if (withGC) gc();
 
-          withoutAggressiveGC(() => {
-            for (let i = 0; i < compare.length; i++) {
-              if (withGC) gc();
+        withoutAggressiveGC(() => {
+          for (let i = 0; i < compare.length; i++) {
+            if (withGC) gc();
 
-              expect(compare[i]).toBe(bytes[i]);
-              if (withGC) gc();
-            }
-          });
-          if (withGC) gc();
+            expect(compare[i]).toBe(bytes[i]);
+            if (withGC) gc();
+          }
         });
+        if (withGC) gc();
+      });
 
       hasBlobFn &&
         it(`${jsonObject.hello === true ? "latin1" : "utf16"} blob${withGC ? " (with gc) " : ""}`, async () => {
@@ -1744,8 +1748,8 @@ it("304 not modified with missing content-length does not cause a request timeou
           socket.end();
         }, 9999).unref();
       },
-      data() { },
-      close() { },
+      data() {},
+      close() {},
     },
     port: 0,
     hostname: "localhost",
@@ -1767,8 +1771,8 @@ it("304 not modified with missing content-length and connection close does not c
           socket.end();
         }, 9999).unref();
       },
-      data() { },
-      close() { },
+      data() {},
+      close() {},
     },
     port: 0,
     hostname: "localhost",
@@ -1790,8 +1794,8 @@ it("304 not modified with content-length 0 and connection close does not cause a
           socket.end();
         }, 9999).unref();
       },
-      data() { },
-      close() { },
+      data() {},
+      close() {},
     },
     port: 0,
     hostname: "localhost",
@@ -1813,8 +1817,8 @@ it("304 not modified with 0 content-length does not cause a request timeout", as
           socket.end();
         }, 9999).unref();
       },
-      data() { },
-      close() { },
+      data() {},
+      close() {},
     },
     port: 0,
     hostname: "localhost",
@@ -1861,7 +1865,7 @@ describe("http/1.1 response body length", () => {
             socket.end(`HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nHello, World!`);
           }
         },
-        close() { },
+        close() {},
       },
       port: 0,
       hostname: "localhost",

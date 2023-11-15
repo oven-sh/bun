@@ -3300,8 +3300,7 @@ pub const ZigConsoleClient = struct {
         var console = global.bunVM().console;
         var writer = console.error_writer.writer();
         const Writer = @TypeOf(writer);
-        for (0..args_len) |i| {
-            const arg = args[i];
+        for (args[0..args_len]) |arg| {
             const tag = ZigConsoleClient.Formatter.Tag.get(arg, global);
             _ = writer.write(" ") catch 0;
             if (Output.enable_ansi_colors_stderr) {

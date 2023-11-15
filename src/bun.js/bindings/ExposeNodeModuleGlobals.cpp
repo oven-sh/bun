@@ -95,7 +95,7 @@ extern "C" void Bun__ExposeNodeModuleGlobals(Zig::GlobalObject* globalObject)
             vm, \
             ExposeNodeModuleGlobalGetters::id, \
             nullptr), \
-        JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessorOrValue \
+        0 | JSC::PropertyAttribute::CustomAccessorOrValue \
     );
 
     FOREACH_EXPOSED_BUILTIN_IMR(PUT_CUSTOM_GETTER_SETTER)

@@ -1585,7 +1585,7 @@ pub const VirtualMachine = struct {
         };
 
         if (jsc_vm.eval_script) |eval_script| {
-            if (strings.endsWithComptime(specifier, "/[bun:eval]")) {
+            if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
                 virtual_source = eval_script;
                 loader = .tsx;
             }
@@ -1658,7 +1658,7 @@ pub const VirtualMachine = struct {
             ret.result = null;
             ret.path = result.path;
             return;
-        } else if (jsc_vm.eval_script != null and strings.endsWithComptime(specifier, "/[bun:eval]")) {
+        } else if (jsc_vm.eval_script != null and strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
             ret.result = null;
             ret.path = specifier;
             return;

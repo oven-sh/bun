@@ -1974,7 +1974,7 @@ pub const ModuleLoader = struct {
         var loader: ?options.Loader = jsc_vm.bundler.options.loaders.get(path.name.ext);
 
         if (jsc_vm.eval_script) |eval_script| {
-            if (strings.endsWithComptime(specifier, "/[bun:eval]")) {
+            if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
                 virtual_source = eval_script;
                 loader = .tsx;
             }

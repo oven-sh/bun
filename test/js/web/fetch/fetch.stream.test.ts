@@ -53,7 +53,7 @@ describe("fetch() with streaming", () => {
         },
       });
 
-      const server_url = `http://${server.hostname}:${server.port}`;
+      const server_url = server.url;
       try {
         const res = await fetch(server_url, { signal: AbortSignal.timeout(20) });
         const reader = res.body?.getReader();
@@ -101,7 +101,7 @@ describe("fetch() with streaming", () => {
         },
       });
 
-      const server_url = `http://${server.hostname}:${server.port}`;
+      const server_url = server.url;
       const res = await fetch(server_url);
       try {
         const promise = res.text(); // start buffering
@@ -147,7 +147,7 @@ describe("fetch() with streaming", () => {
         },
       });
 
-      const server_url = `http://${server.hostname}:${server.port}`;
+      const server_url = server.url;
       const res = await fetch(server_url);
       try {
         const body = res.body as ReadableStream<Uint8Array>;
@@ -278,7 +278,7 @@ describe("fetch() with streaming", () => {
       });
 
       async function getReader() {
-        return (await fetch(`http://${server.hostname}:${server.port}`, {})).body?.getReader();
+        return (await fetch(server.url, {})).body?.getReader();
       }
       gcTick(false);
       const reader = await getReader();
@@ -349,7 +349,7 @@ describe("fetch() with streaming", () => {
         return parseInt(match[1]?.trim(), 10);
       }
 
-      const res = await fetch(`http://${server.hostname}:${server.port}`, {});
+      const res = await fetch(server.url, {});
       gcTick(false);
       const reader = res.body?.getReader();
       gcTick(false);
@@ -411,7 +411,7 @@ describe("fetch() with streaming", () => {
         },
       });
 
-      const server_url = `http://${server.hostname}:${server.port}`;
+      const server_url = server.url;
       async function doRequest() {
         await Bun.sleep(10);
         const res = await fetch(server_url);
@@ -478,7 +478,7 @@ describe("fetch() with streaming", () => {
         },
       });
 
-      const server_url = `http://${server.hostname}:${server.port}`;
+      const server_url = server.url;
       const res = await fetch(server_url);
 
       const transform = new TransformStream({
@@ -524,7 +524,7 @@ describe("fetch() with streaming", () => {
         },
       });
 
-      const server_url = `http://${server.hostname}:${server.port}`;
+      const server_url = server.url;
       const res = await fetch(server_url);
 
       const reader = res.body?.getReader();
@@ -601,7 +601,7 @@ describe("fetch() with streaming", () => {
         },
       });
 
-      let res = await fetch(`http://${server.hostname}:${server.port}`, {});
+      let res = await fetch(server.url, {});
       gcTick(false);
       const reader = res.body?.getReader();
 
@@ -672,7 +672,7 @@ describe("fetch() with streaming", () => {
             },
           });
 
-          const server_url = `http://${server.hostname}:${server.port}`;
+          const server_url = server.url;
           const res = await fetch(server_url);
           const reader = res.body?.getReader();
           let buffer = Buffer.alloc(0);
@@ -759,7 +759,7 @@ describe("fetch() with streaming", () => {
           },
         });
 
-        let res = await fetch(`http://${server.hostname}:${server.port}`, {});
+        let res = await fetch(server.url, {});
         gcTick(false);
         const reader = res.body?.getReader();
 
@@ -810,13 +810,13 @@ describe("fetch() with streaming", () => {
             );
           },
         });
-        let res = await fetch(`http://${server.hostname}:${server.port}`, {});
+        let res = await fetch(server.url, {});
         gcTick(false);
         const result = await res.text();
         gcTick(false);
         expect(result).toBe(content);
 
-        res = await fetch(`http://${server.hostname}:${server.port}`, {});
+        res = await fetch(server.url, {});
         gcTick(false);
         const reader = res.body?.getReader();
 
@@ -881,13 +881,13 @@ describe("fetch() with streaming", () => {
             );
           },
         });
-        let res = await fetch(`http://${server.hostname}:${server.port}`, {});
+        let res = await fetch(server.url, {});
         gcTick(false);
         const result = await res.text();
         gcTick(false);
         expect(result).toBe(content);
 
-        res = await fetch(`http://${server.hostname}:${server.port}`, {});
+        res = await fetch(server.url, {});
         gcTick(false);
         const reader = res.body?.getReader();
 
@@ -931,13 +931,13 @@ describe("fetch() with streaming", () => {
             });
           },
         });
-        let res = await fetch(`http://${server.hostname}:${server.port}`, {});
+        let res = await fetch(server.url, {});
         gcTick(false);
         const result = await res.text();
         gcTick(false);
         expect(result).toBe(content);
 
-        res = await fetch(`http://${server.hostname}:${server.port}`, {});
+        res = await fetch(server.url, {});
         gcTick(false);
         const reader = res.body?.getReader();
 
@@ -981,13 +981,13 @@ describe("fetch() with streaming", () => {
             });
           },
         });
-        let res = await fetch(`http://${server.hostname}:${server.port}`, {});
+        let res = await fetch(server.url, {});
         gcTick(false);
         const result = await res.text();
         gcTick(false);
         expect(result).toBe(content);
 
-        res = await fetch(`http://${server.hostname}:${server.port}`, {});
+        res = await fetch(server.url, {});
         gcTick(false);
         const reader = res.body?.getReader();
 
@@ -1065,7 +1065,7 @@ describe("fetch() with streaming", () => {
               await write("Extra Data!");
               socket.flush();
             },
-            drain(socket) {},
+            drain(socket) { },
           },
         });
 
@@ -1143,7 +1143,7 @@ describe("fetch() with streaming", () => {
               }
               socket.flush();
             },
-            drain(socket) {},
+            drain(socket) { },
           },
         });
         try {
@@ -1228,7 +1228,7 @@ describe("fetch() with streaming", () => {
                 }
                 socket.flush();
               },
-              drain(socket) {},
+              drain(socket) { },
             },
           });
 
@@ -1318,7 +1318,7 @@ describe("fetch() with streaming", () => {
               }
               socket.flush();
             },
-            drain(socket) {},
+            drain(socket) { },
           },
         });
 

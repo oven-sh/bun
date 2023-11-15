@@ -154,7 +154,7 @@ describe("Server", () => {
       port: 0,
     });
 
-    const response = await fetch(`http://${server.hostname}:${server.port}`);
+    const response = await fetch(server.url);
     expect(await response.text()).toBe("Hello");
     server.stop(true);
   });
@@ -206,8 +206,8 @@ describe("Server", () => {
       });
 
       try {
-        await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal });
-      } catch {}
+        await fetch(server.url, { signal: abortController.signal });
+      } catch { }
       expect(signalOnServer).toBe(true);
       server.stop(true);
     }
@@ -229,8 +229,8 @@ describe("Server", () => {
       });
 
       try {
-        await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal });
-      } catch {}
+        await fetch(server.url, { signal: abortController.signal });
+      } catch { }
       expect(signalOnServer).toBe(false);
       server.stop(true);
     }
@@ -274,8 +274,8 @@ describe("Server", () => {
       });
 
       try {
-        await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal });
-      } catch {}
+        await fetch(server.url, { signal: abortController.signal });
+      } catch { }
       await Bun.sleep(10);
       expect(signalOnServer).toBe(true);
       server.stop(true);
@@ -289,7 +289,7 @@ describe("Server", () => {
       },
     });
     try {
-      const url = `http://${server.hostname}:${server.port}/`;
+      const url = server.url.href;
       const response = await server.fetch(url);
       expect(await response.text()).toBe("Hello World!");
       expect(response.status).toBe(200);
@@ -306,7 +306,7 @@ describe("Server", () => {
       },
     });
     try {
-      const url = `http://${server.hostname}:${server.port}/`;
+      const url = server.url.href;
       const response = await server.fetch(new Request(url));
       expect(await response.text()).toBe("Hello World!");
       expect(response.status).toBe(200);
@@ -352,8 +352,8 @@ describe("Server", () => {
       });
 
       try {
-        await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal });
-      } catch {}
+        await fetch(server.url, { signal: abortController.signal });
+      } catch { }
       await Bun.sleep(10);
       expect(signalOnServer).toBe(true);
       server.stop(true);
@@ -391,18 +391,18 @@ describe("Server", () => {
       },
       port: 0,
     });
-    const url = `${server.hostname}:${server.port}`;
+    const url = server.url.href.replace("https", "http");
 
     try {
       // should fail
-      await fetch(`http://${url}`, { tls: { rejectUnauthorized: false } });
+      await fetch(url, { tls: { rejectUnauthorized: false } });
       expect(true).toBe(false);
     } catch (err: any) {
       expect(err.code).toBe("ConnectionClosed");
     }
 
     try {
-      const result = await fetch(`https://${url}`, { tls: { rejectUnauthorized: false } }).then(res => res.text());
+      const result = await fetch(server.url, { tls: { rejectUnauthorized: false } }).then(res => res.text());
       expect(result).toBe("Hello");
     } finally {
       server.stop(true);

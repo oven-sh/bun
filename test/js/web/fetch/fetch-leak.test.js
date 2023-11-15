@@ -18,7 +18,7 @@ describe("fetch doesn't leak", () => {
     const proc = Bun.spawn({
       env: {
         ...bunEnv,
-        SERVER: `http://${server.hostname}:${server.port}`,
+        SERVER: server.url,
         COUNT: "200",
       },
       stderr: "inherit",
@@ -64,7 +64,7 @@ describe("fetch doesn't leak", () => {
 
     const env = {
       ...bunEnv,
-      SERVER: `${tls ? "https" : "http"}://${server.hostname}:${server.port}`,
+      SERVER: server.url,
       BUN_JSC_forceRAMSize: (1024 * 1024 * 64).toString("10"),
     };
 

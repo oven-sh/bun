@@ -19,7 +19,7 @@ test("uploads roundtrip", async () => {
   });
 
   // @ts-ignore
-  const reqBody = new Request(`http://${server.hostname}:${server.port}`, {
+  const reqBody = new Request(server.url, {
     body,
     method: "POST",
   });
@@ -51,7 +51,7 @@ test("formData uploads roundtrip, with a call to .body", async () => {
   });
 
   // @ts-ignore
-  const reqBody = new Request(`http://${server.hostname}:${server.port}`, {
+  const reqBody = new Request(server.url, {
     body,
     method: "POST",
   });
@@ -91,7 +91,7 @@ test("req.formData throws error when stream is in use", async () => {
   });
 
   // @ts-ignore
-  const reqBody = new Request(`http://${server.hostname}:${server.port}`, {
+  const reqBody = new Request(server.url, {
     body,
     method: "POST",
   });
@@ -117,7 +117,7 @@ test("formData uploads roundtrip, without a call to .body", async () => {
   });
 
   // @ts-ignore
-  const reqBody = new Request(`http://${server.hostname}:${server.port}`, {
+  const reqBody = new Request(server.url, {
     body,
     method: "POST",
   });
@@ -150,7 +150,7 @@ test("uploads roundtrip with sendfile()", async () => {
     },
   });
 
-  const resp = await fetch("http://" + server.hostname + ":" + server.port, {
+  const resp = await fetch(server.url, {
     body: Bun.file(path),
     method: "PUT",
   });

@@ -298,7 +298,7 @@ describe("AbortSignal", () => {
 
     try {
       await fetch(`http://127.0.0.1:${server.port}`, { signal: signal }).then(res => res.text());
-      expect(() => {}).toThrow();
+      expect(() => { }).toThrow();
     } catch (ex: any) {
       expect(ex.name).toBe("TimeoutError");
     }
@@ -315,7 +315,7 @@ describe("AbortSignal", () => {
     try {
       const request = new Request(`http://127.0.0.1:${server.port}`, { signal });
       await Promise.all([fetch(request).then(res => res.text()), manualAbort()]);
-      expect(() => {}).toThrow();
+      expect(() => { }).toThrow();
     } catch (ex: any) {
       expect(ex.name).toBe("AbortError");
     }
@@ -360,7 +360,7 @@ describe("Headers", () => {
         });
       },
     });
-    const result = await fetch(`http://${server.hostname}:${server.port}/`);
+    const result = await fetch(server.url);
     const value = result.headers.get("content-encoding");
     const body = await result.json();
     expect(value).toBe("gzip");
@@ -501,7 +501,7 @@ describe("fetch", () => {
         });
       },
     });
-    const response = await fetch(`http://${server.hostname}:${server.port}`, {
+    const response = await fetch(server.url, {
       redirect: "manual",
     });
     expect(response.status).toBe(302);
@@ -520,7 +520,7 @@ describe("fetch", () => {
         });
       },
     });
-    const response = await fetch(`http://${server.hostname}:${server.port}`, {
+    const response = await fetch(server.url, {
       redirect: "follow",
     });
     expect(response.status).toBe(200);
@@ -540,7 +540,7 @@ describe("fetch", () => {
       },
     });
     try {
-      const response = await fetch(`http://${server.hostname}:${server.port}`, {
+      const response = await fetch(server.url, {
         redirect: "error",
       });
       expect(response).toBeUndefined();
@@ -558,7 +558,7 @@ describe("fetch", () => {
     });
 
     // POST with body
-    const url = `http://${server.hostname}:${server.port}`;
+    const url = server.url;
     const response = await fetch(url, { method: "POST", body: "buntastic" });
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("buntastic");
@@ -566,7 +566,7 @@ describe("fetch", () => {
 
   ["GET", "HEAD", "OPTIONS"].forEach(method =>
     it(`fail on ${method} with body`, async () => {
-      const url = `http://${server.hostname}:${server.port}`;
+      const url = server.url;
       expect(async () => {
         await fetch(url, { body: "buntastic" });
       }).toThrow("fetch() request with GET/HEAD/OPTIONS method cannot have body.");
@@ -582,7 +582,7 @@ describe("fetch", () => {
     });
 
     // POST with body
-    const url = `http://${server.hostname}:${server.port}`;
+    const url = server.url;
     const response = await fetch(url, { method: "POST", body: "buntastic" });
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("9");
@@ -650,33 +650,31 @@ function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?
         if (withGC) gc();
       });
 
-      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> json${
-        withGC ? " (with gc) " : ""
-      }`, async () => {
-        if (withGC) gc();
-        var response = blobbyConstructor(new TextEncoder().encode(JSON.stringify(jsonObject)));
-        if (withGC) gc();
-        expect(JSON.stringify(await response.json())).toBe(JSON.stringify(jsonObject));
-        if (withGC) gc();
-      });
+      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> json${withGC ? " (with gc) " : ""
+        }`, async () => {
+          if (withGC) gc();
+          var response = blobbyConstructor(new TextEncoder().encode(JSON.stringify(jsonObject)));
+          if (withGC) gc();
+          expect(JSON.stringify(await response.json())).toBe(JSON.stringify(jsonObject));
+          if (withGC) gc();
+        });
 
-      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> invalid json${
-        withGC ? " (with gc) " : ""
-      }`, async () => {
-        if (withGC) gc();
-        var response = blobbyConstructor(
-          new TextEncoder().encode(JSON.stringify(jsonObject) + " NOW WE ARE INVALID JSON"),
-        );
-        if (withGC) gc();
-        var failed = false;
-        try {
-          await response.json();
-        } catch (e) {
-          failed = true;
-        }
-        expect(failed).toBe(true);
-        if (withGC) gc();
-      });
+      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> invalid json${withGC ? " (with gc) " : ""
+        }`, async () => {
+          if (withGC) gc();
+          var response = blobbyConstructor(
+            new TextEncoder().encode(JSON.stringify(jsonObject) + " NOW WE ARE INVALID JSON"),
+          );
+          if (withGC) gc();
+          var failed = false;
+          try {
+            await response.json();
+          } catch (e) {
+            failed = true;
+          }
+          expect(failed).toBe(true);
+          if (withGC) gc();
+        });
 
       it(`${jsonObject.hello === true ? "latin1" : "utf16"} text${withGC ? " (with gc) " : ""}`, async () => {
         if (withGC) gc();
@@ -686,15 +684,14 @@ function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?
         if (withGC) gc();
       });
 
-      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> text${
-        withGC ? " (with gc) " : ""
-      }`, async () => {
-        if (withGC) gc();
-        var response = blobbyConstructor(new TextEncoder().encode(JSON.stringify(jsonObject)));
-        if (withGC) gc();
-        expect(await response.text()).toBe(JSON.stringify(jsonObject));
-        if (withGC) gc();
-      });
+      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> text${withGC ? " (with gc) " : ""
+        }`, async () => {
+          if (withGC) gc();
+          var response = blobbyConstructor(new TextEncoder().encode(JSON.stringify(jsonObject)));
+          if (withGC) gc();
+          expect(await response.text()).toBe(JSON.stringify(jsonObject));
+          if (withGC) gc();
+        });
 
       it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer${withGC ? " (with gc) " : ""}`, async () => {
         if (withGC) gc();
@@ -719,30 +716,29 @@ function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?
         if (withGC) gc();
       });
 
-      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> arrayBuffer${
-        withGC ? " (with gc) " : ""
-      }`, async () => {
-        if (withGC) gc();
+      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> arrayBuffer${withGC ? " (with gc) " : ""
+        }`, async () => {
+          if (withGC) gc();
 
-        var response = blobbyConstructor(new TextEncoder().encode(JSON.stringify(jsonObject)));
-        if (withGC) gc();
+          var response = blobbyConstructor(new TextEncoder().encode(JSON.stringify(jsonObject)));
+          if (withGC) gc();
 
-        const bytes = new TextEncoder().encode(JSON.stringify(jsonObject));
-        if (withGC) gc();
+          const bytes = new TextEncoder().encode(JSON.stringify(jsonObject));
+          if (withGC) gc();
 
-        const compare = new Uint8Array(await response.arrayBuffer());
-        if (withGC) gc();
+          const compare = new Uint8Array(await response.arrayBuffer());
+          if (withGC) gc();
 
-        withoutAggressiveGC(() => {
-          for (let i = 0; i < compare.length; i++) {
-            if (withGC) gc();
+          withoutAggressiveGC(() => {
+            for (let i = 0; i < compare.length; i++) {
+              if (withGC) gc();
 
-            expect(compare[i]).toBe(bytes[i]);
-            if (withGC) gc();
-          }
+              expect(compare[i]).toBe(bytes[i]);
+              if (withGC) gc();
+            }
+          });
+          if (withGC) gc();
         });
-        if (withGC) gc();
-      });
 
       hasBlobFn &&
         it(`${jsonObject.hello === true ? "latin1" : "utf16"} blob${withGC ? " (with gc) " : ""}`, async () => {
@@ -1542,7 +1538,7 @@ describe("should strip headers", () => {
       },
     });
 
-    const { headers, url, redirected } = await fetch(`http://${server.hostname}:${server.port}/redirect`, {
+    const { headers, url, redirected } = await fetch(`${server.url.href}/redirect`, {
       method: "POST",
       headers: {
         "I-Am-Here": "yes",
@@ -1584,7 +1580,7 @@ describe("should strip headers", () => {
           return new Response("hello", {
             headers: {
               ...request.headers,
-              "Location": `http://${server.hostname}:${server.port}/redirected`,
+              "Location": `${server.url.href}/redirected`,
             },
             status: 302,
           });
@@ -1619,7 +1615,7 @@ it("same-origin status code 302 should not strip headers", async () => {
         return new Response("hello", {
           headers: {
             ...request.headers,
-            "Location": `http://${server.hostname}:${server.port}/redirected`,
+            "Location": `${server.url.href}/redirected`,
           },
           status: 302,
         });
@@ -1631,7 +1627,7 @@ it("same-origin status code 302 should not strip headers", async () => {
     },
   });
 
-  const { headers, url, redirected } = await fetch(`http://${server.hostname}:${server.port}/redirect`, {
+  const { headers, url, redirected } = await fetch(`${server.url.href}/redirect`, {
     method: "GET",
     headers: {
       "Authorization": "yes",
@@ -1696,7 +1692,7 @@ describe("should handle relative location in the redirect, issue#5635", () => {
       },
     });
 
-    const resp = await fetch(`http://${server.hostname}:${server.port}${pathname}`);
+    const resp = await fetch(`${server.url.href}/${pathname}`);
     expect(resp.redirected).toBe(true);
     expect(new URL(resp.url).pathname).toStrictEqual(expected);
     expect(resp.status).toBe(200);
@@ -1727,7 +1723,7 @@ it("should throw RedirectURLTooLong when location is too long", async () => {
   let err = undefined;
   try {
     gc();
-    const resp = await fetch(`http://${server.hostname}:${server.port}/redirect`);
+    const resp = await fetch(`${server.url.href}/redirect`);
   } catch (error) {
     gc();
     err = error;
@@ -1748,14 +1744,14 @@ it("304 not modified with missing content-length does not cause a request timeou
           socket.end();
         }, 9999).unref();
       },
-      data() {},
-      close() {},
+      data() { },
+      close() { },
     },
     port: 0,
     hostname: "localhost",
   });
 
-  const response = await fetch(`http://${server.hostname}:${server.port}/`);
+  const response = await fetch(server.url);
   expect(response.status).toBe(304);
   expect(await response.arrayBuffer()).toHaveLength(0);
   server.stop(true);
@@ -1771,14 +1767,14 @@ it("304 not modified with missing content-length and connection close does not c
           socket.end();
         }, 9999).unref();
       },
-      data() {},
-      close() {},
+      data() { },
+      close() { },
     },
     port: 0,
     hostname: "localhost",
   });
 
-  const response = await fetch(`http://${server.hostname}:${server.port}/`);
+  const response = await fetch(server.url);
   expect(response.status).toBe(304);
   expect(await response.arrayBuffer()).toHaveLength(0);
   server.stop(true);
@@ -1794,14 +1790,14 @@ it("304 not modified with content-length 0 and connection close does not cause a
           socket.end();
         }, 9999).unref();
       },
-      data() {},
-      close() {},
+      data() { },
+      close() { },
     },
     port: 0,
     hostname: "localhost",
   });
 
-  const response = await fetch(`http://${server.hostname}:${server.port}/`);
+  const response = await fetch(server.url);
   expect(response.status).toBe(304);
   expect(await response.arrayBuffer()).toHaveLength(0);
   server.stop(true);
@@ -1817,14 +1813,14 @@ it("304 not modified with 0 content-length does not cause a request timeout", as
           socket.end();
         }, 9999).unref();
       },
-      data() {},
-      close() {},
+      data() { },
+      close() { },
     },
     port: 0,
     hostname: "localhost",
   });
 
-  const response = await fetch(`http://${server.hostname}:${server.port}/`);
+  const response = await fetch(server.url);
   expect(response.status).toBe(304);
   expect(await response.arrayBuffer()).toHaveLength(0);
   server.stop(true);
@@ -1865,7 +1861,7 @@ describe("http/1.1 response body length", () => {
             socket.end(`HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nHello, World!`);
           }
         },
-        close() {},
+        close() { },
       },
       port: 0,
       hostname: "localhost",

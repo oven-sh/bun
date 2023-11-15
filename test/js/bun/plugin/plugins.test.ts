@@ -475,7 +475,7 @@ describe("errors", () => {
         return new Response(result);
       },
     });
-    const { default: text } = await import(`http://${server.hostname}:${server.port}/hey.txt`);
+    const { default: text } = await import(`${server.url.href}/hey.txt`);
     expect(text).toBe(result);
   });
 });

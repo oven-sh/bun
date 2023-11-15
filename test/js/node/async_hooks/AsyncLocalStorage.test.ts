@@ -258,7 +258,7 @@ describe("async context passes through", () => {
         },
       });
 
-      const response = await fetch("http://" + server.hostname + ":" + server.port);
+      const response = await fetch(server.url);
       expect(await response.text()).toBe("value");
 
       expect(s.getStore()).toBe("value");
@@ -366,7 +366,7 @@ describe("async context passes through", () => {
     let promise = new Promise<void>(r => (resolve = r));
     s.run("value", async () => {
       stream = new ReadableStream({
-        start(controller) {},
+        start(controller) { },
         cancel(reason) {
           value = s.getStore();
           resolve();
@@ -395,7 +395,7 @@ describe("async context passes through", () => {
           controller.close();
           resolve();
         },
-        cancel(reason) {},
+        cancel(reason) { },
       });
     });
     expect(s.getStore()).toBe(undefined);
@@ -490,11 +490,11 @@ describe("async context passes through", () => {
           return new Response(s.getStore()!);
         },
         websocket: {
-          open(ws) {},
+          open(ws) { },
           message(ws, message) {
             ws.close();
           },
-          close(ws, code, message) {},
+          close(ws, code, message) { },
         },
       });
 

@@ -308,9 +308,9 @@ test(".env escaped dollar sign", () => {
 test(".env doesnt crash with 159 bytes", () => {
   const dir = tempDirWithFiles("dotenv-159", {
     ".env":
-      "123456789=1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678" +
+      "aaaaaaaaa=1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678" +
       "\n",
-    "index.ts": "console.log(process.env['123456789']);",
+    "index.ts": "console.log(process.env['aaaaaaaaa']);",
     "package.json": `{
       "name": "foo",
       "devDependencies": {
@@ -439,7 +439,7 @@ describe("boundary tests", () => {
     });
     const { stdout: stdout2 } = bunRunWithoutTrim(`${dir2}/index.ts`);
     // should be "a\n but console.log adds a newline
-    expect(stdout2).toBe('"a\n\n');
+    expect(stdout2).toBe('"a\\n\n');
   });
 
   test("buffer boundary", () => {

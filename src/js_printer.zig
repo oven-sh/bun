@@ -343,7 +343,7 @@ pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer,
             const remain = text[@as(usize, width)..];
             if (encoding != .utf8 and width > 0) {
                 var codepoint_bytes: [4]u8 = undefined;
-                std.mem.writeIntNative(i32, &codepoint_bytes, c);
+                std.mem.writeInt(i32, &codepoint_bytes, c, .little);
                 try writer.writeAll(
                     codepoint_bytes[0..strings.encodeWTF8Rune(codepoint_bytes[0..4], c)],
                 );
@@ -4601,12 +4601,9 @@ fn NewPrinter(
                     if (comptime is_json)
                         unreachable;
 
-                    const c = bestQuoteCharForString(u16, s.value, false);
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
-                    p.print(c);
-                    p.printQuotedUTF16(s.value, c);
-                    p.print(c);
+                    p.printQuotedUTF8(s.value, false);
                     p.printSemicolonAfterStatement();
                 },
                 .s_break => |s| {

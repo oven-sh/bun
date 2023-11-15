@@ -217,6 +217,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_getAll, (JSGlobalObject
         return JSValue::encode(JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0));
     }
 
+    MarkedArgumentBuffer strings;
+    strings.ensureCapacity(count);
+    for (unsigned i = 0; i < count; ++i) {
+        strings.append(jsString(vm, values[i]));
+    }
+
     JSC::JSArray* array = nullptr;
     GCDeferralContext deferralContext(lexicalGlobalObject->vm());
     JSC::ObjectInitializationScope initializationScope(lexicalGlobalObject->vm());
@@ -224,10 +230,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_getAll, (JSGlobalObject
              initializationScope, &deferralContext,
              lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
              count))) {
+
         for (unsigned i = 0; i < count; ++i) {
-            array->initializeIndex(initializationScope, i, jsString(vm, values[i]));
-            RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
+            array->initializeIndex(initializationScope, i, strings.at(i));
         }
+
     } else {
         array = constructEmptyArray(lexicalGlobalObject, nullptr, count);
         RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
@@ -236,12 +243,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_getAll, (JSGlobalObject
             return JSValue::encode(jsUndefined());
         }
         for (unsigned i = 0; i < count; ++i) {
-            array->putDirectIndex(lexicalGlobalObject, i, jsString(vm, values[i]));
+            array->putDirectIndex(lexicalGlobalObject, i, strings.at(i));
             RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
         }
-        RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
     }
 
+    RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
     return JSValue::encode(array);
 }
 
@@ -605,7 +612,7 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
         obj = constructEmptyObject(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(throwScope, {});
         RELEASE_AND_RETURN(throwScope, obj);
-    } else if (size < 64) {
+    } else if (size <= JSFinalObject::maxInlineCapacity) {
         obj = constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), size);
     } else {
         obj = constructEmptyObject(lexicalGlobalObject);

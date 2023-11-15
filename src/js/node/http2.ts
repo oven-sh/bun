@@ -12,6 +12,8 @@ type Http2ConnectOptions = { settings?: Settings; protocol?: "https:" | "http:";
 const TLSSocket = tls.TLSSocket;
 const EventEmitter = require("node:events");
 const { Duplex } = require("node:stream");
+const primordials = require("internal/primordials");
+
 const { H2FrameParser, getPackedSettings, getUnpackedSettings } = $lazy("internal/http2");
 
 const sensitiveHeaders = Symbol.for("nodejs.http2.sensitiveHeaders");
@@ -24,7 +26,7 @@ const bunHTTP2WantTrailers = Symbol.for("::bunhttp2WantTrailers::");
 const bunHTTP2Session = Symbol.for("::bunhttp2session::");
 
 const ReflectGetPrototypeOf = Reflect.getPrototypeOf;
-const FunctionPrototypeBind = Function.prototype.call.bind(Function.prototype.bind);
+const FunctionPrototypeBind = primordials.FunctionPrototypeBind;
 const isArray = Array.isArray;
 
 const proxySocketHandler = {

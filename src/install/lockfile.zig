@@ -2390,7 +2390,7 @@ pub const Package = extern struct {
             buf: []const u8,
             _cwd: string,
             package_name: string,
-            comptime is_root: bool,
+            enqueue_prepare_scripts: bool,
             add_node_gyp_rebuild_script: bool,
         ) void {
             var cwd: ?string = null;
@@ -2438,7 +2438,7 @@ pub const Package = extern struct {
                 }
             }
 
-            if (comptime !is_root) return;
+            if (!enqueue_prepare_scripts) return;
 
             const prepare_scripts = .{
                 "preprepare",

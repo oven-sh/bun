@@ -9,8 +9,6 @@ it("should log to console correctly", async () => {
     stdout: "pipe",
     stderr: "pipe",
     env: bunEnv,
-      BUN_DEBUG_QUIET_LOGS: "1",
-    },
   });
   expect(await exited).toBe(0);
   const outText = await new Response(stderr).text();

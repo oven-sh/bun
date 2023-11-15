@@ -36,8 +36,7 @@ describe("bun -e", () => {
       cmd: [bunExe(), "-e", '(throw new Error("hi" as 2))'],
       env: bunEnv,
     });
-    console.log(stderr.toString("utf8"));
     expect(stderr.toString("utf8")).toInclude('"hi" as 2');
-    expect(stderr.toString("utf8")).toInclude("Syntax Error");
+    expect(stderr.toString("utf8")).toInclude("Unexpected throw");
   });
 });

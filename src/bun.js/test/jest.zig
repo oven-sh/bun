@@ -333,6 +333,8 @@ pub const Jest = struct {
             function.ensureStillAlive();
             global_hooks_object.put(globalObject, ZigString.static(name), function);
         }
+
+        createMockObjects(globalObject, global_hooks_object);
         return global_hooks_object;
     }
 
@@ -447,6 +449,12 @@ pub const Jest = struct {
             Expect.getConstructor(globalObject),
         );
 
+        createMockObjects(globalObject, module);
+
+        return module;
+    }
+
+    fn createMockObjects(globalObject: *JSGlobalObject, module: JSC.JSValue) void {
         const setSystemTime = JSC.NewFunction(globalObject, ZigString.static("setSystemTime"), 0, JSMock__jsSetSystemTime, false);
         module.put(
             globalObject,
@@ -494,8 +502,6 @@ pub const Jest = struct {
         vi.put(globalObject, ZigString.static("module"), mockModuleFn);
         vi.put(globalObject, ZigString.static("restoreAllMocks"), restoreAllMocks);
         module.put(globalObject, ZigString.static("vi"), vi);
-
-        return module;
     }
 
     extern fn Bun__Jest__testPreloadObject(*JSC.JSGlobalObject) JSC.JSValue;

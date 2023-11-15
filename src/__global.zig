@@ -72,9 +72,27 @@ pub fn setThreadName(name: StringTypes.stringZ) void {
     }
 }
 
+const ExitFn = *const fn () callconv(.C) void;
+
+var on_exit_callbacks = std.ArrayListUnmanaged(ExitFn){};
+export fn Bun__atexit(function: ExitFn) void {
+    if (std.mem.indexOfScalar(ExitFn, on_exit_callbacks.items, function) == null) {
+        on_exit_callbacks.append(bun.default_allocator, function) catch {};
+    }
+}
+
+pub fn runExitCallbacks() void {
+    for (on_exit_callbacks.items) |callback| {
+        callback();
+    }
+    on_exit_callbacks.items.len = 0;
+}
+
 /// Flushes stdout and stderr and exits with the given code.
 pub fn exit(code: u8) noreturn {
+    runExitCallbacks();
     Output.flush();
+    std.mem.doNotOptimizeAway(&Bun__atexit);
     std.c._exit(code);
 }
 

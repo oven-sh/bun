@@ -751,7 +751,7 @@ JSMockModule JSMockModule::create(JSC::JSGlobalObject* globalObject)
                     globalObject,
                     JSC::JSFunction::create(init.vm, init.owner, 0, "lastCall"_s, jsMockFunctionGetter_mockGetLastCall, ImplementationVisibility::Public),
                     jsUndefined()),
-                JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+                JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
             JSC::Structure* structure
                 = globalObject->structureCache().emptyObjectStructureForPrototype(

@@ -15,7 +15,7 @@ const primes = [_]u64{
 
 fn read_bytes(comptime bytes: u8, data: []const u8) u64 {
     const T = std.meta.Int(.unsigned, 8 * bytes);
-    return mem.readIntLittle(T, data[0..bytes]);
+    return mem.readInt(T, data[0..bytes], .little);
 }
 
 fn read_8bytes_swapped(data: []const u8) u64 {

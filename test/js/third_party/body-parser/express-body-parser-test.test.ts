@@ -21,6 +21,35 @@ test("iconv works", () => {
   expect(iconv.encodingExists("us-ascii")).toBe(true);
 });
 
+// https://github.com/oven-sh/bun/issues/7031
+test("doesn't reuse listeners", async () => {
+  const PORT = 9999;
+  const newServer = async () => {
+    const app = express();
+    const x = Math.random();
+    app.use((req, res, next) => {
+      res.send(x.toString());
+      lastX = x;
+    });
+    return new Promise((resolve, reject) => {
+      const listener = app.listen(PORT, () => {
+        resolve(listener);
+      });
+    });
+  };
+  const listener = await newServer();
+  let r = await fetch("http://localhost:9999");
+  const text1 = await r.text();
+  await listener.close();
+
+  const listener2 = await newServer();
+  r = await fetch("http://localhost:9999");
+  const text2 = await r.text();
+  await listener2.close();
+
+  expect(text1).not.toEqual(text2);
+});
+
 // https://github.com/oven-sh/bun/issues/1913
 test("httpServer", async () => {
   // Constants
@@ -45,7 +74,6 @@ test("httpServer", async () => {
     });
     reached = true;
     response.status(200).send("POST - pong");
-    httpServer.close();
   });
 
   httpServer.listen(PORT);
@@ -59,5 +87,6 @@ test("httpServer", async () => {
   expect(await resp.text()).toBe("POST - pong");
   expect(resp.status).toBe(200);
 
+  httpServer.close();
   expect(reached).toBe(true);
 });

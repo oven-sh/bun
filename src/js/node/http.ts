@@ -443,7 +443,7 @@ class Server extends EventEmitter {
     }
     this.#server = undefined;
     if (typeof optionalCallback === "function") this.once("close", optionalCallback);
-    server.stop();
+    server.stop(true);
     this.emit("close");
   }
 

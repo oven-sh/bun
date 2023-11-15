@@ -27,7 +27,7 @@ server.on("stream", (stream, headers, flags) => {
   }
 });
 
-server.listen(0);
+server.listen(0, "localhost");
 
 server.on("listening", () => {
   process.stdout.write(JSON.stringify(server.address()));

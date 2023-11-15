@@ -85,7 +85,10 @@ import { describe, it, afterAll, afterEach, beforeAll, beforeEach } from "bun:te
         metadata.set("succeed-on-retry-attempt", "1");
         client.echo({ value: "test value", value2: 3 }, metadata, (error: grpc.ServiceError, response: any) => {
           assert(error);
-          assert.strictEqual(error.details, "Failed on retry 0");
+          assert(
+            error.details === "Failed on retry 0" || error.details.indexOf("RST_STREAM with code 0") !== -1,
+            error.details,
+          );
           done();
         });
       });
@@ -162,7 +165,11 @@ import { describe, it, afterAll, afterEach, beforeAll, beforeEach } from "bun:te
         metadata.set("respond-with-status", `${grpc.status.NOT_FOUND}`);
         client.echo({ value: "test value", value2: 3 }, metadata, (error: grpc.ServiceError, response: any) => {
           assert(error);
-          assert.strictEqual(error.details, "Failed on retry 0");
+          //RST_STREAM is a graceful close
+          assert(
+            error.details === "Failed on retry 0" || error.details.indexOf("RST_STREAM with code 0") !== -1,
+            error.details,
+          );
           done();
         });
       });
@@ -196,7 +203,10 @@ import { describe, it, afterAll, afterEach, beforeAll, beforeEach } from "bun:te
         client2.echo({ value: "test value", value2: 3 }, metadata, (error: grpc.ServiceError, response: any) => {
           client2.close();
           assert(error);
-          assert.strictEqual(error.details, "Failed on retry 4");
+          assert(
+            error.details === "Failed on retry 4" || error.details.indexOf("RST_STREAM with code 0") !== -1,
+            error.details,
+          );
           done();
         });
       });

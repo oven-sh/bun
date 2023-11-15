@@ -727,6 +727,9 @@ class ClientHttp2Session extends Http2Session {
       var stream = self.#streams.get(streamId);
       if (stream) {
         self.#connections--;
+        stream[bunHTTP2Closed] = true;
+        stream[bunHTTP2Session] = null;
+        stream.rstCode = 0;
         stream.destroy();
         stream.emit("end");
         stream.emit("close");
@@ -842,10 +845,8 @@ class ClientHttp2Session extends Http2Session {
       self.emit("goaway", errorCode, lastStreamId, opaqueData);
       if (errorCode !== 0) {
         for (let [_, stream] of self.#streams) {
-          if (!stream[bunHTTP2Closed]) {
-            stream[bunHTTP2Closed] = true;
-            stream.destroy(sessionErrorFromCode(errorCode));
-          }
+          stream.rstCode = errorCode;
+          stream.destroy(sessionErrorFromCode(errorCode));
         }
       }
       self[bunHTTP2Socket]?.end();

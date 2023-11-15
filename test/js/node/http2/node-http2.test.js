@@ -1063,8 +1063,8 @@ describe("Client Basics", () => {
       const frame = new http2utils.Frame(7, 7, 0, 0).data;
       socket.end(Buffer.concat([frame, Buffer.alloc(7)]));
     });
-    server.listen(0, "localhost", async () => {
-      const url = `http://localhost:${server.address().port}`;
+    server.listen(0, "127.0.0.1", async () => {
+      const url = `http://127.0.0.1:${server.address().port}`;
       try {
         const { promise, resolve } = Promise.withResolvers();
         const client = http2.connect(url);

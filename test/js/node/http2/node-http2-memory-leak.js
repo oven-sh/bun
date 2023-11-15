@@ -26,10 +26,13 @@ const ITERATIONS = 100;
 // lets send a big payload
 const PAYLOAD = "a".repeat(1024 * 1024);
 
+const info = await nodeEchoServer();
+
 function assertBaselineWithAVG(baseline, avg) {
   const a = Math.max(baseline, avg);
   const b = Math.min(baseline, avg);
   if (a / b > BASELINE_THRESHOLD) {
+    info.subprocess.kill();
     // leak detected
     process.exit(97);
   }
@@ -37,7 +40,6 @@ function assertBaselineWithAVG(baseline, avg) {
 
 try {
   // spin up a node local echo server
-  const info = await nodeEchoServer();
   const startCount = getHeapStats();
   let averageDiff = 0;
 

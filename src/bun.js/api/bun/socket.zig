@@ -200,12 +200,14 @@ const Handlers = struct {
 
     pub fn resolvePromise(this: *Handlers, value: JSValue) void {
         const promise = this.promise.trySwap() orelse return;
-        promise.asAnyPromise().?.resolve(this.globalObject, value);
+        const anyPromise = promise.asAnyPromise() orelse return;
+        anyPromise.resolve(this.globalObject, value);
     }
 
     pub fn rejectPromise(this: *Handlers, value: JSValue) bool {
         const promise = this.promise.trySwap() orelse return false;
-        promise.asAnyPromise().?.reject(this.globalObject, value);
+        const anyPromise = promise.asAnyPromise() orelse return false;
+        anyPromise.reject(this.globalObject, value);
         return true;
     }
 

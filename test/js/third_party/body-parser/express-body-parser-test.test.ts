@@ -23,7 +23,7 @@ test("iconv works", () => {
 
 // https://github.com/oven-sh/bun/issues/7031
 test("doesn't reuse listeners", async () => {
-  const PORT = 9999;
+  let PORT = 0;
   const newServer = async () => {
     const app = express();
     const x = Math.random();
@@ -38,12 +38,14 @@ test("doesn't reuse listeners", async () => {
     });
   };
   const listener = await newServer();
-  let r = await fetch("http://localhost:9999");
+  const addr = listener.address();
+  PORT = addr.port;
+  let r = await fetch(`http://localhost:${PORT}`);
   const text1 = await r.text();
   await listener.close();
 
   const listener2 = await newServer();
-  r = await fetch("http://localhost:9999");
+  r = await fetch(`http://localhost:${PORT}`);
   const text2 = await r.text();
   await listener2.close();
 

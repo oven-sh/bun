@@ -583,7 +583,7 @@ pub const VirtualMachine = struct {
     modules: ModuleLoader.AsyncModule.Queue = .{},
     aggressive_garbage_collection: GCLevel = GCLevel.none,
 
-    parser_arena: ?*bun.ArenaAllocator = null,
+    module_loader: ModuleLoader = .{},
 
     gc_controller: JSC.GarbageCollectionController = .{},
     worker: ?*JSC.WebWorker = null,
@@ -592,8 +592,6 @@ pub const VirtualMachine = struct {
     debugger: ?Debugger = null,
     has_started_debugger: bool = false,
     has_terminated: bool = false,
-
-    eval_script: ?*logger.Source = null,
 
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
 
@@ -1584,12 +1582,14 @@ pub const VirtualMachine = struct {
             break :brk options.Loader.file;
         };
 
-        if (jsc_vm.eval_script) |eval_script| {
+        if (jsc_vm.module_loader.eval_script) |eval_script| {
             if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
                 virtual_source = eval_script;
                 loader = .tsx;
             }
         }
+
+        defer jsc_vm.module_loader.resetArena(jsc_vm);
 
         return try ModuleLoader.transpileSourceCode(
             jsc_vm,
@@ -1658,7 +1658,7 @@ pub const VirtualMachine = struct {
             ret.result = null;
             ret.path = result.path;
             return;
-        } else if (jsc_vm.eval_script != null and strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
+        } else if (jsc_vm.module_loader.eval_script != null and strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
             ret.result = null;
             ret.path = specifier;
             return;
@@ -1918,16 +1918,6 @@ pub const VirtualMachine = struct {
     }
 
     pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, referrer: bun.String, log: *logger.Log, ret: *ErrorableResolvedSource, err: anyerror) void {
-        defer {
-            var vm = globalThis.bunVM();
-            if (vm.parser_arena) |parser_arena| {
-                if (vm.smol) {
-                    _ = parser_arena.reset(.free_all);
-                } else {
-                    _ = parser_arena.reset(.{ .retain_with_limit = 8 * 1024 * 1024 });
-                }
-            }
-        }
         switch (log.msgs.items.len) {
             0 => {
                 const msg: logger.Msg = brk: {

@@ -169,7 +169,7 @@ pub const Run = struct {
         vm.allocator = arena.allocator();
 
         if (ctx.runtime_options.eval_script.len > 0) {
-            vm.eval_script = ptr: {
+            vm.module_loader.eval_script = ptr: {
                 var v = try bun.default_allocator.create(logger.Source);
                 v.* = logger.Source.initPathString(entry_path, ctx.runtime_options.eval_script);
                 break :ptr v;

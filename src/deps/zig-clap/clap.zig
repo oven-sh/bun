@@ -226,16 +226,16 @@ pub const Diagnostic = struct {
 
         switch (err) {
             error.DoesntTakeValue => {
-                Output.pretty("<red>error<r><d>:<r> The argument '{s}' does not take a value.\n", .{name});
+                Output.prettyErrorln("<red>error<r><d>:<r> The argument '{s}' does not take a value.", .{name});
             },
             error.MissingValue => {
-                Output.pretty("<red>error<r><d>:<r> The argument '{s}' requires a value but none was supplied.\n", .{name});
+                Output.prettyErrorln("<red>error<r><d>:<r> The argument '{s}' requires a value but none was supplied.", .{name});
             },
             error.InvalidArgument => {
-                Output.pretty("<red>error<r><d>:<r> Invalid Argument '{s}'\n", .{name});
+                Output.prettyErrorln("<red>error<r><d>:<r> Invalid Argument '{s}'", .{name});
             },
             else => {
-                Output.pretty("<red>error<r><d>:<r> {s} while parsing argument '{s}'\n", .{ @errorName(err), name });
+                Output.prettyErrorln("<red>error<r><d>:<r> {s} while parsing argument '{s}'", .{ @errorName(err), name });
             },
         }
         Output.flush();

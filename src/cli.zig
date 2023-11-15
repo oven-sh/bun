@@ -1083,7 +1083,7 @@ pub const Command = struct {
 
             if (comptime Command.Tag.uses_global_options.get(command)) {
                 ctx.args = try Arguments.parse(allocator, &ctx, command);
-            } else {}
+            }
             return ctx;
         }
     };

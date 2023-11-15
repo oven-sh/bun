@@ -8664,12 +8664,12 @@ fn NewParser_(
                                         .s_function => |func_container| {
                                             if (func_container.func.name) |name| {
                                                 break :default_name_getter LocRef{ .loc = name.loc, .ref = name.ref };
-                                            } else {}
+                                            }
                                         },
                                         .s_class => |class| {
                                             if (class.class.class_name) |name| {
                                                 break :default_name_getter LocRef{ .loc = name.loc, .ref = name.ref };
-                                            } else {}
+                                            }
                                         },
                                         else => {},
                                     }
@@ -8709,12 +8709,12 @@ fn NewParser_(
                                                 .s_function => |func_container| {
                                                     if (func_container.func.name) |_name| {
                                                         break :default_name_getter LocRef{ .loc = defaultLoc, .ref = _name.ref };
-                                                    } else {}
+                                                    }
                                                 },
                                                 .s_class => |class| {
                                                     if (class.class.class_name) |_name| {
                                                         break :default_name_getter LocRef{ .loc = defaultLoc, .ref = _name.ref };
-                                                    } else {}
+                                                    }
                                                 },
                                                 else => {},
                                             }

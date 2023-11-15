@@ -192,7 +192,13 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
 
     // constructed "resolved" urls
     var resolved_urls = ResolvedURLsMap{};
-    defer resolved_urls.deinit(allocator);
+    defer {
+        var itr = resolved_urls.iterator();
+        while (itr.next()) |entry| {
+            allocator.free(entry.value_ptr.*);
+        }
+        resolved_urls.deinit(allocator);
+    }
 
     // Counting Phase
     // This "IdMap" is used to make object key lookups faster for the `packages` object
@@ -317,8 +323,9 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
             const pkg_name = packageNameFromPath(pkg_path);
             if (version_prop != null and pkg_name.len > 0) {
                 // construct registry url
+                const registry = Install.PackageManager.instance.scopeForPackageName(pkg_name);
                 var count: usize = 0;
-                count += Npm.Registry.default_url.len + pkg_name.len + "/-/".len;
+                count += registry.url.href.len + pkg_name.len + "/-/".len;
                 if (pkg_name[0] == '@') {
                     // scoped
                     const slash_index = strings.indexOfChar(pkg_name, '/') orelse return error.InvalidNPMLockfile;
@@ -332,8 +339,8 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
 
                 var resolved_url = allocator.alloc(u8, count) catch unreachable;
                 var remain = resolved_url;
-                @memcpy(remain[0..Npm.Registry.default_url.len], Npm.Registry.default_url);
-                remain = remain[Npm.Registry.default_url.len..];
+                @memcpy(remain[0..registry.url.href.len], registry.url.href);
+                remain = remain[registry.url.href.len..];
                 @memcpy(remain[0..pkg_name.len], pkg_name);
                 remain = remain[pkg_name.len..];
                 remain[0.."/-/".len].* = "/-/".*;

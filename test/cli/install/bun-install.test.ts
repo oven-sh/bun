@@ -7833,3 +7833,26 @@ describe("Registry URLs", () => {
     expect(await exited).toBe(0);
   });
 });
+
+it("should handle @scoped name that contains tilde, issue#7045", async () => {
+  await writeFile(
+    join(package_dir, "bunfig.toml"),
+    `
+[install]
+cache = false
+`,
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "@~39/empty"],
+    cwd: package_dir,
+    stdin: null,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  expect(await new Response(stderr).text()).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  expect(await new Response(stdout).text()).toContain("installed @~39/empty@1.0.0");
+  expect(await exited).toBe(0);
+});

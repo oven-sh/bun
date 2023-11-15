@@ -842,9 +842,9 @@ pub const FileSystem = struct {
                 // so if we're not going to do a full content hash, we should use mtime and size.
                 // even mtime is debatable.
                 var hash_bytes_remain: []u8 = hash_bytes[0..];
-                std.mem.writeIntNative(@TypeOf(this.size), hash_bytes_remain[0..@sizeOf(@TypeOf(this.size))], this.size);
+                std.mem.writeInt(@TypeOf(this.size), hash_bytes_remain[0..@sizeOf(@TypeOf(this.size))], this.size, .little);
                 hash_bytes_remain = hash_bytes_remain[@sizeOf(@TypeOf(this.size))..];
-                std.mem.writeIntNative(@TypeOf(this.mtime), hash_bytes_remain[0..@sizeOf(@TypeOf(this.mtime))], this.mtime);
+                std.mem.writeInt(@TypeOf(this.mtime), hash_bytes_remain[0..@sizeOf(@TypeOf(this.mtime))], this.mtime, .little);
                 hash_bytes_remain = hash_bytes_remain[@sizeOf(@TypeOf(this.mtime))..];
                 std.debug.assert(hash_bytes_remain.len == 8);
                 hash_bytes_remain[0..8].* = @as([8]u8, @bitCast(@as(u64, 0)));

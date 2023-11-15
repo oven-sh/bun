@@ -401,5 +401,17 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
 
 $getter;
 export function mainModule() {
+  var existing = $getByIdDirectPrivate(this, "main");
+  // note: this doesn't handle "process.mainModule = undefined"
+  if (typeof existing !== "undefined") {
+    return existing;
+  }
+
   return $requireMap.$get(Bun.main);
+}
+
+$overriddenName = "set mainModule";
+export function setMainModule(value) {
+  $putByIdDirectPrivate(this, "main", value);
+  return true;
 }

@@ -6,6 +6,20 @@
 var { isBun, test, describe, expect, jest, vi, mock, bunTest, spyOn } = require("./test-interop.js")();
 
 describe("expect()", () => {
+  if (typeof Bun !== "undefined") {
+    test("()", () => {
+      const { withoutAggressiveGC } = require("harness");
+
+      withoutAggressiveGC(() => {
+        expect();
+
+        for (let i = 0; i < 5000; i++) {
+          expect();
+        }
+      });
+    });
+  }
+
   test("rejects", async () => {
     await expect(Promise.reject(1)).rejects.toBe(1);
 
@@ -1311,12 +1325,12 @@ describe("expect()", () => {
     b = { a: 1, b: 2 };
     expect(a).not.toEqual(b);
 
-    array1 = [1, 2, 3];
+    const array1 = [1, 2, 3];
     expect(array1).toEqual(expect.arrayContaining([]));
     expect(array1).toEqual(expect.arrayContaining([1, 2]));
     expect(array1).not.toEqual(expect.arrayContaining([1, 2, 4]));
 
-    array2 = [{ a: 1, b: 2 }, { a: { a: 1 } }];
+    const array2 = [{ a: 1, b: 2 }, { a: { a: 1 } }];
     expect(array2).toEqual(expect.arrayContaining([{ a: 1, b: 2 }]));
     expect(array2).toEqual(expect.arrayContaining([{ a: { a: 1 } }]));
     expect(array2).not.toEqual(expect.arrayContaining([{ a: 2, b: 3 }]));

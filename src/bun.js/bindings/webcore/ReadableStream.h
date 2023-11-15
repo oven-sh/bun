@@ -45,6 +45,7 @@ public:
 
     WEBCORE_EXPORT static bool isDisturbed(JSC::JSGlobalObject*, JSReadableStream*);
     WEBCORE_EXPORT static bool isLocked(JSC::JSGlobalObject*, JSReadableStream*);
+    WEBCORE_EXPORT static void cancel(WebCore::JSDOMGlobalObject& globalObject, JSReadableStream*, const WebCore::Exception& exception);
 
     std::optional<std::pair<Ref<ReadableStream>, Ref<ReadableStream>>> tee();
 

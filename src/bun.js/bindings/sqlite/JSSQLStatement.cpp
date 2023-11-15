@@ -187,7 +187,7 @@ public:
     JSC::JSValue rebind(JSGlobalObject* globalObject, JSC::JSValue values, bool clone);
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::JSFunctionType, StructureFlags), info());
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     bool need_update() { return version_db->version.load() != version; }
@@ -209,8 +209,6 @@ protected:
         , stmt(stmt)
         , version_db(version_db)
         , columnNames(new PropertyNameArray(globalObject.vm(), PropertyNameMode::Strings, PrivateSymbolMode::Exclude))
-        , _structure(globalObject.vm(), this, nullptr)
-        , _prototype(globalObject.vm(), this, nullptr)
     {
     }
 
@@ -238,11 +236,11 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
     castedThis->_prototype.clear();
 
     int count = sqlite3_column_count(stmt);
-    if (count == 0)
+    if (count < 1)
         return;
 
     // Fast path:
-    if (count < 64) {
+    if (count <= JSFinalObject::maxInlineCapacity) {
         // 64 is the maximum we can preallocate here
         // see https://github.com/oven-sh/bun/issues/987
         // also see https://github.com/oven-sh/bun/issues/1646
@@ -294,7 +292,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
 
     // 64 is the maximum we can preallocate here
     // see https://github.com/oven-sh/bun/issues/987
-    JSC::JSObject* object = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), std::min(count, 64));
+    JSC::JSObject* object = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), std::min(static_cast<unsigned>(count), JSFinalObject::maxInlineCapacity));
 
     for (int i = 0; i < count; i++) {
         const char* name = sqlite3_column_name(stmt, i);
@@ -594,9 +592,13 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
     }
 
     int status = sqlite3_db_config(db, SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, 1, NULL);
-    assert(status == SQLITE_OK);
+    if (status != SQLITE_OK) {
+        // TODO: log a warning here that we can't load extensions
+    }
     status = sqlite3_db_config(db, SQLITE_DBCONFIG_DEFENSIVE, 1, NULL);
-    assert(status == SQLITE_OK);
+    if (status != SQLITE_OK) {
+        // TODO: log a warning here that defensive mode is not enabled
+    }
 
     status = sqlite3_deserialize(db, "main", reinterpret_cast<unsigned char*>(data), byteLength, byteLength, flags);
     if (status == SQLITE_BUSY) {
@@ -989,10 +991,14 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
     }
 
     int status = sqlite3_db_config(db, SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, 1, NULL);
-    assert(status == SQLITE_OK);
-    status = sqlite3_db_config(db, SQLITE_DBCONFIG_DEFENSIVE, 1, NULL);
-    assert(status == SQLITE_OK);
+    if (status != SQLITE_OK) {
+        // TODO: log a warning here that extensions are unsupported.
+    }
 
+    status = sqlite3_db_config(db, SQLITE_DBCONFIG_DEFENSIVE, 1, NULL);
+    if (status != SQLITE_OK) {
+        // TODO: log a warning here that defensive mode is unsupported.
+    }
     auto count = databases().size();
     databases().append(new VersionSqlite3(db));
     RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(count)));
@@ -1070,6 +1076,8 @@ void JSSQLStatementConstructor::finishCreation(VM& vm)
 
     reifyStaticProperties(vm, JSSQLStatementConstructor::info(), JSSQLStatementConstructorTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+
+    ASSERT(inherits(info()));
 }
 
 static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLStatement* castedThis);
@@ -1139,10 +1147,10 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
         }
 
     } else {
-        if (count <= 64) {
+        if (count <= JSFinalObject::maxInlineCapacity) {
             result = JSC::JSFinalObject::create(vm, castedThis->_prototype.get()->structure());
         } else {
-            result = JSC::JSFinalObject::create(vm, JSC::JSFinalObject::createStructure(vm, lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), std::min(count, 64)));
+            result = JSC::JSFinalObject::create(vm, JSC::JSFinalObject::createStructure(vm, lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), JSFinalObject::maxInlineCapacity));
         }
 
         for (int i = 0; i < count; i++) {
@@ -1650,6 +1658,7 @@ void JSSQLStatement::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSSQLStatement::info(), JSSQLStatementTableValues, *this);
+    ASSERT(inherits(info()));
 }
 
 JSSQLStatement::~JSSQLStatement()

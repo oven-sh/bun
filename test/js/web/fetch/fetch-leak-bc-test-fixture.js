@@ -31,7 +31,8 @@ for (let j = 0; j < COUNT; j++) {
     const res = await fetch(SERVER);
     const clone = res.clone().clone();
     const clone2 = res.clone();
-    oks += !!(await clone.arrayBuffer())?.byteLength && !!(await Bun.readableStreamToArrayBuffer(clone2.body))?.byteLength;
+    oks +=
+      !!(await clone.arrayBuffer())?.byteLength && !!(await Bun.readableStreamToArrayBuffer(clone2.body))?.byteLength;
     await res.arrayBuffer();
   })();
 }

@@ -2875,7 +2875,7 @@ fn NewSocket(comptime ssl: bool) type {
                 var vm = this.handlers.vm;
                 this.reffer.unref(vm);
                 this.poll_ref.unref(vm);
-                // will be free handlers and the old_context when hits 0 active connections
+                // will free handlers and the old_context when hits 0 active connections
                 // the connection can be upgraded inside a handler call so we need to garantee that it will be still alive
                 this.handlers.markInactive(ssl, old_context, this.wrapped);
                 this.has_pending_activity.store(false, .Release);

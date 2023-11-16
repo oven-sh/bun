@@ -7490,9 +7490,9 @@ pub const PackageManager = struct {
                             if (!this.has_created_bin) {
                                 if (!this.options.global) {
                                     if (comptime Environment.isWindows) {
-                                        std.os.mkdiratW(this.root_node_modules_folder.dir.fd, strings.w(".bin"), 0) catch {};
+                                        std.os.mkdiratW(this.node_modules_folder, strings.w(".bin"), 0) catch {};
                                     } else {
-                                        this.root_node_modules_folder.dir.makeDirZ(".bin") catch {};
+                                        this.node_modules_folder.dir.makeDirZ(".bin") catch {};
                                     }
                                 }
                                 if (comptime Environment.isPosix)
@@ -7960,6 +7960,9 @@ pub const PackageManager = struct {
                     try bun.makePath(cwd, bun.span(node_modules.relative_path));
                     break :brk try cwd.openIterableDir(node_modules.relative_path, .{});
                 };
+
+                // a .bin directory could be created in each node_modules directory
+                installer.has_created_bin = false;
 
                 var remaining = node_modules.dependencies;
 

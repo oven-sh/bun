@@ -69,7 +69,7 @@ pub const Body = struct {
     }
 
     pub fn clone(this: *Body, globalThis: *JSGlobalObject) Body {
-        return Body{ .value = this.value.clone(globalThis), .original_body = this.original_body orelse this };
+        return Body{ .value = this.value.clone(globalThis) };
     }
 
     pub fn writeFormat(this: *const Body, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
@@ -125,6 +125,7 @@ pub const Body = struct {
                     this.body_clones = ArrayList(*Body).init(bun.default_allocator);
                 this.body_clones.append(other) catch @panic("oom!");
                 other.is_waiting = true;
+                other.original_body = this;
             }
         }
     }

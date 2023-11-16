@@ -1915,7 +1915,7 @@ declare module "bun" {
       this: Server,
       request: Request,
       server: Server,
-    ): Response | Promise<Response>;
+    ): any | Promise<any>;
   }
 
   export interface UnixServeOptions extends GenericServeOptions {
@@ -1933,7 +1933,7 @@ declare module "bun" {
       this: Server,
       request: Request,
       server: Server,
-    ): Response | Promise<Response>;
+    ): any | Promise<any>;
   }
 
   export interface WebSocketServeOptions<WebSocketDataType = undefined>
@@ -2014,7 +2014,7 @@ declare module "bun" {
       this: Server,
       request: Request,
       server: Server,
-    ): Response | undefined | Promise<Response | undefined>;
+    ): any | Promise<any>;
   }
 
   export interface UnixWebSocketServeOptions<WebSocketDataType = undefined>
@@ -2075,7 +2075,7 @@ declare module "bun" {
       this: Server,
       request: Request,
       server: Server,
-    ): Response | undefined | Promise<Response | undefined>;
+    ): any | Promise<any>;
   }
 
   export interface TLSWebSocketServeOptions<WebSocketDataType = undefined>
@@ -2290,7 +2290,7 @@ declare module "bun" {
      * consistently in all cases and it doesn't yet call the `error` handler
      * consistently. This needs to be fixed
      */
-    fetch(request: Request | string): Response | Promise<Response>;
+    fetch(request: Request | string): any | Promise<any>;
 
     /**
      * Upgrade a {@link Request} to a {@link ServerWebSocket}

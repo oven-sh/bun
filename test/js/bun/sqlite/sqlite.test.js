@@ -428,46 +428,46 @@ it("inlineCapacity #987", async () => {
 
   const db = new Database(path);
 
-  const query = `SELECT 
-  media.mid, 
-  UPPER(media.name) as name, 
-  media.url, 
-  media.duration, 
-  time(media.duration, 'unixepoch') AS durationStr, 
-  sum(totalDurations) AS totalDurations, 
-  sum(logs.views) AS views, 
-  total.venues, 
-  total.devices, 
+  const query = `SELECT
+  media.mid,
+  UPPER(media.name) as name,
+  media.url,
+  media.duration,
+  time(media.duration, 'unixepoch') AS durationStr,
+  sum(totalDurations) AS totalDurations,
+  sum(logs.views) AS views,
+  total.venues,
+  total.devices,
   SUM(CASE WHEN day = '01' THEN logs.views ELSE 0 END) as 'vi01', SUM(CASE WHEN day = '02' THEN logs.views ELSE 0 END) as 'vi02', SUM(CASE WHEN day = '03' THEN logs.views ELSE 0 END) as 'vi03', SUM(CASE WHEN day = '04' THEN logs.views ELSE 0 END) as 'vi04', SUM(CASE WHEN day = '05' THEN logs.views ELSE 0 END) as 'vi05', SUM(CASE WHEN day = '06' THEN logs.views ELSE 0 END) as 'vi06', SUM(CASE WHEN day = '07' THEN logs.views ELSE 0 END) as 'vi07', SUM(CASE WHEN day = '08' THEN logs.views ELSE 0 END) as 'vi08', SUM(CASE WHEN day = '09' THEN logs.views ELSE 0 END) as 'vi09', SUM(CASE WHEN day = '10' THEN logs.views ELSE 0 END) as 'vi10', SUM(CASE WHEN day = '11' THEN logs.views ELSE 0 END) as 'vi11', SUM(CASE WHEN day = '12' THEN logs.views ELSE 0 END) as 'vi12', SUM(CASE WHEN day = '13' THEN logs.views ELSE 0 END) as 'vi13', SUM(CASE WHEN day = '14' THEN logs.views ELSE 0 END) as 'vi14', SUM(CASE WHEN day = '15' THEN logs.views ELSE 0 END) as 'vi15', SUM(CASE WHEN day = '16' THEN logs.views ELSE 0 END) as 'vi16', SUM(CASE WHEN day = '17' THEN logs.views ELSE 0 END) as 'vi17', SUM(CASE WHEN day = '18' THEN logs.views ELSE 0 END) as 'vi18', SUM(CASE WHEN day = '19' THEN logs.views ELSE 0 END) as 'vi19', SUM(CASE WHEN day = '20' THEN logs.views ELSE 0 END) as 'vi20', SUM(CASE WHEN day = '21' THEN logs.views ELSE 0 END) as 'vi21', SUM(CASE WHEN day = '22' THEN logs.views ELSE 0 END) as 'vi22', SUM(CASE WHEN day = '23' THEN logs.views ELSE 0 END) as 'vi23', SUM(CASE WHEN day = '24' THEN logs.views ELSE 0 END) as 'vi24', SUM(CASE WHEN day = '25' THEN logs.views ELSE 0 END) as 'vi25', SUM(CASE WHEN day = '26' THEN logs.views ELSE 0 END) as 'vi26', SUM(CASE WHEN day = '27' THEN logs.views ELSE 0 END) as 'vi27', SUM(CASE WHEN day = '28' THEN logs.views ELSE 0 END) as 'vi28', SUM(CASE WHEN day = '29' THEN logs.views ELSE 0 END) as 'vi29', SUM(CASE WHEN day = '30' THEN logs.views ELSE 0 END) as 'vi30', MAX(CASE WHEN day = '01' THEN logs.venues ELSE 0 END) as 've01', MAX(CASE WHEN day = '02' THEN logs.venues ELSE 0 END) as 've02', MAX(CASE WHEN day = '03' THEN logs.venues ELSE 0 END) as 've03', MAX(CASE WHEN day = '04' THEN logs.venues ELSE 0 END) as 've04', MAX(CASE WHEN day = '05' THEN logs.venues ELSE 0 END) as 've05', MAX(CASE WHEN day = '06' THEN logs.venues ELSE 0 END) as 've06', MAX(CASE WHEN day = '07' THEN logs.venues ELSE 0 END) as 've07', MAX(CASE WHEN day = '08' THEN logs.venues ELSE 0 END) as 've08', MAX(CASE WHEN day = '09' THEN logs.venues ELSE 0 END) as 've09', MAX(CASE WHEN day = '10' THEN logs.venues ELSE 0 END) as 've10', MAX(CASE WHEN day = '11' THEN logs.venues ELSE 0 END) as 've11', MAX(CASE WHEN day = '12' THEN logs.venues ELSE 0 END) as 've12', MAX(CASE WHEN day = '13' THEN logs.venues ELSE 0 END) as 've13', MAX(CASE WHEN day = '14' THEN logs.venues ELSE 0 END) as 've14', MAX(CASE WHEN day = '15' THEN logs.venues ELSE 0 END) as 've15', MAX(CASE WHEN day = '16' THEN logs.venues ELSE 0 END) as 've16', MAX(CASE WHEN day = '17' THEN logs.venues ELSE 0 END) as 've17', MAX(CASE WHEN day = '18' THEN logs.venues ELSE 0 END) as 've18', MAX(CASE WHEN day = '19' THEN logs.venues ELSE 0 END) as 've19', MAX(CASE WHEN day = '20' THEN logs.venues ELSE 0 END) as 've20', MAX(CASE WHEN day = '21' THEN logs.venues ELSE 0 END) as 've21', MAX(CASE WHEN day = '22' THEN logs.venues ELSE 0 END) as 've22', MAX(CASE WHEN day = '23' THEN logs.venues ELSE 0 END) as 've23', MAX(CASE WHEN day = '24' THEN logs.venues ELSE 0 END) as 've24', MAX(CASE WHEN day = '25' THEN logs.venues ELSE 0 END) as 've25', MAX(CASE WHEN day = '26' THEN logs.venues ELSE 0 END) as 've26', MAX(CASE WHEN day = '27' THEN logs.venues ELSE 0 END) as 've27', MAX(CASE WHEN day = '28' THEN logs.venues ELSE 0 END) as 've28', MAX(CASE WHEN day = '29' THEN logs.venues ELSE 0 END) as 've29', MAX(CASE WHEN day = '30' THEN logs.venues ELSE 0 END) as 've30', MAX(CASE WHEN day = '01' THEN logs.devices ELSE 0 END) as 'de01', MAX(CASE WHEN day = '02' THEN logs.devices ELSE 0 END) as 'de02', MAX(CASE WHEN day = '03' THEN logs.devices ELSE 0 END) as 'de03', MAX(CASE WHEN day = '04' THEN logs.devices ELSE 0 END) as 'de04', MAX(CASE WHEN day = '05' THEN logs.devices ELSE 0 END) as 'de05', MAX(CASE WHEN day = '06' THEN logs.devices ELSE 0 END) as 'de06', MAX(CASE WHEN day = '07' THEN logs.devices ELSE 0 END) as 'de07', MAX(CASE WHEN day = '08' THEN logs.devices ELSE 0 END) as 'de08', MAX(CASE WHEN day = '09' THEN logs.devices ELSE 0 END) as 'de09', MAX(CASE WHEN day = '10' THEN logs.devices ELSE 0 END) as 'de10', MAX(CASE WHEN day = '11' THEN logs.devices ELSE 0 END) as 'de11', MAX(CASE WHEN day = '12' THEN logs.devices ELSE 0 END) as 'de12', MAX(CASE WHEN day = '13' THEN logs.devices ELSE 0 END) as 'de13', MAX(CASE WHEN day = '14' THEN logs.devices ELSE 0 END) as 'de14', MAX(CASE WHEN day = '15' THEN logs.devices ELSE 0 END) as 'de15', MAX(CASE WHEN day = '16' THEN logs.devices ELSE 0 END) as 'de16', MAX(CASE WHEN day = '17' THEN logs.devices ELSE 0 END) as 'de17', MAX(CASE WHEN day = '18' THEN logs.devices ELSE 0 END) as 'de18', MAX(CASE WHEN day = '19' THEN logs.devices ELSE 0 END) as 'de19', MAX(CASE WHEN day = '20' THEN logs.devices ELSE 0 END) as 'de20', MAX(CASE WHEN day = '21' THEN logs.devices ELSE 0 END) as 'de21', MAX(CASE WHEN day = '22' THEN logs.devices ELSE 0 END) as 'de22', MAX(CASE WHEN day = '23' THEN logs.devices ELSE 0 END) as 'de23', MAX(CASE WHEN day = '24' THEN logs.devices ELSE 0 END) as 'de24', MAX(CASE WHEN day = '25' THEN logs.devices ELSE 0 END) as 'de25', MAX(CASE WHEN day = '26' THEN logs.devices ELSE 0 END) as 'de26', MAX(CASE WHEN day = '27' THEN logs.devices ELSE 0 END) as 'de27', MAX(CASE WHEN day = '28' THEN logs.devices ELSE 0 END) as 'de28', MAX(CASE WHEN day = '29' THEN logs.devices ELSE 0 END) as 'de29', MAX(CASE WHEN day = '30' THEN logs.devices ELSE 0 END) as 'de30'
-  FROM 
+  FROM
   (
-    SELECT 
-      logs.mid, 
-      sum(logs.duration) AS totalDurations, 
-      strftime ('%d', START, 'unixepoch', 'localtime') AS day, 
-      count(*) AS views, 
-      count(DISTINCT did) AS devices, 
-      count(DISTINCT vid) AS venues 
-    FROM 
-      logs 
+    SELECT
+      logs.mid,
+      sum(logs.duration) AS totalDurations,
+      strftime ('%d', START, 'unixepoch', 'localtime') AS day,
+      count(*) AS views,
+      count(DISTINCT did) AS devices,
+      count(DISTINCT vid) AS venues
+    FROM
+      logs
     WHERE strftime('%m-%Y', start, 'unixepoch', 'localtime')='06-2022'
-    GROUP BY 
-      day, 
+    GROUP BY
+      day,
       logs.mid
-  ) logs 
-  INNER JOIN media ON media.id = logs.mid 
+  ) logs
+  INNER JOIN media ON media.id = logs.mid
   INNER JOIN (
-    SELECT 
-      mid, 
-      count(DISTINCT vid) as venues, 
-      count(DISTINCT did) as devices 
-    FROM 
-      logs 
+    SELECT
+      mid,
+      count(DISTINCT vid) as venues,
+      count(DISTINCT did) as devices
+    FROM
+      logs
     WHERE strftime('%m-%Y', start, 'unixepoch', 'localtime')='06-2022'
-    GROUP by 
+    GROUP by
       mid
-  ) total ON logs.mid = total.mid 
-  ORDER BY 
+  ) total ON logs.mid = total.mid
+  ORDER BY
   name`;
 
   expect(Object.keys(db.query(query).all()[0]).length).toBe(99);
@@ -609,16 +609,52 @@ it("#5872", () => {
 });
 
 it("issue#6597", () => {
-  const db = new Database(":memory:");
-  db.run("CREATE TABLE Users (Id INTEGER PRIMARY KEY, Name VARCHAR(255));");
-  db.run("CREATE TABLE Cars (Id INTEGER PRIMARY KEY, Driver INTEGER, FOREIGN KEY (Driver) REFERENCES Users(Id))");
-  db.run('INSERT INTO Users (Id, Name) VALUES (1, "Alice");');
-  db.run("INSERT INTO Cars (Id, Driver) VALUES (1,1);");
-  const result = db.query("SELECT * FROM Cars JOIN Users ON Driver=Users.Id").get();
-  expect(result).toEqual({
+  // better-sqlite3 returns the last value of duplicate fields
+  let db = new Database(":memory:");
+  db.run("CREATE TABLE Users (Id INTEGER PRIMARY KEY, Name VARCHAR(255), CreatedAt TIMESTAMP)");
+  db.run(
+    "CREATE TABLE Cars (Id INTEGER PRIMARY KEY, Driver INTEGER, CreatedAt TIMESTAMP, FOREIGN KEY (Driver) REFERENCES Users(Id))",
+  );
+  db.run('INSERT INTO Users (Id, Name, CreatedAt) VALUES (1, "Alice", "2022-01-01");');
+  db.run('INSERT INTO Cars (Id, Driver, CreatedAt) VALUES (2, 1, "2023-01-01");');
+  let result = db.prepare("SELECT * FROM Cars JOIN Users ON Driver=Users.Id").get();
+  expect(result).toStrictEqual({
     Id: 1,
     Driver: 1,
+    CreatedAt: "2022-01-01",
     Name: "Alice",
   });
+  db.close();
+});
+
+it("issue#7147", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE foos (foo_id INTEGER NOT NULL PRIMARY KEY, foo_a TEXT, foo_b TEXT)");
+  db.exec(
+    "CREATE TABLE bars (bar_id INTEGER NOT NULL PRIMARY KEY, foo_id INTEGER NOT NULL, bar_a INTEGER, bar_b INTEGER, FOREIGN KEY (foo_id) REFERENCES foos (foo_id))",
+  );
+  db.exec("INSERT INTO foos VALUES (1, 'foo_1', 'foo_2')");
+  db.exec("INSERT INTO bars VALUES (1, 1, 'bar_1', 'bar_2')");
+  db.exec("INSERT INTO bars VALUES (2, 1, 'baz_3', 'baz_4')");
+  const query = db.query("SELECT f.*, b.* FROM foos f JOIN bars b ON b.foo_id = f.foo_id");
+  const result = query.all();
+  expect(result).toStrictEqual([
+    {
+      foo_id: 1,
+      foo_a: "foo_1",
+      foo_b: "foo_2",
+      bar_id: 1,
+      bar_a: "bar_1",
+      bar_b: "bar_2",
+    },
+    {
+      foo_id: 1,
+      foo_a: "foo_1",
+      foo_b: "foo_2",
+      bar_id: 2,
+      bar_a: "baz_3",
+      bar_b: "baz_4",
+    },
+  ]);
   db.close();
 });

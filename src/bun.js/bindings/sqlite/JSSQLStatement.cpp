@@ -251,7 +251,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
         PropertyOffset offset;
         auto columnNames = castedThis->columnNames.get();
         bool anyHoles = false;
-        for (int i = 0; i < count; i++) {
+        for (int i = count - 1; i >= 0; i--) {
             const char* name = sqlite3_column_name(stmt, i);
 
             if (name == nullptr) {
@@ -265,6 +265,9 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
                 break;
             }
 
+            // When joining multiple tables, the same column names can appear multiple times
+            // columnNames de-dupes property names internally
+            // We can't have two properties with the same name, so using columnOffsets to track this.
             int preCount = columnNames->size();
             columnNames->add(
                 Identifier::fromString(vm, WTF::String::fromUTF8(name, len))
@@ -280,9 +283,12 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
             Structure* structure = globalObject.structureCache().emptyObjectStructureForPrototype(&globalObject, globalObject.objectPrototype(), columnNames->size());
             vm.writeBarrier(castedThis, structure);
 
-            for (const auto& propertyName : *columnNames) {
+            auto nameVec = columnNames->data()->propertyNameVector();
+            for (auto it = nameVec.rbegin(); it != nameVec.rend(); ++it) {
+                auto propertyName = *it;
                 structure = Structure::addPropertyTransition(vm, structure, propertyName, 0, offset);
             }
+
             castedThis->_structure.set(vm, castedThis, structure);
 
             // We are done.
@@ -306,7 +312,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
     // see https://github.com/oven-sh/bun/issues/987
     JSC::JSObject* object = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), std::min(static_cast<unsigned>(count), JSFinalObject::maxInlineCapacity));
 
-    for (int i = 0; i < count; i++) {
+    for (int i = count - 1; i >= 0; i--) {
         const char* name = sqlite3_column_name(stmt, i);
 
         if (name == nullptr)
@@ -337,13 +343,13 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
             }
         }
 
-        object->putDirect(vm, key, primitive, 0);
         int preCount = castedThis->columnNames->size();
         castedThis->columnNames->add(key);
         int curCount = castedThis->columnNames->size();
 
         if (preCount != curCount) {
             castedThis->columnOffsets |= (1u << i);
+            object->putDirect(vm, key, primitive, 0);
         }
     }
     castedThis->_prototype.set(vm, castedThis, object);
@@ -1114,8 +1120,12 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
     if (auto* structure = castedThis->_structure.get()) {
         result = JSC::constructEmptyObject(vm, structure);
 
-        for (unsigned int i = 0, j = 0; j < count; i++, j++) {
-            if (j > 0 && (castedThis->columnOffsets & (1u << i)) == 0) {
+        // i: the index of columns returned from SQLite
+        // j: the index of object property
+        for (int i = 0, j = 0; j < count; i++, j++) {
+            // columnOffsets stores all column we added in columnNames
+            if ((castedThis->columnOffsets & (1u << i)) == 0) {
+                // this column is duplicate, skip
                 j -= 1;
                 continue;
             }
@@ -1176,7 +1186,7 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
         }
 
         for (int i = 0, j = 0; j < count; i++, j++) {
-            if (j > 0 && (castedThis->columnOffsets & (1u << i)) == 0) {
+            if ((castedThis->columnOffsets & (1u << i)) == 0) {
                 j -= 1;
                 continue;
             }
@@ -1240,7 +1250,7 @@ static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGloba
     auto* stmt = castedThis->stmt;
 
     for (int i = 0, j = 0; j < count; i++, j++) {
-        if (j > 0 && (castedThis->columnOffsets & (1u << i)) == 0) {
+        if ((castedThis->columnOffsets & (1u << i)) == 0) {
             j -= 1;
             continue;
         }

@@ -26,39 +26,30 @@ const clientInsecureCreds = grpc.credentials.createInsecure();
 
 ["h2", "h2c"].forEach(protocol => {
   describe(`Client ${protocol}`, () => {
-    let server: TestServer;
-    let client: TestClient;
-
-    beforeAll(done => {
-      server = new TestServer(protocol === "h2");
-
-      server
-        .start()
-        .then(() => {
-          client = TestClient.createFromServer(server);
-          done();
-        })
-        .catch(done);
-    });
-
-    afterAll(done => {
-      client.close();
-      server.shutdown();
-      done();
-    });
-
-    it("should call the waitForReady callback only once, when channel connectivity state is READY", done => {
-      const deadline = Date.now() + 1000;
-      let calledTimes = 0;
-      client.waitForReady(deadline, err => {
-        assert.ifError(err);
-        assert.equal(client.getChannel().getConnectivityState(true), ConnectivityState.READY);
-        calledTimes += 1;
-      });
-      setTimeout(() => {
+    it("should call the waitForReady callback only once, when channel connectivity state is READY", async () => {
+      const server = new TestServer(protocol === "h2");
+      await server.start();
+      const client = TestClient.createFromServer(server);
+      try {
+        const { promise, resolve, reject } = Promise.withResolvers();
+        const deadline = Date.now() + 1000;
+        let calledTimes = 0;
+        client.waitForReady(deadline, err => {
+          calledTimes++;
+          try {
+            assert.ifError(err);
+            assert.equal(client.getChannel().getConnectivityState(true), ConnectivityState.READY);
+          } catch (e) {
+            reject(e);
+          }
+        });
+        setTimeout(resolve, deadline - Date.now());
+        await promise;
         assert.equal(calledTimes, 1);
-        done();
-      }, deadline - Date.now());
+      } finally {
+        client?.close();
+        server.shutdown();
+      }
     });
   });
 });

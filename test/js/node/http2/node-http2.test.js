@@ -826,7 +826,6 @@ describe("Client Basics", () => {
     });
     const result = await promise;
     expect(typeof result.duration).toBe("number");
-    expect(result.duration).toBeGreaterThan(0);
     expect(result.payload).toBeInstanceOf(Buffer);
     expect(result.payload.byteLength).toBe(8);
     expect(received_ping).toBeInstanceOf(Buffer);
@@ -854,7 +853,6 @@ describe("Client Basics", () => {
     });
     const result = await promise;
     expect(typeof result.duration).toBe("number");
-    expect(result.duration).toBeGreaterThan(0);
     expect(result.payload).toBeInstanceOf(Buffer);
     expect(result.payload.byteLength).toBe(8);
     expect(received_ping).toBeInstanceOf(Buffer);

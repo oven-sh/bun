@@ -321,11 +321,11 @@ pub const Bin = extern struct {
                 bun.todo(@src(), {});
                 return;
             }
-            std.os.symlinkatZ(target_path, this.root_node_modules_folder, dest_path) catch |err| {
+            std.os.symlinkatZ(target_path, this.package_installed_node_modules, dest_path) catch |err| {
                 // Silently ignore PathAlreadyExists
                 // Most likely, the symlink was already created by another package
                 if (err == error.PathAlreadyExists) {
-                    setPermissions(this.root_node_modules_folder, dest_path);
+                    setPermissions(this.package_installed_node_modules, dest_path);
                     var target_path_trim = target_path;
                     if (strings.hasPrefix(target_path_trim, "../")) {
                         target_path_trim = target_path_trim[3..];
@@ -336,7 +336,7 @@ pub const Bin = extern struct {
 
                 this.err = err;
             };
-            setPermissions(this.root_node_modules_folder, dest_path);
+            setPermissions(this.package_installed_node_modules, dest_path);
         }
 
         const dot_bin = ".bin" ++ std.fs.path.sep_str;
@@ -351,7 +351,7 @@ pub const Bin = extern struct {
             var remain: []u8 = &dest_buf;
 
             if (!link_global) {
-                const root_dir = std.fs.Dir{ .fd = bun.fdcast(this.root_node_modules_folder) };
+                const root_dir = std.fs.Dir{ .fd = bun.fdcast(this.package_installed_node_modules) };
                 const from = root_dir.realpath(dot_bin, &target_buf) catch |err| {
                     this.err = err;
                     return;

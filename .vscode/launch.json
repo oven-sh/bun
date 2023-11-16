@@ -138,7 +138,7 @@
       "request": "launch",
       "name": "bun run [file]",
       "program": "bun-debug",
-      "args": ["run", "${file}", "${file}"],
+      "args": ["run", "${file}"],
       "cwd": "${fileDirname}",
       "env": {
         "FORCE_COLOR": "1",

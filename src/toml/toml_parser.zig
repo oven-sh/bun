@@ -268,7 +268,7 @@ pub const TOML = struct {
                     else => return err,
                 }
             };
-        } else {}
+        }
         p.lexer.allow_double_bracket = true;
     }
 

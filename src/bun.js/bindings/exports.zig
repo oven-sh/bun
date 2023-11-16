@@ -68,10 +68,6 @@ pub const ZigGlobalObject = extern struct {
         JSC.markBinding(@src());
         @call(.always_inline, Interface.resolve, .{ res, global, specifier, source, query });
     }
-    pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: *bun.String, source: *bun.String) callconv(.C) void {
-        JSC.markBinding(@src());
-        @call(.always_inline, Interface.fetch, .{ ret, global, specifier, source });
-    }
 
     pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, rejection: JSPromiseRejectionOperation) callconv(.C) JSValue {
         JSC.markBinding(@src());
@@ -92,8 +88,6 @@ pub const ZigGlobalObject = extern struct {
         .{
             .import = import,
             .resolve = resolve,
-            .fetch = fetch,
-            // .@"eval" = eval,
             .promiseRejectionTracker = promiseRejectionTracker,
             .reportUncaughtException = reportUncaughtException,
             .onCrash = onCrash,
@@ -105,10 +99,9 @@ pub const ZigGlobalObject = extern struct {
     comptime {
         @export(import, .{ .name = Export[0].symbol_name });
         @export(resolve, .{ .name = Export[1].symbol_name });
-        @export(fetch, .{ .name = Export[2].symbol_name });
-        @export(promiseRejectionTracker, .{ .name = Export[3].symbol_name });
-        @export(reportUncaughtException, .{ .name = Export[4].symbol_name });
-        @export(onCrash, .{ .name = Export[5].symbol_name });
+        @export(promiseRejectionTracker, .{ .name = Export[2].symbol_name });
+        @export(reportUncaughtException, .{ .name = Export[3].symbol_name });
+        @export(onCrash, .{ .name = Export[4].symbol_name });
     }
 };
 

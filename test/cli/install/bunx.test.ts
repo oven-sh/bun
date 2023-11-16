@@ -83,7 +83,7 @@ it("should output usage if no arguments are passed", async () => {
 
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err).toContain("usage: ");
+  expect(err).toContain("Usage: ");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out).toHaveLength(0);

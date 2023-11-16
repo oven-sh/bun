@@ -190,6 +190,7 @@ pub const ServerConfig = struct {
     }
 
     pub const SSLConfig = struct {
+        requires_custom_request_ctx: bool = false,
         server_name: [*c]const u8 = null,
 
         key_file_name: [*c]const u8 = null,
@@ -256,6 +257,71 @@ pub const ServerConfig = struct {
             }
 
             return ctx_opts;
+        }
+
+        pub fn isSame(thisConfig: *const SSLConfig, otherConfig: *const SSLConfig) bool {
+            { //strings
+                const fields = .{
+                    "server_name",
+                    "key_file_name",
+                    "cert_file_name",
+                    "ca_file_name",
+                    "dh_params_file_name",
+                    "passphrase",
+                    "ssl_ciphers",
+                    "protos",
+                };
+
+                inline for (fields) |field| {
+                    const lhs = @field(thisConfig, field);
+                    const rhs = @field(otherConfig, field);
+                    if (lhs != null and rhs != null) {
+                        if (!stringsEqual(lhs, rhs))
+                            return false;
+                    } else if (lhs != null or rhs != null) {
+                        return false;
+                    }
+                }
+            }
+
+            {
+                //numbers
+                const fields = .{ "secure_options", "request_cert", "reject_unauthorized", "low_memory_mode" };
+
+                inline for (fields) |field| {
+                    const lhs = @field(thisConfig, field);
+                    const rhs = @field(otherConfig, field);
+                    if (lhs != rhs)
+                        return false;
+                }
+            }
+
+            {
+                // complex fields
+                const fields = .{ "key", "ca", "cert" };
+                inline for (fields) |field| {
+                    const lhs_count = @field(thisConfig, field ++ "_count");
+                    const rhs_count = @field(otherConfig, field ++ "_count");
+                    if (lhs_count != rhs_count)
+                        return false;
+                    if (lhs_count > 0) {
+                        const lhs = @field(thisConfig, field);
+                        const rhs = @field(otherConfig, field);
+                        for (0..lhs_count) |i| {
+                            if (!stringsEqual(lhs.?[i], rhs.?[i]))
+                                return false;
+                        }
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        fn stringsEqual(a: [*c]const u8, b: [*c]const u8) bool {
+            const lhs = bun.asByteSlice(a);
+            const rhs = bun.asByteSlice(b);
+            return strings.eqlLong(lhs, rhs, true);
         }
 
         pub fn deinit(this: *SSLConfig) void {
@@ -346,6 +412,7 @@ pub const ServerConfig = struct {
                         return null;
                     }
                     any = true;
+                    result.requires_custom_request_ctx = true;
                 }
             }
 
@@ -365,11 +432,13 @@ pub const ServerConfig = struct {
                                     native_array[valid_count] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
                                     valid_count += 1;
                                     any = true;
+                                    result.requires_custom_request_ctx = true;
                                 }
                             } else if (BlobFileContentResult.init("key", item, global, exception)) |content| {
                                 if (content.data.len > 0) {
                                     native_array[valid_count] = content.data.ptr;
                                     valid_count += 1;
+                                    result.requires_custom_request_ctx = true;
                                     any = true;
                                 } else {
                                     // mark and free all CA's
@@ -401,6 +470,7 @@ pub const ServerConfig = struct {
                         result.key = native_array;
                         result.key_count = 1;
                         any = true;
+                        result.requires_custom_request_ctx = true;
                     } else {
                         result.deinit();
                         return null;
@@ -412,6 +482,7 @@ pub const ServerConfig = struct {
                         if (sliced.len > 0) {
                             native_array[0] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
                             any = true;
+                            result.requires_custom_request_ctx = true;
                             result.key = native_array;
                             result.key_count = 1;
                         } else {
@@ -438,6 +509,7 @@ pub const ServerConfig = struct {
                         return null;
                     }
                     any = true;
+                    result.requires_custom_request_ctx = true;
                 }
             }
 
@@ -450,6 +522,7 @@ pub const ServerConfig = struct {
                     }
 
                     any = true;
+                    result.requires_custom_request_ctx = true;
                 } else {
                     global.throwInvalidArguments("ALPNProtocols argument must be an string, Buffer or TypedArray", .{});
                     result.deinit();
@@ -474,11 +547,13 @@ pub const ServerConfig = struct {
                                     native_array[valid_count] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
                                     valid_count += 1;
                                     any = true;
+                                    result.requires_custom_request_ctx = true;
                                 }
                             } else if (BlobFileContentResult.init("cert", item, global, exception)) |content| {
                                 if (content.data.len > 0) {
                                     native_array[valid_count] = content.data.ptr;
                                     valid_count += 1;
+                                    result.requires_custom_request_ctx = true;
                                     any = true;
                                 } else {
                                     // mark and free all CA's
@@ -510,6 +585,7 @@ pub const ServerConfig = struct {
                         result.cert = native_array;
                         result.cert_count = 1;
                         any = true;
+                        result.requires_custom_request_ctx = true;
                     } else {
                         result.deinit();
                         return null;
@@ -521,6 +597,7 @@ pub const ServerConfig = struct {
                         if (sliced.len > 0) {
                             native_array[0] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
                             any = true;
+                            result.requires_custom_request_ctx = true;
                             result.cert = native_array;
                             result.cert_count = 1;
                         } else {
@@ -552,6 +629,7 @@ pub const ServerConfig = struct {
                 if (sliced.len > 0) {
                     result.ssl_ciphers = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
                     any = true;
+                    result.requires_custom_request_ctx = true;
                 }
             }
             if (obj.getTruthy(global, "serverName")) |server_name| {
@@ -560,6 +638,7 @@ pub const ServerConfig = struct {
                 if (sliced.len > 0) {
                     result.server_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
                     any = true;
+                    result.requires_custom_request_ctx = true;
                 }
             }
 
@@ -580,12 +659,14 @@ pub const ServerConfig = struct {
                                     native_array[valid_count] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
                                     valid_count += 1;
                                     any = true;
+                                    result.requires_custom_request_ctx = true;
                                 }
                             } else if (BlobFileContentResult.init("ca", item, global, exception)) |content| {
                                 if (content.data.len > 0) {
                                     native_array[valid_count] = content.data.ptr;
                                     valid_count += 1;
                                     any = true;
+                                    result.requires_custom_request_ctx = true;
                                 } else {
                                     // mark and free all CA's
                                     result.cert = native_array;
@@ -616,6 +697,7 @@ pub const ServerConfig = struct {
                         result.ca = native_array;
                         result.ca_count = 1;
                         any = true;
+                        result.requires_custom_request_ctx = true;
                     } else {
                         result.deinit();
                         return null;
@@ -627,6 +709,7 @@ pub const ServerConfig = struct {
                         if (sliced.len > 0) {
                             native_array[0] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
                             any = true;
+                            result.requires_custom_request_ctx = true;
                             result.ca = native_array;
                             result.ca_count = 1;
                         } else {
@@ -686,6 +769,7 @@ pub const ServerConfig = struct {
                 if (obj.get(global, "lowMemoryMode")) |low_memory_mode| {
                     result.low_memory_mode = low_memory_mode.toBoolean();
                     any = true;
+                    result.requires_custom_request_ctx = true;
                 }
             }
 

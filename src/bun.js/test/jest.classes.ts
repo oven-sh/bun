@@ -118,6 +118,10 @@ export default [
       rejects: {
         getter: "getStaticRejects",
       },
+      unreachable: {
+        fn: "doUnreachable",
+        length: 1,
+      },
     },
     proto: {
       pass: {

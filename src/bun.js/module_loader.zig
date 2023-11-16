@@ -584,7 +584,23 @@ pub const RuntimeTranspilerStore = struct {
 };
 
 pub const ModuleLoader = struct {
+    transpile_source_code_arena: ?*bun.ArenaAllocator = null,
+    eval_script: ?*logger.Source = null,
+
     const debug = Output.scoped(.ModuleLoader, true);
+
+    /// This must be called after calling transpileSourceCode
+    pub fn resetArena(this: *ModuleLoader, jsc_vm: *VirtualMachine) void {
+        std.debug.assert(&jsc_vm.module_loader == this);
+        if (this.transpile_source_code_arena) |arena| {
+            if (jsc_vm.smol) {
+                _ = arena.reset(.free_all);
+            } else {
+                _ = arena.reset(.{ .retain_with_limit = 8 * 1024 * 1024 });
+            }
+        }
+    }
+
     pub const AsyncModule = struct {
 
         // This is all the state used by the printer to print the module
@@ -1351,7 +1367,6 @@ pub const ModuleLoader = struct {
         loader: options.Loader,
         log: *logger.Log,
         virtual_source: ?*const logger.Source,
-        ret: *ErrorableResolvedSource,
         promise_ptr: ?*?*JSC.JSInternalPromise,
         source_code_printer: *js_printer.BufferPrinter,
         globalObject: ?*JSC.JSGlobalObject,
@@ -1368,16 +1383,17 @@ pub const ModuleLoader = struct {
                     jsc_vm.main_hash == hash and
                     strings.eqlLong(jsc_vm.main, path.text, false);
 
-                var arena: ?*bun.ArenaAllocator = brk: {
+                var arena_: ?*bun.ArenaAllocator = brk: {
                     // Attempt to reuse the Arena from the parser when we can
                     // This code is potentially re-entrant, so only one Arena can be reused at a time
                     // That's why we have to check if the Arena is null
                     //
                     // Using an Arena here is a significant memory optimization when loading many files
-                    if (jsc_vm.parser_arena) |shared| {
-                        jsc_vm.parser_arena = null;
+                    if (jsc_vm.module_loader.transpile_source_code_arena) |shared| {
+                        jsc_vm.module_loader.transpile_source_code_arena = null;
                         break :brk shared;
                     }
+
                     // we must allocate the arena so that the pointer it points to is always valid.
                     var arena = try jsc_vm.allocator.create(bun.ArenaAllocator);
                     arena.* = bun.ArenaAllocator.init(bun.default_allocator);
@@ -1387,22 +1403,23 @@ pub const ModuleLoader = struct {
                 var give_back_arena = true;
                 defer {
                     if (give_back_arena) {
-                        if (jsc_vm.parser_arena == null) {
+                        if (jsc_vm.module_loader.transpile_source_code_arena == null) {
                             if (jsc_vm.smol) {
-                                _ = arena.?.reset(.free_all);
+                                _ = arena_.?.reset(.free_all);
                             } else {
-                                _ = arena.?.reset(.{ .retain_with_limit = 8 * 1024 * 1024 });
+                                _ = arena_.?.reset(.{ .retain_with_limit = 8 * 1024 * 1024 });
                             }
 
-                            jsc_vm.parser_arena = arena;
+                            jsc_vm.module_loader.transpile_source_code_arena = arena_;
                         } else {
-                            arena.?.deinit();
-                            jsc_vm.allocator.destroy(arena.?);
+                            arena_.?.deinit();
+                            jsc_vm.allocator.destroy(arena_.?);
                         }
                     }
                 }
 
-                var allocator = arena.?.allocator();
+                var arena = arena_.?;
+                var allocator = arena.allocator();
 
                 var fd: ?StoredFileDescriptorType = null;
                 var package_json: ?*PackageJSON = null;
@@ -1507,6 +1524,7 @@ pub const ModuleLoader = struct {
                                 }
                             }
 
+                            give_back_arena = false;
                             return error.ParseError;
                         };
                     },
@@ -1523,7 +1541,6 @@ pub const ModuleLoader = struct {
                         .wasm,
                         log,
                         &parse_result.source,
-                        ret,
                         promise_ptr,
                         source_code_printer,
                         globalObject,
@@ -1551,6 +1568,7 @@ pub const ModuleLoader = struct {
                 }
 
                 if (jsc_vm.bundler.log.errors > 0) {
+                    give_back_arena = false;
                     return error.ParseError;
                 }
 
@@ -1628,10 +1646,9 @@ pub const ModuleLoader = struct {
                             .promise_ptr = promise_ptr,
                             .specifier = specifier,
                             .referrer = referrer,
-                            .arena = arena.?,
+                            .arena = arena,
                         },
                     );
-                    arena = null;
                     give_back_arena = false;
                     return error.AsyncModule;
                 }
@@ -1814,7 +1831,6 @@ pub const ModuleLoader = struct {
                     .file,
                     log,
                     virtual_source,
-                    ret,
                     promise_ptr,
                     source_code_printer,
                     globalObject,
@@ -1949,9 +1965,18 @@ pub const ModuleLoader = struct {
         );
         const path = Fs.Path.init(specifier);
 
+        var virtual_source: ?*logger.Source = null;
+
         // Deliberately optional.
         // The concurrent one only handles javascript-like loaders right now.
-        const loader: ?options.Loader = jsc_vm.bundler.options.loaders.get(path.name.ext);
+        var loader: ?options.Loader = jsc_vm.bundler.options.loaders.get(path.name.ext);
+
+        if (jsc_vm.module_loader.eval_script) |eval_script| {
+            if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
+                virtual_source = eval_script;
+                loader = .tsx;
+            }
+        }
 
         // We only run the transpiler concurrently when we can.
         // Today, that's:
@@ -1993,6 +2018,8 @@ pub const ModuleLoader = struct {
             }
         };
 
+        defer jsc_vm.module_loader.resetArena(jsc_vm);
+
         var promise: ?*JSC.JSInternalPromise = null;
         ret.* = ErrorableResolvedSource.ok(
             ModuleLoader.transpileSourceCode(
@@ -2004,8 +2031,7 @@ pub const ModuleLoader = struct {
                 path,
                 synchronous_loader,
                 &log,
-                null,
-                ret,
+                virtual_source,
                 if (allow_promise) &promise else null,
                 VirtualMachine.source_code_printer.?,
                 globalObject,
@@ -2204,6 +2230,8 @@ pub const ModuleLoader = struct {
             };
 
         defer log.deinit();
+        defer jsc_vm.module_loader.resetArena(jsc_vm);
+
         ret.* = ErrorableResolvedSource.ok(
             ModuleLoader.transpileSourceCode(
                 jsc_vm,
@@ -2215,7 +2243,6 @@ pub const ModuleLoader = struct {
                 loader,
                 &log,
                 &virtual_source,
-                ret,
                 null,
                 VirtualMachine.source_code_printer.?,
                 globalObject,

@@ -1497,7 +1497,6 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn onClose(this: *This, socket: Socket, err: c_int, _: ?*anyopaque) void {
             JSC.markBinding(@src());
             log("onClose", .{});
-            if (this.detached) return;
             this.detached = true;
             defer this.markInactive();
             const handlers = this.handlers;

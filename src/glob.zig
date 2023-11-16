@@ -891,7 +891,7 @@ pub const GlobWalker = struct {
         if (comptime !isWindows) {
             return filepath[0] == '.';
         } else {
-            return std.unicode.utf16DecodeSurrogatePair(&filepath[0..2]) == '.' catch false;
+            return filepath[1] == '.';
         }
     }
 

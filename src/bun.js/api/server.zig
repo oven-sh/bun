@@ -4784,12 +4784,34 @@ pub const ServerWebSocket = struct {
             return .undefined;
         }
 
-        this.closed = true;
+        const code = brk: {
+            if (args.ptr[0].isEmpty() or args.ptr[0].isUndefined()) {
+                // default exception code
+                break :brk 1000;
+            }
 
-        const code = if (args.len > 0) args.ptr[0].toInt32() else @as(i32, 1000);
-        var message_value = if (args.len > 1) args.ptr[1].toSlice(globalThis, bun.default_allocator) else ZigString.Slice.empty;
+            if (!args.ptr[0].isNumber()) {
+                globalThis.throwInvalidArguments("close requires a numeric code or undefined", .{});
+                return .zero;
+            }
+
+            break :brk args.ptr[0].coerce(i32, globalThis);
+        };
+
+        var message_value: ZigString.Slice = brk: {
+            if (args.ptr[1].isEmpty() or args.ptr[1].isUndefined()) break :brk ZigString.Slice.empty;
+
+            if (args.ptr[1].toSliceOrNull(globalThis)) |slice| {
+                break :brk slice;
+            }
+
+            // toString() failed, that means an exception occurred.
+            return .zero;
+        };
+
         defer message_value.deinit();
 
+        this.closed = true;
         this.websocket.end(code, message_value.slice());
         return .undefined;
     }

@@ -24,7 +24,7 @@ extern "C" uWS::HttpRequest* Request__getUWSRequest(void*);
 static EncodedJSValue assignHeadersFromFetchHeaders(FetchHeaders& impl, JSObject* prototype, JSObject* objectValue, JSC::InternalFieldTuple* tuple, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    uint32_t size = std::min(impl.sizeAfterJoiningSetCookieHeader(), static_cast<uint32_t>(63));
+    uint32_t size = std::min(impl.sizeAfterJoiningSetCookieHeader(), static_cast<uint32_t>(JSFinalObject::maxInlineCapacity));
     JSC::JSArray* array = constructEmptyArray(globalObject, nullptr, impl.size() * 2);
     RETURN_IF_EXCEPTION(scope, {});
     JSC::JSObject* obj = JSC::constructEmptyObject(globalObject, prototype, size);
@@ -202,7 +202,7 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
         size++;
     }
 
-    JSC::JSObject* headersObject = JSC::constructEmptyObject(globalObject, prototype, std::min(size, static_cast<size_t>(63)));
+    JSC::JSObject* headersObject = JSC::constructEmptyObject(globalObject, prototype, std::min(size, static_cast<size_t>(JSFinalObject::maxInlineCapacity)));
     RETURN_IF_EXCEPTION(scope, {});
     JSC::JSArray* array = constructEmptyArray(globalObject, nullptr, size * 2);
     JSC::JSArray* setCookiesHeaderArray = nullptr;

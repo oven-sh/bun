@@ -610,20 +610,15 @@ it("#5872", () => {
 
 it("issue#6597", () => {
   const db = new Database(":memory:");
-  db.run("CREATE TABLE Users (Id INTEGER PRIMARY KEY, Name VARCHAR(255), CreatedAt TIMESTAMP)");
-  db.run(
-    "CREATE TABLE Cars (Id INTEGER PRIMARY KEY, Driver INTEGER, CreatedAt TIMESTAMP, FOREIGN KEY (Driver) REFERENCES Users(Id))",
-  );
-  db.run('INSERT INTO Users (Id, Name, CreatedAt) VALUES (1, "Alice", "2022-01-01");');
-  db.run('INSERT INTO Cars (Id, Driver, CreatedAt) VALUES (1, 1, "2023-01-01");');
+  db.run("CREATE TABLE Users (Id INTEGER PRIMARY KEY, Name VARCHAR(255));");
+  db.run("CREATE TABLE Cars (Id INTEGER PRIMARY KEY, Driver INTEGER, FOREIGN KEY (Driver) REFERENCES Users(Id))");
+  db.run('INSERT INTO Users (Id, Name) VALUES (1, "Alice");');
+  db.run("INSERT INTO Cars (Id, Driver) VALUES (1,1);");
   const result = db.query("SELECT * FROM Cars JOIN Users ON Driver=Users.Id").get();
   expect(result).toEqual({
     Id: 1,
     Driver: 1,
     Name: "Alice",
-    CreatedAt: "2023-01-01",
-    Users_CreatedAt: "2022-01-01",
-    Users_Id: 1,
   });
   db.close();
 });

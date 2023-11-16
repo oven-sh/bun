@@ -97,7 +97,7 @@ pub const Response = struct {
     }
 
     pub fn hasPendingActivity(this: *Response) callconv(.C) bool {
-        return this.body.is_waiting;
+        return this.body.isWaiting();
     }
 
     pub fn getBodyValue(
@@ -953,7 +953,7 @@ pub const Fetch = struct {
                         for (0..1 + clones_len) |i| {
                             var body = response_list[i];
                             defer {
-                                body.is_waiting = false;
+                                body.is_waiting.store(false, .Release);
                             }
                             const err = this.onReject();
                             err.ensureStillAlive();
@@ -1031,7 +1031,7 @@ pub const Fetch = struct {
                                             },
                                             bun.default_allocator,
                                         );
-                                        body.is_waiting = false;
+                                        body.is_waiting.store(false, .Release);
                                     }
 
                                     continue;
@@ -1051,7 +1051,7 @@ pub const Fetch = struct {
                                 body.value = body_value;
                                 if (old == .Locked) {
                                     old.resolve(&body.value, this.global_this);
-                                    body.is_waiting = false;
+                                    body.is_waiting.store(false, .Release);
                                 }
                             }
                         }

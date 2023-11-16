@@ -15271,13 +15271,7 @@ fn NewParser_(
                                         p.source,
                                         record.range,
                                         expr,
-                                        &.{},
                                         name,
-                                        MacroVisitor,
-                                        MacroVisitor{
-                                            .p = p,
-                                            .loc = expr.loc,
-                                        },
                                     ) catch return expr);
 
                                     if (macro_result.data != .e_template) {
@@ -16378,10 +16372,7 @@ fn NewParser_(
                                 p.source,
                                 record.range,
                                 copied,
-                                &.{},
                                 name,
-                                MacroVisitor,
-                                MacroVisitor{ .p = p, .loc = expr.loc },
                             ) catch |err| {
                                 if (err == error.MacroFailed) {
                                     if (p.log.msgs.items.len == start_error_count) {

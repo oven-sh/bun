@@ -140,6 +140,7 @@ pub const Loader = struct {
         }
 
         // NO_PROXY filter
+        // See the syntax at https://about.gitlab.com/blog/2021/01/27/we-need-to-talk-no-proxy/
         if (http_proxy != null) {
             if (this.map.get("no_proxy") orelse this.map.get("NO_PROXY")) |no_proxy_text| {
                 if (no_proxy_text.len == 0 or strings.eqlComptime(no_proxy_text, "\"\"") or strings.eqlComptime(no_proxy_text, "''")) {
@@ -149,7 +150,7 @@ pub const Loader = struct {
                 var no_proxy_list = std.mem.split(u8, no_proxy_text, ",");
                 var next = no_proxy_list.next();
                 while (next != null) {
-                    var host = next.?;
+                    var host = strings.trim(next.?, &strings.whitespace_chars);
                     if (strings.eql(host, "*")) {
                         return null;
                     }

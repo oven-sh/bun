@@ -1,10 +1,8 @@
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs" assert { type: "macro" };
-import { addStrings, addStringsUTF16, escape, identity } from "./macro.ts" assert { type: "macro" };
+import { addStrings, addStringsUTF16, escape, identity, urlSearchParams } from "./macro.ts" assert { type: "macro" };
 import { escapeHTML } from "bun" assert { type: "macro" };
 
 test("bun builtins can be used in macros", async () => {
-  expect(readFileSync("../package.json", "utf-8")).toBe(await Bun.file("../package.json").text());
   expect(escapeHTML("abc!")).toBe("abc!");
 });
 

@@ -1906,7 +1906,7 @@ pub const Command = struct {
                 Command.Tag.BuildCommand => {
                     const intro_text =
                         \\<b>Usage<r>:
-                        \\  Transpile and bundle one more more files.
+                        \\  Transpile and bundle one or more files.
                         \\  <b><green>bun build<r> <cyan>[...flags]<r> [...entrypoints]
                     ;
 

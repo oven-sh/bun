@@ -214,6 +214,7 @@ pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
 }
 
 pub fn lstat(path: [:0]const u8) Maybe(bun.Stat) {
+    if (Environment.isWindows) @panic("todo");
     var stat_ = mem.zeroes(bun.Stat);
     if (Maybe(bun.Stat).errnoSys(lstat64(path, &stat_), .lstat)) |err| return err;
     return Maybe(bun.Stat){ .result = stat_ };

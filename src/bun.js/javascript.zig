@@ -2904,7 +2904,7 @@ pub const VirtualMachine = struct {
 
         if (show.fd) {
             if (show.syscall) {
-                try writer.writeAll("   ");
+                try writer.writeAll("     ");
             } else if (show.errno) {
                 try writer.writeAll("  ");
             }

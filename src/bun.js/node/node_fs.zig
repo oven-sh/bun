@@ -16,6 +16,8 @@ const system = std.os.system;
 const Maybe = JSC.Maybe;
 const Encoding = JSC.Node.Encoding;
 
+// const FileDescriptor = bun.FileDescriptor;
+
 /// For all JS-exposed code, we should return LibUV file descriptors.
 const FileDescriptor = bun.UVFileDescriptor;
 
@@ -48,15 +50,19 @@ const Syscall = if (Environment.isWindows) struct {
     // Note: `req = undefined; req.deinit()` has a saftey-check in a debug build
 
     pub fn open(file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(FileDescriptor) {
-        var req: uv.fs_t = uv.fs_t.uninitialized;
-        defer req.deinit();
-        const result = uv.uv_fs_open(uv.Loop.get(), &req, file_path.ptr, flags, perm, null);
+        // var req: uv.fs_t = uv.fs_t.uninitialized;
+        // defer req.deinit();
+        // const result = uv.uv_fs_open(uv.Loop.get(), &req, file_path.ptr, flags, perm, null);
 
-        log("uv open({s}, {d}, {d}) = {d}", .{ file_path, flags, perm, result.value });
-        return if (result.errno()) |code|
-            .{ .err = .{ .errno = code, .syscall = .open } }
-        else
-            .{ .result = result.value };
+        // log("uv open({s}, {d}, {d}) = {d}", .{ file_path, flags, perm, result.value });
+        // return if (result.errno()) |code|
+        //     .{ .err = .{ .errno = code, .syscall = .open } }
+        // else
+        //     .{ .result = result.value };
+        return switch (bun.sys.open(file_path, flags, perm)) {
+            .result => |result| .{ .result = fduncast(result) },
+            .err => |err| .{ .err = err },
+        };
     }
 
     pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
@@ -4419,6 +4425,18 @@ pub const NodeFS = struct {
         var buf = args.buffer.slice();
         buf = buf[@min(args.offset, buf.len)..];
         buf = buf[0..@min(buf.len, args.length)];
+
+        if (Environment.isWindows) {
+            var bytes_written: std.os.windows.DWORD = undefined;
+            if (std.os.windows.kernel32.WriteFile(bun.fdcast(fdcast(args.fd)), buf.ptr, @truncate(buf.len), &bytes_written, null) == 0) {
+                return .{ .err = Syscall.Error{
+                    .errno = @intFromEnum(std.os.windows.kernel32.GetLastError()),
+                    .syscall = .WriteFile,
+                    .fd = @intCast(args.fd),
+                } };
+            }
+            return .{ .result = .{ .bytes_written = bytes_written } };
+        }
 
         return switch (Syscall.write(args.fd, buf)) {
             .err => |err| .{

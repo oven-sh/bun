@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { addStrings, addStringsUTF16, escape, identity, urlSearchParams } from "./macro.ts" assert { type: "macro" };
+import { addStrings, addStringsUTF16, escape, identity } from "./macro.ts" assert { type: "macro" };
 import { escapeHTML } from "bun" assert { type: "macro" };
 
 test("bun builtins can be used in macros", async () => {

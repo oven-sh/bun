@@ -1,4 +1,4 @@
-const recommended_zig_version = "0.12.0-dev.1571+03adafd80";
+const recommended_zig_version = "0.12.0-dev.1604+caae40c21";
 const zig_version = @import("builtin").zig_version;
 const std = @import("std");
 

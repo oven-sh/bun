@@ -214,6 +214,85 @@ test("package added after install", async () => {
   expect(await exited).toBe(0);
 });
 
+test("it should install and use correct binary version", async () => {
+  // this should install `what-bin` in two places:
+  //
+  // - node_modules/.bin/what-bin@1.5.0
+  // - node_modules/uses-what-bin/node_modules/.bin/what-bin@1.0.0
+
+  await writeFile(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "uses-what-bin": "1.0.0",
+        "what-bin": "1.5.0",
+      },
+    }),
+  );
+
+  var { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("not found");
+  expect(err).not.toContain("error:");
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + uses-what-bin@1.0.0",
+    " + what-bin@1.5.0",
+    "",
+    expect.stringContaining("3 packages installed"),
+  ]);
+  expect(await exited).toBe(0);
+  expect(await file(join(packageDir, "node_modules", ".bin", "what-bin")).text()).toContain("what-bin@1.5.0");
+  expect(
+    await file(join(packageDir, "node_modules", "uses-what-bin", "node_modules", ".bin", "what-bin")).text(),
+  ).toContain("what-bin@1.0.0");
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await rm(join(packageDir, "bun.lockb"));
+
+  await writeFile(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "uses-what-bin": "1.5.0",
+        "what-bin": "1.0.0",
+      },
+      scripts: {
+        install: "what-bin",
+      },
+      trustedDependencies: ["uses-what-bin"],
+    }),
+  );
+
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  }));
+
+  expect(await exited).toBe(0);
+  expect(await file(join(packageDir, "node_modules", ".bin", "what-bin")).text()).toContain("what-bin@1.0.0");
+  expect(
+    await file(join(packageDir, "node_modules", "uses-what-bin", "node_modules", ".bin", "what-bin")).text(),
+  ).toContain("what-bin@1.5.0");
+});
+
 describe("semver", () => {
   const taggedVersionTests = [
     {

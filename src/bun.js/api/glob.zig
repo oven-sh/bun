@@ -259,6 +259,9 @@ fn globWalkResultToJS(globWalk: *GlobWalker, globalThis: *JSGlobalObject) JSValu
     return BunString.toJSArray(globalThis, globWalk.matchedPaths.items[0..]);
 }
 
+/// The reference to the arena is not used after the scope because it is copied
+/// by `GlobWalker.init`/`GlobWalker.initWithCwd` if all allocations work and no
+/// errors occur
 fn makeGlobWalker(
     this: *Glob,
     globalThis: *JSGlobalObject,

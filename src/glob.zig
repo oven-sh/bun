@@ -201,6 +201,7 @@ pub const GlobWalker = struct {
         };
     };
 
+    /// The arena parameter is dereferenced and copied if all allocations go well and nothing goes wrong
     pub fn init(
         this: *GlobWalker,
         arena: *Arena,
@@ -248,6 +249,7 @@ pub const GlobWalker = struct {
     }
 
     /// `cwd` should be allocated with the arena
+    /// The arena parameter is dereferenced and copied if all allocations go well and nothing goes wrong
     pub fn initWithCwd(
         this: *GlobWalker,
         arena: *Arena,

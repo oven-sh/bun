@@ -3935,7 +3935,7 @@ const LinkerContext = struct {
                 defer dir.close();
 
                 var real_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                chunk.template.placeholder.dir = try resolve_path.relativeAlloc(this.allocator, this.resolver.opts.root_dir, try bun.getFdPath(dir.fd, &real_path_buf));
+                chunk.template.placeholder.dir = try resolve_path.relativeAlloc(this.allocator, this.resolver.opts.root_dir, try bun.getFdPath(bun.toFD(dir.fd), &real_path_buf));
             } else {
                 chunk.template = PathTemplate.chunk;
                 if (this.resolver.opts.chunk_naming.len > 0)

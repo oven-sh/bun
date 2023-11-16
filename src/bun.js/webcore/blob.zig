@@ -330,7 +330,7 @@ pub const Blob = struct {
 
                 switch (pathlike_tag) {
                     .fd => {
-                        const fd = @as(bun.FileDescriptor, @intCast(try reader.readInt(bun.FileDescriptor, .little)));
+                        const fd = try reader.readInt(bun.FileDescriptor, .little);
 
                         var blob = try allocator.create(Blob);
                         blob.* = Blob.findOrCreateFileFromPath(
@@ -1517,7 +1517,7 @@ pub const Blob = struct {
 
                     switch (file.pathlike) {
                         .fd => |fd| {
-                            try writer.writeInt(u32, @as(u32, @intCast(fd)), .little);
+                            try writer.writeInt(bun.FileDescriptor, fd, .little);
                         },
                         .path => |path| {
                             const path_slice = path.slice();

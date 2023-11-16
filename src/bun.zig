@@ -266,11 +266,12 @@ pub const Global = @import("./__global.zig");
 pub const FileDescriptor = if (Environment.isBrowser)
     u0
 else if (Environment.isWindows)
+    // On windows, this is a bitcast "bun.FD" struct
     u64
 else
     std.os.fd_t;
 
-pub const UVFileDescriptor = if (Environment.isWindows) c_int else FileDescriptor;
+pub const FD = @import("./fd.zig").FD;
 
 // When we are on a computer with an absurdly high number of max open file handles
 // such is often the case with macOS
@@ -1790,32 +1791,21 @@ pub inline fn todo(src: std.builtin.SourceLocation, value: anytype) @TypeOf(valu
 }
 
 pub inline fn fdcast(fd: FileDescriptor) std.os.fd_t {
-    if (comptime FileDescriptor == std.os.fd_t) {
-        return fd;
-    }
-
-    return @ptrFromInt(fd);
-}
-
-pub inline fn socketcast(fd: FileDescriptor) std.os.fd_t {
-    if (comptime FileDescriptor == std.os.fd_t) {
-        return fd;
-    }
-
-    return @ptrFromInt(fd);
+    return FD.fromFileDescriptor(fd).system();
 }
 
 pub inline fn toFD(fd: anytype) FileDescriptor {
-    const FD = @TypeOf(fd);
-    if (comptime FileDescriptor == std.os.fd_t) {
-        return @intCast(fd);
+    if (Environment.isWindows) {
+        const T = @TypeOf(fd);
+        return (switch (T) {
+            FD.System => FD.fromSystem(fd),
+            FD.UV => FD.fromUV(fd),
+            FileDescriptor => FD.fromFileDescriptor(fd),
+            else => @compileError("toFD() does not support type \"" ++ @typeName(T) ++ "\""),
+        }).fileDescriptor();
+    } else {
+        return fd;
     }
-
-    if (comptime FD == std.os.fd_t) {
-        return @intFromPtr(fd);
-    }
-
-    return @intCast(fd);
 }
 
 pub const HOST_NAME_MAX = if (Environment.isWindows)
@@ -1895,7 +1885,7 @@ pub const win32 = struct {
         std.os.argv = new_ptr;
     }
 
-    pub fn stdio(i: anytype) FileDescriptor {
+    pub fn stdio(i: anytype) FD {
         return switch (i) {
             0 => STDIN_FD,
             1 => STDOUT_FD,

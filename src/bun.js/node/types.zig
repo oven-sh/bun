@@ -1095,13 +1095,10 @@ pub const ArgumentsSlice = struct {
 };
 
 pub fn fileDescriptorFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?bun.FileDescriptor {
-    if (!value.isNumber() or value.isBigInt()) return null;
-    const fd = value.toInt64();
-    if (!Valid.fileDescriptor(fd, ctx, exception)) {
-        return null;
-    }
-
-    return @as(bun.FileDescriptor, @intCast(fd));
+    return if (bun.FD.fromJSValidated(value, ctx, exception) catch null) |fd|
+        fd.fileDescriptor()
+    else
+        null;
 }
 
 // Node.js docs:
@@ -1217,20 +1214,20 @@ pub const PathOrFileDescriptor = union(Tag) {
     pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, allocator: std.mem.Allocator, exception: JSC.C.ExceptionRef) ?JSC.Node.PathOrFileDescriptor {
         const first = arguments.next() orelse return null;
 
-        if (fileDescriptorFromJS(ctx, first, exception)) |fd| {
+        if (bun.FD.fromJSValidated(first, ctx, exception) catch return null) |fd| {
             arguments.eat();
-            return JSC.Node.PathOrFileDescriptor{ .fd = fd };
+            return JSC.Node.PathOrFileDescriptor{ .fd = fd.fileDescriptor() };
         }
 
-        if (exception.* != null) return null;
-
-        return JSC.Node.PathOrFileDescriptor{ .path = PathLike.fromJSWithAllocator(ctx, arguments, allocator, exception) orelse return null };
+        return JSC.Node.PathOrFileDescriptor{
+            .path = PathLike.fromJSWithAllocator(ctx, arguments, allocator, exception) orelse return null,
+        };
     }
 
     pub fn toJS(this: JSC.Node.PathOrFileDescriptor, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
         return switch (this) {
-            .path => this.path.toJS(ctx, exception),
-            .fd => JSC.JSValue.jsNumberFromInt32(@as(i32, @intCast(this.fd))).asRef(),
+            .path => |path| path.toJS(ctx, exception),
+            .fd => |fd| bun.FD.fromFileDescriptor(fd).toJS(),
         };
     }
 };

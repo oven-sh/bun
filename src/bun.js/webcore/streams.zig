@@ -4223,7 +4223,7 @@ pub const File = struct {
 
         var fd = if (file.pathlike != .path)
             // We will always need to close the file descriptor.
-            switch (Syscall.dup(@intCast(file.pathlike.fd))) {
+            switch (Syscall.dup(file.pathlike.fd)) {
                 .result => |_fd| _fd,
                 .err => |err| {
                     return .{ .err = err.withPath(file.pathlike.path.slice()) };

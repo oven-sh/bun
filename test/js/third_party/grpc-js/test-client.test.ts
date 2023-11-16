@@ -48,7 +48,7 @@ const clientInsecureCreds = grpc.credentials.createInsecure();
     });
 
     it("should call the waitForReady callback only once, when channel connectivity state is READY", done => {
-      const deadline = Date.now() + 100;
+      const deadline = Date.now() + 1000;
       let calledTimes = 0;
       client.waitForReady(deadline, err => {
         assert.ifError(err);

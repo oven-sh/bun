@@ -522,6 +522,30 @@ declare module "bun:test" {
     anything: () => Expect;
     stringContaining: (str: string) => Expect<string>;
     stringMatching: <T extends RegExp | string>(regex: T) => Expect<T>;
+
+    /**
+     * Throw an error if this function is called.
+     *
+     * @param msg Optional message to display if the test fails
+     * @returns never
+     *
+     * @example
+     * ## Example
+     *
+     * ```ts
+     * import { expect, test } from "bun:test";
+     *
+     * test("!!abc!! is not a module", () => {
+     *  try {
+     *     require("!!abc!!");
+     *     expect.unreachable();
+     *  } catch(e) {
+     *     expect(e.name).not.toBe("UnreachableError");
+     *  }
+     * });
+     * ```
+     */
+    unreachable(msg?: string | Error): never;
   };
   /**
    * Asserts that a value matches some criteria.

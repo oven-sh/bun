@@ -4774,3 +4774,9 @@ CPP_DECL void JSC__VM__setControlFlowProfiler(JSC__VM* vm, bool isEnabled)
         vm->disableControlFlowProfiler();
     }
 }
+
+extern "C" EncodedJSValue JSC__createError(JSC::JSGlobalObject* globalObject, BunString* str)
+{
+    return JSValue::encode(
+        JSC::createError(globalObject, str->toWTFString()));
+}

@@ -69,7 +69,9 @@ pub const Body = struct {
     }
 
     pub fn clone(this: *Body, globalThis: *JSGlobalObject) Body {
-        return Body{ .value = this.value.clone(globalThis) };
+        return Body{
+            .value = this.value.clone(globalThis),
+        };
     }
 
     pub fn writeFormat(this: *const Body, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {

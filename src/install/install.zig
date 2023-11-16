@@ -48,6 +48,7 @@ const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
 const z_allocator = @import("../memory_allocator.zig").z_allocator;
 const Syscall = bun.sys;
 const RunCommand = @import("../cli/run_command.zig").RunCommand;
+const PackageManagerCommand = @import("../cli/package_manager_command.zig").PackageManagerCommand;
 threadlocal var initialized_store = false;
 const Futex = @import("../futex.zig");
 
@@ -6377,11 +6378,11 @@ pub const PackageManager = struct {
         "Possible values: \"hardlink\" (default), \"symlink\", \"copyfile\"";
 
     const install_params_ = [_]ParamType{
-        clap.parseParam("-c, --config <STR>?               Load config (bunfig.toml)") catch unreachable,
+        clap.parseParam("-c, --config <STR>?               Specify path to config file (bunfig.toml)") catch unreachable,
         clap.parseParam("-y, --yarn                        Write a yarn.lock file (yarn v1)") catch unreachable,
         clap.parseParam("-p, --production                  Don't install devDependencies") catch unreachable,
-        clap.parseParam("--no-save                         Don't save a lockfile") catch unreachable,
-        clap.parseParam("--save                            Save to package.json") catch unreachable,
+        clap.parseParam("--no-save                         Don't update package.json or save a lockfile") catch unreachable,
+        clap.parseParam("--save                            Save to package.json (true by default)") catch unreachable,
         clap.parseParam("--dry-run                         Don't install anything") catch unreachable,
         clap.parseParam("--frozen-lockfile                 Disallow changes to lockfile") catch unreachable,
         clap.parseParam("-f, --force                       Always request the latest versions from the registry & reinstall all dependencies") catch unreachable,
@@ -6397,14 +6398,12 @@ pub const PackageManager = struct {
         clap.parseParam("--cwd <STR>                       Set a specific cwd") catch unreachable,
         clap.parseParam("--backend <STR>                   Platform-specific optimizations for installing dependencies. " ++ platform_specific_backend_label) catch unreachable,
         clap.parseParam("--link-native-bins <STR>...       Link \"bin\" from a matching platform-specific \"optionalDependencies\" instead. Default: esbuild, turbo") catch unreachable,
-
         // clap.parseParam("--omit <STR>...                   Skip installing dependencies of a certain type. \"dev\", \"optional\", or \"peer\"") catch unreachable,
         // clap.parseParam("--no-dedupe                       Disable automatic downgrading of dependencies that would otherwise cause unnecessary duplicate package versions ($BUN_CONFIG_NO_DEDUPLICATE)") catch unreachable,
-
         clap.parseParam("--help                            Print this help menu") catch unreachable,
     };
 
-    const install_params = install_params_ ++ [_]ParamType{
+    pub const install_params = install_params_ ++ [_]ParamType{
         clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
         clap.parseParam("-D, --development") catch unreachable,
         clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
@@ -6412,15 +6411,15 @@ pub const PackageManager = struct {
         clap.parseParam("<POS> ...                         ") catch unreachable,
     };
 
-    const update_params = install_params_ ++ [_]ParamType{
+    pub const update_params = install_params_ ++ [_]ParamType{
         clap.parseParam("<POS> ...                         \"name\" of packages to update") catch unreachable,
     };
 
-    const pm_params = install_params_ ++ [_]ParamType{
+    pub const pm_params = install_params_ ++ [_]ParamType{
         clap.parseParam("<POS> ...                         ") catch unreachable,
     };
 
-    const add_params = install_params_ ++ [_]ParamType{
+    pub const add_params = install_params_ ++ [_]ParamType{
         clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
         clap.parseParam("-D, --development") catch unreachable,
         clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
@@ -6428,15 +6427,15 @@ pub const PackageManager = struct {
         clap.parseParam("<POS> ...                         \"name\" or \"name@version\" of package(s) to install") catch unreachable,
     };
 
-    const remove_params = install_params_ ++ [_]ParamType{
+    pub const remove_params = install_params_ ++ [_]ParamType{
         clap.parseParam("<POS> ...                         \"name\" of package(s) to remove from package.json") catch unreachable,
     };
 
-    const link_params = install_params_ ++ [_]ParamType{
+    pub const link_params = install_params_ ++ [_]ParamType{
         clap.parseParam("<POS> ...                         \"name\" install package as a link") catch unreachable,
     };
 
-    const unlink_params = install_params_ ++ [_]ParamType{
+    pub const unlink_params = install_params_ ++ [_]ParamType{
         clap.parseParam("<POS> ...                         \"name\" uninstall package as a link") catch unreachable,
     };
 
@@ -6491,6 +6490,147 @@ pub const PackageManager = struct {
             }
         };
 
+        pub fn printHelp(comptime subcommand: Subcommand) void {
+            switch (subcommand) {
+                // fall back to HelpCommand.printWithReason
+                Subcommand.install => {
+                    const intro_text =
+                        \\<b>Usage<r>: <b><green>bun install<r> <cyan>[flags]<r> [...\<pkg\>]
+                        \\<b>Alias: <b>bun i<r>
+                        \\  Install the dependencies listed in package.json
+                    ;
+                    const outro_text =
+                        \\<b>Examples:<r>
+                        \\  <d>Install the dependencies for the current project<r>
+                        \\  <b><green>bun install<r>
+                        \\
+                        \\  <d>Skip devDependencies<r>
+                        \\  <b><green>bun install --production<r>
+                        \\
+                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/install<r>
+                    ;
+                    Output.pretty("\n" ++ intro_text, .{});
+                    Output.flush();
+                    Output.pretty("\n\n<b>Flags:<r>", .{});
+                    Output.flush();
+                    clap.simpleHelp(&PackageManager.add_params);
+                    Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
+                    Output.flush();
+                },
+                Subcommand.update => {
+                    const intro_text =
+                        \\<b>Usage<r>: <b><green>bun update<r> <cyan>[flags]<r>
+                        \\  Update all dependencies to most recent versions within the version range in package.json
+                        \\
+                    ;
+                    const outro_text =
+                        \\<b>Examples:<r>
+                        \\  <d>Update all dependencies:<r>
+                        \\  <b><green>bun update<r>
+                        \\
+                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/update<r>
+                    ;
+                    Output.pretty("\n" ++ intro_text, .{});
+                    Output.flush();
+                    Output.pretty("\n<b>Flags:<r>", .{});
+                    Output.flush();
+                    clap.simpleHelp(&PackageManager.add_params);
+                    Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
+                    Output.flush();
+                },
+                Subcommand.pm => {
+                    PackageManagerCommand.printHelp();
+                },
+                Subcommand.add => {
+                    const intro_text =
+                        \\<b>Usage<r>: <b><green>bun add<r> <cyan>[flags]<r> \<pkg\> [...\<pkg\>]
+                        \\<b>Alias: <b>bun a<r>
+                    ;
+                    const outro_text =
+                        \\<b>Examples:<r>
+                        \\  <d>Add a dependency from the npm registry<r>
+                        \\  <b><green>bun add zod<r>
+                        \\  <b><green>bun add zod@next<r>
+                        \\  <b><green>bun add zod@3.0.0<r>
+                        \\
+                        \\  <d>Add a dev, optional, or peer dependency <r>
+                        \\  <b><green>bun add -d typescript<r>
+                        \\  <b><green>bun add -o lodash<r>
+                        \\  <b><green>bun add --peer esbuild<r>
+                        \\
+                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/add<r>
+                    ;
+                    Output.pretty("\n" ++ intro_text, .{});
+                    Output.flush();
+                    Output.pretty("\n\n<b>Flags:<r>", .{});
+                    Output.flush();
+                    clap.simpleHelp(&PackageManager.add_params);
+                    Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
+                    Output.flush();
+                },
+                Subcommand.remove => {
+                    const intro_text =
+                        \\<b>Usage<r>: <b><green>bun remove<r> <cyan>[flags]<r> \<pkg\> [...\<pkg\>]
+                        \\<b>Alias: <b>bun r<r>
+                        \\  Remove a package from package.json and uninstall from node_modules
+                        \\
+                    ;
+                    const outro_text =
+                        \\<b>Examples:<r>
+                        \\  <d>Remove a dependency<r>
+                        \\  <b><green>bun remove ts-node<r>
+                        \\
+                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/remove<r>
+                    ;
+                    Output.pretty("\n" ++ intro_text, .{});
+                    Output.flush();
+                    Output.pretty("\n<b>Flags:<r>", .{});
+                    Output.flush();
+                    clap.simpleHelp(&PackageManager.remove_params);
+                    Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
+                    Output.flush();
+                },
+                Subcommand.link => {
+                    const intro_text =
+                        \\<b>Usage<r>: <b><green>bun link<r> <cyan>[flags]<r> [\<package\>]
+                        \\
+                    ;
+                    const outro_text =
+                        \\<b>Examples:<r>
+                        \\  <d>Register the current directory as a linkable package.<r>
+                        \\  <d>Directory should contain a package.json.<r>
+                        \\  <b><green>bun link<r>
+                        \\
+                        \\  <d>Add a previously-registered linkable package as a dependency of the current project.<r>
+                        \\  <b><green>bun link \<package\><r>
+                        \\
+                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/link<r>
+                    ;
+                    Output.pretty("\n" ++ intro_text, .{});
+                    Output.flush();
+                    Output.pretty("\n<b>Flags:<r>", .{});
+                    Output.flush();
+                    clap.simpleHelp(&PackageManager.link_params);
+                    Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
+                    Output.flush();
+                },
+                Subcommand.unlink => {
+                    const intro_text =
+                        \\<b>Usage<r>: <b><green>bun unlink<r> <cyan>[flags]<r>
+                        \\
+                        \\<b>Examples:<r>
+                        \\  <d>Unregister the current directory as a linkable package.<r>
+                        \\  <b><green>bun unlink<r>
+                        \\
+                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/link<r>
+                    ;
+
+                    Output.pretty("\n" ++ intro_text ++ "\n", .{});
+                    Output.flush();
+                },
+            }
+        }
+
         pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !CommandLineArguments {
             comptime var params: []const ParamType = &switch (subcommand) {
                 .install => install_params,
@@ -6515,11 +6655,7 @@ pub const PackageManager = struct {
             };
 
             if (args.flag("--help")) {
-                Output.prettyln("\n<b><magenta>bun<r> (package manager) flags:<r>\n\n", .{});
-                Output.flush();
-
-                clap.help(Output.writer(), params) catch {};
-
+                printHelp(subcommand);
                 Global.exit(0);
             }
 
@@ -6775,87 +6911,23 @@ pub const PackageManager = struct {
 
         if (manager.options.positionals.len <= 1) {
             var examples_to_print: [3]string = undefined;
+            _ = examples_to_print;
 
             const off = @as(u64, @intCast(std.time.milliTimestamp()));
+            _ = off;
 
             switch (op) {
                 .add => {
-                    const filler = @import("../cli.zig").HelpCommand.packages_to_add_filler;
+                    Output.prettyWarnln("<r><red><b>error:<r> <red>no package specified to add<r>", .{});
+                    Output.flush();
+                    PackageManager.CommandLineArguments.printHelp(.add);
 
-                    examples_to_print[0] = filler[@as(usize, @intCast((off) % filler.len))];
-                    examples_to_print[1] = filler[@as(usize, @intCast((off + 1) % filler.len))];
-                    examples_to_print[2] = filler[@as(usize, @intCast((off + 2) % filler.len))];
-
-                    Output.prettyErrorln(
-                        \\
-                        \\<r><b>Usage:<r>
-                        \\
-                        \\  bun add <r><cyan>package-name@version<r>
-                        \\  bun add <r><cyan>package-name<r>
-                        \\  bun add <r><cyan>package-name a-second-package<r>
-                        \\
-                        \\<r><b>Examples:<r>
-                        \\
-                        \\  bun add -g {s}
-                        \\  bun add {s}
-                        \\  bun add {s}
-                        \\
-                    , .{ examples_to_print[0], examples_to_print[1], examples_to_print[2] });
-
-                    if (manager.options.global) {
-                        Output.prettyErrorln(
-                            \\
-                            \\<d>Shorthand: <b>bun a -g<r>
-                            \\
-                        , .{});
-                    } else {
-                        Output.prettyErrorln(
-                            \\
-                            \\<d>Shorthand: <b>bun a<r>
-                            \\
-                        , .{});
-                    }
                     Global.exit(0);
                 },
                 .remove => {
-                    const filler = @import("../cli.zig").HelpCommand.packages_to_remove_filler;
-
-                    examples_to_print[0] = filler[@as(usize, @intCast((off) % filler.len))];
-                    examples_to_print[1] = filler[@as(usize, @intCast((off + 1) % filler.len))];
-                    examples_to_print[2] = filler[@as(usize, @intCast((off + 2) % filler.len))];
-
-                    Output.prettyErrorln(
-                        \\
-                        \\<r><b>Usage:<r>
-                        \\
-                        \\  bun remove <r><red>package-name<r>
-                        \\  bun remove <r><red>package-name a-second-package<r>
-                        \\
-                        \\<r><b>Examples:<r>
-                        \\
-                        \\  bun remove {s} {s}
-                        \\  bun remove {s}
-                        \\
-                    , .{
-                        examples_to_print[0],
-                        examples_to_print[1],
-                        examples_to_print[2],
-                    });
-                    if (manager.options.global) {
-                        Output.prettyErrorln(
-                            \\
-                            \\<d>Shorthand: <b>bun rm -g<r>
-                            \\
-                        , .{});
-                    } else {
-                        Output.prettyErrorln(
-                            \\
-                            \\<d>Shorthand: <b>bun rm<r>
-                            \\
-                        , .{});
-                    }
-
+                    Output.prettyWarnln("<r><red><b>error:<r> no package specified to remove<r>", .{});
                     Output.flush();
+                    PackageManager.CommandLineArguments.printHelp(.remove);
 
                     Global.exit(0);
                 },
@@ -7418,9 +7490,9 @@ pub const PackageManager = struct {
                             if (!this.has_created_bin) {
                                 if (!this.options.global) {
                                     if (comptime Environment.isWindows) {
-                                        std.os.mkdiratW(this.root_node_modules_folder.dir.fd, strings.w(".bin"), 0) catch {};
+                                        std.os.mkdiratW(this.node_modules_folder, strings.w(".bin"), 0) catch {};
                                     } else {
-                                        this.root_node_modules_folder.dir.makeDirZ(".bin") catch {};
+                                        this.node_modules_folder.dir.makeDirZ(".bin") catch {};
                                     }
                                 }
                                 if (comptime Environment.isPosix)
@@ -7888,6 +7960,9 @@ pub const PackageManager = struct {
                     try bun.makePath(cwd, bun.span(node_modules.relative_path));
                     break :brk try cwd.openIterableDir(node_modules.relative_path, .{});
                 };
+
+                // a .bin directory could be created in each node_modules directory
+                installer.has_created_bin = false;
 
                 var remaining = node_modules.dependencies;
 

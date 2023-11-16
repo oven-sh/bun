@@ -124,7 +124,7 @@ jobs:
         run: |
           brew install sccache ccache rust llvm@$LLVM_VERSION pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config --force
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
-          echo "$(brew --prefix sccache)/bin" >> $GITHUB_PATH
+          # echo "$(brew --prefix sccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
           brew link --overwrite llvm@$LLVM_VERSION
@@ -197,8 +197,8 @@ jobs:
           HOMEBREW_NO_INSTALL_CLEANUP: 1
         run: |
           brew install sccache ccache rust llvm@$LLVM_VERSION pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config --force
-          echo "$(brew --prefix sccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
+          # echo "$(brew --prefix sccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
           brew link --overwrite llvm@$LLVM_VERSION

@@ -25,8 +25,6 @@
 #include "DOMJITIDLTypeFilter.h"
 #include "DOMJITHelpers.h"
 #include <JavaScriptCore/DFGAbstractHeap.h>
-#include <iostream>
-using namespace std;
 
 /* ******************************************************************************** */
 // Lazy Load SQLite on macOS
@@ -253,9 +251,8 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
         PropertyOffset offset;
         auto columnNames = castedThis->columnNames.get();
         bool anyHoles = false;
-        for (int i = count - 1; i >= 0; i--) {
+        for (int i = 0; i < count; i++) {
             const char* name = sqlite3_column_name(stmt, i);
-            std::cout << "column name is "<< name  << std::endl;
 
             if (name == nullptr) {
                 anyHoles = true;
@@ -309,7 +306,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
     // see https://github.com/oven-sh/bun/issues/987
     JSC::JSObject* object = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), std::min(static_cast<unsigned>(count), JSFinalObject::maxInlineCapacity));
 
-    for (int i = count - 1; i >= 0; i--) {
+    for (int i = 0; i < count; i++) {
         const char* name = sqlite3_column_name(stmt, i);
 
         if (name == nullptr)
@@ -1113,14 +1110,13 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
     JSC::JSObject* result;
 
     auto* stmt = castedThis->stmt;
-    int total = sqlite3_column_count(stmt);
 
     if (auto* structure = castedThis->_structure.get()) {
         result = JSC::constructEmptyObject(vm, structure);
 
-        for (int i = total - 1, j = total - 1; j >= 0 && i >= 0; i--, j--) {
-            if ((castedThis->columnOffsets & (1u << i)) == 0) {
-                j += 1;
+        for (unsigned int i = 0, j = 0; j < count; i++, j++) {
+            if (j > 0 && (castedThis->columnOffsets & (1u << i)) == 0) {
+                j -= 1;
                 continue;
             }
             JSValue value;
@@ -1169,7 +1165,7 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
             }
             }
 
-            result->putDirectOffset(vm, total - 1 - j, value);
+            result->putDirectOffset(vm, j, value);
         }
 
     } else {
@@ -1179,9 +1175,9 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
             result = JSC::JSFinalObject::create(vm, JSC::JSFinalObject::createStructure(vm, lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), JSFinalObject::maxInlineCapacity));
         }
 
-        for (int i = total - 1, j = total - 1; j >= 0 && i > 0; i--, j--) {
+        for (int i = 0, j = 0; j < count; i++, j++) {
             if (j > 0 && (castedThis->columnOffsets & (1u << i)) == 0) {
-                j += 1;
+                j -= 1;
                 continue;
             }
             auto name = columnNames[j];
@@ -1242,11 +1238,10 @@ static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGloba
 
     JSC::JSArray* result = JSArray::create(vm, lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), count);
     auto* stmt = castedThis->stmt;
-    int total = sqlite3_column_count(stmt);
 
-    for (int i = total - 1, j = total - 1; j >= 0 && i >= 0; i--, j--) {
-        if ((castedThis->columnOffsets & (1u << i)) == 0) {
-            j += 1;
+    for (int i = 0, j = 0; j < count; i++, j++) {
+        if (j > 0 && (castedThis->columnOffsets & (1u << i)) == 0) {
+            j -= 1;
             continue;
         }
 

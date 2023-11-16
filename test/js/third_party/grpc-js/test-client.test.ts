@@ -39,11 +39,11 @@ const clientInsecureCreds = grpc.credentials.createInsecure();
           try {
             assert.ifError(err);
             assert.equal(client.getChannel().getConnectivityState(true), ConnectivityState.READY);
+            resolve(undefined);
           } catch (e) {
             reject(e);
           }
         });
-        setTimeout(resolve, deadline - Date.now());
         await promise;
         assert.equal(calledTimes, 1);
       } finally {

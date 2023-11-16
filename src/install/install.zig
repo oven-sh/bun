@@ -7497,7 +7497,7 @@ pub const PackageManager = struct {
                             if (!this.has_created_bin) {
                                 if (!this.options.global) {
                                     if (comptime Environment.isWindows) {
-                                        std.os.mkdiratW(this.node_modules_folder, strings.w(".bin"), 0) catch {};
+                                        std.os.mkdiratW(this.node_modules_folder.dir.fd, strings.w(".bin"), 0) catch {};
                                     } else {
                                         this.node_modules_folder.dir.makeDirZ(".bin") catch {};
                                     }

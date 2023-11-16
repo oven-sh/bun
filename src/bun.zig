@@ -1791,7 +1791,18 @@ pub inline fn todo(src: std.builtin.SourceLocation, value: anytype) @TypeOf(valu
 }
 
 pub inline fn fdcast(fd: FileDescriptor) std.os.fd_t {
-    return FD.fromFileDescriptor(fd).system();
+    if (!Environment.isWindows) return fd;
+
+    if (@inComptime() and fd == invalid_fd) return FD.invalid.system();
+
+    const x: FD = @bitCast(fd);
+    return switch (Environment.isWindows) {
+        false => @intCast(x.value.as_system),
+        true => switch (x.kind) {
+            .system => @ptrFromInt(x.value.as_system),
+            .uv => windows.libuv.uv_get_osfhandle(x.value.as_uv),
+        },
+    };
 }
 
 pub inline fn toFD(fd: anytype) FileDescriptor {

@@ -11,8 +11,7 @@ const libuv = bun.windows.libuv;
 const allow_assert = env.allow_assert;
 
 const log = bun.Output.scoped(.FD, false);
-
-inline fn handleToNumber(handle: FD.System) FD.FDInt {
+fn handleToNumber(handle: FD.System) FD.FDInt {
     if (env.os == .windows) {
         // intCast fails if 'fd > 2^62'
         // possible with handleToNumber(GetCurrentProcess());
@@ -21,8 +20,7 @@ inline fn handleToNumber(handle: FD.System) FD.FDInt {
         return handle;
     }
 }
-
-inline fn numberToHandle(handle: FD.FDInt) FD.System {
+fn numberToHandle(handle: FD.FDInt) FD.System {
     if (env.os == .windows) {
         return @ptrFromInt(handle);
     } else {
@@ -30,13 +28,13 @@ inline fn numberToHandle(handle: FD.FDInt) FD.System {
     }
 }
 
-pub inline fn uv_get_osfhandle(in: c_int) libuv.uv_os_fd_t {
+pub fn uv_get_osfhandle(in: c_int) libuv.uv_os_fd_t {
     const out = libuv.uv_get_osfhandle(in);
     log("uv_get_osfhandle({d}) = {d}", .{ in, @intFromPtr(out) });
     return out;
 }
 
-pub inline fn uv_open_osfhandle(in: libuv.uv_os_fd_t) c_int {
+pub fn uv_open_osfhandle(in: libuv.uv_os_fd_t) c_int {
     const out = libuv.uv_open_osfhandle(in);
     log("uv_get_osfhandle({d}) = {d}", .{ @intFromPtr(in), out });
     return out;
@@ -57,7 +55,7 @@ pub const FD = packed struct {
     owned_by_libuv: if (env.os == .windows) bool else void,
     kind: Kind,
 
-    const invalid_value = std.math.minInt(FDInt);
+    const invalid_value = std.math.maxInt(FDInt);
     pub const invalid = FD{
         .owned_by_libuv = if (env.os == .windows) false else {},
         .kind = .system,
@@ -136,16 +134,16 @@ pub const FD = packed struct {
         };
     }
 
-    pub inline fn isValid(this: FD) bool {
+    pub fn isValid(this: FD) bool {
         return this.value.as_system != invalid_value;
     }
 
     /// When calling this function, you may not be able to close the returned fd.
     /// To close the fd, you have to call `.close()` on the FD.
-    pub inline fn system(this: FD) System {
-        return switch (env.os) {
-            else => numberToHandle(this.value.as_system),
-            .windows => switch (this.kind) {
+    pub fn system(this: FD) System {
+        return switch (env.os == .windows) {
+            false => numberToHandle(this.value.as_system),
+            true => switch (this.kind) {
                 .system => numberToHandle(this.value.as_system),
                 .uv => libuv.uv_get_osfhandle(this.value.as_uv),
             },
@@ -153,17 +151,17 @@ pub const FD = packed struct {
     }
 
     /// Convert to bun.FileDescriptor
-    pub inline fn fileDescriptor(this: FD) bun.FileDescriptor {
+    pub fn fileDescriptor(this: FD) bun.FileDescriptor {
         return @bitCast(this);
     }
 
-    pub inline fn fromFileDescriptor(fd: bun.FileDescriptor) FD {
+    pub fn fromFileDescriptor(fd: bun.FileDescriptor) FD {
         return @bitCast(fd);
     }
 
     /// When calling this function, you should consider the FD struct to now be invalid.
     /// Calling `.close()` on the FD at that point may not work.
-    pub inline fn uv(this: FD) UV {
+    pub fn uv(this: FD) UV {
         return switch (env.os) {
             else => numberToHandle(this.value.as_system),
             .windows => switch (this.kind) {

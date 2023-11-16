@@ -329,7 +329,7 @@ it("promises.readFile", async () => {
   for (let i = 0; i < 20; i++) {
     try {
       await fs.promises.readFile("/i-dont-exist", "utf-8");
-      expect(false).toBeTrue();
+      expect.unreachable();
     } catch (e: any) {
       expect(e).toBeInstanceOf(Error);
       expect(e.message).toBe("No such file or directory");

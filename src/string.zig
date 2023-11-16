@@ -435,8 +435,9 @@ pub const String = extern struct {
         }
     }
 
-    pub fn toErrorInstance(this: String, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        return this.toZigString().toErrorInstance(globalObject);
+    pub fn toErrorInstance(this_: String, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        var this = this_;
+        return JSC__createError(globalObject, &this);
     }
 
     pub fn static(input: []const u8) String {
@@ -860,6 +861,8 @@ pub const String = extern struct {
     pub fn eql(this: String, other: String) bool {
         return this.toZigString().eql(other.toZigString());
     }
+
+    extern fn JSC__createError(*JSC.JSGlobalObject, str: *String) JSC.JSValue;
 };
 
 pub const SliceWithUnderlyingString = struct {

@@ -77,6 +77,7 @@ pub const Response = struct {
     pub const getJSON = ResponseMixin.getJSON;
     pub const getArrayBuffer = ResponseMixin.getArrayBuffer;
     pub const getBlob = ResponseMixin.getBlob;
+    pub const getBlobWithoutCallFrame = ResponseMixin.getBlobWithoutCallFrame;
     pub const getFormData = ResponseMixin.getFormData;
 
     pub fn getFormDataEncoding(this: *Response) ?*bun.FormData.AsyncFormData {

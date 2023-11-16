@@ -1085,6 +1085,13 @@ pub fn BodyMixin(comptime Type: type) type {
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
+            return this.getBlobWithoutCallFrame(globalObject);
+        }
+
+        pub fn getBlobWithoutCallFrame(
+            this: *Type,
+            globalObject: *JSC.JSGlobalObject,
+        ) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
 
             if (value.* == .Used) {

@@ -603,9 +603,6 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
 
             Global.exit(1);
         },
-        error.MissingValue => {
-            Global.exit(1);
-        },
         else => {},
     }
 

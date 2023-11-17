@@ -49,17 +49,16 @@ const makeSafe = (unsafe, safe) => {
     ArrayPrototypeForEach(Reflect.ownKeys(unsafe.prototype), key => {
       if (!Reflect.getOwnPropertyDescriptor(safe.prototype, key)) {
         const desc = Reflect.getOwnPropertyDescriptor(unsafe.prototype, key);
-        if (
-          typeof desc.value === "function" &&
-          desc.value.length === 0 &&
-          Symbol.iterator in (desc.value.$call(dummy) || {})
-        ) {
-          const createIterator = uncurryThis(desc.value);
-          next ??= uncurryThis(createIterator(dummy).next);
-          const SafeIterator = createSafeIterator(createIterator, next);
-          desc.value = function () {
-            return new SafeIterator(this);
-          };
+        if (typeof desc.value === "function" && desc.value.length === 0) {
+          const called = desc.value.$call(dummy) || {};
+          if (Symbol.iterator in (typeof called === "object" ? called : {})) {
+            const createIterator = uncurryThis(desc.value);
+            next ??= uncurryThis(createIterator(dummy).next);
+            const SafeIterator = createSafeIterator(createIterator, next);
+            desc.value = function () {
+              return new SafeIterator(this);
+            };
+          }
         }
         Reflect.defineProperty(safe.prototype, key, desc);
       }

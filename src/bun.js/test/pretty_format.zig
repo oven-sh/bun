@@ -769,7 +769,8 @@ pub const JestPrettyFormat = struct {
                     this.formatter.estimated_line_length = this.formatter.indent * 2 + 1;
 
                     if (this.formatter.indent == 0) this.writer.writeAll("\n") catch {};
-                    var classname = value.getName(globalThis);
+                    var classname = ZigString.Empty;
+                    value.getClassName(globalThis, &classname);
                     if (classname.eqlComptime("Object")) {
                         this.writer.print("{} ", .{classname}) catch {};
                     }
@@ -993,7 +994,7 @@ pub const JestPrettyFormat = struct {
                             switch (remaining.charAt(i)) {
                                 '\\' => {
                                     writer.print("{}\\", .{remaining.substringWithLen(0, i)});
-                                    remaining = remaining.substring(i + 1, 0);
+                                    remaining = remaining.substring(i + 1);
                                 },
                                 '\r' => {
                                     if (i + 1 < remaining.len and remaining.charAt(i + 1) == '\n') {
@@ -1002,7 +1003,7 @@ pub const JestPrettyFormat = struct {
                                         writer.print("{}\n", .{remaining.substringWithLen(0, i)});
                                     }
 
-                                    remaining = remaining.substring(i + 1, 0);
+                                    remaining = remaining.substring(i + 1);
                                 },
                                 else => unreachable,
                             }

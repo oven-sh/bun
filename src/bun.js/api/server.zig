@@ -5607,7 +5607,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                             if (comptime Environment.isLinux) {
                                 var rc: i32 = -1;
                                 const code = Sys.getErrno(rc);
-                                if (code == bun.C.E.ACCESS) {
+                                if (code == bun.C.E.ACCES) {
                                     error_instance = (JSC.SystemError{
                                         .message = bun.String.init(std.fmt.bufPrint(&output_buf, "permission denied {s}:{d}", .{ tcp.hostname orelse "0.0.0.0", tcp.port }) catch "Failed to start server"),
                                         .code = bun.String.static("EACCES"),

@@ -96,6 +96,8 @@ const Socket = (function (InternalSocket) {
     static #Handlers = {
       close: Socket.#Close,
       data({ data: self }, buffer) {
+        if (!self) return;
+
         self.bytesRead += buffer.length;
         const queue = self.#readQueue;
 
@@ -108,6 +110,8 @@ const Socket = (function (InternalSocket) {
       end: Socket.#Close,
       error(socket, error) {
         const self = socket.data;
+        if (!self) return;
+
         const callback = self.#writeCallback;
         if (callback) {
           self.#writeCallback = null;
@@ -117,6 +121,8 @@ const Socket = (function (InternalSocket) {
       },
       open(socket) {
         const self = socket.data;
+        if (!self) return;
+
         socket.timeout(self.timeout);
         if (self.#unrefOnConnected) socket.unref();
         self[bunSocketInternal] = socket;
@@ -140,6 +146,7 @@ const Socket = (function (InternalSocket) {
       },
       handshake(socket, success, verifyError) {
         const { data: self } = socket;
+        if (!self) return;
 
         self._securePending = false;
         self.secureConnecting = false;
@@ -168,6 +175,8 @@ const Socket = (function (InternalSocket) {
       },
       timeout(socket) {
         const self = socket.data;
+        if (!self) return;
+
         self.emit("timeout", self);
       },
       binaryType: "buffer",
@@ -175,7 +184,7 @@ const Socket = (function (InternalSocket) {
 
     static #Close(socket) {
       const self = socket.data;
-      if (self.#closed) return;
+      if (!self || self.#closed) return;
       self.#closed = true;
       //socket cannot be used after close
       self[bunSocketInternal] = null;
@@ -188,7 +197,7 @@ const Socket = (function (InternalSocket) {
 
     static #Drain(socket) {
       const self = socket.data;
-
+      if (!self) return;
       const callback = self.#writeCallback;
       if (callback) {
         const chunk = self.#writeChunk;

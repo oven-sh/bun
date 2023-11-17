@@ -305,9 +305,18 @@ pub const Bin = extern struct {
 
         pub var umask: std.os.mode_t = 0;
 
+        var has_set_umask = false;
+
         pub const Error = error{
             NotImplementedYet,
         } || std.os.SymLinkError || std.os.OpenError || std.os.RealPathError;
+
+        pub fn ensureUmask() void {
+            if (!has_set_umask) {
+                has_set_umask = true;
+                umask = bun.C.umask(0);
+            }
+        }
 
         fn unscopedPackageName(name: []const u8) []const u8 {
             if (name[0] != '@') return name;
@@ -369,10 +378,6 @@ pub const Bin = extern struct {
                                 this.err = err;
                                 return;
                             };
-                        }
-
-                        if (comptime Environment.isPosix) {
-                            Bin.Linker.umask = C.umask(0);
                         }
 
                         break :brk root_dir.realpath(dot_bin, &target_buf) catch |err| {

@@ -5602,7 +5602,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             if (error_instance == .zero) {
                 switch (this.config.address) {
                     .tcp => |tcp| {
-                        // this value is hard set by the underlying system, but it might be wrong for windows?
                         error_set: {
                             if (comptime Environment.isLinux) {
                                 var rc: i32 = -1;

@@ -1483,19 +1483,6 @@ NapiClass* NapiClass::create(VM& vm, Zig::GlobalObject* globalObject, const char
     return napiClass;
 }
 
-CallData NapiClass::getConstructData(JSCell* cell)
-{
-    auto construct = JSC::jsCast<NapiClass*>(cell)->constructor();
-    if (!construct) {
-        return NapiClass::Base::getConstructData(cell);
-    }
-
-    CallData constructData;
-    constructData.type = CallData::Type::Native;
-    constructData.native.function = construct;
-    return constructData;
-}
-
 void NapiClass::finishCreation(VM& vm, NativeExecutable* executable, unsigned length, const String& name, napi_callback constructor,
     void* data,
     size_t property_count,

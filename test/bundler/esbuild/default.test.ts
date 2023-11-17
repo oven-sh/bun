@@ -4111,7 +4111,7 @@ describe("bundler", () => {
   });
   itBundled("default/DefineImportMeta", {
     files: {
-      "/entry.js": /* js */ `
+      "/entry.js": /* js */ ` 
         console.log(
           // These should be fully substituted
           import.meta,

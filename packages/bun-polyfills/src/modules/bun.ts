@@ -45,8 +45,8 @@ const require = createRequire(import.meta.url);
 export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satisfies typeof Bun.main;
 
 //? These are automatically updated on build by tools/updateversions.ts, do not edit manually.
-export const version = '1.0.4' satisfies typeof Bun.version;
-export const revision = 'f6d40d9c9c922bbd66671b22e1af156a9f9bf917' satisfies typeof Bun.revision;
+export const version = '1.0.13' satisfies typeof Bun.version;
+export const revision = '222bfda9cc2a5b22d737e4657246e3127600fb09' satisfies typeof Bun.revision;
 
 export const gc = (globalThis.gc ? (() => (globalThis.gc!(), process.memoryUsage().heapUsed)) : (() => {
     const err = new Error('[bun-polyfills] Garbage collection polyfills are only available when Node.js is ran with the --expose-gc flag.');
@@ -606,6 +606,9 @@ const dummyPluginBuilder: PluginBuilder = ({
         return; // stubbed
     },
     onResolve(constraints: PluginConstraints, callback: OnResolveCallback): void {
+        return; // stubbed
+    },
+    module(specifier: string, callback) {
         return; // stubbed
     },
     config: { plugins: [], entrypoints: [] },

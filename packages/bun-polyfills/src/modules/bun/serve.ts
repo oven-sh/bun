@@ -43,6 +43,7 @@ class Server<T = undefined> implements BunServer {
         this.development = !!options.development ?? process.env.NODE_ENV !== 'production';
         this.hostname = listenOn.hostname ?? '';
         this.id = options.id ?? '';
+        this.url = new URL(`${tls ? 'https' : 'http'}://${listenOn.hostname || 'localhost'}:${listenOn.port ?? 0}`); // TODO
         // missing from bun-types (?) + untested if these values are right yet
         this.protocol = ws ? (tls ? 'wss' : 'ws') : (tls ? 'https' : 'http');
         // privates
@@ -143,8 +144,8 @@ class Server<T = undefined> implements BunServer {
             },
         });
 
-        if (listenOn.unix) this.#uws.listen_unix((listenSock) => { this.#listenSock = listenSock }, listenOn.unix);
-        else this.#uws.listen(listenOn.hostname!, listenOn.port ?? 0, (listenSock) => { this.#listenSock = listenSock });
+        if (listenOn.unix) this.#uws.listen_unix((listenSock) => { this.#listenSock = listenSock; }, listenOn.unix);
+        else this.#uws.listen(listenOn.hostname!, listenOn.port ?? 0, (listenSock) => { this.#listenSock = listenSock; });
     }
     #listenSock: uws.us_listen_socket | null = null;
     #uws: uws.TemplatedApp;
@@ -162,6 +163,7 @@ class Server<T = undefined> implements BunServer {
         return port === -1 ? undefined as unknown as number : port;
     }
     id: string;
+    url: URL;
     protocol: string; //? see note in constructor
     pendingRequests = 0;
     pendingWebSockets = 0;

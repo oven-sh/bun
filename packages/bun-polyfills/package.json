@@ -26,7 +26,7 @@
     "typescript": "^5.2.2"
   },
   "dependencies": {
-    "argon2": "^0.31.1",
+    "argon2": "^0.31.2",
     "bcryptjs": "^2.4.3",
     "bun-wasm": "link:bun-wasm",
     "chalk": "^5.3.0",

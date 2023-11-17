@@ -14,8 +14,13 @@ const proc = spawn({
 });
 await proc.exited;
 if (proc.exitCode !== 0) {
-  console.log("Failed to generate " + output + ", create_hash_table exited with "
-    + (proc.exitCode||"") + (proc.signalCode||""));
+  console.log(
+    "Failed to generate " +
+      output +
+      ", create_hash_table exited with " +
+      (proc.exitCode || "") +
+      (proc.signalCode || ""),
+  );
   process.exit(1);
 }
 let str = await new Response(proc.stdout).text();

@@ -26,6 +26,8 @@ const Syscall = if (Environment.isWindows) struct {
     const openat = bun.sys.openat;
     const getFdPath = bun.sys.getFdPath;
     const setFileOffset = bun.sys.setFileOffset;
+    const openatOSPath = bun.sys.openatOSPath;
+    const mkdirOSPath = bun.sys.mkdirOSPath;
 
     // Note: `req = undefined; req.deinit()` has a saftey-check in a debug build
 
@@ -1857,7 +1859,9 @@ pub const Arguments = struct {
         recursive: bool = false,
         /// A file mode. If a string is passed, it is parsed as an octal integer. If not specified
         /// @default
-        mode: Mode = 0o777,
+        mode: Mode = DefaultMode,
+
+        pub const DefaultMode = 0o777;
 
         pub fn deinit(this: Mkdir) void {
             this.path.deinit();
@@ -3479,7 +3483,7 @@ const Return = struct {
     pub const Lchown = void;
     pub const Link = void;
     pub const Lstat = StatOrNotFound;
-    pub const Mkdir = bun.String;
+    pub const Mkdir = void;
     pub const Mkdtemp = JSC.ZigString;
     pub const Open = FDImpl;
     pub const WriteFile = void;
@@ -4109,7 +4113,7 @@ pub const NodeFS = struct {
 
         const path = args.path.sliceZ(&this.sync_error_buf);
         return switch (Syscall.mkdir(path, args.mode)) {
-            .result => Maybe(Return.Mkdir){ .result = bun.String.empty },
+            .result => Maybe(Return.Mkdir){ .result = {} },
             .err => |err| Maybe(Return.Mkdir){ .err = err },
         };
     }
@@ -4118,40 +4122,37 @@ pub const NodeFS = struct {
     // TODO: verify this works correctly with unicode codepoints
     pub fn mkdirRecursive(this: *NodeFS, args: Arguments.Mkdir, comptime flavor: Flavor) Maybe(Return.Mkdir) {
         _ = flavor;
-        const Option = Maybe(Return.Mkdir);
-
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        const path = args.path.sliceZWithForceCopy(&buf, true);
+        const path = args.path.osPath(&buf);
+        return this.mkdirRecursiveOSPath(path, args.mode);
+    }
+
+    pub fn mkdirRecursiveOSPath(this: *NodeFS, path: bun.OSPathSlice, mode: Mode) Maybe(Return.Mkdir) {
+        const Char = std.meta.Child(bun.OSPathSlice);
         const len = @as(u16, @truncate(path.len));
 
         // First, attempt to create the desired directory
         // If that fails, then walk back up the path until we have a match
-        switch (Syscall.mkdir(path, args.mode)) {
+        switch (Syscall.mkdirOSPath(path, mode)) {
             .err => |err| {
                 switch (err.getErrno()) {
                     else => {
-                        @memcpy(this.sync_error_buf[0..len], path[0..len]);
-                        return .{ .err = err.withPath(this.sync_error_buf[0..len]) };
+                        return .{ .err = err.withPath(this.osPathIntoSyncErrorBuf(path[0..len])) };
                     },
 
                     .EXIST => {
-                        return Option{ .result = bun.String.empty };
+                        return .{ .result = {} };
                     },
                     // continue
                     .NOENT => {},
                 }
             },
             .result => {
-                return Option{
-                    .result = if (args.path == .slice_with_underlying_string)
-                        args.path.slice_with_underlying_string.underlying
-                    else
-                        bun.String.create(args.path.slice()),
-                };
+                return .{ .result = {} };
             },
         }
 
-        var working_mem = &this.sync_error_buf;
+        var working_mem: *bun.OSPathBuffer = @alignCast(@ptrCast(&this.sync_error_buf));
         @memcpy(working_mem[0..len], path[0..len]);
 
         var i: u16 = len - 1;
@@ -4160,9 +4161,9 @@ pub const NodeFS = struct {
         while (i > 0) : (i -= 1) {
             if (path[i] == std.fs.path.sep) {
                 working_mem[i] = 0;
-                var parent: [:0]u8 = working_mem[0..i :0];
+                var parent: [:0]Char = working_mem[0..i :0];
 
-                switch (Syscall.mkdir(parent, args.mode)) {
+                switch (Syscall.mkdirOSPath(parent, mode)) {
                     .err => |err| {
                         working_mem[i] = std.fs.path.sep;
                         switch (err.getErrno()) {
@@ -4173,7 +4174,12 @@ pub const NodeFS = struct {
                             .NOENT => {
                                 continue;
                             },
-                            else => return .{ .err = err.withPath(parent) },
+                            else => return .{ .err = err.withPath(
+                                if (Environment.isWindows)
+                                    this.osPathIntoSyncErrorBufOverlap(parent)
+                                else
+                                    parent,
+                            ) },
                         }
                     },
                     .result => {
@@ -4184,15 +4190,14 @@ pub const NodeFS = struct {
                 }
             }
         }
-        var first_match: u16 = i;
         i += 1;
         // after we find one that works, we go forward _after_ the first working directory
         while (i < len) : (i += 1) {
             if (path[i] == std.fs.path.sep) {
                 working_mem[i] = 0;
-                var parent: [:0]u8 = working_mem[0..i :0];
+                var parent: [:0]Char = working_mem[0..i :0];
 
-                switch (Syscall.mkdir(parent, args.mode)) {
+                switch (Syscall.mkdirOSPath(parent, mode)) {
                     .err => |err| {
                         working_mem[i] = std.fs.path.sep;
                         switch (err.getErrno()) {
@@ -4215,33 +4220,22 @@ pub const NodeFS = struct {
 
         // Our final directory will not have a trailing separator
         // so we have to create it once again
-        switch (Syscall.mkdir(working_mem[0..len :0], args.mode)) {
+        switch (Syscall.mkdirOSPath(working_mem[0..len :0], mode)) {
             .err => |err| {
                 switch (err.getErrno()) {
                     // handle the race condition
                     .EXIST => {
-                        var display_path = bun.String.empty;
-                        if (first_match != std.math.maxInt(u16)) {
-                            display_path = bun.String.create(working_mem[0..first_match]);
-                        }
-                        return Option{ .result = display_path };
+                        return .{ .result = {} };
                     },
 
                     // NOENT shouldn't happen here
                     else => return .{
-                        .err = err.withPath(path),
+                        .err = err.withPath(this.osPathIntoSyncErrorBuf(path)),
                     },
                 }
             },
             .result => {
-                return Option{
-                    .result = if (first_match != std.math.maxInt(u16))
-                        bun.String.create(working_mem[0..first_match])
-                    else if (args.path == .slice_with_underlying_string)
-                        args.path.slice_with_underlying_string.underlying
-                    else
-                        bun.String.create(args.path.slice()),
-                };
+                return .{ .result = {} };
             },
         }
     }
@@ -4268,10 +4262,13 @@ pub const NodeFS = struct {
         }
         // std.c.getErrno(rc) returns SUCCESS if rc is null so we call std.c._errno() directly
         const errno = @as(std.c.E, @enumFromInt(std.c._errno().*));
-        return .{ .err = Syscall.Error{ .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(errno))), .syscall = .mkdtemp } };
+        return .{ .err = Syscall.Error{
+            .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(errno))),
+            .syscall = .mkdtemp,
+        } };
     }
     pub fn open(this: *NodeFS, args: Arguments.Open, comptime _: Flavor) Maybe(Return.Open) {
-        const path = args.path.sliceZ(&this.sync_error_buf);
+        const path = args.path.sliceWithWinNormalizerCWDZ(&this.sync_error_buf);
         return switch (Syscall.open(path, @intFromEnum(args.flags), args.mode)) {
             .err => |err| .{
                 .err = err.withPath(args.path.slice()),
@@ -4472,7 +4469,7 @@ pub const NodeFS = struct {
             else => unreachable,
         };
 
-        var path = args.path.sliceZ(buf);
+        var path = args.path.sliceWithWinNormalizerCWDZ(buf);
         const flags = os.O.DIRECTORY | os.O.RDONLY;
         const fd = switch (Syscall.open(path, flags, 0)) {
             .err => |err| return .{
@@ -4563,7 +4560,7 @@ pub const NodeFS = struct {
         var path: [:0]const u8 = undefined;
         const fd: FileDescriptor = switch (args.path) {
             .path => brk: {
-                path = args.path.path.sliceZ(&this.sync_error_buf);
+                path = args.path.path.sliceWithWinNormalizerCWDZ(&this.sync_error_buf);
                 if (this.vm) |vm| {
                     if (vm.standalone_module_graph) |graph| {
                         if (graph.find(path)) |file| {
@@ -4740,7 +4737,7 @@ pub const NodeFS = struct {
 
         const fd = switch (args.file) {
             .path => brk: {
-                path = args.file.path.sliceZ(pathbuf);
+                path = args.file.path.sliceWithWinNormalizerCWDZ(pathbuf);
 
                 const open_result = Syscall.openat(
                     args.dirfd,
@@ -5026,7 +5023,7 @@ pub const NodeFS = struct {
             Maybe(Return.Rmdir).success;
     }
     pub fn rm(this: *NodeFS, args: Arguments.RmDir, comptime _: Flavor) Maybe(Return.Rm) {
-        if (comptime Environment.isPosix) {
+        if (true) {
             // We cannot use removefileat() on macOS because it does not handle write-protected files as expected.
             if (args.recursive) {
                 // TODO: switch to an implementation which does not use any "unreachable"
@@ -5134,7 +5131,7 @@ pub const NodeFS = struct {
             return Maybe(Return.Rm).success;
         }
 
-        if (comptime Environment.isWindows) {
+        if (false) {
             var dest = args.path.osPath(&this.sync_error_buf);
             std.os.windows.DeleteFile(dest, .{
                 .dir = null,
@@ -5399,57 +5396,105 @@ pub const NodeFS = struct {
     pub fn cp(this: *NodeFS, args: Arguments.Cp, comptime flavor: Flavor) Maybe(Return.Cp) {
         comptime std.debug.assert(flavor == .sync);
 
-        if (comptime Environment.isWindows) {
-            return Maybe(Return.Cp).todo();
+        var src_buf: bun.PathBuffer = undefined;
+        var dest_buf: bun.PathBuffer = undefined;
+
+        var src = args.src.osPath(&src_buf);
+        var dest = args.dest.osPath(&dest_buf);
+
+        return this._cpSync(
+            @as(*bun.OSPathBuffer, @alignCast(@ptrCast(&src_buf))),
+            @intCast(src.len),
+            @as(*bun.OSPathBuffer, @alignCast(@ptrCast(&dest_buf))),
+            @intCast(dest.len),
+            args.flags,
+        );
+    }
+
+    pub fn osPathIntoSyncErrorBuf(this: *NodeFS, slice: anytype) [:0]const u8 {
+        if (Environment.isWindows) {
+            return bun.strings.fromWPath(&this.sync_error_buf, slice);
+        } else {
+            @memcpy(this.sync_error_buf[0..slice.len], slice);
+            if (std.meta.sentinel(@TypeOf(slice))) |_| {
+                this.sync_error_buf[slice.len] = 0;
+            }
+            return this.sync_error_buf[0..slice.len];
         }
+    }
 
-        var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var src = args.src.sliceZ(&src_buf);
-        var dest = args.dest.sliceZ(&dest_buf);
-
-        return this._cpSync(&src_buf, @intCast(src.len), &dest_buf, @intCast(dest.len), args.flags);
+    pub fn osPathIntoSyncErrorBufOverlap(this: *NodeFS, slice: anytype) []const u8 {
+        if (Environment.isWindows) {
+            var tmp: bun.WPathBuffer = undefined;
+            @memcpy(tmp[0..slice.len], slice);
+            return bun.strings.fromWPath(&this.sync_error_buf, tmp[0..slice.len]);
+        } else {
+            @compileError("TODO");
+        }
     }
 
     fn _cpSync(
         this: *NodeFS,
-        src_buf: *[bun.MAX_PATH_BYTES]u8,
+        src_buf: *bun.OSPathBuffer,
         src_dir_len: PathString.PathInt,
-        dest_buf: *[bun.MAX_PATH_BYTES]u8,
+        dest_buf: *bun.OSPathBuffer,
         dest_dir_len: PathString.PathInt,
         args: Arguments.Cp.Flags,
     ) Maybe(Return.Cp) {
         const src = src_buf[0..src_dir_len :0];
         const dest = dest_buf[0..dest_dir_len :0];
 
-        const stat_ = switch (Syscall.lstat(src)) {
-            .result => |result| result,
-            .err => |err| {
-                @memcpy(this.sync_error_buf[0..src.len], src);
-                return .{ .err = err.withPath(this.sync_error_buf[0..src.len]) };
-            },
-        };
-
-        if (!os.S.ISDIR(stat_.mode)) {
-            const r = this._copySingleFileSync(
-                src,
-                dest,
-                @enumFromInt((if (args.errorOnExist or !args.force) Constants.COPYFILE_EXCL else @as(u8, 0))),
-                stat_,
-            );
-            if (r == .err and r.err.errno == @intFromEnum(E.EXIST) and !args.errorOnExist) {
-                return Maybe(Return.Cp).success;
+        if (Environment.isWindows) {
+            const attributes = windows.GetFileAttributesW(src);
+            if (attributes == windows.INVALID_FILE_ATTRIBUTES) {
+                return .{ .err = .{
+                    .errno = @intFromEnum(C.SystemErrno.ENOENT),
+                    .syscall = .copyfile,
+                    .path = this.osPathIntoSyncErrorBuf(src),
+                } };
             }
-            return r;
+
+            if ((attributes & windows.FILE_ATTRIBUTE_DIRECTORY) == 0) {
+                const r = this._copySingleFileSync(
+                    src,
+                    dest,
+                    @enumFromInt((if (args.errorOnExist or !args.force) Constants.COPYFILE_EXCL else @as(u8, 0))),
+                    attributes,
+                );
+                if (r == .err and r.err.errno == @intFromEnum(E.EXIST) and !args.errorOnExist) {
+                    return Maybe(Return.Cp).success;
+                }
+                return r;
+            }
+        } else {
+            const stat_ = switch (Syscall.lstat(src)) {
+                .result => |result| result,
+                .err => |err| {
+                    @memcpy(this.sync_error_buf[0..src.len], src);
+                    return .{ .err = err.withPath(this.sync_error_buf[0..src.len]) };
+                },
+            };
+
+            if (!os.S.ISDIR(stat_.mode)) {
+                const r = this._copySingleFileSync(
+                    src,
+                    dest,
+                    @enumFromInt((if (args.errorOnExist or !args.force) Constants.COPYFILE_EXCL else @as(u8, 0))),
+                    stat_,
+                );
+                if (r == .err and r.err.errno == @intFromEnum(E.EXIST) and !args.errorOnExist) {
+                    return Maybe(Return.Cp).success;
+                }
+                return r;
+            }
         }
 
         if (!args.recursive) {
-            @memcpy(this.sync_error_buf[0..src.len], src);
             return .{
                 .err = .{
                     .errno = @intFromEnum(E.ISDIR),
                     .syscall = .copyfile,
-                    .path = this.sync_error_buf[0..src.len],
+                    .path = this.osPathIntoSyncErrorBuf(src),
                 },
             };
         }
@@ -5476,40 +5521,49 @@ pub const NodeFS = struct {
         }
 
         const flags = os.O.DIRECTORY | os.O.RDONLY;
-        const fd = switch (Syscall.open(src, flags, 0)) {
+        const fd = switch (Syscall.openatOSPath(bun.toFD((std.fs.cwd().fd)), src, flags, 0)) {
             .err => |err| {
-                @memcpy(this.sync_error_buf[0..src.len], src);
-                return .{ .err = err.withPath(this.sync_error_buf[0..src.len]) };
+                return .{ .err = err.withPath(this.osPathIntoSyncErrorBuf(src)) };
             },
             .result => |fd_| fd_,
         };
         defer _ = Syscall.close(fd);
 
-        const mkdir_ = this.mkdirRecursive(.{
-            .path = PathLike{ .string = PathString.init(dest) },
-            .recursive = true,
-        }, .sync);
-
-        switch (mkdir_) {
+        switch (this.mkdirRecursiveOSPath(dest, Arguments.Mkdir.DefaultMode)) {
             .err => |err| return Maybe(Return.Cp){ .err = err },
             .result => {},
         }
 
-        var dir = std.fs.Dir{ .fd = fd };
-        var iterator = DirIterator.iterate(dir);
+        var iterator = iterator: {
+            var dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
+            if (Environment.isWindows) {
+                // iterate directly over [:0]const u16 instead of converting to utf8
+                break :iterator DirIterator.IteratorW{
+                    .dir = dir,
+                    .index = 0,
+                    .end_index = 0,
+                    .first = true,
+                    .buf = undefined,
+                    .name_data = undefined,
+                };
+            } else {
+                break :iterator DirIterator.iterate(dir);
+            }
+        };
         var entry = iterator.next();
         while (switch (entry) {
             .err => |err| {
-                @memcpy(this.sync_error_buf[0..src.len], src);
-                return .{ .err = err.withPath(this.sync_error_buf[0..src.len]) };
+                return .{ .err = err.withPath(this.osPathIntoSyncErrorBuf(src)) };
             },
             .result => |ent| ent,
         }) |current| : (entry = iterator.next()) {
-            @memcpy(src_buf[src_dir_len + 1 .. src_dir_len + 1 + current.name.len], current.name.slice());
+            const name_slice = if (Environment.isWindows) current.name else current.name.slice();
+
+            @memcpy(src_buf[src_dir_len + 1 .. src_dir_len + 1 + current.name.len], name_slice);
             src_buf[src_dir_len] = std.fs.path.sep;
             src_buf[src_dir_len + 1 + current.name.len] = 0;
 
-            @memcpy(dest_buf[dest_dir_len + 1 .. dest_dir_len + 1 + current.name.len], current.name.slice());
+            @memcpy(dest_buf[dest_dir_len + 1 .. dest_dir_len + 1 + current.name.len], name_slice);
             dest_buf[dest_dir_len] = std.fs.path.sep;
             dest_buf[dest_dir_len + 1 + current.name.len] = 0;
 
@@ -5552,15 +5606,16 @@ pub const NodeFS = struct {
     /// This is `copyFile`, but it copies symlinks as-is
     pub fn _copySingleFileSync(
         this: *NodeFS,
-        src: [:0]const u8,
-        dest: [:0]const u8,
+        src: bun.OSPathSlice,
+        dest: bun.OSPathSlice,
         mode: Constants.Copyfile,
-        reuse_stat: ?std.os.Stat,
+        /// Stat on posix, file attributes on windows
+        reuse_stat: ?if (Environment.isWindows) windows.DWORD else std.os.Stat,
     ) Maybe(Return.CopyFile) {
         const ret = Maybe(Return.CopyFile);
 
         // TODO: do we need to fchown?
-        if (comptime Environment.isMac) {
+        if (Environment.isMac) {
             if (mode.isForceClone()) {
                 // https://www.manpagez.com/man/2/clonefile/
                 return ret.errnoSysP(C.clonefile(src, dest, 0), .clonefile, src) orelse ret.success;
@@ -5670,7 +5725,7 @@ pub const NodeFS = struct {
             return ret.errnoSysP(C.copyfile(src, dest, null, mode_), .copyfile, src) orelse ret.success;
         }
 
-        if (comptime Environment.isLinux) {
+        if (Environment.isLinux) {
             // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
             if (mode.isForceClone()) {
                 return Maybe(Return.CopyFile).todo();
@@ -5790,7 +5845,14 @@ pub const NodeFS = struct {
             return ret.success;
         }
 
-        return ret.todo;
+        if (Environment.isWindows) {
+            const result = windows.CopyFileW(src, dest, @intFromBool(mode.shouldntOverwrite()));
+            if (Maybe(Return.CopyFile).errnoSysP(result, .copyfile, this.osPathIntoSyncErrorBuf(src))) |e| {
+                return e;
+            }
+        }
+
+        return ret.todo();
     }
 
     /// Directory scanning + clonefile will block this thread, then each individual file copy (what the sync version

@@ -17,6 +17,7 @@ const Fs = @import("../../fs.zig");
 const URL = @import("../../url.zig").URL;
 const Shimmer = @import("../bindings/shimmer.zig").Shimmer;
 const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
+const resolve_path = @import("../../resolver/resolve_path.zig");
 const meta = bun.meta;
 /// Time in seconds. Not nanos!
 pub const TimeLike = c_int;
@@ -82,9 +83,10 @@ pub fn Maybe(comptime ResultType: type) type {
         };
 
         pub inline fn todo() @This() {
-            if (Environment.isDebug) {
-                @panic("Maybe(" ++ @typeName(ResultType) ++ ").todo() Called");
-            }
+            // if (Environment.isDebug) {
+            //     @panic("Maybe(" ++ @typeName(ResultType) ++ ").todo() Called");
+            // }
+            //
             return .{ .err = Syscall.Error.todo() };
         }
 
@@ -183,6 +185,9 @@ pub fn Maybe(comptime ResultType: type) type {
         }
 
         pub inline fn errnoSysP(rc: anytype, syscall: Syscall.Tag, path: anytype) ?@This() {
+            if (std.meta.Child(@TypeOf(path)) == u16) {
+                @compileError("Do not pass WString path to errnoSysP, it needs the path encoded as utf8");
+            }
             return switch (Syscall.getErrno(rc)) {
                 .SUCCESS => null,
                 else => |err| @This(){
@@ -774,6 +779,14 @@ pub const PathLike = union(Tag) {
             .buffer => this.buffer.slice(),
             .slice_with_underlying_string => this.slice_with_underlying_string.slice(),
         };
+    }
+
+    pub inline fn sliceWithWinNormalizerCWDZ(this: PathLike, buf: *[bun.MAX_PATH_BYTES]u8) [:0]const u8 {
+        const data = this.slice();
+        if (!Environment.isWindows or !std.fs.path.isAbsolute(data)) {
+            return sliceZWithForceCopy(this, buf, false);
+        }
+        return resolve_path.PosixToWinNormalizer.resolveCWDWithExternalBufZ(buf, data) catch @panic("Error while resolving path.");
     }
 
     pub fn sliceZWithForceCopy(this: PathLike, buf: *[bun.MAX_PATH_BYTES]u8, comptime force: bool) [:0]const u8 {

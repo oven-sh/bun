@@ -241,17 +241,19 @@ pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
 }
 
 pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
-    if (comptime Environment.isMac) {
-        return Maybe(void).errnoSysP(system.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success;
-    }
+    return switch (Environment.os) {
+        .mac => Maybe(void).errnoSysP(system.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success,
 
-    if (comptime Environment.isLinux) {
-        return Maybe(void).errnoSysP(linux.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success;
-    }
-    var wbuf: bun.WPathBuffer = undefined;
-    _ = kernel32.CreateDirectoryW(bun.strings.toWPath(&wbuf, file_path).ptr, null);
+        .linux => Maybe(void).errnoSysP(linux.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success,
 
-    return Maybe(void).errnoSysP(0, .mkdir, file_path) orelse Maybe(void).success;
+        .windows => {
+            var wbuf: bun.WPathBuffer = undefined;
+            const rc = kernel32.CreateDirectoryW(bun.strings.toWPath(&wbuf, file_path).ptr, null);
+            return Maybe(void).errnoSys(rc, .mkdir) orelse Maybe(void).success;
+        },
+
+        else => @compileError("mkdir is not implemented on this platform"),
+    };
 }
 
 pub fn mkdirA(file_path: []const u8, flags: bun.Mode) Maybe(void) {
@@ -273,10 +275,22 @@ pub fn mkdirA(file_path: []const u8, flags: bun.Mode) Maybe(void) {
         }), flags), .mkdir, file_path) orelse Maybe(void).success;
     }
 
-    var wbuf: bun.WPathBuffer = undefined;
-    _ = kernel32.CreateDirectoryW(bun.strings.toWPath(&wbuf, file_path).ptr, null);
+    if (comptime Environment.isWindows) {
+        var wbuf: bun.WPathBuffer = undefined;
+        const rc = kernel32.CreateDirectoryW(bun.strings.toWPath(&wbuf, file_path).ptr, null);
 
-    return Maybe(void).errnoSysP(0, .mkdir, file_path) orelse Maybe(void).success;
+        return Maybe(void).errnoSys(rc, .mkdir) orelse Maybe(void).success;
+    }
+}
+
+pub fn mkdirOSPath(file_path: bun.OSPathSlice, flags: bun.Mode) Maybe(void) {
+    return switch (Environment.os) {
+        else => mkdir(file_path, flags),
+        .windows => {
+            const rc = kernel32.CreateDirectoryW(file_path, null);
+            return Maybe(void).errnoSys(rc, .mkdir) orelse Maybe(void).success;
+        },
+    };
 }
 
 pub fn fcntl(fd_: bun.FileDescriptor, cmd: i32, arg: usize) Maybe(usize) {
@@ -1213,6 +1227,9 @@ pub const Error = struct {
     }
 
     pub inline fn withPath(this: Error, path: anytype) Error {
+        if (std.meta.Child(@TypeOf(path)) == u16) {
+            @compileError("Do not pass WString path to withPath, it needs the path encoded as utf8");
+        }
         return Error{
             .errno = this.errno,
             .syscall = this.syscall,

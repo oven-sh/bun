@@ -4226,7 +4226,7 @@ pub const File = struct {
             switch (Syscall.dup(file.pathlike.fd)) {
                 .result => |_fd| _fd,
                 .err => |err| {
-                    return .{ .err = err.withPath(file.pathlike.path.slice()) };
+                    return .{ .err = err.withFd(file.pathlike.fd) };
                 },
             }
         else switch (Syscall.open(file.pathlike.path.sliceZ(&file_buf), std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC, 0)) {

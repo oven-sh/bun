@@ -1807,17 +1807,17 @@ pub const PosixToWinNormalizer = struct {
         source_dir: []const u8,
         maybe_posix_path: []const u8,
     ) []const u8 {
-        return internalResolve(&this._raw_bytes, source_dir, maybe_posix_path);
+        return resolveWithExternalBuf(&this._raw_bytes, source_dir, maybe_posix_path);
     }
 
     pub inline fn resolveCWD(
         this: *PosixToWinNormalizer,
         maybe_posix_path: []const u8,
     ) ![]const u8 {
-        return internalResolveCWD(&this._raw_bytes, maybe_posix_path);
+        return resolveCWDWithExternalBuf(&this._raw_bytes, maybe_posix_path);
     }
 
-    fn internalResolve(
+    pub fn resolveWithExternalBuf(
         buf: *Buf,
         source_dir: []const u8,
         maybe_posix_path: []const u8,
@@ -1837,7 +1837,7 @@ pub const PosixToWinNormalizer = struct {
         return maybe_posix_path;
     }
 
-    fn internalResolveCWD(
+    pub fn resolveCWDWithExternalBuf(
         buf: *Buf,
         maybe_posix_path: []const u8,
     ) ![]const u8 {
@@ -1857,5 +1857,30 @@ pub const PosixToWinNormalizer = struct {
             }
         }
         return maybe_posix_path;
+    }
+
+    pub fn resolveCWDWithExternalBufZ(
+        buf: *Buf,
+        maybe_posix_path: []const u8,
+    ) ![:0]const u8 {
+        std.debug.assert(std.fs.path.isAbsoluteWindows(maybe_posix_path));
+
+        if (bun.Environment.isWindows) {
+            const root = windowsFilesystemRoot(maybe_posix_path);
+            if (root.len == 1) {
+                std.debug.assert(isSepAny(root[0]));
+                // note: bun.getcwd will return forward slashes, not what we want.
+                const cwd = try std.os.getcwd(buf);
+                std.debug.assert(cwd.ptr == buf.ptr);
+                const source_root = windowsFilesystemRoot(cwd);
+                std.debug.assert(source_root.ptr == source_root.ptr);
+                @memcpy(buf[source_root.len..][0 .. maybe_posix_path.len - 1], maybe_posix_path[1..]);
+                buf[source_root.len + maybe_posix_path.len - 1] = 0;
+                return buf[0 .. source_root.len + maybe_posix_path.len - 1 :0];
+            }
+        }
+        @memcpy(buf.ptr, maybe_posix_path);
+        buf[maybe_posix_path.len] = 0;
+        return buf[0..maybe_posix_path.len :0];
     }
 };

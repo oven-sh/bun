@@ -13,7 +13,7 @@
       "program": "${workspaceFolder}/build/bun-debug.exe",
       "args": ["/Users/windo/Code/Test/j.mjs", "--outfile", "yellow.js"],
       // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
-      "cwd": "${workspaceFolder}/test"
+      "cwd": "/Users/windo/Code/Test/"
       // "env": {
       //   "FORCE_COLOR": "1",
       //   "BUN_DEBUG_QUIET_LOGS": "1",

@@ -2280,3 +2280,12 @@ it("test syscall errno, issue#4198", () => {
   );
   rmdirSync(path);
 });
+
+const isWindows = process.platform === "win32";
+
+it.if(isWindows)("writing to hidden file is possible", () => {
+  Bun.spawnSync(["cmd", "/C", "touch file.txt && attrib +h file.txt"], {});
+  writeFileSync("file.txt", "Hello World");
+  const content = readFileSync("file.txt", "utf8");
+  expect(content).toBe("Hello World");
+});

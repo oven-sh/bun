@@ -4856,17 +4856,15 @@ fn NewParser_(
                     return p.callRuntime(arg.loc, "__require", args);
                 },
                 else => {
-                    if (p.options.bundle) {
-                        const args = p.allocator.alloc(Expr, 1) catch unreachable;
-                        args[0] = arg;
-                        return p.newExpr(
-                            E.Call{
-                                .target = p.valueForRequire(arg.loc),
-                                .args = ExprNodeList.init(args),
-                            },
-                            arg.loc,
-                        );
-                    }
+                    const args = p.allocator.alloc(Expr, 1) catch unreachable;
+                    args[0] = arg;
+                    return p.newExpr(
+                        E.Call{
+                            .target = p.valueForRequire(arg.loc),
+                            .args = ExprNodeList.init(args),
+                        },
+                        arg.loc,
+                    );
                 },
             }
 

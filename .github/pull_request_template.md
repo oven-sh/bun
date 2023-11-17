@@ -20,7 +20,7 @@ This adds a new flag --bail to bun test. When set, it will stop running tests af
 <!-- If JavaScript/TypeScript modules or builtins changed:
 
 - [ ] I included a test for the new code, or existing tests cover it
-- [ ] I ran tests locally and they pass (`bun-debug test test-file-name.test`)
+- [ ] I ran my tests locally and they pass (`bun-debug test test-file-name.test`)
 
 -->
 

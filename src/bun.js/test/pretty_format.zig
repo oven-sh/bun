@@ -755,11 +755,11 @@ pub const JestPrettyFormat = struct {
                         var name_str = ZigString.init("");
 
                         value.getNameProperty(globalThis, &name_str);
-                        if (name_str.len > 0 and !strings.eqlComptime(name_str.slice(), "Object")) {
+                        if (name_str.len > 0 and !name_str.eqlComptime("Object")) {
                             writer.print("{} ", .{name_str});
                         } else {
                             value.getPrototype(globalThis).getNameProperty(globalThis, &name_str);
-                            if (name_str.len > 0 and !strings.eqlComptime(name_str.slice(), "Object")) {
+                            if (name_str.len > 0 and !name_str.eqlComptime("Object")) {
                                 writer.print("{} ", .{name_str});
                             }
                         }
@@ -771,7 +771,7 @@ pub const JestPrettyFormat = struct {
                     if (this.formatter.indent == 0) this.writer.writeAll("\n") catch {};
                     var classname = ZigString.Empty;
                     value.getClassName(globalThis, &classname);
-                    if (classname.eqlComptime("Object")) {
+                    if (!classname.isEmpty() and !classname.eqlComptime("Object")) {
                         this.writer.print("{} ", .{classname}) catch {};
                     }
 
@@ -1744,7 +1744,7 @@ pub const JestPrettyFormat = struct {
                         var object_name = ZigString.Empty;
                         value.getClassName(this.globalThis, &object_name);
 
-                        if (!strings.eqlComptime(object_name.slice(), "Object")) {
+                        if (!object_name.eqlComptime("Object")) {
                             writer.print("{s} {{}}", .{object_name});
                         } else {
                             // don't write "Object"

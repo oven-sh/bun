@@ -56,6 +56,7 @@ function checkSameOutput(test: string, args: any[]) {
 function runOn(executable: string, test: string, args: any[]) {
   const exec = spawnSync({
     cmd: [executable, join(__dirname, "napi-app/main.js"), test, JSON.stringify(args)],
+    env: bunEnv,
   });
   const errs = exec.stderr.toString();
   expect(errs).toBe("");

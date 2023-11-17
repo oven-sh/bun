@@ -638,7 +638,6 @@ function convertProtocols(protocols) {
       (p, c, i) => {
         const len = Buffer.byteLength(c);
         if (len > 255) {
-          console.log("len", len);
           throw new RangeError(
             `The byte length of the protocol at index ${i} exceeds the maximum length. It must be <= 255. Received ${len}`,
           );

@@ -11,3 +11,4 @@ console.timeLog("label", [123, 456, 789]);
 console.timeLog("label", { name: "foo" });
 console.timeLog("label", { a: 123, b: 456, c: 789 });
 console.timeLog("label");
+console.timeEnd("labal");

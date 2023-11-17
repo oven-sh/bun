@@ -25,7 +25,7 @@ const BASELINE_THRESHOLD = 1.25;
 // 100 iterations should be enough to detect a leak
 const ITERATIONS = 100;
 // lets send a bigish payload
-const PAYLOAD = "a".repeat(128 * 1024);
+const PAYLOAD = Buffer.from("a".repeat(128 * 1024));
 
 const info = await nodeEchoServer();
 

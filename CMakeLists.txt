@@ -2,8 +2,8 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
-set(Bun_VERSION "1.0.11")
-set(WEBKIT_TAG 16badcb5df6b1190051b4b3caa1a5aeb4e2fc441)
+set(Bun_VERSION "1.0.13")
+set(WEBKIT_TAG 8d416fd62b5a255ddb5b62d6ea508fa6e0a17342)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")

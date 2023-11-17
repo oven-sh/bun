@@ -2143,7 +2143,7 @@ declare module "bun" {
       this: Server,
       request: Request,
       server: Server,
-    ): Response | undefined | Promise<Response | undefined>;
+    ): Response | undefined | void | Promise<Response | undefined | void>;
   }
 
   export interface UnixWebSocketServeOptions<WebSocketDataType = undefined>
@@ -2204,7 +2204,7 @@ declare module "bun" {
       this: Server,
       request: Request,
       server: Server,
-    ): Response | undefined | Promise<Response | undefined>;
+    ): Response | undefined | void | Promise<Response | undefined | void>;
   }
 
   export interface TLSWebSocketServeOptions<WebSocketDataType = undefined>

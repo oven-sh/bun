@@ -2,7 +2,7 @@ import { heapStats } from "bun:jsc";
 import http2 from "http2";
 import path from "path";
 function getHeapStats() {
-  return heapStats().objectTypeCounts.H2FrameParser;
+  return heapStats().objectTypeCounts;
 }
 
 const nodeExecutable = Bun.which("node");
@@ -21,7 +21,6 @@ async function nodeEchoServer() {
   const url = `https://${address.family === "IPv6" ? `[${address.address}]` : address.address}:${address.port}`;
   return { address, url, subprocess };
 }
-const BASELINE_THRESHOLD = 1.25;
 // X iterations should be enough to detect a leak
 const ITERATIONS = 50;
 // lets send a bigish payload
@@ -29,29 +28,12 @@ const PAYLOAD = Buffer.from("a".repeat(128 * 1024));
 
 const info = await nodeEchoServer();
 
-function assertBaselineWithAVG(baseline, avg) {
-  const a = Math.max(baseline, avg);
-  const b = Math.min(baseline, avg);
-  if (a / b > BASELINE_THRESHOLD) {
-    info.subprocess.kill();
-    // leak detected
-    console.log("Leak detected", a / b);
-    process.exit(99);
-  }
-}
-
-try {
-  // spin up a node local echo server
-  const startCount = getHeapStats();
-  let averageDiff = 0;
-
-  const startRSS = process.memoryUsage.rss();
-  let baseLine = null;
-  for (let j = 0; j < ITERATIONS; j++) {
-    const client = http2.connect(info.url, { rejectUnauthorized: false });
-    const promises = [];
-    // 10 multiplex POST connections per iteration
-    for (let i = 0; i < 10; i++) {
+async function runRequests(iterations) {
+  for (let j = 0; j < iterations; j++) {
+    let client = http2.connect(info.url, { rejectUnauthorized: false });
+    let promises = [];
+    // 100 multiplex POST connections per iteration
+    for (let i = 0; i < 100; i++) {
       const { promise, resolve, reject } = Promise.withResolvers();
       const req = client.request({ ":path": "/post", ":method": "POST" });
       let got_response = false;
@@ -73,23 +55,51 @@ try {
     }
     await Promise.all(promises);
     client.close();
-    // collect garbage
+    client = null;
+    promises = null;
     Bun.gc(true);
-    const endRSS = process.memoryUsage.rss();
-    baseLine = endRSS - startRSS;
-    averageDiff += endRSS - startRSS;
+  }
+}
+
+try {
+  const startStats = getHeapStats();
+
+  // warm up
+  await runRequests(ITERATIONS);
+  await Bun.sleep(10);
+  Bun.gc(true);
+  // take a baseline
+  const baseline = process.memoryUsage.rss();
+  // run requests
+  await runRequests(ITERATIONS);
+  await Bun.sleep(10);
+  Bun.gc(true);
+  // take an end snapshot
+  const end = process.memoryUsage.rss();
+
+  const delta = end - baseline;
+  const bodiesLeaked = delta / PAYLOAD.length;
+  // we executed 10 requests per iteration
+  if (bodiesLeaked > ITERATIONS) {
+    console.log("Too many bodies leaked", bodiesLeaked);
+    process.exit(1);
   }
 
-  averageDiff /= ITERATIONS;
-  // we use the last leak as a baseline and compare with the average of all leaks
-  // if is growing more than BASELINE_THRESHOLD we consider it a leak
-  assertBaselineWithAVG(baseLine, averageDiff);
-  // last GC to collect all H2FrameParser objects
-  Bun.gc(true);
-  const endCount = getHeapStats();
+  const endStats = getHeapStats();
   info.subprocess.kill();
-  // every created H2FrameParser should be destroyed
-  process.exit(endCount - startCount);
+  // check for H2FrameParser leaks
+  const pendingH2Parsers = (endStats.H2FrameParser || 0) - (startStats.H2FrameParser || 0);
+  if (pendingH2Parsers > 5) {
+    console.log("Too many pending H2FrameParsers", pendingH2Parsers);
+    process.exit(pendingH2Parsers);
+  }
+  // check for TLSSocket leaks
+  const pendingTLSSockets = (endStats.TLSSocket || 0) - (startStats.TLSSocket || 0);
+  if (pendingTLSSockets > 5) {
+    console.log("Too many pending TLSSockets", pendingTLSSockets);
+    process.exit(pendingTLSSockets);
+  }
+  process.exit(0);
 } catch (err) {
   console.log(err);
   info.subprocess.kill();

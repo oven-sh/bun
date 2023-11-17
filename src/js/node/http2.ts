@@ -1069,11 +1069,6 @@ class ClientHttp2Session extends Http2Session {
 
     const protocol = url.protocol || options?.protocol || "https:";
     const port = url.port ? parseInt(url.port, 10) : protocol === "http:" ? 80 : 443;
-    // TODO: h2c or HTTP2 Over Cleartext
-    // h2c is not supported yet but should
-    // need to implement upgrade from http1.1 to h2c
-    // we can use picohttp to do that
-    // browsers dont support h2c (and probably never will)
 
     // h2 with ALPNProtocols
     let socket;

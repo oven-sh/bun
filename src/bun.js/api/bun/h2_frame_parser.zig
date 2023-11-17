@@ -282,7 +282,7 @@ pub export fn BUN__HTTP2__getUnpackedSettings(globalObject: *JSC.JSGlobalObject,
     const data_arg = args_list.ptr[0];
 
     if (data_arg.asArrayBuffer(globalObject)) |array_buffer| {
-        var payload = array_buffer.slice();
+        var payload = array_buffer.byteSlice();
         const settingByteSize = SettingsPayloadUnit.byteSize;
         if (payload.len < settingByteSize or payload.len % settingByteSize != 0) {
             globalObject.throw("Expected buf to be a Buffer of at least 6 bytes and a multiple of 6 bytes", .{});
@@ -1634,7 +1634,7 @@ pub const H2FrameParser = struct {
                 const opaque_data_arg = args_list.ptr[2];
                 if (!opaque_data_arg.isEmptyOrUndefinedOrNull()) {
                     if (opaque_data_arg.asArrayBuffer(globalObject)) |array_buffer| {
-                        var slice = array_buffer.slice();
+                        var slice = array_buffer.byteSlice();
                         this.sendGoAway(0, @enumFromInt(errorCode), slice, lastStreamID);
                         return JSC.JSValue.jsUndefined();
                     }
@@ -2454,7 +2454,7 @@ pub const H2FrameParser = struct {
         }
         const buffer = args_list.ptr[0];
         if (buffer.asArrayBuffer(globalObject)) |array_buffer| {
-            var bytes = array_buffer.slice();
+            var bytes = array_buffer.byteSlice();
 
             // read all the bytes
             while (bytes.len > 0) {

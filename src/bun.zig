@@ -1934,7 +1934,7 @@ pub const FDTag = enum {
     stdin,
     stdout,
     pub fn get(fd_: anytype) FDTag {
-        const fd = toFD(@as(FileDescriptor, @intCast(fd_)));
+        const fd = toFD(fd_);
         if (comptime Environment.isWindows) {
             if (fd == win32.STDOUT_FD) {
                 return .stdout;

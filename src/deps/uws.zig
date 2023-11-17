@@ -2413,17 +2413,8 @@ pub const UVLoop = extern struct {
     pre: *uv.uv_prepare_t,
     check: *uv.uv_check_t,
 
-    threadlocal var threadlocal_loop_data: uv.Loop = undefined;
-    threadlocal var threadlocal_loop: ?*UVLoop = null;
-
     pub fn init() *UVLoop {
-        if (threadlocal_loop) |loop| return loop;
-        if (bun.windows.libuv.Loop.init(&threadlocal_loop_data)) |e| {
-            std.debug.panic("Failed to initialize libuv loop: {s}", .{@tagName(e)});
-        }
-        const loop = uws_get_loop_with_native(&threadlocal_loop_data);
-        threadlocal_loop = loop;
-        return loop;
+        return uws_get_loop_with_native(bun.windows.libuv.Loop.get());
     }
 
     extern fn uws_get_loop_with_native(*anyopaque) *UVLoop;

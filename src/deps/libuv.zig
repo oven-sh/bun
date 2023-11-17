@@ -551,8 +551,17 @@ pub const Loop = extern struct {
         bun.default_allocator.destroy(ptr);
     }
 
+    threadlocal var threadlocal_loop_data: Loop = undefined;
+    threadlocal var threadlocal_loop: ?*Loop = null;
+
+    /// UV loop is not thread local.
     pub fn get() *Loop {
-        return uv_default_loop();
+        if (threadlocal_loop) |loop| return loop;
+        if (bun.windows.libuv.Loop.init(&threadlocal_loop_data)) |e| {
+            std.debug.panic("Failed to initialize libuv loop: {s}", .{@tagName(e)});
+        }
+        threadlocal_loop = &threadlocal_loop_data;
+        return &threadlocal_loop_data;
     }
 
     pub fn tick(this: *Loop) void {

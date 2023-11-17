@@ -304,5 +304,6 @@ size_t toISOString(JSC::VM& vm, double date, char in[64])
         return 0;
 
     return charactersWritten;
+}
 
 }

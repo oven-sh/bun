@@ -834,7 +834,7 @@ pub const String = extern struct {
             return this.value.WTFStringImpl.hasPrefix(value);
         }
 
-        return this.toZigString().substringWithLen(0, this.length()).eqlComptime(value);
+        return this.toZigString().substring(0, value.len).eqlComptime(value);
     }
 
     pub fn isWTFAllocator(this: std.mem.Allocator) bool {

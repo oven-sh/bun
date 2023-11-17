@@ -266,7 +266,8 @@ pub const Global = @import("./__global.zig");
 pub const FileDescriptor = if (Environment.isBrowser)
     u0
 else if (Environment.isWindows)
-    // On windows, this is a bitcast "bun.FD" struct
+    // On windows, this is a bitcast "bun.FDImpl" struct
+    // Do not bitcast it to *anyopaque manually, but instead use `fdcast()`
     u64
 else
     std.os.fd_t;
@@ -1806,8 +1807,8 @@ pub inline fn fdcast(fd: FileDescriptor) std.os.fd_t {
 ///
 /// Accepts either a UV descriptor (i32) or a windows handle (*anyopaque)
 pub inline fn toFD(fd: anytype) FileDescriptor {
+    const T = @TypeOf(fd);
     if (Environment.isWindows) {
-        const T = @TypeOf(fd);
         return (switch (T) {
             FDImpl.System => FDImpl.fromSystem(fd),
             FDImpl.UV => FDImpl.fromUV(fd),
@@ -1815,6 +1816,7 @@ pub inline fn toFD(fd: anytype) FileDescriptor {
             else => @compileError("toFD() does not support type \"" ++ @typeName(T) ++ "\""),
         }).encode();
     } else {
+        comptime std.debug.assert(T == FileDescriptor);
         return fd;
     }
 }

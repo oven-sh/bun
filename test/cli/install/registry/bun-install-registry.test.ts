@@ -58,7 +58,7 @@ test("basic 1", async () => {
       },
     }),
   );
-  const { stdout, stderr, exited } = spawn({
+  var { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: packageDir,
     stdout: null,
@@ -67,9 +67,9 @@ test("basic 1", async () => {
     env,
   });
   expect(stderr).toBeDefined();
-  const err = await new Response(stderr).text();
+  var err = await new Response(stderr).text();
   expect(stdout).toBeDefined();
-  const out = await new Response(stdout).text();
+  var out = await new Response(stdout).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
@@ -82,6 +82,29 @@ test("basic 1", async () => {
     name: "basic-1",
     version: "1.0.0",
   } as any);
+  expect(await exited).toBe(0);
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  }));
+
+  err = await new Response(stderr).text();
+  out = await new Response(stdout).text();
+  expect(err).not.toContain("Saved lockfile");
+  expect(err).not.toContain("not found");
+  expect(err).not.toContain("error:");
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + basic-1@1.0.0",
+    "",
+    " 1 package installed",
+  ]);
   expect(await exited).toBe(0);
 });
 
@@ -98,7 +121,7 @@ test("dependency from root satisfies range from dependency", async () => {
     }),
   );
 
-  const { stdout, stderr, exited } = spawn({
+  var { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: packageDir,
     stdout: null,
@@ -108,9 +131,9 @@ test("dependency from root satisfies range from dependency", async () => {
   });
 
   expect(stderr).toBeDefined();
-  const err = await new Response(stderr).text();
+  var err = await new Response(stderr).text();
   expect(stdout).toBeDefined();
-  const out = await new Response(stdout).text();
+  var out = await new Response(stdout).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
@@ -124,6 +147,30 @@ test("dependency from root satisfies range from dependency", async () => {
     name: "no-deps",
     version: "1.0.0",
   } as any);
+  expect(await exited).toBe(0);
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  }));
+
+  err = await new Response(stderr).text();
+  out = await new Response(stdout).text();
+  expect(err).not.toContain("Saved lockfile");
+  expect(err).not.toContain("not found");
+  expect(err).not.toContain("error:");
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + no-deps@1.0.0",
+    " + one-range-dep@1.0.0",
+    "",
+    " 2 packages installed",
+  ]);
   expect(await exited).toBe(0);
 });
 
@@ -212,6 +259,32 @@ test("package added after install", async () => {
     version: "1.1.0",
   } as any);
   expect(await exited).toBe(0);
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  }));
+
+  expect(stderr).toBeDefined();
+  err = await new Response(stderr).text();
+  expect(stdout).toBeDefined();
+  out = await new Response(stdout).text();
+  expect(err).not.toContain("Saved lockfile");
+  expect(err).not.toContain("not found");
+  expect(err).not.toContain("error:");
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + no-deps@1.0.0",
+    " + one-range-dep@1.0.0",
+    "",
+    " 3 packages installed",
+  ]);
+  expect(await exited).toBe(0);
 });
 
 test("it should correctly link binaries after deleting node_modules", async () => {
@@ -299,11 +372,11 @@ test("it should install and use correct binary version", async () => {
     env,
   });
 
-  const err = await new Response(stderr).text();
+  var err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
-  const out = await new Response(stdout).text();
+  var out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + uses-what-bin@1.0.0",
     " + what-bin@1.5.0",
@@ -349,6 +422,30 @@ test("it should install and use correct binary version", async () => {
   expect(
     await file(join(packageDir, "node_modules", "uses-what-bin", "node_modules", ".bin", "what-bin")).text(),
   ).toContain("what-bin@1.5.0");
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  }));
+
+  out = await new Response(stdout).text();
+  err = await new Response(stderr).text();
+  expect(err).not.toContain("Saved lockfile");
+  expect(err).not.toContain("not found");
+  expect(err).not.toContain("error:");
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + uses-what-bin@1.5.0",
+    " + what-bin@1.0.0",
+    "",
+    expect.stringContaining("3 packages installed"),
+  ]);
+  expect(await exited).toBe(0);
 });
 
 describe("semver", () => {

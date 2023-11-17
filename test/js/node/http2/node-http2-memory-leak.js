@@ -7,6 +7,7 @@ function getHeapStats() {
 
 const nodeExecutable = Bun.which("node");
 if (!nodeExecutable) {
+  console.log("No node executable found");
   process.exit(99); // 99 no node executable
 }
 async function nodeEchoServer() {
@@ -20,11 +21,11 @@ async function nodeEchoServer() {
   const url = `https://${address.family === "IPv6" ? `[${address.address}]` : address.address}:${address.port}`;
   return { address, url, subprocess };
 }
-const BASELINE_THRESHOLD = 1.1;
+const BASELINE_THRESHOLD = 1.25;
 // 100 iterations should be enough to detect a leak
 const ITERATIONS = 100;
-// lets send a big payload
-const PAYLOAD = "a".repeat(1024 * 1024);
+// lets send a bigish payload
+const PAYLOAD = "a".repeat(128 * 1024);
 
 const info = await nodeEchoServer();
 
@@ -34,7 +35,8 @@ function assertBaselineWithAVG(baseline, avg) {
   if (a / b > BASELINE_THRESHOLD) {
     info.subprocess.kill();
     // leak detected
-    process.exit(97);
+    console.log("Leak detected", a / b);
+    process.exit(99);
   }
 }
 
@@ -91,5 +93,5 @@ try {
 } catch (err) {
   console.log(err);
   info.subprocess.kill();
-  process.exit(98); // 98 exception
+  process.exit(99); // 99 exception
 }

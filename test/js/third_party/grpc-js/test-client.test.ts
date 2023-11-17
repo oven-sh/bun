@@ -44,8 +44,6 @@ const clientInsecureCreds = grpc.credentials.createInsecure();
             reject(e);
           }
         });
-        // dummy event loop iteration
-        setTimeout(() => {}, 100);
         await promise;
         assert.equal(calledTimes, 1);
       } finally {

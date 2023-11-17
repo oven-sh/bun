@@ -769,9 +769,8 @@ pub const JestPrettyFormat = struct {
                     this.formatter.estimated_line_length = this.formatter.indent * 2 + 1;
 
                     if (this.formatter.indent == 0) this.writer.writeAll("\n") catch {};
-                    var classname = ZigString.Empty;
-                    value.getClassName(globalThis, &classname);
-                    if (!strings.eqlComptime(classname.slice(), "Object")) {
+                    var classname = value.getName(globalThis);
+                    if (classname.eqlComptime("Object")) {
                         this.writer.print("{} ", .{classname}) catch {};
                     }
 

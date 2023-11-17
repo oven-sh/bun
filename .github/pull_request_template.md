@@ -19,18 +19,17 @@ This adds a new flag --bail to bun test. When set, it will stop running tests af
 
 <!-- If JavaScript/TypeScript modules or builtins changed:
 
-- [ ] I ran `make js` and committed the transpiled changes
-- [ ] I or my editor ran Prettier on the changed files (or I ran `bun fmt`)
-- [ ] I included a test for the new code, or an existing test covers it
+- [ ] I included a test for the new code, or existing tests cover it
+- [ ] I ran tests locally and they pass (`bun-debug test test-file-name.test`)
 
 -->
 
 <!-- If Zig files changed:
 
 - [ ] I checked the lifetime of memory allocated to verify it's (1) freed and (2) only freed when it should be
-- [ ] I or my editor ran `zig fmt` on the changed files
 - [ ] I included a test for the new code, or an existing test covers it
 - [ ] JSValue used outside outside of the stack is either wrapped in a JSC.Strong or is JSValueProtect'ed
+- [ ] I wrote TypeScript/JavaScript tests locally and they pass (`bun-debug test test-file-name.test`)
 -->
 
 <!-- If new methods, getters, or setters were added to a publicly exposed class:
@@ -47,11 +46,6 @@ This adds a new flag --bail to bun test. When set, it will stop running tests af
 
 - [ ] I ran `make headers` to regenerate the C header file
 
--->
-
-<!-- If \*.classes.ts files were added or changed:
-
-- [ ] I ran `make codegen` to regenerate the C++ and Zig code
 -->
 
 <!-- If a new builtin ESM/CJS module was added:

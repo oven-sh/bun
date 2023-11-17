@@ -69,7 +69,7 @@ pub const Reader = struct {
                 return try this.read(length);
             },
             u16, u32, i8, i16, i32 => {
-                return std.mem.readIntSliceNative(T, this.read(length * @sizeOf(T)));
+                return std.mem.readInt(T, this.read(length * @sizeOf(T))[0 .. length * @sizeOf(T)], @import("builtin").cpu.arch.endian());
             },
             [:0]const u8, []const u8 => {
                 var i: u32 = 0;
@@ -121,7 +121,7 @@ pub const Reader = struct {
     pub inline fn readInt(this: *Self, comptime T: type) !T {
         var slice = try this.read(@sizeOf(T));
 
-        return std.mem.readIntSliceNative(T, slice);
+        return std.mem.readInt(T, slice[0..@sizeOf(T)], @import("builtin").cpu.arch.endian());
     }
 
     pub inline fn readBool(this: *Self) !bool {
@@ -147,7 +147,7 @@ pub const Reader = struct {
                 return try this.readArray([]u8);
             },
             u16, u32, i8, i16, i32 => {
-                return std.mem.readIntSliceNative(T, try this.read(@sizeOf(T)));
+                return std.mem.readInt(T, (try this.read(@sizeOf(T)))[0..@sizeOf(T)], @import("builtin").cpu.arch.endian());
             },
             else => {
                 switch (comptime @typeInfo(T)) {

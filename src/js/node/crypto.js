@@ -11291,7 +11291,6 @@ var require_sign = __commonJS({
       curves = require_curves2();
     function sign(hash, key, hashType, signType, tag) {
       var priv = parseKeys(getKeyFrom(key, "private"));
-
       if (priv.curve) {
         if (signType !== "ecdsa" && signType !== "ecdsa/rsa") throw new Error("wrong private key type");
         return ecSign(hash, priv);
@@ -12018,7 +12017,6 @@ const harcoded_curves = [
   "secp224r1",
   "prime256v1",
   "prime192v1",
-  "ed25519",
   "secp384r1",
   "secp521r1",
 ];
@@ -12294,16 +12292,50 @@ function _createPublicKey(key) {
 crypto_exports.createPublicKey = _createPublicKey;
 crypto_exports.KeyObject = KeyObject;
 const _createSign = crypto_exports.createSign;
-crypto_exports.sign = function (algorithm, data, key, encoding, callback) {
+crypto_exports.sign = function (algorithm, data, key, callback) {
+  if (!algorithm) {
+    // if we dont have algorithm, we need to get it from key
+    if (key instanceof KeyObject) {
+      key = key[kCryptoKey];
+      algorithm = key.algorithm.name;
+    } else if (key instanceof CryptoKey) {
+      algorithm = key.algorithm.name;
+    } else {
+      key = _createPrivateKey(key);
+      key = key[kCryptoKey];
+      algorithm = key.algorithm.name;
+    }
+  }
+
+  if (typeof data === "string") {
+    data = Buffer.from(data);
+  }
+  algorithm = algorithm?.toLowerCase();
   if (typeof callback === "function") {
     try {
-      const result = _createSign(algorithm).update(data, encoding).sign(key, encoding);
-      callback(null, result);
+      if (algorithm === "ed25519") {
+        globalThis.crypto.subtle
+          .sign(
+            {
+              name: algorithm,
+              hash: "SHA-256",
+            },
+            key,
+            data,
+          )
+          .then(result => {
+            callback(null, result);
+          })
+          .catch(callback);
+      } else {
+        const result = _createSign(algorithm).update(data).sign(key);
+        callback(null, result);
+      }
     } catch (err) {
       callback(err);
     }
   } else {
-    return _createSign(algorithm).update(data, encoding).sign(key, encoding);
+    return _createSign(algorithm).update(data).sign(key);
   }
 };
 const _createVerify = crypto_exports.createVerify;

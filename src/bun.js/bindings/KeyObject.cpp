@@ -42,7 +42,13 @@
 #include <openssl/pem.h>
 #include <openssl/curve25519.h>
 #include "JSBuffer.h"
-
+#include "CryptoAlgorithmHMAC.h"
+#include "CryptoAlgorithmEd25519.h"
+#include "CryptoAlgorithmRSA_PSS.h"
+#include "CryptoAlgorithmRSASSA_PKCS1_v1_5.h"
+#include "CryptoAlgorithmECDSA.h"
+#include "CryptoAlgorithmEcdsaParams.h"
+#include "CryptoAlgorithmRegistry.h";
 using namespace JSC;
 using namespace Bun;
 using JSGlobalObject
@@ -1239,6 +1245,194 @@ JSC::EncodedJSValue KeyObject__createSecretKey(JSC::JSGlobalObject* lexicalGloba
     return JSValue::encode(JSC::jsUndefined());
 }
 
+JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+{
+   auto count = callFrame->argumentCount();
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (count < 2) {
+        JSC::throwTypeError(globalObject, scope, "sign requires 2 arguments"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    auto* key = jsDynamicCast<JSCryptoKey*>(callFrame->argument(0));
+    if (!key) {
+        // No JSCryptoKey instance
+        JSC::throwTypeError(globalObject, scope, "expected CryptoKey as first argument"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    JSValue bufferArg = callFrame->uncheckedArgument(1);
+    if (!bufferArg.isCell()) {
+        JSC::throwTypeError(globalObject, scope, "expected Buffer or uffer or array-like object as second argument"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    void* data = nullptr;
+    size_t byteLength = 0;
+    auto bufferArgCell = bufferArg.asCell();
+    auto type = bufferArgCell->type();
+
+    switch (type) {
+    case DataViewType:
+    case Uint8ArrayType:
+    case Uint8ClampedArrayType:
+    case Uint16ArrayType:
+    case Uint32ArrayType:
+    case Int8ArrayType:
+    case Int16ArrayType:
+    case Int32ArrayType:
+    case Float32ArrayType:
+    case Float64ArrayType:
+    case BigInt64ArrayType:
+    case BigUint64ArrayType: {
+        JSC::JSArrayBufferView* view = jsCast<JSC::JSArrayBufferView*>(bufferArgCell);
+
+        data = view->vector();
+        byteLength = view->length();
+    }
+    case ArrayBufferType: {
+        auto* jsBuffer = jsDynamicCast<JSC::JSArrayBuffer*>(bufferArgCell);
+        if (UNLIKELY(!jsBuffer)) {
+            break;
+        }
+        auto* buffer = jsBuffer->impl();
+        data = buffer->data();
+        byteLength = buffer->byteLength();
+        
+    }
+    default: {
+        break;
+    }
+    }
+    if (UNLIKELY(!data)) {
+        JSC::throwTypeError(globalObject, scope, "expected Buffer or uffer or array-like object as second argument"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    
+    auto vectorData = Vector<uint8_t>((uint8_t*)data, byteLength);
+    auto& wrapped = key->wrapped();
+    auto key_type = wrapped.type();
+    auto id = wrapped.keyClass();
+
+    auto hash = WebCore::CryptoAlgorithmIdentifier::SHA_256;
+    auto customHash = count > 2;
+    if (customHash) {
+        auto algorithm = callFrame->argument(3);
+        if (algorithm.isUndefinedOrNull() || algorithm.isEmpty() || !algorithm.isString()) {
+            JSC::throwTypeError(globalObject, scope, "algorithm is expected to be a string"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        auto algorithm_str = algorithm.toWTFString(globalObject);
+        auto identifier = CryptoAlgorithmRegistry::singleton().identifier(algorithm_str);
+        if (UNLIKELY(!identifier)) {
+            JSC::throwTypeError(globalObject, scope, "invalid algorithm"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+            
+        switch (*identifier)
+        {
+            case WebCore::CryptoAlgorithmIdentifier::SHA_1:
+            case WebCore::CryptoAlgorithmIdentifier::SHA_224:
+            case WebCore::CryptoAlgorithmIdentifier::SHA_256:
+            case WebCore::CryptoAlgorithmIdentifier::SHA_384:
+            case WebCore::CryptoAlgorithmIdentifier::SHA_512:{
+
+                hash = *identifier;
+                break;
+            }
+            default: {
+                JSC::throwTypeError(globalObject, scope, "invalid hash algorithm"_s);
+                return JSC::JSValue::encode(JSC::JSValue {});       
+            }
+        }
+    }
+
+
+    switch (id) {
+        case CryptoKeyClass::HMAC: {
+            const auto& hmac = downcast<WebCore::CryptoKeyHMAC>(wrapped);
+            // TODO: fix this hash should be the informed by the user
+            auto result = WebCore::CryptoAlgorithmHMAC::platformSign(hmac, vectorData);
+            if (result.hasException()) {
+                WebCore::propagateException(*globalObject, scope, result.releaseException());
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+            auto resultData = result.releaseReturnValue();
+            auto size = resultData.size();
+            auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
+            if (size > 0)
+                memcpy(buffer->vector(), resultData.data(), size);
+
+            return JSC::JSValue::encode(buffer);
+        }
+        case CryptoKeyClass::OKP: {
+            const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(wrapped);
+            if(okpKey.namedCurve() != CryptoKeyOKP::NamedCurve::Ed25519) {
+                JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key type curve X25519 not supported"_s);
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+            auto result = WebCore::CryptoAlgorithmEd25519::platformSign(okpKey, vectorData);
+            if (result.hasException()) {
+                WebCore::propagateException(*globalObject, scope, result.releaseException());
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+            auto resultData = result.releaseReturnValue();
+            auto size = resultData.size();
+            auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
+            if (size > 0)
+                memcpy(buffer->vector(), resultData.data(), size);
+
+            return JSC::JSValue::encode(buffer);
+        }
+        case CryptoKeyClass::EC: {
+            const auto& ec = downcast<WebCore::CryptoKeyEC>(wrapped);
+            if(ec.algorithmIdentifier() != WebCore::CryptoAlgorithmIdentifier::ECDSA) {
+                JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key type for EC only ECDSA is supported"_s);
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+            CryptoAlgorithmEcdsaParams params;
+            params.identifier = CryptoAlgorithmIdentifier::ECDSA;
+            params.hashIdentifier = hash;
+            auto result = WebCore::CryptoAlgorithmECDSA::platformSign(params, ec, vectorData);
+            auto resultData = result.releaseReturnValue();
+            auto size = resultData.size();
+            auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
+            if (size > 0)
+                memcpy(buffer->vector(), resultData.data(), size);
+            
+            return JSC::JSValue::encode(buffer);
+        }
+        case CryptoKeyClass::RSA: {
+            const auto& rsa = downcast<WebCore::CryptoKeyRSA>(wrapped);
+            switch(rsa.algorithmIdentifier()) {
+                case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5: {
+                    // TODO: fix this hash should be the informed by the user
+                    auto result = WebCore::CryptoAlgorithmRSASSA_PKCS1_v1_5::platformSign(rsa, vectorData);
+                    if (result.hasException()) {
+                        WebCore::propagateException(*globalObject, scope, result.releaseException());
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
+                    auto resultData = result.releaseReturnValue();
+                    auto size = resultData.size();
+                    auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
+                    if (size > 0)
+                        memcpy(buffer->vector(), resultData.data(), size);
+                    
+                    return JSC::JSValue::encode(buffer);
+                }
+                default: {
+                     JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Sign not supported for this key type"_s);
+                    return JSC::JSValue::encode(JSC::JSValue {});
+                }
+            }
+        }
+        default: {
+            JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Sign not supported for this key type"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+    }
+}
 JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
 

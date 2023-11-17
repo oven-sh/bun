@@ -39,6 +39,8 @@ public:
     static constexpr CryptoAlgorithmIdentifier s_identifier = CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5;
     static Ref<CryptoAlgorithm> create();
 
+    static ExceptionOr<Vector<uint8_t>> platformSign(const CryptoKeyRSA&, const Vector<uint8_t>&);
+    static ExceptionOr<bool> platformVerify(const CryptoKeyRSA&, const Vector<uint8_t>&, const Vector<uint8_t>&);
 private:
     CryptoAlgorithmRSASSA_PKCS1_v1_5() = default;
     CryptoAlgorithmIdentifier identifier() const final;
@@ -48,9 +50,6 @@ private:
     void generateKey(const CryptoAlgorithmParameters&, bool extractable, CryptoKeyUsageBitmap, KeyOrKeyPairCallback&&, ExceptionCallback&&, ScriptExecutionContext&) final;
     void importKey(CryptoKeyFormat, KeyData&&, const CryptoAlgorithmParameters&, bool extractable, CryptoKeyUsageBitmap, KeyCallback&&, ExceptionCallback&&) final;
     void exportKey(CryptoKeyFormat, Ref<CryptoKey>&&, KeyDataCallback&&, ExceptionCallback&&) final;
-
-    static ExceptionOr<Vector<uint8_t>> platformSign(const CryptoKeyRSA&, const Vector<uint8_t>&);
-    static ExceptionOr<bool> platformVerify(const CryptoKeyRSA&, const Vector<uint8_t>&, const Vector<uint8_t>&);
 };
 
 } // namespace WebCore

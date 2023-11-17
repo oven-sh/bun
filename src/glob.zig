@@ -121,8 +121,11 @@ fn dummyFilterFalse(val: []const u8) bool {
     return false;
 }
 
-pub fn GlobWalker_(comptime ignore_filter_fn: ?*const fn ([]const u8) bool) type {
+pub fn GlobWalker_(
+    comptime ignore_filter_fn: ?*const fn ([]const u8) bool,
+) type {
     const is_ignored: *const fn ([]const u8) bool = if (comptime ignore_filter_fn) |func| func else dummyFilterFalse;
+
     return struct {
         const GlobWalker = @This();
         pub const Result = Maybe(void);
@@ -153,6 +156,8 @@ pub fn GlobWalker_(comptime ignore_filter_fn: ?*const fn ([]const u8) bool) type
         // iteration state
         workbuf: ArrayList(WorkItem) = ArrayList(WorkItem){},
 
+        /// The glob walker references the .directory.path so its not safe to
+        /// copy/move this
         const IterState = union(enum) {
             get_next,
             directory: Directory,
@@ -200,7 +205,7 @@ pub fn GlobWalker_(comptime ignore_filter_fn: ?*const fn ([]const u8) bool) type
                 return Maybe(void).success;
             }
 
-            fn deinit(this: *Iterator) void {
+            pub fn deinit(this: *Iterator) void {
                 _ = Syscall.close(this.cwd_fd);
                 switch (this.iter_state) {
                     .directory => |dir| {
@@ -271,7 +276,7 @@ pub fn GlobWalker_(comptime ignore_filter_fn: ?*const fn ([]const u8) bool) type
                 return Maybe(void).success;
             }
 
-            fn next(this: *Iterator) !Maybe(?[]const u8) {
+            pub fn next(this: *Iterator) !Maybe(?[]const u8) {
                 while (true) {
                     switch (this.iter_state) {
                         .get_next => {
@@ -629,8 +634,11 @@ pub fn GlobWalker_(comptime ignore_filter_fn: ?*const fn ([]const u8) bool) type
             return Maybe(void).success;
         }
 
-        pub fn deinit(this: *GlobWalker) void {
-            this.arena.deinit();
+        /// NOTE This also calls deinit on the arena, if you don't want to do that then
+        pub fn deinit(this: *GlobWalker, comptime clear_arena: bool) void {
+            if (comptime clear_arena) {
+                this.arena.deinit();
+            }
         }
 
         pub fn handleSysErrWithPath(
@@ -773,6 +781,7 @@ pub fn GlobWalker_(comptime ignore_filter_fn: ?*const fn ([]const u8) bool) type
             add: *bool,
         ) ?u32 {
             if (!this.dot and GlobWalker.startsWithDot(entry_name)) return null;
+            if (is_ignored(entry_name)) return null;
 
             // Handle double wildcard `**`, this could possibly
             // propagate the `**` to the directory's children
@@ -836,13 +845,13 @@ pub fn GlobWalker_(comptime ignore_filter_fn: ?*const fn ([]const u8) bool) type
             pattern: *Component,
             next_pattern: ?*Component,
         ) bool {
-            // Handle case a)
+            // Handle case b)
             if (!is_last) return pattern.syntax_hint == .Double and
                 component_idx + 1 == this.patternComponents.items.len -| 1 and
                 next_pattern.?.syntax_hint != .Double and
                 this.matchPatternImpl(next_pattern.?, entry_name);
 
-            // Handle case b)
+            // Handle case a)
             return this.matchPatternImpl(pattern, entry_name);
         }
 

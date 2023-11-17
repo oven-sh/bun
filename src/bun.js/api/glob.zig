@@ -245,7 +245,7 @@ pub const WalkTask = struct {
     }
 
     fn deinit(this: *WalkTask) void {
-        this.walker.deinit();
+        this.walker.deinit(true);
         this.alloc.destroy(this);
     }
 };
@@ -441,7 +441,7 @@ pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.Call
         arena.deinit();
         return .undefined;
     };
-    defer globWalker.deinit();
+    defer globWalker.deinit(true);
 
     switch (globWalker.walk() catch {
         globalThis.throw("Out of memory", .{});

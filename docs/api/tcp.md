@@ -6,7 +6,7 @@ To start a TCP server with `Bun.listen`:
 
 ```ts
 Bun.listen({
-  hostname: "localhost",
+  hostname: "127.0.0.1",
   port: 8080,
   socket: {
     data(socket, data) {}, // message received from client
@@ -24,7 +24,7 @@ In Bun, a set of handlers are declared once per server instead of assigning call
 
 ```ts
 Bun.listen({
-  hostname: "localhost",
+  hostname: "127.0.0.1",
   port: 8080,
   socket: {
     open(socket) {},
@@ -46,7 +46,7 @@ Contextual data can be attached to a socket in the `open` handler.
 type SocketData = { sessionId: string };
 
 Bun.listen<SocketData>({
-  hostname: "localhost",
+  hostname: "127.0.0.1",
   port: 8080,
   socket: {
     data(socket, data) {
@@ -63,7 +63,7 @@ To enable TLS, pass a `tls` object containing `key` and `cert` fields.
 
 ```ts
 Bun.listen({
-  hostname: "localhost",
+  hostname: "127.0.0.1",
   port: 8080,
   socket: {
     data(socket, data) {},

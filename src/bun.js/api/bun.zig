@@ -785,7 +785,7 @@ fn doResolveWithArgs(
     var errorable: ErrorableString = undefined;
     var query_string = ZigString.Empty;
 
-    const specifier_decoded = if (specifier.hasPrefixComptime("file://"))
+    const specifier_decoded = if (specifier.length() >= "file://".len and specifier.hasPrefixComptime("file://"))
         bun.JSC.URL.pathFromFileURL(specifier)
     else
         specifier.dupeRef();

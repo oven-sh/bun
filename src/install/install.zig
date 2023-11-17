@@ -6155,7 +6155,7 @@ pub const PackageManager = struct {
 
             // Step 2. Setup the global directory
             var node_modules: std.fs.IterableDir = brk: {
-                Bin.Linker.umask = C.umask(0);
+                Bin.Linker.ensureUmask();
                 var explicit_global_dir: string = "";
                 if (ctx.install) |install_| {
                     explicit_global_dir = install_.global_dir orelse explicit_global_dir;
@@ -6323,7 +6323,7 @@ pub const PackageManager = struct {
 
             // Step 2. Setup the global directory
             var node_modules: std.fs.IterableDir = brk: {
-                Bin.Linker.umask = C.umask(0);
+                Bin.Linker.ensureUmask();
                 var explicit_global_dir: string = "";
                 if (ctx.install) |install_| {
                     explicit_global_dir = install_.global_dir orelse explicit_global_dir;
@@ -7901,7 +7901,9 @@ pub const PackageManager = struct {
 
         {
             var iterator = Lockfile.Tree.Iterator.init(lockfile);
-
+            if (comptime Environment.isPosix) {
+                Bin.Linker.ensureUmask();
+            }
             var installer: PackageInstaller = brk: {
                 // These slices potentially get resized during iteration
                 // so we want to make sure they're not accessible to the rest of this function

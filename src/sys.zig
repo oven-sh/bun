@@ -288,7 +288,10 @@ pub fn mkdirOSPath(file_path: bun.OSPathSlice, flags: bun.Mode) Maybe(void) {
         else => mkdir(file_path, flags),
         .windows => {
             const rc = kernel32.CreateDirectoryW(file_path, null);
-            return Maybe(void).errnoSys(rc, .mkdir) orelse Maybe(void).success;
+            return if (rc != 0)
+                Maybe(void).success
+            else
+                Maybe(void).errnoSys(rc, .mkdir) orelse Maybe(void).success;
         },
     };
 }

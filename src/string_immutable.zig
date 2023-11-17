@@ -1625,7 +1625,7 @@ pub fn utf16Codepoint(comptime Type: type, input: Type) UTF16Replacement {
 }
 
 fn windowsPathIsPosixAbsolute(utf8: []const u8) bool {
-    if (utf8.len == 0) return true;
+    if (utf8.len == 0) return false;
     if (!charIsAnySlash(utf8[0])) return false;
     if (utf8.len > 1 and charIsAnySlash(utf8[1])) return false;
     return true;

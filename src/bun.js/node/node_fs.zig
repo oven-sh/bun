@@ -15,6 +15,7 @@ const Flavor = JSC.Node.Flavor;
 const system = std.os.system;
 const Maybe = JSC.Maybe;
 const Encoding = JSC.Node.Encoding;
+const PosixToWinNormalizer = @import("../../resolver/resolve_path.zig").PosixToWinNormalizer;
 
 const FileDescriptor = bun.FileDescriptor;
 const FDImpl = bun.FDImpl;
@@ -3753,7 +3754,7 @@ pub const NodeFS = struct {
     /// https://github.com/pnpm/pnpm/issues/2761
     /// https://github.com/libuv/libuv/pull/2578
     /// https://github.com/nodejs/node/issues/34624
-    pub fn copyFile(_: *NodeFS, args: Arguments.CopyFile, comptime flavor: Flavor) Maybe(Return.CopyFile) {
+    pub fn copyFile(this: *NodeFS, args: Arguments.CopyFile, comptime flavor: Flavor) Maybe(Return.CopyFile) {
         _ = flavor;
         const ret = Maybe(Return.CopyFile);
 
@@ -3929,8 +3930,8 @@ pub const NodeFS = struct {
 
             var src_buf: bun.WPathBuffer = undefined;
             var dest_buf: bun.WPathBuffer = undefined;
-            var src = strings.toWPathNormalizeAutoExtend(&src_buf, args.src.slice());
-            var dest = strings.toWPathNormalizeAutoExtend(&dest_buf, args.dest.slice());
+            var src = strings.toWPathNormalizeAutoExtend(&src_buf, args.src.sliceWithWinNormalizerCWDZ(&this.sync_error_buf));
+            var dest = strings.toWPathNormalizeAutoExtend(&dest_buf, args.dest.sliceWithWinNormalizerCWDZ(&this.sync_error_buf));
             if (windows.CopyFileW(src.ptr, dest.ptr, if (args.mode.shouldntOverwrite()) 1 else 0) == windows.FALSE) {
                 if (ret.errnoSysP(0, .copyfile, args.src.slice())) |rest| {
                     return rest;
@@ -4127,6 +4128,13 @@ pub const NodeFS = struct {
         return this.mkdirRecursiveOSPath(path, args.mode);
     }
 
+    pub fn _isSep(char: std.meta.Child(bun.OSPathSlice)) bool {
+        return if (Environment.isWindows)
+            char == '/' or char == '\\'
+        else
+            char == '/';
+    }
+
     pub fn mkdirRecursiveOSPath(this: *NodeFS, path: bun.OSPathSlice, mode: Mode) Maybe(Return.Mkdir) {
         const Char = std.meta.Child(bun.OSPathSlice);
         const len = @as(u16, @truncate(path.len));
@@ -4159,7 +4167,7 @@ pub const NodeFS = struct {
 
         // iterate backwards until creating the directory works successfully
         while (i > 0) : (i -= 1) {
-            if (path[i] == std.fs.path.sep) {
+            if (_isSep(path[i])) {
                 working_mem[i] = 0;
                 var parent: [:0]Char = working_mem[0..i :0];
 
@@ -4193,7 +4201,7 @@ pub const NodeFS = struct {
         i += 1;
         // after we find one that works, we go forward _after_ the first working directory
         while (i < len) : (i += 1) {
-            if (path[i] == std.fs.path.sep) {
+            if (_isSep(path[i])) {
                 working_mem[i] = 0;
                 var parent: [:0]Char = working_mem[0..i :0];
 

@@ -786,7 +786,7 @@ pub const PathLike = union(Tag) {
         if (!Environment.isWindows or !std.fs.path.isAbsolute(data)) {
             return sliceZWithForceCopy(this, buf, false);
         }
-        return resolve_path.PosixToWinNormalizer.resolveCWDWithExternalBuf(buf, data) catch @panic("Error while resolving path.");
+        return resolve_path.PosixToWinNormalizer.resolveCWDWithExternalBufZ(buf, data) catch @panic("Error while resolving path.");
     }
 
     pub fn sliceZWithForceCopy(this: PathLike, buf: *[bun.MAX_PATH_BYTES]u8, comptime force: bool) [:0]const u8 {

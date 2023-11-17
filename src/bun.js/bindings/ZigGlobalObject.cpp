@@ -344,7 +344,11 @@ static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<Stack
         sb.append(message);
     }
 
-    if (stackTrace.isEmpty()) {
+    // FIXME: why can size == 6 and capacity == 0?
+    // https://discord.com/channels/876711213126520882/1174901590457585765/1174907969419350036
+    size_t framesCount = std::min(stackTrace.size(), stackTrace.capacity());
+
+    if (framesCount == 0) {
         return sb.toString();
     }
 
@@ -352,7 +356,6 @@ static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<Stack
         sb.append("\n"_s);
     }
 
-    size_t framesCount = stackTrace.size();
     ZigStackFrame remappedFrames[64];
     framesCount = framesCount > 64 ? 64 : framesCount;
 

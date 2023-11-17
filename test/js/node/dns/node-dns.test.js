@@ -57,13 +57,15 @@ test("it exists", () => {
 });
 
 test("dns.resolve (bun.sh)", done => {
-  dns.resolve("bun.sh", (err, domain, results) => {
-    expect(err).toBeNull();
-    expect(domain).toBe("bun.sh");
-    expect(results instanceof Array).toBe(true);
+  it("dns.resolve (bun.sh)", () => {
+    dns.resolve("bun.sh", (err, domain, results) => {
+      expect(err).toBeNull();
+      expect(domain).toBe("bun.sh");
+      expect(results instanceof Array).toBe(true);
 
-    // check if it contains only IPs
-    expect(results.every(e => typeof e === "string")).toBe(true);
+      // check if it contains only IPs
+      expect(results.every(e => typeof e === "string")).toBe(true);
+    });
   });
 
   it("dns_promises.resolve should return only IPs", async () => {

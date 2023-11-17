@@ -545,7 +545,7 @@ const promises = {
     switch (rrtype?.toLowerCase()) {
       case "a":
       case "aaaa":
-        return dns.resolve(hostname, rrtype).then(promisifyLookup);
+        return dns.resolve(hostname, rrtype).then(promisifyResolveX);
       default:
         return dns.resolve(hostname, rrtype);
     }

@@ -7,7 +7,7 @@ describe("napi", () => {
   beforeAll(() => {
     // build gyp
     const build = spawnSync({
-      cmd: ["yarn", "build"],
+      cmd: ["bun", "run", "build"],
       cwd: join(__dirname, "napi-app"),
     });
     if (!build.success) {
@@ -47,7 +47,7 @@ describe("napi", () => {
 
 function checkSameOutput(test: string, args: any[]) {
   const nodeResult = runOn("node", test, args).trim();
-  let bunResult = runOn(join(__dirname, "../../build/bun-debug"), test, args);
+  let bunResult = runOn(bunExe(), test, args);
   // remove all debug logs
   bunResult = bunResult.replaceAll(/^\[\w+\].+$/gm, "").trim();
   expect(bunResult).toBe(nodeResult);

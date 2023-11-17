@@ -7276,7 +7276,6 @@ pub const PackageManager = struct {
         bins: []const Bin,
         resolutions: []Resolution,
         node: *Progress.Node,
-        has_created_bin: bool = false,
         global_bin_dir: std.fs.IterableDir,
         destination_dir_subpath_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
         folder_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
@@ -7487,19 +7486,6 @@ pub const PackageManager = struct {
 
                         const bin = this.bins[package_id];
                         if (bin.tag != .none) {
-                            if (!this.has_created_bin) {
-                                if (!this.options.global) {
-                                    if (comptime Environment.isWindows) {
-                                        std.os.mkdiratW(this.node_modules_folder, strings.w(".bin"), 0) catch {};
-                                    } else {
-                                        this.node_modules_folder.dir.makeDirZ(".bin") catch {};
-                                    }
-                                }
-                                if (comptime Environment.isPosix)
-                                    Bin.Linker.umask = C.umask(0);
-                                this.has_created_bin = true;
-                            }
-
                             const bin_task_id = Task.Id.forBinLink(package_id);
                             var task_queue = this.manager.task_queue.getOrPut(this.manager.allocator, bin_task_id) catch unreachable;
                             if (!task_queue.found_existing) {
@@ -7961,9 +7947,6 @@ pub const PackageManager = struct {
                     break :brk try cwd.openIterableDir(node_modules.relative_path, .{});
                 };
 
-                // a .bin directory could be created in each node_modules directory
-                installer.has_created_bin = false;
-
                 var remaining = node_modules.dependencies;
 
                 // cache line is 64 bytes on ARM64 and x64
@@ -8067,19 +8050,6 @@ pub const PackageManager = struct {
                         if (meta.isDisabled()) continue;
 
                         const name = lockfile.str(&dependencies[dependency_id].name);
-
-                        if (!installer.has_created_bin) {
-                            if (!this.options.global) {
-                                if (comptime Environment.isWindows) {
-                                    std.os.mkdiratW(node_modules_folder.dir.fd, bun.strings.w(".bin"), 0) catch {};
-                                } else {
-                                    node_modules_folder.dir.makeDirZ(".bin") catch {};
-                                }
-                            }
-                            if (comptime Environment.isPosix)
-                                Bin.Linker.umask = C.umask(0);
-                            installer.has_created_bin = true;
-                        }
 
                         var bin_linker = Bin.Linker{
                             .bin = original_bin,

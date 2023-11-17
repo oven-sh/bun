@@ -10,8 +10,8 @@ const libuv = bun.windows.libuv;
 
 const allow_assert = env.allow_assert;
 
-const log = bun.Output.scoped(.FD, false);
-fn handleToNumber(handle: FD.System) FD.FDInt {
+const log = bun.Output.scoped(.fs, false);
+fn handleToNumber(handle: FDImpl.System) FDImpl.SystemAsInt {
     if (env.os == .windows) {
         // intCast fails if 'fd > 2^62'
         // possible with handleToNumber(GetCurrentProcess());
@@ -20,7 +20,7 @@ fn handleToNumber(handle: FD.System) FD.FDInt {
         return handle;
     }
 }
-fn numberToHandle(handle: FD.FDInt) FD.System {
+fn numberToHandle(handle: FDImpl.SystemAsInt) FDImpl.System {
     if (env.os == .windows) {
         return @ptrFromInt(handle);
     } else {
@@ -40,7 +40,11 @@ pub fn uv_open_osfhandle(in: libuv.uv_os_fd_t) c_int {
     return out;
 }
 
-/// Abstraction over file descriptors. This struct does nothing on '!isWindows'
+/// Abstraction over file descriptors. This struct does nothing on non-windows operating systems.
+///
+/// bun.FileDescriptor is the bitcast of this struct, which is essentially a tagged pointer.
+///
+/// You can aquire one with FDImpl.decode(fd), and convert back to it with FDImpl.encode(fd).
 ///
 /// On Windows builds we have two kinds of file descriptors:
 /// - system: A "std.os.windows.HANDLE" that windows APIs can interact with.
@@ -48,125 +52,108 @@ pub fn uv_open_osfhandle(in: libuv.uv_os_fd_t) c_int {
 /// - uv:     A libuv file descriptor that looks like a linux file descriptor.
 ///           (technically a c runtime file descriptor, libuv might do extra stuff though)
 ///
-/// When converting UVFDs into Windows FDs, they are still said to be owned by libuv, and they
-/// say to NOT close the handle. This is tracked by a flag `owned_by_libuv`.
-pub const FD = packed struct {
+/// When converting UVFDs into Windows FDs, they are still said to be owned by libuv,
+/// and they say to NOT close the handle.
+pub const FDImpl = packed struct {
     value: Value,
-    owned_by_libuv: if (env.os == .windows) bool else void,
     kind: Kind,
 
-    const invalid_value = std.math.maxInt(FDInt);
-    pub const invalid = FD{
-        .owned_by_libuv = if (env.os == .windows) false else {},
+    const invalid_value = std.math.maxInt(SystemAsInt);
+    pub const invalid = FDImpl{
         .kind = .system,
         .value = .{ .as_system = invalid_value },
     };
 
     pub const System = std.os.fd_t;
-    pub const FDInt = switch (env.os) {
-        .windows => u62,
+
+    pub const SystemAsInt = switch (env.os) {
+        .windows => u63,
         else => std.meta.Int(.unsigned, @bitSizeOf(System)),
     };
+
     pub const UV = switch (env.os) {
         .windows => bun.windows.libuv.uv_file,
         else => System,
     };
 
     const Value = if (env.os == .windows)
-        packed union { as_system: FDInt, as_uv: UV }
+        packed union { as_system: SystemAsInt, as_uv: UV }
     else
-        packed union { as_system: FDInt };
-
-    comptime {
-        std.debug.assert(@sizeOf(FD) == @sizeOf(System));
-
-        if (env.os == .windows) {
-            // we want the conversion from FD to fd_t to be a integer truncate
-            std.debug.assert(@as(FD, @bitCast(@as(u64, 512))).value.as_system == 512);
-        }
-    }
+        packed union { as_system: SystemAsInt };
 
     const Kind = if (env.os == .windows)
         enum(u1) { system = 0, uv = 1 }
     else
         enum(u0) { system };
 
-    pub fn fromSystem(system_fd: System) FD {
+    comptime {
+        std.debug.assert(@sizeOf(FDImpl) == @sizeOf(System));
+
+        if (env.os == .windows) {
+            // we want the conversion from FD to fd_t to be a integer truncate
+            std.debug.assert(@as(FDImpl, @bitCast(@as(u64, 512))).value.as_system == 512);
+        }
+    }
+
+    pub inline fn fromSystem(system_fd: System) FDImpl {
         if (env.os == .windows) {
             // the current process fd is max usize
             // https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getcurrentprocess
-            std.debug.assert(@intFromPtr(system_fd) > std.math.maxInt(FDInt));
+            std.debug.assert(@intFromPtr(system_fd) <= std.math.maxInt(SystemAsInt));
         }
 
-        return FD{
-            .owned_by_libuv = if (env.os == .windows) false else {},
+        return FDImpl{
             .kind = .system,
             .value = .{ .as_system = handleToNumber(system_fd) },
         };
     }
 
-    pub fn fromSystemOwnedByLibuv(system_fd: System) FD {
-        if (env.os == .windows) {
-            // the current process fd is max usize
-            // https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getcurrentprocess
-            std.debug.assert(@intFromPtr(system_fd) > std.math.maxInt(FDInt));
-        }
-
-        return FD{
-            .owned_by_libuv = if (env.os == .windows) true else {},
-            .kind = .system,
-            .value = .{ .as_system = handleToNumber(system_fd) },
-        };
-    }
-
-    pub fn fromUV(uv_fd: UV) FD {
+    pub inline fn fromUV(uv_fd: UV) FDImpl {
         return switch (env.os) {
-            else => FD{
-                .owned_by_libuv = {},
+            else => FDImpl{
                 .kind = .system,
                 .value = .{ .as_system = uv_fd },
             },
-            .windows => FD{
-                .owned_by_libuv = true,
+            .windows => FDImpl{
                 .kind = .uv,
                 .value = .{ .as_uv = uv_fd },
             },
         };
     }
 
-    pub fn isValid(this: FD) bool {
+    pub inline fn isValid(this: FDImpl) bool {
         return this.value.as_system != invalid_value;
     }
 
     /// When calling this function, you may not be able to close the returned fd.
     /// To close the fd, you have to call `.close()` on the FD.
-    pub fn system(this: FD) System {
+    pub inline fn system(this: FDImpl) System {
         return switch (env.os == .windows) {
             false => numberToHandle(this.value.as_system),
             true => switch (this.kind) {
                 .system => numberToHandle(this.value.as_system),
-                .uv => libuv.uv_get_osfhandle(this.value.as_uv),
+                .uv => uv_get_osfhandle(this.value.as_uv),
             },
         };
     }
 
     /// Convert to bun.FileDescriptor
-    pub fn fileDescriptor(this: FD) bun.FileDescriptor {
+    pub inline fn encode(this: FDImpl) bun.FileDescriptor {
         return @bitCast(this);
     }
 
-    pub fn fromFileDescriptor(fd: bun.FileDescriptor) FD {
+    pub inline fn decode(fd: bun.FileDescriptor) FDImpl {
         return @bitCast(fd);
     }
 
     /// When calling this function, you should consider the FD struct to now be invalid.
     /// Calling `.close()` on the FD at that point may not work.
-    pub fn uv(this: FD) UV {
+    pub inline fn uv(this: FDImpl) UV {
         return switch (env.os) {
             else => numberToHandle(this.value.as_system),
             .windows => switch (this.kind) {
                 .system => fd: {
-                    break :fd libuv.uv_open_osfhandle(numberToHandle(this.value.as_system));
+                    break :fd uv_open_osfhandle(numberToHandle(this.value.as_system));
                 },
                 .uv => this.value.as_uv,
             },
@@ -174,106 +161,105 @@ pub const FD = packed struct {
     }
 
     /// This function will prevent stdout and stderr from being closed.
-    pub fn close(this: FD) ?bun.sys.Error {
+    pub fn close(this: FDImpl) ?bun.sys.Error {
         if (env.os != .windows or this.kind == .uv) {
             // This branch executes always on linux (uv() is no-op),
             // or on Windows when given a UV file descriptor.
             const fd = this.uv();
             if (fd == bun.STDOUT_FD or fd == bun.STDERR_FD) {
-                log("close({d}) SKIPPED", .{fd});
+                log("close({}) SKIPPED", .{this});
                 return null;
             }
         }
-        return this.close();
+        return this.closeAllowingStdoutAndStderr();
     }
 
-    pub fn closeAllowingStdoutAndStderr(this: FD) ?bun.sys.Error {
+    pub fn closeAllowingStdoutAndStderr(this: FDImpl) ?bun.sys.Error {
         if (allow_assert) {
             std.debug.assert(this.value.as_system != invalid_value); // probably a UAF
         }
-        defer if (allow_assert) {
-            this.value.as_system = invalid_value;
-        };
-        log("close({d})", .{this});
-        switch (env.os) {
-            .linux => {
+
+        const result: ?bun.sys.Error = switch (env.os) {
+            .linux => result: {
                 const fd = this.system();
                 std.debug.assert(fd != bun.invalid_fd);
                 std.debug.assert(fd > -1);
-                return switch (linux.getErrno(linux.close(fd))) {
+                break :result switch (linux.getErrno(linux.close(fd))) {
                     .BADF => bun.sys.Error{ .errno = @intFromEnum(os.E.BADF), .syscall = .close, .fd = fd },
                     else => null,
                 };
             },
-            .mac => {
+            .mac => result: {
                 const fd = this.system();
                 std.debug.assert(fd != bun.invalid_fd);
                 std.debug.assert(fd > -1);
-                return switch (bun.sys.system.getErrno(bun.sys.system.@"close$NOCANCEL"(fd))) {
+                break :result switch (bun.sys.system.getErrno(bun.sys.system.@"close$NOCANCEL"(fd))) {
                     .BADF => bun.sys.Error{ .errno = @intFromEnum(os.E.BADF), .syscall = .close, .fd = fd },
                     else => null,
                 };
             },
-            .windows => {
-                var req: uv.fs_t = uv.fs_t.uninitialized;
+            .windows => result: {
+                var req: libuv.fs_t = libuv.fs_t.uninitialized;
                 switch (this.kind) {
                     .uv => {
                         defer req.deinit();
-                        const rc = libuv.uv_fs_close(libuv.Loop.get(), this.value.as_uv, null);
-                        return if (rc.errno()) |errno|
-                            .{ .errno = errno, .syscall = .close, .fd = this.value.as_uv }
+                        const rc = libuv.uv_fs_close(libuv.Loop.get(), &req, this.value.as_uv, null);
+                        break :result if (rc.errno()) |errno|
+                            .{ .errno = errno, .syscall = .close, .fd = this.encode() }
                         else
                             null;
                     },
-                    .system => if (this.owned_by_libuv) {
-                        // TODO: this block may be invalid, and we may not actually be able to safely close the handle.
-                        defer req.deinit();
-                        const uv_fd = libuv.uv_open_osfhandle();
-                        const rc = libuv.uv_fs_close(libuv.Loop.get(), uv_fd, null);
-                        return if (rc.errno()) |errno|
-                            .{ .errno = errno, .syscall = .close, .fd = uv_fd }
-                        else
-                            null;
-                    } else {
-                        const handle = this.value.as_system;
-                        std.debug.assert(@intFromPtr(handle) != 0);
+                    .system => {
+                        const handle: System = @ptrFromInt(@as(u64, this.value.as_system));
+                        std.debug.assert(this.value.as_system != 0);
                         if (std.os.windows.kernel32.CloseHandle(handle) == 0) {
-                            return bun.sys.Error{
+                            break :result bun.sys.Error{
                                 .errno = @intFromEnum(std.os.windows.kernel32.GetLastError()),
                                 .syscall = .CloseHandle,
+                                .fd = this.encode(),
                             };
                         }
                     },
                 }
             },
             else => @compileError("FD.close() not implemented yet"),
+        };
+
+        if (env.isDebug) {
+            if (result) |err| {
+                log("close({}) = err {d}", .{ this, err.errno });
+            } else {
+                log("close({})", .{this});
+            }
         }
+
+        return result;
     }
 
     /// This "fails" if not given an int32, returning null in that case
-    pub fn fromJS(value: JSValue) ?FD {
+    pub fn fromJS(value: JSValue) ?FDImpl {
         if (!value.isInt32()) return null;
         const fd = value.asInt32();
-        return FD.fromUV(fd);
+        return FDImpl.fromUV(fd);
     }
 
     // If a non-number is given, returns null.
     // If the given number is not an fd (negative), an error is thrown and error.JSException is returned.
-    pub fn fromJSValidated(value: JSValue, global: *JSC.JSGlobalObject, exception_ref: JSC.C.ExceptionRef) !?FD {
+    pub fn fromJSValidated(value: JSValue, global: *JSC.JSGlobalObject, exception_ref: JSC.C.ExceptionRef) !?FDImpl {
         if (!value.isInt32()) return null;
         const fd = value.asInt32();
         if (!JSC.Node.Valid.fileDescriptor(fd, global, exception_ref)) {
             return error.JSException;
         }
-        return FD.fromUV(fd);
+        return FDImpl.fromUV(fd);
     }
 
     /// This forces a conversion to a UV file descriptor
-    pub fn toJS(value: FD) JSValue {
+    pub fn toJS(value: FDImpl, _: *JSC.JSGlobalObject, _: JSC.C.ExceptionRef) JSValue {
         return JSValue.jsNumberFromInt32(value.uv());
     }
 
-    pub fn format(this: FD, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: FDImpl, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         switch (env.os) {
             else => {
                 writer.print("{d}", .{this.system()});

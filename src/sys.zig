@@ -119,6 +119,11 @@ pub const Tag = enum(u8) {
     WriteFile,
     NtQueryDirectoryFile,
     GetFinalPathNameByHandle,
+    CloseHandle,
+
+    pub fn isWindows(this: Tag) bool {
+        return @intFromEnum(this) > @intFromEnum(Tag.WriteFile);
+    }
 
     pub var strings = std.EnumMap(Tag, JSC.C.JSStringRef).initFull(null);
 };
@@ -378,8 +383,7 @@ pub fn openDirAtWindows(
     );
 
     if (comptime Environment.allow_assert) {
-        log("NtCreateFile({d}, {}) = {d} (dir)", .{ dirFd, bun.strings.fmtUTF16(path), rc });
-        log("result={d}", .{fd});
+        log("NtCreateFile({d}, {}) = {d} (dir) = {d}", .{ dirFd, bun.strings.fmtUTF16(path), rc, @intFromPtr(fd) });
     }
 
     switch (windows.Win32Error.fromNTStatus(rc)) {
@@ -490,8 +494,7 @@ pub fn openatWindows(dirfD: bun.FileDescriptor, path_: []const u16, flags: bun.M
         );
 
         if (comptime Environment.allow_assert) {
-            log("NtCreateFile({d}, {}) = {d} (file)", .{ dirfD, bun.strings.fmtUTF16(path), rc });
-            log("result={d}", .{result});
+            log("NtCreateFile({d}, {}) = {d} (file) = {d}", .{ dirfD, bun.strings.fmtUTF16(path), rc, @intFromPtr(result) });
         }
 
         switch (windows.Win32Error.fromNTStatus(rc)) {
@@ -612,47 +615,11 @@ pub fn open(file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.
 
 /// This function will prevent stdout and stderr from being closed.
 pub fn close(fd: bun.FileDescriptor) ?Syscall.Error {
-    if (fd == bun.STDOUT_FD or fd == bun.STDERR_FD) {
-        log("close({d}) SKIPPED", .{fd});
-        return null;
-    }
-
-    return closeAllowingStdoutAndStderr(fd);
+    return bun.FDImpl.decode(fd).close();
 }
 
 pub fn closeAllowingStdoutAndStderr(fd: bun.FileDescriptor) ?Syscall.Error {
-    log("close({d})", .{fd});
-    std.debug.assert(fd != bun.invalid_fd);
-
-    if (comptime std.meta.trait.isSignedInt(@TypeOf(fd)))
-        std.debug.assert(fd > -1);
-
-    if (comptime Environment.isMac) {
-        // This avoids the EINTR problem.
-        return switch (system.getErrno(system.@"close$NOCANCEL"(fd))) {
-            .BADF => Syscall.Error{ .errno = @intFromEnum(os.E.BADF), .syscall = .close },
-            else => null,
-        };
-    }
-
-    if (comptime Environment.isLinux) {
-        return switch (linux.getErrno(linux.close(fd))) {
-            .BADF => Syscall.Error{ .errno = @intFromEnum(os.E.BADF), .syscall = .close },
-            else => null,
-        };
-    }
-
-    if (comptime Environment.isWindows) {
-        std.debug.assert(fd != 0);
-
-        if (kernel32.CloseHandle(bun.fdcast(fd)) == 0) {
-            return Syscall.Error{ .errno = @intFromEnum(os.E.BADF), .syscall = .close };
-        }
-
-        return null;
-    }
-
-    @compileError("Not implemented yet");
+    return bun.FDImpl.decode(fd).closeAllowingStdoutAndStderr();
 }
 
 pub const max_count = switch (builtin.os.tag) {

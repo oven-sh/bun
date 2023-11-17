@@ -271,7 +271,7 @@ else if (Environment.isWindows)
 else
     std.os.fd_t;
 
-pub const FD = @import("./fd.zig").FD;
+pub const FDImpl = @import("./fd.zig").FDImpl;
 
 // When we are on a computer with an absurdly high number of max open file handles
 // such is often the case with macOS
@@ -1790,21 +1790,30 @@ pub inline fn todo(src: std.builtin.SourceLocation, value: anytype) @TypeOf(valu
     return value;
 }
 
+/// converts a `bun.FileDescriptor` into the native operating system fd
+///
+/// On non-windows this does nothing, but on windows it converts UV descriptors
+/// to Windows' *HANDLE, and casts the types for proper usage.
+///
+/// This may be needed in places where a FileDescriptor is given to `std` or `kernel32` apis
 pub inline fn fdcast(fd: FileDescriptor) std.os.fd_t {
     if (!Environment.isWindows) return fd;
-    if (@inComptime() and fd == invalid_fd) return FD.invalid.system();
-    return FD.fromFileDescriptor(fd).system();
+    if (@inComptime() and fd == invalid_fd) return FDImpl.invalid.system();
+    return FDImpl.decode(fd).system();
 }
 
+/// Converts a native file descriptor into a `bun.FileDescriptor`
+///
+/// Accepts either a UV descriptor (i32) or a windows handle (*anyopaque)
 pub inline fn toFD(fd: anytype) FileDescriptor {
     if (Environment.isWindows) {
         const T = @TypeOf(fd);
         return (switch (T) {
-            FD.System => FD.fromSystem(fd),
-            FD.UV => FD.fromUV(fd),
-            FileDescriptor => FD.fromFileDescriptor(fd),
+            FDImpl.System => FDImpl.fromSystem(fd),
+            FDImpl.UV => FDImpl.fromUV(fd),
+            FileDescriptor => FDImpl.decode(fd),
             else => @compileError("toFD() does not support type \"" ++ @typeName(T) ++ "\""),
-        }).fileDescriptor();
+        }).encode();
     } else {
         return fd;
     }
@@ -1887,7 +1896,7 @@ pub const win32 = struct {
         std.os.argv = new_ptr;
     }
 
-    pub fn stdio(i: anytype) FD {
+    pub fn stdio(i: anytype) FileDescriptor {
         return switch (i) {
             0 => STDIN_FD,
             1 => STDOUT_FD,

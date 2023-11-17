@@ -1095,8 +1095,8 @@ pub const ArgumentsSlice = struct {
 };
 
 pub fn fileDescriptorFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?bun.FileDescriptor {
-    return if (bun.FD.fromJSValidated(value, ctx, exception) catch null) |fd|
-        fd.fileDescriptor()
+    return if (bun.FDImpl.fromJSValidated(value, ctx, exception) catch null) |fd|
+        fd.encode()
     else
         null;
 }
@@ -1214,9 +1214,9 @@ pub const PathOrFileDescriptor = union(Tag) {
     pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, allocator: std.mem.Allocator, exception: JSC.C.ExceptionRef) ?JSC.Node.PathOrFileDescriptor {
         const first = arguments.next() orelse return null;
 
-        if (bun.FD.fromJSValidated(first, ctx, exception) catch return null) |fd| {
+        if (bun.FDImpl.fromJSValidated(first, ctx, exception) catch return null) |fd| {
             arguments.eat();
-            return JSC.Node.PathOrFileDescriptor{ .fd = fd.fileDescriptor() };
+            return JSC.Node.PathOrFileDescriptor{ .fd = fd.encode() };
         }
 
         return JSC.Node.PathOrFileDescriptor{
@@ -1227,7 +1227,7 @@ pub const PathOrFileDescriptor = union(Tag) {
     pub fn toJS(this: JSC.Node.PathOrFileDescriptor, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
         return switch (this) {
             .path => |path| path.toJS(ctx, exception),
-            .fd => |fd| bun.FD.fromFileDescriptor(fd).toJS(),
+            .fd => |fd| bun.FDImpl.decode(fd).toJS(),
         };
     }
 };

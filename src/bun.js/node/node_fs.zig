@@ -17,7 +17,7 @@ const Maybe = JSC.Maybe;
 const Encoding = JSC.Node.Encoding;
 
 const FileDescriptor = bun.FileDescriptor;
-const FD = bun.FD;
+const FDImpl = bun.FDImpl;
 
 const Syscall = if (Environment.isWindows) struct {
     const log = bun.sys.syslog;
@@ -139,7 +139,7 @@ const Syscall = if (Environment.isWindows) struct {
     }
 
     pub fn ftruncate(fd: FileDescriptor, size: isize) Maybe(void) {
-        const uv_fd = FD.fromFileDescriptor(fd).uv();
+        const uv_fd = FDImpl.decode(fd).uv();
         var req: uv.fs_t = uv.fs_t.uninitialized;
         defer req.deinit();
         const rc = uv.uv_fs_ftruncate(uv.Loop.get(), &req, uv_fd, size, null);
@@ -152,7 +152,7 @@ const Syscall = if (Environment.isWindows) struct {
     }
 
     pub fn fstat(fd: FileDescriptor) Maybe(bun.Stat) {
-        const uv_fd = FD.fromFileDescriptor(fd).uv();
+        const uv_fd = FDImpl.decode(fd).uv();
         var req: uv.fs_t = uv.fs_t.uninitialized;
         defer req.deinit();
         const rc = uv.uv_fs_fstat(uv.Loop.get(), &req, uv_fd, null);
@@ -165,7 +165,7 @@ const Syscall = if (Environment.isWindows) struct {
     }
 
     pub fn fdatasync(fd: FileDescriptor) Maybe(void) {
-        const uv_fd = FD.fromFileDescriptor(fd).uv();
+        const uv_fd = FDImpl.decode(fd).uv();
         var req: uv.fs_t = uv.fs_t.uninitialized;
         defer req.deinit();
         const rc = uv.uv_fs_fdatasync(uv.Loop.get(), &req, uv_fd, null);
@@ -214,15 +214,15 @@ const Syscall = if (Environment.isWindows) struct {
     }
 
     pub fn close(fd: FileDescriptor) ?Syscall.Error {
-        return FD.fromFileDescriptor(fd).close();
+        return FDImpl.decode(fd).close();
     }
 
     pub fn closeAllowingStdoutAndStderr(fd: FileDescriptor) ?Syscall.Error {
-        return FD.fromFileDescriptor(fd).closeAllowingStdoutAndStderr();
+        return FDImpl.decode(fd).closeAllowingStdoutAndStderr();
     }
 
     pub fn preadv(fd: FileDescriptor, bufs: []const bun.PlatformIOVec, position: i64) Maybe(usize) {
-        const uv_fd = FD.fromFileDescriptor(fd).uv();
+        const uv_fd = FDImpl.decode(fd).uv();
         comptime std.debug.assert(bun.PlatformIOVec == uv.uv_buf_t);
 
         const debug_timer = bun.Output.DebugTimer.start();
@@ -256,7 +256,7 @@ const Syscall = if (Environment.isWindows) struct {
     }
 
     pub fn pwritev(fd: FileDescriptor, bufs: []const bun.PlatformIOVec, position: i64) Maybe(usize) {
-        const uv_fd = FD.fromFileDescriptor(fd).uv();
+        const uv_fd = FDImpl.decode(fd).uv();
         comptime std.debug.assert(bun.PlatformIOVec == uv.uv_buf_t);
 
         const debug_timer = bun.Output.DebugTimer.start();
@@ -3481,7 +3481,7 @@ const Return = struct {
     pub const Lstat = StatOrNotFound;
     pub const Mkdir = bun.String;
     pub const Mkdtemp = JSC.ZigString;
-    pub const Open = FileDescriptor;
+    pub const Open = FDImpl;
     pub const WriteFile = void;
     pub const Readv = Read;
     pub const Read = struct {
@@ -4276,7 +4276,7 @@ pub const NodeFS = struct {
             .err => |err| .{
                 .err = err.withPath(args.path.slice()),
             },
-            .result => |fd| .{ .result = fd },
+            .result => |fd| .{ .result = FDImpl.decode(fd) },
         };
     }
     pub fn openDir(_: *NodeFS, _: Arguments.OpenDir, comptime _: Flavor) Maybe(Return.OpenDir) {
@@ -4349,18 +4349,6 @@ pub const NodeFS = struct {
         var buf = args.buffer.slice();
         buf = buf[@min(args.offset, buf.len)..];
         buf = buf[0..@min(buf.len, args.length)];
-
-        if (Environment.isWindows) {
-            var bytes_written: std.os.windows.DWORD = undefined;
-            if (std.os.windows.kernel32.WriteFile(bun.fdcast(args.fd), buf.ptr, @truncate(buf.len), &bytes_written, null) == 0) {
-                return .{ .err = Syscall.Error{
-                    .errno = @intFromEnum(std.os.windows.kernel32.GetLastError()),
-                    .syscall = .WriteFile,
-                    .fd = args.fd,
-                } };
-            }
-            return .{ .result = .{ .bytes_written = bytes_written } };
-        }
 
         return switch (Syscall.write(args.fd, buf)) {
             .err => |err| .{
@@ -4754,7 +4742,7 @@ pub const NodeFS = struct {
             .path => brk: {
                 path = args.file.path.sliceZ(pathbuf);
 
-                const open_result = bun.sys.openat(
+                const open_result = Syscall.openat(
                     args.dirfd,
                     path,
                     @intFromEnum(args.flag) | os.O.NOCTTY,

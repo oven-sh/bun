@@ -832,6 +832,14 @@ describe("writeFileSync", () => {
       expect(buffer[i]).toBe(out[i]);
     }
   });
+  it("correctly decodes base64(#7165)", () => {
+    const path = `${tmpdir()}/${Date.now()}.base64.writeFileSync.txt`;
+    const data = Buffer.from("this is a test message which should be written as plain text through base64");
+    const b64 = data.toString("base64");
+    writeFileSync(path, b64, "base64");
+    const out = readFileSync(path);
+    expect(out).toEqual(data);
+  });
   it("returning ArrayBuffer works", () => {
     const buffer = new Buffer([
       70, 105, 108, 101, 32, 119, 114, 105, 116, 116, 101, 110, 32, 115, 117, 99, 99, 101, 115, 115, 102, 117, 108, 108,

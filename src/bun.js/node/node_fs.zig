@@ -28,6 +28,7 @@ const FileDescriptor = bun.FileDescriptor;
 const DirIterator = @import("./dir_iterator.zig");
 const Path = @import("../../resolver/resolve_path.zig");
 const FileSystem = @import("../../fs.zig").FileSystem;
+const Base64 = @import("../../base64/base64.zig");
 const StringOrBuffer = JSC.Node.StringOrBuffer;
 const ArgumentsSlice = JSC.Node.ArgumentsSlice;
 const TimeLike = JSC.Node.TimeLike;
@@ -4450,13 +4451,27 @@ pub const NodeFS = struct {
             .fd => |_fd| _fd,
         };
 
+        var buf = args.data.slice();
+        var written: usize = 0;
+        var base64_buffer = if (args.encoding == .base64)
+            bun.default_allocator.alloc(u8, Base64.decodeLen(buf)) catch @panic("oom")
+        else
+            undefined;
         defer {
+            if (args.encoding == .base64)
+                bun.default_allocator.free(base64_buffer);
             if (args.file == .path)
                 _ = Syscall.close(fd);
         }
 
-        var buf = args.data.slice();
-        var written: usize = 0;
+        if (args.encoding == .base64) {
+            const result = Base64.decode(base64_buffer, buf);
+            if (!result.fail) {
+                buf = base64_buffer[0..result.written];
+            } else {
+                return .{ .err = Syscall.Error.oom };
+            }
+        }
 
         // Attempt to pre-allocate large files
         if (Environment.isLinux) {

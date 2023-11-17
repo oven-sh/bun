@@ -42,12 +42,6 @@ This adds a new flag --bail to bun test. When set, it will stop running tests af
 - [ ] I made sure that specific versions of dependencies are used instead of ranged or tagged versions
 -->
 
-<!-- If functions were added to exports.zig or bindings.zig
-
-- [ ] I ran `make headers` to regenerate the C header file
-
--->
-
 <!-- If a new builtin ESM/CJS module was added:
 
 - [ ] I updated Aliases in `module_loader.zig` to include the new module

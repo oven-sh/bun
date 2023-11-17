@@ -214,6 +214,64 @@ test("package added after install", async () => {
   expect(await exited).toBe(0);
 });
 
+test("it should correctly link binaries after deleting node_modules", async () => {
+  const json: any = {
+    name: "foo",
+    version: "1.0.0",
+    dependencies: {
+      "what-bin": "1.0.0",
+      "uses-what-bin": "1.5.0",
+    },
+  };
+  await writeFile(join(packageDir, "package.json"), JSON.stringify(json));
+
+  var { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  var err = await new Response(stderr).text();
+  var out = await new Response(stdout).text();
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("not found");
+  expect(err).not.toContain("error:");
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + uses-what-bin@1.5.0",
+    " + what-bin@1.0.0",
+    "",
+    expect.stringContaining("3 packages installed"),
+  ]);
+  expect(await exited).toBe(0);
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  }));
+
+  err = await new Response(stderr).text();
+  out = await new Response(stdout).text();
+  expect(err).not.toContain("Saved lockfile");
+  expect(err).not.toContain("not found");
+  expect(err).not.toContain("error:");
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + uses-what-bin@1.5.0",
+    " + what-bin@1.0.0",
+    "",
+    expect.stringContaining("3 packages installed"),
+  ]);
+  expect(await exited).toBe(0);
+});
+
 test("it should install and use correct binary version", async () => {
   // this should install `what-bin` in two places:
   //

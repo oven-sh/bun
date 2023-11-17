@@ -318,7 +318,7 @@ pub const Iterator = switch (builtin.os.tag) {
     else => @compileError("unimplemented"),
 };
 
-const WrappedIterator = struct {
+pub const WrappedIterator = struct {
     iter: Iterator,
     const Self = @This();
 

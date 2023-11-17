@@ -137,8 +137,32 @@ pub const GlobWalker = struct {
     root_cwd_slice: []const u8 = "",
 
     pathBuf: [bun.MAX_PATH_BYTES]u8 = undefined,
-
+    // iteration state
     workbuf: ArrayList(WorkItem) = ArrayList(WorkItem){},
+    iter_state: IterState = .get_next,
+    // FIXME: close on deinit
+    cwd_fd: bun.FileDescriptor = 0,
+    empty_dir_path: [0:0]u8 = [0:0]u8{},
+
+    const IterState = union(enum) {
+        get_next,
+        directory: Directory,
+
+        const Directory = struct {
+            fd: bun.FileDescriptor,
+            iter: DirIterator.WrappedIterator,
+            path: [bun.MAX_PATH_BYTES]u8,
+            dir_path: [:0]const u8,
+
+            component_idx: u32,
+            pattern: *Component,
+            next_pattern: ?*Component,
+            is_last: bool,
+
+            is_root: bool,
+            at_cwd: bool = false,
+        };
+    };
 
     const WorkItem = struct {
         path: []const u8,
@@ -224,7 +248,8 @@ pub const GlobWalker = struct {
                 cwd = copiedCwd;
             },
         }
-        const globWalker = try this.initWithCwd(
+
+        return try this.initWithCwd(
             arena,
             pattern,
             cwd,
@@ -234,7 +259,6 @@ pub const GlobWalker = struct {
             error_on_broken_symlinks,
             only_files,
         );
-        return .{ .result = globWalker };
     }
 
     pub fn convertUtf8ToCodepoints(codepoints: []u32, pattern: []const u8) void {
@@ -260,7 +284,7 @@ pub const GlobWalker = struct {
         follow_symlinks: bool,
         error_on_broken_symlinks: bool,
         only_files: bool,
-    ) !void {
+    ) !Maybe(void) {
         var patternComponents = ArrayList(Component){};
         try GlobWalker.buildPatternComponents(
             arena,
@@ -271,19 +295,33 @@ pub const GlobWalker = struct {
             &this.has_relative_components,
         );
 
+        this.cwd = cwd;
+        var path_buf: *[bun.MAX_PATH_BYTES]u8 = &this.pathBuf;
+        const root_path = this.cwd;
+        @memcpy(path_buf[0..root_path.len], root_path[0..root_path.len]);
+        path_buf[root_path.len] = 0;
+        this.root_cwd_slice = root_path;
+        var cwd_fd = switch (Syscall.open(@ptrCast(path_buf[0 .. root_path.len + 1]), std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+            .err => |err| return .{ .err = this.handleSysErrWithPath(err, @ptrCast(path_buf[0 .. root_path.len + 1])) },
+            .result => |fd| fd,
+        };
+        this.cwd_fd = cwd_fd;
+
         this.patternComponents = patternComponents;
         this.pattern = pattern;
         this.arena = arena.*;
-        this.cwd = cwd;
         this.dot = dot;
         this.absolute = absolute;
         this.follow_symlinks = follow_symlinks;
         this.error_on_broken_symlinks = error_on_broken_symlinks;
         this.only_files = only_files;
+
+        return Maybe(void).success;
     }
 
     pub fn deinit(this: *GlobWalker) void {
         this.arena.deinit();
+        _ = Syscall.close(this.cwd_fd);
     }
 
     pub fn handleSysErrWithPath(
@@ -292,10 +330,295 @@ pub const GlobWalker = struct {
         path_buf: [:0]const u8,
     ) Syscall.Error {
         @memcpy(this.pathBuf[0 .. path_buf.len + 1], @as([]const u8, @ptrCast(path_buf[0 .. path_buf.len + 1])));
+        // std.mem.copyBackwards(u8, this.pathBuf[0 .. path_buf.len + 1], @as([]const u8, @ptrCast(path_buf[0 .. path_buf.len + 1])));
         return err.withPath(this.pathBuf[0 .. path_buf.len + 1]);
     }
 
+    fn transitionToDirIterState(this: *GlobWalker, work_item: WorkItem, comptime root: bool) !Maybe(void) {
+        // FIXME: doesn't nede to be initially set to undefined but lazy rn (can be zero initialized)
+        this.iter_state = .{ .directory = undefined };
+        this.iter_state.directory.is_root = root;
+
+        var dir_path: [:0]u8 = dir_path: {
+            if (comptime root) {
+                if (!this.absolute) {
+                    this.iter_state.directory.path[0] = 0;
+                    break :dir_path this.iter_state.directory.path[0..0 :0];
+                }
+            }
+            // TODO Optimization: On posix systems filepaths are already null byte terminated so we can skip this if thats the case
+            @memcpy(this.iter_state.directory.path[0..work_item.path.len], work_item.path);
+            this.iter_state.directory.path[work_item.path.len] = 0;
+            break :dir_path this.iter_state.directory.path[0..work_item.path.len :0];
+        };
+
+        var had_dot_dot = false;
+        const component_idx = this.skipSpecialComponents(work_item.idx, &dir_path, &this.iter_state.directory.path, &had_dot_dot);
+
+        this.iter_state.directory.dir_path = dir_path;
+        this.iter_state.directory.component_idx = component_idx;
+        this.iter_state.directory.pattern = &this.patternComponents.items[component_idx];
+        this.iter_state.directory.next_pattern = if (component_idx + 1 < this.patternComponents.items.len) &this.patternComponents.items[component_idx + 1] else null;
+        this.iter_state.directory.is_last = component_idx == this.patternComponents.items.len - 1;
+
+        var fd: bun.FileDescriptor = fd: {
+            if (comptime root) {
+                if (had_dot_dot) break :fd switch (Syscall.openat(this.cwd_fd, dir_path, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+                    .err => |err| return .{
+                        .err = this.handleSysErrWithPath(err, dir_path),
+                    },
+                    .result => |fd_| fd_,
+                };
+
+                this.iter_state.directory.at_cwd = true;
+                break :fd this.cwd_fd;
+            }
+
+            break :fd switch (Syscall.openat(this.cwd_fd, dir_path, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+                .err => |err| return .{
+                    .err = this.handleSysErrWithPath(err, dir_path),
+                },
+                .result => |fd_| fd_,
+            };
+        };
+
+        this.iter_state.directory.fd = fd;
+        var dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
+        var iterator = DirIterator.iterate(dir);
+        this.iter_state.directory.iter = iterator;
+
+        return Maybe(void).success;
+    }
+
     pub fn walk(this: *GlobWalker) !Maybe(void) {
+        if (this.patternComponents.items.len == 0) return Maybe(void).success;
+
+        const root_work_item = WorkItem.new(this.cwd, 0, .directory);
+        switch (try this.transitionToDirIterState(root_work_item, true)) {
+            .err => |err| return .{ .err = err },
+            else => {},
+        }
+
+        while (switch (try this.next()) {
+            .err => |err| return .{ .err = err },
+            .result => |matched_path| matched_path,
+        }) |path| {
+            try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(path));
+        }
+        return Maybe(void).success;
+    }
+
+    pub fn next(this: *GlobWalker) !Maybe(?[]const u8) {
+        while (true) {
+            switch (this.iter_state) {
+                .get_next => {
+                    // Done
+                    if (this.workbuf.items.len == 0) return .{ .result = null };
+                    const work_item = this.workbuf.pop();
+                    switch (work_item.kind) {
+                        .directory => {
+                            switch (try this.transitionToDirIterState(work_item, false)) {
+                                .err => |err| return .{ .err = err },
+                                else => {},
+                            }
+                            continue;
+                        },
+                        .symlink => {
+                            var scratch_path_buf: *[bun.MAX_PATH_BYTES]u8 = &this.pathBuf;
+                            @memcpy(scratch_path_buf[0..work_item.path.len], work_item.path);
+                            scratch_path_buf[work_item.path.len] = 0;
+                            var symlink_full_path_z: [:0]u8 = scratch_path_buf[0..work_item.path.len :0];
+                            const entry_name = symlink_full_path_z[work_item.entry_start..symlink_full_path_z.len];
+
+                            var has_dot_dot = false;
+                            const component_idx = this.skipSpecialComponents(work_item.idx, &symlink_full_path_z, scratch_path_buf, &has_dot_dot);
+                            var pattern = this.patternComponents.items[component_idx];
+                            const next_pattern = if (component_idx + 1 < this.patternComponents.items.len) &this.patternComponents.items[component_idx + 1] else null;
+                            const is_last = component_idx == this.patternComponents.items.len - 1;
+
+                            const kind: EntryKind = kind: {
+                                const stat_result = switch (Syscall.stat(symlink_full_path_z)) {
+                                    .err => |err| {
+                                        if (this.error_on_broken_symlinks) return .{ .err = this.handleSysErrWithPath(err, symlink_full_path_z) };
+                                        // Broken symlink
+                                        if (!this.only_files) {
+                                            // (See case A and B in the comment for `matchPatternFile()`)
+                                            // When we encounter a symlink we call the catch all
+                                            // matching function: `matchPatternImpl()` to see if we can avoid following the symlink.
+                                            // So for case A, we just need to check if the pattern is the last pattern.
+                                            if (is_last or
+                                                (pattern.syntax_hint == .Double and
+                                                component_idx + 1 == this.patternComponents.items.len -| 1 and
+                                                next_pattern.?.syntax_hint != .Double and
+                                                this.matchPatternImpl(next_pattern.?, entry_name)))
+                                            {
+                                                return .{ .result = try this.prepareMatchedPathSymlink(symlink_full_path_z) };
+                                            }
+                                        }
+                                        continue;
+                                    },
+                                    .result => |stat| stat,
+                                };
+
+                                if (comptime bun.Environment.isPosix) {
+                                    const m = stat_result.mode & std.os.S.IFMT;
+                                    switch (m) {
+                                        std.os.S.IFDIR => break :kind .directory,
+                                        std.os.S.IFLNK => break :kind .sym_link,
+                                        std.os.S.IFREG => break :kind .file,
+                                        else => {},
+                                    }
+                                } else if (comptime bun.Environment.isWindows) {
+                                    return bun.todo(@src(), Maybe(?[]const u8).success);
+                                } else {
+                                    // wasm?
+                                    return bun.todo(@src(), Maybe(?[]const u8).success);
+                                }
+
+                                continue;
+                            };
+
+                            this.iter_state = .get_next;
+
+                            switch (kind) {
+                                .file => {
+                                    if (is_last)
+                                        return .{ .result = try this.prepareMatchedPathSymlink(symlink_full_path_z) };
+
+                                    if (pattern.syntax_hint == .Double and
+                                        component_idx + 1 == this.patternComponents.items.len -| 1 and
+                                        next_pattern.?.syntax_hint != .Double and
+                                        this.matchPatternImpl(next_pattern.?, entry_name))
+                                    {
+                                        return .{ .result = try this.prepareMatchedPathSymlink(symlink_full_path_z) };
+                                    }
+
+                                    continue;
+                                },
+                                .directory => {
+                                    var add_dir: bool = false;
+                                    // TODO this function calls `matchPatternImpl(pattern,
+                                    // entry_name)` which is redundant because we already called
+                                    // that when we first encountered the symlink
+                                    const recursion_idx_bump_ = this.matchPatternDir(&pattern, next_pattern, entry_name, component_idx, is_last, &add_dir);
+
+                                    if (recursion_idx_bump_) |recursion_idx_bump| {
+                                        try this.workbuf.append(
+                                            this.arena.allocator(),
+                                            WorkItem.new(work_item.path, component_idx + recursion_idx_bump, .directory),
+                                        );
+                                    }
+
+                                    if (add_dir and !this.only_files) {
+                                        return .{ .result = try this.prepareMatchedPathSymlink(symlink_full_path_z) };
+                                    }
+
+                                    continue;
+                                },
+                                .sym_link => {
+                                    // This should not happen because if there's a symlink chain
+                                    // calling stat should follow it until it reaches the final
+                                    // file/dir
+                                    @panic("Unexpected symlink chain");
+                                },
+                                else => continue,
+                            }
+                        },
+                    }
+                },
+                .directory => |*dir| {
+                    const entry = switch (dir.iter.next()) {
+                        .err => |err| {
+                            if (!dir.at_cwd) _ = Syscall.close(dir.fd);
+                            return .{ .err = this.handleSysErrWithPath(err, dir.dir_path) };
+                        },
+                        .result => |ent| ent,
+                    } orelse {
+                        if (!dir.at_cwd) _ = Syscall.close(dir.fd);
+                        this.iter_state = .get_next;
+                        continue;
+                    };
+
+                    const dir_iter_state: *const IterState.Directory = &this.iter_state.directory;
+
+                    const entry_name = entry.name.slice();
+                    switch (entry.kind) {
+                        .file => {
+                            const matches = this.matchPatternFile(entry_name, dir_iter_state.component_idx, dir.is_last, dir_iter_state.pattern, dir_iter_state.next_pattern);
+                            if (matches) {
+                                const prepared = try this.prepareMatchedPath(entry_name, dir.dir_path);
+                                return .{ .result = prepared };
+                            }
+                            continue;
+                        },
+                        .directory => {
+                            var add_dir: bool = false;
+                            const recursion_idx_bump_ = this.matchPatternDir(dir_iter_state.pattern, dir_iter_state.next_pattern, entry_name, dir_iter_state.component_idx, dir_iter_state.is_last, &add_dir);
+
+                            if (recursion_idx_bump_) |recursion_idx_bump| {
+                                const subdir_parts: []const []const u8 = &[_][]const u8{
+                                    dir.dir_path[0..dir.dir_path.len],
+                                    entry_name,
+                                };
+
+                                const subdir_entry_name = try this.join(subdir_parts);
+
+                                try this.workbuf.append(
+                                    this.arena.allocator(),
+                                    WorkItem.new(subdir_entry_name, dir_iter_state.component_idx + recursion_idx_bump, .directory),
+                                );
+                            }
+
+                            if (add_dir and !this.only_files) {
+                                const prepared_path = try this.prepareMatchedPath(entry_name, dir.dir_path);
+                                return .{ .result = prepared_path };
+                            }
+
+                            continue;
+                        },
+                        .sym_link => {
+                            if (this.follow_symlinks) {
+                                // Following a symlink requires additional syscalls, so
+                                // we first try it against our "catch-all" pattern match
+                                // function
+                                const matches = this.matchPatternImpl(dir_iter_state.pattern, entry_name);
+                                if (!matches) continue;
+
+                                const subdir_parts: []const []const u8 = &[_][]const u8{
+                                    dir.dir_path[0..dir.dir_path.len],
+                                    entry_name,
+                                };
+                                const entry_start: u32 = @intCast(if (dir.dir_path.len == 0) 0 else dir.dir_path.len + 1);
+
+                                // const subdir_entry_name = try this.arena.allocator().dupe(u8, ResolvePath.join(subdir_parts, .auto));
+                                const subdir_entry_name = try this.join(subdir_parts);
+
+                                try this.workbuf.append(
+                                    this.arena.allocator(),
+                                    WorkItem.newSymlink(subdir_entry_name, dir_iter_state.component_idx, entry_start),
+                                );
+
+                                continue;
+                            }
+
+                            if (this.only_files) continue;
+
+                            const matches = this.matchPatternFile(entry_name, dir_iter_state.component_idx, dir_iter_state.is_last, dir_iter_state.pattern, dir_iter_state.next_pattern);
+                            if (matches) {
+                                const prepared_path = try this.prepareMatchedPath(entry_name, dir.dir_path);
+                                _ = prepared_path;
+                            }
+
+                            continue;
+                        },
+                        else => continue,
+                    }
+                },
+            }
+        }
+    }
+
+    pub fn walkOld(this: *GlobWalker) !Maybe(void) {
         if (this.patternComponents.items.len == 0) return Maybe(void).success;
         var path_buf: [bun.MAX_PATH_BYTES]u8 = std.mem.zeroes([bun.MAX_PATH_BYTES]u8);
 
@@ -860,6 +1183,20 @@ pub const GlobWalker = struct {
         );
         pattern_component.unicode_set = true;
         return codepoints;
+    }
+
+    fn prepareMatchedPathSymlink(this: *GlobWalker, symlink_full_path: []const u8) ![]const u8 {
+        const name = try this.arena.allocator().dupe(u8, symlink_full_path);
+        return name;
+    }
+
+    fn prepareMatchedPath(this: *GlobWalker, entry_name: []const u8, dir_name: [:0]const u8) ![]const u8 {
+        const subdir_parts: []const []const u8 = &[_][]const u8{
+            dir_name[0..dir_name.len],
+            entry_name,
+        };
+        const name = try this.join(subdir_parts);
+        return name;
     }
 
     fn appendMatchedPath(

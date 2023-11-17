@@ -285,7 +285,8 @@ fn makeGlobWalker(
         };
 
         globWalker.* = .{};
-        globWalker.initWithCwd(
+
+        switch (globWalker.initWithCwd(
             arena,
             this.pattern,
             cwd.?,
@@ -297,7 +298,13 @@ fn makeGlobWalker(
         ) catch {
             globalThis.throw("Out of memory", .{});
             return null;
-        };
+        }) {
+            .err => |err| {
+                globalThis.throwValue(err.toJSC(globalThis));
+                return null;
+            },
+            else => {},
+        }
         return globWalker;
     }
     var globWalker = alloc.create(GlobWalker) catch {

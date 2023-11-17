@@ -5547,6 +5547,7 @@ pub const S = struct {
     pub const With = struct {
         value: ExprNodeIndex,
         body: StmtNodeIndex,
+        body_loc: logger.Loc = logger.Loc.Empty,
     };
 
     pub const Try = struct {

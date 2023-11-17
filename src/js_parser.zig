@@ -3629,7 +3629,7 @@ pub const Parser = struct {
             exports_kind = .cjs;
         } else if (p.esm_export_keyword.len > 0 or p.top_level_await_keyword.len > 0) {
             exports_kind = .esm;
-        } else if (uses_exports_ref or uses_module_ref or p.has_top_level_return) {
+        } else if (uses_exports_ref or uses_module_ref or p.has_top_level_return or p.has_with_scope) {
             exports_kind = .cjs;
             if (p.options.features.commonjs_at_runtime) {
                 wrapper_expr = .{
@@ -4419,6 +4419,9 @@ fn NewParser_(
         has_export_default: bool = false,
         has_export_keyword: bool = false,
 
+        // Used for forcing CommonJS
+        has_with_scope: bool = false,
+
         is_file_considered_to_have_esm_exports: bool = false,
 
         hmr_module: GeneratedSymbol = GeneratedSymbol{ .primary = Ref.None, .backup = Ref.None, .ref = Ref.None },
@@ -4853,17 +4856,15 @@ fn NewParser_(
                     return p.callRuntime(arg.loc, "__require", args);
                 },
                 else => {
-                    if (p.options.bundle) {
-                        const args = p.allocator.alloc(Expr, 1) catch unreachable;
-                        args[0] = arg;
-                        return p.newExpr(
-                            E.Call{
-                                .target = p.valueForRequire(arg.loc),
-                                .args = ExprNodeList.init(args),
-                            },
-                            arg.loc,
-                        );
-                    }
+                    const args = p.allocator.alloc(Expr, 1) catch unreachable;
+                    args[0] = arg;
+                    return p.newExpr(
+                        E.Call{
+                            .target = p.valueForRequire(arg.loc),
+                            .args = ExprNodeList.init(args),
+                        },
+                        arg.loc,
+                    );
                 },
             }
 
@@ -6516,6 +6517,14 @@ fn NewParser_(
             scope.strict_mode = parent.strict_mode;
 
             p.current_scope = scope;
+
+            if (comptime kind == .with) {
+                // "with" statements change the default from ESModule to CommonJS at runtime.
+                // "with" statements are not allowed in strict mode.
+                if (p.options.features.commonjs_at_runtime) {
+                    p.has_with_scope = true;
+                }
+            }
 
             if (comptime !Environment.isRelease) {
                 // Enforce that scope locations are strictly increasing to help catch bugs
@@ -9033,12 +9042,18 @@ fn NewParser_(
                     try p.lexer.next();
                     try p.lexer.expect(.t_open_paren);
                     const test_ = try p.parseExpr(.lowest);
+                    const body_loc = p.lexer.loc();
                     try p.lexer.expect(.t_close_paren);
 
+                    // Push a scope so we make sure to prevent any bare identifiers referenced
+                    // within the body from being renamed. Renaming them might change the
+                    // semantics of the code.
+                    _ = try p.pushScopeForParsePass(.with, body_loc);
                     var stmtOpts = ParseStatementOptions{};
                     const body = try p.parseStmt(&stmtOpts);
+                    p.popScope();
 
-                    return p.s(S.With{ .body = body, .value = test_ }, loc);
+                    return p.s(S.With{ .body = body, .body_loc = body_loc, .value = test_ }, loc);
                 },
                 .t_switch => {
                     try p.lexer.next();
@@ -11052,8 +11067,9 @@ fn NewParser_(
             return p.current_scope.strict_mode != .sloppy_mode;
         }
 
-        pub inline fn isStrictModeOutputFormat(_: *P) bool {
-            return true;
+        pub inline fn isStrictModeOutputFormat(p: *P) bool {
+            // TODO: once CJS or IIFE is supported, this will need to be updated
+            return p.options.bundle;
         }
 
         pub fn declareCommonJSSymbol(p: *P, comptime kind: Symbol.Kind, comptime name: string) !Ref {
@@ -18156,14 +18172,21 @@ fn NewParser_(
                     }
                 },
                 .s_with => |data| {
-                    // using with is forbidden in strict mode
-                    // we largely only deal with strict mode
-                    // however, old code should still technically transpile
-                    // we do not attempt to preserve all the semantics of with
                     data.value = p.visitExpr(data.value);
-                    // This stmt can be a block or an expression
-                    if (comptime Environment.allow_assert) assert(data.body.data == .s_block or data.body.data == .s_expr);
+
+                    p.pushScopeForVisitPass(.with, data.body_loc) catch unreachable;
+
+                    // This can be many different kinds of statements.
+                    // example code:
+                    //
+                    //      with(this.document.defaultView || Object.create(null))
+                    //         with(this.document)
+                    //           with(this.form)
+                    //             with(this.element)
+                    //
                     data.body = p.visitSingleStmt(data.body, StmtsKind.none);
+
+                    p.popScope();
                 },
                 .s_while => |data| {
                     data.test_ = p.visitExpr(data.test_);

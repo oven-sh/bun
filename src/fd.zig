@@ -68,7 +68,7 @@ pub const FDImpl = packed struct {
 
     pub const SystemAsInt = switch (env.os) {
         .windows => u63,
-        else => std.meta.Int(.unsigned, @bitSizeOf(System)),
+        else => System,
     };
 
     pub const UV = switch (env.os) {
@@ -262,7 +262,7 @@ pub const FDImpl = packed struct {
     pub fn format(this: FDImpl, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         switch (env.os) {
             else => {
-                writer.print("{d}", .{this.system()});
+                try writer.print("{d}", .{this.system()});
             },
             .windows => {
                 switch (this.kind) {

@@ -1799,6 +1799,7 @@ pub inline fn todo(src: std.builtin.SourceLocation, value: anytype) @TypeOf(valu
 /// This may be needed in places where a FileDescriptor is given to `std` or `kernel32` apis
 pub inline fn fdcast(fd: FileDescriptor) std.os.fd_t {
     if (!Environment.isWindows) return fd;
+    // if not having this check, the cast may crash zig compiler?
     if (@inComptime() and fd == invalid_fd) return FDImpl.invalid.system();
     return FDImpl.decode(fd).system();
 }
@@ -1816,8 +1817,7 @@ pub inline fn toFD(fd: anytype) FileDescriptor {
             else => @compileError("toFD() does not support type \"" ++ @typeName(T) ++ "\""),
         }).encode();
     } else {
-        comptime std.debug.assert(T == FileDescriptor);
-        return fd;
+        return @intCast(fd);
     }
 }
 
@@ -1934,7 +1934,7 @@ pub const FDTag = enum {
     stdin,
     stdout,
     pub fn get(fd_: anytype) FDTag {
-        const fd = toFD(fd_);
+        const fd = toFD(@as(FileDescriptor, @intCast(fd_)));
         if (comptime Environment.isWindows) {
             if (fd == win32.STDOUT_FD) {
                 return .stdout;

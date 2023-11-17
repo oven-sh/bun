@@ -93,6 +93,12 @@ export default [
     finalize: true,
     klass: {},
     JSType: "0b11101110",
+
+    // TODO: generate-classes needs to handle Object.create properly when
+    // functions are used. The functions need a fallback implementation to use
+    // getters.
+    supportsObjectCreate: true,
+
     proto: {
       isBlockDevice: {
         fn: "isBlockDevice_",
@@ -229,7 +235,12 @@ export default [
     finalize: true,
     klass: {},
     JSType: "0b11101110",
+
+    // TODO: generate-classes needs to handle Object.create properly when
+    // functions are used. The functions need a fallback implementation to use
+    // getters.
     supportsObjectCreate: true,
+
     proto: {
       isBlockDevice: {
         fn: "isBlockDevice_",
@@ -379,6 +390,10 @@ export default [
     finalize: true,
 
     klass: {},
+
+    // TODO: generate-classes needs to handle Object.create properly when
+    // functions are used. The functions need a fallback implementation to use
+    // getters.
     supportsObjectCreate: true,
 
     proto: {

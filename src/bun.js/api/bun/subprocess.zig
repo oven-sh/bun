@@ -1517,7 +1517,10 @@ pub const Subprocess = struct {
             }
 
             break :brk switch (PosixSpawn.spawnZ(argv.items[0].?, actions, attr, @as([*:null]?[*:0]const u8, @ptrCast(argv.items[0..].ptr)), env)) {
-                .err => |err| return err.toJSC(globalThis),
+                .err => |err| {
+                    globalThis.throwValue(err.toJSC(globalThis));
+                    return .zero;
+                },
                 .result => |pid_| pid_,
             };
         };

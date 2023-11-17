@@ -428,7 +428,7 @@ describe("signal", () => {
       stdout: "pipe",
     });
     const prom = child.exited;
-    const ret = process.kill(child.pid, 9);
+    const ret = process.kill(child.pid, "SIGKILL");
     expect(ret).toBe(true);
     await prom;
     expect(child.signalCode).toBe("SIGKILL");

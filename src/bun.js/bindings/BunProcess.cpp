@@ -555,7 +555,7 @@ static void loadSignalNumberMap()
         signalNameToNumberMap->add(signalNames[6], SIGIOT);
         signalNameToNumberMap->add(signalNames[7], SIGBUS);
         signalNameToNumberMap->add(signalNames[8], SIGFPE);
-        // signalNameToNumberMap->add(signalNames[9], SIGKILL);
+        signalNameToNumberMap->add(signalNames[9], SIGKILL);
         signalNameToNumberMap->add(signalNames[10], SIGUSR1);
         signalNameToNumberMap->add(signalNames[11], SIGSEGV);
         signalNameToNumberMap->add(signalNames[12], SIGUSR2);
@@ -618,7 +618,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
         signalNumberToNameMap->add(SIGIOT, signalNames[6]);
         signalNumberToNameMap->add(SIGBUS, signalNames[7]);
         signalNumberToNameMap->add(SIGFPE, signalNames[8]);
-        // signalNumberToNameMap->add(SIGKILL, signalNames[9]);
+        signalNumberToNameMap->add(SIGKILL, signalNames[9]);
         signalNumberToNameMap->add(SIGUSR1, signalNames[10]);
         signalNumberToNameMap->add(SIGSEGV, signalNames[11]);
         signalNumberToNameMap->add(SIGUSR2, signalNames[12]);

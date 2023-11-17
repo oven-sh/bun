@@ -708,10 +708,12 @@ class ClientHttp2Session extends Http2Session {
   static #Handlers = {
     binaryType: "buffer",
     streamStart(self: ClientHttp2Session, streamId: number) {
+      if (!self) return;
       self.#connections++;
       process.nextTick(emitStreamNT, self, self.#streams, streamId);
     },
     streamError(self: ClientHttp2Session, streamId: number, error: number) {
+      if (!self) return;
       var stream = self.#streams.get(streamId);
       if (stream) {
         const error_instance = streamErrorFromCode(error);
@@ -726,6 +728,7 @@ class ClientHttp2Session extends Http2Session {
       }
     },
     streamEnd(self: ClientHttp2Session, streamId: number) {
+      if (!self) return;
       var stream = self.#streams.get(streamId);
       if (stream) {
         self.#connections--;
@@ -742,6 +745,7 @@ class ClientHttp2Session extends Http2Session {
       }
     },
     streamData(self: ClientHttp2Session, streamId: number, data: Buffer) {
+      if (!self) return;
       var stream = self.#streams.get(streamId);
       if (stream) {
         const queue = stream[bunHTTP2StreamReadQueue];
@@ -758,6 +762,7 @@ class ClientHttp2Session extends Http2Session {
       headers: Record<string, string | string[]>,
       flags: number,
     ) {
+      if (!self) return;
       var stream = self.#streams.get(streamId);
       if (stream) {
         let status: string | number = headers[":status"] as string;
@@ -789,15 +794,18 @@ class ClientHttp2Session extends Http2Session {
       }
     },
     localSettings(self: ClientHttp2Session, settings: Settings) {
+      if (!self) return;
       self.emit("localSettings", settings);
       self.#localSettings = settings;
       self.#pendingSettingsAck = false;
     },
     remoteSettings(self: ClientHttp2Session, settings: Settings) {
+      if (!self) return;
       self.emit("remoteSettings", settings);
       self.#remoteSettings = settings;
     },
     ping(self: ClientHttp2Session, payload: Buffer, isACK: boolean) {
+      if (!self) return;
       self.emit("ping", payload);
       if (isACK) {
         const callbacks = self.#pingCallbacks;
@@ -811,14 +819,15 @@ class ClientHttp2Session extends Http2Session {
       }
     },
     error(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
+      if (!self) return;
       self.emit("error", sessionErrorFromCode(errorCode));
 
       self[bunHTTP2Socket]?.end();
       self[bunHTTP2Socket] = null;
-      self.#parser?.detach();
       self.#parser = null;
     },
     aborted(self: ClientHttp2Session, streamId: number, error: any) {
+      if (!self) return;
       var stream = self.#streams.get(streamId);
       if (stream) {
         const error_instance = streamErrorFromCode(constants.NGHTTP2_CANCEL);
@@ -835,6 +844,7 @@ class ClientHttp2Session extends Http2Session {
       }
     },
     wantTrailers(self: ClientHttp2Session, streamId: number) {
+      if (!self) return;
       var stream = self.#streams.get(streamId);
       if (stream) {
         stream[bunHTTP2WantTrailers] = true;
@@ -844,6 +854,7 @@ class ClientHttp2Session extends Http2Session {
       }
     },
     goaway(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
+      if (!self) return;
       self.emit("goaway", errorCode, lastStreamId, opaqueData);
       if (errorCode !== 0) {
         for (let [_, stream] of self.#streams) {
@@ -853,16 +864,16 @@ class ClientHttp2Session extends Http2Session {
       }
       self[bunHTTP2Socket]?.end();
       self[bunHTTP2Socket] = null;
-      self.#parser?.detach();
       self.#parser = null;
     },
     end(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
+      if (!self) return;
       self[bunHTTP2Socket]?.end();
       self[bunHTTP2Socket] = null;
-      self.#parser?.detach();
       self.#parser = null;
     },
     write(self: ClientHttp2Session, buffer: Buffer) {
+      if (!self) return;
       const socket = self[bunHTTP2Socket];
       if (self.#closed) {
         //queue
@@ -917,13 +928,11 @@ class ClientHttp2Session extends Http2Session {
   }
 
   #onClose() {
-    this.#parser?.detach();
     this.#parser = null;
     this[bunHTTP2Socket] = null;
     this.emit("close");
   }
   #onError(error: Error) {
-    this.#parser?.detach();
     this.#parser = null;
     this[bunHTTP2Socket] = null;
     this.emit("error", error);

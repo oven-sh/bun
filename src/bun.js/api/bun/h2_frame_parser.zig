@@ -909,16 +909,6 @@ pub const H2FrameParser = struct {
         this.dispatch(.onWrite, output_value);
     }
 
-    // Detach handlers
-    pub fn detach(this: *H2FrameParser, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
-        JSC.markBinding(@src());
-        log("detach", .{});
-        var handler = this.handlers;
-        handler.deinit();
-
-        return JSC.JSValue.jsUndefined();
-    }
-
     const Payload = struct {
         data: []const u8,
         end: usize,

@@ -9,49 +9,53 @@ describe("leaks", () => {
 
   test("scanSync", () => {
     const code = /* ts */ `
-      Bun.gc(true);
-      (function () {
-        const glob = new Bun.Glob("**/*.ts");
-        Array.from(glob.scanSync({ cwd: '${cwd}' }));
-      })();
-      Bun.gc(true);
-      console.error(process.memoryUsage.rss())
+      let prev: number | undefined = undefined;
+      for (let i = 0; i < ${iters}; i++) {
+        Bun.gc(true);
+        (function () {
+          const glob = new Bun.Glob("**/*");
+          Array.from(glob.scanSync({ cwd: '${cwd}' }));
+        })();
+        Bun.gc(true);
+        const val = process.memoryUsage.rss();
+        if (prev === undefined) {
+          prev = val;
+        } else {
+          if (Math.abs(prev - val) >= ${hundredMb}) {
+            throw new Error('uh oh: ' + Math.abs(prev - val))
+          }
+        }
+      }
     `;
 
-    let prev: number | undefined = undefined;
-    for (let i = 0; i < iters; i++) {
-      const { stderr, exitCode } = Bun.spawnSync([bun, "--smol", "-e", code]);
-      expect(exitCode).toBe(0);
-      const val = parseInt(stderr.toString());
-      if (prev === undefined) {
-        prev = val;
-      } else {
-        expect(Math.abs(prev - val)).toBeLessThanOrEqual(hundredMb);
-      }
-    }
+    const { stdout, stderr, exitCode } = Bun.spawnSync([bun, "--smol", "-e", code]);
+    console.log(stdout.toString(), stderr.toString());
+    expect(exitCode).toBe(0);
   });
 
   test("scan", async () => {
     const code = /* ts */ `
-      Bun.gc(true);
-      await (async function () {
-        const glob = new Bun.Glob("**/*.ts");
-        Array.fromAsync(glob.scan({ cwd: '${cwd}' }));
-      })();
-      Bun.gc(true);
-      console.error(process.memoryUsage.rss())
+      let prev: number | undefined = undefined;
+      for (let i = 0; i < ${iters}; i++) {
+        Bun.gc(true);
+        await (async function () {
+          const glob = new Bun.Glob("**/*");
+          await Array.fromAsync(glob.scan({ cwd: '${cwd}' }));
+        })();
+        Bun.gc(true);
+        const val = process.memoryUsage.rss();
+        if (prev === undefined) {
+          prev = val;
+        } else {
+          if (Math.abs(prev - val) >= ${hundredMb}) {
+            throw new Error('uh oh: ' + Math.abs(prev - val))
+          }
+        }
+      }
     `;
 
-    let prev: number | undefined = undefined;
-    for (let i = 0; i < iters; i++) {
-      const { stderr, exitCode } = Bun.spawnSync([bun, "--smol", "-e", code]);
-      expect(exitCode).toBe(0);
-      const val = parseInt(stderr.toString());
-      if (prev === undefined) {
-        prev = val;
-      } else {
-        expect(Math.abs(prev - val)).toBeLessThanOrEqual(hundredMb);
-      }
-    }
+    const { stdout, stderr, exitCode } = Bun.spawnSync([bun, "--smol", "-e", code]);
+    console.log(stdout.toString(), stderr.toString());
+    expect(exitCode).toBe(0);
   });
 });

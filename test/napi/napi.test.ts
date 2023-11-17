@@ -1,5 +1,5 @@
 import { it, expect, test, beforeAll, describe } from "bun:test";
-import {bunExe, bunEnv} from "harness";
+import { bunExe, bunEnv } from "harness";
 import { spawnSync } from "bun";
 import { join } from "path";
 

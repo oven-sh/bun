@@ -236,7 +236,7 @@ var InternalResolver = class Resolver {
         switch (rrtype?.toLowerCase()) {
           case "a":
           case "aaaa":
-            callback(null, hostname, results.map(mapResolveX));
+            callback(null, results.map(mapResolveX));
             break;
           default:
             callback(null, results);
@@ -461,7 +461,6 @@ function resolve(hostname, rrtype, callback) {
         case "aaaa":
           callback(
             null,
-            hostname,
             results.map(({ address }) => address),
           );
           break;

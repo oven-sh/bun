@@ -320,6 +320,7 @@ static bool skipNextComputeErrorInfo = false;
 // error.stack calls this function
 static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned& line, unsigned& column, String& sourceURL, JSObject* errorInstance)
 {
+    GCDeferralContext context(vm);
     auto* lexicalGlobalObject = errorInstance->globalObject();
     Zig::GlobalObject* globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
@@ -2773,6 +2774,8 @@ void GlobalObject::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
+    m_commonStrings.initialize();
+
     m_JSDOMFileConstructor.initLater(
         [](const Initializer<JSObject>& init) {
             JSObject* fileConstructor = Bun::createJSDOMFileConstructor(init.vm, init.owner);
@@ -2853,6 +2856,8 @@ void GlobalObject::finishCreation(VM& vm)
 
             auto& vm = globalObject->vm();
 
+            auto& builtinNames = WebCore::builtinNames(vm);
+
             structure = structure->addPropertyTransition(
                 vm,
                 structure,
@@ -2863,14 +2868,14 @@ void GlobalObject::finishCreation(VM& vm)
             structure = structure->addPropertyTransition(
                 vm,
                 structure,
-                JSC::Identifier::fromString(vm, "require"_s),
+                builtinNames.requirePublicName(),
                 0,
                 offset);
 
             structure = structure->addPropertyTransition(
                 vm,
                 structure,
-                JSC::Identifier::fromString(vm, "resolve"_s),
+                builtinNames.resolvePublicName(),
                 0,
                 offset);
 
@@ -3834,7 +3839,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         visitor.append(constructor);
 
     thisObject->m_builtinInternalFunctions.visit(visitor);
-
+    thisObject->m_commonStrings.visit<Visitor>(visitor);
     visitor.append(thisObject->m_assignToStream);
     visitor.append(thisObject->m_readableStreamToArrayBuffer);
     visitor.append(thisObject->m_readableStreamToArrayBufferResolve);

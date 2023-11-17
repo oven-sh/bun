@@ -2,6 +2,8 @@ const ExternalStringList = @import("./install.zig").ExternalStringList;
 const Semver = @import("./semver.zig");
 const ExternalString = Semver.ExternalString;
 const String = Semver.String;
+const Output = bun.Output;
+const Global = bun.Global;
 const std = @import("std");
 const strings = @import("root").bun.strings;
 const Environment = @import("../env.zig");
@@ -162,6 +164,7 @@ pub const Bin = extern struct {
     pub const Tag = enum(u8) {
         /// no bin field
         none = 0,
+
         /// "bin" is a string
         /// ```
         /// "bin": "./bin/foo",
@@ -175,6 +178,7 @@ pub const Bin = extern struct {
         /// }
         ///```
         named_file = 2,
+
         /// "bin" is a directory
         ///```
         /// "dirs": {
@@ -182,6 +186,7 @@ pub const Bin = extern struct {
         /// }
         ///```
         dir = 3,
+
         // "bin" is a map of more than one
         ///```
         /// "bin": {
@@ -300,9 +305,18 @@ pub const Bin = extern struct {
 
         pub var umask: std.os.mode_t = 0;
 
+        var has_set_umask = false;
+
         pub const Error = error{
             NotImplementedYet,
         } || std.os.SymLinkError || std.os.OpenError || std.os.RealPathError;
+
+        pub fn ensureUmask() void {
+            if (!has_set_umask) {
+                has_set_umask = true;
+                umask = bun.C.umask(0);
+            }
+        }
 
         fn unscopedPackageName(name: []const u8) []const u8 {
             if (name[0] != '@') return name;
@@ -352,8 +366,27 @@ pub const Bin = extern struct {
 
             if (!link_global) {
                 const root_dir = std.fs.Dir{ .fd = bun.fdcast(this.package_installed_node_modules) };
-                const from = root_dir.realpath(dot_bin, &target_buf) catch |err| {
-                    this.err = err;
+                const from = root_dir.realpath(dot_bin, &target_buf) catch |realpath_err| brk: {
+                    if (realpath_err == error.FileNotFound) {
+                        if (comptime Environment.isWindows) {
+                            std.os.mkdiratW(root_dir.fd, bun.strings.w(".bin"), 0) catch |err| {
+                                this.err = err;
+                                return;
+                            };
+                        } else {
+                            root_dir.makeDirZ(".bin") catch |err| {
+                                this.err = err;
+                                return;
+                            };
+                        }
+
+                        break :brk root_dir.realpath(dot_bin, &target_buf) catch |err| {
+                            this.err = err;
+                            return;
+                        };
+                    }
+
+                    this.err = realpath_err;
                     return;
                 };
                 const to = bun.getFdPath(this.package_installed_node_modules, &dest_buf) catch |err| {

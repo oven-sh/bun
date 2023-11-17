@@ -987,6 +987,7 @@ pub const JSX = struct {
         }
 
         pub fn parsePackageName(str: string) string {
+            if (str.len == 0) return str;
             if (str[0] == '@') {
                 if (strings.indexOfChar(str[1..], '/')) |first_slash| {
                     var remainder = str[1 + first_slash + 1 ..];

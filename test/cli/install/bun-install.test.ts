@@ -2571,7 +2571,7 @@ it("should handle aliased & direct dependency references", async () => {
     },
   });
   expect(await readdirSorted(join(package_dir, "bar"))).toEqual(["node_modules", "package.json"]);
-  expect(await readdirSorted(join(package_dir, "bar", "node_modules"))).toEqual([".bin", "moo"]);
+  expect(await readdirSorted(join(package_dir, "bar", "node_modules"))).toEqual(["moo"]);
   expect(await readdirSorted(join(package_dir, "bar", "node_modules", "moo"))).toEqual(["index.js", "package.json"]);
   expect(await file(join(package_dir, "bar", "node_modules", "moo", "package.json")).json()).toEqual({
     name: "baz",

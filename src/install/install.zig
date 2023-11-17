@@ -6158,7 +6158,7 @@ pub const PackageManager = struct {
 
             // Step 2. Setup the global directory
             var node_modules: std.fs.IterableDir = brk: {
-                Bin.Linker.umask = C.umask(0);
+                Bin.Linker.ensureUmask();
                 var explicit_global_dir: string = "";
                 if (ctx.install) |install_| {
                     explicit_global_dir = install_.global_dir orelse explicit_global_dir;
@@ -6326,7 +6326,7 @@ pub const PackageManager = struct {
 
             // Step 2. Setup the global directory
             var node_modules: std.fs.IterableDir = brk: {
-                Bin.Linker.umask = C.umask(0);
+                Bin.Linker.ensureUmask();
                 var explicit_global_dir: string = "";
                 if (ctx.install) |install_| {
                     explicit_global_dir = install_.global_dir orelse explicit_global_dir;
@@ -7283,7 +7283,6 @@ pub const PackageManager = struct {
         bins: []const Bin,
         resolutions: []Resolution,
         node: *Progress.Node,
-        has_created_bin: bool = false,
         global_bin_dir: std.fs.IterableDir,
         destination_dir_subpath_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
         folder_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
@@ -7494,19 +7493,6 @@ pub const PackageManager = struct {
 
                         const bin = this.bins[package_id];
                         if (bin.tag != .none) {
-                            if (!this.has_created_bin) {
-                                if (!this.options.global) {
-                                    if (comptime Environment.isWindows) {
-                                        std.os.mkdiratW(this.node_modules_folder.dir.fd, strings.w(".bin"), 0) catch {};
-                                    } else {
-                                        this.node_modules_folder.dir.makeDirZ(".bin") catch {};
-                                    }
-                                }
-                                if (comptime Environment.isPosix)
-                                    Bin.Linker.umask = C.umask(0);
-                                this.has_created_bin = true;
-                            }
-
                             const bin_task_id = Task.Id.forBinLink(package_id);
                             var task_queue = this.manager.task_queue.getOrPut(this.manager.allocator, bin_task_id) catch unreachable;
                             if (!task_queue.found_existing) {
@@ -7922,7 +7908,9 @@ pub const PackageManager = struct {
 
         {
             var iterator = Lockfile.Tree.Iterator.init(lockfile);
-
+            if (comptime Environment.isPosix) {
+                Bin.Linker.ensureUmask();
+            }
             var installer: PackageInstaller = brk: {
                 // These slices potentially get resized during iteration
                 // so we want to make sure they're not accessible to the rest of this function
@@ -7967,9 +7955,6 @@ pub const PackageManager = struct {
                     try bun.makePath(cwd, bun.span(node_modules.relative_path));
                     break :brk try cwd.openIterableDir(node_modules.relative_path, .{});
                 };
-
-                // a .bin directory could be created in each node_modules directory
-                installer.has_created_bin = false;
 
                 var remaining = node_modules.dependencies;
 
@@ -8074,19 +8059,6 @@ pub const PackageManager = struct {
                         if (meta.isDisabled()) continue;
 
                         const name = lockfile.str(&dependencies[dependency_id].name);
-
-                        if (!installer.has_created_bin) {
-                            if (!this.options.global) {
-                                if (comptime Environment.isWindows) {
-                                    std.os.mkdiratW(node_modules_folder.dir.fd, bun.strings.w(".bin"), 0) catch {};
-                                } else {
-                                    node_modules_folder.dir.makeDirZ(".bin") catch {};
-                                }
-                            }
-                            if (comptime Environment.isPosix)
-                                Bin.Linker.umask = C.umask(0);
-                            installer.has_created_bin = true;
-                        }
 
                         var bin_linker = Bin.Linker{
                             .bin = original_bin,

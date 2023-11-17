@@ -81,7 +81,7 @@ Bun.serve<User>({
 
 Bun.serve({
   fetch(req, server) {
-    server.upgrade(req)
+    server.upgrade(req);
   },
 
   websocket: {

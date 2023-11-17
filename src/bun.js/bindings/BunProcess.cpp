@@ -35,9 +35,7 @@
 #include "ProcessBindingNatives.h"
 
 #if OS(LINUX)
-#if __has_include(<gnu/libc-version.h>)
 #include <gnu/libc-version.h>
-#endif
 #endif
 
 #pragma mark - Node.js Process
@@ -1348,9 +1346,8 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
             header->putDirect(vm, JSC::Identifier::fromString(vm, "host"_s), JSC::jsString(vm, String::fromUTF8ReplacingInvalidSequences(reinterpret_cast<const LChar*>(host), strlen(host))), 0);
         }
 
-// glibc
-#if OS(LINUX) && defined(GLIBC_VERSION)
-        header->putDirect(vm, JSC::Identifier::fromString(vm, "glibcVersionCompiler"_s), JSC::jsString(vm, String::fromUTF8ReplacingInvalidSequences(reinterpret_cast<const LChar*>(GLIBC_VERSION), strlen(GLIBC_VERSION))), 0);
+#if OS(LINUX)
+        header->putDirect(vm, JSC::Identifier::fromString(vm, "glibcVersionCompiler"_s), JSC::jsString(vm, makeString(__GLIBC__, '.', __GLIBC_MINOR__)), 0);
         header->putDirect(vm, JSC::Identifier::fromString(vm, "glibcVersionRuntime"_s), JSC::jsString(vm, String::fromUTF8(reinterpret_cast<const LChar*>(gnu_get_libc_version())), 0));
 #endif
 

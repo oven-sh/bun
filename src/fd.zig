@@ -95,7 +95,7 @@ pub const FDImpl = packed struct {
         }
     }
 
-    pub inline fn fromSystem(system_fd: System) FDImpl {
+    pub fn fromSystem(system_fd: System) FDImpl {
         if (env.os == .windows) {
             // the current process fd is max usize
             // https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getcurrentprocess
@@ -108,7 +108,7 @@ pub const FDImpl = packed struct {
         };
     }
 
-    pub inline fn fromUV(uv_fd: UV) FDImpl {
+    pub fn fromUV(uv_fd: UV) FDImpl {
         return switch (env.os) {
             else => FDImpl{
                 .kind = .system,
@@ -121,13 +121,13 @@ pub const FDImpl = packed struct {
         };
     }
 
-    pub inline fn isValid(this: FDImpl) bool {
+    pub fn isValid(this: FDImpl) bool {
         return this.value.as_system != invalid_value;
     }
 
     /// When calling this function, you may not be able to close the returned fd.
     /// To close the fd, you have to call `.close()` on the FD.
-    pub inline fn system(this: FDImpl) System {
+    pub fn system(this: FDImpl) System {
         return switch (env.os == .windows) {
             false => numberToHandle(this.value.as_system),
             true => switch (this.kind) {
@@ -138,17 +138,17 @@ pub const FDImpl = packed struct {
     }
 
     /// Convert to bun.FileDescriptor
-    pub inline fn encode(this: FDImpl) bun.FileDescriptor {
+    pub fn encode(this: FDImpl) bun.FileDescriptor {
         return @bitCast(this);
     }
 
-    pub inline fn decode(fd: bun.FileDescriptor) FDImpl {
+    pub fn decode(fd: bun.FileDescriptor) FDImpl {
         return @bitCast(fd);
     }
 
     /// When calling this function, you should consider the FD struct to now be invalid.
     /// Calling `.close()` on the FD at that point may not work.
-    pub inline fn uv(this: FDImpl) UV {
+    pub fn uv(this: FDImpl) UV {
         return switch (env.os) {
             else => numberToHandle(this.value.as_system),
             .windows => switch (this.kind) {

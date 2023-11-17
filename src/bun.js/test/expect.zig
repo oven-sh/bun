@@ -3563,6 +3563,27 @@ pub const Expect = struct {
         var vm = globalObject.bunVM();
         vm.autoGarbageCollect();
     }
+
+    pub fn doUnreachable(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const arg = callframe.arguments(1).ptr[0];
+
+        if (arg.isEmptyOrUndefinedOrNull()) {
+            const error_value = bun.String.init("reached unreachable code").toErrorInstance(globalObject);
+            error_value.put(globalObject, ZigString.static("name"), bun.String.init("UnreachableError").toJSConst(globalObject));
+            globalObject.throwValue(error_value);
+            return .zero;
+        }
+
+        if (arg.isString()) {
+            const error_value = arg.toBunString(globalObject).toErrorInstance(globalObject);
+            error_value.put(globalObject, ZigString.static("name"), bun.String.init("UnreachableError").toJSConst(globalObject));
+            globalObject.throwValue(error_value);
+            return .zero;
+        }
+
+        globalObject.throwValue(arg);
+        return .zero;
+    }
 };
 
 pub const ExpectAnything = struct {

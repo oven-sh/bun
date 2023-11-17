@@ -228,20 +228,20 @@ pub const Blob = struct {
         comptime Writer: type,
         writer: Writer,
     ) !void {
-        try writer.writeIntNative(u8, serialization_version);
+        try writer.writeInt(u8, serialization_version, .little);
 
-        try writer.writeIntNative(u64, @as(u64, @intCast(this.offset)));
+        try writer.writeInt(u64, @as(u64, @intCast(this.offset)), .little);
 
-        try writer.writeIntNative(u32, @as(u32, @truncate(this.content_type.len)));
+        try writer.writeInt(u32, @as(u32, @truncate(this.content_type.len)), .little);
         _ = try writer.write(this.content_type);
-        try writer.writeIntNative(u8, @intFromBool(this.content_type_was_set));
+        try writer.writeInt(u8, @intFromBool(this.content_type_was_set), .little);
 
         const store_tag: Store.SerializeTag = if (this.store) |store|
             if (store.data == .file) .file else .bytes
         else
             .empty;
 
-        try writer.writeIntNative(u8, @intFromEnum(store_tag));
+        try writer.writeInt(u8, @intFromEnum(store_tag), .little);
 
         this.resolveSize();
         if (this.store) |store| {
@@ -301,22 +301,22 @@ pub const Blob = struct {
     ) !JSValue {
         const allocator = globalThis.allocator();
 
-        const version = try reader.readIntNative(u8);
+        const version = try reader.readInt(u8, .little);
         _ = version;
 
-        const offset = try reader.readIntNative(u64);
+        const offset = try reader.readInt(u64, .little);
 
-        const content_type_len = try reader.readIntNative(u32);
+        const content_type_len = try reader.readInt(u32, .little);
 
         const content_type = try readSlice(reader, content_type_len, allocator);
 
-        const content_type_was_set: bool = try reader.readIntNative(u8) != 0;
+        const content_type_was_set: bool = try reader.readInt(u8, .little) != 0;
 
-        const store_tag = try reader.readEnum(Store.SerializeTag, .Little);
+        const store_tag = try reader.readEnum(Store.SerializeTag, .little);
 
         const blob: *Blob = switch (store_tag) {
             .bytes => brk: {
-                const bytes_len = try reader.readIntNative(u32);
+                const bytes_len = try reader.readInt(u32, .little);
                 const bytes = try readSlice(reader, bytes_len, allocator);
 
                 var blob = Blob.init(bytes, allocator, globalThis);
@@ -326,11 +326,11 @@ pub const Blob = struct {
                 break :brk blob_;
             },
             .file => brk: {
-                const pathlike_tag = try reader.readEnum(JSC.Node.PathOrFileDescriptor.SerializeTag, .Little);
+                const pathlike_tag = try reader.readEnum(JSC.Node.PathOrFileDescriptor.SerializeTag, .little);
 
                 switch (pathlike_tag) {
                     .fd => {
-                        const fd = @as(bun.FileDescriptor, @intCast(try reader.readIntNative(bun.FileDescriptor)));
+                        const fd = @as(bun.FileDescriptor, @intCast(try reader.readInt(bun.FileDescriptor, .little)));
 
                         var blob = try allocator.create(Blob);
                         blob.* = Blob.findOrCreateFileFromPath(
@@ -343,7 +343,7 @@ pub const Blob = struct {
                         break :brk blob;
                     },
                     .path => {
-                        const path_len = try reader.readIntNative(u32);
+                        const path_len = try reader.readInt(u32, .little);
 
                         const path = try readSlice(reader, path_len, default_allocator);
 
@@ -1513,22 +1513,22 @@ pub const Blob = struct {
             switch (this.data) {
                 .file => |file| {
                     const pathlike_tag: JSC.Node.PathOrFileDescriptor.SerializeTag = if (file.pathlike == .fd) .fd else .path;
-                    try writer.writeIntNative(u8, @intFromEnum(pathlike_tag));
+                    try writer.writeInt(u8, @intFromEnum(pathlike_tag), .little);
 
                     switch (file.pathlike) {
                         .fd => |fd| {
-                            try writer.writeIntNative(u32, @as(u32, @intCast(fd)));
+                            try writer.writeInt(u32, @as(u32, @intCast(fd)), .little);
                         },
                         .path => |path| {
                             const path_slice = path.slice();
-                            try writer.writeIntNative(u32, @as(u32, @truncate(path_slice.len)));
+                            try writer.writeInt(u32, @as(u32, @truncate(path_slice.len)), .little);
                             _ = try writer.write(path_slice);
                         },
                     }
                 },
                 .bytes => |bytes| {
                     const slice = bytes.slice();
-                    try writer.writeIntNative(u32, @as(u32, @truncate(slice.len)));
+                    try writer.writeInt(u32, @as(u32, @truncate(slice.len)), .little);
                     _ = try writer.write(slice);
                 },
             }

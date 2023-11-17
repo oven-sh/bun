@@ -435,8 +435,9 @@ pub const String = extern struct {
         }
     }
 
-    pub fn toErrorInstance(this: String, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        return this.toZigString().toErrorInstance(globalObject);
+    pub fn toErrorInstance(this_: String, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        var this = this_;
+        return JSC__createError(globalObject, &this);
     }
 
     pub fn static(input: []const u8) String {
@@ -508,6 +509,12 @@ pub const String = extern struct {
         JSC.markBinding(@src());
 
         return BunString__toJSWithLength(globalObject, this, len);
+    }
+
+    pub fn toJSDOMURL(this: *String, globalObject: *bun.JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+
+        return BunString__toJSDOMURL(globalObject, this);
     }
 
     pub fn toJSConst(this: *const String, globalObject: *bun.JSC.JSGlobalObject) JSC.JSValue {
@@ -647,7 +654,7 @@ pub const String = extern struct {
     }
 
     pub fn substring(self: String, offset: usize) String {
-        return String.init(self.toZigString().substring(offset, 0));
+        return String.init(self.toZigString().substring(offset));
     }
 
     pub fn toUTF8(this: String, allocator: std.mem.Allocator) ZigString.Slice {
@@ -693,6 +700,7 @@ pub const String = extern struct {
     extern fn BunString__fromJS(globalObject: *JSC.JSGlobalObject, value: bun.JSC.JSValue, out: *String) bool;
     extern fn BunString__toJS(globalObject: *JSC.JSGlobalObject, in: *String) JSC.JSValue;
     extern fn BunString__toJSWithLength(globalObject: *JSC.JSGlobalObject, in: *String, usize) JSC.JSValue;
+    extern fn BunString__toJSDOMURL(globalObject: *JSC.JSGlobalObject, in: *String) JSC.JSValue;
     extern fn BunString__toWTFString(this: *String) void;
 
     pub fn ref(this: String) void {
@@ -826,7 +834,10 @@ pub const String = extern struct {
             return this.value.WTFStringImpl.hasPrefix(value);
         }
 
-        return this.toZigString().substring(0, value.len).eqlComptime(value);
+        var str = this.toZigString();
+        if (str.len < value.len) return false;
+
+        return str.substringWithLen(0, value.len).eqlComptime(value);
     }
 
     pub fn isWTFAllocator(this: std.mem.Allocator) bool {
@@ -853,6 +864,8 @@ pub const String = extern struct {
     pub fn eql(this: String, other: String) bool {
         return this.toZigString().eql(other.toZigString());
     }
+
+    extern fn JSC__createError(*JSC.JSGlobalObject, str: *String) JSC.JSValue;
 };
 
 pub const SliceWithUnderlyingString = struct {

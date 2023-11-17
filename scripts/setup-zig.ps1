@@ -1,5 +1,5 @@
 # TODO(@paperdave): finalize this script out
-$ZigVersion = "0.12.0-dev.1297+a9e66ed73"
+$ZigVersion = "0.12.0-dev.1604+caae40c21"
 
 $Url = "https://ziglang.org/builds/zig-windows-x86_64-${ZigVersion}.zip"
 

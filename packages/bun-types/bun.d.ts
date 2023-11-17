@@ -2014,7 +2014,7 @@ declare module "bun" {
       this: Server,
       request: Request,
       server: Server,
-    ): Response | undefined | Promise<Response | undefined>;
+    ): Response | undefined | void | Promise<Response | undefined | void>;
   }
 
   export interface UnixWebSocketServeOptions<WebSocketDataType = undefined>
@@ -2075,7 +2075,7 @@ declare module "bun" {
       this: Server,
       request: Request,
       server: Server,
-    ): Response | undefined | Promise<Response | undefined>;
+    ): Response | undefined | void | Promise<Response | undefined | void>;
   }
 
   export interface TLSWebSocketServeOptions<WebSocketDataType = undefined>
@@ -2403,6 +2403,8 @@ declare module "bun" {
      * How many {@link ServerWebSocket}s are in-flight right now?
      */
     readonly pendingWebSockets: number;
+
+    readonly url: URL;
 
     readonly port: number;
     /**

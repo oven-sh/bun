@@ -57,6 +57,13 @@ function mkdirForce(path: string) {
   if (!existsSync(path)) mkdirSync(path, { recursive: true });
 }
 
+it("Dirent.name setter", () => {
+  const dirent = Object.create(Dirent.prototype);
+  expect(dirent.name).toBeUndefined();
+  dirent.name = "hello";
+  expect(dirent.name).toBe("hello");
+});
+
 it("writeFileSync in append should not truncate the file", () => {
   const path = join(tmpdir(), "writeFileSync-should-not-append-" + (Date.now() * 10000).toString(16));
   var str = "";
@@ -322,7 +329,7 @@ it("promises.readFile", async () => {
   for (let i = 0; i < 20; i++) {
     try {
       await fs.promises.readFile("/i-dont-exist", "utf-8");
-      expect(false).toBeTrue();
+      expect.unreachable();
     } catch (e: any) {
       expect(e).toBeInstanceOf(Error);
       expect(e.message).toBe("No such file or directory");

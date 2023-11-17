@@ -86,6 +86,7 @@ pub const Request = struct {
     pub const getArrayBuffer = RequestMixin.getArrayBuffer;
     pub const getBlob = RequestMixin.getBlob;
     pub const getFormData = RequestMixin.getFormData;
+    pub const getBlobWithoutCallFrame = RequestMixin.getBlobWithoutCallFrame;
 
     pub export fn Request__getUWSRequest(
         this: *Request,
@@ -341,7 +342,7 @@ pub const Request = struct {
             const req_url = req.url();
             if (req_url.len > 0 and req_url[0] == '/') {
                 if (req.header("host")) |host| {
-                    const fmt = ZigURL.HostFormatter{
+                    const fmt = strings.HostFormatter{
                         .is_https = this.https,
                         .host = host,
                     };
@@ -368,7 +369,7 @@ pub const Request = struct {
             const req_url = req.url();
             if (req_url.len > 0 and req_url[0] == '/') {
                 if (req.header("host")) |host| {
-                    const fmt = ZigURL.HostFormatter{
+                    const fmt = strings.HostFormatter{
                         .is_https = this.https,
                         .host = host,
                     };

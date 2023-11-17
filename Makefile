@@ -1355,7 +1355,7 @@ mimalloc-debug:
 			-GNinja \
 			. \
 			&& ninja
-	cp $(BUN_DEPS_DIR)/mimalloc/$(_MIMALLOC_DEBUG_FILE) $(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE)
+	cp $(BUN_DEPS_DIR)/mimalloc/$(_MIMALLOC_DEBUG_FILE) $(BUN_DEPS_OUT_DIR)/$(_MIMALLOC_DEBUG_FILE)
 
 
 # mimalloc is built as object files so that it can overload the system malloc on linux

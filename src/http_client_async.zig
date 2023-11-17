@@ -3094,7 +3094,7 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
 
     // done or streaming
     const is_done = content_length != null and this.state.total_body_received >= content_length.?;
-    if (is_done or this.signals.get(.body_streaming)) {
+    if (is_done or this.signals.get(.body_streaming) or content_length == null) {
         const processed = try this.state.processBodyBuffer(buffer.*);
 
         if (this.progress_node) |progress| {
@@ -3344,6 +3344,33 @@ pub fn handleResponseMetadata(
         response.status_code = 304;
     }
 
+    // Don't do this for proxies because those connections will be open for awhile.
+    if (!this.proxy_tunneling) {
+
+        // according to RFC 7230 section 3.3.3:
+        //   1. Any response to a HEAD request and any response with a 1xx (Informational),
+        //      204 (No Content), or 304 (Not Modified) status code
+        //      [...] cannot contain a message body or trailer section.
+        // therefore in these cases set content-length to 0, so the response body is always ignored
+        // and is not waited for (which could cause a timeout)
+        if ((response.status_code >= 100 and response.status_code < 200) or response.status_code == 204 or response.status_code == 304) {
+            this.state.content_length = 0;
+        }
+
+        //
+        // according to RFC 7230 section 6.3:
+        //   In order to remain persistent, all messages on a connection need to
+        //   have a self-defined message length (i.e., one not defined by closure
+        //   of the connection)
+        // therefore, if response has no content-length header and is not chunked, implicitly disable
+        // the keep-alive behavior (keep-alive being the default behavior for HTTP/1.1 and not for HTTP/1.0)
+        //
+        // but, we must only do this IF the status code allows it to contain a body.
+        else if (this.state.content_length == null and this.state.transfer_encoding != .chunked) {
+            this.state.allow_keepalive = false;
+        }
+    }
+
     if (this.proxy_tunneling and this.proxy_tunnel == null) {
         if (response.status_code == 200) {
             // signal to continue the proxing
@@ -3541,7 +3568,7 @@ pub fn handleResponseMetadata(
         log("handleResponseMetadata: content_length is null and transfer_encoding {}", .{this.state.transfer_encoding});
     }
 
-    if (this.method.hasBody() and ((content_length != null and content_length.? > 0) or !this.state.allow_keepalive or this.state.transfer_encoding == .chunked or is_server_sent_events)) {
+    if (this.method.hasBody() and (content_length == null or content_length.? > 0 or !this.state.allow_keepalive or this.state.transfer_encoding == .chunked or is_server_sent_events)) {
         return ShouldContinue.continue_streaming;
     } else {
         return ShouldContinue.finished;

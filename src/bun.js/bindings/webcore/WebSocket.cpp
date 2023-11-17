@@ -75,7 +75,6 @@
 // #include "WebCoreThreadRun.h"
 // #endif
 
-
 namespace WebCore {
 WTF_MAKE_ISO_ALLOCATED_IMPL(WebSocket);
 
@@ -1457,7 +1456,7 @@ extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, int32_t
 }
 extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t errorCode, const BunString* reason)
 {
-    WTF::String wtf_reason = Bun::toWTFString(*reason);
+    WTF::String wtf_reason = reason->toWTFString(BunString::ZeroCopy);
     webSocket->didClose(0, errorCode, WTFMove(wtf_reason));
 }
 

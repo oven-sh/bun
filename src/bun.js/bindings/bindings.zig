@@ -278,7 +278,14 @@ pub const ZigString = extern struct {
     }
 
     pub fn substring(this: ZigString, offset: usize, maxlen: usize) ZigString {
-        return this.substringWithLen(offset, @min(this.len, maxlen));
+        var len: usize = undefined;
+        if (maxlen == 0) {
+            len = this.len;
+        } else {
+            len = @max(this.len, maxlen);
+        }
+
+        return this.substringWithLen(offset, len);
     }
 
     pub fn maxUTF8ByteLength(this: ZigString) usize {

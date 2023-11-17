@@ -14,6 +14,7 @@ const IdentityContext = @import("../../identity_context.zig").IdentityContext;
 const Fs = @import("../../fs.zig");
 const Resolver = @import("../../resolver/resolver.zig");
 const ast = @import("../../import_record.zig");
+const Sys = @import("../../sys.zig");
 
 const MacroEntryPoint = bun.bundler.MacroEntryPoint;
 const logger = @import("root").bun.logger;
@@ -5601,11 +5602,25 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             if (error_instance == .zero) {
                 switch (this.config.address) {
                     .tcp => |tcp| {
-                        error_instance = (JSC.SystemError{
-                            .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to start server. Is port {d} in use?", .{tcp.port}) catch "Failed to start server"),
-                            .code = bun.String.static("EADDRINUSE"),
-                            .syscall = bun.String.static("listen"),
-                        }).toErrorInstance(this.globalThis);
+                        // this value is hard set by the underlying system, but it might be wrong for windows?
+                        var rc: i32 = -1;
+                        const code = Sys.getErrno(rc);
+                        switch (code) {
+                            bun.C.E.ACCES => {
+                                error_instance = (JSC.SystemError{
+                                    .message = bun.String.init(std.fmt.bufPrint(&output_buf, "permission denied {s}:{d}", .{ tcp.hostname orelse "0.0.0.0", tcp.port }) catch "Failed to start server"),
+                                    .code = bun.String.static("EACCES"),
+                                    .syscall = bun.String.static("listen"),
+                                }).toErrorInstance(this.globalThis);
+                            },
+                            else => {
+                                error_instance = (JSC.SystemError{
+                                    .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to start server. Is port {d} in use?", .{tcp.port}) catch "Failed to start server"),
+                                    .code = bun.String.static("EADDRINUSE"),
+                                    .syscall = bun.String.static("listen"),
+                                }).toErrorInstance(this.globalThis);
+                            },
+                        }
                     },
                     .unix => |unix| {
                         error_instance = (JSC.SystemError{

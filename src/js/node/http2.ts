@@ -27,7 +27,6 @@ const bunHTTP2Session = Symbol.for("::bunhttp2session::");
 
 const ReflectGetPrototypeOf = Reflect.getPrototypeOf;
 const FunctionPrototypeBind = primordials.FunctionPrototypeBind;
-const isArray = Array.isArray;
 
 const proxySocketHandler = {
   get(session, prop) {
@@ -462,14 +461,14 @@ class ClientHttp2Stream extends Duplex {
       throw error;
     }
 
-    if (!(headers instanceof Object)) {
+    if (!$isObject(headers)) {
       throw new Error("ERR_HTTP2_INVALID_HEADERS: headers must be an object");
     }
 
     const sensitives = headers[sensitiveHeaders];
     const sensitiveNames = {};
     if (sensitives) {
-      if (!isArray(sensitives)) {
+      if (!$isJSArray(sensitives)) {
         const error = new TypeError("ERR_INVALID_ARG_VALUE: The argument headers[http2.neverIndex] is invalid");
         error.code = "ERR_INVALID_ARG_VALUE";
         throw error;
@@ -778,7 +777,7 @@ class ClientHttp2Session extends Http2Session {
         }
 
         let cookie = headers["cookie"];
-        if (isArray(cookie)) {
+        if ($isArray(cookie)) {
           headers["cookie"] = (headers["cookie"] as string[]).join(";");
         }
         if (stream[bunHTTP2StreamResponded]) {
@@ -1166,14 +1165,14 @@ class ClientHttp2Session extends Http2Session {
       throw error;
     }
 
-    if (!(headers instanceof Object)) {
+    if (!$isObject(headers)) {
       throw new Error("ERR_HTTP2_INVALID_HEADERS: headers must be an object");
     }
 
     const sensitives = headers[sensitiveHeaders];
     const sensitiveNames = {};
     if (sensitives) {
-      if (!isArray(sensitives)) {
+      if (!$isArray(sensitives)) {
         const error = new TypeError("ERR_INVALID_ARG_VALUE: The arguments headers[http2.neverIndex] is invalid");
         error.code = "ERR_INVALID_ARG_VALUE";
         throw error;

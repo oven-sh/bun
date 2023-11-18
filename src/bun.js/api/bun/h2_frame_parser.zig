@@ -2209,10 +2209,6 @@ pub const H2FrameParser = struct {
             return JSC.JSValue.jsNumber(-1);
         }
 
-        const stream = this.handleReceivedStreamID(stream_id) orelse {
-            return JSC.JSValue.jsNumber(-1);
-        };
-
         var headers_obj = headers_arg.asObjectRef();
 
         // we iterate twice, because pseudo headers must be sent first, but can appear anywhere in the headers object
@@ -2276,6 +2272,9 @@ pub const H2FrameParser = struct {
                         const value = value_slice.slice();
                         log("encode header {s} {s}", .{ name, value });
                         encoded_size += this.encode(&header_buffer, buffer[encoded_size..], name, value_slice.slice(), never_index) catch {
+                            const stream = this.handleReceivedStreamID(stream_id) orelse {
+                                return JSC.JSValue.jsNumber(-1);
+                            };
                             stream.state = .CLOSED;
                             stream.rstCode = @intFromEnum(ErrorCode.COMPRESSION_ERROR);
                             this.dispatchWithExtra(.onStreamError, JSC.JSValue.jsNumber(stream_id), JSC.JSValue.jsNumber(stream.rstCode));
@@ -2297,6 +2296,9 @@ pub const H2FrameParser = struct {
                     const value = value_slice.slice();
                     log("encode header {s} {s}", .{ name, value });
                     encoded_size += this.encode(&header_buffer, buffer[encoded_size..], name, value_slice.slice(), never_index) catch {
+                        const stream = this.handleReceivedStreamID(stream_id) orelse {
+                            return JSC.JSValue.jsNumber(-1);
+                        };
                         stream.state = .CLOSED;
                         stream.rstCode = @intFromEnum(ErrorCode.COMPRESSION_ERROR);
                         this.dispatchWithExtra(.onStreamError, JSC.JSValue.jsNumber(stream_id), JSC.JSValue.jsNumber(stream.rstCode));
@@ -2305,6 +2307,9 @@ pub const H2FrameParser = struct {
                 }
             }
         }
+        const stream = this.handleReceivedStreamID(stream_id) orelse {
+            return JSC.JSValue.jsNumber(-1);
+        };
 
         var flags: u8 = @intFromEnum(HeadersFrameFlags.END_HEADERS);
         var exclusive: bool = false;
@@ -2459,9 +2464,6 @@ pub const H2FrameParser = struct {
             // read all the bytes
             while (bytes.len > 0) {
                 const result = this.readBytes(bytes);
-                if (result >= bytes.len) {
-                    break;
-                }
                 bytes = bytes[result..];
             }
             return JSC.JSValue.jsUndefined();

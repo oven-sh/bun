@@ -70,6 +70,8 @@ declare module "bun" {
     options?: { PATH?: string; cwd?: string },
   ): string | null;
 
+  export function $(strings: TemplateStringsArray, ...expressions: any[]): void;
+
   interface TOML {
     /**
      * Parse a TOML string into a JavaScript object.

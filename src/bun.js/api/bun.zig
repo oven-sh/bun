@@ -41,6 +41,7 @@ pub const BunObject = struct {
     pub const spawnSync = JSC.wrapStaticMethod(JSC.Subprocess, "spawnSync", false);
     pub const which = Bun.which;
     pub const write = JSC.WebCore.Blob.writeFile;
+    pub const @"$" = Bun.shell;
     // --- Callbacks ---
 
     // --- Getters ---
@@ -151,6 +152,7 @@ pub const BunObject = struct {
         @export(BunObject.spawnSync, .{ .name = callbackName("spawnSync") });
         @export(BunObject.which, .{ .name = callbackName("which") });
         @export(BunObject.write, .{ .name = callbackName("write") });
+        @export(BunObject.@"$", .{ .name = callbackName("$") });
         // -- Callbacks --
     }
 };
@@ -237,6 +239,7 @@ const is_bindgen = JSC.is_bindgen;
 const max_addressible_memory = std.math.maxInt(u56);
 const Async = bun.Async;
 const SemverObject = @import("../../install/semver.zig").SemverObject;
+const Shell = @import("../../shell.zig");
 
 threadlocal var css_imports_list_strings: [512]ZigString = undefined;
 threadlocal var css_imports_list: [512]Api.StringPointer = undefined;
@@ -285,6 +288,48 @@ pub fn getCSSImports() []ZigString {
         ZigString.fromStringPointer(css_imports_list[i], css_imports_buf.items, &css_imports_list_strings[i]);
     }
     return css_imports_list_strings[0..tail];
+}
+
+pub fn shell(
+    globalThis: *JSC.JSGlobalObject,
+    callframe: *JSC.CallFrame,
+) callconv(.C) JSC.JSValue {
+    const arguments_ = callframe.arguments(1);
+    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    const string_args = arguments.nextEat() orelse {
+        globalThis.throw("shell: expected 2 arguments, got 0", .{});
+        return JSC.JSValue.jsUndefined();
+    };
+
+    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+    defer arena.deinit();
+
+    var template_args = callframe.argumentsPtr()[0..callframe.argumentsCount()];
+    var script = std.ArrayList(u8).init(arena.allocator());
+    var string_iter = string_args.arrayIterator(globalThis);
+    var i: u32 = 0;
+    while (string_iter.next()) |js_value| {
+        const str = js_value.getZigString(globalThis);
+        script.appendSlice(str.full()) catch {
+            globalThis.throwOutOfMemory();
+            return JSValue.undefined;
+        };
+        const template_value = template_args[i];
+        const template_value_str = template_value.getZigString(globalThis);
+        script.appendSlice(template_value_str.full()) catch {
+            globalThis.throwOutOfMemory();
+            return JSValue.undefined;
+        };
+        i += 1;
+    }
+
+    var interpreter = Shell.Interpreter.new(arena.allocator());
+    interpreter.interpret(script.items[0..]) catch |err| {
+        globalThis.throwError(err, "shell:");
+        return JSValue.undefined;
+    };
+
+    return JSValue.undefined;
 }
 
 pub fn which(

@@ -644,6 +644,7 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback
     which                                          BunObject_callback_which                                            DontDelete|Function 1
     write                                          BunObject_callback_write                                            DontDelete|Function 1
+    $                                              BunObject_callback_$                                                DontDelete|Function 1
 @end
 */
 

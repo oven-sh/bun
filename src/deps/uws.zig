@@ -441,8 +441,9 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             var path_ = allocator.dupeZ(u8, path) catch return null;
             defer allocator.free(path_);
 
-            var socket = us_socket_context_connect_unix(comptime ssl_int, socket_ctx, path_, 0, 8) orelse return null;
+            var socket = us_socket_context_connect_unix(comptime ssl_int, socket_ctx, path_, 0, @sizeOf(Context)) orelse return null;
             const socket_ = ThisSocket{ .socket = socket };
+
             var holder = socket_.ext(Context) orelse {
                 if (comptime bun.Environment.allow_assert) unreachable;
                 _ = us_socket_close_connecting(comptime ssl_int, socket);

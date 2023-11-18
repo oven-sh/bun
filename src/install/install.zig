@@ -2793,10 +2793,6 @@ pub const PackageManager = struct {
     ) !?ResolvedPackageResult {
         name.assertDefined();
 
-        if (resolution < this.lockfile.packages.len) {
-            return .{ .package = this.lockfile.packages.get(resolution) };
-        }
-
         if (install_peer and behavior.isPeer()) {
             if (this.lockfile.package_index.get(name_hash)) |index| {
                 const resolutions: []Resolution = this.lockfile.packages.items(.resolution);
@@ -2873,6 +2869,10 @@ pub const PackageManager = struct {
                     },
                 }
             }
+        }
+
+        if (resolution < this.lockfile.packages.len) {
+            return .{ .package = this.lockfile.packages.get(resolution) };
         }
 
         switch (version.tag) {
@@ -6155,7 +6155,7 @@ pub const PackageManager = struct {
 
             // Step 2. Setup the global directory
             var node_modules: std.fs.IterableDir = brk: {
-                Bin.Linker.umask = C.umask(0);
+                Bin.Linker.ensureUmask();
                 var explicit_global_dir: string = "";
                 if (ctx.install) |install_| {
                     explicit_global_dir = install_.global_dir orelse explicit_global_dir;
@@ -6323,7 +6323,7 @@ pub const PackageManager = struct {
 
             // Step 2. Setup the global directory
             var node_modules: std.fs.IterableDir = brk: {
-                Bin.Linker.umask = C.umask(0);
+                Bin.Linker.ensureUmask();
                 var explicit_global_dir: string = "";
                 if (ctx.install) |install_| {
                     explicit_global_dir = install_.global_dir orelse explicit_global_dir;
@@ -6632,6 +6632,8 @@ pub const PackageManager = struct {
         }
 
         pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !CommandLineArguments {
+            Output.is_verbose = Output.isVerbose();
+
             comptime var params: []const ParamType = &switch (subcommand) {
                 .install => install_params,
                 .update => update_params,
@@ -6671,7 +6673,7 @@ pub const PackageManager = struct {
             // cli.no_dedupe = args.flag("--no-dedupe");
             cli.no_cache = args.flag("--no-cache");
             cli.silent = args.flag("--silent");
-            cli.verbose = args.flag("--verbose");
+            cli.verbose = args.flag("--verbose") or Output.is_verbose;
             cli.ignore_scripts = args.flag("--ignore-scripts");
             cli.no_summary = args.flag("--no-summary");
 
@@ -7901,7 +7903,9 @@ pub const PackageManager = struct {
 
         {
             var iterator = Lockfile.Tree.Iterator.init(lockfile);
-
+            if (comptime Environment.isPosix) {
+                Bin.Linker.ensureUmask();
+            }
             var installer: PackageInstaller = brk: {
                 // These slices potentially get resized during iteration
                 // so we want to make sure they're not accessible to the rest of this function

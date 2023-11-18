@@ -537,6 +537,13 @@ private:
 
 } // namespace Zig
 
+// TODO: move this
+namespace Bun {
+
+String formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const WTF::String& name, const WTF::String& message, unsigned& line, unsigned& column, WTF::String& sourceURL, Vector<JSC::StackFrame>& stackTrace, JSC::JSObject* errorInstance);
+
+}
+
 #ifndef RENAMED_JSDOM_GLOBAL_OBJECT
 #define RENAMED_JSDOM_GLOBAL_OBJECT
 namespace WebCore {

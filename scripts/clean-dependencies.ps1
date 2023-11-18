@@ -27,3 +27,4 @@ Reset-Submodule $Deps/picohttpparser
 Reset-Submodule $Deps/tinycc
 Reset-Submodule $Deps/zlib
 Reset-Submodule $Deps/zstd
+Reset-Submodule $Deps/ls-hpack

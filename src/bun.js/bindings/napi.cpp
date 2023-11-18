@@ -1483,19 +1483,6 @@ NapiClass* NapiClass::create(VM& vm, Zig::GlobalObject* globalObject, const char
     return napiClass;
 }
 
-CallData NapiClass::getConstructData(JSCell* cell)
-{
-    auto construct = JSC::jsCast<NapiClass*>(cell)->constructor();
-    if (!construct) {
-        return NapiClass::Base::getConstructData(cell);
-    }
-
-    CallData constructData;
-    constructData.type = CallData::Type::Native;
-    constructData.native.function = construct;
-    return constructData;
-}
-
 void NapiClass::finishCreation(VM& vm, NativeExecutable* executable, unsigned length, const String& name, napi_callback constructor,
     void* data,
     size_t property_count,
@@ -1771,15 +1758,22 @@ extern "C" napi_status napi_get_value_string_utf8(napi_env env,
         return napi_ok;
     }
 
-    if (bufsize == NAPI_AUTO_LENGTH) {
-        bufsize = strlen(buf);
+    if (UNLIKELY(bufsize == 0)) {
+        *writtenPtr = 0;
+        return napi_ok;
+    }
+
+    if (UNLIKELY(bufsize == NAPI_AUTO_LENGTH)) {
+        *writtenPtr = 0;
+        buf[0] = '\0';
+        return napi_ok;
     }
 
     size_t written;
     if (view.is8Bit()) {
-        written = Bun__encoding__writeLatin1(view.characters8(), view.length(), reinterpret_cast<unsigned char*>(buf), bufsize, static_cast<uint8_t>(WebCore::BufferEncodingType::utf8));
+        written = Bun__encoding__writeLatin1(view.characters8(), view.length(), reinterpret_cast<unsigned char*>(buf), bufsize - 1, static_cast<uint8_t>(WebCore::BufferEncodingType::utf8));
     } else {
-        written = Bun__encoding__writeUTF16(view.characters16(), view.length(), reinterpret_cast<unsigned char*>(buf), bufsize, static_cast<uint8_t>(WebCore::BufferEncodingType::utf8));
+        written = Bun__encoding__writeUTF16(view.characters16(), view.length(), reinterpret_cast<unsigned char*>(buf), bufsize - 1, static_cast<uint8_t>(WebCore::BufferEncodingType::utf8));
     }
 
     if (writtenPtr != nullptr) {

@@ -45,6 +45,7 @@ pub const API = struct {
     pub const TCPSocket = @import("./bun.js/api/bun/socket.zig").TCPSocket;
     pub const TLSSocket = @import("./bun.js/api/bun/socket.zig").TLSSocket;
     pub const Listener = @import("./bun.js/api/bun/socket.zig").Listener;
+    pub const H2FrameParser = @import("./bun.js/api/bun/h2_frame_parser.zig").H2FrameParser;
 };
 pub const DNS = @import("./bun.js/api/bun/dns_resolver.zig");
 pub const FFI = @import("./bun.js/api/ffi.zig").FFI;

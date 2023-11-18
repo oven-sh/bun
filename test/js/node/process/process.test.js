@@ -508,3 +508,8 @@ it("process.constrainedMemory()", () => {
     expect(process.constrainedMemory()).toBeUndefined();
   }
 });
+
+it("process.report", () => {
+  // TODO: write better tests
+  JSON.stringify(process.report.getReport(), null, 2);
+});

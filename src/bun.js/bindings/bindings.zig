@@ -277,15 +277,8 @@ pub const ZigString = extern struct {
         return out;
     }
 
-    pub fn substring(this: ZigString, offset: usize, maxlen: usize) ZigString {
-        var len: usize = undefined;
-        if (maxlen == 0) {
-            len = this.len;
-        } else {
-            len = @max(this.len, maxlen);
-        }
-
-        return this.substringWithLen(offset, len);
+    pub fn substring(this: ZigString, offset: usize) ZigString {
+        return this.substringWithLen(offset, this.len);
     }
 
     pub fn maxUTF8ByteLength(this: ZigString) usize {
@@ -5789,6 +5782,11 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
         /// value. Also note the behavior of the other options.
         pub fn next(self: *Self) ?ZigString {
             return nextMaybeFirstValue(self, .zero);
+        }
+
+        pub fn reset(self: *Self) void {
+            self.iter_i = 0;
+            self.i = 0;
         }
 
         pub fn nextMaybeFirstValue(self: *Self, first_value: JSValue) ?ZigString {

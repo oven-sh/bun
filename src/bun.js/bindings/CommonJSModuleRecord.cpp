@@ -108,12 +108,12 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         globalObject,
         globalObject->requireResolveFunctionUnbound(),
         moduleObject->id(),
-        ArgList(), 1, jsString(vm, String("resolve"_s)));
+        ArgList(), 1, globalObject->commonStrings().resolveString(globalObject));
     JSFunction* requireFunction = JSC::JSBoundFunction::create(vm,
         globalObject,
         globalObject->requireFunctionUnbound(),
         moduleObject,
-        ArgList(), 1, jsString(vm, String("require"_s)));
+        ArgList(), 1, globalObject->commonStrings().requireString(globalObject));
     requireFunction->putDirect(vm, vm.propertyNames->resolve, resolveFunction, 0);
     moduleObject->putDirect(vm, WebCore::clientData(vm)->builtinNames().requirePublicName(), requireFunction, 0);
 
@@ -238,7 +238,7 @@ RequireFunctionPrototype* RequireFunctionPrototype::create(
     RequireFunctionPrototype* prototype = new (NotNull, JSC::allocateCell<RequireFunctionPrototype>(vm)) RequireFunctionPrototype(vm, structure);
     prototype->finishCreation(vm);
 
-    prototype->putDirect(vm, JSC::Identifier::fromString(vm, "resolve"_s), jsCast<Zig::GlobalObject*>(globalObject)->requireResolveFunctionUnbound(), 0);
+    prototype->putDirect(vm, builtinNames(vm).resolvePublicName(), jsCast<Zig::GlobalObject*>(globalObject)->requireResolveFunctionUnbound(), 0);
 
     return prototype;
 }
@@ -1059,13 +1059,13 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
         globalObject,
         globalObject->requireFunctionUnbound(),
         moduleObject,
-        ArgList(), 1, jsString(vm, String("require"_s)));
+        ArgList(), 1, globalObject->commonStrings().requireString(globalObject));
 
     JSFunction* resolveFunction = JSC::JSBoundFunction::create(vm,
         globalObject,
         globalObject->requireResolveFunctionUnbound(),
         moduleObject,
-        ArgList(), 1, jsString(vm, String("resolve"_s)));
+        ArgList(), 1, globalObject->commonStrings().resolveString(globalObject));
 
     requireFunction->putDirect(vm, vm.propertyNames->resolve, resolveFunction, 0);
 

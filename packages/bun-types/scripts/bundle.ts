@@ -23,7 +23,7 @@ try {
 
 const header = await file(join(import.meta.dir, "..", "header.txt")).text();
 const filesToCat = (await getDotTsFiles("./")).filter(
-  f => !["./index.d.ts"].some(tf => f === tf),
+  f => f !== "./index.d.ts",
 );
 
 const fileContents: string[] = [];
@@ -47,6 +47,7 @@ await write(destination, text);
 const packageJSON = {
   name: process.env.PACKAGE_NAME || "bun-types",
   version: BUN_VERSION,
+  license: "MIT",
   description:
     "Type definitions for Bun, an incredibly fast JavaScript runtime",
   types: "types.d.ts",

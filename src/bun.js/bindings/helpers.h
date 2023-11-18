@@ -7,7 +7,6 @@
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSString.h>
-#include <JavaScriptCore/JSValueInternal.h>
 #include <JavaScriptCore/ThrowScope.h>
 #include <JavaScriptCore/VM.h>
 
@@ -239,7 +238,7 @@ static const JSC::JSString* toJSStringGC(ZigString str, JSC::JSGlobalObject* glo
 
 static const JSC::JSValue toJSStringValueGC(ZigString str, JSC::JSGlobalObject* global)
 {
-    return JSC::JSValue(toJSString(str, global));
+    return JSC::JSValue(toJSStringGC(str, global));
 }
 
 static const ZigString ZigStringEmpty = ZigString { nullptr, 0 };

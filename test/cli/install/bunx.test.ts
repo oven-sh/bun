@@ -15,6 +15,26 @@ afterEach(async () => {
   await rm(x_dir, { force: true, recursive: true });
 });
 
+it("should choose the tagged versions instead of the PATH versions when a tag is specified", async () => {
+  const processes = Array.from({ length: 3 }, (_, i) => {
+    return spawn({
+      cmd: [bunExe(), "x", "semver@7.5." + i, "--help"],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "inherit",
+      env,
+    });
+  });
+
+  const results = await Promise.all(processes.map(p => p.exited));
+  expect(results).toEqual([0, 0, 0]);
+  const outputs = (await Promise.all(processes.map(p => new Response(p.stdout).text()))).map(a =>
+    a.substring(0, a.indexOf("\n")),
+  );
+  expect(outputs).toEqual(["SemVer 7.5.0", "SemVer 7.5.1", "SemVer 7.5.2"]);
+});
+
 it("should install and run default (latest) version", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "x", "uglify-js", "--compress"],
@@ -63,7 +83,7 @@ it("should output usage if no arguments are passed", async () => {
 
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err).toContain("usage: ");
+  expect(err).toContain("Usage: ");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out).toHaveLength(0);
@@ -135,4 +155,81 @@ console.log(
   expect(out.split(/\r?\n/)).toEqual(["console.log(42);", ""]);
   expect(await exited).toBe(0);
   expect(await readdirSorted(x_dir)).toEqual(["test.js"]);
+});
+
+it("should work for github repository", async () => {
+  await rm(join(await realpath(tmpdir()), "github:piuccio"), { force: true, recursive: true });
+  // without cache
+  const withoutCache = spawn({
+    cmd: [bunExe(), "x", "github:piuccio/cowsay", "--help"],
+    cwd: x_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  expect(withoutCache.stderr).toBeDefined();
+  let err = await new Response(withoutCache.stderr).text();
+  expect(err).not.toContain("error");
+  expect(withoutCache.stdout).toBeDefined();
+  let out = await new Response(withoutCache.stdout).text();
+  expect(out.trim()).toContain("Usage: cowsay");
+  expect(await withoutCache.exited).toBe(0);
+
+  // cached
+  const cached = spawn({
+    cmd: [bunExe(), "x", "github:piuccio/cowsay", "--help"],
+    cwd: x_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  expect(cached.stderr).toBeDefined();
+  err = await new Response(cached.stderr).text();
+  expect(err).not.toContain("error");
+  expect(cached.stdout).toBeDefined();
+  out = await new Response(cached.stdout).text();
+  expect(out.trim()).toContain("Usage: cowsay");
+  expect(await cached.exited).toBe(0);
+});
+
+it("should work for github repository with committish", async () => {
+  await rm(join(await realpath(tmpdir()), "github:piuccio"), { force: true, recursive: true });
+  const withoutCache = spawn({
+    cmd: [bunExe(), "x", "github:piuccio/cowsay#HEAD", "hello bun!"],
+    cwd: x_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  expect(withoutCache.stderr).toBeDefined();
+  let err = await new Response(withoutCache.stderr).text();
+  expect(err).not.toContain("error");
+  expect(withoutCache.stdout).toBeDefined();
+  let out = await new Response(withoutCache.stdout).text();
+  expect(out.trim()).toContain("hello bun!");
+  expect(await withoutCache.exited).toBe(0);
+
+  // cached
+  const cached = spawn({
+    cmd: [bunExe(), "x", "github:piuccio/cowsay#HEAD", "hello bun!"],
+    cwd: x_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  expect(cached.stderr).toBeDefined();
+  err = await new Response(cached.stderr).text();
+  expect(err).not.toContain("error");
+  expect(cached.stdout).toBeDefined();
+  out = await new Response(cached.stdout).text();
+  expect(out.trim()).toContain("hello bun!");
+  expect(await cached.exited).toBe(0);
 });

@@ -87,7 +87,7 @@ pub const ExternalModules = struct {
     };
 
     pub fn isNodeBuiltin(str: string) bool {
-        return NodeBuiltinsMap.has(str);
+        return bun.JSC.HardcodedModule.Aliases.has(str, .node);
     }
 
     const default_wildcard_patterns = &[_]WildcardPattern{
@@ -987,6 +987,7 @@ pub const JSX = struct {
         }
 
         pub fn parsePackageName(str: string) string {
+            if (str.len == 0) return str;
             if (str[0] == '@') {
                 if (strings.indexOfChar(str[1..], '/')) |first_slash| {
                     var remainder = str[1 + first_slash + 1 ..];
@@ -1364,6 +1365,7 @@ pub const BundleOptions = struct {
     loaders: Loader.HashTable,
     resolve_dir: string = "/",
     jsx: JSX.Pragma = JSX.Pragma{},
+    emit_decorator_metadata: bool = false,
     auto_import_jsx: bool = true,
     allow_runtime: bool = true,
 
@@ -1419,6 +1421,7 @@ pub const BundleOptions = struct {
     transform_options: Api.TransformOptions,
     polyfill_node_globals: bool = false,
     transform_only: bool = false,
+    load_tsconfig_json: bool = true,
 
     rewrite_jest_for_tests: bool = false,
 
@@ -1441,6 +1444,7 @@ pub const BundleOptions = struct {
     minify_whitespace: bool = false,
     minify_syntax: bool = false,
     minify_identifiers: bool = false,
+    dead_code_elimination: bool = true,
 
     code_coverage: bool = false,
     debugger: bool = false,
@@ -1603,6 +1607,10 @@ pub const BundleOptions = struct {
 
         Analytics.Features.define = Analytics.Features.define or transform.define != null;
         Analytics.Features.loaders = Analytics.Features.loaders or transform.loaders != null;
+
+        if (transform.env_files.len > 0) {
+            opts.env.files = transform.env_files;
+        }
 
         if (transform.origin) |origin| {
             opts.origin = URL.parse(origin);
@@ -1904,7 +1912,7 @@ pub const TransformOptions = struct {
 
         var cwd: string = "/";
         if (Environment.isWasi or Environment.isWindows) {
-            cwd = try std.process.getCwdAlloc(allocator);
+            cwd = try bun.getcwdAlloc(allocator);
         }
 
         var define = bun.StringHashMap(string).init(allocator);
@@ -2273,6 +2281,9 @@ pub const Env = struct {
     prefix: string = "",
     defaults: List = List{},
     allocator: std.mem.Allocator = undefined,
+
+    /// List of explicit env files to load (e..g specified by --env-file args)
+    files: []const []const u8 = &[_][]u8{},
 
     pub fn init(
         allocator: std.mem.Allocator,

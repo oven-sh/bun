@@ -435,8 +435,9 @@ pub const String = extern struct {
         }
     }
 
-    pub fn toErrorInstance(this: String, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        return this.toZigString().toErrorInstance(globalObject);
+    pub fn toErrorInstance(this_: String, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        var this = this_;
+        return JSC__createError(globalObject, &this);
     }
 
     pub fn static(input: []const u8) String {
@@ -460,6 +461,7 @@ pub const String = extern struct {
 
     pub fn createExternal(bytes: []const u8, isLatin1: bool, ctx: ?*anyopaque, callback: ?*const fn (*anyopaque, *anyopaque, u32) callconv(.C) void) String {
         JSC.markBinding(@src());
+        std.debug.assert(bytes.len > 0);
         return BunString__createExternal(bytes.ptr, bytes.len, isLatin1, ctx, callback);
     }
 
@@ -507,6 +509,12 @@ pub const String = extern struct {
         JSC.markBinding(@src());
 
         return BunString__toJSWithLength(globalObject, this, len);
+    }
+
+    pub fn toJSDOMURL(this: *String, globalObject: *bun.JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+
+        return BunString__toJSDOMURL(globalObject, this);
     }
 
     pub fn toJSConst(this: *const String, globalObject: *bun.JSC.JSGlobalObject) JSC.JSValue {
@@ -646,7 +654,7 @@ pub const String = extern struct {
     }
 
     pub fn substring(self: String, offset: usize) String {
-        return String.init(self.toZigString().substring(offset, 0));
+        return String.init(self.toZigString().substring(offset));
     }
 
     pub fn toUTF8(this: String, allocator: std.mem.Allocator) ZigString.Slice {
@@ -692,6 +700,7 @@ pub const String = extern struct {
     extern fn BunString__fromJS(globalObject: *JSC.JSGlobalObject, value: bun.JSC.JSValue, out: *String) bool;
     extern fn BunString__toJS(globalObject: *JSC.JSGlobalObject, in: *String) JSC.JSValue;
     extern fn BunString__toJSWithLength(globalObject: *JSC.JSGlobalObject, in: *String, usize) JSC.JSValue;
+    extern fn BunString__toJSDOMURL(globalObject: *JSC.JSGlobalObject, in: *String) JSC.JSValue;
     extern fn BunString__toWTFString(this: *String) void;
 
     pub fn ref(this: String) void {
@@ -825,7 +834,10 @@ pub const String = extern struct {
             return this.value.WTFStringImpl.hasPrefix(value);
         }
 
-        return this.toZigString().substring(0, value.len).eqlComptime(value);
+        var str = this.toZigString();
+        if (str.len < value.len) return false;
+
+        return str.substringWithLen(0, value.len).eqlComptime(value);
     }
 
     pub fn isWTFAllocator(this: std.mem.Allocator) bool {
@@ -845,9 +857,15 @@ pub const String = extern struct {
         }
     }
 
+    pub fn eqlUTF8(this: String, other: []const u8) bool {
+        return this.toZigString().eql(ZigString.initUTF8(other));
+    }
+
     pub fn eql(this: String, other: String) bool {
         return this.toZigString().eql(other.toZigString());
     }
+
+    extern fn JSC__createError(*JSC.JSGlobalObject, str: *String) JSC.JSValue;
 };
 
 pub const SliceWithUnderlyingString = struct {
@@ -855,17 +873,17 @@ pub const SliceWithUnderlyingString = struct {
     underlying: String,
 
     pub fn toThreadSafe(this: *SliceWithUnderlyingString) void {
-        std.debug.assert(this.underlying.tag == .WTFStringImpl);
+        if (this.underlying.tag == .WTFStringImpl) {
+            var orig = this.underlying.value.WTFStringImpl;
+            this.underlying.toThreadSafe();
+            if (this.underlying.value.WTFStringImpl != orig) {
+                orig.deref();
 
-        var orig = this.underlying.value.WTFStringImpl;
-        this.underlying.toThreadSafe();
-        if (this.underlying.value.WTFStringImpl != orig) {
-            orig.deref();
-
-            if (this.utf8.allocator.get()) |allocator| {
-                if (String.isWTFAllocator(allocator)) {
-                    this.utf8.deinit();
-                    this.utf8 = this.underlying.toUTF8(bun.default_allocator);
+                if (this.utf8.allocator.get()) |allocator| {
+                    if (String.isWTFAllocator(allocator)) {
+                        this.utf8.deinit();
+                        this.utf8 = this.underlying.toUTF8(bun.default_allocator);
+                    }
                 }
             }
         }

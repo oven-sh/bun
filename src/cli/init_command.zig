@@ -23,19 +23,7 @@ const logger = @import("root").bun.logger;
 const JSPrinter = bun.js_printer;
 
 fn exists(path: anytype) bool {
-    if (@TypeOf(path) == [:0]const u8 or @TypeOf(path) == [:0]u8) {
-        if (std.os.accessZ(path, 0)) {
-            return true;
-        } else |_| {
-            return false;
-        }
-    } else {
-        if (std.os.access(path, 0)) {
-            return true;
-        } else |_| {
-            return false;
-        }
-    }
+    return bun.sys.exists(path);
 }
 pub const InitCommand = struct {
     fn prompt(
@@ -99,6 +87,21 @@ pub const InitCommand = struct {
     };
 
     pub fn exec(alloc: std.mem.Allocator, argv: [][*:0]u8) !void {
+        const print_help = brk: {
+            for (argv) |arg_| {
+                const arg = bun.span(arg_);
+                if (strings.eqlComptime(arg, "--help")) {
+                    break :brk true;
+                }
+            }
+            break :brk false;
+        };
+
+        if (print_help) {
+            CLI.Command.Tag.printHelp(.InitCommand, true);
+            Global.exit(0);
+        }
+
         var fs = try Fs.FileSystem.init(null);
         const pathname = Fs.PathName.init(fs.topLevelDirWithoutTrailingSlash());
         const destination_dir = std.fs.cwd();
@@ -210,7 +213,7 @@ pub const InitCommand = struct {
             ).data.e_object;
         }
 
-        const auto_yes = brk: {
+        const auto_yes = Output.stdout_descriptor_type != .terminal or brk: {
             for (argv) |arg_| {
                 const arg = bun.span(arg_);
                 if (strings.eqlComptime(arg, "-y") or strings.eqlComptime(arg, "--yes")) {
@@ -395,7 +398,7 @@ pub const InitCommand = struct {
                 defer file.close();
                 file.writer().print(README, .{
                     .name = fields.name,
-                    .bunVersion = Global.version.fmt(""),
+                    .bunVersion = Environment.version_string,
                     .entryPoint = fields.entry_point,
                 }) catch break :brk;
                 Output.prettyln(" + <r><d>{s}<r>", .{filename});
@@ -425,9 +428,9 @@ pub const InitCommand = struct {
                 },
                 alloc,
             );
-            process.stderr_behavior = .Pipe;
-            process.stdin_behavior = .Pipe;
-            process.stdout_behavior = .Pipe;
+            process.stderr_behavior = .Ignore;
+            process.stdin_behavior = .Ignore;
+            process.stdout_behavior = .Ignore;
             _ = try process.spawnAndWait();
         }
     }

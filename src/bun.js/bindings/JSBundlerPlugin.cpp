@@ -1,24 +1,24 @@
 #include "JSBundlerPlugin.h"
 
 #include "headers-handwritten.h"
-#include "JavaScriptCore/CatchScope.h"
-#include "JavaScriptCore/JSGlobalObject.h"
-#include "JavaScriptCore/JSTypeInfo.h"
-#include "JavaScriptCore/Structure.h"
+#include <JavaScriptCore/CatchScope.h>
+#include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/JSTypeInfo.h>
+#include <JavaScriptCore/Structure.h>
 #include "helpers.h"
 #include "ZigGlobalObject.h"
-#include "JavaScriptCore/JavaScript.h"
-#include "JavaScriptCore/JSObjectInlines.h"
-#include "wtf/text/WTFString.h"
-#include "JavaScriptCore/JSCInlines.h"
+#include <JavaScriptCore/JavaScript.h>
+#include <JavaScriptCore/JSObjectInlines.h>
+#include <wtf/text/WTFString.h>
+#include <JavaScriptCore/JSCInlines.h>
 
-#include "JavaScriptCore/ObjectConstructor.h"
-#include "JavaScriptCore/SubspaceInlines.h"
-#include "JavaScriptCore/RegExpObject.h"
-#include "JavaScriptCore/JSPromise.h"
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/SubspaceInlines.h>
+#include <JavaScriptCore/RegExpObject.h>
+#include <JavaScriptCore/JSPromise.h>
 #include "BunClientData.h"
 #include "ModuleLoader.h"
-#include "JavaScriptCore/RegularExpression.h"
+#include <JavaScriptCore/RegularExpression.h>
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
@@ -31,6 +31,7 @@ namespace Bun {
 extern "C" void JSBundlerPlugin__addError(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
 extern "C" void JSBundlerPlugin__onLoadAsync(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
 extern "C" void JSBundlerPlugin__onResolveAsync(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
+extern "C" void JSBundlerPlugin__onVirtualModulePlugin(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
 
 JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_addFilter);
 JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_addError);
@@ -62,7 +63,7 @@ bool BundlerPlugin::anyMatchesCrossThread(JSC::VM& vm, const BunString* namespac
             return false;
 
         // Avoid unnecessary string copies
-        auto namespaceString = namespaceStr ? Bun::toWTFString(*namespaceStr) : String();
+        auto namespaceString = namespaceStr ? namespaceStr->toWTFString(BunString::ZeroCopy) : String();
 
         auto* group = this->onLoad.group(namespaceString);
         if (group == nullptr) {
@@ -70,7 +71,7 @@ bool BundlerPlugin::anyMatchesCrossThread(JSC::VM& vm, const BunString* namespac
         }
 
         auto& filters = *group;
-        auto pathString = Bun::toWTFString(*path);
+        auto pathString = path->toWTFString(BunString::ZeroCopy);
 
         for (auto& filter : filters) {
             Yarr::MatchingContextHolder regExpContext(vm, usesPatternContextBuffer, nullptr, Yarr::MatchFrom::CompilerThread);
@@ -84,14 +85,14 @@ bool BundlerPlugin::anyMatchesCrossThread(JSC::VM& vm, const BunString* namespac
             return false;
 
         // Avoid unnecessary string copies
-        auto namespaceString = namespaceStr ? Bun::toWTFString(*namespaceStr) : String();
+        auto namespaceString = namespaceStr ? namespaceStr->toWTFString(BunString::ZeroCopy) : String();
 
         auto* group = this->onResolve.group(namespaceString);
         if (group == nullptr) {
             return false;
         }
 
-        auto pathString = Bun::toWTFString(*path);
+        auto pathString = path->toWTFString(BunString::ZeroCopy);
         auto& filters = *group;
 
         for (auto& filter : filters) {
@@ -154,6 +155,7 @@ public:
     Bun::BundlerPlugin plugin;
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> onLoadFunction;
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> onResolveFunction;
+    JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> moduleFunction;
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> setupFunction;
 
 private:
@@ -292,8 +294,8 @@ extern "C" bool JSBundlerPlugin__anyMatches(Bun::JSBundlerPlugin* pluginObject, 
 
 extern "C" void JSBundlerPlugin__matchOnLoad(JSC::JSGlobalObject* globalObject, Bun::JSBundlerPlugin* plugin, const BunString* namespaceString, const BunString* path, void* context, uint8_t defaultLoaderId)
 {
-    WTF::String namespaceStringStr = namespaceString ? Bun::toWTFString(*namespaceString) : WTF::String();
-    WTF::String pathStr = path ? Bun::toWTFString(*path) : WTF::String();
+    WTF::String namespaceStringStr = namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : WTF::String();
+    WTF::String pathStr = path ? path->toWTFString(BunString::ZeroCopy) : WTF::String();
 
     JSFunction* function = plugin->onLoadFunction.get(plugin);
     if (UNLIKELY(!function))
@@ -328,12 +330,12 @@ extern "C" void JSBundlerPlugin__matchOnLoad(JSC::JSGlobalObject* globalObject, 
 
 extern "C" void JSBundlerPlugin__matchOnResolve(JSC::JSGlobalObject* globalObject, Bun::JSBundlerPlugin* plugin, const BunString* namespaceString, const BunString* path, const BunString* importer, void* context, uint8_t kindId)
 {
-    WTF::String namespaceStringStr = namespaceString ? Bun::toWTFString(*namespaceString) : WTF::String("file"_s);
+    WTF::String namespaceStringStr = namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : WTF::String("file"_s);
     if (namespaceStringStr.length() == 0) {
         namespaceStringStr = WTF::String("file"_s);
     }
-    WTF::String pathStr = path ? Bun::toWTFString(*path) : WTF::String();
-    WTF::String importerStr = importer ? Bun::toWTFString(*importer) : WTF::String();
+    WTF::String pathStr = path ? path->toWTFString(BunString::ZeroCopy) : WTF::String();
+    WTF::String importerStr = importer ? importer->toWTFString(BunString::ZeroCopy) : WTF::String();
     auto& vm = globalObject->vm();
 
     JSFunction* function = plugin->onResolveFunction.get(plugin);
@@ -383,10 +385,10 @@ extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* glob
         target);
 }
 
-extern "C" EncodedJSValue JSBundlerPlugin__runSetupFunction(
+extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(
     Bun::JSBundlerPlugin* plugin,
-    EncodedJSValue encodedSetupFunction,
-    EncodedJSValue encodedConfig)
+    JSC::EncodedJSValue encodedSetupFunction,
+    JSC::EncodedJSValue encodedConfig)
 {
     auto& vm = plugin->vm();
     auto scope = DECLARE_CATCH_SCOPE(vm);

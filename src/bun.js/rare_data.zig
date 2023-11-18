@@ -10,6 +10,7 @@ const BoringSSL = @import("root").bun.BoringSSL;
 const bun = @import("root").bun;
 const WebSocketClientMask = @import("../http/websocket_http_client.zig").Mask;
 const UUID = @import("./uuid.zig");
+const Async = bun.Async;
 const StatWatcherScheduler = @import("./node/node_fs_stat_watcher.zig").StatWatcherScheduler;
 const IPC = @import("./ipc.zig");
 const uws = @import("root").bun.uws;
@@ -29,7 +30,7 @@ hot_map: ?HotMap = null,
 tail_cleanup_hook: ?*CleanupHook = null,
 cleanup_hook: ?*CleanupHook = null,
 
-file_polls_: ?*JSC.FilePoll.Store = null,
+file_polls_: ?*Async.FilePoll.Store = null,
 
 global_dns_data: ?*JSC.DNS.GlobalData = null,
 
@@ -38,6 +39,32 @@ spawn_ipc_usockets_context: ?*uws.SocketContext = null,
 mime_types: ?bun.HTTP.MimeType.Map = null,
 
 node_fs_stat_watcher_scheduler: ?*StatWatcherScheduler = null,
+
+listening_sockets_for_watch_mode: std.ArrayListUnmanaged(bun.FileDescriptor) = .{},
+listening_sockets_for_watch_mode_lock: bun.Lock = bun.Lock.init(),
+
+pub fn addListeningSocketForWatchMode(this: *RareData, socket: bun.FileDescriptor) void {
+    this.listening_sockets_for_watch_mode_lock.lock();
+    defer this.listening_sockets_for_watch_mode_lock.unlock();
+    this.listening_sockets_for_watch_mode.append(bun.default_allocator, socket) catch {};
+}
+
+pub fn removeListeningSocketForWatchMode(this: *RareData, socket: bun.FileDescriptor) void {
+    this.listening_sockets_for_watch_mode_lock.lock();
+    defer this.listening_sockets_for_watch_mode_lock.unlock();
+    if (std.mem.indexOfScalar(bun.FileDescriptor, this.listening_sockets_for_watch_mode.items, socket)) |i| {
+        _ = this.listening_sockets_for_watch_mode.swapRemove(i);
+    }
+}
+
+pub fn closeAllListenSocketsForWatchMode(this: *RareData) void {
+    this.listening_sockets_for_watch_mode_lock.lock();
+    defer this.listening_sockets_for_watch_mode_lock.unlock();
+    for (this.listening_sockets_for_watch_mode.items) |socket| {
+        _ = Syscall.close(socket);
+    }
+    this.listening_sockets_for_watch_mode = .{};
+}
 
 pub fn hotMap(this: *RareData, allocator: std.mem.Allocator) *HotMap {
     if (this.hot_map == null) {
@@ -109,10 +136,10 @@ pub const HotMap = struct {
     }
 };
 
-pub fn filePolls(this: *RareData, vm: *JSC.VirtualMachine) *JSC.FilePoll.Store {
+pub fn filePolls(this: *RareData, vm: *JSC.VirtualMachine) *Async.FilePoll.Store {
     return this.file_polls_ orelse {
-        this.file_polls_ = vm.allocator.create(JSC.FilePoll.Store) catch unreachable;
-        this.file_polls_.?.* = JSC.FilePoll.Store.init(vm.allocator);
+        this.file_polls_ = vm.allocator.create(Async.FilePoll.Store) catch unreachable;
+        this.file_polls_.?.* = Async.FilePoll.Store.init(vm.allocator);
         return this.file_polls_.?;
     };
 }

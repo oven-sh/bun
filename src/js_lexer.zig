@@ -642,7 +642,7 @@ fn NewLexer_(
                         lexer.step();
 
                         // Handle Windows CRLF
-                        if (lexer.code_point == 'r' and comptime !is_json) {
+                        if (lexer.code_point == '\r' and comptime !is_json) {
                             lexer.step();
                             if (lexer.code_point == '\n') {
                                 lexer.step();

@@ -271,6 +271,19 @@ it("path.basename", () => {
   strictEqual(path.posix.basename(`/a/b/${controlCharFilename}`), controlCharFilename);
 });
 
+describe("path.join #5769", () => {
+  for (let length of [4096, 4095, 4097, 65_432, 65_431, 65_433]) {
+    it("length " + length, () => {
+      const tooLengthyFolderName = Array.from({ length }).fill("b").join("");
+      expect(path.join(tooLengthyFolderName)).toEqual("b".repeat(length));
+    });
+    it("length " + length + "joined", () => {
+      const tooLengthyFolderName = Array.from({ length }).fill("b");
+      expect(path.join(...tooLengthyFolderName)).toEqual("b/".repeat(length).substring(0, 2 * length - 1));
+    });
+  }
+});
+
 it("path.join", () => {
   const failures = [];
   const backslashRE = /\\/g;
@@ -415,6 +428,9 @@ it("path.join", () => {
 
 it("path.relative", () => {
   const failures = [];
+  const cwd = process.cwd();
+  const cwdParent = path.dirname(cwd);
+  const parentIsRoot = cwdParent == "/";
 
   const relativeTests = [
     // [
@@ -477,6 +493,16 @@ it("path.relative", () => {
         ["/webp4ck-hot-middleware", "/webpack/buildin/module.js", "../webpack/buildin/module.js"],
         ["/webpack-hot-middleware", "/webp4ck/buildin/module.js", "../webp4ck/buildin/module.js"],
         ["/var/webpack-hot-middleware", "/var/webpack/buildin/module.js", "../webpack/buildin/module.js"],
+        ["/app/node_modules/pkg", "../static", `../../..${parentIsRoot ? "" : cwdParent}/static`],
+        ["/app/node_modules/pkg", "../../static", `../../..${parentIsRoot ? "" : path.dirname(cwdParent)}/static`],
+        ["/app", "../static", `..${parentIsRoot ? "" : cwdParent}/static`],
+        ["/app", "../".repeat(64) + "static", "../static"],
+        [".", "../static", cwd == "/" ? "static" : "../static"],
+        ["/", "../static", parentIsRoot ? "static" : `${cwdParent}/static`.slice(1)],
+        ["../", "../", ""],
+        ["../", "../../", parentIsRoot ? "" : ".."],
+        ["../../", "../", parentIsRoot ? "" : path.basename(cwdParent)],
+        ["../../", "../../", ""],
       ],
     ],
   ];
@@ -797,6 +823,17 @@ describe("path.parse and path.format", () => {
         base: "another_dir",
         ext: "",
         name: "another_dir",
+      },
+    },
+    {
+      // https://github.com/oven-sh/bun/issues/4954
+      input: "/test/Ł.txt",
+      expected: {
+        root: "/",
+        dir: "/test",
+        base: "Ł.txt",
+        ext: ".txt",
+        name: "Ł",
       },
     },
   ];

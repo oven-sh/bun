@@ -62,9 +62,9 @@ pub const CrashReportWriter = struct {
 
         var base_dir: []const u8 = ".";
         if (bun.getenvZ("BUN_INSTALL")) |install_dir| {
-            base_dir = std.mem.trimRight(u8, install_dir, std.fs.path.sep_str);
-        } else if (bun.getenvZ("HOME")) |home_dir| {
-            base_dir = std.mem.trimRight(u8, home_dir, std.fs.path.sep_str);
+            base_dir = strings.withoutTrailingSlash(install_dir);
+        } else if (bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
+            base_dir = strings.withoutTrailingSlash(home_dir);
         }
         const file_path = std.fmt.bufPrintZ(
             &crash_reporter_path,
@@ -72,8 +72,12 @@ pub const CrashReportWriter = struct {
             .{ base_dir, Global.package_json_version, @as(u64, @intCast(@max(std.time.milliTimestamp(), 0))) },
         ) catch return;
 
-        std.fs.cwd().makeDir(std.fs.path.dirname(bun.asByteSlice(file_path)).?) catch {};
-        var file = std.fs.cwd().createFileZ(file_path, .{ .truncate = true }) catch return;
+        if (bun.path.nextDirname(file_path)) |dirname| {
+            _ = bun.sys.mkdirA(dirname, 0);
+        }
+
+        const call = bun.sys.open(file_path, std.os.O.TRUNC, 0).unwrap() catch return;
+        var file = std.fs.File{ .handle = bun.fdcast(call) };
         this.file = std.io.bufferedWriter(
             file.writer(),
         );
@@ -85,7 +89,7 @@ pub const CrashReportWriter = struct {
 
         if (this.file_path.len > 0) {
             var tilda = false;
-            if (bun.getenvZ("HOME")) |home_dir| {
+            if (bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
                 if (strings.hasPrefix(display_path, home_dir)) {
                     display_path = display_path[home_dir.len..];
                     tilda = true;
@@ -107,8 +111,8 @@ pub fn printMetadata() void {
 
     const cmd_label: string = if (CLI.cmd) |tag| @tagName(tag) else "Unknown";
 
-    const platform = if (Environment.isMac) "macOS" else "Linux";
-    const arch = if (Environment.isAarch64)
+    const platform = comptime Environment.os.displayString();
+    const arch = comptime if (Environment.isAarch64)
         if (Environment.isMac) "Silicon" else "arm64"
     else
         "x64";
@@ -247,10 +251,21 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
 }
 
 var globalError_ranOnce = false;
+var error_return_trace: ?*std.builtin.StackTrace = null;
 
 export fn Bun__crashReportWrite(ctx: *CrashReportWriter, bytes_ptr: [*]const u8, len: usize) void {
-    if (len > 0)
+    if (error_return_trace) |trace| {
+        if (len > 0) {
+            ctx.print("{s}\n{}", .{ bytes_ptr[0..len], trace });
+        } else {
+            ctx.print("{}\n", .{trace});
+        }
+        return;
+    }
+
+    if (len > 0) {
         ctx.print("{s}\n", .{bytes_ptr[0..len]});
+    }
 }
 
 extern "C" fn Bun__crashReportDumpStackTrace(ctx: *anyopaque) void;
@@ -274,6 +289,10 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
         .{ @errorName(name), bun.fmt.hexIntUpper(addr) },
     );
     printMetadata();
+    if (comptime Environment.isDebug) {
+        error_return_trace = @errorReturnTrace();
+    }
+
     if (comptime !@import("root").bun.JSC.is_bindgen) {
         std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
         Bun__crashReportDumpStackTrace(&crash_report_writer);
@@ -290,23 +309,29 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
     }
 
     crash_report_writer.file = null;
-    if (comptime Environment.isDebug) {
-        if (@errorReturnTrace()) |stack| {
-            std.debug.dumpStackTrace(stack.*);
-        }
+    if (error_return_trace) |trace| {
+        std.debug.dumpStackTrace(trace.*);
     }
-
+    Global.runExitCallbacks();
     std.c._exit(128 + @as(u8, @truncate(@as(u8, @intCast(@max(signal, 0))))));
 }
 
 pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace())) noreturn {
     @setCold(true);
 
+    error_return_trace = trace_;
+
     if (@atomicRmw(bool, &globalError_ranOnce, .Xchg, true, .Monotonic)) {
         Global.exit(1);
     }
 
     switch (err) {
+        // error.BrokenPipe => {
+        //     if (comptime Environment.isNative) {
+        //         // if stdout/stderr was closed, we don't need to print anything
+        //         std.c._exit(bun.JSC.getGlobalExitCodeForPipeFailure());
+        //     }
+        // },
         error.SyntaxError => {
             Output.prettyError(
                 "\n<r><red>SyntaxError<r><d>:<r> An error occurred while parsing code",
@@ -583,9 +608,6 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
                 }
             }
 
-            Global.exit(1);
-        },
-        error.MissingValue => {
             Global.exit(1);
         },
         else => {},

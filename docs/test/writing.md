@@ -109,7 +109,7 @@ $ bun test --todo
 
 ## `test.only`
 
-To run a particular test or suite of tests use `test.only()` or `describe.only()`. Once declared, running `bun test --skip` will only execute tests/suites that have been marked with `.only()`.
+To run a particular test or suite of tests use `test.only()` or `describe.only()`. Once declared, running `bun test --only` will only execute tests/suites that have been marked with `.only()`.
 
 ```ts
 import { test, describe } from "bun:test";
@@ -143,12 +143,6 @@ To run a test conditionally, use `test.if()`. The test will run if the condition
 test.if(Math.random() > 0.5)("runs half the time", () => {
   // ...
 });
-```
-
-```ts
-test.if(Math.random() > 0.5)("runs half the time", () => {
-  // ...
-});
 
 const macOS = process.arch === "darwin";
 test.if(macOS)("runs on macOS", () => {
@@ -174,252 +168,252 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 
 ---
 
-- 🟢
+- ✅
 - [`.not`](https://jestjs.io/docs/expect#not)
 
 ---
 
-- 🟢
+- ✅
 - [`.toBe()`](https://jestjs.io/docs/expect#tobevalue)
 
 ---
 
-- 🟢
+- ✅
 - [`.toEqual()`](https://jestjs.io/docs/expect#toequalvalue)
 
 ---
 
-- 🟢
+- ✅
 - [`.toBeNull()`](https://jestjs.io/docs/expect#tobenull)
 
 ---
 
-- 🟢
+- ✅
 - [`.toBeUndefined()`](https://jestjs.io/docs/expect#tobeundefined)
 
 ---
 
-- 🟢
+- ✅
 - [`.toBeNaN()`](https://jestjs.io/docs/expect#tobenan)
 
 ---
 
-- 🟢
+- ✅
 - [`.toBeDefined()`](https://jestjs.io/docs/expect#tobedefined)
 
 ---
 
-- 🟢
+- ✅
 - [`.toBeFalsy()`](https://jestjs.io/docs/expect#tobefalsy)
 
 ---
 
-- 🟢
+- ✅
 - [`.toBeTruthy()`](https://jestjs.io/docs/expect#tobetruthy)
 
 ---
 
-- 🟢
+- ✅
 - [`.toContain()`](https://jestjs.io/docs/expect#tocontainitem)
 
 ---
 
-- 🟢
+- ✅
 - [`.toStrictEqual()`](https://jestjs.io/docs/expect#tostrictequalvalue)
 
 ---
 
-- 🟢
+- ✅
 - [`.toThrow()`](https://jestjs.io/docs/expect#tothrowerror)
 
 ---
 
-- 🟢
+- ✅
 - [`.toHaveLength()`](https://jestjs.io/docs/expect#tohavelengthnumber)
 
 ---
 
-- 🟢
+- ✅
 - [`.toHaveProperty()`](https://jestjs.io/docs/expect#tohavepropertykeypath-value)
 
 ---
 
-- 🔴
+- ❌
 - [`.extend`](https://jestjs.io/docs/expect#expectextendmatchers)
 
 ---
 
-- 🟢
+- ✅
 - [`.anything()`](https://jestjs.io/docs/expect#expectanything)
 
 ---
 
-- 🟢
+- ✅
 - [`.any()`](https://jestjs.io/docs/expect#expectanyconstructor)
 
 ---
 
-- 🔴
+- ❌
 - [`.arrayContaining()`](https://jestjs.io/docs/expect#expectarraycontainingarray)
 
 ---
 
-- 🔴
+- ❌
 - [`.assertions()`](https://jestjs.io/docs/expect#expectassertionsnumber)
 
 ---
 
-- 🔴
+- ❌
 - [`.closeTo()`](https://jestjs.io/docs/expect#expectclosetonumber-numdigits)
 
 ---
 
-- 🔴
+- ❌
 - [`.hasAssertions()`](https://jestjs.io/docs/expect#expecthasassertions)
 
 ---
 
-- 🔴
+- ❌
 - [`.objectContaining()`](https://jestjs.io/docs/expect#expectobjectcontainingobject)
 
 ---
 
-- 🟢
+- ✅
 - [`.stringContaining()`](https://jestjs.io/docs/expect#expectstringcontainingstring)
 
 ---
 
-- 🟢
+- ✅
 - [`.stringMatching()`](https://jestjs.io/docs/expect#expectstringmatchingstring--regexp)
 
 ---
 
-- 🔴
+- ❌
 - [`.addSnapshotSerializer()`](https://jestjs.io/docs/expect#expectaddsnapshotserializerserializer)
 
 ---
 
-- 🟢
+- ✅
 - [`.resolves()`](https://jestjs.io/docs/expect#resolves)
 
 ---
 
-- 🟢
+- ✅
 - [`.rejects()`](https://jestjs.io/docs/expect#rejects)
 
 ---
 
-- 🟢
+- ✅
 - [`.toHaveBeenCalled()`](https://jestjs.io/docs/expect#tohavebeencalled)
 
 ---
 
-- 🟢
+- ✅
 - [`.toHaveBeenCalledTimes()`](https://jestjs.io/docs/expect#tohavebeencalledtimesnumber)
 
 ---
 
-- 🔴
+- ❌
 - [`.toHaveBeenCalledWith()`](https://jestjs.io/docs/expect#tohavebeencalledwitharg1-arg2-)
 
 ---
 
-- 🔴
+- ❌
 - [`.toHaveBeenLastCalledWith()`](https://jestjs.io/docs/expect#tohavebeenlastcalledwitharg1-arg2-)
 
 ---
 
-- 🔴
+- ❌
 - [`.toHaveBeenNthCalledWith()`](https://jestjs.io/docs/expect#tohavebeennthcalledwithnthcall-arg1-arg2-)
 
 ---
 
-- 🔴
+- ❌
 - [`.toHaveReturned()`](https://jestjs.io/docs/expect#tohavereturned)
 
 ---
 
-- 🔴
+- ❌
 - [`.toHaveReturnedTimes()`](https://jestjs.io/docs/expect#tohavereturnedtimesnumber)
 
 ---
 
-- 🔴
+- ❌
 - [`.toHaveReturnedWith()`](https://jestjs.io/docs/expect#tohavereturnedwithvalue)
 
 ---
 
-- 🔴
+- ❌
 - [`.toHaveLastReturnedWith()`](https://jestjs.io/docs/expect#tohavelastreturnedwithvalue)
 
 ---
 
-- 🔴
+- ❌
 - [`.toHaveNthReturnedWith()`](https://jestjs.io/docs/expect#tohaventhreturnedwithnthcall-value)
 
 ---
 
-- 🟢
+- ✅
 - [`.toBeCloseTo()`](https://jestjs.io/docs/expect#tobeclosetonumber-numdigits)
 
 ---
 
-- 🟢
+- ✅
 - [`.toBeGreaterThan()`](https://jestjs.io/docs/expect#tobegreaterthannumber--bigint)
 
 ---
 
-- 🟢
+- ✅
 - [`.toBeGreaterThanOrEqual()`](https://jestjs.io/docs/expect#tobegreaterthanorequalnumber--bigint)
 
 ---
 
-- 🟢
+- ✅
 - [`.toBeLessThan()`](https://jestjs.io/docs/expect#tobelessthannumber--bigint)
 
 ---
 
-- 🟢
+- ✅
 - [`.toBeLessThanOrEqual()`](https://jestjs.io/docs/expect#tobelessthanorequalnumber--bigint)
 
 ---
 
-- 🟢
+- ✅
 - [`.toBeInstanceOf()`](https://jestjs.io/docs/expect#tobeinstanceofclass)
 
 ---
 
-- 🔴
+- ❌
 - [`.toContainEqual()`](https://jestjs.io/docs/expect#tocontainequalitem)
 
 ---
 
-- 🟢
+- ✅
 - [`.toMatch()`](https://jestjs.io/docs/expect#tomatchregexp--string)
 
 ---
 
-- 🟢
+- ✅
 - [`.toMatchObject()`](https://jestjs.io/docs/expect#tomatchobjectobject)
 
 ---
 
-- 🟢
+- ✅
 - [`.toMatchSnapshot()`](https://jestjs.io/docs/expect#tomatchsnapshotpropertymatchers-hint)
 
 ---
 
-- 🔴
+- ❌
 - [`.toMatchInlineSnapshot()`](https://jestjs.io/docs/expect#tomatchinlinesnapshotpropertymatchers-inlinesnapshot)
 
 ---
 
-- 🔴
+- ❌
 - [`.toThrowErrorMatchingSnapshot()`](https://jestjs.io/docs/expect#tothrowerrormatchingsnapshothint)
 
 ---
 
-- 🔴
+- ❌
 - [`.toThrowErrorMatchingInlineSnapshot()`](https://jestjs.io/docs/expect#tothrowerrormatchinginlinesnapshotinlinesnapshot)
 
 {% /table %}

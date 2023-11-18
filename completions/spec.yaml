@@ -78,6 +78,9 @@ subcommands:
       - name: server-bunfile
         type: string
         summary: "Use a specific .bun file for SSR in bun dev (default: node_modules.server.bun)"
+      - name: env-file
+        type: string
+        summary: "Load environment variables from the specified file(s)"
       - name: extension-order
         type: string
         summary: "defaults to: .tsx,.ts,.jsx,.js,.json"
@@ -119,9 +122,6 @@ subcommands:
       - no-save --
       - dry-run -- "Don't install anything"
       - force -- "Always request the latest versions from the registry & reinstall all dependenices"
-      - name: lockfile
-        type: string
-        summary: "Store & load a lockfile at a specific filepath"
       - name: cache-dir
         type: string
         summary: "Store & load cached data from a specific directory path"
@@ -160,9 +160,6 @@ subcommands:
       - no-cache -- "Ignore manifest cache entirely"
       - silent -- "Don't output anything"
       - verbose -- "Excessively verbose logging"
-      - name: lockfile
-        type: string
-        summary: "Store & load a lockfile at a specific filepath"
       - name: cache-dir
         type: string
         summary: "Store & load cached data from a specific directory path"
@@ -198,9 +195,6 @@ subcommands:
       - no-save --
       - dry-run -- "Don't install anything"
       - force -- "Always request the latest versions from the registry & reinstall all dependenices"
-      - name: lockfile
-        type: string
-        summary: "Store & load a lockfile at a specific filepath"
       - name: cache-dir
         type: string
         summary: "Store & load cached data from a specific directory path"

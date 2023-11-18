@@ -121,18 +121,31 @@ public:
     void corkUnchecked() {
         /* What if another socket is corked? */
         getLoopData()->corkedSocket = this;
+        getLoopData()->corkedSocketIsSSL = SSL;
+    }
+
+    void uncorkWithoutSending() {
+        if (isCorked()) {
+            getLoopData()->corkedSocket = nullptr;
+        }
     }
 
     /* Cork this socket. Only one socket may ever be corked per-loop at any given time */
     void cork() {
         /* Extra check for invalid corking of others */
         if (getLoopData()->corkOffset && getLoopData()->corkedSocket != this) {
-            std::cerr << "Error: Cork buffer must not be acquired without checking canCork!" << std::endl;
-            std::terminate();
+            // We uncork the other socket early instead of terminating the program
+            // is unlikely to be cause any issues and is better than crashing
+            if(getLoopData()->corkedSocketIsSSL) {
+                ((AsyncSocket<true> *) getLoopData()->corkedSocket)->uncork();
+            } else {
+                ((AsyncSocket<false> *) getLoopData()->corkedSocket)->uncork();
+            }
         }
 
         /* What if another socket is corked? */
         getLoopData()->corkedSocket = this;
+        getLoopData()->corkedSocketIsSSL = SSL;
     }
 
     /* Returns the corked socket or nullptr */
@@ -206,9 +219,9 @@ public:
         unsigned char *b = (unsigned char *) binary.data();
 
         if (binary.length() == 4) {
-            ipLength = sprintf(buf, "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
+            ipLength = snprintf(buf, sizeof(buf), "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
         } else {
-            ipLength = sprintf(buf, "%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
+            ipLength = snprintf(buf, sizeof(buf), "%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
                 b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11],
                 b[12], b[13], b[14], b[15]);
         }

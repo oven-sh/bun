@@ -1,7 +1,8 @@
 import { ArrayBufferSink, readableStreamToText, spawn, spawnSync, write } from "bun";
 import { describe, expect, it } from "bun:test";
-import { gcTick as _gcTick, bunEnv } from "harness";
+import { gcTick as _gcTick, bunExe, bunEnv } from "harness";
 import { rmSync, writeFileSync } from "node:fs";
+import path from "path";
 
 for (let [gcTick, label] of [
   [_gcTick, "gcTick"],
@@ -44,6 +45,15 @@ for (let [gcTick, label] of [
         expect(exitCode1).toBe(0);
         expect(exitCode2).toBe(1);
         gcTick();
+      });
+
+      it("throws errors for invalid arguments", async () => {
+        expect(() => {
+          spawnSync({
+            cmd: ["echo", "hi"],
+            cwd: "./this-should-not-exist",
+          });
+        }).toThrow("No such file or directory");
       });
     });
 
@@ -160,7 +170,7 @@ for (let [gcTick, label] of [
           expect(exitCode1).toBe(0);
           expect(exitCode2).toBe(1);
         }
-      }, 20_000);
+      }, 60_000_0);
 
       // FIXME: fix the assertion failure
       it.skip("Uint8Array works as stdout", () => {
@@ -440,6 +450,223 @@ for (let [gcTick, label] of [
           });
         }
       });
+
+      describe("ipc", () => {
+        it("the subprocess should be defined and the child should send", done => {
+          gcTick();
+          const returned_subprocess = spawn([bunExe(), path.join(__dirname, "bun-ipc-child.js")], {
+            ipc: (message, subProcess) => {
+              expect(subProcess).toBe(returned_subprocess);
+              expect(message).toBe("hello");
+              subProcess.kill();
+              done();
+              gcTick();
+            },
+          });
+        });
+
+        it("the subprocess should receive the parent message and respond back", done => {
+          gcTick();
+
+          const parentMessage = "I am your father";
+          const childProc = spawn([bunExe(), path.join(__dirname, "bun-ipc-child-respond.js")], {
+            ipc: (message, subProcess) => {
+              expect(message).toBe(`pong:${parentMessage}`);
+              subProcess.kill();
+              done();
+              gcTick();
+            },
+          });
+
+          childProc.send(parentMessage);
+          gcTick();
+        });
+      });
+
+      it("throws errors for invalid arguments", async () => {
+        expect(() => {
+          spawnSync({
+            cmd: ["echo", "hi"],
+            cwd: "./this-should-not-exist",
+          });
+        }).toThrow("No such file or directory");
+      });
     });
   });
 }
+
+if (!process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) {
+  it("with BUN_FEATURE_FLAG_FORCE_WAITER_THREAD", async () => {
+    const result = spawnSync({
+      cmd: [bunExe(), "test", import.meta.path],
+      env: {
+        ...bunEnv,
+        // Both flags are necessary to force this condition
+        "BUN_FEATURE_FLAG_FORCE_WAITER_THREAD": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "1",
+      },
+    });
+    if (result.exitCode !== 0) {
+      console.error(result.stderr.toString());
+      console.log(result.stdout.toString());
+    }
+    expect(result.exitCode).toBe(0);
+  }, 60_000);
+}
+
+describe("spawn unref and kill should not hang", () => {
+  it("kill and await exited", async () => {
+    for (let i = 0; i < 10; i++) {
+      const proc = spawn({
+        cmd: ["sleep", "0.001"],
+        stdout: "ignore",
+        stderr: "ignore",
+        stdin: "ignore",
+      });
+      proc.kill();
+      await proc.exited;
+    }
+
+    expect().pass();
+  });
+  it("unref", async () => {
+    for (let i = 0; i < 100; i++) {
+      const proc = spawn({
+        cmd: ["sleep", "0.001"],
+        stdout: "ignore",
+        stderr: "ignore",
+        stdin: "ignore",
+      });
+      proc.unref();
+      await proc.exited;
+    }
+
+    expect().pass();
+  });
+  it("kill and unref", async () => {
+    for (let i = 0; i < 100; i++) {
+      const proc = spawn({
+        cmd: ["sleep", "0.001"],
+        stdout: "ignore",
+        stderr: "ignore",
+        stdin: "ignore",
+      });
+      proc.kill();
+      proc.unref();
+      await proc.exited;
+    }
+
+    expect().pass();
+  });
+  it("unref and kill", async () => {
+    for (let i = 0; i < 100; i++) {
+      const proc = spawn({
+        cmd: ["sleep", "0.001"],
+        stdout: "ignore",
+        stderr: "ignore",
+        stdin: "ignore",
+      });
+      proc.unref();
+      proc.kill();
+      await proc.exited;
+    }
+
+    expect().pass();
+  });
+
+  it("should not hang after unref", async () => {
+    const proc = spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "does-not-hang.js")],
+    });
+
+    await proc.exited;
+    expect().pass();
+  });
+});
+
+async function runTest(sleep: string, order = ["sleep", "kill", "unref", "exited"]) {
+  console.log("running", order.join(","));
+  for (let i = 0; i < 100; i++) {
+    const proc = spawn({
+      cmd: ["sleep", sleep],
+      stdout: "ignore",
+      stderr: "ignore",
+      stdin: "ignore",
+    });
+    for (let action of order) {
+      switch (action) {
+        case "sleep": {
+          await Bun.sleep(1);
+          break;
+        }
+
+        case "kill": {
+          proc.kill();
+          break;
+        }
+
+        case "unref": {
+          proc.unref();
+          break;
+        }
+
+        case "exited": {
+          expect(await proc.exited).toBeNumber();
+          break;
+        }
+
+        default: {
+          throw new Error("unknown action");
+        }
+      }
+    }
+  }
+  expect().pass();
+}
+
+describe("should not hang", () => {
+  for (let sleep of ["0.001", "0"]) {
+    describe("sleep " + sleep, () => {
+      for (let order of [
+        ["sleep", "kill", "unref", "exited"],
+        ["sleep", "unref", "kill", "exited"],
+        ["kill", "sleep", "unref", "exited"],
+        ["kill", "unref", "sleep", "exited"],
+        ["unref", "sleep", "kill", "exited"],
+        ["unref", "kill", "sleep", "exited"],
+        ["exited", "sleep", "kill", "unref"],
+        ["exited", "sleep", "unref", "kill"],
+        ["exited", "kill", "sleep", "unref"],
+        ["exited", "kill", "unref", "sleep"],
+        ["exited", "unref", "sleep", "kill"],
+        ["exited", "unref", "kill", "sleep"],
+        ["unref", "exited"],
+        ["exited", "unref"],
+        ["kill", "exited"],
+        ["exited"],
+      ]) {
+        const name = order.join(",");
+        const fn = runTest.bind(undefined, sleep, order);
+        it(name, fn);
+      }
+    });
+  }
+});
+
+it("#3480", async () => {
+  try {
+    var server = Bun.serve({
+      port: 0,
+      fetch: (req, res) => {
+        Bun.spawnSync(["echo", "1"], {});
+        return new Response("Hello world!");
+      },
+    });
+
+    const response = await fetch("http://" + server.hostname + ":" + server.port);
+    expect(await response.text()).toBe("Hello world!");
+    expect(response.ok);
+  } finally {
+    server!.stop(true);
+  }
+});

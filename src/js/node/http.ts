@@ -2,6 +2,9 @@
 const EventEmitter = require("node:events");
 const { isTypedArray } = require("node:util/types");
 const { Duplex, Readable, Writable } = require("node:stream");
+const { getHeader, setHeader, assignHeaders: assignHeadersFast } = $lazy("http");
+
+const GlobalPromise = globalThis.Promise;
 
 const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
 /**
@@ -11,7 +14,7 @@ const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
  *  field-vchar    = VCHAR / obs-text
  */
 function checkInvalidHeaderChar(val: string) {
-  return RegExpPrototypeExec.call(headerCharRegex, val) !== null;
+  return RegExpPrototypeExec.$call(headerCharRegex, val) !== null;
 }
 
 const validateHeaderName = (name, label) => {
@@ -75,13 +78,9 @@ const searchParamsSymbol = Symbol.for("query"); // This is the symbol used in No
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const StringPrototypeToUpperCase = String.prototype.toUpperCase;
-const StringPrototypeIncludes = String.prototype.includes;
-const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
-const StringPrototypeIndexOf = String.prototype.indexOf;
 const ArrayIsArray = Array.isArray;
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const ObjectAssign = Object.assign;
-const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 
 const INVALID_PATH_REGEX = /[^\u0021-\u00ff]/;
 const NODE_HTTP_WARNING =
@@ -97,11 +96,13 @@ function isValidTLSArray(obj) {
   if (typeof obj === "string" || isTypedArray(obj) || obj instanceof ArrayBuffer || obj instanceof Blob) return true;
   if (Array.isArray(obj)) {
     for (var i = 0; i < obj.length; i++) {
-      if (typeof obj !== "string" && !isTypedArray(obj) && !(obj instanceof ArrayBuffer) && !(obj instanceof Blob))
+      const item = obj[i];
+      if (typeof item !== "string" && !isTypedArray(item) && !(item instanceof ArrayBuffer) && !(item instanceof Blob))
         return false;
     }
     return true;
   }
+  return false;
 }
 
 class ERR_INVALID_ARG_TYPE extends TypeError {
@@ -126,30 +127,20 @@ function validateFunction(callable: any, field: string) {
   return callable;
 }
 
-function getHeader(headers, name) {
-  if (!headers) return;
-  const result = headers.get(name);
-  return result == null ? undefined : result;
-}
-
 type FakeSocket = InstanceType<typeof FakeSocket>;
 var FakeSocket = class Socket extends Duplex {
-  [kInternalSocketData]: any;
+  [kInternalSocketData]!: [import("bun").Server, OutgoingMessage, Request];
   bytesRead = 0;
   bytesWritten = 0;
   connecting = false;
-  remoteAddress: string | null = null;
-  remotePort;
   timeout = 0;
-
   isServer = false;
 
+  #address;
   address() {
-    return {
-      address: this.localAddress,
-      family: this.localFamily,
-      port: this.localPort,
-    };
+    // Call server.requestIP() without doing any propety getter twice.
+    var internalData;
+    return (this.#address ??= (internalData = this[kInternalSocketData])?.[0]?.requestIP(internalData[2]) ?? {});
   }
 
   get bufferSize() {
@@ -193,8 +184,31 @@ var FakeSocket = class Socket extends Duplex {
 
   ref() {}
 
+  get remoteAddress() {
+    return this.address()?.address;
+  }
+
+  set remoteAddress(val) {
+    // initialize the object so that other properties wouldn't be lost
+    this.address().address = val;
+  }
+
+  get remotePort() {
+    return this.address()?.port;
+  }
+
+  set remotePort(val) {
+    // initialize the object so that other properties wouldn't be lost
+    this.address().port = val;
+  }
+
   get remoteFamily() {
-    return "IPv4";
+    return this.address()?.family;
+  }
+
+  set remoteFamily(val) {
+    // initialize the object so that other properties wouldn't be lost
+    this.address().family = val;
   }
 
   resetAndDestroy() {}
@@ -437,13 +451,7 @@ class Server extends EventEmitter {
 
   address() {
     if (!this.#server) return null;
-
-    const address = this.#server.hostname;
-    return {
-      address,
-      family: isIPv6(address) ? "IPv6" : "IPv4",
-      port: this.#server.port,
-    };
+    return this.#server.address;
   }
 
   listen(port, host, backlog, onListen) {
@@ -476,6 +484,7 @@ class Server extends EventEmitter {
 
     const ResponseClass = this.#options.ServerResponse || ServerResponse;
     const RequestClass = this.#options.IncomingMessage || IncomingMessage;
+    let isHTTPS = false;
 
     try {
       const tls = this.#tls;
@@ -502,10 +511,16 @@ class Server extends EventEmitter {
             ws.data.drain(ws);
           },
         },
+        // Be very careful not to access (web) Request object
+        // properties:
+        // - request.url
+        // - request.headers
+        //
+        // We want to avoid triggering the getter for these properties because
+        // that will cause the data to be cloned twice, which costs memory & performance.
         fetch(req, _server) {
           var pendingResponse;
           var pendingError;
-          var rejectFunction, resolveFunction;
           var reject = err => {
             if (pendingError) return;
             pendingError = err;
@@ -518,17 +533,23 @@ class Server extends EventEmitter {
             if (resolveFunction) resolveFunction(resp);
           };
 
+          const prevIsNextIncomingMessageHTTPS = isNextIncomingMessageHTTPS;
+          isNextIncomingMessageHTTPS = isHTTPS;
           const http_req = new RequestClass(req);
+          isNextIncomingMessageHTTPS = prevIsNextIncomingMessageHTTPS;
+
+          const upgrade = http_req.headers.upgrade;
+
           const http_res = new ResponseClass({ reply, req: http_req });
 
-          http_req.once("error", err => reject(err));
-          http_res.once("error", err => reject(err));
+          http_req.socket[kInternalSocketData] = [_server, http_res, req];
 
-          const upgrade = req.headers.get("upgrade");
+          const rejectFn = err => reject(err);
+          http_req.once("error", rejectFn);
+          http_res.once("error", rejectFn);
+
           if (upgrade) {
-            const socket = http_req.socket;
-            socket[kInternalSocketData] = [_server, http_res, req];
-            server.emit("upgrade", http_req, socket, kEmptyBuffer);
+            server.emit("upgrade", http_req, http_req.socket, kEmptyBuffer);
           } else {
             server.emit("request", http_req, http_res);
           }
@@ -541,15 +562,14 @@ class Server extends EventEmitter {
             return pendingResponse;
           }
 
-          return new Promise((resolve, reject) => {
-            resolveFunction = resolve;
-            rejectFunction = reject;
-          });
+          var { promise, resolve: resolveFunction, reject: rejectFunction } = $newPromiseCapability(GlobalPromise);
+          return promise;
         },
       });
+      isHTTPS = this.#server.protocol === "https";
       setTimeout(emitListeningNextTick, 1, this, onListen, null, this.#server.hostname, this.#server.port);
     } catch (err) {
-      setTimeout(emitListeningNextTick, 1, this, onListen, err);
+      server.emit("error", err);
     }
 
     return this;
@@ -557,16 +577,53 @@ class Server extends EventEmitter {
   setTimeout(msecs, callback) {}
 }
 
-function assignHeaders(object, req) {
-  var headers = req.headers.toJSON();
-  const rawHeaders = $newArrayWithSize(req.headers.count * 2);
+function assignHeadersSlow(object, req) {
+  const headers = req.headers;
+  var outHeaders = Object.create(null);
+  const rawHeaders: string[] = [];
   var i = 0;
-  for (const key in headers) {
-    rawHeaders[i++] = key;
-    rawHeaders[i++] = headers[key];
+  for (let key in headers) {
+    var originalKey = key;
+    var value = headers[originalKey];
+
+    key = key.toLowerCase();
+
+    if (key !== "set-cookie") {
+      value = String(value);
+      $putByValDirect(rawHeaders, i++, originalKey);
+      $putByValDirect(rawHeaders, i++, value);
+      outHeaders[key] = value;
+    } else {
+      if ($isJSArray(value)) {
+        outHeaders[key] = value.slice();
+
+        for (let entry of value) {
+          $putByValDirect(rawHeaders, i++, originalKey);
+          $putByValDirect(rawHeaders, i++, entry);
+        }
+      } else {
+        value = String(value);
+        outHeaders[key] = [value];
+        $putByValDirect(rawHeaders, i++, originalKey);
+        $putByValDirect(rawHeaders, i++, value);
+      }
+    }
   }
-  object.headers = headers;
+  object.headers = outHeaders;
   object.rawHeaders = rawHeaders;
+}
+
+function assignHeaders(object, req) {
+  // This fast path is an 8% speedup for a "hello world" node:http server, and a 7% speedup for a "hello world" express server
+  const tuple = assignHeadersFast(req, object);
+  if (tuple !== null) {
+    object.headers = $getInternalField(tuple, 0);
+    object.rawHeaders = $getInternalField(tuple, 1);
+    return true;
+  } else {
+    assignHeadersSlow(object, req);
+    return false;
+  }
 }
 function destroyBodyStreamNT(bodyStream) {
   bodyStream.destroy();
@@ -578,43 +635,56 @@ function getDefaultHTTPSAgent() {
   return (_defaultHTTPSAgent ??= new Agent({ defaultPort: 443, protocol: "https:" }));
 }
 
+function requestHasNoBody(method, req) {
+  if ("GET" === method || "HEAD" === method || "TRACE" === method || "CONNECT" === method || "OPTIONS" === method)
+    return true;
+  const headers = req?.headers;
+  const contentLength = headers?.["content-length"];
+  if (!parseInt(contentLength, 10)) return true;
+
+  return false;
+}
+
+// This lets us skip some URL parsing
+var isNextIncomingMessageHTTPS = false;
+
 class IncomingMessage extends Readable {
-  method: string;
+  method: string | null = null;
   complete: boolean;
 
   constructor(req, defaultIncomingOpts) {
-    const method = req.method;
-
     super();
-
-    const url = new URL(req.url);
 
     var { type = "request", [kInternalRequest]: nodeReq } = defaultIncomingOpts || {};
 
-    this.#noBody =
-      type === "request" // TODO: Add logic for checking for body on response
-        ? "GET" === method ||
-          "HEAD" === method ||
-          "TRACE" === method ||
-          "CONNECT" === method ||
-          "OPTIONS" === method ||
-          (parseInt(req.headers.get("Content-Length") || "") || 0) === 0
-        : false;
-
     this.#req = req;
-    this.method = method;
     this.#type = type;
-    this.complete = !!this.#noBody;
 
     this.#bodyStream = undefined;
-    const socket = new FakeSocket();
-    socket.remoteAddress = url.hostname;
-    socket.remotePort = url.port;
-    this.#fakeSocket = socket;
 
-    this.url = url.pathname + url.search;
-    this.#nodeReq = this.req = nodeReq;
-    assignHeaders(this, req);
+    this.req = nodeReq;
+
+    if (!assignHeaders(this, req)) {
+      this.#fakeSocket = req;
+      const reqUrl = String(req?.url || "");
+      this.url = reqUrl;
+    }
+
+    if (isNextIncomingMessageHTTPS) {
+      // Creating a new Duplex is expensive.
+      // We can skip it if the request is not HTTPS.
+      const socket = new FakeSocket();
+      this.#fakeSocket = socket;
+      socket.encrypted = true;
+      isNextIncomingMessageHTTPS = false;
+    }
+
+    this.#noBody =
+      type === "request" // TODO: Add logic for checking for body on response
+        ? requestHasNoBody(this.method, this)
+        : false;
+
+    this.complete = !!this.#noBody;
   }
 
   headers;
@@ -622,13 +692,12 @@ class IncomingMessage extends Readable {
   _consuming = false;
   _dumped = false;
   #bodyStream: ReadableStreamDefaultReader | undefined;
-  #fakeSocket: FakeSocket | undefined;
+  #fakeSocket: FakeSocket | undefined = undefined;
   #noBody = false;
   #aborted = false;
   #req;
   url;
   #type;
-  #nodeReq;
 
   _construct(callback) {
     // TODO: streaming
@@ -637,7 +706,7 @@ class IncomingMessage extends Readable {
       return;
     }
 
-    const contentLength = this.#req.headers.get("content-length");
+    const contentLength = this.headers["content-length"];
     const length = contentLength ? parseInt(contentLength, 10) : 0;
     if (length === 0) {
       this.#noBody = true;
@@ -654,7 +723,7 @@ class IncomingMessage extends Readable {
       if (this.#aborted) return;
       if (done) {
         this.push(null);
-        this.destroy();
+        process.nextTick(destroyBodyStreamNT, this);
         break;
       }
       for (var v of value) {
@@ -694,7 +763,7 @@ class IncomingMessage extends Readable {
   }
 
   get connection() {
-    return this.#fakeSocket;
+    return (this.#fakeSocket ??= new FakeSocket());
   }
 
   get statusCode() {
@@ -958,8 +1027,11 @@ let OriginalWriteHeadFn, OriginalImplicitHeadFn;
 class ServerResponse extends Writable {
   declare _writableState: any;
 
-  constructor({ req, reply }) {
+  constructor(c) {
     super();
+    if (!c) c = {};
+    var req = c.req || {};
+    var reply = c.reply;
     this.req = req;
     this._reply = reply;
     this.sendDate = true;
@@ -1174,7 +1246,7 @@ class ServerResponse extends Writable {
 
   setHeader(name, value) {
     var headers = (this.#headers ??= new Headers());
-    headers.set(name, value);
+    setHeader(headers, name, value);
     return this;
   }
 
@@ -1297,10 +1369,13 @@ class ClientRequest extends OutgoingMessage {
         decompress: false,
       })
         .then(response => {
+          const prevIsHTTPS = isNextIncomingMessageHTTPS;
+          isNextIncomingMessageHTTPS = response.url.startsWith("https:");
           var res = (this.#res = new IncomingMessage(response, {
             type: "response",
             [kInternalRequest]: this,
           }));
+          isNextIncomingMessageHTTPS = prevIsHTTPS;
           this.emit("response", res);
         })
         .catch(err => {
@@ -1391,7 +1466,7 @@ class ClientRequest extends OutgoingMessage {
 
     if (options.path) {
       const path = String(options.path);
-      if (RegExpPrototypeExec.call(INVALID_PATH_REGEX, path) !== null) {
+      if (RegExpPrototypeExec.$call(INVALID_PATH_REGEX, path) !== null) {
         $debug('Path contains unescaped characters: "%s"', path);
         throw new Error("Path contains unescaped characters");
         // throw new ERR_UNESCAPED_CHARACTERS("Request path");
@@ -1438,7 +1513,7 @@ class ClientRequest extends OutgoingMessage {
         // throw new ERR_INVALID_HTTP_TOKEN("Method", method);
         throw new Error("ERR_INVALID_HTTP_TOKEN: Method");
       }
-      method = this.#method = StringPrototypeToUpperCase.call(method);
+      method = this.#method = StringPrototypeToUpperCase.$call(method);
     } else {
       method = this.#method = "GET";
     }
@@ -1515,7 +1590,7 @@ class ClientRequest extends OutgoingMessage {
       //   // For the Host header, ensure that IPv6 addresses are enclosed
       //   // in square brackets, as defined by URI formatting
       //   // https://tools.ietf.org/html/rfc3986#section-3.2.2
-      //   const posColon = StringPrototypeIndexOf.call(hostHeader, ":");
+      //   const posColon = StringPrototypeIndexOf.$call(hostHeader, ":");
       //   if (
       //     posColon !== -1 &&
       //     StringPrototypeIncludes(hostHeader, ":", posColon + 1) &&
@@ -1614,8 +1689,8 @@ function urlToHttpOptions(url) {
   return {
     protocol,
     hostname:
-      typeof hostname === "string" && StringPrototypeStartsWith.call(hostname, "[")
-        ? StringPrototypeSlice.call(hostname, 1, -1)
+      typeof hostname === "string" && StringPrototypeStartsWith.$call(hostname, "[")
+        ? StringPrototypeSlice.$call(hostname, 1, -1)
         : hostname,
     hash,
     search,
@@ -1646,7 +1721,7 @@ const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
  * See https://tools.ietf.org/html/rfc7230#section-3.2.6
  */
 function checkIsHttpToken(val) {
-  return RegExpPrototypeExec.call(tokenRegExp, val) !== null;
+  return RegExpPrototypeExec.$call(tokenRegExp, val) !== null;
 }
 
 // Copyright Joyent, Inc. and other Node contributors.

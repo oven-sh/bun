@@ -26,7 +26,7 @@ Get started with one of the quick links below, or read on to learn more about Bu
 {% arrowbutton href="/docs/installation" text="Install Bun" /%}
 {% arrowbutton href="/docs/quickstart" text="Do the quickstart" /%}
 {% arrowbutton href="/docs/cli/install" text="Install a package" /%}
-{% arrowbutton href="/docs/templates" text="Use a project template" /%}
+{% arrowbutton href="/docs/cli/bun-create" text="Use a project template" /%}
 {% arrowbutton href="/docs/bundler" text="Bundle code for production" /%}
 {% arrowbutton href="/docs/api/http" text="Build an HTTP server" /%}
 {% arrowbutton href="/docs/api/websockets" text="Build a Websocket server" /%}
@@ -37,11 +37,14 @@ Get started with one of the quick links below, or read on to learn more about Bu
 
 ## What is a runtime?
 
-JavaScript (or, more formally, ECMAScript) is just a _specification_ for a programming language. Anyone can write a JavaScript _engine_ that ingests a valid JavaScript program and executes it. The two most popular engines in use today are V8 (developed by Google) and JavaScriptCore (developed by Apple). Both are open source.
+JavaScript (or, more formally, ECMAScript) is just a _specification_ for a programming language. Anyone can write a JavaScript _engine_ that ingests a valid JavaScript program and executes it. The two most popular engines in use today are V8 (developed by Google)
+and JavaScriptCore (developed by Apple). Both are open source.
+
+But most JavaScript programs don't run in a vacuum. They need a way to access the outside world to perform useful tasks. This is where _runtimes_ come in. They implement additional APIs that are then made available to the JavaScript programs they execute.
 
 ### Browsers
 
-But most JavaScript programs don't run in a vacuum. They need a way to access the outside world to perform useful tasks. This is where _runtimes_ come in. They implement additional APIs that are then made available to the JavaScript programs they execute. Notably, browsers ship with JavaScript runtimes that implement a set of Web-specific APIs that are exposed via the global `window` object. Any JavaScript code executed by the browser can use these APIs to implement interactive or dynamic behavior in the context of the current webpage.
+Notably, browsers ship with JavaScript runtimes that implement a set of Web-specific APIs that are exposed via the global `window` object. Any JavaScript code executed by the browser can use these APIs to implement interactive or dynamic behavior in the context of the current webpage.
 
 <!-- JavaScript runtime that exposes  JavaScript engines are designed to run "vanilla" JavaScript programs, but it's often JavaScript _runtimes_ use an engine internally to execute the code and implement additional APIs that are then made available to executed programs.
 JavaScript was [initially designed](https://en.wikipedia.org/wiki/JavaScript) as a language to run in web browsers to implement interactivity and dynamic behavior in web pages. Browsers are the first JavaScript runtimes. JavaScript programs that are executed in browsers have access to a set of Web-specific global APIs on the `window` object. -->
@@ -66,7 +69,7 @@ Bun is designed from the ground-up with today's JavaScript ecosystem in mind.
 - **TypeScript & JSX support**. You can directly execute `.jsx`, `.ts`, and `.tsx` files; Bun's transpiler converts these to vanilla JavaScript before execution.
 - **ESM & CommonJS compatibility**. The world is moving towards ES modules (ESM), but millions of packages on npm still require CommonJS. Bun recommends ES modules, but supports CommonJS.
 - **Web-standard APIs**. Bun implements standard Web APIs like `fetch`, `WebSocket`, and `ReadableStream`. Bun is powered by the JavaScriptCore engine, which is developed by Apple for Safari, so some APIs like [`Headers`](https://developer.mozilla.org/en-US/docs/Web/API/Headers) and [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) directly use [Safari's implementation](https://github.com/oven-sh/bun/blob/HEAD/src/bun.js/bindings/webcore/JSFetchHeaders.cpp).
-- **Node.js compatibility**. In addition to supporting Node-style module resolution, Bun aims for full compatibility with built-in Node.js globals (`process`, `Buffer`) and modules (`path`, `fs`, `http`, etc.) _This is an ongoing effort that is not complete._ Refer to the compatibility page for the current status.
+- **Node.js compatibility**. In addition to supporting Node-style module resolution, Bun aims for full compatibility with built-in Node.js globals (`process`, `Buffer`) and modules (`path`, `fs`, `http`, etc.) _This is an ongoing effort that is not complete._ Refer to the [compatibility page](https://bun.sh/docs/runtime/nodejs-apis) for the current status.
 
 Bun is more than a runtime. The long-term goal is to be a cohesive, infrastructural toolkit for building apps with JavaScript/TypeScript, including a package manager, transpiler, bundler, script runner, test runner, and more.
 

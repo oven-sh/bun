@@ -35,7 +35,7 @@ Promise { <pending> }
 [Function]
 [Function]
 [class Foo]
-[class]
+[class (anonymous)]
 {}
 [Function: foooo]
 /FooRegex/
@@ -50,3 +50,62 @@ String 123 should be 2nd word, 456 == 456 and percent s %s == What okay
 [
   {}, {}, {}, {}
 ]
+{
+  level1: {
+    level2: {
+      level3: [Object ...]
+    }
+  }
+}
+{
+  "1": [Object ...]
+}
+{
+  "1": [Object ...]
+}
+{
+  "1": {
+    "2": [Object ...]
+  }
+}
+{
+  "1": {
+    "2": {
+      "3": 3
+    }
+  }
+}
+SetIterator { 
+  1,
+  "123",
+  {
+    a: [],
+    str: "123123132",
+    nr: 3453
+  },
+}
+SetIterator { 
+  1,
+  "123",
+  {
+    a: [],
+    str: "123123132",
+    nr: 3453
+  },
+}
+SetIterator { } SetIterator { }
+MapIterator { 
+  "key",
+  "key_2",
+}
+MapIterator { 
+  {
+    a: [],
+    str: "123123132",
+    nr: 3453
+  },
+  {
+    b: "test"
+  },
+}
+MapIterator { } MapIterator { }

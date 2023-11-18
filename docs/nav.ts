@@ -35,12 +35,16 @@ export default {
     page("quickstart", "Quickstart", {
       description: "Get started with Bun by building and running a simple HTTP server in 6 lines of TypeScript.",
     }),
-    page("templates", "Templates", {
-      description: "Hit the ground running with one of Bun's official templates, or download a template from GitHub.",
+    page("typescript", "TypeScript", {
+      description: "Install and configure type declarations for Bun's APIs",
     }),
-    page("guides", "Guides", {
-      description: "A set of walkthrough guides and code snippets for performing common tasks with Bun",
-      href: "/guides",
+
+    divider("Templating"),
+    page("cli/init", "`bun init`", {
+      description: "Scaffold an empty Bun project.",
+    }),
+    page("cli/bun-create", "`bun create`", {
+      description: "Scaffold a new Bun project from an official template or GitHub repo.",
     }),
 
     // page("typescript", "TypeScript"),
@@ -78,7 +82,6 @@ export default {
     // page("bundev", "Dev server"),
     // page("benchmarks", "Benchmarks"),
 
-    // divider("Runtime"),
     divider("Runtime"),
     page("cli/run", "`bun run`", {
       description: "Use `bun run` to execute JavaScript/TypeScript files and package.json scripts.",
@@ -101,6 +104,9 @@ export default {
     // page("runtime/apis", "APIs", {
     //   description: `Bun is a new JavaScript runtime designed to be a faster, leaner, more modern replacement for Node.js.`,
     // }),
+    page("runtime/env", "Environment variables", {
+      description: `How to read and set environment variables, plus how to use them to configure Bun`,
+    }),
     page("runtime/bun-apis", "Bun APIs", {
       description: `Bun provides a set of highly optimized native APIs for performing common tasks.`,
     }),
@@ -129,7 +135,7 @@ export default {
     page("runtime/autoimport", "Auto-install", {
       description: `Never use node_modules again. Bun can optionally auto-install your dependencies on the fly.`,
     }),
-    page("runtime/configuration", "Configuration", {
+    page("runtime/bunfig", "bunfig.toml", {
       description: `Bun's runtime is configurable with environment variables and the bunfig.toml config file.`,
     }),
     page("runtime/debugger", "Debugger", {
@@ -146,6 +152,21 @@ export default {
       description:
         "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
     }),
+    page("cli/add", "`bun add`", {
+      description: "Add dependencies to your project.",
+    }),
+    page("cli/remove", "`bun remove`", {
+      description: "Remove dependencies from your project.",
+    }),
+    page("cli/update", "`bun update`", {
+      description: "Update your project's dependencies.",
+    }),
+    page("cli/link", "`bun link`", {
+      description: "Install local packages as dependencies in your project.",
+    }),
+    page("cli/pm", "`bun pm`", {
+      description: "Utilities relating to package management with Bun.",
+    }),
     page("install/cache", "Global cache", {
       description:
         "Bun's package manager installs all packages into a shared global cache to avoid redundant re-downloads.",
@@ -153,20 +174,26 @@ export default {
     page("install/workspaces", "Workspaces", {
       description: "Bun's package manager supports workspaces and mono-repo development workflows.",
     }),
+    page("install/lifecycle", "Lifecycle scripts", {
+      description: "How Bun handles package lifecycle scripts with trustedDependencies",
+    }),
     page("install/lockfile", "Lockfile", {
       description:
-        "Bun's binary lockfile `bun.lockb` tracks your resolved dependency ytrr, making future installs fast and repeatable.",
+        "Bun's binary lockfile `bun.lockb` tracks your resolved dependency tree, making future installs fast and repeatable.",
     }),
     page("install/registries", "Scopes and registries", {
       description: "How to configure private scopes and custom package registries.",
     }),
-    page("install/utilities", "Utilities", {
-      description: "Use `bun pm` to introspect your global module cache or project dependency tree.",
+    page("install/overrides", "Overrides and resolutions", {
+      description: "Specify version ranges for nested dependencies",
     }),
+    // page("install/utilities", "Utilities", {
+    //   description: "Use `bun pm` to introspect your global module cache or project dependency tree.",
+    // }),
 
     divider("Bundler"),
     page("bundler", "`Bun.build`", {
-      description: "Bundle code for comsumption in the browser with Bun's native bundler.",
+      description: "Bundle code for consumption in the browser with Bun's native bundler.",
     }),
     // page("bundler/intro", "How bundlers work", {
     //   description: "A visual introduction to bundling",
@@ -313,6 +340,10 @@ export default {
       description: `Bun implements the Node-API spec for building native addons.`,
     }), // "`Node-API`"),
 
+    page("api/semver", "Semver", {
+      description: `Bun's native Semver implementation is 20x faster than the popular \`node-semver\` package.`,
+    }), // "`Semver`"),
+
     // divider("Dev Server"),
     // page("bun-dev", "Vanilla"),
     // page("dev/css", "CSS"),
@@ -328,7 +359,7 @@ export default {
     page("project/benchmarking", "Benchmarking", {
       description: `Bun is designed for performance. Learn how to benchmark Bun yourself.`,
     }),
-    page("project/development", "Development", {
+    page("project/contributing", "Contributing", {
       description: "Learn how to contribute to Bun and get your local development environment up and running.",
     }),
     page("project/licensing", "License", {

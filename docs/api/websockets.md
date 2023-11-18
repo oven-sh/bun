@@ -87,7 +87,7 @@ ws.send(new Uint8Array([1, 2, 3])); // TypedArray | DataView
 
 ### Headers
 
-Once the upgrade succeeds, Bun will send a `101 Switching Protocols` response per the [spec](https://developer.mozilla.org/en-US/docs/Web/HTTP/Protocol_upgrade_mechanism). Additional `headers` can be attched to this `Response` in the call to `server.upgrade()`.
+Once the upgrade succeeds, Bun will send a `101 Switching Protocols` response per the [spec](https://developer.mozilla.org/en-US/docs/Web/HTTP/Protocol_upgrade_mechanism). Additional `headers` can be attached to this `Response` in the call to `server.upgrade()`.
 
 ```ts
 Bun.serve({
@@ -161,7 +161,7 @@ socket.addEventListener("message", event => {
 
 ### Pub/Sub
 
-Bun's `ServerWebSocket` implementation implements a native publish-subscribe API for topic-based broadcasting. Individual sockets can `.subscribe()` to a topic (specified with a string identifier) and `.publish()` messages to all other subscribers to that topic. This topic-based broadcast API is similar to [MQTT](https://en.wikipedia.org/wiki/MQTT) and [Redis Pub/Sub](https://redis.io/topics/pubsub).
+Bun's `ServerWebSocket` implementation implements a native publish-subscribe API for topic-based broadcasting. Individual sockets can `.subscribe()` to a topic (specified with a string identifier) and `.publish()` messages to all other subscribers to that topic (excluding itself). This topic-based broadcast API is similar to [MQTT](https://en.wikipedia.org/wiki/MQTT) and [Redis Pub/Sub](https://redis.io/topics/pubsub).
 
 ```ts
 const server = Bun.serve<{ username: string }>({
@@ -192,7 +192,7 @@ const server = Bun.serve<{ username: string }>({
     close(ws) {
       const msg = `${ws.data.username} has left the chat`;
       ws.unsubscribe("the-group-chat");
-      ws.publish("the-group-chat", msg);
+      server.publish("the-group-chat", msg);
     },
   },
 });
@@ -200,7 +200,18 @@ const server = Bun.serve<{ username: string }>({
 console.log(`Listening on ${server.hostname}:${server.port}`);
 ```
 
-Calling `.publish(data)` will send the message to all subscribers of a topic _except_ the socket that called `.publish()`.
+Calling `.publish(data)` will send the message to all subscribers of a topic _except_ the socket that called `.publish()`. To send a message to all subscribers of a topic, use the `.publish()` method on the `Server` instance.
+
+```ts
+const server = Bun.serve({
+  websocket: {
+    // ...
+  },
+});
+
+// listen for some external event
+server.publish("the-group-chat", "Hello world");
+```
 
 ### Compression
 

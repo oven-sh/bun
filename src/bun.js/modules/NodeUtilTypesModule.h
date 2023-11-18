@@ -2,15 +2,15 @@
 
 #include "webcrypto/JSCryptoKey.h"
 #include "napi_external.h"
-#include "JavaScriptCore/CallFrame.h"
-#include "JavaScriptCore/CallFrameInlines.h"
-#include "JavaScriptCore/AggregateError.h"
-#include "JavaScriptCore/JSArrayBuffer.h"
+#include <JavaScriptCore/CallFrame.h>
+#include <JavaScriptCore/CallFrameInlines.h>
+#include <JavaScriptCore/AggregateError.h>
+#include <JavaScriptCore/JSArrayBuffer.h>
 #include "webcrypto/JSJsonWebKey.h"
-#include "JavaScriptCore/ObjectConstructor.h"
-#include "JavaScriptCore/GeneratorFunctionPrototype.h"
-#include "JavaScriptCore/AsyncFunctionPrototype.h"
-#include "JavaScriptCore/ErrorPrototype.h"
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/GeneratorFunctionPrototype.h>
+#include <JavaScriptCore/AsyncFunctionPrototype.h>
+#include <JavaScriptCore/ErrorPrototype.h>
 
 using namespace JSC;
 
@@ -203,7 +203,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsWeakSet, (JSC::JSGlobalObject * globalObjec
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsArrayBuffer, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     GET_FIRST_CELL
-    return JSValue::encode(jsBoolean(jsDynamicCast<JSArrayBuffer*>(cell) != nullptr));
+    auto* arrayBuffer = jsDynamicCast<JSArrayBuffer*>(cell);
+    if (!arrayBuffer)
+        return JSValue::encode(jsBoolean(false));
+    return JSValue::encode(jsBoolean(!arrayBuffer->isShared()));
 }
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsDataView, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {

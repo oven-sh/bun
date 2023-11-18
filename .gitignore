@@ -6,6 +6,7 @@ packages/*/*.wasm
 profile.json
 
 node_modules
+.envrc
 .swcrc
 yarn.lock
 dist
@@ -109,7 +110,7 @@ misctools/machbench
 *.big
 .eslintcache
 
-bun-webkit
+/bun-webkit
 
 src/deps/c-ares/build
 src/bun.js/bindings-obj
@@ -123,6 +124,7 @@ cold-jsc-start
 cold-jsc-start.d
 
 /test.ts
+/test.js
 
 src/js/out/modules*
 src/js/out/functions*
@@ -133,3 +135,27 @@ make-dev-stats.csv
 
 .uuid
 tsconfig.tsbuildinfo
+
+*.lib
+*.pdb
+CMakeFiles
+build.ninja
+.ninja_deps
+.ninja_log
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+
+*.lib
+x64
+**/*.vcxproj*
+**/*.sln*
+**/*.dir
+**/*.pdb
+
+/.webkit-cache
+/.cache
+/src/deps/libuv
+/build-*/
+
+.vs

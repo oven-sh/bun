@@ -1,6 +1,6 @@
-import { unsafe } from "bun";
+import { spawn } from "bun";
 import { expect, it, test } from "bun:test";
-import { withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, withoutAggressiveGC } from "harness";
 
 test("exists", () => {
   expect(typeof URL !== "undefined").toBe(true);
@@ -31,6 +31,7 @@ const globalSetters = [
 for (const [Constructor, name, eventName, prop] of globalSetters) {
   test(`self.${name}`, () => {
     var called = false;
+    console.log("name", name);
 
     const callback = ({ [prop]: data }) => {
       expect(data).toBe("hello");
@@ -146,19 +147,19 @@ it("crypto.timingSafeEqual", () => {
   expect(crypto.timingSafeEqual(uuid, uuid.slice())).toBe(true);
   try {
     crypto.timingSafeEqual(uuid, uuid.slice(1));
-    expect(false).toBe(true);
+    expect.unreachable();
   } catch (e) {}
 
   try {
     crypto.timingSafeEqual(uuid, uuid.slice(0, uuid.length - 2));
-    expect(false).toBe(true);
+    expect.unreachable();
   } catch (e) {
     expect(e.message).toBe("Input buffers must have the same length");
   }
 
   try {
     expect(crypto.timingSafeEqual(uuid, crypto.randomUUID())).toBe(false);
-    expect(false).toBe(true);
+    expect.unreachable();
   } catch (e) {
     expect(e.name).toBe("TypeError");
   }
@@ -224,4 +225,47 @@ test("navigator", () => {
   const userAgent = `Bun/${version}`;
   expect(navigator.hardwareConcurrency > 0).toBe(true);
   expect(navigator.userAgent).toBe(userAgent);
+  if (process.platform === "darwin") {
+    expect(navigator.platform).toBe("MacIntel");
+  } else if (process.platform === "win32") {
+    expect(navigator.platform).toBe("Win32");
+  } else if (process.platform === "linux") {
+    expect(navigator.platform).toBe("Linux x86_64");
+  }
+});
+
+test("confirm (yes)", async () => {
+  const proc = spawn({
+    cmd: [bunExe(), require("path").join(import.meta.dir, "./confirm-fixture.js")],
+    stderr: "pipe",
+    stdin: "pipe",
+    stdout: "pipe",
+    env: bunEnv,
+  });
+
+  proc.stdin.write("Y");
+  await proc.stdin.flush();
+
+  proc.stdin.write("\n");
+  await proc.stdin.flush();
+
+  await proc.exited;
+
+  expect(await new Response(proc.stderr).text()).toBe("Yes\n");
+});
+
+test("confirm (no)", async () => {
+  const proc = spawn({
+    cmd: [bunExe(), require("path").join(import.meta.dir, "./confirm-fixture.js")],
+    stderr: "pipe",
+    stdin: "pipe",
+    stdout: "pipe",
+    env: bunEnv,
+  });
+
+  proc.stdin.write("poask\n");
+  await proc.stdin.flush();
+  await proc.exited;
+
+  expect(await new Response(proc.stderr).text()).toBe("No\n");
 });

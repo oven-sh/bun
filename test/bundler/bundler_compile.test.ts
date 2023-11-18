@@ -18,6 +18,10 @@ describe("bundler", () => {
     files: {
       "/entry.ts": `
         // testing random features of bun
+        import 'node:process';
+        import 'process';
+        import 'fs';
+
         import { Database } from "bun:sqlite";
         import { serve } from 'bun';
         import { getRandomSeed } from 'bun:jsc';
@@ -64,17 +68,17 @@ describe("bundler", () => {
           </html>
         );
 
-        const port = 42001;
+        const port = 0;
         const server = Bun.serve({
           port,
           async fetch(req) {
             return new Response(await renderToReadableStream(<App />), headers);
           },
         });
-        const res = await fetch("http://localhost:" + port);
+        const res = await fetch(server.url);
         if (res.status !== 200) throw "status error";
         console.log(await res.text());
-        server.stop();
+        server.stop(true);
       `,
     },
     run: {

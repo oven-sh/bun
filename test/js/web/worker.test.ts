@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import path from "path";
-import * as wt from "worker_threads";
+import wt from "worker_threads";
 
 test("worker", done => {
   const worker = new Worker(new URL("worker-fixture.js", import.meta.url).href, {
@@ -98,7 +98,7 @@ test("sending 50 messages should just work", done => {
   });
 });
 
-test("worker with event listeners doesnt close event loop", done => {
+test("worker with event listeners doesn't close event loop", done => {
   const x = Bun.spawn({
     cmd: [bunExe(), path.join(import.meta.dir, "many-messages-event-loop.mjs"), "worker-fixture-many-messages.js"],
     env: bunEnv,
@@ -126,7 +126,7 @@ test("worker with event listeners doesnt close event loop", done => {
   });
 });
 
-test("worker with event listeners doesnt close event loop 2", done => {
+test("worker with event listeners doesn't close event loop 2", done => {
   const x = Bun.spawn({
     cmd: [bunExe(), path.join(import.meta.dir, "many-messages-event-loop.mjs"), "worker-fixture-many-messages2.js"],
     env: bunEnv,
@@ -177,6 +177,7 @@ test("worker_threads with process.exit", done => {
       expect(event).toBe(2);
     } catch (e) {
       done(e);
+      return;
     }
     done();
   });
@@ -199,7 +200,7 @@ test("worker_threads with process.exit (delay) and terminate", async () => {
   expect(code2).toBe(2);
 });
 
-test.skip("terminating forcefully properly interrupts", async () => {
+test.todo("terminating forcefully properly interrupts", async () => {
   const worker2 = new wt.Worker(new URL("worker-fixture-while-true.js", import.meta.url).href, {});
   await new Promise<void>(done => {
     worker2.on("message", () => done());

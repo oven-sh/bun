@@ -1,0 +1,8 @@
+{
+  "name": "jsonwebtoken",
+  "dependencies": {
+    "jsonwebtoken": "9.0.2",
+    "jws": "4.0.0",
+    "sinon": "6.0.0"
+  }
+}

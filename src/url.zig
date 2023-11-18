@@ -101,32 +101,10 @@ pub const URL = struct {
         return "localhost";
     }
 
-    pub const HostFormatter = struct {
-        host: string,
-        port: string = "80",
-        is_https: bool = false,
-
-        pub fn format(formatter: HostFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            if (strings.indexOfChar(formatter.host, ':') != null) {
-                try writer.writeAll(formatter.host);
-                return;
-            }
-
-            try writer.writeAll(formatter.host);
-
-            const is_port_optional = (formatter.is_https and (formatter.port.len == 0 or strings.eqlComptime(formatter.port, "443"))) or
-                (!formatter.is_https and (formatter.port.len == 0 or strings.eqlComptime(formatter.port, "80")));
-            if (!is_port_optional) {
-                try writer.writeAll(":");
-                try writer.writeAll(formatter.port);
-                return;
-            }
-        }
-    };
-    pub fn displayHost(this: *const URL) HostFormatter {
-        return HostFormatter{
+    pub fn displayHost(this: *const URL) strings.HostFormatter {
+        return strings.HostFormatter{
             .host = if (this.host.len > 0) this.host else this.displayHostname(),
-            .port = this.port,
+            .port = if (this.port.len > 0) this.getPort() else null,
             .is_https = this.isHTTPS(),
         };
     }
@@ -335,7 +313,7 @@ pub const URL = struct {
             url.pathname = "/";
         }
 
-        while (url.pathname.len > 1 and @as(u16, @bitCast(url.pathname[0..2].*)) == comptime std.mem.readIntNative(u16, "//")) {
+        while (url.pathname.len > 1 and @as(u16, @bitCast(url.pathname[0..2].*)) == comptime std.mem.readInt(u16, "//", .little)) {
             url.pathname = url.pathname[1..];
         }
 
@@ -402,7 +380,7 @@ pub const URL = struct {
                 '@' => {
                     // we found a password, everything before this point in the slice is a password
                     url.password = str[0..i];
-                    if (Environment.allow_assert) std.debug.assert(str[i..].len < 2 or std.mem.readIntNative(u16, str[i..][0..2]) != std.mem.readIntNative(u16, "//"));
+                    if (Environment.allow_assert) std.debug.assert(str[i..].len < 2 or std.mem.readInt(u16, str[i..][0..2], .little) != std.mem.readInt(u16, "//", .little));
                     return i + 1;
                 },
                 // if we reach a slash or "?", there's no password
@@ -1097,8 +1075,11 @@ pub const FormData = struct {
                             break :brk field.content_type.slice(buf);
                         }
                         if (filename_str.len > 0) {
-                            if (bun.HTTP.MimeType.byExtensionNoDefault(std.fs.path.extension(filename_str))) |mime| {
-                                break :brk mime.value;
+                            const extension = std.fs.path.extension(filename_str);
+                            if (extension.len > 0) {
+                                if (bun.HTTP.MimeType.byExtensionNoDefault(extension[1..extension.len])) |mime| {
+                                    break :brk mime.value;
+                                }
                             }
                         }
 

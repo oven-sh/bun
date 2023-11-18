@@ -228,20 +228,20 @@ pub const Blob = struct {
         comptime Writer: type,
         writer: Writer,
     ) !void {
-        try writer.writeIntNative(u8, serialization_version);
+        try writer.writeInt(u8, serialization_version, .little);
 
-        try writer.writeIntNative(u64, @as(u64, @intCast(this.offset)));
+        try writer.writeInt(u64, @as(u64, @intCast(this.offset)), .little);
 
-        try writer.writeIntNative(u32, @as(u32, @truncate(this.content_type.len)));
+        try writer.writeInt(u32, @as(u32, @truncate(this.content_type.len)), .little);
         _ = try writer.write(this.content_type);
-        try writer.writeIntNative(u8, @intFromBool(this.content_type_was_set));
+        try writer.writeInt(u8, @intFromBool(this.content_type_was_set), .little);
 
         const store_tag: Store.SerializeTag = if (this.store) |store|
             if (store.data == .file) .file else .bytes
         else
             .empty;
 
-        try writer.writeIntNative(u8, @intFromEnum(store_tag));
+        try writer.writeInt(u8, @intFromEnum(store_tag), .little);
 
         this.resolveSize();
         if (this.store) |store| {
@@ -301,22 +301,22 @@ pub const Blob = struct {
     ) !JSValue {
         const allocator = globalThis.allocator();
 
-        const version = try reader.readIntNative(u8);
+        const version = try reader.readInt(u8, .little);
         _ = version;
 
-        const offset = try reader.readIntNative(u64);
+        const offset = try reader.readInt(u64, .little);
 
-        const content_type_len = try reader.readIntNative(u32);
+        const content_type_len = try reader.readInt(u32, .little);
 
         const content_type = try readSlice(reader, content_type_len, allocator);
 
-        const content_type_was_set: bool = try reader.readIntNative(u8) != 0;
+        const content_type_was_set: bool = try reader.readInt(u8, .little) != 0;
 
-        const store_tag = try reader.readEnum(Store.SerializeTag, .Little);
+        const store_tag = try reader.readEnum(Store.SerializeTag, .little);
 
         const blob: *Blob = switch (store_tag) {
             .bytes => brk: {
-                const bytes_len = try reader.readIntNative(u32);
+                const bytes_len = try reader.readInt(u32, .little);
                 const bytes = try readSlice(reader, bytes_len, allocator);
 
                 var blob = Blob.init(bytes, allocator, globalThis);
@@ -326,11 +326,11 @@ pub const Blob = struct {
                 break :brk blob_;
             },
             .file => brk: {
-                const pathlike_tag = try reader.readEnum(JSC.Node.PathOrFileDescriptor.SerializeTag, .Little);
+                const pathlike_tag = try reader.readEnum(JSC.Node.PathOrFileDescriptor.SerializeTag, .little);
 
                 switch (pathlike_tag) {
                     .fd => {
-                        const fd = @as(bun.FileDescriptor, @intCast(try reader.readIntNative(bun.FileDescriptor)));
+                        const fd = @as(bun.FileDescriptor, @intCast(try reader.readInt(bun.FileDescriptor, .little)));
 
                         var blob = try allocator.create(Blob);
                         blob.* = Blob.findOrCreateFileFromPath(
@@ -343,7 +343,7 @@ pub const Blob = struct {
                         break :brk blob;
                     },
                     .path => {
-                        const path_len = try reader.readIntNative(u32);
+                        const path_len = try reader.readInt(u32, .little);
 
                         const path = try readSlice(reader, path_len, default_allocator);
 
@@ -1040,7 +1040,10 @@ pub const Blob = struct {
                     break :brk result;
                 },
                 .err => |err| {
-                    return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                    return JSC.JSPromise.rejectedPromiseValue(
+                        globalThis,
+                        err.withPath(pathlike.path.slice()).toJSC(globalThis),
+                    );
                 },
             }
             unreachable;
@@ -1080,8 +1083,13 @@ pub const Blob = struct {
                             needs_async.* = true;
                             return .zero;
                         }
-
-                        return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                        if (comptime !needs_open) {
+                            return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                        }
+                        return JSC.JSPromise.rejectedPromiseValue(
+                            globalThis,
+                            err.withPath(pathlike.path.slice()).toJSC(globalThis),
+                        );
                     },
                 }
             }
@@ -1110,7 +1118,10 @@ pub const Blob = struct {
                     break :brk result;
                 },
                 .err => |err| {
-                    return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                    return JSC.JSPromise.rejectedPromiseValue(
+                        globalThis,
+                        err.withPath(pathlike.path.slice()).toJSC(globalThis),
+                    );
                 },
             }
             unreachable;
@@ -1145,7 +1156,13 @@ pub const Blob = struct {
                         needs_async.* = true;
                         return .zero;
                     }
-                    return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                    if (comptime !needs_open) {
+                        return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                    }
+                    return JSC.JSPromise.rejectedPromiseValue(
+                        globalThis,
+                        err.withPath(pathlike.path.slice()).toJSC(globalThis),
+                    );
                 },
             }
         }
@@ -1297,7 +1314,38 @@ pub const Blob = struct {
             return .undefined;
         };
 
-        const blob = Blob.findOrCreateFileFromPath(path, globalObject);
+        var blob = Blob.findOrCreateFileFromPath(path, globalObject);
+
+        if (arguments.len >= 2) {
+            const opts = arguments[1];
+
+            if (opts.isObject()) {
+                if (opts.getTruthy(globalObject, "type")) |file_type| {
+                    inner: {
+                        if (file_type.isString()) {
+                            var allocator = bun.default_allocator;
+                            var str = file_type.toSlice(globalObject, bun.default_allocator);
+                            defer str.deinit();
+                            const slice = str.slice();
+                            if (!strings.isAllASCII(slice)) {
+                                break :inner;
+                            }
+                            blob.content_type_was_set = true;
+                            if (vm.mimeType(str.slice())) |entry| {
+                                blob.content_type = entry.value;
+                                break :inner;
+                            }
+                            var content_type_buf = allocator.alloc(u8, slice.len) catch unreachable;
+                            blob.content_type = strings.copyLowercase(slice, content_type_buf);
+                            blob.content_type_allocated = true;
+                        }
+                    }
+                }
+                if (opts.getTruthy(globalObject, "lastModified")) |last_modified| {
+                    blob.last_modified = last_modified.coerce(f64, globalObject);
+                }
+            }
+        }
 
         var ptr = bun.default_allocator.create(Blob) catch unreachable;
         ptr.* = blob;
@@ -1465,22 +1513,22 @@ pub const Blob = struct {
             switch (this.data) {
                 .file => |file| {
                     const pathlike_tag: JSC.Node.PathOrFileDescriptor.SerializeTag = if (file.pathlike == .fd) .fd else .path;
-                    try writer.writeIntNative(u8, @intFromEnum(pathlike_tag));
+                    try writer.writeInt(u8, @intFromEnum(pathlike_tag), .little);
 
                     switch (file.pathlike) {
                         .fd => |fd| {
-                            try writer.writeIntNative(u32, @as(u32, @intCast(fd)));
+                            try writer.writeInt(u32, @as(u32, @intCast(fd)), .little);
                         },
                         .path => |path| {
                             const path_slice = path.slice();
-                            try writer.writeIntNative(u32, @as(u32, @truncate(path_slice.len)));
+                            try writer.writeInt(u32, @as(u32, @truncate(path_slice.len)), .little);
                             _ = try writer.write(path_slice);
                         },
                     }
                 },
                 .bytes => |bytes| {
                     const slice = bytes.slice();
-                    try writer.writeIntNative(u32, @as(u32, @truncate(slice.len)));
+                    try writer.writeInt(u32, @as(u32, @truncate(slice.len)), .little);
                     _ = try writer.write(slice);
                 },
             }
@@ -1680,6 +1728,7 @@ pub const Blob = struct {
             read_completion: HTTPClient.NetworkThread.Completion = undefined,
             read_len: SizeType = 0,
             read_off: SizeType = 0,
+            read_eof: bool = false,
             size: SizeType = 0,
             buffer: []u8 = undefined,
             task: HTTPClient.NetworkThread.Task = undefined,
@@ -1797,8 +1846,7 @@ pub const Blob = struct {
 
             pub fn onRead(this: *ReadFile, completion: *HTTPClient.NetworkThread.Completion, result: AsyncIO.ReadError!usize) void {
                 defer this.doReadLoop();
-
-                this.read_len = @as(SizeType, @truncate(result catch |err| {
+                const read_len = @as(SizeType, @truncate(result catch |err| {
                     if (@hasField(HTTPClient.NetworkThread.Completion, "result")) {
                         this.errno = AsyncIO.asError(-completion.result);
                         this.system_error = (bun.sys.Error{
@@ -1821,6 +1869,8 @@ pub const Blob = struct {
                     this.read_len = 0;
                     return;
                 }));
+                this.read_eof = read_len == 0;
+                this.read_len = read_len;
             }
 
             fn runAsync(this: *ReadFile, task: *ReadFileTask) void {
@@ -1930,7 +1980,7 @@ pub const Blob = struct {
                 this.read_off += this.read_len;
                 var remain = this.buffer[@min(this.read_off, @as(Blob.SizeType, @truncate(this.buffer.len)))..];
 
-                if (remain.len > 0 and this.errno == null) {
+                if (remain.len > 0 and this.errno == null and !this.read_eof) {
                     this.doRead();
                     return;
                 }
@@ -2287,7 +2337,7 @@ pub const Blob = struct {
                                 this.source_fd = 0;
                             }
 
-                            this.system_error = errno.toSystemError();
+                            this.system_error = errno.withPath(this.destination_file_store.pathlike.path.slice()).toSystemError();
                             return AsyncIO.asError(errno.errno);
                         },
                     };
@@ -2737,17 +2787,7 @@ pub const Blob = struct {
         value: JSC.JSValue,
         global: *JSGlobalObject,
     ) JSC.JSValue {
-        if (value.isError()) {
-            return JSC.JSPromise.rejectedPromiseValue(global, value);
-        }
-
-        if (value.jsType() == .JSPromise)
-            return value;
-
-        return JSPromise.resolvedPromiseValue(
-            global,
-            value,
-        );
+        return JSC.JSPromise.wrap(global, value);
     }
 
     pub fn getText(
@@ -3011,12 +3051,13 @@ pub const Blob = struct {
             }
         }
 
+        const offset = this.offset +| @as(SizeType, @intCast(relativeStart));
         const len = @as(SizeType, @intCast(@max(relativeEnd -| relativeStart, 0)));
 
         // This copies over the is_all_ascii flag
         // which is okay because this will only be a <= slice
         var blob = this.dupe();
-        blob.offset = @as(SizeType, @intCast(relativeStart));
+        blob.offset = offset;
         blob.size = len;
 
         // infer the content type if it was not specified
@@ -3671,11 +3712,7 @@ pub const Blob = struct {
             if (comptime lifetime != .temporary) this.setIsASCIIFlag(true);
         }
 
-        if (comptime lifetime == .temporary) {
-            return ZigString.init(buf).toJSONObject(global);
-        } else {
-            return ZigString.init(buf).toJSONObject(global);
-        }
+        return ZigString.init(buf).toJSONObject(global);
     }
 
     pub fn toFormDataWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u8, comptime _: Lifetime) JSValue {

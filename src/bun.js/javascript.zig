@@ -58,7 +58,7 @@ const MarkedArrayBuffer = @import("./base.zig").MarkedArrayBuffer;
 const getAllocator = @import("./base.zig").getAllocator;
 const JSValue = @import("root").bun.JSC.JSValue;
 const NewClass = @import("./base.zig").NewClass;
-const Microtask = @import("root").bun.JSC.Microtask;
+
 const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
 const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;
 const JSPrivateDataPtr = @import("root").bun.JSC.JSPrivateDataPtr;
@@ -96,6 +96,7 @@ pub const Buffer = MarkedArrayBuffer;
 const Lock = @import("../lock.zig").Lock;
 const BuildMessage = JSC.BuildMessage;
 const ResolveMessage = JSC.ResolveMessage;
+const Async = bun.Async;
 
 pub const OpaqueCallback = *const fn (current: ?*anyopaque) callconv(.C) void;
 pub fn OpaqueWrap(comptime Context: type, comptime Function: fn (this: *Context) void) OpaqueCallback {
@@ -288,18 +289,14 @@ pub export fn Bun__Process__send(
     globalObject: *JSGlobalObject,
     callFrame: *JSC.CallFrame,
 ) JSValue {
+    JSC.markBinding(@src());
     if (callFrame.argumentsCount() < 1) {
         globalObject.throwInvalidArguments("process.send requires at least one argument", .{});
         return .zero;
     }
     var vm = globalObject.bunVM();
-    if (vm.ipc) |ipc| {
-        const fd = ipc.socket.fd();
-        const success = IPC.serializeJSValueForSubprocess(
-            globalObject,
-            callFrame.argument(0),
-            fd,
-        );
+    if (vm.ipc) |ipc_instance| {
+        const success = ipc_instance.ipc.serializeAndSend(globalObject, callFrame.argument(0));
         return if (success) .undefined else .zero;
     } else {
         globalObject.throw("IPC Socket is no longer open.", .{});
@@ -307,10 +304,15 @@ pub export fn Bun__Process__send(
     }
 }
 
+pub export fn Bun__isBunMain(globalObject: *JSGlobalObject, input_ptr: [*]const u8, input_len: usize) bool {
+    return strings.eql(globalObject.bunVM().main, input_ptr[0..input_len]);
+}
+
 pub export fn Bun__Process__disconnect(
     globalObject: *JSGlobalObject,
     callFrame: *JSC.CallFrame,
 ) JSValue {
+    JSC.markBinding(@src());
     _ = callFrame;
     _ = globalObject;
     return .undefined;
@@ -319,14 +321,20 @@ pub export fn Bun__Process__disconnect(
 /// This function is called on the main thread
 /// The bunVM() call will assert this
 pub export fn Bun__queueTask(global: *JSGlobalObject, task: *JSC.CppTask) void {
+    JSC.markBinding(@src());
+
     global.bunVM().eventLoop().enqueueTask(Task.init(task));
 }
 
 pub export fn Bun__queueTaskWithTimeout(global: *JSGlobalObject, task: *JSC.CppTask, milliseconds: i32) void {
+    JSC.markBinding(@src());
+
     global.bunVM().eventLoop().enqueueTaskWithTimeout(Task.init(task), milliseconds);
 }
 
 pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JSValue) callconv(.C) JSValue {
+    JSC.markBinding(@src());
+
     var jsc_vm = globalObject.bunVM();
     jsc_vm.onUnhandledError(globalObject, value);
     return JSC.JSValue.jsUndefined();
@@ -336,6 +344,8 @@ pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JS
 /// The main difference: we need to allocate the task & wakeup the thread
 /// We can avoid that if we run it from the main thread.
 pub export fn Bun__queueTaskConcurrently(global: *JSGlobalObject, task: *JSC.CppTask) void {
+    JSC.markBinding(@src());
+
     var concurrent = bun.default_allocator.create(JSC.ConcurrentTask) catch unreachable;
     concurrent.* = JSC.ConcurrentTask{
         .task = Task.init(task),
@@ -345,6 +355,8 @@ pub export fn Bun__queueTaskConcurrently(global: *JSGlobalObject, task: *JSC.Cpp
 }
 
 pub export fn Bun__handleRejectedPromise(global: *JSGlobalObject, promise: *JSC.JSPromise) void {
+    JSC.markBinding(@src());
+
     const result = promise.result(global.vm());
     var jsc_vm = global.bunVM();
 
@@ -368,6 +380,14 @@ pub export fn Bun__onDidAppendPlugin(jsc_vm: *VirtualMachine, globalObject: *JSG
     jsc_vm.bundler.linker.plugin_runner = &jsc_vm.plugin_runner.?;
 }
 
+// pub fn getGlobalExitCodeForPipeFailure() u8 {
+//     if (VirtualMachine.is_main_thread_vm) {
+//         return VirtualMachine.get().exit_handler.exit_code;
+//     }
+
+//     return 0;
+// }
+
 pub const ExitHandler = struct {
     exit_code: u8 = 0,
 
@@ -387,8 +407,9 @@ pub const ExitHandler = struct {
         JSC.markBinding(@src());
         var vm = @fieldParentPtr(VirtualMachine, "exit_handler", this);
         Process__dispatchOnExit(vm.global, this.exit_code);
-        if (vm.isMainThread())
+        if (vm.isMainThread()) {
             Bun__closeAllSQLiteDatabasesForTermination();
+        }
     }
 
     pub fn dispatchOnBeforeExit(this: *ExitHandler) void {
@@ -400,6 +421,52 @@ pub const ExitHandler = struct {
 
 pub const WebWorker = @import("./web_worker.zig").WebWorker;
 
+pub const ImportWatcher = union(enum) {
+    none: void,
+    hot: *HotReloader.Watcher,
+    watch: *WatchReloader.Watcher,
+
+    pub fn start(this: ImportWatcher) !void {
+        switch (this) {
+            inline .hot => |watcher| try watcher.start(),
+            inline .watch => |watcher| try watcher.start(),
+            else => {},
+        }
+    }
+
+    pub inline fn watchlist(this: ImportWatcher) Watcher.WatchListArray {
+        return switch (this) {
+            inline .hot, .watch => |wacher| wacher.watchlist,
+            else => .{},
+        };
+    }
+
+    pub inline fn indexOf(this: ImportWatcher, hash: Watcher.HashType) ?u32 {
+        return switch (this) {
+            inline .hot, .watch => |wacher| wacher.indexOf(hash),
+            else => null,
+        };
+    }
+
+    pub inline fn addFile(
+        this: ImportWatcher,
+        fd: StoredFileDescriptorType,
+        file_path: string,
+        hash: Watcher.HashType,
+        loader: options.Loader,
+        dir_fd: StoredFileDescriptorType,
+        package_json: ?*PackageJSON,
+        comptime copy_file_path: bool,
+    ) !void {
+        switch (this) {
+            inline .hot, .watch => |wacher| try wacher.addFile(fd, file_path, hash, loader, dir_fd, package_json, copy_file_path),
+            else => {},
+        }
+    }
+};
+
+const PlatformEventLoop = if (Environment.isPosix) uws.Loop else bun.Async.Loop;
+
 /// TODO: rename this to ScriptExecutionContext
 /// This is the shared global state for a single JS instance execution
 /// Today, Bun is one VM per thread, so the name "VirtualMachine" sort of makes sense
@@ -409,8 +476,7 @@ pub const VirtualMachine = struct {
     allocator: std.mem.Allocator,
     has_loaded_constructors: bool = false,
     bundler: Bundler,
-    bun_dev_watcher: ?*http.Watcher = null,
-    bun_watcher: ?*JSC.Watcher = null,
+    bun_watcher: ImportWatcher = .{ .none = {} },
     console: *ZigConsoleClient,
     log: *logger.Log,
     main: string = "",
@@ -422,11 +488,12 @@ pub const VirtualMachine = struct {
     origin: URL = URL{},
     node_fs: ?*Node.NodeFS = null,
     timer: Bun.Timer = Bun.Timer{},
-    event_loop_handle: ?*uws.Loop = null,
+    event_loop_handle: ?*PlatformEventLoop = null,
     pending_unref_counter: i32 = 0,
     preload: []const string = &[_][]const u8{},
     unhandled_pending_rejection_to_capture: ?*JSC.JSValue = null,
     standalone_module_graph: ?*bun.StandaloneModuleGraph = null,
+    smol: bool = false,
 
     hot_reload: bun.CLI.Command.HotReload = .none,
     jsc: *JSC.VM = undefined,
@@ -516,7 +583,7 @@ pub const VirtualMachine = struct {
     modules: ModuleLoader.AsyncModule.Queue = .{},
     aggressive_garbage_collection: GCLevel = GCLevel.none,
 
-    parser_arena: ?@import("root").bun.ArenaAllocator = null,
+    module_loader: ModuleLoader = .{},
 
     gc_controller: JSC.GarbageCollectionController = .{},
     worker: ?*JSC.WebWorker = null,
@@ -524,10 +591,19 @@ pub const VirtualMachine = struct {
 
     debugger: ?Debugger = null,
     has_started_debugger: bool = false,
+    has_terminated: bool = false,
 
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
 
     pub const OnException = fn (*ZigException) void;
+
+    pub fn uwsLoop(this: *const VirtualMachine) *uws.Loop {
+        if (comptime Environment.isPosix) {
+            return this.event_loop_handle.?;
+        }
+
+        return uws.Loop.get();
+    }
 
     pub fn isMainThread(this: *const VirtualMachine) bool {
         return this.worker == null;
@@ -567,9 +643,13 @@ pub const VirtualMachine = struct {
     }
 
     pub fn isEventLoopAlive(vm: *const VirtualMachine) bool {
-        return vm.active_tasks > 0 or
-            vm.event_loop_handle.?.active > 0 or
-            vm.event_loop.tasks.count > 0;
+        return vm.event_loop_handle.?.isActive() or (vm.active_tasks +
+            vm.event_loop.tasks.count +
+            vm.event_loop.immediate_tasks.count + vm.event_loop.next_immediate_tasks.count > 0);
+    }
+
+    pub fn wakeup(this: *VirtualMachine) void {
+        this.eventLoop().wakeup();
     }
 
     const SourceMapHandlerGetter = struct {
@@ -669,7 +749,7 @@ pub const VirtualMachine = struct {
         }
 
         if (map.map.fetchSwapRemove("BUN_INTERNAL_IPC_FD")) |kv| {
-            if (std.fmt.parseInt(i32, kv.value, 10) catch null) |fd| {
+            if (std.fmt.parseInt(i32, kv.value.value, 10) catch null) |fd| {
                 this.initIPCInstance(fd);
             } else {
                 Output.printErrorln("Failed to parse BUN_INTERNAL_IPC_FD", .{});
@@ -677,6 +757,13 @@ pub const VirtualMachine = struct {
         }
 
         if (map.get("BUN_GARBAGE_COLLECTOR_LEVEL")) |gc_level| {
+            // Reuse this flag for other things to avoid unnecessary hashtable
+            // lookups on start for obscure flags which we do not want others to
+            // depend on.
+            if (map.get("BUN_FEATURE_FLAG_FORCE_WAITER_THREAD") != null) {
+                JSC.Subprocess.WaiterThread.setShouldUseWaiterThread();
+            }
+
             if (strings.eqlComptime(gc_level, "1")) {
                 this.aggressive_garbage_collection = .mild;
             } else if (strings.eqlComptime(gc_level, "2")) {
@@ -790,6 +877,20 @@ pub const VirtualMachine = struct {
         }
     }
 
+    pub fn scriptExecutionStatus(this: *VirtualMachine) callconv(.C) JSC.ScriptExecutionStatus {
+        if (this.worker) |worker| {
+            if (worker.requested_terminate) {
+                return .stopped;
+            }
+        }
+
+        return .running;
+    }
+
+    comptime {
+        @export(scriptExecutionStatus, .{ .name = "Bun__VM__scriptExecutionStatus" });
+    }
+
     pub fn onExit(this: *VirtualMachine) void {
         this.exit_handler.dispatchOnExit();
 
@@ -823,7 +924,7 @@ pub const VirtualMachine = struct {
         unix: []const u8 = "",
         script_execution_context_id: u32 = 0,
         next_debugger_id: u64 = 1,
-        poll_ref: JSC.PollRef = .{},
+        poll_ref: Async.KeepAlive = .{},
         wait_for_connection: bool = false,
         set_breakpoint_on_first_line: bool = false,
 
@@ -946,6 +1047,10 @@ pub const VirtualMachine = struct {
         this.eventLoop().enqueueTask(task);
     }
 
+    pub inline fn enqueueImmediateTask(this: *VirtualMachine, task: Task) void {
+        this.eventLoop().enqueueImmediateTask(task);
+    }
+
     pub inline fn enqueueTaskConcurrent(this: *VirtualMachine, task: *JSC.ConcurrentTask) void {
         this.eventLoop().enqueueTaskConcurrent(task);
     }
@@ -979,9 +1084,13 @@ pub const VirtualMachine = struct {
     pub const MacroMap = std.AutoArrayHashMap(i32, js.JSObjectRef);
 
     pub fn enableMacroMode(this: *VirtualMachine) void {
+        JSC.markBinding(@src());
+
         if (!this.has_enabled_macro_mode) {
             this.has_enabled_macro_mode = true;
             this.macro_event_loop.tasks = EventLoop.Queue.init(default_allocator);
+            this.macro_event_loop.immediate_tasks = EventLoop.Queue.init(default_allocator);
+            this.macro_event_loop.next_immediate_tasks = EventLoop.Queue.init(default_allocator);
             this.macro_event_loop.tasks.ensureTotalCapacity(16) catch unreachable;
             this.macro_event_loop.global = this.global;
             this.macro_event_loop.virtual_machine = this;
@@ -1005,7 +1114,7 @@ pub const VirtualMachine = struct {
     }
 
     pub fn isWatcherEnabled(this: *VirtualMachine) bool {
-        return this.bun_dev_watcher != null or this.bun_watcher != null;
+        return this.bun_watcher != .none;
     }
 
     /// Instead of storing timestamp as a i128, we store it as a u64.
@@ -1032,6 +1141,7 @@ pub const VirtualMachine = struct {
     pub fn initWithModuleGraph(
         opts: Options,
     ) !*VirtualMachine {
+        JSC.markBinding(@src());
         const allocator = opts.allocator;
         VMHolder.vm = try allocator.create(VirtualMachine);
         var console = try allocator.create(ZigConsoleClient);
@@ -1066,10 +1176,15 @@ pub const VirtualMachine = struct {
             .ref_strings_mutex = Lock.init(),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
             .standalone_module_graph = opts.graph.?,
-            .parser_arena = @import("root").bun.ArenaAllocator.init(allocator),
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
+            default_allocator,
+        );
+        vm.regular_event_loop.immediate_tasks = EventLoop.Queue.init(
+            default_allocator,
+        );
+        vm.regular_event_loop.next_immediate_tasks = EventLoop.Queue.init(
             default_allocator,
         );
         vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
@@ -1128,6 +1243,7 @@ pub const VirtualMachine = struct {
     };
 
     pub fn init(opts: Options) !*VirtualMachine {
+        JSC.markBinding(@src());
         const allocator = opts.allocator;
         var log: *logger.Log = undefined;
         if (opts.log) |__log| {
@@ -1168,10 +1284,15 @@ pub const VirtualMachine = struct {
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = Lock.init(),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
-            .parser_arena = @import("root").bun.ArenaAllocator.init(allocator),
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
+            default_allocator,
+        );
+        vm.regular_event_loop.immediate_tasks = EventLoop.Queue.init(
+            default_allocator,
+        );
+        vm.regular_event_loop.next_immediate_tasks = EventLoop.Queue.init(
             default_allocator,
         );
         vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
@@ -1206,6 +1327,7 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.global = vm.global;
         vm.regular_event_loop.virtual_machine = vm;
         vm.jsc = vm.global.vm();
+        vm.smol = opts.smol;
 
         if (source_code_printer == null) {
             var writer = try js_printer.BufferWriter.init(allocator);
@@ -1257,6 +1379,7 @@ pub const VirtualMachine = struct {
         worker: *WebWorker,
         opts: Options,
     ) anyerror!*VirtualMachine {
+        JSC.markBinding(@src());
         var log: *logger.Log = undefined;
         const allocator = opts.allocator;
         if (opts.log) |__log| {
@@ -1297,12 +1420,17 @@ pub const VirtualMachine = struct {
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = Lock.init(),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
-            .parser_arena = @import("root").bun.ArenaAllocator.init(allocator),
             .standalone_module_graph = worker.parent.standalone_module_graph,
             .worker = worker,
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
+            default_allocator,
+        );
+        vm.regular_event_loop.immediate_tasks = EventLoop.Queue.init(
+            default_allocator,
+        );
+        vm.regular_event_loop.next_immediate_tasks = EventLoop.Queue.init(
             default_allocator,
         );
         vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
@@ -1320,7 +1448,7 @@ pub const VirtualMachine = struct {
 
         vm.bundler.configureLinker();
         try vm.bundler.configureFramework(false);
-
+        vm.smol = opts.smol;
         vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
 
         if (opts.args.serve orelse false) {
@@ -1336,7 +1464,7 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.global = vm.global;
         vm.regular_event_loop.virtual_machine = vm;
         vm.jsc = vm.global.vm();
-
+        vm.bundler.setAllocator(allocator);
         if (source_code_printer == null) {
             var writer = try js_printer.BufferWriter.init(allocator);
             source_code_printer = allocator.create(js_printer.BufferPrinter) catch unreachable;
@@ -1363,14 +1491,16 @@ pub const VirtualMachine = struct {
         return ResolvedSource{
             .source_code = bun.String.init(source.impl),
             .specifier = specifier,
-            .source_url = ZigString.init(source_url),
+            .source_url = bun.String.init(source_url),
             .hash = source.hash,
             .allocator = source,
+            .needs_deref = false,
         };
     }
 
     pub fn refCountedStringWithWasNew(this: *VirtualMachine, new: *bool, input_: []const u8, hash_: ?u32, comptime dupe: bool) *JSC.RefString {
         JSC.markBinding(@src());
+        std.debug.assert(input_.len > 0);
         const hash = hash_ orelse JSC.RefString.computeHash(input_);
         this.ref_strings_mutex.lock();
         defer this.ref_strings_mutex.unlock();
@@ -1399,6 +1529,7 @@ pub const VirtualMachine = struct {
     }
 
     pub fn refCountedString(this: *VirtualMachine, input_: []const u8, hash_: ?u32, comptime dupe: bool) *JSC.RefString {
+        std.debug.assert(input_.len > 0);
         var _was_new = false;
         return this.refCountedStringWithWasNew(&_was_new, input_, hash_, comptime dupe);
     }
@@ -1424,7 +1555,6 @@ pub const VirtualMachine = struct {
         _specifier: String,
         referrer: String,
         log: *logger.Log,
-        ret: *ErrorableResolvedSource,
         comptime flags: FetchFlags,
     ) anyerror!ResolvedSource {
         std.debug.assert(VirtualMachine.isLoaded());
@@ -1432,6 +1562,9 @@ pub const VirtualMachine = struct {
         if (try ModuleLoader.fetchBuiltinModule(jsc_vm, _specifier)) |builtin| {
             return builtin;
         }
+
+        var virtual_source: ?*logger.Source = null;
+
         var display_specifier = _specifier.toUTF8(bun.default_allocator);
         defer display_specifier.deinit();
         var specifier_clone = _specifier.toUTF8(bun.default_allocator);
@@ -1441,13 +1574,22 @@ pub const VirtualMachine = struct {
         const referrer_clone = referrer.toUTF8(bun.default_allocator);
         defer referrer_clone.deinit();
         var path = Fs.Path.init(specifier_clone.slice());
-        const loader = jsc_vm.bundler.options.loaders.get(path.name.ext) orelse brk: {
+        var loader = jsc_vm.bundler.options.loaders.get(path.name.ext) orelse brk: {
             if (strings.eqlLong(specifier, jsc_vm.main, true)) {
                 break :brk options.Loader.js;
             }
 
             break :brk options.Loader.file;
         };
+
+        if (jsc_vm.module_loader.eval_script) |eval_script| {
+            if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
+                virtual_source = eval_script;
+                loader = .tsx;
+            }
+        }
+
+        defer jsc_vm.module_loader.resetArena(jsc_vm);
 
         return try ModuleLoader.transpileSourceCode(
             jsc_vm,
@@ -1458,8 +1600,7 @@ pub const VirtualMachine = struct {
             path,
             loader,
             log,
-            null,
-            ret,
+            virtual_source,
             null,
             VirtualMachine.source_code_printer.?,
             globalObject,
@@ -1475,7 +1616,6 @@ pub const VirtualMachine = struct {
 
     fn normalizeSpecifierForResolution(specifier_: []const u8, query_string: *[]const u8) []const u8 {
         var specifier = specifier_;
-        if (strings.hasPrefixComptime(specifier, "file://")) specifier = specifier["file://".len..];
 
         if (strings.indexOfChar(specifier, '?')) |i| {
             query_string.* = specifier[i..];
@@ -1488,7 +1628,6 @@ pub const VirtualMachine = struct {
     threadlocal var specifier_cache_resolver_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
     fn _resolve(
         ret: *ResolveFunctionResult,
-        _: *JSGlobalObject,
         specifier: string,
         source: string,
         is_esm: bool,
@@ -1515,9 +1654,13 @@ pub const VirtualMachine = struct {
             ret.result = null;
             ret.path = specifier;
             return;
-        } else if (JSC.HardcodedModule.Map.get(specifier)) |result| {
+        } else if (JSC.HardcodedModule.Aliases.get(specifier, .bun)) |result| {
             ret.result = null;
-            ret.path = @as(string, @tagName(result));
+            ret.path = result.path;
+            return;
+        } else if (jsc_vm.module_loader.eval_script != null and strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
+            ret.result = null;
+            ret.path = specifier;
             return;
         }
 
@@ -1589,20 +1732,6 @@ pub const VirtualMachine = struct {
 
         ret.path = result_path.text;
     }
-    pub fn queueMicrotaskToEventLoop(
-        globalObject: *JSGlobalObject,
-        microtask: *Microtask,
-    ) void {
-        if (comptime Environment.allow_assert)
-            std.debug.assert(VirtualMachine.isLoaded());
-
-        var vm_ = globalObject.bunVM();
-        if (vm_.global == globalObject) {
-            vm_.enqueueTask(Task.init(@as(*JSC.MicrotaskForDefaultGlobalObject, @ptrCast(microtask))));
-        } else {
-            vm_.enqueueTask(Task.init(microtask));
-        }
-    }
 
     pub fn resolveForAPI(
         res: *ErrorableString,
@@ -1672,7 +1801,7 @@ pub const VirtualMachine = struct {
                     printed,
                 ),
             };
-            res.* = ErrorableString.err(error.NameTooLong, ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source.utf8()).asVoid());
+            res.* = ErrorableString.err(error.NameTooLong, ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice()).asVoid());
             return;
         }
 
@@ -1727,7 +1856,7 @@ pub const VirtualMachine = struct {
             jsc_vm.bundler.linker.log = old_log;
             jsc_vm.bundler.resolver.log = old_log;
         }
-        _resolve(&result, global, specifier_utf8.slice(), normalizeSource(source_utf8.slice()), is_esm, is_a_file_path) catch |err_| {
+        _resolve(&result, specifier_utf8.slice(), normalizeSource(source_utf8.slice()), is_esm, is_a_file_path) catch |err_| {
             var err = err_;
             const msg: logger.Msg = brk: {
                 var msgs: []logger.Msg = log.msgs.items;
@@ -1783,65 +1912,6 @@ pub const VirtualMachine = struct {
     // }
 
     pub const main_file_name: string = "bun:main";
-
-    pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: bun.String, source: bun.String) callconv(.C) void {
-        var jsc_vm: *VirtualMachine = if (comptime Environment.isLinux)
-            VirtualMachine.get()
-        else
-            global.bunVM();
-
-        var log = logger.Log.init(jsc_vm.bundler.allocator);
-
-        const result = switch (!jsc_vm.bundler.options.disable_transpilation) {
-            inline else => |is_disabled| fetchWithoutOnLoadPlugins(jsc_vm, global, specifier, source, &log, ret, if (comptime is_disabled) .print_source_and_clone else .transpile) catch |err| {
-                processFetchLog(global, specifier, source, &log, ret, err);
-                return;
-            },
-        };
-
-        if (log.errors > 0) {
-            processFetchLog(global, specifier, source, &log, ret, error.LinkError);
-            return;
-        }
-
-        if (log.warnings > 0) {
-            var writer = Output.errorWriter();
-            if (Output.enable_ansi_colors) {
-                for (log.msgs.items) |msg| {
-                    if (msg.kind == .warn) {
-                        msg.writeFormat(writer, true) catch {};
-                    }
-                }
-            } else {
-                for (log.msgs.items) |msg| {
-                    if (msg.kind == .warn) {
-                        msg.writeFormat(writer, false) catch {};
-                    }
-                }
-            }
-        }
-
-        ret.result.value = result;
-        var vm = get();
-
-        if (vm.blobs) |blobs| {
-            const spec = specifier.toUTF8(bun.default_allocator);
-            const specifier_blob = brk: {
-                if (strings.hasPrefix(spec.slice(), VirtualMachine.get().bundler.fs.top_level_dir)) {
-                    break :brk spec.slice()[VirtualMachine.get().bundler.fs.top_level_dir.len..];
-                }
-                break :brk spec.slice();
-            };
-
-            if (vm.has_loaded) {
-                blobs.temporary.put(specifier_blob, .{ .ptr = result.source_code.byteSlice().ptr, .len = result.source_code.length() }) catch {};
-            } else {
-                blobs.persistent.put(specifier_blob, .{ .ptr = result.source_code.byteSlice().ptr, .len = result.source_code.length() }) catch {};
-            }
-        }
-
-        ret.success = true;
-    }
 
     pub fn drainMicrotasks(this: *VirtualMachine) void {
         this.eventLoop().drainMicrotasks();
@@ -1921,6 +1991,7 @@ pub const VirtualMachine = struct {
     // TODO:
     pub fn deinit(this: *VirtualMachine) void {
         this.source_mappings.deinit();
+        this.has_terminated = true;
     }
 
     pub const ExceptionList = std.ArrayList(Api.JsException);
@@ -1979,6 +2050,82 @@ pub const VirtualMachine = struct {
         this.global.deleteModuleRegistryEntry(&str);
     }
 
+    fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
+        this.is_in_preload = true;
+        defer this.is_in_preload = false;
+
+        for (this.preload) |preload| {
+            var result = switch (this.bundler.resolver.resolveAndAutoInstall(
+                this.bundler.fs.top_level_dir,
+                normalizeSource(preload),
+                .stmt,
+                .read_only,
+            )) {
+                .success => |r| r,
+                .failure => |e| {
+                    this.log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        this.allocator,
+                        "{s} resolving preload {any}",
+                        .{
+                            @errorName(e),
+                            js_printer.formatJSONString(preload),
+                        },
+                    ) catch unreachable;
+                    return e;
+                },
+                .pending, .not_found => {
+                    this.log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        this.allocator,
+                        "preload not found {any}",
+                        .{
+                            js_printer.formatJSONString(preload),
+                        },
+                    ) catch unreachable;
+                    return error.ModuleNotFound;
+                },
+            };
+            var promise = JSModuleLoader.import(this.global, &String.fromBytes(result.path().?.text));
+
+            this.pending_internal_promise = promise;
+            JSValue.fromCell(promise).protect();
+            defer JSValue.fromCell(promise).unprotect();
+
+            // pending_internal_promise can change if hot module reloading is enabled
+            if (this.isWatcherEnabled()) {
+                this.eventLoop().performGC();
+                switch (this.pending_internal_promise.status(this.global.vm())) {
+                    JSC.JSPromise.Status.Pending => {
+                        while (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                            this.eventLoop().tick();
+
+                            if (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                                this.eventLoop().autoTick();
+                            }
+                        }
+                    },
+                    else => {},
+                }
+            } else {
+                this.eventLoop().performGC();
+                this.waitForPromise(JSC.AnyPromise{
+                    .Internal = promise,
+                });
+            }
+
+            if (promise.status(this.global.vm()) == .Rejected)
+                return promise;
+        }
+
+        // only load preloads once
+        this.preload.len = 0;
+
+        return null;
+    }
+
     pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
         this.has_loaded = false;
         this.main = entry_path;
@@ -1986,100 +2133,61 @@ pub const VirtualMachine = struct {
 
         try this.entry_point.generate(
             this.allocator,
-            this.bun_watcher != null,
-            Fs.PathName.init(entry_path),
+            this.bun_watcher != .none,
+            entry_path,
             main_file_name,
         );
         this.eventLoop().ensureWaker();
-
-        var promise: *JSInternalPromise = undefined;
 
         if (this.debugger != null) {
             try Debugger.create(this, this.global);
         }
 
         if (!this.bundler.options.disable_transpilation) {
-            {
-                this.is_in_preload = true;
-                defer this.is_in_preload = false;
-                for (this.preload) |preload| {
-                    var result = switch (this.bundler.resolver.resolveAndAutoInstall(
-                        this.bundler.fs.top_level_dir,
-                        normalizeSource(preload),
-                        .stmt,
-                        .read_only,
-                    )) {
-                        .success => |r| r,
-                        .failure => |e| {
-                            this.log.addErrorFmt(
-                                null,
-                                logger.Loc.Empty,
-                                this.allocator,
-                                "{s} resolving preload {any}",
-                                .{
-                                    @errorName(e),
-                                    js_printer.formatJSONString(preload),
-                                },
-                            ) catch unreachable;
-                            return e;
-                        },
-                        .pending, .not_found => {
-                            this.log.addErrorFmt(
-                                null,
-                                logger.Loc.Empty,
-                                this.allocator,
-                                "preload not found {any}",
-                                .{
-                                    js_printer.formatJSONString(preload),
-                                },
-                            ) catch unreachable;
-                            return error.ModuleNotFound;
-                        },
-                    };
-                    promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.fromBytes(result.path().?.text));
-
-                    this.pending_internal_promise = promise;
-                    JSValue.fromCell(promise).protect();
-                    defer JSValue.fromCell(promise).unprotect();
-
-                    // pending_internal_promise can change if hot module reloading is enabled
-                    if (this.bun_watcher != null) {
-                        this.eventLoop().performGC();
-                        switch (this.pending_internal_promise.status(this.global.vm())) {
-                            JSC.JSPromise.Status.Pending => {
-                                while (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
-                                    this.eventLoop().tick();
-
-                                    if (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
-                                        this.eventLoop().autoTick();
-                                    }
-                                }
-                            },
-                            else => {},
-                        }
-                    } else {
-                        this.eventLoop().performGC();
-                        this.waitForPromise(JSC.AnyPromise{
-                            .Internal = promise,
-                        });
-                    }
-
-                    if (promise.status(this.global.vm()) == .Rejected)
-                        return promise;
-                }
+            if (try this.loadPreloads()) |promise| {
+                JSC.JSValue.fromCell(promise).ensureStillAlive();
+                JSC.JSValue.fromCell(promise).protect();
+                this.pending_internal_promise = promise;
+                return promise;
             }
 
-            // only load preloads once
-            this.preload.len = 0;
-
-            promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(main_file_name));
+            var promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(main_file_name)) orelse return error.JSError;
             this.pending_internal_promise = promise;
             JSC.JSValue.fromCell(promise).ensureStillAlive();
+            return promise;
         } else {
-            promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(this.main));
+            var promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(this.main)) orelse return error.JSError;
             this.pending_internal_promise = promise;
             JSC.JSValue.fromCell(promise).ensureStillAlive();
+
+            return promise;
         }
+    }
+
+    pub fn reloadEntryPointForTestRunner(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
+        this.has_loaded = false;
+        this.main = entry_path;
+        this.main_hash = bun.JSC.Watcher.getHash(entry_path);
+
+        this.eventLoop().ensureWaker();
+
+        if (this.debugger != null) {
+            try Debugger.create(this, this.global);
+        }
+
+        if (!this.bundler.options.disable_transpilation) {
+            if (try this.loadPreloads()) |promise| {
+                JSC.JSValue.fromCell(promise).ensureStillAlive();
+                this.pending_internal_promise = promise;
+                JSC.JSValue.fromCell(promise).protect();
+
+                return promise;
+            }
+        }
+
+        var promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.fromBytes(this.main)) orelse return error.JSError;
+        this.pending_internal_promise = promise;
+        JSC.JSValue.fromCell(promise).ensureStillAlive();
 
         return promise;
     }
@@ -2088,17 +2196,22 @@ pub const VirtualMachine = struct {
     pub fn loadEntryPointForWebWorker(this: *VirtualMachine, entry_path: string) anyerror!*JSInternalPromise {
         var promise = try this.reloadEntryPoint(entry_path);
         this.eventLoop().performGC();
-        this.waitForPromise(JSC.AnyPromise{
+        this.eventLoop().waitForPromiseWithTermination(JSC.AnyPromise{
             .Internal = promise,
         });
+        if (this.worker) |worker| {
+            if (worker.requested_terminate) {
+                return error.WorkerTerminated;
+            }
+        }
         return this.pending_internal_promise;
     }
 
-    pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInternalPromise {
-        var promise = try this.reloadEntryPoint(entry_path);
+    pub fn loadEntryPointForTestRunner(this: *VirtualMachine, entry_path: string) anyerror!*JSInternalPromise {
+        var promise = try this.reloadEntryPointForTestRunner(entry_path);
 
         // pending_internal_promise can change if hot module reloading is enabled
-        if (this.bun_watcher != null) {
+        if (this.isWatcherEnabled()) {
             this.eventLoop().performGC();
             switch (this.pending_internal_promise.status(this.global.vm())) {
                 JSC.JSPromise.Status.Pending => {
@@ -2113,6 +2226,10 @@ pub const VirtualMachine = struct {
                 else => {},
             }
         } else {
+            if (promise.status(this.global.vm()) == .Rejected) {
+                return promise;
+            }
+
             this.eventLoop().performGC();
             this.waitForPromise(JSC.AnyPromise{
                 .Internal = promise,
@@ -2122,6 +2239,55 @@ pub const VirtualMachine = struct {
         this.eventLoop().autoTick();
 
         return this.pending_internal_promise;
+    }
+
+    pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInternalPromise {
+        var promise = try this.reloadEntryPoint(entry_path);
+
+        // pending_internal_promise can change if hot module reloading is enabled
+        if (this.isWatcherEnabled()) {
+            this.eventLoop().performGC();
+            switch (this.pending_internal_promise.status(this.global.vm())) {
+                JSC.JSPromise.Status.Pending => {
+                    while (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                        this.eventLoop().tick();
+
+                        if (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                            this.eventLoop().autoTick();
+                        }
+                    }
+                },
+                else => {},
+            }
+        } else {
+            if (promise.status(this.global.vm()) == .Rejected) {
+                return promise;
+            }
+
+            this.eventLoop().performGC();
+            this.waitForPromise(JSC.AnyPromise{
+                .Internal = promise,
+            });
+        }
+
+        this.eventLoop().autoTick();
+
+        return this.pending_internal_promise;
+    }
+
+    pub fn addListeningSocketForWatchMode(this: *VirtualMachine, socket: bun.FileDescriptor) void {
+        if (this.hot_reload != .watch) {
+            return;
+        }
+
+        this.rareData().addListeningSocketForWatchMode(socket);
+    }
+    pub fn removeListeningSocketForWatchMode(this: *VirtualMachine, socket: bun.FileDescriptor) void {
+        if (this.hot_reload != .watch) {
+            return;
+        }
+
+        this.rareData().removeListeningSocketForWatchMode(socket);
     }
 
     pub fn loadMacroEntryPoint(this: *VirtualMachine, entry_path: string, function_name: string, specifier: string, hash: i32) !*JSInternalPromise {
@@ -2139,7 +2305,7 @@ pub const VirtualMachine = struct {
         };
 
         this.runWithAPILock(MacroEntryPointLoader, &loader, MacroEntryPointLoader.load);
-        return loader.promise;
+        return loader.promise orelse return error.JSError;
     }
 
     /// A subtlelty of JavaScriptCore:
@@ -2153,16 +2319,16 @@ pub const VirtualMachine = struct {
 
     const MacroEntryPointLoader = struct {
         path: string,
-        promise: *JSInternalPromise = undefined,
+        promise: ?*JSInternalPromise = null,
         pub fn load(this: *MacroEntryPointLoader) void {
             this.promise = VirtualMachine.get()._loadMacroEntryPoint(this.path);
         }
     };
 
-    pub inline fn _loadMacroEntryPoint(this: *VirtualMachine, entry_path: string) *JSInternalPromise {
+    pub inline fn _loadMacroEntryPoint(this: *VirtualMachine, entry_path: string) ?*JSInternalPromise {
         var promise: *JSInternalPromise = undefined;
 
-        promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(entry_path));
+        promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(entry_path)) orelse return null;
         this.waitForPromise(JSC.AnyPromise{
             .Internal = promise,
         });
@@ -2457,8 +2623,7 @@ pub const VirtualMachine = struct {
             @max(top.position.column_start, 0),
         )) |mapping| {
             var log = logger.Log.init(default_allocator);
-            var errorable: ErrorableResolvedSource = undefined;
-            var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, &errorable, .print_source) catch return;
+            var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return;
             const code = original_source.source_code.toUTF8(bun.default_allocator);
             defer code.deinit();
 
@@ -2741,14 +2906,14 @@ pub const VirtualMachine = struct {
 
     pub const IPCInstance = struct {
         globalThis: ?*JSGlobalObject,
-        socket: IPC.Socket,
         uws_context: *uws.SocketContext,
-        ipc_buffer: bun.ByteList,
+        ipc: IPC.IPCData,
 
         pub fn handleIPCMessage(
             this: *IPCInstance,
             message: IPC.DecodedIPCMessage,
         ) void {
+            JSC.markBinding(@src());
             switch (message) {
                 // In future versions we can read this in order to detect version mismatches,
                 // or disable future optimizations if the subprocess is old.
@@ -2765,6 +2930,7 @@ pub const VirtualMachine = struct {
         }
 
         pub fn handleIPCClose(this: *IPCInstance, _: IPC.Socket) void {
+            JSC.markBinding(@src());
             if (this.globalThis) |global| {
                 var vm = global.bunVM();
                 vm.ipc = null;
@@ -2778,6 +2944,10 @@ pub const VirtualMachine = struct {
     };
 
     pub fn initIPCInstance(this: *VirtualMachine, fd: i32) void {
+        if (Environment.isWindows) {
+            Output.prettyWarnln("IPC is not supported on Windows", .{});
+            return;
+        }
         this.event_loop.ensureWaker();
         const context = uws.us_create_socket_context(0, this.event_loop_handle.?, @sizeOf(usize), .{}).?;
         IPC.Socket.configure(context, true, *IPCInstance, IPCInstance.Handlers);
@@ -2791,13 +2961,13 @@ pub const VirtualMachine = struct {
         var instance = bun.default_allocator.create(IPCInstance) catch @panic("OOM");
         instance.* = .{
             .globalThis = this.global,
-            .socket = socket,
             .uws_context = context,
-            .ipc_buffer = bun.ByteList{},
+            .ipc = .{ .socket = socket },
         };
         var ptr = socket.ext(*IPCInstance);
         ptr.?.* = instance;
         this.ipc = instance;
+        instance.ipc.writeVersionPacket();
     }
     comptime {
         if (!JSC.is_bindgen)
@@ -2806,6 +2976,7 @@ pub const VirtualMachine = struct {
 };
 
 pub const HotReloader = NewHotReloader(VirtualMachine, JSC.EventLoop, false);
+pub const WatchReloader = NewHotReloader(VirtualMachine, JSC.EventLoop, true);
 pub const Watcher = HotReloader.Watcher;
 extern fn BunDebugger__willHotReload() void;
 
@@ -2832,6 +3003,8 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             this.eventLoop().enqueueTaskConcurrent(task);
         }
 
+        pub var clear_screen = false;
+
         pub const HotReloadTask = struct {
             reloader: *Reloader,
             count: u8 = 0,
@@ -2857,11 +3030,16 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             }
 
             pub fn enqueue(this: *HotReloadTask) void {
+                JSC.markBinding(@src());
                 if (this.count == 0)
                     return;
 
                 if (comptime reload_immediately) {
-                    bun.reloadProcess(bun.default_allocator, Output.enable_ansi_colors);
+                    Output.flush();
+                    if (comptime Ctx == ImportWatcher) {
+                        this.reloader.ctx.rareData().closeAllListenSocketsForWatchMode();
+                    }
+                    bun.reloadProcess(bun.default_allocator, clear_screen);
                     unreachable;
                 }
 
@@ -2895,23 +3073,51 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
         ) void);
 
         pub fn enableHotModuleReloading(this: *Ctx) void {
-            if (this.bun_watcher != null)
-                return;
+            if (comptime @TypeOf(this.bun_watcher) == ImportWatcher) {
+                if (this.bun_watcher != .none)
+                    return;
+            } else {
+                if (this.bun_watcher != null)
+                    return;
+            }
 
             var reloader = bun.default_allocator.create(Reloader) catch @panic("OOM");
             reloader.* = .{
                 .ctx = this,
                 .verbose = if (@hasField(Ctx, "log")) this.log.level.atLeast(.info) else false,
             };
-            this.bun_watcher = @This().Watcher.init(
-                reloader,
-                this.bundler.fs,
-                bun.default_allocator,
-            ) catch @panic("Failed to enable File Watcher");
 
-            this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.?);
+            if (comptime @TypeOf(this.bun_watcher) == ImportWatcher) {
+                this.bun_watcher = if (reload_immediately)
+                    .{ .watch = @This().Watcher.init(
+                        reloader,
+                        this.bundler.fs,
+                        bun.default_allocator,
+                    ) catch @panic("Failed to enable File Watcher") }
+                else
+                    .{ .hot = @This().Watcher.init(
+                        reloader,
+                        this.bundler.fs,
+                        bun.default_allocator,
+                    ) catch @panic("Failed to enable File Watcher") };
 
-            this.bun_watcher.?.start() catch @panic("Failed to start File Watcher");
+                if (reload_immediately) {
+                    this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.watch);
+                } else {
+                    this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.hot);
+                }
+            } else {
+                this.bun_watcher = @This().Watcher.init(
+                    reloader,
+                    this.bundler.fs,
+                    bun.default_allocator,
+                ) catch @panic("Failed to enable File Watcher");
+                this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.?);
+            }
+
+            clear_screen = Output.enable_ansi_colors and !strings.eqlComptime(this.bundler.env.map.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true");
+
+            reloader.getContext().start() catch @panic("Failed to start File Watcher");
         }
 
         pub fn onMaybeWatchDirectory(watch: *@This().Watcher, file_path: string, dir_fd: StoredFileDescriptorType) void {
@@ -2938,6 +3144,18 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             Output.prettyErrorln("<r>Watcher crashed: <red><b>{s}<r>", .{@errorName(err)});
         }
 
+        pub fn getContext(this: *@This()) *@This().Watcher {
+            if (comptime @TypeOf(this.ctx.bun_watcher) == ImportWatcher) {
+                if (reload_immediately) {
+                    return this.ctx.bun_watcher.watch;
+                } else {
+                    return this.ctx.bun_watcher.hot;
+                }
+            } else {
+                return this.ctx.bun_watcher.?;
+            }
+        }
+
         pub fn onFileUpdate(
             this: *@This(),
             events: []watcher.WatchEvent,
@@ -2951,7 +3169,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             const hashes = slice.items(.hash);
             const parents = slice.items(.parent_hash);
             var file_descriptors = slice.items(.fd);
-            var ctx = this.ctx.bun_watcher.?;
+            var ctx = this.getContext();
             defer ctx.flushEvictions();
             defer Output.flush();
 
@@ -3126,3 +3344,5 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
         }
     };
 }
+
+pub export var isBunTest: bool = false;

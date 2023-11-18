@@ -25,7 +25,7 @@
 
 #include "config.h"
 #include "JSDOMWrapper.h"
-#include "wtf/NeverDestroyed.h"
+#include <wtf/NeverDestroyed.h>
 #include "JSAbortSignal.h"
 
 namespace WebCore {

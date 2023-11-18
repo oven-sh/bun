@@ -44,7 +44,6 @@ const ByName = struct {
 };
 
 pub const PackageManagerCommand = struct {
-    pub fn printHelp(_: std.mem.Allocator) void {}
     pub fn printHash(ctx: Command.Context, lockfile_: []const u8) !void {
         @setCold(true);
         var lockfile_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -81,6 +80,26 @@ pub const PackageManagerCommand = struct {
         }
 
         return subcommand;
+    }
+
+    pub fn printHelp() void {
+        Output.prettyln(
+            \\<b><blue>bun pm<r>: Package manager utilities
+            \\
+            \\  bun pm <b>bin<r>          print the path to bin folder
+            \\  bun pm <b>-g bin<r>       print the <b>global<r> path to bin folder
+            \\  bun pm <b>ls<r>           list the dependency tree according to the current lockfile
+            \\  bun pm <b>ls<r> <cyan>--all<r>     list the entire dependency tree according to the current lockfile
+            \\  bun pm <b>hash<r>         generate & print the hash of the current lockfile
+            \\  bun pm <b>hash-string<r>  print the string used to hash the lockfile
+            \\  bun pm <b>hash-print<r>   print the hash stored in the current lockfile
+            \\  bun pm <b>cache<r>        print the path to the cache folder
+            \\  bun pm <b>cache rm<r>     clear the cache
+            \\  bun pm <b>migrate<r>      migrate another package manager's lockfile without installing anything
+            \\
+            \\Learn more about these at <magenta>https://bun.sh/docs/cli/pm<r>
+            \\
+        , .{});
     }
 
     pub fn exec(ctx: Command.Context) !void {
@@ -162,7 +181,7 @@ pub const PackageManagerCommand = struct {
                 Global.crash();
             };
 
-            if (pm.options.positionals.len > 0 and strings.eqlComptime(pm.options.positionals[0], "rm")) {
+            if (pm.options.positionals.len > 1 and strings.eqlComptime(pm.options.positionals[1], "rm")) {
                 std.fs.deleteTreeAbsolute(outpath) catch |err| {
                     Output.prettyErrorln("{s} deleting cache directory", .{@errorName(err)});
                     Global.crash();
@@ -208,7 +227,7 @@ pub const PackageManagerCommand = struct {
                 try printNodeModulesFolderStructure(&first_directory, null, 0, &directories, lockfile, more_packages);
             } else {
                 var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const path = std.os.getcwd(&cwd_buf) catch {
+                const path = bun.getcwd(&cwd_buf) catch {
                     Output.prettyErrorln("<r><red>error<r>: Could not get current working directory", .{});
                     Global.exit(1);
                 };
@@ -244,24 +263,35 @@ pub const PackageManagerCommand = struct {
             }
 
             Global.exit(0);
+        } else if (strings.eqlComptime(subcommand, "migrate")) {
+            if (!pm.options.enable.force_save_lockfile) try_load_bun: {
+                std.fs.cwd().accessZ("bun.lockb", .{ .mode = .read_only }) catch break :try_load_bun;
+
+                Output.prettyErrorln(
+                    \\<r><red>error<r>: bun.lockb already exists
+                    \\run with --force to overwrite
+                , .{});
+                Global.exit(1);
+            }
+            const load_lockfile = @import("../install/migration.zig").detectAndLoadOtherLockfile(
+                pm.lockfile,
+                ctx.allocator,
+                pm.log,
+                pm.options.lockfile_path,
+            );
+            if (load_lockfile == .not_found) {
+                Output.prettyErrorln(
+                    \\<r><red>error<r>: could not find any other lockfile
+                , .{});
+                Global.exit(1);
+            }
+            handleLoadLockfileErrors(load_lockfile, pm);
+            const lockfile = load_lockfile.ok;
+            lockfile.saveToDisk(pm.options.lockfile_path);
+            Global.exit(0);
         }
 
-        Output.prettyln(
-            \\<b><blue>bun pm<r>: package manager related commands
-            \\
-            \\  bun pm <b>bin<r>          print the path to bin folder
-            \\  bun pm <b>-g bin<r>       print the <b>global<r> path to bin folder
-            \\  bun pm <b>ls<r>           list the dependency tree according to the current lockfile
-            \\  bun pm <b>ls --all<r>     list the entire dependency tree according to the current lockfile
-            \\  bun pm <b>hash<r>         generate & print the hash of the current lockfile
-            \\  bun pm <b>hash-string<r>  print the string used to hash the lockfile
-            \\  bun pm <b>hash-print<r>   print the hash stored in the current lockfile
-            \\  bun pm <b>cache<r>        print the path to the cache folder
-            \\  bun pm <b>cache rm<r>     clear the cache
-            \\
-            \\Learn more about these at <magenta>https://bun.sh/docs/install/utilities<r>
-            \\
-        , .{});
+        printHelp();
 
         if (subcommand.len > 0) {
             Output.prettyErrorln("\n<red>error<r>: \"{s}\" unknown command\n", .{subcommand});
@@ -326,7 +356,7 @@ fn printNodeModulesFolderStructure(
             }
         } else {
             var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            const path = std.os.getcwd(&cwd_buf) catch {
+            const path = bun.getcwd(&cwd_buf) catch {
                 Output.prettyErrorln("<r><red>error<r>: Could not get current working directory", .{});
                 Global.exit(1);
             };

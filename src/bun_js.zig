@@ -168,6 +168,14 @@ pub const Run = struct {
         vm.arena = &run.arena;
         vm.allocator = arena.allocator();
 
+        if (ctx.runtime_options.eval_script.len > 0) {
+            vm.module_loader.eval_script = ptr: {
+                var v = try bun.default_allocator.create(logger.Source);
+                v.* = logger.Source.initPathString(entry_path, ctx.runtime_options.eval_script);
+                break :ptr v;
+            };
+        }
+
         b.options.install = ctx.install;
         b.resolver.opts.install = ctx.install;
         b.resolver.opts.global_cache = ctx.debug.global_cache;
@@ -238,13 +246,21 @@ pub const Run = struct {
         run.any_unhandled = true;
     }
 
+    extern fn Bun__ExposeNodeModuleGlobals(*JSC.JSGlobalObject) void;
+
     pub fn start(this: *Run) void {
         var vm = this.vm;
         vm.hot_reload = this.ctx.debug.hot_reload;
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
 
-        if (this.ctx.debug.hot_reload != .none) {
-            JSC.HotReloader.enableHotModuleReloading(vm);
+        if (this.ctx.runtime_options.eval_script.len > 0) {
+            Bun__ExposeNodeModuleGlobals(vm.global);
+        }
+
+        switch (this.ctx.debug.hot_reload) {
+            .hot => JSC.HotReloader.enableHotModuleReloading(vm),
+            .watch => JSC.WatchReloader.enableHotModuleReloading(vm),
+            else => {},
         }
 
         if (strings.eqlComptime(this.entry_path, ".") and vm.bundler.fs.top_level_dir.len > 0) {
@@ -273,6 +289,7 @@ pub const Run = struct {
                 } else {
                     vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
                 }
+                vm.log.msgs.items.len = 0;
                 Output.prettyErrorln("\n", .{});
                 Output.flush();
             }

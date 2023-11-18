@@ -53,6 +53,7 @@ const BodyMixin = JSC.WebCore.BodyMixin;
 const Body = JSC.WebCore.Body;
 const Request = JSC.WebCore.Request;
 const Blob = JSC.WebCore.Blob;
+const Async = bun.Async;
 
 const BoringSSL = bun.BoringSSL;
 const X509 = @import("../api/bun/x509.zig");
@@ -63,8 +64,8 @@ pub const Response = struct {
 
     allocator: std.mem.Allocator,
     body: Body,
+    init: Init,
     url: bun.String = bun.String.empty,
-    status_text: bun.String = bun.String.empty,
     redirected: bool = false,
 
     // We must report a consistent value for this
@@ -76,6 +77,7 @@ pub const Response = struct {
     pub const getJSON = ResponseMixin.getJSON;
     pub const getArrayBuffer = ResponseMixin.getArrayBuffer;
     pub const getBlob = ResponseMixin.getBlob;
+    pub const getBlobWithoutCallFrame = ResponseMixin.getBlobWithoutCallFrame;
     pub const getFormData = ResponseMixin.getFormData;
 
     pub fn getFormDataEncoding(this: *Response) ?*bun.FormData.AsyncFormData {
@@ -89,7 +91,7 @@ pub const Response = struct {
         return this.reported_estimated_size orelse brk: {
             this.reported_estimated_size = @as(
                 u63,
-                @intCast(this.body.value.estimatedSize() + this.url.byteSlice().len + this.status_text.byteSlice().len + @sizeOf(Response)),
+                @intCast(this.body.value.estimatedSize() + this.url.byteSlice().len + this.init.status_text.byteSlice().len + @sizeOf(Response)),
             );
             break :brk this.reported_estimated_size.?;
         };
@@ -104,11 +106,11 @@ pub const Response = struct {
     pub fn getFetchHeaders(
         this: *Response,
     ) ?*FetchHeaders {
-        return this.body.init.headers;
+        return this.init.headers;
     }
 
     pub inline fn statusCode(this: *const Response) u16 {
-        return this.body.init.status_code;
+        return this.init.status_code;
     }
 
     pub fn redirectLocation(this: *const Response) ?[]const u8 {
@@ -116,7 +118,7 @@ pub const Response = struct {
     }
 
     pub fn header(this: *const Response, name: JSC.FetchHeaders.HTTPHeaderName) ?[]const u8 {
-        return if ((this.body.init.headers orelse return null).fastGet(name)) |str|
+        return if ((this.init.headers orelse return null).fastGet(name)) |str|
             str.slice()
         else
             null;
@@ -146,14 +148,20 @@ pub const Response = struct {
             try writer.writeAll("\n");
 
             try formatter.writeIndent(Writer, writer);
-            try writer.writeAll(comptime Output.prettyFmt("<r>headers<d>:<r> ", enable_ansi_colors));
-            formatter.printAs(.Private, Writer, writer, this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
+            try writer.writeAll(comptime Output.prettyFmt("<r>status<d>:<r> ", enable_ansi_colors));
+            formatter.printAs(.Double, Writer, writer, JSC.JSValue.jsNumber(this.init.status_code), .NumberObject, enable_ansi_colors);
             formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
             try writer.writeAll("\n");
 
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime Output.prettyFmt("<r>statusText<d>:<r> ", enable_ansi_colors));
-            try writer.print(comptime Output.prettyFmt("<r>\"<b>{}<r>\"", enable_ansi_colors), .{this.status_text});
+            try writer.print(comptime Output.prettyFmt("<r>\"<b>{}<r>\"", enable_ansi_colors), .{this.init.status_text});
+            formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
+            try writer.writeAll("\n");
+
+            try formatter.writeIndent(Writer, writer);
+            try writer.writeAll(comptime Output.prettyFmt("<r>headers<d>:<r> ", enable_ansi_colors));
+            formatter.printAs(.Private, Writer, writer, this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
             formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
             try writer.writeAll("\n");
 
@@ -162,6 +170,7 @@ pub const Response = struct {
             formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.redirected), .BooleanObject, enable_ansi_colors);
             formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
             try writer.writeAll("\n");
+
             formatter.resetLine();
             try this.body.writeFormat(Formatter, formatter, writer, enable_ansi_colors);
         }
@@ -172,7 +181,7 @@ pub const Response = struct {
     }
 
     pub fn isOK(this: *const Response) bool {
-        return this.body.init.status_code == 304 or (this.body.init.status_code >= 200 and this.body.init.status_code <= 299);
+        return this.init.status_code >= 200 and this.init.status_code <= 299;
     }
 
     pub fn getURL(
@@ -187,7 +196,7 @@ pub const Response = struct {
         this: *Response,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
-        if (this.body.init.status_code < 200) {
+        if (this.init.status_code < 200) {
             return ZigString.init("error").toValue(globalThis);
         }
 
@@ -199,7 +208,7 @@ pub const Response = struct {
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/statusText
-        return this.status_text.toJS(globalThis);
+        return this.init.status_text.toJS(globalThis);
     }
 
     pub fn getRedirected(
@@ -219,18 +228,18 @@ pub const Response = struct {
     }
 
     fn getOrCreateHeaders(this: *Response, globalThis: *JSC.JSGlobalObject) *FetchHeaders {
-        if (this.body.init.headers == null) {
-            this.body.init.headers = FetchHeaders.createEmpty();
+        if (this.init.headers == null) {
+            this.init.headers = FetchHeaders.createEmpty();
 
             if (this.body.value == .Blob) {
                 const content_type = this.body.value.Blob.content_type;
                 if (content_type.len > 0) {
-                    this.body.init.headers.?.put("content-type", content_type, globalThis);
+                    this.init.headers.?.put("content-type", content_type, globalThis);
                 }
             }
         }
 
-        return this.body.init.headers.?;
+        return this.init.headers.?;
     }
 
     pub fn getHeaders(
@@ -262,8 +271,8 @@ pub const Response = struct {
         new_response.* = Response{
             .allocator = allocator,
             .body = this.body.clone(globalThis),
+            .init = this.init.clone(globalThis),
             .url = this.url.clone(),
-            .status_text = this.status_text.clone(),
             .redirected = this.redirected,
         };
     }
@@ -279,17 +288,16 @@ pub const Response = struct {
         _: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/status
-        return JSValue.jsNumber(this.body.init.status_code);
+        return JSValue.jsNumber(this.init.status_code);
     }
 
     pub fn finalize(
         this: *Response,
     ) callconv(.C) void {
-        this.body.deinit(this.allocator);
-
         var allocator = this.allocator;
 
-        this.status_text.deref();
+        this.init.deinit(allocator);
+        this.body.deinit(allocator);
         this.url.deref();
 
         allocator.destroy(this);
@@ -348,7 +356,7 @@ pub const Response = struct {
     pub fn getContentType(
         this: *Response,
     ) ?ZigString.Slice {
-        if (this.body.init.headers) |headers| {
+        if (this.init.headers) |headers| {
             if (headers.fastGet(.ContentType)) |value| {
                 return value.toSlice(bun.default_allocator);
             }
@@ -373,10 +381,10 @@ pub const Response = struct {
 
         var response = Response{
             .body = Body{
-                .init = Body.Init{
-                    .status_code = 200,
-                },
                 .value = .{ .Empty = {} },
+            },
+            .init = Response.Init{
+                .status_code = 200,
             },
             .allocator = getAllocator(globalThis),
             .url = bun.String.empty,
@@ -409,10 +417,10 @@ pub const Response = struct {
 
         if (args.nextEat()) |init| {
             if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
-                response.body.init.status_code = @as(u16, @intCast(@min(@max(0, init.toInt32()), std.math.maxInt(u16))));
+                response.init.status_code = @as(u16, @intCast(@min(@max(0, init.toInt32()), std.math.maxInt(u16))));
             } else {
-                if (Body.Init.init(getAllocator(globalThis), globalThis, init) catch null) |_init| {
-                    response.body.init = _init;
+                if (Response.Init.init(getAllocator(globalThis), globalThis, init) catch null) |_init| {
+                    response.init = _init;
                 }
             }
         }
@@ -434,10 +442,10 @@ pub const Response = struct {
         // var response = getAllocator(globalThis).create(Response) catch unreachable;
 
         var response = Response{
+            .init = Response.Init{
+                .status_code = 302,
+            },
             .body = Body{
-                .init = Body.Init{
-                    .status_code = 302,
-                },
                 .value = .{ .Empty = {} },
             },
             .allocator = getAllocator(globalThis),
@@ -455,17 +463,17 @@ pub const Response = struct {
 
         if (args.nextEat()) |init| {
             if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
-                response.body.init.status_code = @as(u16, @intCast(@min(@max(0, init.toInt32()), std.math.maxInt(u16))));
+                response.init.status_code = @as(u16, @intCast(@min(@max(0, init.toInt32()), std.math.maxInt(u16))));
             } else {
-                if (Body.Init.init(getAllocator(globalThis), globalThis, init) catch null) |_init| {
-                    response.body.init = _init;
-                    response.body.init.status_code = 302;
+                if (Response.Init.init(getAllocator(globalThis), globalThis, init) catch null) |_init| {
+                    response.init = _init;
+                    response.init.status_code = 302;
                 }
             }
         }
 
-        response.body.init.headers = response.getOrCreateHeaders(globalThis);
-        var headers_ref = response.body.init.headers.?;
+        response.init.headers = response.getOrCreateHeaders(globalThis);
+        var headers_ref = response.init.headers.?;
         headers_ref.put("location", url_string_slice.slice(), globalThis);
         var ptr = response.allocator.create(Response) catch unreachable;
         ptr.* = response;
@@ -478,10 +486,10 @@ pub const Response = struct {
     ) callconv(.C) JSValue {
         var response = getAllocator(globalThis).create(Response) catch unreachable;
         response.* = Response{
+            .init = Response.Init{
+                .status_code = 0,
+            },
             .body = Body{
-                .init = Body.Init{
-                    .status_code = 0,
-                },
                 .value = .{ .Empty = {} },
             },
             .allocator = getAllocator(globalThis),
@@ -494,6 +502,8 @@ pub const Response = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) ?*Response {
+        var allocator = getAllocator(globalThis);
+
         const args_list = brk: {
             var args = callframe.arguments(2);
             if (args.len > 1 and args.ptr[1].isEmptyOrUndefinedOrNull()) {
@@ -503,17 +513,24 @@ pub const Response = struct {
         };
 
         const arguments = args_list.ptr[0..args_list.len];
-        const body: Body = @as(?Body, brk: {
+
+        const init: Init = @as(?Init, brk: {
             switch (arguments.len) {
                 0 => {
-                    break :brk Body.@"200"(globalThis);
+                    break :brk Init{
+                        .status_code = 200,
+                        .headers = null,
+                    };
                 },
                 1 => {
-                    break :brk Body.extract(globalThis, arguments[0]);
+                    break :brk Init{
+                        .status_code = 200,
+                        .headers = null,
+                    };
                 },
                 else => {
                     if (arguments[1].isObject()) {
-                        break :brk Body.extractWithInit(globalThis, arguments[0], arguments[1]);
+                        break :brk Init.init(allocator, globalThis, arguments[1]) catch null;
                     }
 
                     std.debug.assert(!arguments[1].isEmptyOrUndefinedOrNull());
@@ -526,20 +543,149 @@ pub const Response = struct {
             unreachable;
         }) orelse return null;
 
-        var response = getAllocator(globalThis).create(Response) catch unreachable;
+        const body: Body = brk: {
+            switch (arguments.len) {
+                0 => {
+                    break :brk Body{
+                        .value = Body.Value{ .Null = {} },
+                    };
+                },
+                else => {
+                    break :brk Body.extract(globalThis, arguments[0]);
+                },
+            }
+            unreachable;
+        } orelse return null;
+
+        var response = allocator.create(Response) catch unreachable;
 
         response.* = Response{
             .body = body,
+            .init = init,
             .allocator = getAllocator(globalThis),
         };
 
         if (response.body.value == .Blob and
-            response.body.init.headers != null and
+            response.init.headers != null and
             response.body.value.Blob.content_type.len > 0 and
-            !response.body.init.headers.?.fastHas(.ContentType))
+            !response.init.headers.?.fastHas(.ContentType))
         {
-            response.body.init.headers.?.put("content-type", response.body.value.Blob.content_type, globalThis);
+            response.init.headers.?.put("content-type", response.body.value.Blob.content_type, globalThis);
         }
+
+        return response;
+    }
+
+    pub const Init = struct {
+        headers: ?*FetchHeaders = null,
+        status_code: u16,
+        status_text: bun.String = bun.String.empty,
+        method: Method = Method.GET,
+
+        pub fn clone(this: Init, ctx: *JSGlobalObject) Init {
+            var that = this;
+            var headers = this.headers;
+            if (headers) |head| {
+                that.headers = head.cloneThis(ctx);
+            }
+            that.status_text = this.status_text.clone();
+
+            return that;
+        }
+
+        pub fn init(allocator: std.mem.Allocator, ctx: *JSGlobalObject, response_init: JSC.JSValue) !?Init {
+            var result = Init{ .status_code = 200 };
+
+            if (!response_init.isCell())
+                return null;
+
+            if (response_init.jsType() == .DOMWrapper) {
+                // fast path: it's a Request object or a Response object
+                // we can skip calling JS getters
+                if (response_init.as(Request)) |req| {
+                    if (req.headers) |headers| {
+                        if (!headers.isEmpty()) {
+                            result.headers = headers.cloneThis(ctx);
+                        }
+                    }
+
+                    result.method = req.method;
+                    return result;
+                }
+
+                if (response_init.as(Response)) |resp| {
+                    return resp.init.clone(ctx);
+                }
+            }
+
+            if (response_init.fastGet(ctx, .headers)) |headers| {
+                if (headers.as(FetchHeaders)) |orig| {
+                    if (!orig.isEmpty()) {
+                        result.headers = orig.cloneThis(ctx);
+                    }
+                } else {
+                    result.headers = FetchHeaders.createFromJS(ctx.ptr(), headers);
+                }
+            }
+
+            if (response_init.fastGet(ctx, .status)) |status_value| {
+                const number = status_value.coerceToInt64(ctx);
+                if ((200 <= number and number < 600) or number == 101) {
+                    result.status_code = @as(u16, @truncate(@as(u32, @intCast(number))));
+                } else {
+                    const err = ctx.createRangeErrorInstance("The status provided ({d}) must be 101 or in the range of [200, 599]", .{number});
+                    ctx.throwValue(err);
+                    return null;
+                }
+            }
+
+            if (response_init.fastGet(ctx, .statusText)) |status_text| {
+                result.status_text = bun.String.fromJS(status_text, ctx).dupeRef();
+            }
+
+            if (response_init.fastGet(ctx, .method)) |method_value| {
+                var method_str = method_value.toSlice(ctx, allocator);
+                defer method_str.deinit();
+                if (method_str.len > 0) {
+                    result.method = Method.which(method_str.slice()) orelse .GET;
+                }
+            }
+
+            return result;
+        }
+
+        pub fn deinit(this: *Init, _: std.mem.Allocator) void {
+            if (this.headers) |headers| {
+                this.headers = null;
+
+                headers.deref();
+            }
+
+            this.status_text.deref();
+        }
+    };
+
+    pub fn @"404"(globalThis: *JSC.JSGlobalObject) Response {
+        return emptyWithStatus(globalThis, 404);
+    }
+
+    pub fn @"200"(globalThis: *JSC.JSGlobalObject) Response {
+        return emptyWithStatus(globalThis, 200);
+    }
+
+    inline fn emptyWithStatus(globalThis: *JSC.JSGlobalObject, status: u16) Response {
+        var allocator = getAllocator(globalThis);
+        var response = allocator.create(Response) catch unreachable;
+
+        response.* = Response{
+            .body = Body{
+                .value = Body.Value{ .Null = {} },
+            },
+            .init = Init{
+                .status_code = status,
+            },
+            .allocator = getAllocator(globalThis),
+        };
 
         return response;
     }
@@ -638,7 +784,7 @@ pub const Fetch = struct {
         request_headers: Headers = Headers{ .allocator = undefined },
         promise: JSC.JSPromise.Strong,
         concurrent_task: JSC.ConcurrentTask = .{},
-        poll_ref: JSC.PollRef = .{},
+        poll_ref: Async.KeepAlive = .{},
         memory_reporter: *JSC.MemoryReportingAllocator,
         /// For Http Client requests
         /// when Content-Length is provided this represents the whole size of the request
@@ -778,27 +924,27 @@ pub const Fetch = struct {
             if (!success) {
                 const err = this.onReject();
                 err.ensureStillAlive();
+                // if we are streaming update with error
+                if (this.readable_stream_ref.get()) |readable| {
+                    readable.ptr.Bytes.onData(
+                        .{
+                            .err = .{ .JSValue = err },
+                        },
+                        bun.default_allocator,
+                    );
+                }
+                // if we are buffering resolve the promise
                 if (this.response.get()) |response_js| {
                     if (response_js.as(Response)) |response| {
                         const body = response.body;
-                        if (body.value == .Locked) {
-                            if (body.value.Locked.readable) |readable| {
-                                readable.ptr.Bytes.onData(
-                                    .{
-                                        .err = .{ .JSValue = err },
-                                    },
-                                    bun.default_allocator,
-                                );
-                                return;
-                            }
+                        if (body.value.Locked.promise) |promise_| {
+                            const promise = promise_.asAnyPromise().?;
+                            promise.reject(globalThis, err);
                         }
 
                         response.body.value.toErrorInstance(err, globalThis);
-                        return;
                     }
                 }
-
-                globalThis.throwValue(err);
                 return;
             }
 
@@ -1135,6 +1281,73 @@ pub const Fetch = struct {
                     error.FailedToOpenSocket => bun.String.static("Was there a typo in the url or port?"),
                     error.TooManyRedirects => bun.String.static("The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()"),
                     error.ConnectionRefused => bun.String.static("Unable to connect. Is the computer able to access the url?"),
+
+                    error.UNABLE_TO_GET_ISSUER_CERT => bun.String.static("unable to get issuer certificate"),
+                    error.UNABLE_TO_GET_CRL => bun.String.static("unable to get certificate CRL"),
+                    error.UNABLE_TO_DECRYPT_CERT_SIGNATURE => bun.String.static("unable to decrypt certificate's signature"),
+                    error.UNABLE_TO_DECRYPT_CRL_SIGNATURE => bun.String.static("unable to decrypt CRL's signature"),
+                    error.UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY => bun.String.static("unable to decode issuer public key"),
+                    error.CERT_SIGNATURE_FAILURE => bun.String.static("certificate signature failure"),
+                    error.CRL_SIGNATURE_FAILURE => bun.String.static("CRL signature failure"),
+                    error.CERT_NOT_YET_VALID => bun.String.static("certificate is not yet valid"),
+                    error.CRL_NOT_YET_VALID => bun.String.static("CRL is not yet valid"),
+                    error.CERT_HAS_EXPIRED => bun.String.static("certificate has expired"),
+                    error.CRL_HAS_EXPIRED => bun.String.static("CRL has expired"),
+                    error.ERROR_IN_CERT_NOT_BEFORE_FIELD => bun.String.static("format error in certificate's notBefore field"),
+                    error.ERROR_IN_CERT_NOT_AFTER_FIELD => bun.String.static("format error in certificate's notAfter field"),
+                    error.ERROR_IN_CRL_LAST_UPDATE_FIELD => bun.String.static("format error in CRL's lastUpdate field"),
+                    error.ERROR_IN_CRL_NEXT_UPDATE_FIELD => bun.String.static("format error in CRL's nextUpdate field"),
+                    error.OUT_OF_MEM => bun.String.static("out of memory"),
+                    error.DEPTH_ZERO_SELF_SIGNED_CERT => bun.String.static("self signed certificate"),
+                    error.SELF_SIGNED_CERT_IN_CHAIN => bun.String.static("self signed certificate in certificate chain"),
+                    error.UNABLE_TO_GET_ISSUER_CERT_LOCALLY => bun.String.static("unable to get local issuer certificate"),
+                    error.UNABLE_TO_VERIFY_LEAF_SIGNATURE => bun.String.static("unable to verify the first certificate"),
+                    error.CERT_CHAIN_TOO_LONG => bun.String.static("certificate chain too long"),
+                    error.CERT_REVOKED => bun.String.static("certificate revoked"),
+                    error.INVALID_CA => bun.String.static("invalid CA certificate"),
+                    error.INVALID_NON_CA => bun.String.static("invalid non-CA certificate (has CA markings)"),
+                    error.PATH_LENGTH_EXCEEDED => bun.String.static("path length constraint exceeded"),
+                    error.PROXY_PATH_LENGTH_EXCEEDED => bun.String.static("proxy path length constraint exceeded"),
+                    error.PROXY_CERTIFICATES_NOT_ALLOWED => bun.String.static("proxy certificates not allowed, please set the appropriate flag"),
+                    error.INVALID_PURPOSE => bun.String.static("unsupported certificate purpose"),
+                    error.CERT_UNTRUSTED => bun.String.static("certificate not trusted"),
+                    error.CERT_REJECTED => bun.String.static("certificate rejected"),
+                    error.APPLICATION_VERIFICATION => bun.String.static("application verification failure"),
+                    error.SUBJECT_ISSUER_MISMATCH => bun.String.static("subject issuer mismatch"),
+                    error.AKID_SKID_MISMATCH => bun.String.static("authority and subject key identifier mismatch"),
+                    error.AKID_ISSUER_SERIAL_MISMATCH => bun.String.static("authority and issuer serial number mismatch"),
+                    error.KEYUSAGE_NO_CERTSIGN => bun.String.static("key usage does not include certificate signing"),
+                    error.UNABLE_TO_GET_CRL_ISSUER => bun.String.static("unable to get CRL issuer certificate"),
+                    error.UNHANDLED_CRITICAL_EXTENSION => bun.String.static("unhandled critical extension"),
+                    error.KEYUSAGE_NO_CRL_SIGN => bun.String.static("key usage does not include CRL signing"),
+                    error.KEYUSAGE_NO_DIGITAL_SIGNATURE => bun.String.static("key usage does not include digital signature"),
+                    error.UNHANDLED_CRITICAL_CRL_EXTENSION => bun.String.static("unhandled critical CRL extension"),
+                    error.INVALID_EXTENSION => bun.String.static("invalid or inconsistent certificate extension"),
+                    error.INVALID_POLICY_EXTENSION => bun.String.static("invalid or inconsistent certificate policy extension"),
+                    error.NO_EXPLICIT_POLICY => bun.String.static("no explicit policy"),
+                    error.DIFFERENT_CRL_SCOPE => bun.String.static("Different CRL scope"),
+                    error.UNSUPPORTED_EXTENSION_FEATURE => bun.String.static("Unsupported extension feature"),
+                    error.UNNESTED_RESOURCE => bun.String.static("RFC 3779 resource not subset of parent's resources"),
+                    error.PERMITTED_VIOLATION => bun.String.static("permitted subtree violation"),
+                    error.EXCLUDED_VIOLATION => bun.String.static("excluded subtree violation"),
+                    error.SUBTREE_MINMAX => bun.String.static("name constraints minimum and maximum not supported"),
+                    error.UNSUPPORTED_CONSTRAINT_TYPE => bun.String.static("unsupported name constraint type"),
+                    error.UNSUPPORTED_CONSTRAINT_SYNTAX => bun.String.static("unsupported or invalid name constraint syntax"),
+                    error.UNSUPPORTED_NAME_SYNTAX => bun.String.static("unsupported or invalid name syntax"),
+                    error.CRL_PATH_VALIDATION_ERROR => bun.String.static("CRL path validation error"),
+                    error.SUITE_B_INVALID_VERSION => bun.String.static("Suite B: certificate version invalid"),
+                    error.SUITE_B_INVALID_ALGORITHM => bun.String.static("Suite B: invalid public key algorithm"),
+                    error.SUITE_B_INVALID_CURVE => bun.String.static("Suite B: invalid ECC curve"),
+                    error.SUITE_B_INVALID_SIGNATURE_ALGORITHM => bun.String.static("Suite B: invalid signature algorithm"),
+                    error.SUITE_B_LOS_NOT_ALLOWED => bun.String.static("Suite B: curve not allowed for this LOS"),
+                    error.SUITE_B_CANNOT_SIGN_P_384_WITH_P_256 => bun.String.static("Suite B: cannot sign P-384 with P-256"),
+                    error.HOSTNAME_MISMATCH => bun.String.static("Hostname mismatch"),
+                    error.EMAIL_MISMATCH => bun.String.static("Email address mismatch"),
+                    error.IP_ADDRESS_MISMATCH => bun.String.static("IP address mismatch"),
+                    error.INVALID_CALL => bun.String.static("Invalid certificate verification context"),
+                    error.STORE_LOOKUP => bun.String.static("Issuer certificate lookup error"),
+                    error.NAME_CONSTRAINTS_WITHOUT_SANS => bun.String.static("Issuer has name constraints but leaf has no SANs"),
+                    error.UNKKNOW_CERTIFICATE_VERIFICATION_ERROR => bun.String.static("unknown certificate verification error"),
                     else => bun.String.static("fetch() failed. For more information, pass `verbose: true` in the second argument to fetch()"),
                 },
                 .path = path,
@@ -1238,13 +1451,13 @@ pub const Fetch = struct {
             return Response{
                 .allocator = allocator,
                 .url = bun.String.createAtomIfPossible(metadata.url),
-                .status_text = bun.String.createAtomIfPossible(http_response.status),
                 .redirected = this.result.redirected,
+                .init = .{
+                    .headers = FetchHeaders.createFromPicoHeaders(http_response.headers),
+                    .status_code = @as(u16, @truncate(http_response.status_code)),
+                    .status_text = bun.String.createAtomIfPossible(http_response.status),
+                },
                 .body = .{
-                    .init = .{
-                        .headers = FetchHeaders.createFromPicoHeaders(http_response.headers),
-                        .status_code = @as(u16, @truncate(http_response.status_code)),
-                    },
                     .value = this.toBodyValue(),
                 },
             };
@@ -1488,15 +1701,15 @@ pub const Fetch = struct {
 
         response.* = Response{
             .body = Body{
-                .init = Body.Init{
-                    .status_code = 200,
-                },
                 .value = .{
                     .Blob = blob,
                 },
             },
+            .init = Response.Init{
+                .status_code = 200,
+                .status_text = bun.String.createAtom("OK"),
+            },
             .allocator = allocator,
-            .status_text = bun.String.createAtom("OK"),
             .url = data_url.url.dupeRef(),
         };
 
@@ -1563,7 +1776,7 @@ pub const Fetch = struct {
 
         var url_proxy_buffer: []const u8 = undefined;
         var is_file_url = false;
-        var reject_unauthorized = true;
+        var reject_unauthorized = script_ctx.bundler.env.getTLSRejectUnauthorized();
         var check_server_identity: JSValue = .zero;
         // TODO: move this into a DRYer implementation
         // The status quo is very repetitive and very bug prone
@@ -1708,7 +1921,7 @@ pub const Fetch = struct {
                             if (decompress.isBoolean()) {
                                 disable_decompression = !decompress.asBoolean();
                             } else if (decompress.isNumber()) {
-                                disable_keepalive = decompress.to(i32) == 0;
+                                disable_decompression = decompress.to(i32) == 0;
                             }
                         }
 
@@ -1901,7 +2114,7 @@ pub const Fetch = struct {
                             if (decompress.isBoolean()) {
                                 disable_decompression = !decompress.asBoolean();
                             } else if (decompress.isNumber()) {
-                                disable_keepalive = decompress.to(i32) == 0;
+                                disable_decompression = decompress.to(i32) == 0;
                             }
                         }
 
@@ -2009,10 +2222,10 @@ pub const Fetch = struct {
 
             response.* = Response{
                 .body = Body{
-                    .init = Body.Init{
-                        .status_code = 200,
-                    },
                     .value = .{ .Blob = bun_file },
+                },
+                .init = Response.Init{
+                    .status_code = 200,
                 },
                 .allocator = bun.default_allocator,
                 .url = file_url_string.clone(),

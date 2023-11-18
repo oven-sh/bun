@@ -1,6 +1,6 @@
 Bundling is currently an important mechanism for building complex web apps.
 
-Modern apps typically consist of a large number of files and package dependencies. Despite the fact that modern browsers support [ES Module](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Modules) imports, it's still too slow to fetch each file via inidividual HTTP requests. _Bundling_ is the process of concatenating several source files into a single large file that can be loaded in a single request.
+Modern apps typically consist of a large number of files and package dependencies. Despite the fact that modern browsers support [ES Module](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Modules) imports, it's still too slow to fetch each file via individual HTTP requests. _Bundling_ is the process of concatenating several source files into a single large file that can be loaded in a single request.
 
 {% callout %}
 **On bundling** — Despite recent advances like [`modulepreload`](https://developer.mozilla.org/en-US/docs/Web/HTML/Attributes/rel/modulepreload) and [HTTP/3](https://en.wikipedia.org/wiki/HTTP/3), bundling is still the most performant approach.

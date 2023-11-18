@@ -63,8 +63,16 @@ const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerHandlers = Symbol.for("::bunsocket_serverhandlers::");
 const bunSocketServerConnections = Symbol.for("::bunnetserverconnections::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
+
 const bunSocketInternal = Symbol.for("::bunnetsocketinternal::");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
+function closeNT(self) {
+  self.emit("close");
+}
+function endNT(socket, callback, err) {
+  socket.end();
+  callback(err);
+}
 
 var SocketClass;
 const Socket = (function (InternalSocket) {
@@ -74,17 +82,15 @@ const Socket = (function (InternalSocket) {
     enumerable: false,
   });
 
-  return Object.defineProperty(
-    function Socket(options) {
-      return new InternalSocket(options);
+  function Socket(options) {
+    return new InternalSocket(options);
+  }
+  Socket.prototype = InternalSocket.prototype;
+  return Object.defineProperty(Socket, Symbol.hasInstance, {
+    value(instance) {
+      return instance instanceof InternalSocket;
     },
-    Symbol.hasInstance,
-    {
-      value(instance) {
-        return instance instanceof InternalSocket;
-      },
-    },
-  );
+  });
 })(
   class Socket extends Duplex {
     static #Handlers = {
@@ -145,12 +151,12 @@ const Socket = (function (InternalSocket) {
           const cert = self.getPeerCertificate(true);
           verifyError = checkServerIdentity(self.servername, cert);
         }
-
         if (self._requestCert || self._rejectUnauthorized) {
           if (verifyError) {
             self.authorized = false;
             self.authorizationError = verifyError.code || verifyError.message;
             if (self._rejectUnauthorized) {
+              self.emit("error", verifyError);
               self.destroy(verifyError);
               return;
             }
@@ -215,6 +221,7 @@ const Socket = (function (InternalSocket) {
         const { pauseOnConnect, connectionListener, InternalSocketClass, requestCert, rejectUnauthorized } = options;
         const _socket = new InternalSocketClass({});
         _socket.isServer = true;
+        _socket.server = self;
         _socket._requestCert = requestCert;
         _socket._rejectUnauthorized = rejectUnauthorized;
 
@@ -234,37 +241,41 @@ const Socket = (function (InternalSocket) {
           self.emit("drop", data);
           return;
         }
-        // the duplex implementation start paused, so we resume when pauseOnConnect is falsy
-        if (!pauseOnConnect) {
-          _socket.resume();
-        }
+
+        const bunTLS = _socket[bunTlsSymbol];
+        const isTLS = typeof bunTLS === "function";
 
         self[bunSocketServerConnections]++;
 
         if (typeof connectionListener == "function") {
-          if (InternalSocketClass.name === "TLSSocket") {
+          this.pauseOnConnect = pauseOnConnect;
+          if (isTLS) {
             // add secureConnection event handler
             self.once("secureConnection", () => connectionListener(_socket));
           } else {
             connectionListener(_socket);
           }
         }
-
         self.emit("connection", _socket);
+        // the duplex implementation start paused, so we resume when pauseOnConnect is falsy
+        if (!pauseOnConnect && !isTLS) {
+          _socket.resume();
+        }
       },
       handshake(socket, success, verifyError) {
         const { data: self } = socket;
-        self.emit("secure", self);
-
         self._securePending = false;
         self.secureConnecting = false;
         self._secureEstablished = !!success;
-
+        const server = self.server;
         if (self._requestCert || self._rejectUnauthorized) {
           if (verifyError) {
             self.authorized = false;
             self.authorizationError = verifyError.code || verifyError.message;
+            server.emit("tlsClientError", verifyError, self);
             if (self._rejectUnauthorized) {
+              // if we reject we still need to emit secure
+              self.emit("secure", self);
               self.destroy(verifyError);
               return;
             }
@@ -272,7 +283,13 @@ const Socket = (function (InternalSocket) {
         } else {
           self.authorized = true;
         }
-        self.emit("secureConnection", verifyError);
+        self.server.emit("secureConnection", self);
+        // after secureConnection event we emmit secure and secureConnect
+        self.emit("secure", self);
+        self.emit("secureConnect", verifyError);
+        if (!server.pauseOnConnect) {
+          self.resume();
+        }
       },
       error(socket, error) {
         Socket.#Handlers.error(socket, error);
@@ -303,6 +320,8 @@ const Socket = (function (InternalSocket) {
     _parent;
     _parentWrap;
     #socket;
+    server;
+    pauseOnConnect = false;
     #upgraded;
 
     constructor(options) {
@@ -317,7 +336,7 @@ const Socket = (function (InternalSocket) {
       this._parent = this;
       this._parentWrap = this;
       this.#pendingRead = undefined;
-      this.#upgraded = false;
+      this.#upgraded = null;
       if (socket instanceof Socket) {
         this.#socket = socket;
       }
@@ -350,6 +369,14 @@ const Socket = (function (InternalSocket) {
         this.emit("connect", this);
       }
       Socket.#Drain(socket);
+    }
+
+    #closeRawConnection() {
+      const connection = this.#upgraded;
+      connection[bunSocketInternal] = null;
+      connection.unref();
+      connection.destroy();
+      process.nextTick(closeNT, connection);
     }
 
     connect(port, host, connectListener) {
@@ -402,6 +429,7 @@ const Socket = (function (InternalSocket) {
         }
       }
 
+      this.pauseOnConnect = pauseOnConnect;
       if (!pauseOnConnect) {
         this.resume();
       }
@@ -412,13 +440,17 @@ const Socket = (function (InternalSocket) {
       var tls = undefined;
 
       if (typeof bunTLS === "function") {
-        tls = bunTLS.call(this, port, host, true);
+        tls = bunTLS.$call(this, port, host, true);
         // Client always request Cert
         this._requestCert = true;
-        this._rejectUnauthorized = rejectUnauthorized;
 
         if (tls) {
-          tls.rejectUnauthorized = rejectUnauthorized;
+          if (typeof rejectUnauthorized !== "undefined") {
+            this._rejectUnauthorized = rejectUnauthorized;
+            tls.rejectUnauthorized = rejectUnauthorized;
+          } else {
+            this._rejectUnauthorized = tls.rejectUnauthorized;
+          }
           tls.requestCert = true;
           tls.session = session || tls.session;
           this.servername = tls.servername;
@@ -446,90 +478,97 @@ const Socket = (function (InternalSocket) {
       } else if (connectListener) this.on("connect", connectListener);
 
       // start using existing connection
-      if (connection) {
-        const socket = connection[bunSocketInternal];
+      try {
+        if (connection) {
+          const socket = connection[bunSocketInternal];
 
-        if (socket) {
-          this.connecting = true;
-          this.#upgraded = true;
-          const result = socket.upgradeTLS({
-            data: this,
-            tls,
-            socket: Socket.#Handlers,
-          });
-          if (result) {
-            const [raw, tls] = result;
-            // replace socket
-            connection[bunSocketInternal] = raw;
-            raw.timeout(raw.timeout);
-            raw.connecting = false;
-            this[bunSocketInternal] = tls;
-          } else {
-            this[bunSocketInternal] = null;
-            throw new Error("Invalid socket");
-          }
-        } else {
-          // wait to be connected
-          connection.once("connect", () => {
-            const socket = connection[bunSocketInternal];
-            if (!socket) return;
-
+          if (socket) {
             this.connecting = true;
-            this.#upgraded = true;
+            this.#upgraded = connection;
             const result = socket.upgradeTLS({
               data: this,
               tls,
               socket: Socket.#Handlers,
             });
-
             if (result) {
               const [raw, tls] = result;
               // replace socket
               connection[bunSocketInternal] = raw;
               raw.timeout(raw.timeout);
+              this.once("end", this.#closeRawConnection);
               raw.connecting = false;
               this[bunSocketInternal] = tls;
             } else {
               this[bunSocketInternal] = null;
               throw new Error("Invalid socket");
             }
+          } else {
+            // wait to be connected
+            connection.once("connect", () => {
+              const socket = connection[bunSocketInternal];
+              if (!socket) return;
+
+              this.connecting = true;
+              this.#upgraded = connection;
+              const result = socket.upgradeTLS({
+                data: this,
+                tls,
+                socket: Socket.#Handlers,
+              });
+
+              if (result) {
+                const [raw, tls] = result;
+                // replace socket
+                connection[bunSocketInternal] = raw;
+                raw.timeout(raw.timeout);
+                this.once("end", this.#closeRawConnection);
+                raw.connecting = false;
+                this[bunSocketInternal] = tls;
+              } else {
+                this[bunSocketInternal] = null;
+                throw new Error("Invalid socket");
+              }
+            });
+          }
+        } else if (path) {
+          // start using unix socket
+          bunConnect({
+            data: this,
+            unix: path,
+            socket: Socket.#Handlers,
+            tls,
+          }).catch(error => {
+            this.emit("error", error);
+            this.emit("close");
+          });
+        } else {
+          // default start
+          bunConnect({
+            data: this,
+            hostname: host || "localhost",
+            port: port,
+            socket: Socket.#Handlers,
+            tls,
+          }).catch(error => {
+            this.emit("error", error);
+            this.emit("close");
           });
         }
-      } else if (path) {
-        // start using unix socket
-        bunConnect({
-          data: this,
-          unix: path,
-          socket: Socket.#Handlers,
-          tls,
-        }).catch(error => {
-          this.emit("error", error);
-          this.emit("close");
-        });
-      } else {
-        // default start
-        bunConnect({
-          data: this,
-          hostname: host || "localhost",
-          port: port,
-          socket: Socket.#Handlers,
-          tls,
-        }).catch(error => {
-          this.emit("error", error);
-          this.emit("close");
-        });
+      } catch (error) {
+        process.nextTick(emitErrorAndCloseNextTick, this, error);
       }
       return this;
     }
 
     _destroy(err, callback) {
-      this[bunSocketInternal]?.end();
-      callback(err);
+      const socket = this[bunSocketInternal];
+      socket && process.nextTick(endNT, socket, callback, err);
     }
 
     _final(callback) {
       this[bunSocketInternal]?.end();
       callback();
+      process.nextTick(closeNT, this);
     }
 
     get localAddress() {
@@ -552,8 +591,10 @@ const Socket = (function (InternalSocket) {
       const queue = this.#readQueue;
       let chunk;
       while ((chunk = queue.peek())) {
-        if (!this.push(chunk)) return;
+        const can_continue = !this.push(chunk);
+        // always remove from queue push will queue it internally if needed
         queue.shift();
+        if (!can_continue) break;
       }
     }
 
@@ -639,7 +680,6 @@ const connect = createConnection;
 
 class Server extends EventEmitter {
   #server;
-  #listening = false;
   [bunSocketServerConnections] = 0;
   [bunSocketServerOptions];
   maxConnections = 0;
@@ -677,7 +717,6 @@ class Server extends EventEmitter {
     if (this.#server) {
       this.#server.stop(true);
       this.#server = null;
-      this.#listening = false;
       this[bunSocketServerConnections] = 0;
       this.emit("close");
       if (typeof callback === "function") {
@@ -815,13 +854,15 @@ class Server extends EventEmitter {
       const options = this[bunSocketServerOptions];
 
       if (typeof bunTLS === "function") {
-        [tls, TLSSocketClass] = bunTLS.call(this, port, hostname, false);
+        [tls, TLSSocketClass] = bunTLS.$call(this, port, hostname, false);
         options.servername = tls.serverName;
         options.InternalSocketClass = TLSSocketClass;
+        if (!tls.requestCert) {
+          tls.rejectUnauthorized = false;
+        }
       } else {
         options.InternalSocketClass = SocketClass;
       }
-
       this.#server = Bun.listen(
         path
           ? {
@@ -842,8 +883,6 @@ class Server extends EventEmitter {
       //make this instance available on handlers
       this.#server.data = this;
 
-      this.#listening = true;
-
       // We must schedule the emitListeningNextTick() only after the next run of
       // the event loop's IO queue. Otherwise, the server may not actually be listening
       // when the 'listening' event is emitted.
@@ -853,7 +892,6 @@ class Server extends EventEmitter {
       // process.nextTick() is not sufficient because it will run before the IO queue.
       setTimeout(emitListeningNextTick, 1, this, onListen);
     } catch (err) {
-      this.#listening = false;
       setTimeout(emitErrorNextTick, 1, this, err);
     }
     return this;
@@ -862,6 +900,11 @@ class Server extends EventEmitter {
 
 function emitErrorNextTick(self, error) {
   self.emit("error", error);
+}
+
+function emitErrorAndCloseNextTick(self, error) {
+  self.emit("error", error);
+  self.emit("close");
 }
 
 function emitListeningNextTick(self, onListen) {

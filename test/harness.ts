@@ -7,6 +7,7 @@ export const bunEnv: any = {
   NO_COLOR: "1",
   FORCE_COLOR: undefined,
   TZ: "Etc/UTC",
+  CI: "1",
 };
 
 export function bunExe() {
@@ -47,7 +48,7 @@ export async function expectMaxObjectTypeCount(
   gc(true);
   for (const wait = 20; maxWait > 0; maxWait -= wait) {
     if (heapStats().objectTypeCounts[type] <= count) break;
-    await new Promise(resolve => setTimeout(resolve, wait));
+    await Bun.sleep(wait);
     gc();
   }
   expect(heapStats().objectTypeCounts[type]).toBeLessThanOrEqual(count);
@@ -59,7 +60,7 @@ export function gcTick(trace = false) {
   trace && console.trace("");
   // console.trace("hello");
   gc();
-  return new Promise(resolve => setTimeout(resolve, 0));
+  return Bun.sleep(0);
 }
 
 export function withoutAggressiveGC(block: () => unknown) {
@@ -83,7 +84,7 @@ export function hideFromStackTrace(block: CallableFunction) {
   });
 }
 
-export function tempDirWithFiles(basename: string, files: Record<string, string | Record<string, string>>) {
+export function tempDirWithFiles(basename: string, files: Record<string, string | Record<string, string>>): string {
   var fs = require("fs");
   var path = require("path");
   var { tmpdir } = require("os");

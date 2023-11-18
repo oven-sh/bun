@@ -117,7 +117,7 @@ pub const INotify = struct {
         std.debug.assert(!loaded_inotify);
         loaded_inotify = true;
 
-        if (std.os.getenvZ("BUN_INOTIFY_COALESCE_INTERVAL")) |env| {
+        if (bun.getenvZ("BUN_INOTIFY_COALESCE_INTERVAL")) |env| {
             coalesce_interval = std.fmt.parseInt(isize, env, 10) catch 100_000;
         }
 
@@ -373,6 +373,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
         close_descriptors: bool = false,
 
         pub const HashType = u32;
+        pub const WatchListArray = Watchlist;
 
         var evict_list: [WATCHER_MAX_LIST]WatchItemIndex = undefined;
 

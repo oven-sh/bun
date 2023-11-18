@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { dirname } from "node:path";
+import { promisify } from "node:util";
 import { bunEnv, bunExe, gc } from "harness";
 import fs, {
   closeSync,
@@ -55,6 +56,13 @@ if (!import.meta.dir) {
 function mkdirForce(path: string) {
   if (!existsSync(path)) mkdirSync(path, { recursive: true });
 }
+
+it("Dirent.name setter", () => {
+  const dirent = Object.create(Dirent.prototype);
+  expect(dirent.name).toBeUndefined();
+  dirent.name = "hello";
+  expect(dirent.name).toBe("hello");
+});
 
 it("writeFileSync in append should not truncate the file", () => {
   const path = join(tmpdir(), "writeFileSync-should-not-append-" + (Date.now() * 10000).toString(16));
@@ -136,6 +144,35 @@ describe("copyFileSync", () => {
     expect(Bun.hash(readFileSync(tempdir + "/copyFileSync.dest.blob"))).toBe(Bun.hash(buffer.buffer));
   });
 
+  it("constants are right", () => {
+    expect(fs.constants.COPYFILE_EXCL).toBe(1);
+    expect(fs.constants.COPYFILE_FICLONE).toBe(2);
+    expect(fs.constants.COPYFILE_FICLONE_FORCE).toBe(4);
+  });
+
+  it("FICLONE option does not error ever", () => {
+    const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}.FICLONE/1234/hi`;
+    expect(existsSync(tempdir)).toBe(false);
+    expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
+
+    // that don't exist
+    copyFileSync(import.meta.path, tempdir + "/copyFileSync.js", fs.constants.COPYFILE_FICLONE);
+    copyFileSync(import.meta.path, tempdir + "/copyFileSync.js", fs.constants.COPYFILE_FICLONE);
+    copyFileSync(import.meta.path, tempdir + "/copyFileSync.js", fs.constants.COPYFILE_FICLONE);
+  });
+
+  it("COPYFILE_EXCL works", () => {
+    const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}.COPYFILE_EXCL/1234/hi`;
+    expect(existsSync(tempdir)).toBe(false);
+    expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
+
+    // that don't exist
+    copyFileSync(import.meta.path, tempdir + "/copyFileSync.js", fs.constants.COPYFILE_EXCL);
+    expect(() => {
+      copyFileSync(import.meta.path, tempdir + "/copyFileSync.js", fs.constants.COPYFILE_EXCL);
+    }).toThrow();
+  });
+
   if (process.platform === "linux") {
     describe("should work when copyFileRange is not available", () => {
       it("on large files", () => {
@@ -212,7 +249,7 @@ describe("copyFileSync", () => {
 
 describe("mkdirSync", () => {
   it("should create a directory", () => {
-    const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}/1234/hi`;
+    const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}.mkdirSync/1234/hi`;
     expect(existsSync(tempdir)).toBe(false);
     expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
     expect(existsSync(tempdir)).toBe(true);
@@ -292,7 +329,7 @@ it("promises.readFile", async () => {
   for (let i = 0; i < 20; i++) {
     try {
       await fs.promises.readFile("/i-dont-exist", "utf-8");
-      expect(false).toBeTrue();
+      expect.unreachable();
     } catch (e: any) {
       expect(e).toBeInstanceOf(Error);
       expect(e.message).toBe("No such file or directory");
@@ -953,6 +990,64 @@ describe("stat", () => {
     } catch (e: any) {
       expect(e.code).toBe("ENOENT");
     }
+
+    try {
+      statSync("");
+      throw "statSync should throw";
+    } catch (e: any) {
+      expect(e.code).toBe("ENOENT");
+    }
+  });
+});
+
+describe("exist", () => {
+  it("should return false with invalid path", () => {
+    expect(existsSync("/pathNotExist")).toBe(false);
+  });
+
+  it("should return false with empty string", () => {
+    expect(existsSync("")).toBe(false);
+  });
+});
+
+describe("fs.exists", () => {
+  it("should throw TypeError with invalid argument", done => {
+    let err = undefined;
+    try {
+      // @ts-ignore
+      fs.exists(import.meta.path);
+    } catch (e) {
+      err = e;
+    }
+    try {
+      expect(err).not.toBeUndefined();
+      expect(err).toBeInstanceOf(TypeError);
+      // @ts-ignore
+      expect(err.code).toStrictEqual("ERR_INVALID_ARG_TYPE");
+      done();
+    } catch (e) {
+      done(e);
+    }
+  });
+  it("should return false with invalid path", done => {
+    fs.exists(`${tmpdir()}/test-fs-exists-${Date.now()}`, exists => {
+      try {
+        expect(exists).toBe(false);
+        done();
+      } catch (e) {
+        done(e);
+      }
+    });
+  });
+  it("should return true with existed path", done => {
+    fs.exists(import.meta.path, exists => {
+      try {
+        expect(exists).toBe(true);
+        done();
+      } catch (e) {
+        done(e);
+      }
+    });
   });
 });
 
@@ -1016,19 +1111,41 @@ describe("rmdir", () => {
       done();
     });
   });
-  it("does not remove a dir with a file in it", done => {
+
+  it("removes a dir x 512", async () => {
+    var queue = new Array(512);
+    var paths = new Array(512);
+    for (let i = 0; i < 512; i++) {
+      const path = `${tmpdir()}/${Date.now()}.rm.dir${i}`;
+      try {
+        mkdirSync(path);
+      } catch (e) {}
+      paths[i] = path;
+      queue[i] = promises.rmdir(path);
+    }
+
+    await Promise.all(queue);
+
+    for (let i = 0; i < 512; i++) {
+      expect(existsSync(paths[i])).toBe(false);
+    }
+  });
+  it("does not remove a dir with a file in it", async () => {
     const path = `${tmpdir()}/${Date.now()}.rm.dir`;
     try {
       mkdirSync(path);
       writeFileSync(`${path}/file.txt`, "File written successfully", "utf8");
     } catch (e) {}
     expect(existsSync(path + "/file.txt")).toBe(true);
-    rmdir(path, err => {
+    try {
+      await promises.rmdir(path);
+    } catch (err) {
       expect("ENOTEMPTY EPERM").toContain(err!.code);
-      done();
-    });
+    }
+
     expect(existsSync(path + "/file.txt")).toBe(true);
-    rmdir(path, { recursive: true }, () => {});
+
+    await promises.rmdir(path, { recursive: true });
     expect(existsSync(path + "/file.txt")).toBe(false);
   });
   it("removes a dir recursively", done => {
@@ -1846,6 +1963,102 @@ it("createReadStream on a large file emits readable event correctly", () => {
   });
 });
 
+describe("fs.write", () => {
+  it("should work with (fd, buffer, offset, length, position, callback)", done => {
+    const path = `${tmpdir()}/bun-fs-write-1-${Date.now()}.txt`;
+    const fd = fs.openSync(path, "w");
+    const buffer = Buffer.from("bun");
+    fs.write(fd, buffer, 0, buffer.length, 0, err => {
+      try {
+        expect(err).toBeNull();
+        expect(readFileSync(path, "utf8")).toStrictEqual("bun");
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+        closeSync(fd);
+      }
+      done();
+    });
+  });
+
+  it("should work with (fd, buffer, offset, length, callback)", done => {
+    const path = `${tmpdir()}/bun-fs-write-2-${Date.now()}.txt`;
+    const fd = fs.openSync(path, "w");
+    const buffer = Buffer.from("bun");
+    fs.write(fd, buffer, 0, buffer.length, (err, written, buffer) => {
+      try {
+        expect(err).toBeNull();
+        expect(written).toBe(3);
+        expect(buffer.slice(0, written).toString()).toStrictEqual("bun");
+        expect(Buffer.isBuffer(buffer)).toBe(true);
+        expect(readFileSync(path, "utf8")).toStrictEqual("bun");
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+        closeSync(fd);
+      }
+      done();
+    });
+  });
+
+  it("should work with (fd, string, position, encoding, callback)", done => {
+    const path = `${tmpdir()}/bun-fs-write-3-${Date.now()}.txt`;
+    const fd = fs.openSync(path, "w");
+    const string = "bun";
+    fs.write(fd, string, 0, "utf8", (err, written, string) => {
+      try {
+        expect(err).toBeNull();
+        expect(written).toBe(3);
+        expect(string.slice(0, written).toString()).toStrictEqual("bun");
+        expect(string).toBeTypeOf("string");
+        expect(readFileSync(path, "utf8")).toStrictEqual("bun");
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+        closeSync(fd);
+      }
+      done();
+    });
+  });
+
+  it("should work with (fd, string, position, callback)", done => {
+    const path = `${tmpdir()}/bun-fs-write-4-${Date.now()}.txt`;
+    const fd = fs.openSync(path, "w");
+    const string = "bun";
+    fs.write(fd, string, 0, (err, written, string) => {
+      try {
+        expect(err).toBeNull();
+        expect(written).toBe(3);
+        expect(string.slice(0, written).toString()).toStrictEqual("bun");
+        expect(string).toBeTypeOf("string");
+        expect(readFileSync(path, "utf8")).toStrictEqual("bun");
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+        closeSync(fd);
+      }
+      done();
+    });
+  });
+
+  it("should work with util.promisify", async () => {
+    const path = `${tmpdir()}/bun-fs-write-5-${Date.now()}.txt`;
+    const fd = fs.openSync(path, "w");
+    const string = "bun";
+    const fswrite = promisify(fs.write);
+    const ret = await fswrite(fd, string, 0);
+    expect(typeof ret === "object").toBeTrue();
+    expect(ret.bytesWritten === 3).toBeTrue();
+    expect(ret.buffer === string).toBeTrue();
+    expect(readFileSync(path, "utf8")).toStrictEqual("bun");
+    fs.closeSync(fd);
+  });
+});
+
 describe("fs.read", () => {
   it("should work with (fd, callback)", done => {
     const path = `${tmpdir()}/bun-fs-read-1-${Date.now()}.txt`;
@@ -1861,6 +2074,7 @@ describe("fs.read", () => {
         return done(e);
       } finally {
         unlinkSync(path);
+        closeSync(fd);
       }
       done();
     });
@@ -1880,6 +2094,7 @@ describe("fs.read", () => {
         return done(e);
       } finally {
         unlinkSync(path);
+        closeSync(fd);
       }
       done();
     });
@@ -1899,6 +2114,7 @@ describe("fs.read", () => {
         return done(e);
       } finally {
         unlinkSync(path);
+        closeSync(fd);
       }
       done();
     });
@@ -1918,6 +2134,7 @@ describe("fs.read", () => {
         return done(e);
       } finally {
         unlinkSync(path);
+        closeSync(fd);
       }
       done();
     });
@@ -1937,6 +2154,7 @@ describe("fs.read", () => {
         return done(e);
       } finally {
         unlinkSync(path);
+        closeSync(fd);
       }
       done();
     });
@@ -1956,9 +2174,24 @@ describe("fs.read", () => {
         return done(e);
       } finally {
         unlinkSync(path);
+        closeSync(fd);
       }
       done();
     });
+  });
+  it("should work with util.promisify", async () => {
+    const path = `${tmpdir()}/bun-fs-read-6-${Date.now()}.txt`;
+    fs.writeFileSync(path, "bun bun bun bun");
+
+    const fd = fs.openSync(path, "r");
+    const buffer = Buffer.alloc(15);
+    const fsread = promisify(fs.read);
+
+    const ret = await fsread(fd, buffer, 0, 15, 0);
+    expect(typeof ret === "object").toBeTrue();
+    expect(ret.bytesRead === 15).toBeTrue();
+    expect(buffer.slice().toString() === "bun bun bun bun").toBeTrue();
+    fs.closeSync(fd);
   });
 });
 

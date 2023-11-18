@@ -281,10 +281,10 @@ pub const Os = struct {
         JSC.markBinding(@src());
 
         switch (comptime builtin.target.cpu.arch.endian()) {
-            .Big => {
+            .big => {
                 return JSC.ZigString.init("BE").withEncoding().toValue(globalThis);
             },
-            .Little => {
+            .little => {
                 return JSC.ZigString.init("LE").withEncoding().toValue(globalThis);
             },
         }
@@ -530,6 +530,9 @@ pub const Os = struct {
                         addr_data[0], addr_data[1], addr_data[2],
                         addr_data[3], addr_data[4], addr_data[5],
                     }) catch unreachable;
+                    interface.put(globalThis, JSC.ZigString.static("mac"), JSC.ZigString.init(mac).withEncoding().toValueGC(globalThis));
+                } else {
+                    const mac = "00:00:00:00:00:00";
                     interface.put(globalThis, JSC.ZigString.static("mac"), JSC.ZigString.init(mac).withEncoding().toValueGC(globalThis));
                 }
             }

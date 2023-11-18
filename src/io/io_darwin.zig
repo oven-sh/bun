@@ -512,7 +512,7 @@ pub const Waker = struct {
 
     const zeroed = std.mem.zeroes([16]Kevent64);
 
-    pub fn wake(this: *Waker) !void {
+    pub fn wake(this: *Waker) void {
         bun.JSC.markBinding(@src());
 
         if (io_darwin_schedule_wakeup(this.machport)) {
@@ -522,11 +522,11 @@ pub const Waker = struct {
         this.has_pending_wake = true;
     }
 
-    pub fn wait(this: Waker) !usize {
+    pub fn wait(this: Waker) void {
         bun.JSC.markBinding(@src());
         var events = zeroed;
 
-        const count = std.os.system.kevent64(
+        _ = std.os.system.kevent64(
             this.kq,
             &events,
             0,
@@ -535,12 +535,6 @@ pub const Waker = struct {
             0,
             null,
         );
-
-        if (count < 0) {
-            return asError(std.c.getErrno(count));
-        }
-
-        return @as(usize, @intCast(count));
     }
 
     extern fn io_darwin_create_machport(
@@ -1350,6 +1344,12 @@ pub fn read(
         struct {
             fn doOperation(op: anytype) ReadError!usize {
                 while (true) {
+                    if (op.positional) {
+                        const rc = os.system.lseek(op.fd, @intCast(op.offset), 0);
+                        if (rc == -1) {
+                            return error.Unseekable;
+                        }
+                    }
                     const rc = os.system.read(
                         op.fd,
                         op.buf,

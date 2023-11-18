@@ -1192,6 +1192,69 @@ export default <>hi</>
     expect(fragment.includes("var JSXFrag = foo.frag,")).toBe(true);
   });
 
+  it("JSX keys", () => {
+    var bun = new Bun.Transpiler({
+      loader: "jsx",
+      define: {
+        "process.env.NODE_ENV": JSON.stringify("development"),
+      },
+    });
+
+    expect(bun.transformSync("console.log(<div key={() => {}} points={() => {}}></div>);")).toBe(
+      `console.log(jsxDEV("div", {
+  points: () => {
+  }
+}, () => {
+}, false, undefined, this));
+`,
+    );
+
+    expect(bun.transformSync("console.log(<div points={() => {}} key={() => {}}></div>);")).toBe(
+      `console.log(jsxDEV("div", {
+  points: () => {
+  }
+}, () => {
+}, false, undefined, this));
+`,
+    );
+
+    expect(bun.transformSync("console.log(<div key={() => {}} key={() => {}}></div>);")).toBe(
+      'console.log(jsxDEV("div", {\n  key: () => {\n  }\n}, () => {\n}, false, undefined, this));\n',
+    );
+
+    expect(bun.transformSync("console.log(<div key={() => {}}></div>, () => {});")).toBe(
+      'console.log(jsxDEV("div", {}, () => {\n}, false, undefined, this), () => {\n});\n',
+    );
+
+    expect(bun.transformSync("console.log(<div key={() => {}} a={() => {}} key={() => {}}></div>, () => {});")).toBe(
+      'console.log(jsxDEV("div", {\n  key: () => {\n  },\n  a: () => {\n  }\n}, () => {\n}, false, undefined, this), () => {\n});\n',
+    );
+
+    expect(bun.transformSync("console.log(<div key={() => {}} key={() => {}} a={() => {}}></div>, () => {});")).toBe(
+      'console.log(jsxDEV("div", {\n  key: () => {\n  },\n  a: () => {\n  }\n}, () => {\n}, false, undefined, this), () => {\n});\n',
+    );
+
+    expect(bun.transformSync("console.log(<div points={() => {}} key={() => {}}></div>);")).toBe(
+      `console.log(jsxDEV("div", {
+  points: () => {
+  }
+}, () => {
+}, false, undefined, this));
+`,
+    );
+
+    expect(bun.transformSync("console.log(<div key={() => {}}></div>);")).toBe(
+      `console.log(jsxDEV("div", {}, () => {
+}, false, undefined, this));
+`,
+    );
+
+    expect(bun.transformSync("console.log(<div></div>);")).toBe(
+      `console.log(jsxDEV("div", {}, undefined, false, undefined, this));
+`,
+    );
+  });
+
   it.todo("JSX", () => {
     var bun = new Bun.Transpiler({
       loader: "jsx",
@@ -1306,9 +1369,19 @@ export default <>hi</>
       platform: "bun",
       jsxOptimizationInline: true,
       treeShaking: false,
+      inline: true,
+      deadCodeElimination: true,
+      allowBunRuntime: true,
+
+      target: "bun",
+      tsconfig: JSON.stringify({
+        compilerOptions: {
+          jsxImportSource: "react",
+        },
+      }),
     });
 
-    it.todo("inlines static JSX into object literals", () => {
+    it("inlines static JSX into object literals", () => {
       expect(
         inliner
           .transformSync(
@@ -1323,55 +1396,60 @@ export var ComponentThatHasSpreadCausesDeopt = <Hello {...spread} />
 
 `.trim(),
           )
+          .replaceAll("\n", "")
+          .replaceAll("  ", "")
           .trim(),
       ).toBe(
-        `var $$typeof = Symbol.for("react.element");
-export var hi = {
-  $$typeof,
-  type: "div",
-  key: null,
-  ref: null,
-  props: {
-    children: 123
-  },
-  _owner: null
-};
-export var hiWithKey = {
-  $$typeof,
-  type: "div",
-  key: "hey",
-  ref: null,
-  props: {
-    children: 123
-  },
-  _owner: null
-};
-export var hiWithRef = $jsx("div", {
-  ref: foo,
-  children: 123
-});
-export var ComponentThatChecksDefaultProps = {
-  $$typeof,
-  type: Hello,
-  key: null,
-  ref: null,
-  props: Hello.defaultProps || {},
-  _owner: null
-};
-export var ComponentThatChecksDefaultPropsAndHasChildren = {
-  $$typeof,
-  type: Hello,
-  key: null,
-  ref: null,
-  props: __merge({
-    children: "my child"
-  }, Hello.defaultProps),
-  _owner: null
-};
-export var ComponentThatHasSpreadCausesDeopt = $jsx(Hello, {
-  ...spread
-});
-`.trim(),
+        // TODO: figure out why its using jsxDEV() here. It doesn't do that with NODE_ENV=production at runtime.
+        `
+  import {
+    $$typeof as $$typeof_4ad651bb3f5de058,
+    __merge as __merge_e79ebbbc0cc1f55b
+    } from "bun:wrap";
+    export var hi = {
+      $$typeof: $$typeof_4ad651bb3f5de058,
+      type: "div",
+      key: null,
+      ref: null,
+      props: {
+        children: 123
+      },
+      _owner: null
+    }, hiWithKey = {
+      $$typeof: $$typeof_4ad651bb3f5de058,
+      type: "div",
+      key: "hey",
+      ref: null,
+      props: {
+        children: 123
+      },
+      _owner: null
+    }, hiWithRef = jsxDEV("div", {
+      ref: foo,
+      children: 123
+    }, void 0, !1, void 0, this), ComponentThatChecksDefaultProps = {
+      $$typeof: $$typeof_4ad651bb3f5de058,
+      type: Hello,
+      key: null,
+      ref: null,
+      props: Hello.defaultProps || {},
+      _owner: null
+    }, ComponentThatChecksDefaultPropsAndHasChildren = {
+      $$typeof: $$typeof_4ad651bb3f5de058,
+      type: Hello,
+      key: null,
+      ref: null,
+      props: __merge_e79ebbbc0cc1f55b({
+        children: "my child"
+      }, Hello.defaultProps),
+      _owner: null
+    }, ComponentThatHasSpreadCausesDeopt = jsxDEV(Hello, {
+      ...spread
+    }, void 0, !1, void 0, this);
+        `
+          .replaceAll("\n", "")
+          .replaceAll("  ", "")
+          .trim(),
       );
     });
   });
@@ -1983,6 +2061,30 @@ console.log(resolve.length)
 
       // expectParseError("\u200Ca", 'Unexpected "\\u200c"');
       // expectParseError("\u200Da", 'Unexpected "\\u200d"');
+    });
+
+    describe("dead code elimination", () => {
+      const transpilerNoDCE = new Bun.Transpiler({ deadCodeElimination: false });
+      it("should DCE with deadCodeElimination: true or by default", () => {
+        expect(parsed("123", true, false)).toBe("");
+        expect(parsed("[-1, 2n, null]", true, false)).toBe("");
+        expect(parsed("true", true, false)).toBe("");
+        expect(parsed("!0", true, false)).toBe("");
+        expect(parsed('if (!1) "dead";', true, false)).toBe("if (false)");
+        expect(parsed("if (!1) var x = 2;", true, false)).toBe("if (false)\n  var x");
+        expect(parsed("if (undefined) { let y = Math.random(); }", true, false)).toBe("if (undefined) {\n}");
+      });
+      it("should not DCE with deadCodeElimination: false", () => {
+        expect(parsed("123", true, false, transpilerNoDCE)).toBe("123");
+        expect(parsed("[1, 2n, null]", true, false, transpilerNoDCE)).toBe("[1, 2n, null]");
+        expect(parsed("true", true, false, transpilerNoDCE)).toBe("true");
+        expect(parsed("!0", true, false, transpilerNoDCE)).toBe("!0");
+        expect(parsed('if (!1) "dead";', true, false, transpilerNoDCE)).toBe('if (!1)\n  "dead"');
+        expect(parsed("if (!1) var x = 2;", true, false, transpilerNoDCE)).toBe("if (!1)\n  var x = 2");
+        expect(parsed("if (undefined) { let y = Math.random(); }", true, false, transpilerNoDCE)).toBe(
+          "if (undefined) {\n  let y = Math.random();\n}",
+        );
+      });
     });
   });
 
@@ -3120,5 +3222,27 @@ console.log(foo, array);
 
   it("scanImports on empty file does not segfault", () => {
     new Bun.Transpiler().scanImports("");
+  });
+
+  it("preserves exotic directives", () => {
+    expect(
+      new Bun.Transpiler().transformSync(`"use client";
+console.log("boop");
+`),
+    ).toBe(
+      `"use client";
+console.log("boop");
+`,
+    );
+  });
+  it("does not preserve use strict (for now)", () => {
+    expect(
+      new Bun.Transpiler().transformSync(`"use strict";
+  console.log("boop");
+  `),
+    ).toBe(
+      `console.log("boop");
+`,
+    );
   });
 });

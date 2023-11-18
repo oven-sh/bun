@@ -74,4 +74,4 @@ Ready! Logged in as my-bot#1234
 
 ---
 
-You're up and running with a bare-bones Discord.js bot! This is a basic guide to setting up your bot with Bun; we recommend the [official Discord docs](https://discordjs.guide/) for complete information on the `discord.js` API.
+You're up and running with a bare-bones Discord.js bot! This is a basic guide to setting up your bot with Bun; we recommend the [official discord.js docs](https://discordjs.guide/) for complete information on the `discord.js` API.

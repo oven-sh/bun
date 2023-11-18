@@ -142,7 +142,9 @@ using namespace Bun;
 
 extern "C" JSC::EncodedJSValue Bun__fetch(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 extern "C" JSC::EncodedJSValue Bun__canonicalizeIP(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-
+extern "C" JSC::EncodedJSValue H2FrameParser__getConstructor(Zig::GlobalObject* globalObject);
+extern "C" JSC::EncodedJSValue BUN__HTTP2__getUnpackedSettings(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+extern "C" JSC::EncodedJSValue BUN__HTTP2_getPackedSettings(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 using JSGlobalObject
     = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
@@ -317,20 +319,8 @@ extern "C" Zig::GlobalObject* Bun__getDefaultGlobal();
 // TODO: thread_local for workers
 static bool skipNextComputeErrorInfo = false;
 
-// error.stack calls this function
-static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned& line, unsigned& column, String& sourceURL, JSObject* errorInstance)
+WTF::String Bun::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const WTF::String& name, const WTF::String& message, unsigned& line, unsigned& column, WTF::String& sourceURL, Vector<JSC::StackFrame>& stackTrace, JSC::JSObject* errorInstance)
 {
-    auto* lexicalGlobalObject = errorInstance->globalObject();
-    Zig::GlobalObject* globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
-
-    WTF::String name = "Error"_s;
-    WTF::String message;
-
-    // Note that we are not allowed to allocate memory in here. It's called inside a finalizer.
-    if (auto* instance = jsDynamicCast<ErrorInstance*>(errorInstance)) {
-        name = instance->sanitizedNameString(lexicalGlobalObject);
-        message = instance->sanitizedMessageString(lexicalGlobalObject);
-    }
 
     WTF::StringBuilder sb;
 
@@ -343,7 +333,12 @@ static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<Stack
         sb.append(message);
     }
 
-    if (stackTrace.isEmpty()) {
+    // FIXME: why can size == 6 and capacity == 0?
+    // https://discord.com/channels/876711213126520882/1174901590457585765/1174907969419350036
+    size_t framesCount = stackTrace.size();
+
+    if (framesCount == 0) {
+        ASSERT(stackTrace.isEmpty());
         return sb.toString();
     }
 
@@ -351,7 +346,6 @@ static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<Stack
         sb.append("\n"_s);
     }
 
-    size_t framesCount = stackTrace.size();
     ZigStackFrame remappedFrames[64];
     framesCount = framesCount > 64 ? 64 : framesCount;
 
@@ -409,8 +403,10 @@ static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<Stack
                 sourceURL = frame.sourceURL(vm);
 
                 if (remappedFrames[i].remapped) {
-                    errorInstance->putDirect(vm, Identifier::fromString(vm, "originalLine"_s), jsNumber(thisLine), 0);
-                    errorInstance->putDirect(vm, Identifier::fromString(vm, "originalColumn"_s), jsNumber(thisColumn), 0);
+                    if (errorInstance) {
+                        errorInstance->putDirect(vm, Identifier::fromString(vm, "originalLine"_s), jsNumber(thisLine), 0);
+                        errorInstance->putDirect(vm, Identifier::fromString(vm, "originalColumn"_s), jsNumber(thisColumn), 0);
+                    }
                 }
             }
 
@@ -430,6 +426,24 @@ static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<Stack
     }
 
     return sb.toString();
+}
+
+// error.stack calls this function
+static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned& line, unsigned& column, String& sourceURL, JSObject* errorInstance)
+{
+    auto* lexicalGlobalObject = errorInstance->globalObject();
+    Zig::GlobalObject* globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
+
+    WTF::String name = "Error"_s;
+    WTF::String message;
+
+    // Note that we are not allowed to allocate memory in here. It's called inside a finalizer.
+    if (auto* instance = jsDynamicCast<ErrorInstance*>(errorInstance)) {
+        name = instance->sanitizedNameString(lexicalGlobalObject);
+        message = instance->sanitizedMessageString(lexicalGlobalObject);
+    }
+
+    return Bun::formatStackTrace(vm, globalObject, name, message, line, column, sourceURL, stackTrace, errorInstance);
 }
 
 static String computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, Vector<StackFrame>& stackFrames, unsigned& line, unsigned& column, String& sourceURL, JSObject* errorObject, JSObject* prepareStackTrace)
@@ -564,16 +578,15 @@ static void resetOnEachMicrotaskTick(JSC::VM& vm, Zig::GlobalObject* globalObjec
 
 extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, void* worker_ptr)
 {
+
     auto heapSize = miniMode ? JSC::HeapType::Small : JSC::HeapType::Large;
-
     JSC::VM& vm = JSC::VM::create(heapSize).leakRef();
-
     // This must happen before JSVMClientData::create
     vm.heap.acquireAccess();
+    JSC::JSLockHolder locker(vm);
 
     WebCore::JSVMClientData::create(&vm, Bun__getVM());
 
-    JSC::JSLockHolder locker(vm);
     Zig::GlobalObject* globalObject;
 
     if (UNLIKELY(executionContextId > -1)) {
@@ -584,14 +597,19 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
 
         if (auto* worker = static_cast<WebCore::Worker*>(worker_ptr)) {
             auto& options = worker->options();
+
+            // ensure remote termination works.
+            vm.ensureTerminationException();
+            vm.forbidExecutionOnTermination();
+
             if (options.bun.env) {
-                auto map = *options.bun.env;
-                auto size = map.size();
-                auto env = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), size > 63 ? 63 : size);
-                for (auto k : map) {
+                auto map = WTFMove(options.bun.env);
+                auto size = map->size();
+                auto env = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), size >= JSFinalObject::maxInlineCapacity ? JSFinalObject::maxInlineCapacity : size);
+                for (auto k : *map) {
                     env->putDirect(vm, JSC::Identifier::fromString(vm, WTFMove(k.key)), JSC::jsString(vm, WTFMove(k.value)));
                 }
-                map.clear();
+                map->clear();
                 globalObject->m_processEnvObject.set(vm, globalObject, env);
             }
         }
@@ -619,7 +637,6 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
         }
     });
 
-    vm.ref();
     return globalObject;
 }
 
@@ -777,6 +794,22 @@ extern "C" JSC__JSValue JSC__JSValue__makeWithNameAndPrototype(JSC__JSGlobalObje
     return JSC::JSValue::encode(JSC::JSValue(object));
 }
 
+extern "C" int Bun__VM__scriptExecutionStatus(void*);
+JSC::ScriptExecutionStatus Zig::GlobalObject::scriptExecutionStatus(JSC::JSGlobalObject* globalObject, JSC::JSObject*)
+{
+    switch (Bun__VM__scriptExecutionStatus(jsCast<Zig::GlobalObject*>(globalObject)->bunVM())) {
+    case 0:
+        return JSC::ScriptExecutionStatus::Running;
+    case 1:
+        return JSC::ScriptExecutionStatus::Suspended;
+    case 2:
+        return JSC::ScriptExecutionStatus::Stopped;
+    default: {
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    }
+}
+
 const JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
     &supportsRichSourceInfo,
     &shouldInterruptScript,
@@ -813,6 +846,8 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure)
     // m_scriptExecutionContext = globalEventScope.m_context;
     mockModule = Bun::JSMockModule::create(this);
     globalEventScope.m_context = m_scriptExecutionContext;
+    // FIXME: is there a better way to do this? this event handler should always be tied to the global object
+    globalEventScope.relaxAdoptionRequirement();
 }
 
 GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::ScriptExecutionContextIdentifier contextId)
@@ -828,6 +863,8 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
     // m_scriptExecutionContext = globalEventScope.m_context;
     mockModule = Bun::JSMockModule::create(this);
     globalEventScope.m_context = m_scriptExecutionContext;
+    // FIXME: is there a better way to do this? this event handler should always be tied to the global object
+    globalEventScope.relaxAdoptionRequirement();
 }
 
 GlobalObject::~GlobalObject()
@@ -1720,6 +1757,19 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
             return JSValue::encode(obj);
         }
 
+        if(string == "internal/http2"_s) {
+            auto* obj = constructEmptyObject(globalObject);
+
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "H2FrameParser"_s)), JSValue::decode(H2FrameParser__getConstructor(globalObject)), 0);
+
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "getPackedSettings"_s)), JSC::JSFunction::create(vm, globalObject, 1, "getPackedSettings"_s, BUN__HTTP2_getPackedSettings, ImplementationVisibility::Public, NoIntrinsic), 0);
+          
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "getUnpackedSettings"_s)), JSC::JSFunction::create(vm, globalObject, 1, "getUnpackedSettings"_s, BUN__HTTP2__getUnpackedSettings, ImplementationVisibility::Public, NoIntrinsic), 0);
+            return JSValue::encode(obj);            
+        } 
         if (string == "internal/tls"_s) {
             auto* obj = constructEmptyObject(globalObject);
 
@@ -1895,6 +1945,16 @@ JSC_DEFINE_CUSTOM_GETTER(getterSubtleCrypto, (JSGlobalObject * lexicalGlobalObje
     return JSValue::encode(reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject)->subtleCrypto());
 }
 
+// Do nothing.
+// This is consistent with Node.js
+// This makes libraries polyfilling `globalThis.crypto.subtle` not throw.
+JSC_DEFINE_CUSTOM_SETTER(setterSubtleCrypto,
+    (JSC::JSGlobalObject*, JSC::EncodedJSValue,
+        JSC::EncodedJSValue, JSC::PropertyName))
+{
+    return true;
+}
+
 JSC_DECLARE_HOST_FUNCTION(makeThisTypeErrorForBuiltins);
 JSC_DECLARE_HOST_FUNCTION(makeGetterTypeErrorForBuiltins);
 JSC_DECLARE_HOST_FUNCTION(makeDOMExceptionForBuiltins);
@@ -2017,12 +2077,12 @@ extern "C" void ReadableStream__cancel(JSC__JSValue possibleReadableStream, Zig:
     if (UNLIKELY(!readableStream))
         return;
 
-    if (!ReadableStream(*globalObject, *readableStream).isLocked()) {
+    if (!ReadableStream::isLocked(globalObject, readableStream)) {
         return;
     }
 
     WebCore::Exception exception { AbortError };
-    ReadableStream(*globalObject, *readableStream).cancel(exception);
+    ReadableStream::cancel(*globalObject, readableStream, exception);
 }
 
 extern "C" void ReadableStream__detach(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject);
@@ -2740,6 +2800,8 @@ void GlobalObject::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
+    m_commonStrings.initialize();
+
     m_JSDOMFileConstructor.initLater(
         [](const Initializer<JSObject>& init) {
             JSObject* fileConstructor = Bun::createJSDOMFileConstructor(init.vm, init.owner);
@@ -2750,12 +2812,11 @@ void GlobalObject::finishCreation(VM& vm)
         [](const Initializer<JSObject>& init) {
             JSC::JSGlobalObject* globalObject = init.owner;
             JSObject* crypto = JSValue::decode(CryptoObject__create(globalObject)).getObject();
-            // this should technically go on the prototype i think?
             crypto->putDirectCustomAccessor(
                 init.vm,
                 Identifier::fromString(init.vm, "subtle"_s),
-                JSC::CustomGetterSetter::create(init.vm, getterSubtleCrypto, nullptr),
-                PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | 0);
+                JSC::CustomGetterSetter::create(init.vm, getterSubtleCrypto, setterSubtleCrypto),
+                PropertyAttribute::DontDelete | 0);
 
             init.set(crypto);
         });
@@ -2821,6 +2882,8 @@ void GlobalObject::finishCreation(VM& vm)
 
             auto& vm = globalObject->vm();
 
+            auto& builtinNames = WebCore::builtinNames(vm);
+
             structure = structure->addPropertyTransition(
                 vm,
                 structure,
@@ -2831,14 +2894,14 @@ void GlobalObject::finishCreation(VM& vm)
             structure = structure->addPropertyTransition(
                 vm,
                 structure,
-                JSC::Identifier::fromString(vm, "require"_s),
+                builtinNames.requirePublicName(),
                 0,
                 offset);
 
             structure = structure->addPropertyTransition(
                 vm,
                 structure,
-                JSC::Identifier::fromString(vm, "resolve"_s),
+                builtinNames.resolvePublicName(),
                 0,
                 offset);
 
@@ -3802,7 +3865,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         visitor.append(constructor);
 
     thisObject->m_builtinInternalFunctions.visit(visitor);
-
+    thisObject->m_commonStrings.visit<Visitor>(visitor);
     visitor.append(thisObject->m_assignToStream);
     visitor.append(thisObject->m_readableStreamToArrayBuffer);
     visitor.append(thisObject->m_readableStreamToArrayBufferResolve);
@@ -4085,10 +4148,10 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
 
     if (res.success) {
         if (queryString.len > 0) {
-            return JSC::Identifier::fromString(globalObject->vm(), makeString(Bun::toWTFString(res.result.value), Zig::toString(queryString)));
+            return JSC::Identifier::fromString(globalObject->vm(), makeString(res.result.value.toWTFString(BunString::ZeroCopy), Zig::toString(queryString)));
         }
 
-        return Identifier::fromString(globalObject->vm(), toWTFString(res.result.value));
+        return Identifier::fromString(globalObject->vm(), res.result.value.toWTFString(BunString::ZeroCopy));
     } else {
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         throwException(scope, res.result.err, globalObject);
@@ -4157,9 +4220,9 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
 
     JSC::Identifier resolvedIdentifier;
     if (queryString.len == 0) {
-        resolvedIdentifier = JSC::Identifier::fromString(vm, Bun::toWTFString(resolved.result.value));
+        resolvedIdentifier = JSC::Identifier::fromString(vm, resolved.result.value.toWTFString(BunString::ZeroCopy));
     } else {
-        resolvedIdentifier = JSC::Identifier::fromString(vm, makeString(Bun::toWTFString(resolved.result.value), Zig::toString(queryString)));
+        resolvedIdentifier = JSC::Identifier::fromString(vm, makeString(resolved.result.value.toWTFString(BunString::ZeroCopy), Zig::toString(queryString)));
     }
 
     auto result = JSC::importModule(globalObject, resolvedIdentifier,

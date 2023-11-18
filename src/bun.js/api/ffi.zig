@@ -432,7 +432,7 @@ pub const FFI = struct {
             return JSC.toInvalidArguments("Expected at least one symbol", .{}, global);
         }
 
-        var obj = JSValue.createEmptyObject(global, if (symbols.count() < 64) symbols.count() else 0);
+        var obj = JSValue.createEmptyObject(global, symbols.count());
         obj.ensureStillAlive();
         defer obj.ensureStillAlive();
         for (symbols.values()) |*function| {

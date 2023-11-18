@@ -448,15 +448,15 @@ pub const BabyList = @import("./baby_list.zig").BabyList;
 pub const ByteList = BabyList(u8);
 
 pub fn DebugOnly(comptime Type: type) type {
-    if (comptime Environment.isDebug) {
+    if (comptime Environment.allow_assert) {
         return Type;
     }
 
     return void;
 }
 
-pub fn DebugOnlyDefault(comptime val: anytype) if (Environment.isDebug) @TypeOf(val) else void {
-    if (comptime Environment.isDebug) {
+pub fn DebugOnlyDefault(comptime val: anytype) if (Environment.allow_assert) @TypeOf(val) else void {
+    if (comptime Environment.allow_assert) {
         return val;
     }
 
@@ -851,6 +851,34 @@ pub const FDHashMapContext = struct {
         }
     };
 };
+
+pub const U32HashMapContext = struct {
+    pub fn hash(_: @This(), value: u32) u64 {
+        return @intCast(value);
+    }
+    pub fn eql(_: @This(), a: u32, b: u32) bool {
+        return a == b;
+    }
+    pub fn pre(input: u32) Prehashed {
+        return Prehashed{
+            .value = @This().hash(.{}, input),
+            .input = input,
+        };
+    }
+
+    pub const Prehashed = struct {
+        value: u64,
+        input: u32,
+        pub fn hash(this: @This(), value: u32) u64 {
+            if (value == this.input) return this.value;
+            return @intCast(value);
+        }
+
+        pub fn eql(_: @This(), a: u32, b: u32) bool {
+            return a == b;
+        }
+    };
+};
 // These wrappers exist to use our strings.eqlLong function
 pub const StringArrayHashMapContext = struct {
     pub fn hash(_: @This(), s: []const u8) u32 {
@@ -955,6 +983,10 @@ pub fn StringHashMapUnmanaged(comptime Type: type) type {
 
 pub fn FDHashMap(comptime Type: type) type {
     return std.HashMap(StoredFileDescriptorType, Type, FDHashMapContext, std.hash_map.default_max_load_percentage);
+}
+
+pub fn U32HashMap(comptime Type: type) type {
+    return std.HashMap(u32, Type, U32HashMapContext, std.hash_map.default_max_load_percentage);
 }
 
 const CopyFile = @import("./copy_file.zig");
@@ -2004,4 +2036,19 @@ pub inline fn pathLiteral(comptime literal: anytype) *const [literal.len:0]u8 {
         buf[buf.len] = 0;
         return &buf;
     };
+}
+
+pub fn exitThread() noreturn {
+    const exiter = struct {
+        pub extern "C" fn pthread_exit(?*anyopaque) noreturn;
+        pub extern "kernel32" fn ExitThread(windows.DWORD) noreturn;
+    };
+
+    if (comptime Environment.isWindows) {
+        exiter.ExitThread(0);
+    } else if (comptime Environment.isPosix) {
+        exiter.pthread_exit(null);
+    } else {
+        @panic("Unsupported platform");
+    }
 }

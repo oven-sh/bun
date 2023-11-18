@@ -370,7 +370,7 @@ pub const Data = struct {
                 if (comptime enable_ansi_colors) {
                     if (!is_note and kind == .err) {
                         try to.writeAll(comptime Output.color_map.get("b").?);
-                    } else {}
+                    }
                 }
 
                 try std.fmt.format(to, comptime Output.prettyFmt("{s}<r>", enable_ansi_colors), .{

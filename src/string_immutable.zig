@@ -144,15 +144,22 @@ pub inline fn isNPMPackageName(target: string) bool {
         '@' => true,
         else => return false,
     };
+
     var slash_index: usize = 0;
     for (target[1..], 0..) |c, i| {
         switch (c) {
             // Old packages may have capital letters
-            'A'...'Z', 'a'...'z', '0'...'9', '$', '-', '_', '.' => {},
+            'A'...'Z', 'a'...'z', '0'...'9', '-', '_', '.' => {},
             '/' => {
                 if (!scoped) return false;
                 if (slash_index > 0) return false;
                 slash_index = i + 1;
+            },
+            // issue#7045, package "@~3/svelte_mount"
+            // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/encodeURIComponent#description
+            // It escapes all characters except: A–Z a–z 0–9 - _ . ! ~ * ' ( )
+            '!', '~', '*', '\'', '(', ')' => {
+                if (!scoped or slash_index > 0) return false;
             },
             else => return false,
         }
@@ -418,7 +425,7 @@ pub const StringOrTinyString = struct {
         // This is a switch expression instead of a statement to make sure it uses the faster assembly
         return switch (this.is_tiny_string) {
             1 => this.remainder_buf[0..this.remainder_len],
-            0 => @as([*]const u8, @ptrFromInt(std.mem.readIntNative(usize, this.remainder_buf[0..@sizeOf(usize)])))[0..std.mem.readIntNative(usize, this.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2])],
+            0 => @as([*]const u8, @ptrFromInt(std.mem.readInt(usize, this.remainder_buf[0..@sizeOf(usize)], .little)))[0..std.mem.readInt(usize, this.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2], .little)],
         };
     }
 
@@ -464,8 +471,8 @@ pub const StringOrTinyString = struct {
                     .is_tiny_string = 0,
                     .remainder_len = 0,
                 };
-                std.mem.writeIntNative(usize, tiny.remainder_buf[0..@sizeOf(usize)], @intFromPtr(stringy.ptr));
-                std.mem.writeIntNative(usize, tiny.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2], stringy.len);
+                std.mem.writeInt(usize, tiny.remainder_buf[0..@sizeOf(usize)], @intFromPtr(stringy.ptr), .little);
+                std.mem.writeInt(usize, tiny.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2], stringy.len, .little);
                 return tiny;
             },
         }
@@ -490,8 +497,8 @@ pub const StringOrTinyString = struct {
                     .is_tiny_string = 0,
                     .remainder_len = 0,
                 };
-                std.mem.writeIntNative(usize, tiny.remainder_buf[0..@sizeOf(usize)], @intFromPtr(stringy.ptr));
-                std.mem.writeIntNative(usize, tiny.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2], stringy.len);
+                std.mem.writeInt(usize, tiny.remainder_buf[0..@sizeOf(usize)], @intFromPtr(stringy.ptr), .little);
+                std.mem.writeInt(usize, tiny.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2], stringy.len, .little);
                 return tiny;
             },
         }
@@ -4367,10 +4374,14 @@ pub fn trim(slice: anytype, comptime values_to_strip: []const u8) @TypeOf(slice)
     return slice[begin..end];
 }
 
+pub const whitespace_chars = [_]u8{ ' ', '\t', '\n', '\r', std.ascii.control_code.vt, std.ascii.control_code.ff };
+
 pub fn lengthOfLeadingWhitespaceASCII(slice: string) usize {
     for (slice) |*c| {
         switch (c.*) {
-            ' ', '\t', '\n', '\r', std.ascii.control_code.vt, std.ascii.control_code.ff => {},
+            whitespace: {
+                inline for (whitespace_chars) |wc| break :whitespace wc;
+            } => {},
             else => {
                 return @intFromPtr(c) - @intFromPtr(slice.ptr);
             },
@@ -5026,3 +5037,14 @@ pub const URLFormatter = struct {
         }
     }
 };
+
+pub fn mustEscapeYAMLString(contents: []const u8) bool {
+    if (contents.len == 0) return true;
+
+    return switch (contents[0]) {
+        'A'...'Z', 'a'...'z' => strings.hasPrefixComptime(contents, "Yes") or strings.hasPrefixComptime(contents, "No") or strings.hasPrefixComptime(contents, "true") or
+            strings.hasPrefixComptime(contents, "false") or
+            std.mem.indexOfAnyPos(u8, contents, 1, ": \t\r\n\x0B\x0C\\\",[]") != null,
+        else => true,
+    };
+}

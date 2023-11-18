@@ -45,7 +45,7 @@ it("can handle multiple requests with non native checkServerIdentity", async () 
       }).then((res: Response) => res.text());
       expect(result?.length).toBeGreaterThan(0);
     } catch (e: any) {
-      expect(e).toBe("unreachable");
+      expect.unreachable();
     }
   }
   const promises = [];
@@ -150,7 +150,7 @@ it("fetch with self-sign certificate tls + rejectUnauthorized: false should not 
         const result = await fetch(url, { tls: { rejectUnauthorized: false } }).then((res: Response) => res.text());
         expect(result).toBe("Hello World");
       } catch (e: any) {
-        expect(e).toBe("unreachable");
+        expect.unreachable();
       }
     }
   });
@@ -164,7 +164,7 @@ it("fetch with invalid tls + rejectUnauthorized: false should not throw", async 
         const result = await fetch(url, { tls: { rejectUnauthorized: false } }).then((res: Response) => res.text());
         expect(result).toBe("Hello World");
       } catch (e: any) {
-        expect(e).toBe("unreachable");
+        expect.unreachable();
       }
     }
   });

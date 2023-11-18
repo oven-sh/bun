@@ -19,10 +19,13 @@ ARG GIT_SHA=""
 ARG BUN_VERSION="bun-v1.0.7"
 ARG BUN_DOWNLOAD_URL_BASE="https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${BUN_VERSION}"
 ARG CANARY=0
+ARG ASSERTIONS=OFF
+ARG ZIG_OPTIMIZE=ReleaseFast
+ARG CMAKE_BUILD_TYPE=Release
 
 ARG NODE_VERSION="20"
 ARG LLVM_VERSION="16"
-ARG ZIG_VERSION="0.12.0-dev.1297+a9e66ed73"
+ARG ZIG_VERSION="0.12.0-dev.1604+caae40c21"
 
 ARG SCCACHE_BUCKET
 ARG SCCACHE_REGION
@@ -178,6 +181,7 @@ FROM bun-base as mimalloc
 
 ARG BUN_DIR
 ARG CPU_TARGET
+ARG ASSERTIONS
 ENV CPU_TARGET=${CPU_TARGET}
 
 COPY Makefile ${BUN_DIR}/Makefile
@@ -185,8 +189,23 @@ COPY src/deps/mimalloc ${BUN_DIR}/src/deps/mimalloc
 
 ENV CCACHE_DIR=/ccache
 
-RUN --mount=type=cache,target=/ccache cd ${BUN_DIR} && \
-  make mimalloc && rm -rf src/deps/mimalloc Makefile
+RUN --mount=type=cache,target=/ccache cd ${BUN_DIR} && \ 
+  make mimalloc && rm -rf src/deps/mimalloc Makefile;
+
+FROM bun-base as mimalloc-debug
+
+ARG BUN_DIR
+ARG CPU_TARGET
+ARG ASSERTIONS
+ENV CPU_TARGET=${CPU_TARGET}
+
+COPY Makefile ${BUN_DIR}/Makefile
+COPY src/deps/mimalloc ${BUN_DIR}/src/deps/mimalloc
+
+ENV CCACHE_DIR=/ccache
+
+RUN --mount=type=cache,target=/ccache cd ${BUN_DIR} && \ 
+  make mimalloc-debug && rm -rf src/deps/mimalloc Makefile;
 
 FROM bun-base as zlib
 
@@ -277,6 +296,22 @@ WORKDIR $BUN_DIR
 
 RUN --mount=type=cache,target=/ccache cd $BUN_DIR && make zstd
 
+FROM bun-base as ls-hpack
+
+ARG BUN_DIR
+
+ARG CPU_TARGET
+ENV CPU_TARGET=${CPU_TARGET}
+
+ENV CCACHE_DIR=/ccache
+
+COPY Makefile ${BUN_DIR}/Makefile
+COPY src/deps/ls-hpack ${BUN_DIR}/src/deps/ls-hpack
+
+WORKDIR $BUN_DIR
+
+RUN --mount=type=cache,target=/ccache cd $BUN_DIR && make lshpack
+
 FROM bun-base-with-zig as bun-identifier-cache
 
 ARG DEBIAN_FRONTEND
@@ -310,18 +345,21 @@ RUN cd $BUN_DIR/src/node-fallbacks \
 FROM bun-base as bun-webkit
 
 ARG BUILDARCH
+ARG ASSERTIONS
 
 COPY CMakeLists.txt ${BUN_DIR}/CMakeLists.txt
 
 RUN mkdir ${BUN_DIR}/bun-webkit \
   && WEBKIT_TAG=$(grep 'set(WEBKIT_TAG' "${BUN_DIR}/CMakeLists.txt" | awk '{print $2}' | cut -f 1 -d ')') \
-  && WEBKIT_URL="https://github.com/oven-sh/WebKit/releases/download/autobuild-${WEBKIT_TAG}/bun-webkit-linux-${BUILDARCH}-lto.tar.gz" \
+  && WEBKIT_SUFFIX=$(if [ "${ASSERTIONS}" = "ON" ]; then echo "debug"; else echo "lto"; fi) \
+  && WEBKIT_URL="https://github.com/oven-sh/WebKit/releases/download/autobuild-${WEBKIT_TAG}/bun-webkit-linux-${BUILDARCH}-${WEBKIT_SUFFIX}.tar.gz" \
   && echo "Downloading ${WEBKIT_URL}" \
   && curl -fsSL "${WEBKIT_URL}" | tar -xz -C ${BUN_DIR}/bun-webkit --strip-components=1
 
 FROM bun-base as bun-cpp-objects
 
 ARG CANARY
+ARG ASSERTIONS
 
 COPY --from=bun-webkit ${BUN_DIR}/bun-webkit ${BUN_DIR}/bun-webkit
 
@@ -335,7 +373,7 @@ ENV CCACHE_DIR=/ccache
 RUN --mount=type=cache,target=/ccache  mkdir ${BUN_DIR}/build \
   && cd ${BUN_DIR}/build \
   && mkdir -p tmp_modules tmp_functions js codegen \
-  && cmake .. -GNinja -DCMAKE_BUILD_TYPE=Release -DBUN_CPP_ONLY=1 -DWEBKIT_DIR=/build/bun/bun-webkit -DCANARY=${CANARY} \
+  && cmake .. -GNinja -DCMAKE_BUILD_TYPE=Release -DUSE_DEBUG_JSC=${ASSERTIONS} -DBUN_CPP_ONLY=1 -DWEBKIT_DIR=/build/bun/bun-webkit -DCANARY=${CANARY} \
   && bash compile-cpp-only.sh -v
 
 FROM bun-base-with-zig as bun-codegen-for-zig
@@ -361,6 +399,8 @@ ARG TRIPLET
 ARG GIT_SHA
 ARG CPU_TARGET
 ARG CANARY=0
+ARG ASSERTIONS=OFF
+ARG ZIG_OPTIMIZE=ReleaseFast
 
 COPY *.zig package.json CMakeLists.txt ${BUN_DIR}/
 COPY completions ${BUN_DIR}/completions
@@ -380,6 +420,7 @@ RUN mkdir -p build \
   && cmake .. \
   -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
+  -DZIG_OPTIMIZE="${ZIG_OPTIMIZE}" \
   -DCPU_TARGET="${CPU_TARGET}" \
   -DZIG_TARGET="${TRIPLET}" \
   -DWEBKIT_DIR="omit" \
@@ -400,6 +441,7 @@ FROM bun-base as bun-link
 
 ARG CPU_TARGET
 ARG CANARY
+ARG ASSERTIONS
 
 ENV CPU_TARGET=${CPU_TARGET}
 
@@ -422,6 +464,7 @@ COPY --from=mimalloc ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=zstd ${BUN_DEPS_OUT_DIR}/*  ${BUN_DEPS_OUT_DIR}/
 COPY --from=tinycc ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=c-ares ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
+COPY --from=ls-hpack ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=bun-compile-zig-obj /tmp/bun-zig.o ${BUN_DIR}/build/bun-zig.o
 COPY --from=bun-cpp-objects ${BUN_DIR}/build/bun-cpp-objects.a ${BUN_DIR}/build/bun-cpp-objects.a
 COPY --from=bun-cpp-objects ${BUN_DIR}/bun-webkit/lib ${BUN_DIR}/bun-webkit/lib
@@ -433,6 +476,7 @@ RUN cmake .. \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUN_LINK_ONLY=1 \
   -DBUN_ZIG_OBJ="${BUN_DIR}/build/bun-zig.o" \
+  -DUSE_DEBUG_JSC=${ASSERTIONS} \
   -DBUN_CPP_ARCHIVE="${BUN_DIR}/build/bun-cpp-objects.a" \
   -DWEBKIT_DIR="${BUN_DIR}/bun-webkit" \
   -DBUN_DEPS_OUT_DIR="${BUN_DEPS_OUT_DIR}" \
@@ -448,3 +492,58 @@ RUN cmake .. \
 FROM scratch as artifact
 
 COPY --from=bun-link /build/out /
+
+FROM bun-base as bun-link-assertions
+
+ARG CPU_TARGET
+ARG CANARY
+ARG ASSERTIONS
+
+ENV CPU_TARGET=${CPU_TARGET}
+
+WORKDIR $BUN_DIR
+
+RUN mkdir -p build bun-webkit
+
+# lol
+COPY src/bun.js/bindings/sqlite/sqlite3.c ${BUN_DIR}/src/bun.js/bindings/sqlite/sqlite3.c
+
+COPY src/symbols.dyn src/linker.lds ${BUN_DIR}/src/
+
+COPY CMakeLists.txt ${BUN_DIR}/CMakeLists.txt
+COPY --from=zlib ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
+COPY --from=base64 ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
+COPY --from=libarchive ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
+COPY --from=boringssl ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
+COPY --from=lolhtml ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
+COPY --from=mimalloc-debug ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
+COPY --from=zstd ${BUN_DEPS_OUT_DIR}/*  ${BUN_DEPS_OUT_DIR}/
+COPY --from=tinycc ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
+COPY --from=c-ares ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
+COPY --from=bun-compile-zig-obj /tmp/bun-zig.o ${BUN_DIR}/build/bun-zig.o
+COPY --from=bun-cpp-objects ${BUN_DIR}/build/bun-cpp-objects.a ${BUN_DIR}/build/bun-cpp-objects.a
+COPY --from=bun-cpp-objects ${BUN_DIR}/bun-webkit/lib ${BUN_DIR}/bun-webkit/lib
+
+WORKDIR $BUN_DIR/build
+
+RUN cmake .. \
+  -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DBUN_LINK_ONLY=1 \
+  -DBUN_ZIG_OBJ="${BUN_DIR}/build/bun-zig.o" \
+  -DUSE_DEBUG_JSC=ON \
+  -DBUN_CPP_ARCHIVE="${BUN_DIR}/build/bun-cpp-objects.a" \
+  -DWEBKIT_DIR="${BUN_DIR}/bun-webkit" \
+  -DBUN_DEPS_OUT_DIR="${BUN_DEPS_OUT_DIR}" \
+  -DCPU_TARGET="${CPU_TARGET}" \
+  -DNO_CONFIGURE_DEPENDS=1 \
+  -DCANARY="${CANARY}" \
+  && ninja -v \
+  && ./bun --revision \
+  && mkdir -p /build/out \
+  && mv bun bun-profile /build/out \
+  && rm -rf ${BUN_DIR} ${BUN_DEPS_OUT_DIR}
+
+FROM scratch as artifact-assertions
+
+COPY --from=bun-link-assertions /build/out /

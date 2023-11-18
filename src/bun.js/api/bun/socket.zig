@@ -169,8 +169,11 @@ const Handlers = struct {
     is_server: bool = false,
     promise: JSC.Strong = .{},
 
+    protection_count: bun.DebugOnly(u32) = bun.DebugOnlyDefault(0),
+
     pub fn markActive(this: *Handlers) void {
         Listener.log("markActive", .{});
+
         this.active_connections += 1;
     }
 
@@ -197,12 +200,14 @@ const Handlers = struct {
 
     pub fn resolvePromise(this: *Handlers, value: JSValue) void {
         const promise = this.promise.trySwap() orelse return;
-        promise.asAnyPromise().?.resolve(this.globalObject, value);
+        const anyPromise = promise.asAnyPromise() orelse return;
+        anyPromise.resolve(this.globalObject, value);
     }
 
     pub fn rejectPromise(this: *Handlers, value: JSValue) bool {
         const promise = this.promise.trySwap() orelse return false;
-        promise.asAnyPromise().?.reject(this.globalObject, value);
+        const anyPromise = promise.asAnyPromise() orelse return false;
+        anyPromise.reject(this.globalObject, value);
         return true;
     }
 
@@ -298,6 +303,10 @@ const Handlers = struct {
     }
 
     pub fn unprotect(this: *Handlers) void {
+        if (comptime Environment.allow_assert) {
+            std.debug.assert(this.protection_count > 0);
+            this.protection_count -= 1;
+        }
         this.onOpen.unprotect();
         this.onClose.unprotect();
         this.onData.unprotect();
@@ -310,6 +319,9 @@ const Handlers = struct {
     }
 
     pub fn protect(this: *Handlers) void {
+        if (comptime Environment.allow_assert) {
+            this.protection_count += 1;
+        }
         this.onOpen.protect();
         this.onClose.protect();
         this.onData.protect();
@@ -830,7 +842,6 @@ pub const Listener = struct {
             ctx.deinit(this.ssl);
         }
 
-        this.handlers.unprotect();
         this.connection.deinit();
         if (this.protos) |protos| {
             this.protos = null;
@@ -1098,7 +1109,7 @@ fn NewSocket(comptime ssl: bool) type {
         handlers: *Handlers,
         this_value: JSC.JSValue = .zero,
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
-        reffer: JSC.Ref = JSC.Ref.init(),
+        is_active: bool = false,
         last_4: [4]u8 = .{ 0, 0, 0, 0 },
         authorized: bool = false,
         connection: ?Listener.UnixOrHost = null,
@@ -1120,10 +1131,14 @@ fn NewSocket(comptime ssl: bool) type {
             },
         };
 
-        pub usingnamespace JSSocketType(ssl);
+        pub usingnamespace if (!ssl)
+            JSC.Codegen.JSTCPSocket
+        else
+            JSC.Codegen.JSTLSSocket;
 
         pub fn hasPendingActivity(this: *This) callconv(.C) bool {
             @fence(.Acquire);
+
             return this.has_pending_activity.load(.Acquire);
         }
 
@@ -1264,15 +1279,15 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn markActive(this: *This) void {
-            if (!this.reffer.has) {
+            if (!this.is_active) {
                 this.handlers.markActive();
-                this.reffer.ref(this.handlers.vm);
+                this.is_active = true;
                 this.has_pending_activity.store(true, .Release);
             }
         }
 
         pub fn markInactive(this: *This) void {
-            if (this.reffer.has) {
+            if (this.is_active) {
                 // we have to close the socket before the socket context is closed
                 // otherwise we will get a segfault
                 // uSockets will defer closing the TCP socket until the next tick
@@ -1281,9 +1296,8 @@ fn NewSocket(comptime ssl: bool) type {
                     // onClose will call markInactive again
                     return;
                 }
-
+                this.is_active = false;
                 var vm = this.handlers.vm;
-                this.reffer.unref(vm);
 
                 this.handlers.markInactive(ssl, this.socket.context(), this.wrapped);
                 this.poll_ref.unref(vm);
@@ -2826,15 +2840,7 @@ fn NewSocket(comptime ssl: bool) type {
                 .binary_type = this.handlers.binary_type,
                 .is_server = is_server,
             };
-            this.handlers.onOpen = .zero;
-            this.handlers.onClose = .zero;
-            this.handlers.onData = .zero;
-            this.handlers.onWritable = .zero;
-            this.handlers.onTimeout = .zero;
-            this.handlers.onConnectError = .zero;
-            this.handlers.onEnd = .zero;
-            this.handlers.onError = .zero;
-            this.handlers.onHandshake = .zero;
+
             raw.* = .{
                 .handlers = raw_handlers_ptr,
                 .this_value = .zero,
@@ -2843,6 +2849,7 @@ fn NewSocket(comptime ssl: bool) type {
                 .wrapped = .tcp,
                 .protos = null,
             };
+            raw_handlers_ptr.protect();
 
             var raw_js_value = raw.getThisValue(globalObject);
             if (JSSocketType(ssl).dataGetCached(this.getThisValue(globalObject))) |raw_default_data| {
@@ -2863,11 +2870,12 @@ fn NewSocket(comptime ssl: bool) type {
 
             //detach and invalidate the old instance
             this.detached = true;
-            if (this.reffer.has) {
+            if (this.is_active) {
                 var vm = this.handlers.vm;
-                this.reffer.unref(vm);
-                old_context.deinit(ssl);
-                bun.default_allocator.destroy(this.handlers);
+                this.is_active = false;
+                // will free handlers and the old_context when hits 0 active connections
+                // the connection can be upgraded inside a handler call so we need to garantee that it will be still alive
+                this.handlers.markInactive(ssl, old_context, this.wrapped);
                 this.poll_ref.unref(vm);
                 this.has_pending_activity.store(false, .Release);
             }

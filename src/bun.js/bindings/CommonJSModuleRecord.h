@@ -82,6 +82,9 @@ public:
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
+
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+
     template<typename, SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {

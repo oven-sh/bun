@@ -2,8 +2,8 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
-set(Bun_VERSION "1.0.11")
-set(WEBKIT_TAG 7cd84abfa787e4b96b27c3ef1e28a4eb1aa49aa1)
+set(Bun_VERSION "1.0.13")
+set(WEBKIT_TAG 5bd03f527e665621464d984a6b224bed1bafd968)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -24,11 +24,11 @@ endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(DEBUG ON)
-    set(ZIG_OPTIMIZE "Debug")
+    set(DEFAULT_ZIG_OPTIMIZE "Debug")
     set(bun "bun-debug")
 elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
     set(DEBUG OFF)
-    set(ZIG_OPTIMIZE "ReleaseFast")
+    set(DEFAULT_ZIG_OPTIMIZE "ReleaseFast")
 
     if(WIN32)
         # lld-link will strip it for you, so we can build directly to bun.exe
@@ -216,6 +216,11 @@ if(DEFINED ENV{CI} OR DEFINED ENV{GITHUB_ACTIONS})
 endif()
 
 set(DEFAULT_USE_STATIC_LIBATOMIC ON)
+set(DEFAULT_USE_DEBUG_JSC, OFF)
+
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(DEFAULT_USE_DEBUG_JSC ON)
+endif()
 
 if(UNIX AND NOT APPLE)
     execute_process(COMMAND cat /etc/os-release COMMAND head -n1 OUTPUT_VARIABLE LINUX_DISTRO)
@@ -237,14 +242,20 @@ option(USE_CUSTOM_BASE64 "Use Bun's recommended version of libbase64" ON)
 option(USE_CUSTOM_LOLHTML "Use Bun's recommended version of lolhtml" ON)
 option(USE_CUSTOM_TINYCC "Use Bun's recommended version of tinycc" ON)
 option(USE_CUSTOM_LIBUV "Use Bun's recommended version of libuv (Windows only)" ON)
+option(USE_CUSTOM_LSHPACK "Use Bun's recommended version of ls-hpack" ON)
 option(USE_BASELINE_BUILD "Build Bun for baseline (older) CPUs" OFF)
 
-option(USE_DEBUG_JSC "Enable assertions and use a debug build of JavaScriptCore" OFF)
+option(ZIG_OPTIMIZE "Optimization level for Zig" ${DEFAULT_ZIG_OPTIMIZE})
+option(USE_DEBUG_JSC "Enable assertions and use a debug build of JavaScriptCore" ${DEFAULT_USE_DEBUG_JSC})
 option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
 option(USE_STATIC_LIBATOMIC "Statically link libatomic, requires the presence of libatomic.a" ${DEFAULT_USE_STATIC_LIBATOMIC})
 
 if(NOT CANARY)
     set(CANARY 0)
+endif()
+
+if(NOT ZIG_OPTIMIZE)
+    set(ZIG_OPTIMIZE ${DEFAULT_ZIG_OPTIMIZE})
 endif()
 
 set(ERROR_LIMIT 100 CACHE STRING "Maximum number of errors to show when compiling C++ code")
@@ -362,6 +373,7 @@ if(NOT WEBKIT_DIR)
     set(ASSERT_ENABLED "0")
 
     if(USE_DEBUG_JSC)
+        add_compile_definitions("BUN_DEBUG=1")
         set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "-debug")
         set(ASSERT_ENABLED "1")
     elseif(NOT DEBUG AND NOT WIN32)
@@ -805,12 +817,13 @@ add_compile_definitions(
     "NOMINMAX"
     "IS_BUILD"
     "BUILDING_JSCONLY__"
-    "ASSERT_ENABLED=$<IF:$<CONFIG:ASSERT_ENABLED>,1,0>"
     "BUN_DYNAMIC_JS_LOAD_PATH=\"${BUN_WORKDIR}/js\""
 )
 
 if(NOT ASSERT_ENABLED)
     add_compile_definitions("NDEBUG=1")
+else()
+    add_compile_definitions("ASSERT_ENABLED=1")
 endif()
 
 include_directories(
@@ -1019,7 +1032,7 @@ if(APPLE)
 endif()
 
 # --- Stripped Binary "bun"
-if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32)
+if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32 AND NOT ASSERT_ENABLED)
     # add_custom_command(
     # TARGET ${bun}
     # POST_BUILD
@@ -1100,11 +1113,21 @@ if(USE_CUSTOM_MIMALLOC)
     if(WIN32)
         target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/mimalloc.lib")
     elseif(APPLE)
-        # https://github.com/microsoft/mimalloc/issues/512
-        # Linking mimalloc via object file on macOS x64 can cause heap corruption
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc.a")
+        if(USE_DEBUG_JSC OR CMAKE_BUILD_TYPE STREQUAL "Debug")
+            message(STATUS "Using debug mimalloc")
+            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc-debug.a")
+        else()
+            # https://github.com/microsoft/mimalloc/issues/512
+            # Linking mimalloc via object file on macOS x64 can cause heap corruption
+            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc.a")
+        endif()
     else()
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc.o")
+        if(USE_DEBUG_JSC OR CMAKE_BUILD_TYPE STREQUAL "Debug")
+            message(STATUS "Using debug mimalloc")
+            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc-debug.a")
+        else()
+            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc.o")
+        endif()
     endif()
 else()
     find_package(mimalloc REQUIRED)
@@ -1203,6 +1226,18 @@ else()
     message(STATUS "Using dynamicly linked sqlite3")
     target_compile_definitions(${bun} PRIVATE "LAZY_LOAD_SQLITE=1")
 endif()
+
+if(USE_CUSTOM_LSHPACK)
+    if(WIN32)
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/lshpack.lib")
+    else()
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/liblshpack.a")
+    endif()
+else()
+    find_package(lshpack REQUIRED)
+    target_link_libraries(${bun} PRIVATE lshpack)
+endif()
+
 
 if(NOT WIN32)
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libWTF.a")

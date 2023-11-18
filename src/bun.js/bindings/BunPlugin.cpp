@@ -682,13 +682,13 @@ DEFINE_VISIT_CHILDREN(JSModuleMock);
 
 EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path)
 {
-    Group* groupPtr = this->group(namespaceString ? Bun::toWTFString(*namespaceString) : String());
+    Group* groupPtr = this->group(namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : String());
     if (groupPtr == nullptr) {
         return JSValue::encode(jsUndefined());
     }
     Group& group = *groupPtr;
 
-    auto pathString = Bun::toWTFString(*path);
+    auto pathString = path->toWTFString(BunString::ZeroCopy);
 
     JSC::JSFunction* function = group.find(globalObject, pathString);
     if (!function) {
@@ -740,7 +740,7 @@ EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, BunStri
 
 EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path, BunString* importer)
 {
-    Group* groupPtr = this->group(namespaceString ? Bun::toWTFString(*namespaceString) : String());
+    Group* groupPtr = this->group(namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : String());
     if (groupPtr == nullptr) {
         return JSValue::encode(jsUndefined());
     }
@@ -753,7 +753,7 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
 
     auto& callbacks = group.callbacks;
 
-    WTF::String pathString = Bun::toWTFString(*path);
+    WTF::String pathString = path->toWTFString(BunString::ZeroCopy);
     for (size_t i = 0; i < filters.size(); i++) {
         if (!filters[i].get()->match(globalObject, pathString, 0)) {
             continue;
@@ -852,7 +852,7 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
         return fallback();
     }
     auto& virtualModules = *globalObject->onLoadPlugins.virtualModules;
-    WTF::String specifierString = Bun::toWTFString(*specifier);
+    WTF::String specifierString = specifier->toWTFString(BunString::ZeroCopy);
 
     if (auto virtualModuleFn = virtualModules.get(specifierString)) {
         auto& vm = globalObject->vm();

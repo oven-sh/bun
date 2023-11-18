@@ -2265,7 +2265,7 @@ pub const Arguments = struct {
                                 return null;
                             }
 
-                            args.offset = current.to(u53);
+                            args.offset = num.to(u53);
                             if (args.offset > args.buffer.buffer.len) {
                                 JSC.throwInvalidArguments(
                                     "The value of \"offset\" should be less than buffer length",

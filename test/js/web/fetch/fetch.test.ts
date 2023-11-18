@@ -360,7 +360,7 @@ describe("Headers", () => {
         });
       },
     });
-    const result = await fetch(`http://${server.hostname}:${server.port}/`);
+    const result = await fetch(server.url);
     const value = result.headers.get("content-encoding");
     const body = await result.json();
     expect(value).toBe("gzip");
@@ -501,7 +501,7 @@ describe("fetch", () => {
         });
       },
     });
-    const response = await fetch(`http://${server.hostname}:${server.port}`, {
+    const response = await fetch(server.url, {
       redirect: "manual",
     });
     expect(response.status).toBe(302);
@@ -520,7 +520,7 @@ describe("fetch", () => {
         });
       },
     });
-    const response = await fetch(`http://${server.hostname}:${server.port}`, {
+    const response = await fetch(server.url, {
       redirect: "follow",
     });
     expect(response.status).toBe(200);
@@ -540,7 +540,7 @@ describe("fetch", () => {
       },
     });
     try {
-      const response = await fetch(`http://${server.hostname}:${server.port}`, {
+      const response = await fetch(server.url, {
         redirect: "error",
       });
       expect(response).toBeUndefined();
@@ -558,7 +558,7 @@ describe("fetch", () => {
     });
 
     // POST with body
-    const url = `http://${server.hostname}:${server.port}`;
+    const url = server.url;
     const response = await fetch(url, { method: "POST", body: "buntastic" });
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("buntastic");
@@ -566,7 +566,7 @@ describe("fetch", () => {
 
   ["GET", "HEAD", "OPTIONS"].forEach(method =>
     it(`fail on ${method} with body`, async () => {
-      const url = `http://${server.hostname}:${server.port}`;
+      const url = server.url;
       expect(async () => {
         await fetch(url, { body: "buntastic" });
       }).toThrow("fetch() request with GET/HEAD/OPTIONS method cannot have body.");
@@ -582,7 +582,7 @@ describe("fetch", () => {
     });
 
     // POST with body
-    const url = `http://${server.hostname}:${server.port}`;
+    const url = server.url;
     const response = await fetch(url, { method: "POST", body: "buntastic" });
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("9");
@@ -1542,7 +1542,7 @@ describe("should strip headers", () => {
       },
     });
 
-    const { headers, url, redirected } = await fetch(`http://${server.hostname}:${server.port}/redirect`, {
+    const { headers, url, redirected } = await fetch(`${server.url.href}/redirect`, {
       method: "POST",
       headers: {
         "I-Am-Here": "yes",
@@ -1584,7 +1584,7 @@ describe("should strip headers", () => {
           return new Response("hello", {
             headers: {
               ...request.headers,
-              "Location": `http://${server.hostname}:${server.port}/redirected`,
+              "Location": `${server.url.href}/redirected`,
             },
             status: 302,
           });
@@ -1619,7 +1619,7 @@ it("same-origin status code 302 should not strip headers", async () => {
         return new Response("hello", {
           headers: {
             ...request.headers,
-            "Location": `http://${server.hostname}:${server.port}/redirected`,
+            "Location": `${server.url.href}/redirected`,
           },
           status: 302,
         });
@@ -1631,7 +1631,7 @@ it("same-origin status code 302 should not strip headers", async () => {
     },
   });
 
-  const { headers, url, redirected } = await fetch(`http://${server.hostname}:${server.port}/redirect`, {
+  const { headers, url, redirected } = await fetch(`${server.url.href}/redirect`, {
     method: "GET",
     headers: {
       "Authorization": "yes",
@@ -1695,8 +1695,9 @@ describe("should handle relative location in the redirect, issue#5635", () => {
         });
       },
     });
-
-    const resp = await fetch(`http://${server.hostname}:${server.port}${pathname}`);
+    let url = new URL(server.url.href);
+    url.pathname = pathname;
+    const resp = await fetch(url);
     expect(resp.redirected).toBe(true);
     expect(new URL(resp.url).pathname).toStrictEqual(expected);
     expect(resp.status).toBe(200);
@@ -1727,7 +1728,7 @@ it("should throw RedirectURLTooLong when location is too long", async () => {
   let err = undefined;
   try {
     gc();
-    const resp = await fetch(`http://${server.hostname}:${server.port}/redirect`);
+    const resp = await fetch(`${server.url.href}/redirect`);
   } catch (error) {
     gc();
     err = error;
@@ -1755,7 +1756,7 @@ it("304 not modified with missing content-length does not cause a request timeou
     hostname: "localhost",
   });
 
-  const response = await fetch(`http://${server.hostname}:${server.port}/`);
+  const response = await fetch(`http://${server.hostname}:${server.port}`);
   expect(response.status).toBe(304);
   expect(await response.arrayBuffer()).toHaveLength(0);
   server.stop(true);
@@ -1778,7 +1779,7 @@ it("304 not modified with missing content-length and connection close does not c
     hostname: "localhost",
   });
 
-  const response = await fetch(`http://${server.hostname}:${server.port}/`);
+  const response = await fetch(`http://${server.hostname}:${server.port}`);
   expect(response.status).toBe(304);
   expect(await response.arrayBuffer()).toHaveLength(0);
   server.stop(true);
@@ -1801,7 +1802,7 @@ it("304 not modified with content-length 0 and connection close does not cause a
     hostname: "localhost",
   });
 
-  const response = await fetch(`http://${server.hostname}:${server.port}/`);
+  const response = await fetch(`http://${server.hostname}:${server.port}`);
   expect(response.status).toBe(304);
   expect(await response.arrayBuffer()).toHaveLength(0);
   server.stop(true);
@@ -1824,7 +1825,7 @@ it("304 not modified with 0 content-length does not cause a request timeout", as
     hostname: "localhost",
   });
 
-  const response = await fetch(`http://${server.hostname}:${server.port}/`);
+  const response = await fetch(`http://${server.hostname}:${server.port}`);
   expect(response.status).toBe(304);
   expect(await response.arrayBuffer()).toHaveLength(0);
   server.stop(true);

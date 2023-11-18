@@ -258,7 +258,7 @@ describe("async context passes through", () => {
         },
       });
 
-      const response = await fetch("http://" + server.hostname + ":" + server.port);
+      const response = await fetch(server.url);
       expect(await response.text()).toBe("value");
 
       expect(s.getStore()).toBe("value");

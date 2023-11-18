@@ -25,7 +25,7 @@ describe("WebSocket", () => {
         },
       },
     });
-    const ws = new WebSocket(`ws://${server.hostname}:${server.port}`, {});
+    const ws = new WebSocket(server.url.href.replace("http:", "ws:"), {});
     await new Promise(resolve => {
       ws.onopen = resolve;
     });
@@ -274,7 +274,7 @@ describe("WebSocket", () => {
         },
       },
     });
-    new WebSocket(`http://${server.hostname}:${server.port}`, {});
+    new WebSocket(server.url, {});
   });
   describe("nodebuffer", () => {
     it("should support 'nodebuffer' binaryType", done => {
@@ -293,7 +293,7 @@ describe("WebSocket", () => {
           },
         },
       });
-      const ws = new WebSocket(`http://${server.hostname}:${server.port}`, {});
+      const ws = new WebSocket(server.url, {});
       ws.binaryType = "nodebuffer";
       expect(ws.binaryType).toBe("nodebuffer");
       Bun.gc(true);
@@ -331,7 +331,7 @@ describe("WebSocket", () => {
           },
         },
       });
-      client = new WebSocket(`http://${server.hostname}:${server.port}`, {});
+      client = new WebSocket(server.url, {});
       client.binaryType = "nodebuffer";
       expect(client.binaryType).toBe("nodebuffer");
     });
@@ -420,7 +420,7 @@ describe("websocket in subprocess", () => {
       },
     });
     const subprocess = Bun.spawn({
-      cmd: [bunExe(), import.meta.dir + "/websocket-subprocess.ts", `http://${server.hostname}:${server.port}`],
+      cmd: [bunExe(), import.meta.dir + "/websocket-subprocess.ts", server.url.href],
       stderr: "pipe",
       stdin: "pipe",
       stdout: "pipe",
@@ -484,7 +484,7 @@ describe("websocket in subprocess", () => {
       },
     });
     const subprocess = Bun.spawn({
-      cmd: [bunExe(), import.meta.dir + "/websocket-subprocess.ts", `http://${server.hostname}:${server.port}`],
+      cmd: [bunExe(), import.meta.dir + "/websocket-subprocess.ts", server.url.href],
       stderr: "pipe",
       stdin: "pipe",
       stdout: "pipe",
@@ -514,7 +514,7 @@ describe("websocket in subprocess", () => {
     });
 
     const subprocess = Bun.spawn({
-      cmd: [bunExe(), import.meta.dir + "/websocket-subprocess.ts", `http://${server.hostname}:${server.port}`],
+      cmd: [bunExe(), import.meta.dir + "/websocket-subprocess.ts", server.url.href],
       stderr: "pipe",
       stdin: "pipe",
       stdout: "pipe",

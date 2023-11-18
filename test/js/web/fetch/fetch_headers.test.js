@@ -12,7 +12,7 @@ describe("Headers", async () => {
       },
       port: 0,
     });
-    url = `http://${server.hostname}:${server.port}`;
+    url = server.url;
   });
   afterAll(() => {
     server.stop(true);

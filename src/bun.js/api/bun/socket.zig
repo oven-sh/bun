@@ -200,12 +200,14 @@ const Handlers = struct {
 
     pub fn resolvePromise(this: *Handlers, value: JSValue) void {
         const promise = this.promise.trySwap() orelse return;
-        promise.asAnyPromise().?.resolve(this.globalObject, value);
+        const anyPromise = promise.asAnyPromise() orelse return;
+        anyPromise.resolve(this.globalObject, value);
     }
 
     pub fn rejectPromise(this: *Handlers, value: JSValue) bool {
         const promise = this.promise.trySwap() orelse return false;
-        promise.asAnyPromise().?.reject(this.globalObject, value);
+        const anyPromise = promise.asAnyPromise() orelse return false;
+        anyPromise.reject(this.globalObject, value);
         return true;
     }
 
@@ -2839,15 +2841,6 @@ fn NewSocket(comptime ssl: bool) type {
                 .binary_type = this.handlers.binary_type,
                 .is_server = is_server,
             };
-            this.handlers.onOpen = .zero;
-            this.handlers.onClose = .zero;
-            this.handlers.onData = .zero;
-            this.handlers.onWritable = .zero;
-            this.handlers.onTimeout = .zero;
-            this.handlers.onConnectError = .zero;
-            this.handlers.onEnd = .zero;
-            this.handlers.onError = .zero;
-            this.handlers.onHandshake = .zero;
             raw.* = .{
                 .handlers = raw_handlers_ptr,
                 .this_value = .zero,
@@ -2856,6 +2849,7 @@ fn NewSocket(comptime ssl: bool) type {
                 .wrapped = .tcp,
                 .protos = null,
             };
+            raw_handlers_ptr.protect();
 
             var raw_js_value = raw.getThisValue(globalObject);
             if (JSSocketType(ssl).dataGetCached(this.getThisValue(globalObject))) |raw_default_data| {
@@ -2879,9 +2873,10 @@ fn NewSocket(comptime ssl: bool) type {
             if (this.reffer.has) {
                 var vm = this.handlers.vm;
                 this.reffer.unref(vm);
-                old_context.deinit(ssl);
-                bun.default_allocator.destroy(this.handlers);
                 this.poll_ref.unref(vm);
+                // will free handlers and the old_context when hits 0 active connections
+                // the connection can be upgraded inside a handler call so we need to garantee that it will be still alive
+                this.handlers.markInactive(ssl, old_context, this.wrapped);
                 this.has_pending_activity.store(false, .Release);
             }
 

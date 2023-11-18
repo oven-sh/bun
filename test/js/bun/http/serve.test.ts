@@ -954,7 +954,7 @@ describe("should support Content-Range with Bun.file()", () => {
       const end = Number(searchParams.get("end"));
       const file = Bun.file(fixture);
       return new Response(file.slice(start, end), {
-        headers: { 'Content-Range': 'bytes ' + start + '-' + end + '/' + file.size }
+        headers: { "Content-Range": "bytes " + start + "-" + end + "/" + file.size },
       });
     },
   });
@@ -991,11 +991,11 @@ describe("should support Content-Range with Bun.file()", () => {
         const response = await fetch(`http://${server.hostname}:${server.port}/?start=${start}&end=${end}`, {
           verbose: true,
         });
-        expect(parseInt(response.headers.get('Content-Range')?.split("/")[1])).toEqual(full.byteLength)
+        expect(parseInt(response.headers.get("Content-Range")?.split("/")[1])).toEqual(full.byteLength);
         expect(await response.arrayBuffer()).toEqual(full.buffer.slice(start, end));
         expect(response.status).toBe(start > 0 || end < full.byteLength ? 206 : 200);
-      })
-    })
+      });
+    });
   }
 
   const emptyRanges = [

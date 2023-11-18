@@ -302,11 +302,11 @@ describe("WebSocket", () => {
     });
     var closed = new Promise(resolve => {
       ws.onclose = resolve;
-    })
+    });
     ws.close();
     await closed;
     server.stop(true);
-  })
+  });
 
   describe("nodebuffer", () => {
     it("should support 'nodebuffer' binaryType", done => {

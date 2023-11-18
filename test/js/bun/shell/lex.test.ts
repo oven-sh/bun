@@ -160,6 +160,41 @@ describe("lex shell", () => {
     expect(result).toEqual(expected);
   });
 
+  test("env_vars exported", () => {
+    const expected = [
+      {
+        Export: {},
+      },
+      {
+        Text: "NAME=zack",
+      },
+      {
+        Delimit: {},
+      },
+      {
+        Text: "FOO=bar",
+      },
+      {
+        Delimit: {},
+      },
+      {
+        Export: {},
+      },
+      {
+        Text: "NICE=lmao",
+      },
+      {
+        Delimit: {},
+      },
+      {
+        Eof: {},
+      },
+    ];
+    const result = JSON.parse($.lex`export NAME=zack FOO=bar export NICE=lmao`);
+    // console.log(result);
+    expect(result).toEqual(expected);
+  });
+
   test("brace_expansion", () => {
     const expected = [
       { "Text": "echo" },

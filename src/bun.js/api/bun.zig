@@ -410,6 +410,14 @@ pub fn shellParse(
     return bun_str.toJS(globalThis);
 }
 
+const ShellTask = struct {
+    arena: std.heap.Arena,
+    script: std.ArrayList(u8),
+    interpreter: Shell.Interpreter,
+
+    pub const AsyncShellTask = JSC.ConcurrentPromiseTask(ShellTask);
+};
+
 pub fn shell(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,

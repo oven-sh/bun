@@ -183,7 +183,9 @@ describe("parse shell", () => {
                 "left": {
                   "cond": {
                     "op": "And",
-                    "left": { "assign": [{ "label": "FOO", "value": { "simple": { "Text": "bar" } } }] },
+                    "left": {
+                      "assign": [{ "label": "FOO", "value": { "simple": { "Text": "bar" } }, "exported": false }],
+                    },
                     "right": {
                       "cmd": {
                         "assigns": [],
@@ -231,8 +233,30 @@ describe("parse shell", () => {
       ],
     };
 
-    const result = JSON.parse($.parse`FOO=bar && echo foo && echo bar | echo lmao | cat > foo.txt`);
+    const result = $.parse`FOO=bar && echo foo && echo bar | echo lmao | cat > foo.txt`;
     // console.log(result);
+    expect(result).toEqual(JSON.stringify(expected));
+  });
+
+  test("assigns", () => {
+    const expected = {
+      "stmts": [
+        {
+          "exprs": [
+            {
+              "assign": [
+                { "label": "FOO", "value": { "simple": { "Text": "bar" } }, "exported": false },
+                { "label": "BAR", "value": { "simple": { "Text": "baz" } }, "exported": true },
+                { "label": "LMAO", "value": { "simple": { "Text": "nice" } }, "exported": true },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = JSON.parse($.parse`FOO=bar export BAR=baz export LMAO=nice`);
+    // console.log("Result", JSON.stringify(result));
     expect(result).toEqual(expected);
   });
 });

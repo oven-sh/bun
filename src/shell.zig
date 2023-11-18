@@ -11,17 +11,20 @@ fn setEnv(name: [*:0]const u8, value: [*:0]const u8) void {
 }
 
 pub const Interpreter = struct {
+    pub const ast = AST;
     allocator: Allocator,
     env: std.StringArrayHashMap([]const u8),
+    cmd_local_env: std.StringArrayHashMap([]const u8),
+
+    stdin: std.fs.File,
+    stdout: std.fs.File,
+    stderr: std.fs.File,
 
     pub fn new(allocator: Allocator) Interpreter {
-        return .{
-            .allocator = allocator,
-            .env = std.StringArrayHashMap([]const u8).init(allocator),
-        };
+        return .{ .allocator = allocator, .env = std.StringArrayHashMap([]const u8).init(allocator), .cmd_local_env = std.StringArrayHashMap([]const u8).init(allocator), .stdin = std.io.getStdIn(), .stdout = std.io.getStdOut(), .stderr = std.io.getStdErr() };
     }
 
-    pub fn interpret(self: *Interpreter, script: AST.Script) !void {
+    pub fn interpret(self: *Interpreter, script: ast.Script) !void {
         for (script.stmts) |*stmt| {
             for (stmt.exprs) |*expr| {
                 try self.interpret_expr(expr);
@@ -29,14 +32,80 @@ pub const Interpreter = struct {
         }
     }
 
-    fn interpret_expr(self: *Interpreter, expr: *const AST.Expr) !void {
-        _ = self;
-        switch (@as(AST.Expr.Tag, expr.*)) {
-            .assign => {},
+    fn interpret_expr(self: *Interpreter, expr: *const ast.Expr) !void {
+        switch (expr.*) {
+            .assign => |assigns| {
+                for (assigns) |*assign| {
+                    try self.interpret_assign(assign);
+                }
+            },
             .cond => {},
             .pipeline => {},
             .cmd => {},
         }
+    }
+
+    fn interpret_assign(self: *Interpreter, assign: *const ast.Assign) !void {
+        const value = try self.eval_atom(&assign.value);
+        if (assign.exported) {
+            try self.env.put(assign.label, value);
+        } else {
+            try self.cmd_local_env.put(assign.label, value);
+        }
+    }
+
+    fn eval_atom(self: *Interpreter, atom: *const ast.Atom) ![]const u8 {
+        const string_size = self.eval_atom_size(atom);
+        var string = try self.allocator.alloc(u8, string_size);
+        switch (atom.*) {
+            .simple => |*simp| {
+                @memcpy(string, self.eval_atom_simpl(simp));
+            },
+            .compound => |cmp| {
+                var i: usize = 0;
+                for (cmp.atoms) |*simple_atom| {
+                    const txt = self.eval_atom_simpl(simple_atom);
+                    var slice = string[i .. i + txt.len];
+                    @memcpy(slice, txt);
+                    i += txt.len;
+                }
+            },
+        }
+        return string;
+    }
+
+    fn eval_atom_size(self: *const Interpreter, atom: *const ast.Atom) usize {
+        return switch (@as(ast.Atom.Tag, atom.*)) {
+            .simple => self.eval_atom_size_simple(&atom.simple),
+            .compound => self.eval_atom_size_simple(&atom.simple),
+        };
+    }
+
+    fn eval_atom_simpl(self: *const Interpreter, atom: *const ast.SimpleAtom) []const u8 {
+        return switch (atom.*) {
+            .Text => |txt| txt,
+            .Var => |label| return self.eval_var(label),
+        };
+    }
+
+    fn eval_atom_size_simple(self: *const Interpreter, simple: *const ast.SimpleAtom) usize {
+        return switch (simple.*) {
+            .Text => |txt| txt.len,
+            .Var => |label| self.eval_var(label).len,
+        };
+    }
+
+    fn eval_atom_size_compound(self: *const Interpreter, compound: *const ast.CompoundAtom) usize {
+        var size: usize = 0;
+        for (compound.atoms) |*atom| {
+            size += self.eval_atom_size_simple(atom);
+        }
+        return size;
+    }
+
+    fn eval_var(self: *const Interpreter, label: []const u8) []const u8 {
+        const value = self.env.get(label) orelse return "";
+        return value;
     }
 };
 
@@ -116,17 +185,14 @@ pub const AST = struct {
     pub const Assign = struct {
         label: []const u8,
         value: Atom,
+        exported: bool,
 
-        pub fn new(label: []const u8, value: Atom) Assign {
+        pub fn new(label: []const u8, value: Atom, exported: bool) Assign {
             return .{
                 .label = label,
                 .value = value,
+                .exported = exported,
             };
-        }
-
-        pub fn format(self: *const Assign, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = options;
-            try std.fmt.format(writer, "{s} Assign( .label = {s}, .value = {any})", .{ fmt, self.label, self.value });
         }
     };
 
@@ -155,9 +221,11 @@ pub const AST = struct {
         };
     };
 
-    pub const Atom = union(enum) {
+    pub const Atom = union(Atom.Tag) {
         simple: SimpleAtom,
         compound: CompoundAtom,
+
+        const Tag = enum(u8) { simple, compound };
 
         pub fn new_simple(atom: SimpleAtom) Atom {
             return .{ .simple = atom };
@@ -344,6 +412,8 @@ pub const Parser = struct {
     /// null and backtrack the parser state
     /// TODO `export FOO=bar`
     fn parse_assign(self: *Parser) !?AST.Assign {
+        const old = self.current;
+        const exported = self.match(.Export);
         switch (self.peek()) {
             .Text => |txtrng| {
                 const start_idx = self.current;
@@ -357,12 +427,20 @@ pub const Parser = struct {
 
                         if (eq_idx == txt.len - 1) {
                             const atom = try self.parse_atom() orelse @panic("OOPS");
-                            break :var_decl .{ .label = label, .value = atom };
+                            break :var_decl .{
+                                .label = label,
+                                .value = atom,
+                                .exported = exported,
+                            };
                         }
 
                         const txt_value = txt[eq_idx + 1 .. txt.len];
                         _ = self.expect_delimit();
-                        break :var_decl .{ .label = label, .value = .{ .simple = .{ .Text = txt_value } } };
+                        break :var_decl .{
+                            .label = label,
+                            .value = .{ .simple = .{ .Text = txt_value } },
+                            .exported = exported,
+                        };
                     }
                     break :var_decl null;
                 };
@@ -371,7 +449,11 @@ pub const Parser = struct {
                     return vd;
                 }
 
-                self.current = start_idx;
+                if (exported) {
+                    self.current = old;
+                } else {
+                    self.current = start_idx;
+                }
                 return null;
             },
             else => return null,
@@ -464,6 +546,7 @@ pub const Parser = struct {
         unreachable;
     }
 
+    /// Consumes token if it matches
     fn match(self: *Parser, toktag: TokenTag) bool {
         if (@as(TokenTag, self.peek()) == toktag) {
             _ = self.advance();
@@ -516,6 +599,7 @@ pub const TokenTag = enum {
     Semicolon,
     BraceBegin,
     BraceEnd,
+    Export,
     Var,
     Text,
     Delimit,
@@ -545,6 +629,8 @@ pub const Token = union(TokenTag) {
     BraceBegin,
     BraceEnd,
 
+    Export,
+
     Var: TextRange,
     Text: TextRange,
 
@@ -573,13 +659,19 @@ pub const Token = union(TokenTag) {
 
 pub const Lexer = struct {
     src: []const u8,
+    /// `i` is the index into the tokens list, tells us at the next token to
+    /// look at
     i: u32 = 0,
+    /// Tell us the beginning of a "word", indexes into the string pool (`buf`)
+    /// Anytime a word is added, this needs to be updated
+    word_start: u32 = 0,
+    /// Keeps track of the end of a "word", indexes into the string pool (`buf`),
+    /// anytime characters are added to the string pool this needs to be updated
     j: u32 = 0,
 
     buf: ArrayList(u8),
     tokens: ArrayList(Token),
     state: State = .Normal,
-    word_start: u32 = 0,
     delimit_quote: bool = false,
 
     const State = enum {
@@ -593,12 +685,38 @@ pub const Lexer = struct {
         escaped: bool = false,
     };
 
+    const BacktrackSnapshot = struct {
+        i: u32,
+        j: u32,
+        word_start: u32,
+        state: State,
+        delimit_quote: bool,
+    };
+
     pub fn new(alloc: Allocator, src: []const u8) Lexer {
         return .{
             .src = src,
             .tokens = ArrayList(Token).init(alloc),
             .buf = ArrayList(u8).init(alloc),
         };
+    }
+
+    fn make_snapshot(self: *Lexer) BacktrackSnapshot {
+        return .{
+            .i = self.i,
+            .j = self.j,
+            .word_start = self.word_start,
+            .delimit_quote = self.delimit_quote,
+            .state = self.state,
+        };
+    }
+
+    fn backtrack(self: *Lexer, snap: BacktrackSnapshot) void {
+        self.i = snap.i;
+        self.j = snap.j;
+        self.word_start = snap.word_start;
+        self.state = snap.state;
+        self.delimit_quote = snap.delimit_quote;
     }
 
     pub fn lex(self: *Lexer) !void {
@@ -616,6 +734,15 @@ pub const Lexer = struct {
             // 3. break words
             if (!escaped) escaped: {
                 switch (char) {
+                    'e' => {
+                        if (self.state == .Single or self.state == .Double) break :escaped;
+                        if (self.eat_export()) {
+                            try self.break_word(true);
+                            try self.tokens.append(.Export);
+                            continue;
+                        }
+                        break :escaped;
+                    },
                     ';' => {
                         if (self.state == .Single or self.state == .Double) break :escaped;
                         try self.break_word(true);
@@ -724,14 +851,27 @@ pub const Lexer = struct {
             try self.tokens.append(.Delimit);
             self.delimit_quote = false;
         }
-        // else if (
-        //     // Need to close DoubleQuote groups because they don't trigger the above condition
-        //     add_delimiter and self.tokens.items.len > 0 and
-        //     self.tokens.items[self.tokens.items.len - 1] == .DoubleQuoteGroupEnd
-        // ) {
-        //     try self.tokens.append(.Delimit);
-        // }
         self.word_start = self.j;
+    }
+
+    fn eat_export(self: *Lexer) bool {
+        return self.eat_literal("export");
+    }
+
+    /// Assumes the first character of the literal has been eaten
+    fn eat_literal(self: *Lexer, comptime literal: []const u8) bool {
+        const literal_skip_first = literal[1..];
+        const snapshot = self.make_snapshot();
+        const slice = self.eat_slice(literal_skip_first.len) orelse {
+            self.backtrack(snapshot);
+            return false;
+        };
+
+        if (std.mem.eql(u8, &slice, literal_skip_first))
+            return true;
+
+        self.backtrack(snapshot);
+        return false;
     }
 
     fn eat_var(self: *Lexer) !Token.TextRange {
@@ -761,6 +901,21 @@ pub const Lexer = struct {
             self.i += 1 + @as(u32, @intFromBool(result.escaped));
             return result;
         }
+        return null;
+    }
+
+    fn eat_slice(self: *Lexer, comptime N: usize) ?[N]u8 {
+        var slice = [_]u8{0} ** N;
+        var i: usize = 0;
+        while (self.peek()) |result| {
+            slice[i] = result.char;
+            i += 1;
+            _ = self.eat();
+            if (i == N) {
+                return slice;
+            }
+        }
+
         return null;
     }
 
@@ -856,6 +1011,8 @@ pub const Test = struct {
         BraceBegin,
         BraceEnd,
 
+        Export,
+
         Var: []const u8,
         Text: []const u8,
 
@@ -864,6 +1021,7 @@ pub const Test = struct {
 
         pub fn from_real(the_token: Token, buf: []const u8) TestToken {
             switch (the_token) {
+                .Export => return .Export,
                 .Var => |txt| return .{ .Var = buf[txt.start..txt.end] },
                 .Text => |txt| return .{ .Text = buf[txt.start..txt.end] },
                 .Pipe => return .Pipe,
@@ -883,140 +1041,3 @@ pub const Test = struct {
         }
     };
 };
-
-test "basic" {
-    const bash_src =
-        \\next dev
-    ;
-    const expected: []const Test.TestToken = &[_]Test.TestToken{ .{ .Text = "next" }, .Delimit, .{ .Text = "dev" }, .Delimit, .Eof };
-    const lexer = try test_lex(bash_src, expected);
-    _ = lexer;
-}
-
-test "vars" {
-    const bash_src =
-        \\next dev $PORT
-    ;
-    const expected: []const Test.TestToken = &[_]Test.TestToken{ .{ .Text = "next" }, .Delimit, .{ .Text = "dev" }, .Delimit, .{ .Var = "PORT" }, .Eof };
-    const lexer = try test_lex(bash_src, expected);
-    _ = lexer;
-}
-
-test "quoted_var" {
-    const bash_src =
-        \\next dev "$PORT"
-    ;
-    const expected: []const Test.TestToken = &[_]Test.TestToken{ .{ .Text = "next" }, .Delimit, .{ .Text = "dev" }, .Delimit, .{ .Var = "PORT" }, .Delimit, .Eof };
-    const lexer = try test_lex(bash_src, expected);
-    _ = lexer;
-}
-
-test "quoted_edge_case" {
-    const bash_src =
-        \\next dev foo"$PORT"
-    ;
-    const expected: []const Test.TestToken = &[_]Test.TestToken{ .{ .Text = "next" }, .Delimit, .{ .Text = "dev" }, .Delimit, .{ .Text = "foo" }, .{ .Var = "PORT" }, .Delimit, .Eof };
-    const lexer = try test_lex(bash_src, expected);
-    _ = lexer;
-}
-
-test "quote_multi" {
-    const bash_src =
-        \\echo foo"$NICE"good"NICE"
-    ;
-    const expected: []const Test.TestToken = &[_]Test.TestToken{ .{ .Text = "echo" }, .Delimit, .{ .Text = "foo" }, .{ .Var = "NICE" }, .{ .Text = "good" }, .{ .Text = "NICE" }, .Delimit, .Eof };
-    const lexer = try test_lex(bash_src, expected);
-    _ = lexer;
-}
-
-test "semicolon" {
-    const bash_src =
-        \\echo foo; bar baz; echo "NICE;";
-    ;
-    const expected: []const Test.TestToken = &[_]Test.TestToken{ .{ .Text = "echo" }, .Delimit, .{ .Text = "foo" }, .Delimit, .Semicolon, .{ .Text = "bar" }, .Delimit, .{ .Text = "baz" }, .Delimit, .Semicolon, .{ .Text = "echo" }, .Delimit, .{ .Text = "NICE;" }, .Delimit, .Semicolon, .Eof };
-    const lexer = try test_lex(bash_src, expected);
-    _ = lexer;
-}
-
-test "single_quote" {
-    const bash_src =
-        \\next dev 'hello how is it going'
-    ;
-    const expected: []const Test.TestToken = &[_]Test.TestToken{ .{ .Text = "next" }, .Delimit, .{ .Text = "dev" }, .Delimit, .{ .Text = "hello how is it going" }, .Delimit, .Eof };
-    const lexer = try test_lex(bash_src, expected);
-    _ = lexer;
-}
-
-test "env_vars" {
-    const bash_src =
-        \\NAME=zack FULLNAME="$NAME radisic" LOL= ; echo $FULLNAME
-    ;
-    const expected: []const Test.TestToken = &[_]Test.TestToken{ .{ .Text = "NAME=zack" }, .Delimit, .{ .Text = "FULLNAME=" }, .{ .Var = "NAME" }, .{ .Text = " radisic" }, .Delimit, .{ .Text = "LOL=" }, .Delimit, .Semicolon, .{ .Text = "echo" }, .Delimit, .{ .Var = "FULLNAME" }, .Eof };
-    const lexer = try test_lex(bash_src, expected);
-    _ = lexer;
-}
-test "env_vars2" {
-    const bash_src =
-        \\NAME=zack foo=$bar echo $NAME
-    ;
-    const expected: []const Test.TestToken = &[_]Test.TestToken{ .{ .Text = "NAME=zack" }, .Delimit, .{ .Text = "echo" }, .Delimit, .{ .Var = "NAME" }, .Eof };
-    const lexer = try test_lex(bash_src, expected);
-    _ = lexer;
-}
-
-test "brace_expansion" {
-    const bash_src =
-        // \\echo {ts,tsx,js,$foo}
-        // \\echo {*.ts,*.tsx,*.js,*.jsx}
-        \\echo {ts,tsx,js,jsx}
-        // \\echo {ts",foo"}
-    ;
-    const expected: []const Test.TestToken = &[_]Test.TestToken{ .{ .Text = "echo" }, .Delimit, .{ .Text = "{ts,tsx,js,jsx}" }, .Delimit, .Eof };
-    const lexer = try test_lex(bash_src, expected);
-    _ = lexer;
-}
-
-test "op_and" {
-    const bash_src =
-        \\echo foo && echo bar
-    ;
-    const expected: []const Test.TestToken = &[_]Test.TestToken{ .{ .Text = "echo" }, .Delimit, .{ .Text = "foo" }, .Delimit, .DoubleAmpersand, .{ .Text = "echo" }, .Delimit, .{ .Text = "bar" }, .Delimit, .Eof };
-    const lexer = try test_lex(bash_src, expected);
-    _ = lexer;
-}
-
-test "op_or" {
-    const bash_src =
-        \\echo foo || echo bar
-    ;
-    const expected: []const Test.TestToken = &[_]Test.TestToken{ .{ .Text = "echo" }, .Delimit, .{ .Text = "foo" }, .Delimit, .DoublePipe, .{ .Text = "echo" }, .Delimit, .{ .Text = "bar" }, .Delimit, .Eof };
-    const lexer = try test_lex(bash_src, expected);
-    _ = lexer;
-}
-
-test "op_pipe" {
-    const bash_src =
-        \\echo foo | echo bar
-    ;
-    const expected: []const Test.TestToken = &[_]Test.TestToken{ .{ .Text = "echo" }, .Delimit, .{ .Text = "foo" }, .Delimit, .Pipe, .{ .Text = "echo" }, .Delimit, .{ .Text = "bar" }, .Delimit, .Eof };
-    const lexer = try test_lex(bash_src, expected);
-    _ = lexer;
-}
-
-test "op_bg" {
-    const bash_src =
-        \\echo foo & echo bar
-    ;
-    const expected: []const Test.TestToken = &[_]Test.TestToken{ .{ .Text = "echo" }, .Delimit, .{ .Text = "foo" }, .Delimit, .Ampersand, .{ .Text = "echo" }, .Delimit, .{ .Text = "bar" }, .Delimit, .Eof };
-    const lexer = try test_lex(bash_src, expected);
-    _ = lexer;
-}
-
-test "op_redirect" {
-    const bash_src =
-        \\echo foo > cat secrets.txt
-    ;
-    const expected: []const Test.TestToken = &[_]Test.TestToken{ .{ .Text = "echo" }, .Delimit, .{ .Text = "foo" }, .Delimit, .RightArrow, .{ .Text = "cat" }, .Delimit, .{ .Text = "secrets.txt" }, .Delimit, .Eof };
-    const lexer = try test_lex(bash_src, expected);
-    _ = lexer;
-}

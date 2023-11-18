@@ -70,8 +70,17 @@ declare module "bun" {
     options?: { PATH?: string; cwd?: string },
   ): string | null;
 
+  type ShellExpression = string | BunFile | ArrayBufferView;
   export interface Shell {
-    (strings: TemplateStringsArray, ...expressions: any[]): void;
+    (
+      strings: TemplateStringsArray,
+      ...expressions: ShellExpression[]
+    ): Promise<ShellOutput>;
+  }
+  export interface ShellOutput {
+    readonly stdout: Buffer;
+    readonly stderr: Buffer;
+    readonly exitCode: number;
   }
 
   export const $: Shell;

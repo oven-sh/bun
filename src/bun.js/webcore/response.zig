@@ -958,22 +958,26 @@ pub const Fetch = struct {
                             }
                             const err = this.onReject();
                             err.ensureStillAlive();
-                            if (body.value == .Locked) {
-                                if (body.value.Locked.readable) |readable| {
+                            if (i == 0) {
+                                if (this.readable_stream_ref.get()) |readable| {
                                     readable.ptr.Bytes.onData(
                                         .{
                                             .err = .{ .JSValue = err },
                                         },
                                         bun.default_allocator,
                                     );
-                                } else {
-                                    if (body.value.Locked.promise) |promise_| {
-                                        const promise = promise_.asAnyPromise().?;
-                                        promise.reject(globalThis, err);
-                                    }
-                                    body.value.toErrorInstance(err, globalThis);
                                 }
                             }
+                            if ((i > 0 or this.readable_stream_ref.get() == null) and body.value.Locked.readable != null) {
+                                body.value.Locked.readable.?.ptr.Bytes.onData(
+                                    .{
+                                        .err = .{ .JSValue = err },
+                                    },
+                                    bun.default_allocator,
+                                );
+                            }
+
+                            body.value.toErrorInstance(err, globalThis);
                         }
 
                         return;

@@ -932,10 +932,6 @@ pub const Body = struct {
                 this.WTFStringImpl.deref();
                 this.* = Value{ .Null = {} };
             }
-
-            if (tag == .Error) {
-                JSC.C.JSValueUnprotect(VirtualMachine.get().global, this.Error.asObjectRef());
-            }
         }
         pub fn clone(this: *Value, globalThis: *JSC.JSGlobalObject) Value {
             if (this.* == .InternalBlob) {

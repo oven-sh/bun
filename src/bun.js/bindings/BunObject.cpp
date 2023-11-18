@@ -685,9 +685,13 @@ public:
         object->finishCreation(vm);
         auto mainShellFunc = JSFunction::create(vm, globalObject, 2, String("$"_s), BunObject_callback_$, ImplementationVisibility::Public);
 #ifdef BUN_DEBUG
-        auto identifier = Identifier::fromString(vm, String("parse"_s));
+        auto parseIdent = Identifier::fromString(vm, String("parse"_s));
         auto parseFunc = JSFunction::create(vm, globalObject, 2, String("shellParse"_s), BunObject_callback_shellParse, ImplementationVisibility::Private);
-        mainShellFunc->putDirect(vm, identifier, parseFunc);
+        mainShellFunc->putDirect(vm, parseIdent, parseFunc);
+
+        auto lexIdent = Identifier::fromString(vm, String("lex"_s));
+        auto lexFunc = JSFunction::create(vm, globalObject, 2, String("lex"_s), BunObject_callback_shellLex, ImplementationVisibility::Private);
+        mainShellFunc->putDirect(vm, lexIdent, lexFunc);
 #endif
         object->putDirect(vm, Identifier::fromString(vm, String("$"_s)), mainShellFunc);
         return object;

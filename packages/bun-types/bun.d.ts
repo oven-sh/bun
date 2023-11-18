@@ -70,7 +70,11 @@ declare module "bun" {
     options?: { PATH?: string; cwd?: string },
   ): string | null;
 
-  export function $(strings: TemplateStringsArray, ...expressions: any[]): void;
+  export interface Shell {
+    (strings: TemplateStringsArray, ...expressions: any[]): void;
+  }
+
+  export const $: Shell;
 
   interface TOML {
     /**

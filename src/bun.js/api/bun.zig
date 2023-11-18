@@ -43,6 +43,7 @@ pub const BunObject = struct {
     pub const write = JSC.WebCore.Blob.writeFile;
     pub const @"$" = Bun.shell;
     pub const shellParse = Bun.shellParse;
+    pub const shellLex = Bun.shellLex;
     // --- Callbacks ---
 
     // --- Getters ---
@@ -155,6 +156,7 @@ pub const BunObject = struct {
         @export(BunObject.write, .{ .name = callbackName("write") });
         @export(BunObject.@"$", .{ .name = callbackName("$") });
         @export(BunObject.shellParse, .{ .name = callbackName("shellParse") });
+        @export(BunObject.shellLex, .{ .name = callbackName("shellLex") });
         // -- Callbacks --
     }
 };
@@ -313,6 +315,54 @@ pub fn shellCmdFromJS(
         i += 1;
     }
     return script;
+}
+
+pub fn shellLex(
+    globalThis: *JSC.JSGlobalObject,
+    callframe: *JSC.CallFrame,
+) callconv(.C) JSC.JSValue {
+    const arguments_ = callframe.arguments(1);
+    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    const string_args = arguments.nextEat() orelse {
+        globalThis.throw("shell_parse: expected 2 arguments, got 0", .{});
+        return JSC.JSValue.jsUndefined();
+    };
+
+    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+    defer arena.deinit();
+
+    const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
+    var script = shellCmdFromJS(arena.allocator(), globalThis, string_args, template_args) catch {
+        globalThis.throwOutOfMemory();
+        return JSValue.undefined;
+    };
+
+    var lexer = Shell.Lexer.new(arena.allocator(), script.items[0..]);
+    lexer.lex() catch |err| {
+        globalThis.throwError(err, "failed to lex shell");
+        return JSValue.undefined;
+    };
+
+    var test_tokens = std.ArrayList(Shell.Test.TestToken).initCapacity(arena.allocator(), lexer.tokens.items.len) catch {
+        globalThis.throwOutOfMemory();
+        return JSValue.undefined;
+    };
+    for (lexer.tokens.items) |tok| {
+        const test_tok = Shell.Test.TestToken.from_real(tok, lexer.buf.items[0..lexer.buf.items.len]);
+        test_tokens.append(test_tok) catch {
+            globalThis.throwOutOfMemory();
+            return JSValue.undefined;
+        };
+    }
+
+    const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, test_tokens.items[0..], .{}) catch {
+        globalThis.throwOutOfMemory();
+        return JSValue.undefined;
+    };
+
+    defer globalThis.bunVM().allocator.free(str);
+    var bun_str = bun.String.fromBytes(str);
+    return bun_str.toJS(globalThis);
 }
 
 pub fn shellParse(

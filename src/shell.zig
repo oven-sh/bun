@@ -890,8 +890,8 @@ fn test_lex(src: []const u8, expected: []const Test.TestToken) !Lexer {
     return lexer;
 }
 
-const Test = struct {
-    const TestToken = union(TokenTag) {
+pub const Test = struct {
+    pub const TestToken = union(TokenTag) {
         // |
         Pipe,
         // ||
@@ -919,7 +919,7 @@ const Test = struct {
         Delimit,
         Eof,
 
-        fn from_real(the_token: Token, buf: []const u8) TestToken {
+        pub fn from_real(the_token: Token, buf: []const u8) TestToken {
             switch (the_token) {
                 .Var => |txt| return .{ .Var = buf[txt.start..txt.end] },
                 .Text => |txt| return .{ .Text = buf[txt.start..txt.end] },

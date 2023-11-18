@@ -977,6 +977,10 @@ pub const Fetch = struct {
                                 );
                             }
 
+                            if (this.abort_reason.isEmptyOrUndefinedOrNull()) {
+                                // dont ask me why but in this case the JSValue is not protected and the Value deinit function will attempt a unprotect
+                                err.protect();
+                            }
                             body.value.toErrorInstance(err, globalThis);
                         }
 

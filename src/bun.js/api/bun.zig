@@ -430,8 +430,23 @@ pub fn shell(
         return JSValue.undefined;
     };
 
+    var lexer = Shell.Lexer.new(arena.allocator(), script.items[0..]);
+    lexer.lex() catch |err| {
+        globalThis.throwError(err, "failed to lex shell");
+        return JSValue.undefined;
+    };
+    var parser = Shell.Parser.new(arena.allocator(), &lexer) catch |err| {
+        globalThis.throwError(err, "failed to create shell parser");
+        return JSValue.undefined;
+    };
+
+    const script_ast = parser.parse() catch |err| {
+        globalThis.throwError(err, "failed to parse shell");
+        return JSValue.undefined;
+    };
+
     var interpreter = Shell.Interpreter.new(arena.allocator());
-    interpreter.interpret(script.items[0..]) catch |err| {
+    interpreter.interpret(script_ast) catch |err| {
         globalThis.throwError(err, "shell:");
         return JSValue.undefined;
     };

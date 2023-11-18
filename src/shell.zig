@@ -10,12 +10,6 @@ fn setEnv(name: [*:0]const u8, value: [*:0]const u8) void {
     _ = setenv(name, value, 1);
 }
 
-test "interpret" {
-    const src = "echo foo && echo bar";
-    var interpreter = Interpreter.new(std.heap.c_allocator);
-    try interpreter.interpret(src);
-}
-
 pub const Interpreter = struct {
     allocator: Allocator,
     env: std.StringArrayHashMap([]const u8),
@@ -27,211 +21,155 @@ pub const Interpreter = struct {
         };
     }
 
-    pub fn interpret(self: *Interpreter, src: []const u8) !void {
-        // TODO: dealloc lol
-        var lex = Lexer.new(self.allocator, src);
-        try lex.lex();
-        var parser = try Parser.new(self.allocator, &lex);
-        const script = try parser.parse();
-        return self.interpret_script(&script);
-    }
-
-    pub fn interpret_script(self: *Interpreter, script: *const Parser.Script) !void {
+    pub fn interpret(self: *Interpreter, script: AST.Script) !void {
         for (script.stmts) |*stmt| {
-            try self.interpret_stmt(stmt);
-        }
-    }
-
-    fn set_env(self: *Interpreter, label: []const u8, value: []const u8) !void {
-        try self.env.put(label, value);
-        // TODO: setEnv()
-    }
-
-    fn interpret_stmt(self: *Interpreter, stmt: *const Parser.Stmt) !void {
-        for (stmt.var_decls) |*vd| {
-            const value = value: {
-                switch (vd.value) {
-                    .Text => |txt| break :value txt,
-                    .Var => |txt| break :value self.get_var(txt),
-                }
-            };
-            try self.set_env(vd.label, value);
-        }
-
-        if (stmt.expr) |*expr| {
-            _ = try self.interpret_expr(expr, std.io.getStdIn(), std.io.getStdOut(), std.io.getStdErr());
-        }
-    }
-
-    fn interpret_expr(self: *Interpreter, expr: *const Parser.Expr, stdin: std.fs.File, stdout: std.fs.File, stderr: std.fs.File) anyerror!std.ChildProcess.Term {
-        switch (@as(Parser.ExprTag, expr.*)) {
-            .Cmd => return try self.interpret_cmd(expr.Cmd, stdin, stdout, stderr),
-            .Binary => return try self.interpret_binary_expr(expr.Binary, stdin, stdout, stderr),
-        }
-    }
-
-    fn interpret_cmd(self: *Interpreter, cmd: *const Parser.Cmd, stdin: std.fs.File, stdout: std.fs.File, stderr: std.fs.File) anyerror!std.ChildProcess.Term {
-        const args = args: {
-            var argv = try self.allocator.alloc([]const u8, 1 + cmd.args.len);
-
-            argv[0] = try self.eval_atom(cmd.name, false);
-
-            for (cmd.args, 1..) |arg, i| {
-                argv[i] = try self.eval_atom(arg, true);
+            for (stmt.exprs) |*expr| {
+                try self.interpret_expr(expr);
             }
-
-            break :args argv;
-        };
-        defer self.allocator.free(args);
-
-        var child_proc = std.ChildProcess.init(args, self.allocator);
-        child_proc.stdin = stdin;
-        child_proc.stdout = stdout;
-        child_proc.stderr = stderr;
-
-        const result = try child_proc.spawnAndWait();
-        return result;
-    }
-
-    fn interpret_binary_expr(self: *Interpreter, binexpr: *const Parser.BinaryExpr, stdin: std.fs.File, stdout: std.fs.File, stderr: std.fs.File) anyerror!std.ChildProcess.Term {
-        switch (binexpr.op) {
-            // &&
-            .And => {
-                var result = try self.interpret_expr(&binexpr.lhs, stdin, stdout, stderr);
-                if (result.Exited != 0) return result;
-                return try self.interpret_expr(&binexpr.rhs, stdin, stdout, stderr);
-            },
-            // ||
-            .Or => {
-                var result = try self.interpret_expr(&binexpr.lhs, stdin, stdout, stderr);
-                if (result.Exited == 0) return result;
-                return try self.interpret_expr(&binexpr.rhs, stdin, stdout, stderr);
-            },
-            // |
-            .Pipe => @panic("TODO"),
-            // >
-            .Redirect => @panic("TODO"),
         }
     }
 
-    fn eval_atom(self: *Interpreter, atom: Parser.Atom, expand: bool) ![]const u8 {
-        switch (atom) {
-            .simple => |simple| {
-                var atom_str_value = self.eval_simple_atom(simple);
-                if (expand) {}
-                return atom_str_value;
-            },
-            .composite => |comp| {
-                var buf = std.ArrayList(u8).init(self.allocator);
-                for (comp.atoms) |inner_atom| {
-                    try buf.appendSlice(try self.eval_simple_atom(inner_atom));
-                }
-                var atom_str_value = buf.items[0..buf.items.len];
-                if (expand) {}
-                return atom_str_value;
-            },
+    fn interpret_expr(self: *Interpreter, expr: *const AST.Expr) !void {
+        _ = self;
+        switch (@as(AST.Expr.Tag, expr.*)) {
+            .assign => {},
+            .cond => {},
+            .pipeline => {},
+            .cmd => {},
         }
-    }
-
-    fn eval_simple_atom(self: *Interpreter, atom: Parser.SimpleAtom) ![]const u8 {
-        switch (atom) {
-            .Var => |label| return self.get_var(label),
-            .Text => |txt| return txt,
-        }
-    }
-
-    fn get_var(self: *Interpreter, var_label: []const u8) []const u8 {
-        return self.env.get(var_label) orelse "";
     }
 };
 
-pub const Parser = struct {
-    strpool: []const u8,
-    tokens: []const Token,
-    alloc: Allocator,
-
-    current: u32 = 0,
-
+pub const AST = struct {
     pub const Script = struct {
         stmts: []Stmt,
 
-        pub fn debug(self: *const Script) void {
-            std.debug.print("Script:\n", .{});
-            for (self.stmts) |*stmt| {
-                _ = stmt;
-                // stmt.debug();
-            }
-            std.debug.print("End Script", .{});
+        pub fn format(self: *const Script, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = options;
+            try std.fmt.format(writer, "{s} Stmt({any})", .{ fmt, self.stmts });
         }
     };
 
     pub const Stmt = struct {
-        var_decls: []VarDecl,
-        expr: ?Expr,
-
-        pub fn debug(self: *const Stmt) void {
-            std.fmt;
-            std.debug.print("Stmt:\n", .{});
-            for (self.var_decls) |*var_decs| {
-                _ = var_decs;
-                // var_decs.debug(depth + 1);
-            }
-            if (self.expr) |expr| {
-                _ = expr;
-            }
-            std.debug.print("End Stmt", .{});
-        }
+        exprs: []Expr,
     };
 
-    pub const VarDecl = struct {
-        label: []const u8,
-        /// INVARIANT:
-        /// Can only be:
-        /// - Text
-        /// - Var
-        value: SimpleAtom,
+    pub const Expr = union(Expr.Tag) {
+        assign: []Assign,
+        cond: *Conditional,
+        pipeline: *Pipeline,
+        cmd: *Cmd,
 
-        pub fn format(self: *const VarDecl, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = options;
-            try std.fmt.format(writer, "{s} VarDecl(label=\"{s}\", value={?})", .{ fmt, self.label, self.value });
-        }
-    };
-
-    const ExprTag = enum { Cmd, Binary };
-
-    pub const Expr = union(ExprTag) {
-        Cmd: *Cmd,
-        Binary: *BinaryExpr,
+        const Tag = enum { assign, cond, pipeline, cmd };
 
         pub fn format(self: *const Expr, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
             _ = options;
-            switch (@as(ExprTag, self.*)) {
-                .Cmd => try std.fmt.format(writer, "{s} Expr.Cmd({?})", .{ fmt, self.Cmd }),
-                .Binary => try std.fmt.format(writer, "{s} Expr.Binary({?})", .{ fmt, self.Binary }),
+            switch (@as(Expr.Tag, self.*)) {
+                .cmd => try std.fmt.format(writer, "{s} Expr.Cmd({any})", .{ fmt, self.cmd }),
+                .cond => try std.fmt.format(writer, "{s} Expr.Cond({any})", .{ fmt, self.cond }),
+                .pipeline => try std.fmt.format(writer, "{s} Expr.Pipeline({any})", .{ fmt, self.pipeline }),
+                .assign => try std.fmt.format(writer, "{s} Expr.Assign({any})", .{ fmt, self.assign }),
             }
+        }
+    };
+
+    pub const Conditional = struct {
+        op: Op,
+        left: Expr,
+        right: Expr,
+
+        const Op = enum { And, Or };
+    };
+
+    pub const Pipeline = struct {
+        items: []CmdOrAssigns,
+    };
+
+    pub const CmdOrAssigns = union(CmdOrAssigns.Tag) {
+        cmd: Cmd,
+        assigns: []Assign,
+
+        const Tag = enum { cmd, assigns };
+
+        pub fn format(self: *const CmdOrAssigns, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = options;
+            switch (@as(CmdOrAssigns.Tag, self.*)) {
+                .cmd => try std.fmt.format(writer, "{s} CmdOrAssigns.Cmd({any})", .{ fmt, self.cmd }),
+                .assigns => try std.fmt.format(writer, "{s} CmdOrAssigns.Assigns({any})", .{ fmt, self.assigns }),
+            }
+        }
+
+        pub fn to_expr(this: CmdOrAssigns, alloc: Allocator) !Expr {
+            switch (this) {
+                .cmd => |cmd| {
+                    var cmd_ptr = try alloc.create(Cmd);
+                    cmd_ptr.* = cmd;
+                    return .{ .cmd = cmd_ptr };
+                },
+                .assigns => |assigns| {
+                    return .{ .assign = assigns };
+                },
+            }
+        }
+    };
+
+    pub const Assign = struct {
+        label: []const u8,
+        value: Atom,
+
+        pub fn new(label: []const u8, value: Atom) Assign {
+            return .{
+                .label = label,
+                .value = value,
+            };
+        }
+
+        pub fn format(self: *const Assign, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = options;
+            try std.fmt.format(writer, "{s} Assign( .label = {s}, .value = {any})", .{ fmt, self.label, self.value });
         }
     };
 
     pub const Cmd = struct {
-        name: Atom,
-        args: []Atom,
+        assigns: []Assign,
+        name_and_args: []Atom,
+        redirect: Redirect = .None,
+        redirect_file: ?Atom = null,
+
+        /// Bit flags for redirects:
+        /// -  `>`  = Redirect.Stdout
+        /// -  `1>` = Redirect.Stdout
+        /// -  `2>` = Redirect.Stderr
+        /// -  `&>` = Redirect.Stdout | Redirect.Stderr
+        /// -  `>>` = Redirect.Append | Redirect.Stdout
+        /// - `1>>` = Redirect.Append | Redirect.Stdout
+        /// - `2>>` = Redirect.Append | Redirect.Stderr
+        /// - `&>>` = Redirect.Append | Redirect.Stdout | Redirect.Stderr
+        ///
+        /// Multiple redirects and redirecting stdin is not supported yet.
+        pub const Redirect = enum(u8) {
+            None = 0,
+            Stdout = 1,
+            Stderr = 2,
+            Append = 4,
+        };
     };
 
     pub const Atom = union(enum) {
         simple: SimpleAtom,
-        composite: CompositeAtom,
+        compound: CompoundAtom,
 
         pub fn new_simple(atom: SimpleAtom) Atom {
             return .{ .simple = atom };
         }
 
-        pub fn new_composite(atom: CompositeAtom) Atom {
-            return .{ .composite = atom };
+        pub fn new_compound(atom: CompoundAtom) Atom {
+            return .{ .compound = atom };
         }
 
-        pub fn is_composite(self: *const Atom) bool {
+        pub fn is_compound(self: *const Atom) bool {
             switch (self.*) {
-                .composite => return true,
+                .compound => return true,
                 else => return false,
             }
         }
@@ -250,34 +188,22 @@ pub const Parser = struct {
         }
     };
 
-    pub const CompositeAtom = struct {
+    pub const CompoundAtom = struct {
         atoms: []SimpleAtom,
-    };
 
-    /// Precedence:
-    /// - `|` (pipe)
-    /// - `>` (redirect)
-    /// - `&&` / `||` (and/or same precedence)
-    pub const BinaryExpr = struct {
-        lhs: Expr,
-        rhs: Expr,
-        op: BinaryOp,
-
-        pub fn new(op: BinaryOp, lhs: Expr, rhs: Expr) BinaryExpr {
-            return .{ .lhs = lhs, .rhs = rhs, .op = op };
-        }
-
-        pub fn as_expr(self: *BinaryExpr) Expr {
-            return .{ .Binary = self };
+        pub fn format(self: *const CompoundAtom, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = options;
+            try std.fmt.format(writer, "{s} {any}", .{ fmt, self.atoms });
         }
     };
+};
 
-    pub const BinaryOp = enum(u8) {
-        Pipe,
-        Redirect,
-        And,
-        Or,
-    };
+pub const Parser = struct {
+    strpool: []const u8,
+    tokens: []const Token,
+    alloc: Allocator,
+
+    current: u32 = 0,
 
     pub fn new(allocator: Allocator, lexer: *const Lexer) !Parser {
         return .{
@@ -287,154 +213,211 @@ pub const Parser = struct {
         };
     }
 
-    pub fn parse(self: *Parser) !Script {
-        var stmts = ArrayList(Stmt).init(self.alloc);
+    pub fn parse(self: *Parser) !AST.Script {
+        var stmts = ArrayList(AST.Stmt).init(self.alloc);
         while (!self.match(.Eof)) {
-            std.debug.print("DEBUGGING: ", .{});
-            self.tokens[self.current].debug(self.strpool);
             try stmts.append(try self.parse_stmt());
         }
+        _ = self.expect(.Eof);
         return .{ .stmts = stmts.items[0..stmts.items.len] };
     }
 
-    fn parse_stmt(self: *Parser) !Stmt {
-        var var_decls = std.ArrayList(VarDecl).init(self.alloc);
+    pub fn parse_stmt(self: *Parser) !AST.Stmt {
+        var exprs = std.ArrayList(AST.Expr).init(self.alloc);
 
-        // Parse var decls
-        while (!self.match_any(&[_]TokenTag{ .Semicolon, .Eof })) {
-            switch (self.peek()) {
-                .Text => |txtrng| {
-                    const start_idx = self.current;
-                    _ = self.expect(.Text);
-                    const txt = self.text(txtrng);
-                    const var_decl: ?VarDecl = var_decl: {
-                        if (self.has_eq_sign(txt)) |eq_idx| {
-                            if (eq_idx == 0) break :var_decl null;
-                            const label = txt[0..eq_idx];
-                            if (eq_idx == txt.len - 1) {
-                                const atom = try self.parse_atom() orelse @panic("OOPS");
-                                if (atom.is_composite()) break :var_decl null;
-                                break :var_decl .{ .label = label, .value = atom.simple };
-                            }
-                            const txt_value = txt[eq_idx + 1 .. txt.len];
-                            _ = self.expect_delimit();
-                            break :var_decl .{ .label = label, .value = .{ .Text = txt_value } };
-                        }
-                        break :var_decl null;
-                    };
+        // {
+        //     var assigns = std.ArrayList(AST.Assign).init(self.alloc);
+        //     // Parse leading var decls
+        //     while (!self.match_any(&.{ .Semicolon, .Eof })) {
+        //         if (try self.parse_assign()) |assign| {
+        //             try assigns.append(assign);
+        //         } else {
+        //             break;
+        //         }
+        //     }
 
-                    if (var_decl) |vd| {
-                        try var_decls.append(vd);
-                        continue;
-                    }
+        //     if (assigns.items.len > 0) {
+        //         try exprs.append(.{ .assign = assigns.items[0..] });
+        //     }
+        // }
 
-                    self.current = start_idx;
-                    break;
-                },
-                else => break,
-            }
+        // if (self.match_any(&.{ .Semicolon, .Eof })) return .{ .exprs = exprs.items[0..] };
+
+        while (!self.match_any(&.{ .Semicolon, .Eof })) {
+            const expr = try self.parse_expr();
+            try exprs.append(expr);
         }
 
-        if (self.match_any(&[_]TokenTag{ .Semicolon, .Eof })) {
-            return .{ .var_decls = var_decls.items[0..var_decls.items.len], .expr = null };
-        }
-
-        const expr = try self.parse_expr();
-        return .{ .var_decls = var_decls.items[0..var_decls.items.len], .expr = expr };
+        return .{
+            .exprs = exprs.items[0..],
+        };
     }
 
-    fn parse_expr(self: *Parser) !Expr {
-        return try self.parse_andor();
+    fn parse_expr(self: *Parser) !AST.Expr {
+        return self.parse_cond();
     }
 
-    fn parse_andor(self: *Parser) !Expr {
-        var left = try self.parse_redirect();
-        while (self.match_any(&[_]TokenTag{ .DoubleAmpersand, .DoublePipe })) {
-            const op: BinaryOp = op: {
+    fn parse_cond(self: *Parser) !AST.Expr {
+        var left = try self.parse_pipeline();
+        while (self.match_any(&.{ .DoubleAmpersand, .DoublePipe })) {
+            const op: AST.Conditional.Op = op: {
                 const previous = @as(TokenTag, self.prev());
-                std.debug.print("Previous: {s}\n", .{@tagName(previous)});
                 switch (previous) {
                     .DoubleAmpersand => break :op .And,
                     .DoublePipe => break :op .Or,
                     else => unreachable,
                 }
             };
-            const right = try self.parse_redirect();
-            left = (try self.allocate(BinaryExpr, BinaryExpr.new(op, left, right))).as_expr();
+
+            const right = try self.parse_pipeline();
+            const conditional = try self.allocate(AST.Conditional, .{ .op = op, .left = left, .right = right });
+            left = .{ .cond = conditional };
         }
+
         return left;
     }
 
-    fn parse_redirect(self: *Parser) !Expr {
-        var left = try self.parse_pipe();
-        while (self.match(.RightArrow)) {
-            const right = try self.parse_pipe();
-            left = (try self.allocate(BinaryExpr, BinaryExpr.new(.Redirect, left, right))).as_expr();
+    fn parse_pipeline(self: *Parser) !AST.Expr {
+        var cmd = try self.parse_cmd_or_assigns();
+
+        if (self.peek() == .Pipe) {
+            var cmds = std.ArrayList(AST.CmdOrAssigns).init(self.alloc);
+            try cmds.append(cmd);
+            while (self.match(.Pipe)) {
+                try cmds.append(try self.parse_cmd_or_assigns());
+            }
+            const pipeline = try self.allocate(AST.Pipeline, .{ .items = cmds.items[0..] });
+            return .{ .pipeline = pipeline };
         }
-        return left;
+
+        return try cmd.to_expr(self.alloc);
     }
 
-    fn parse_pipe(self: *Parser) !Expr {
-        var left = try self.parse_cmd();
-        while (self.match(.Pipe)) {
-            const right = try self.parse_cmd();
-            left = (try self.allocate(BinaryExpr, BinaryExpr.new(.Pipe, left, right))).as_expr();
-        }
-        return left;
-    }
-
-    fn parse_cmd(self: *Parser) !Expr {
-        var name: ?Atom = null;
-        var args = std.ArrayList(Atom).init(self.alloc);
-        while (try self.parse_atom()) |atom| {
-            if (name == null) {
-                name = atom;
+    fn parse_cmd_or_assigns(self: *Parser) !AST.CmdOrAssigns {
+        var assigns = std.ArrayList(AST.Assign).init(self.alloc);
+        while (!self.match_any(&.{ .Semicolon, .Eof })) {
+            if (try self.parse_assign()) |assign| {
+                try assigns.append(assign);
             } else {
-                try args.append(atom);
+                break;
             }
         }
 
-        if (name == null) unreachable;
-        var cmd = try self.alloc.create(Cmd);
-        cmd.* = .{ .name = name.?, .args = args.items[0..args.items.len] };
-        return .{ .Cmd = cmd };
+        if (self.match_any(&.{ .Semicolon, .Eof })) return .{ .assigns = assigns.items[0..] };
+
+        const name = try self.parse_atom() orelse return .{ .assigns = assigns.items[0..] };
+        var name_and_args = std.ArrayList(AST.Atom).init(self.alloc);
+        try name_and_args.append(name);
+        while (try self.parse_atom()) |arg| {
+            try name_and_args.append(arg);
+        }
+
+        // TODO Parse redirects (need to update lexer to have tokens for different parts e.g. &>>)
+        const redirect = self.parse_redirect();
+        const redirect_file = redirect_file: {
+            if (redirect != AST.Cmd.Redirect.None) {
+                const redirect_file = try self.parse_atom() orelse @panic("Redirection with no file");
+                break :redirect_file redirect_file;
+            }
+            break :redirect_file null;
+        };
+        // TODO check for multiple redirects and error
+
+        return .{ .cmd = .{
+            .assigns = assigns.items[0..],
+            .name_and_args = name_and_args.items[0..],
+            .redirect = redirect,
+            .redirect_file = redirect_file,
+        } };
     }
 
-    fn parse_atom(self: *Parser) !?Atom {
-        var exprs = std.ArrayListUnmanaged(SimpleAtom){};
+    // TODO Other redirects (e.g. &>>), probably should have tokens for each kind
+    fn parse_redirect(self: *Parser) AST.Cmd.Redirect {
+        if (self.match(.RightArrow)) {
+            return AST.Cmd.Redirect.Stdout;
+        }
+
+        return AST.Cmd.Redirect.None;
+    }
+
+    /// Try to parse an assignment. If no assignment could be parsed then return
+    /// null and backtrack the parser state
+    /// TODO `export FOO=bar`
+    fn parse_assign(self: *Parser) !?AST.Assign {
+        switch (self.peek()) {
+            .Text => |txtrng| {
+                const start_idx = self.current;
+                _ = self.expect(.Text);
+                const txt = self.text(txtrng);
+                const var_decl: ?AST.Assign = var_decl: {
+                    if (self.has_eq_sign(txt)) |eq_idx| {
+                        // If it starts with = then it's not valid assignment (e.g. `=FOO`)
+                        if (eq_idx == 0) break :var_decl null;
+                        const label = txt[0..eq_idx];
+
+                        if (eq_idx == txt.len - 1) {
+                            const atom = try self.parse_atom() orelse @panic("OOPS");
+                            break :var_decl .{ .label = label, .value = atom };
+                        }
+
+                        const txt_value = txt[eq_idx + 1 .. txt.len];
+                        _ = self.expect_delimit();
+                        break :var_decl .{ .label = label, .value = .{ .simple = .{ .Text = txt_value } } };
+                    }
+                    break :var_decl null;
+                };
+
+                if (var_decl) |vd| {
+                    return vd;
+                }
+
+                self.current = start_idx;
+                return null;
+            },
+            else => return null,
+        }
+    }
+
+    fn parse_atom(self: *Parser) !?AST.Atom {
+        var array_alloc = std.heap.stackFallback(@sizeOf(AST.SimpleAtom), self.alloc);
+        var exprs = try std.ArrayList(AST.SimpleAtom).initCapacity(array_alloc.get(), 1);
         {
             while (!self.match(.Delimit)) {
                 const next = self.peek_n(1);
                 const next_delimits = next == .Delimit or next == .Eof;
                 const peeked = self.peek();
-                peeked.debug(self.strpool);
                 switch (peeked) {
                     .Text => |txtrng| {
                         _ = self.expect(.Text);
                         const txt = self.text(txtrng);
+                        try exprs.append(.{ .Text = txt });
                         if (next_delimits) {
                             _ = self.expect_delimit();
-                            return Atom.new_simple(.{ .Text = txt });
+                            break;
                         }
-                        try exprs.append(self.alloc, .{ .Text = txt });
                     },
                     .Var => |txtrng| {
                         _ = self.expect(.Var);
                         const txt = self.text(txtrng);
+                        try exprs.append(.{ .Var = txt });
                         if (next_delimits) {
                             _ = self.expect_delimit();
-                            return Atom.new_simple(.{ .Var = txt });
+                            break;
                         }
-                        try exprs.append(self.alloc, .{ .Var = txt });
                     },
                     else => return null,
                 }
             }
         }
 
-        if (exprs.items.len == 0) return null;
-
-        return .{ .composite = .{ .atoms = exprs.items[0..exprs.items.len] } };
+        return switch (exprs.items.len) {
+            0 => null,
+            1 => {
+                std.debug.assert(exprs.capacity == 1);
+                return AST.Atom.new_simple(exprs.items[0]);
+            },
+            else => .{ .compound = .{ .atoms = exprs.items[0..exprs.items.len] } },
+        };
     }
 
     fn allocate(self: *const Parser, comptime T: type, val: T) !*T {
@@ -520,46 +503,6 @@ pub const Parser = struct {
         return self.tokens[self.current - 1];
     }
 };
-
-test "parse_basic" {
-    var lexer = Lexer.new(std.heap.c_allocator, "FOO=BAR echo foo && echo $FOO");
-    try lexer.lex();
-    lexer.debug_tokens();
-
-    var parser = try Parser.new(std.heap.c_allocator, &lexer);
-    const script = try parser.parse();
-    std.debug.print("Script: {any}\n", .{script});
-    std.debug.print("var decls: {any}\n", .{script.stmts[0].var_decls});
-
-    try std.testing.expectEqual(@as(usize, 1), script.stmts.len);
-    const stmt = script.stmts[0];
-    const binexpr = stmt.expr.?.Binary;
-    try std.testing.expectEqual(Parser.BinaryOp.And, binexpr.op);
-}
-
-test "parse_precedence" {
-    var lexer = Lexer.new(std.heap.c_allocator, "echo foo | echo bar > cat.txt");
-    try lexer.lex();
-    var parser = try Parser.new(std.heap.c_allocator, &lexer);
-    const script = try parser.parse();
-    std.debug.print("Script: {?}\n", .{script});
-}
-
-test "parse_precedence2" {
-    var lexer = Lexer.new(std.heap.c_allocator, "echo > foo.txt | echo hi");
-    try lexer.lex();
-    var parser = try Parser.new(std.heap.c_allocator, &lexer);
-    const script = try parser.parse();
-    std.debug.print("Script: {?}\n", .{script});
-}
-
-test "parse_prec3" {
-    var lexer = Lexer.new(std.heap.c_allocator, "echo foo && echo lmao | echo hi && echo bar");
-    try lexer.lex();
-    var parser = try Parser.new(std.heap.c_allocator, &lexer);
-    const script = try parser.parse();
-    std.debug.print("Script: {?}\n", .{script});
-}
 
 pub const TokenTag = enum {
     Pipe,

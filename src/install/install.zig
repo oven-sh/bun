@@ -2793,10 +2793,6 @@ pub const PackageManager = struct {
     ) !?ResolvedPackageResult {
         name.assertDefined();
 
-        if (resolution < this.lockfile.packages.len) {
-            return .{ .package = this.lockfile.packages.get(resolution) };
-        }
-
         if (install_peer and behavior.isPeer()) {
             if (this.lockfile.package_index.get(name_hash)) |index| {
                 const resolutions: []Resolution = this.lockfile.packages.items(.resolution);
@@ -2873,6 +2869,10 @@ pub const PackageManager = struct {
                     },
                 }
             }
+        }
+
+        if (resolution < this.lockfile.packages.len) {
+            return .{ .package = this.lockfile.packages.get(resolution) };
         }
 
         switch (version.tag) {

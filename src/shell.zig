@@ -1,3 +1,4 @@
+const bun = @import("root").bun;
 const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
@@ -10,29 +11,70 @@ fn setEnv(name: [*:0]const u8, value: [*:0]const u8) void {
     _ = setenv(name, value, 1);
 }
 
+/// [0] => read end
+/// [1] => write end
+const Pipe = [2]bun.FileDescriptor;
+
+fn fdToFile(fd: bun.FileDescriptor) std.fs.File {
+    return std.fs.File{
+        .handle = fd,
+        .capable_io_mode = .blocking,
+        .intended_io_mode = .blocking,
+    };
+}
+
+const log = bun.Output.scoped(.SHELL, false);
+const logsys = bun.Output.scoped(.SYS, false);
+
+fn closefd(fd: bun.FileDescriptor) void {
+    if (fd == bun.STDOUT_FD or fd == bun.STDERR_FD or fd == bun.STDIN_FD) {
+        logsys("close({d}) SKIPPED", .{fd});
+        return;
+    }
+    logsys("close({d})", .{fd});
+    std.os.close(fd);
+}
+
+// FIXME avoid std.os if possible
+// FIXME error when command not found needs to be handled gracefully
 pub const Interpreter = struct {
     pub const ast = AST;
     allocator: Allocator,
     env: std.StringArrayHashMap([]const u8),
     cmd_local_env: std.StringArrayHashMap([]const u8),
 
-    stdin: std.fs.File,
-    stdout: std.fs.File,
-    stderr: std.fs.File,
+    const IO = struct {
+        stdin: std.fs.File,
+        stdout: std.fs.File,
+        stderr: std.fs.File,
+    };
 
     pub fn new(allocator: Allocator) Interpreter {
-        return .{ .allocator = allocator, .env = std.StringArrayHashMap([]const u8).init(allocator), .cmd_local_env = std.StringArrayHashMap([]const u8).init(allocator), .stdin = std.io.getStdIn(), .stdout = std.io.getStdOut(), .stderr = std.io.getStdErr() };
+        return .{
+            .allocator = allocator,
+            .env = std.StringArrayHashMap([]const u8).init(allocator),
+            .cmd_local_env = std.StringArrayHashMap([]const u8).init(allocator),
+        };
     }
 
     pub fn interpret(self: *Interpreter, script: ast.Script) !void {
+        var stdio = .{
+            .stdin = std.io.getStdIn(),
+            .stdout = std.io.getStdOut(),
+            .stderr = std.io.getStdErr(),
+        };
         for (script.stmts) |*stmt| {
             for (stmt.exprs) |*expr| {
-                try self.interpret_expr(expr);
+                try self.interpret_expr(expr, &stdio);
             }
         }
     }
 
-    fn interpret_expr(self: *Interpreter, expr: *const ast.Expr) !void {
+    fn interpret_expr(
+        self: *Interpreter,
+        expr: *const ast.Expr,
+        io: *IO,
+    ) !void {
         switch (expr.*) {
             .assign => |assigns| {
                 for (assigns) |*assign| {
@@ -40,8 +82,8 @@ pub const Interpreter = struct {
                 }
             },
             .cond => {},
-            .pipeline => {},
-            .cmd => {},
+            .pipeline => |pipeline| try self.interpret_pipeline(pipeline, io),
+            .cmd => |cmd| try self.interpret_cmd(cmd, io),
         }
     }
 
@@ -52,6 +94,183 @@ pub const Interpreter = struct {
         } else {
             try self.cmd_local_env.put(assign.label, value);
         }
+    }
+
+    // fn interpret_cond(self: *Interpreter, left: *const ast.Expr, right: *const ast.Expr, comptime op: ast.Conditional.Op) !void {
+    //     // self.interpret_expr(left);
+    //     // switch (comptime op) {
+    //     //     .And =>
+    //     // }
+    // }
+
+    // FIXME handle closing child processes properly
+    fn interpret_pipeline(self: *Interpreter, pipeline: *const ast.Pipeline, io: *IO) !void {
+        const cmd_count = brk: {
+            var count: usize = 0;
+            for (pipeline.items) |*item| {
+                switch (@as(ast.CmdOrAssigns.Tag, item.*)) {
+                    .cmd => count += 1,
+                    else => {},
+                }
+            }
+            break :brk count;
+        };
+
+        switch (cmd_count) {
+            0 => return,
+            1 => {
+                for (pipeline.items) |*item| {
+                    switch (@as(ast.CmdOrAssigns.Tag, item.*)) {
+                        .cmd => return try self.interpret_cmd(&item.cmd, io),
+                        else => {},
+                    }
+                }
+                return;
+            },
+            else => {},
+        }
+
+        var cmd_procs_set_amount: usize = 0;
+        var cmd_procs = try self.allocator.alloc(std.ChildProcess, cmd_count);
+        errdefer {
+            for (0..cmd_procs_set_amount) |i| {
+                _ = cmd_procs[i].kill() catch {};
+            }
+        }
+
+        const pipe_count: usize = cmd_count - 1;
+        var pipes_set_amount: usize = 0;
+        var pipes = try self.allocator.alloc(Pipe, pipe_count);
+        errdefer {
+            for (0..pipes_set_amount) |i| {
+                const pipe = pipes[i];
+                closefd(pipe[0]);
+                closefd(pipe[1]);
+            }
+        }
+        for (0..pipe_count) |i| {
+            pipes[i] = try std.os.pipe();
+            pipes_set_amount += 1;
+        }
+
+        {
+            var i: usize = 0;
+            for (pipeline.items) |*cmd_or_assign| {
+                const cmd: *const ast.Cmd = switch (cmd_or_assign.*) {
+                    .assigns => continue,
+                    .cmd => |*cmd| cmd,
+                };
+
+                // [a,b] [c,d]
+                // cmd1 | cmd2 | cmd3
+                // cmd1 -> cmd2 -> cmd3
+                // cmd1 -> cmd2 -> cmd3 -> cmd4
+                var file_to_write_to = Interpreter.pipeline_file_to_write(
+                    pipes,
+                    i,
+                    cmd_count,
+                    io,
+                );
+
+                var file_to_read_from = Interpreter.pipeline_file_to_read(pipes, i, io);
+
+                var cmd_io = IO{
+                    .stdin = file_to_read_from,
+                    .stdout = file_to_write_to,
+                    .stderr = io.stderr,
+                };
+                log("Spawn: proc_idx={d} stdin={d} stdout={d} stderr={d}\n", .{ i, file_to_read_from.handle, file_to_write_to.handle, io.stderr.handle });
+
+                var cmd_proc = try self.init_cmd(cmd, &cmd_io);
+                try cmd_proc.spawn();
+                // closefd(file_to_write_to.handle);
+                // closefd(file_to_read_from.handle);
+                closefd(cmd_io.stdin.handle);
+                closefd(cmd_io.stdout.handle);
+
+                cmd_procs[i] = cmd_proc;
+                i += 1;
+                cmd_procs_set_amount += 1;
+            }
+        }
+        // for (pipes, 0..) |pipe, i| {
+        //     _ = i;
+        //     // if (i != 0) {
+        //     // Close read end of all but the first pipe
+        //     closefd(pipe[0]);
+        //     // }
+        //     // if (i != pipes.len - 1) {
+        //     // Close write end of all but the last pipe
+        //     closefd(pipe[1]);
+        //     // }
+        // }
+
+        for (cmd_procs, 0..) |*cmd_proc, i| {
+            // const file_to_read_from = Interpreter.pipeline_file_to_read(pipes, i, io);
+            // closefd(file_to_read_from.handle);
+            // const file_to_write_to = Interpreter.pipeline_file_to_write(
+            //     pipes,
+            //     i,
+            //     cmd_count,
+            //     io,
+            // );
+            // closefd(file_to_write_to.handle);
+
+            log("Wait {d}", .{i});
+
+            _ = cmd_proc.wait() catch |err| {
+                std.debug.print("FUCK {any}\n", .{err});
+            };
+            _ = cmd_proc.kill() catch {};
+        }
+    }
+
+    // cmd1 -> cmd2 -> cmd3
+    fn pipeline_file_to_write(pipes: []Pipe, proc_idx: usize, cmd_count: usize, io: *IO) std.fs.File {
+        if (proc_idx == cmd_count - 1) return io.stdout;
+        return fdToFile(pipes[proc_idx][1]);
+    }
+
+    fn pipeline_file_to_read(pipes: []Pipe, proc_idx: usize, io: *IO) std.fs.File {
+        if (proc_idx == 0) return io.stdin;
+        return fdToFile(pipes[proc_idx - 1][0]);
+    }
+
+    fn init_cmd(self: *Interpreter, cmd: *const ast.Cmd, io: *IO) !std.ChildProcess {
+        self.cmd_local_env.clearRetainingCapacity();
+        for (cmd.assigns) |*assign| {
+            try self.interpret_assign(assign);
+        }
+        const args = args: {
+            var args = try self.allocator.alloc([]const u8, cmd.name_and_args.len);
+            for (cmd.name_and_args, 0..) |*arg_atom, i| {
+                args[i] = try self.eval_atom(arg_atom);
+            }
+            break :args args;
+        };
+
+        // TODO redirects
+        var child_proc = std.ChildProcess.init(args, self.allocator);
+        child_proc.stdin = io.stdin;
+        child_proc.stdout = io.stdout;
+        child_proc.stderr = io.stderr;
+
+        // if (io.stdin.handle != bun.STDIN_FD) child_proc.stdin_behavior = .Close;
+        // if (io.stdout.handle != bun.STDOUT_FD) child_proc.stdout_behavior = .Close;
+        // if (io.stderr.handle != bun.STDERR_FD) child_proc.stderr_behavior = .;
+
+        return child_proc;
+    }
+
+    fn interpret_cmd(self: *Interpreter, cmd: *const ast.Cmd, io: *IO) !void {
+        var child_proc = try self.init_cmd(cmd, io);
+        defer {
+            _ = child_proc.kill() catch {};
+        }
+        const result = try child_proc.spawnAndWait();
+        _ = result;
+        // return result;
+        // return result;
     }
 
     fn eval_atom(self: *Interpreter, atom: *const ast.Atom) ![]const u8 {

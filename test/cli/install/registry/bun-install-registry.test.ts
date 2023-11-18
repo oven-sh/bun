@@ -440,30 +440,32 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
   ]);
   expect(await exited).toBe(0);
 
-  // delete bun.lockb
-  await rm(join(packageDir, "bun.lockb"), { recursive: true, force: true });
+  for (var i = 0; i < 150; i++) {
+    // delete bun.lockb
+    await rm(join(packageDir, "bun.lockb"), { recursive: true, force: true });
 
-  ({ stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: packageDir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  }));
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    }));
 
-  err = await new Response(stderr).text();
-  out = await new Response(stdout).text();
-  expect(err).toContain("Saved lockfile");
-  expect(err).not.toContain("not found");
-  if (!err.includes("mimalloc: warning")) {
-    expect(err).not.toContain("error:");
+    err = await new Response(stderr).text();
+    out = await new Response(stdout).text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("not found");
+    if (!err.includes("mimalloc: warning")) {
+      expect(err).not.toContain("error:");
+    }
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      expect.stringContaining("Checked 19 installs across 23 packages (no changes)"),
+    ]);
+    expect(await exited).toBe(0);
   }
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    expect.stringContaining("Checked 19 installs across 23 packages (no changes)"),
-  ]);
-  expect(await exited).toBe(0);
 
   // delete cache
   await rm(join(packageDir, "node_modules", ".cache"), { recursive: true, force: true });

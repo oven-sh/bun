@@ -6,12 +6,27 @@ import { join } from "path";
 describe("napi", () => {
   beforeAll(() => {
     // build gyp
-    const build = spawnSync({
-      cmd: ["yarn", "build"],
+    const install = spawnSync({
+      cmd: ["bun", "install", "--verbose"],
       cwd: join(__dirname, "napi-app"),
+      stderr: "inherit",
+      env: bunEnv,
+      stdout: "inherit",
+      stdin: "inherit",
+    });
+    if (!install.success) {
+      throw new Error("build failed");
+    }
+
+    const build = spawnSync({
+      cmd: ["bun", "run", "build"],
+      cwd: join(__dirname, "napi-app"),
+      stderr: "inherit",
+      env: bunEnv,
+      stdout: "inherit",
+      stdin: "inherit",
     });
     if (!build.success) {
-      console.error(build.stderr.toString());
       throw new Error("build failed");
     }
   });
@@ -47,7 +62,7 @@ describe("napi", () => {
 
 function checkSameOutput(test: string, args: any[]) {
   const nodeResult = runOn("node", test, args).trim();
-  let bunResult = runOn(join(__dirname, "../../build/bun-debug"), test, args);
+  let bunResult = runOn(bunExe(), test, args);
   // remove all debug logs
   bunResult = bunResult.replaceAll(/^\[\w+\].+$/gm, "").trim();
   expect(bunResult).toBe(nodeResult);

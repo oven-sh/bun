@@ -199,6 +199,8 @@ const CreateOptions = struct {
     };
 
     pub fn parse(ctx: Command.Context) !CreateOptions {
+        Output.is_verbose = Output.isVerbose();
+
         var diag = clap.Diagnostic{};
 
         var args = clap.parse(clap.Help, &params, .{ .diagnostic = &diag, .allocator = ctx.allocator }) catch |err| {
@@ -215,7 +217,7 @@ const CreateOptions = struct {
 
         opts.skip_package_json = args.flag("--no-package-json");
 
-        opts.verbose = args.flag("--verbose");
+        opts.verbose = args.flag("--verbose") or Output.is_verbose;
         opts.open = args.flag("--open");
         opts.skip_install = args.flag("--no-install");
         opts.skip_git = args.flag("--no-git");

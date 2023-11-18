@@ -47,6 +47,11 @@ const Request = JSC.WebCore.Request;
 const assert = std.debug.assert;
 const Syscall = bun.sys;
 
+// Zig FreeBSD std doesn't contain termios
+const c = @cImport({
+    @cInclude("termios.h");
+});
+
 const AnyBlob = JSC.WebCore.AnyBlob;
 pub const ReadableStream = struct {
     value: JSValue,
@@ -4234,7 +4239,12 @@ pub const File = struct {
         };
 
         if ((file.is_atty orelse false) or (fd < 3 and std.os.isatty(bun.fdcast(fd)))) {
-            if (comptime Environment.isPosix) {
+            if (comptime Environment.isFreeBSD) {
+                var termios = std.mem.zeroes(c.termios);
+                _ = c.tcgetattr(fd, &termios);
+                bun.C.cfmakeraw(&termios);
+                file.is_atty = true;
+            } else if (comptime Environment.isPosix) {
                 var termios = std.mem.zeroes(std.os.termios);
                 _ = std.c.tcgetattr(fd, &termios);
                 bun.C.cfmakeraw(&termios);

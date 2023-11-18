@@ -344,6 +344,9 @@ pub const analytics = struct {
         /// wsl
         wsl,
 
+        /// freebsd
+        freebsd,
+
         _,
 
         pub fn jsonStringify(self: @This(), writer: anytype) !void {

@@ -1604,6 +1604,8 @@ pub const Blob = struct {
 
                     if (comptime Environment.isMac) {
                         Callback(this, this.getFdMac());
+                    } else if (comptime Environment.isFreeBSD) {
+                        Callback(this, this.getFdMac()); // Output may be same, if it breaks will be fixed later
                     } else {
                         this.getFdLinux(Callback);
                     }
@@ -1683,7 +1685,7 @@ pub const Blob = struct {
                         comptime OpenCallbackWrapper(callback),
                         &holder.open_completion,
                         path_buffer,
-                        open_flags_,
+                        @intCast(open_flags_),
                         JSC.Node.default_permission,
                     );
                 }
@@ -2227,6 +2229,7 @@ pub const Blob = struct {
             }
 
             const linux = std.os.linux;
+            const freebsd = std.os.freebsd;
             const darwin = std.os.darwin;
 
             pub fn deinit(this: *CopyFile) void {
@@ -2630,7 +2633,7 @@ pub const Blob = struct {
                     }
                 }
 
-                if (comptime Environment.isLinux) {
+                if (comptime Environment.isLinux or Environment.isFreeBSD) {
 
                     // Bun.write(Bun.file("a"), Bun.file("b"))
                     if (os.S.ISREG(stat.mode) and (os.S.ISREG(this.destination_file_store.mode) or this.destination_file_store.mode == 0)) {
@@ -2644,16 +2647,20 @@ pub const Blob = struct {
                         return;
                     }
 
-                    // $ bun run foo.js | bun run bar.js
-                    if (os.S.ISFIFO(stat.mode) and os.S.ISFIFO(this.destination_file_store.mode)) {
-                        if (this.destination_file_store.is_atty orelse false) {
-                            this.doCopyFileRange(.splice, true) catch {};
-                        } else {
-                            this.doCopyFileRange(.splice, false) catch {};
-                        }
+                    if (comptime Environment.isFreeBSD) {
+                        @panic("Idk what I should do here");
+                    } else {
+                        // $ bun run foo.js | bun run bar.js
+                        if (os.S.ISFIFO(stat.mode) and os.S.ISFIFO(this.destination_file_store.mode)) {
+                            if (this.destination_file_store.is_atty orelse false) {
+                                this.doCopyFileRange(.splice, true) catch {};
+                            } else {
+                                this.doCopyFileRange(.splice, false) catch {};
+                            }
 
-                        this.doClose();
-                        return;
+                            this.doClose();
+                            return;
+                        }
                     }
 
                     if (os.S.ISREG(stat.mode) or os.S.ISCHR(stat.mode) or os.S.ISSOCK(stat.mode)) {

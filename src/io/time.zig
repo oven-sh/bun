@@ -1,6 +1,13 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const is_darwin = @import("builtin").target.isDarwin();
+const target = @import("builtin").target;
+const is_darwin = target.isDarwin();
+const is_freebsd = target.os.tag == .freebsd;
+
+// Needed for FreeBSD as zig has time issues for it
+const c = @cImport({
+    @cInclude("time.h");
+});
 
 pub const Time = struct {
     const Self = @This();
@@ -39,7 +46,11 @@ pub const Time = struct {
             // For more detail and why CLOCK_MONOTONIC_RAW is even worse than CLOCK_MONOTONIC,
             // see https://github.com/ziglang/zig/pull/933#discussion_r656021295.
             var ts: std.os.timespec = undefined;
-            std.os.clock_gettime(std.os.CLOCK_BOOTTIME, &ts) catch @panic("CLOCK_BOOTTIME required");
+            if (is_freebsd) {
+                std.os.clock_gettime(c.CLOCK_BOOTTIME, &ts) catch @panic("CLOCK_BOOTTIME required");
+            } else {
+                std.os.clock_gettime(std.os.CLOCK_BOOTTIME, &ts) catch @panic("CLOCK_BOOTTIME required");
+            }
             break :blk @as(u64, @intCast(ts.tv_sec)) * std.time.ns_per_s + @as(u64, @intCast(ts.tv_nsec));
         };
 

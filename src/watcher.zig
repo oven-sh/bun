@@ -253,7 +253,7 @@ pub const Placeholder = struct {
     pub var eventlist_index: EventListIndex = 0;
 };
 
-const PlatformWatcher = if (Environment.isMac)
+const PlatformWatcher = if (Environment.isMac or Environment.isFreeBSD)
     DarwinWatcher
 else if (Environment.isLinux)
     INotify

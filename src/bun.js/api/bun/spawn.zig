@@ -15,6 +15,14 @@ fn _getSystem() type {
             };
         }
 
+        if (comptime bun.Environment.isFreeBSD) {
+            const Type = bun.C.freebsd;
+            break :brk struct {
+                pub usingnamespace std.os.system;
+                pub usingnamespace Type;
+            };
+        }
+
         break :brk std.os.system;
     };
 }

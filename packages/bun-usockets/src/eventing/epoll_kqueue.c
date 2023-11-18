@@ -138,7 +138,11 @@ void us_loop_run(struct us_loop_t *loop) {
 #ifdef LIBUS_USE_EPOLL
         loop->num_ready_polls = epoll_wait(loop->fd, loop->ready_polls, 1024, -1);
 #else
+#if defined(__FreeBSD__)
+        loop->num_ready_polls = kevent(loop->fd, NULL, 0, loop->ready_polls, 1024, NULL);
+#else
         loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, NULL);
+#endif
 #endif
 
         /* Iterate ready polls, dispatching them by type */
@@ -208,9 +212,17 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs, void* tickC
             ts.tv_sec = timeoutMs / 1000;
             ts.tv_nsec = (timeoutMs % 1000) * 1000000;
         }
-        loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, &ts);
-    } else {
+#if defined(__FreeBSD__)
+        loop->num_ready_polls = kevent(loop->fd, NULL, 0, loop->ready_polls, 1024, NULL);
+#else
         loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, NULL);
+#endif
+    } else {
+#if defined(__FreeBSD__)
+        loop->num_ready_polls = kevent(loop->fd, NULL, 0, loop->ready_polls, 1024, NULL);
+#else
+        loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, NULL);
+#endif
     }
 #endif
 
@@ -278,21 +290,35 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop, struct 
 #ifdef LIBUS_USE_KQUEUE
 /* Helper function for setting or updating EVFILT_READ and EVFILT_WRITE */
 int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_data) {
+#if defined(__FreeBSD__)
+    struct kevent change_list[2];
+#else
     struct kevent64_s change_list[2];
+#endif
     int change_length = 0;
 
     /* Do they differ in readable? */
     if ((new_events & LIBUS_SOCKET_READABLE) != (old_events & LIBUS_SOCKET_READABLE)) {
+#if defined (__FreeBSD__)
+        EV_SET(&change_list[change_length++], fd, EVFILT_READ, (new_events & LIBUS_SOCKET_READABLE) ? EV_ADD : EV_DELETE, 0, 0, (uint64_t)(void*)user_data);
+#else
         EV_SET64(&change_list[change_length++], fd, EVFILT_READ, (new_events & LIBUS_SOCKET_READABLE) ? EV_ADD : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
+#endif
     }
 
     /* Do they differ in writable? */
     if ((new_events & LIBUS_SOCKET_WRITABLE) != (old_events & LIBUS_SOCKET_WRITABLE)) {
+#if defined (__FreeBSD__)
+        EV_SET(&change_list[change_length++], fd, EVFILT_WRITE, (new_events & LIBUS_SOCKET_WRITABLE) ? EV_ADD : EV_DELETE, 0, 0, (uint64_t)(void*)user_data);
+#else
         EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, (new_events & LIBUS_SOCKET_WRITABLE) ? EV_ADD : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
+#endif
     }
-
+#if defined(__FreeBSD__)
+    int ret = kevent(kqfd, change_list, change_length, NULL, 0, NULL);
+#else
     int ret = kevent64(kqfd, change_list, change_length, NULL, 0, 0, NULL);
-
+#endif
     // ret should be 0 in most cases (not guaranteed when removing async)
 
     return ret;
@@ -449,10 +475,15 @@ void us_timer_set(struct us_timer_t *t, void (*cb)(struct us_timer_t *t), int ms
 #else
 void us_timer_close(struct us_timer_t *timer, int fallthrough) {
     struct us_internal_callback_t *internal_cb = (struct us_internal_callback_t *) timer;
-
+#if defined(__FreeBSD__)
+    struct kevent event;
+    EV_SET(&event, (uint64_t) (void*) internal_cb, EVFILT_TIMER, EV_DELETE, 0, 0, (uint64_t)internal_cb);
+    kevent(internal_cb->loop->fd, &event, 1, NULL, 0, NULL);
+#else
     struct kevent64_s event;
     EV_SET64(&event, (uint64_t) (void*) internal_cb, EVFILT_TIMER, EV_DELETE, 0, 0, (uint64_t)internal_cb, 0, 0);
     kevent64(internal_cb->loop->fd, &event, 1, NULL, 0, 0, NULL);
+#endif
 
     /* (regular) sockets are the only polls which are not freed immediately */
     if(fallthrough){
@@ -468,10 +499,17 @@ void us_timer_set(struct us_timer_t *t, void (*cb)(struct us_timer_t *t), int ms
     internal_cb->cb = (void (*)(struct us_internal_callback_t *)) cb;
 
     /* Bug: repeat_ms must be the same as ms, or 0 */
+#if defined(__FreeBSD__)
+    struct kevent event;
+    uint64_t ptr = (uint64_t)(void*)internal_cb;
+    EV_SET(&event, ptr, EVFILT_TIMER, EV_ADD | (repeat_ms ? 0 : EV_ONESHOT), 0, ms, (uint64_t)internal_cb);
+    kevent(internal_cb->loop->fd, &event, 1, NULL, 0, NULL);
+#else
     struct kevent64_s event;
     uint64_t ptr = (uint64_t)(void*)internal_cb;
     EV_SET64(&event, ptr, EVFILT_TIMER, EV_ADD | (repeat_ms ? 0 : EV_ONESHOT), 0, ms, (uint64_t)internal_cb, 0, 0);
     kevent64(internal_cb->loop->fd, &event, 1, NULL, 0, 0, NULL);
+#endif
 }
 #endif
 
@@ -532,12 +570,14 @@ struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int f
         loop->num_polls++;
     }
 
+#if defined(__FreeBSD__)
+#else
     cb->machport_buf = us_malloc(MACHPORT_BUF_LEN);
     kern_return_t kr = mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &cb->port);
-
     if (UNLIKELY(kr != KERN_SUCCESS)) {
         return NULL;
     }
+#endif
 
     return (struct us_internal_async *) cb;
 }
@@ -546,13 +586,22 @@ struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int f
 void us_internal_async_close(struct us_internal_async *a) {
     struct us_internal_callback_t *internal_cb = (struct us_internal_callback_t *) a;
 
+#if defined(__FreeBSD__)
+    struct kevent event;
+    uint64_t ptr = (uint64_t)(void*)internal_cb;
+    kevent(internal_cb->loop->fd, &event, 1, NULL, 0, NULL);
+#else
     struct kevent64_s event;
     uint64_t ptr = (uint64_t)(void*)internal_cb;
     EV_SET64(&event, ptr, EVFILT_MACHPORT, EV_DELETE, 0, 0, (uint64_t)(void*)internal_cb, 0,0);
     kevent64(internal_cb->loop->fd, &event, 1, NULL, 0, 0, NULL);
+#endif
 
+#if defined(__FreeBSD__)
+#else
     mach_port_deallocate(mach_task_self(), internal_cb->port);
     us_free(internal_cb->machport_buf);
+#endif
 
     /* (regular) sockets are the only polls which are not freed immediately */
     us_poll_free((struct us_poll_t *) a, internal_cb->loop);
@@ -568,16 +617,26 @@ void us_internal_async_set(struct us_internal_async *a, void (*cb)(struct us_int
     // but that is no longer the case
     // There are not many examples on the internet of using machports this way
     // you can find one in Chromium's codebase.
+#if defined(__FreeBSD__)
+    struct kevent event;
+#else
     struct kevent64_s event;
     event.ident = internal_cb->port;
-    event.filter = EVFILT_MACHPORT;
+#endif
     event.flags = EV_ADD | EV_ENABLE;
+#if defined(__FreeBSD__)
+#else
     event.fflags = MACH_RCV_MSG | MACH_RCV_OVERWRITE;
     event.ext[0] = (uint64_t)(void*)internal_cb->machport_buf;
     event.ext[1] = MACHPORT_BUF_LEN;
+#endif
     event.udata = (uint64_t)(void*)internal_cb;
 
+#if defined(__FreeBSD__)
+    int ret = kevent(internal_cb->loop->fd, &event, 1, NULL, 0, NULL);
+#else
     int ret = kevent64(internal_cb->loop->fd, &event, 1, NULL, 0, 0, NULL);
+#endif
 
     if (UNLIKELY(ret == -1)) {
        abort();
@@ -586,6 +645,9 @@ void us_internal_async_set(struct us_internal_async *a, void (*cb)(struct us_int
 
 void us_internal_async_wakeup(struct us_internal_async *a) {
     struct us_internal_callback_t *internal_cb = (struct us_internal_callback_t *) a;
+#if defined(__FreeBSD__)
+    // I do nothing
+#else
     mach_msg_empty_send_t message;
     memset(&message, 0, sizeof(message));
     message.header.msgh_size = sizeof(message);
@@ -599,6 +661,7 @@ void us_internal_async_wakeup(struct us_internal_async *a) {
         // failure, which must be destroyed to avoid leaking.
         mach_msg_destroy(&message.header);
     }
+#endif
 }
 #endif
 

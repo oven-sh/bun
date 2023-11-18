@@ -28,6 +28,8 @@ pub fn getSystemLoadavg() [3]f32 {
 }
 
 pub const Mode = i32;
+pub const Flags = i32;
+
 const Win32Error = bun.windows.Win32Error;
 
 // The way we do errors in Bun needs to get cleaned up.

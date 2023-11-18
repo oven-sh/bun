@@ -26,7 +26,7 @@
 #include <stdalign.h>
 #endif
 
-#if defined(LIBUS_USE_KQUEUE)
+#if defined(LIBUS_USE_KQUEUE) && defined(__APPLE__)
 #include <mach/mach.h>
 #endif
 
@@ -131,8 +131,10 @@ struct us_internal_callback_t {
   int cb_expects_the_loop;
   int leave_poll_ready;
   void (*cb)(struct us_internal_callback_t *cb);
+#if defined(__APPLE__)
   mach_port_t port;
   void *machport_buf;
+#endif
 };
 
 #else

@@ -386,6 +386,10 @@ pub const Os = struct {
             globalThis.throwTODO("networkInterfaces() is not implemented on Windows");
             return .zero;
         }
+        if (comptime Environment.isFreeBSD) {
+            globalThis.throwTODO("networkInterfaces() is not implemented on FreeBSD");
+            return .zero;
+        }
 
         // getifaddrs sets a pointer to a linked list
         var interface_start: ?*C.ifaddrs = null;

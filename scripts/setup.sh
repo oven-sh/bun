@@ -19,8 +19,8 @@ LLVM_VERSION=16
 
 # this compiler detection could be better
 # it is copy pasted from ./env.sh
-CC=${CC:-$(which clang-16 || which clang || which cc)}
-CXX=${CXX:-$(which clang++-16 || which clang++ || which c++)}
+CC=${CC:-$(which clang-16 || which clang16 || which clang || which cc)}
+CXX=${CXX:-$(which clang++-16 || which clang++16 || which clang++ || which c++)}
 
 test -n "$CC" || fail "missing LLVM $LLVM_VERSION (could not find clang)"
 test -n "$CXX" || fail "missing LLVM $LLVM_VERSION (could not find clang++)"
@@ -32,7 +32,7 @@ for type in CC CXX; do
   ) || fail "LLVM ${LLVM_VERSION} is required. Detected $type as '$compiler'"
 done
 
-has_exec "bun" || fail "you need an existing copy of 'bun' in your path to build bun"
+has_exec "bun" || has_exec "npm" || fail "you need an existing copy of 'bun' in your path to build bun"
 has_exec "cmake" || fail "'cmake' is missing"
 has_exec "ninja" || fail "'ninja' is missing"
 $(
@@ -55,18 +55,31 @@ printf "C Compiler for dependencies: ${CC}\n"
 printf "C++ Compiler for dependencies: ${CXX}\n"
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
+
 bash ./update-submodules.sh
+
+if [ "$(uname -s)" = "FreeBSD" ]; then
+    PATCHES="$(pwd)/../patches"
+    pushd ../src/deps/mimalloc/
+    patch < "$PATCHES/mimalloc-freebsd.patch"
+    popd
+    pwd
+fi
 bash ./all-dependencies.sh
+
+exit 1
 
 cd ../
 
-# Install bun dependencies
-bun i
-# Install test dependencies
-cd test; bun i; cd ..
+bun i || npm i
+cd test; $(bun i || npm i); cd ..
 
 # TODO(@paperdave): do not use the Makefile please
-make runtime_js fallback_decoder bun_error node-fallbacks
+if [ "$(uname -s)" = "FreeBSD" ]; then
+    gmake runtime_js fallback_decoder bun_error node-fallbacks
+else
+    make runtime_js fallback_decoder bun_error node-fallbacks
+fi
 
 mkdir -p build
 rm -f build/CMakeCache.txt

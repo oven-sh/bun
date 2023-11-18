@@ -38,6 +38,11 @@
 #include <errno.h>
 #endif
 
+#if defined(__FreeBSD__)
+#include <arpa/inet.h>
+#include <netinet/ip.h>
+#endif
+
 /* Internal structure of packet buffer */
 struct us_internal_udp_packet_buffer {
 #if defined(_WIN32) || defined(__APPLE__)
@@ -139,7 +144,7 @@ int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, void *msgvec, unsigned int vlen, in
 // an udp socket can only bind to one port, and that port never changes
 // this function returns ONLY the IP address, not any port
 int bsd_udp_packet_buffer_local_ip(void *msgvec, int index, char *ip) {
-#if defined(_WIN32) || defined(__APPLE__)
+#if defined(_WIN32) || defined(__APPLE__) || defined(__FreeBSD__)
     return 0; // not supported
 #else
     struct msghdr *mh = &((struct mmsghdr *) msgvec)[index].msg_hdr;
@@ -210,7 +215,7 @@ void bsd_udp_buffer_set_packet_payload(struct us_udp_packet_buffer_t *send_buf, 
     ss[index].msg_hdr.msg_controllen = 0;
 
     // copy the payload
-    
+
     ss[index].msg_hdr.msg_iov->iov_len = length + offset;
 
 
@@ -637,7 +642,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port) {
         int enabled = 1;
         setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, (void *) &enabled, sizeof(enabled));
     }
-    
+
 #ifdef IPV6_V6ONLY
     int disabled = 0;
     setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, (void *) &disabled, sizeof(disabled));
@@ -653,9 +658,11 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port) {
     int enabled = 1;
     if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_RECVPKTINFO, (void *) &enabled, sizeof(enabled)) == -1) {
         if (errno == 92) {
+#if !defined(__FreeBSD__)
             if (setsockopt(listenFd, IPPROTO_IP, IP_PKTINFO, (void *) &enabled, sizeof(enabled)) != 0) {
                 printf("Error setting IPv4 pktinfo!\n");
             }
+#endif
         } else {
             printf("Error setting IPv6 pktinfo!\n");
         }
@@ -791,8 +798,8 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(const char *host, int port, co
             return LIBUS_SOCKET_ERROR;
         }
     }
-    
-    
+
+
     freeaddrinfo(result);
     return fd;
 }

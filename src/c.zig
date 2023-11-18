@@ -6,9 +6,14 @@ const PlatformSpecific = switch (Environment.os) {
     .mac => @import("./darwin_c.zig"),
     .linux => @import("./linux_c.zig"),
     .windows => @import("./windows_c.zig"),
+    .freebsd => @import("./freebsd_c.zig"),
     else => struct {},
 };
 pub usingnamespace PlatformSpecific;
+
+const c = @cImport({
+    @cInclude("termios.h");
+});
 
 const C = std.c;
 const builtin = @import("builtin");
@@ -25,6 +30,7 @@ const libc_stat = bun.Stat;
 const zeroes = mem.zeroes;
 pub const darwin = @import("./darwin_c.zig");
 pub const linux = @import("./linux_c.zig");
+pub const freebsd = @import("./freebsd_c.zig");
 pub extern "c" fn chmod([*c]const u8, mode_t) c_int;
 pub extern "c" fn fchmod(std.c.fd_t, mode_t) c_int;
 pub extern "c" fn umask(mode_t) mode_t;
@@ -380,7 +386,7 @@ pub fn getRelease(buf: []u8) []const u8 {
 }
 
 pub extern fn memmem(haystack: [*]const u8, haystacklen: usize, needle: [*]const u8, needlelen: usize) ?[*]const u8;
-pub extern fn cfmakeraw(*std.os.termios) void;
+pub extern fn cfmakeraw(*c.termios) void;
 
 const LazyStatus = enum {
     pending,

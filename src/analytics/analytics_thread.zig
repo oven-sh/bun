@@ -1,4 +1,5 @@
 const bun = @import("root").bun;
+const builtin = @import("builtin");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -21,6 +22,11 @@ const Writer = @import("./analytics_schema.zig").Writer;
 const Headers = @import("root").bun.HTTP.Headers;
 const Futex = @import("../futex.zig");
 const Semver = @import("../install/semver.zig");
+
+// Needed for FreeBSD as zig doesn't have struct
+const c = @cImport({
+    @cInclude("sys/utsname.h");
+});
 
 fn NewUint64(val: u64) Analytics.Uint64 {
     const bytes = std.mem.asBytes(&val);
@@ -271,7 +277,7 @@ pub const GenerateHeader = struct {
             return platform;
         }
 
-        pub var linux_os_name: std.c.utsname = undefined;
+        pub var linux_os_name: c.utsname = undefined;
         var platform_: ?Analytics.Platform = null;
         pub const Platform = Analytics.Platform;
 
@@ -281,6 +287,8 @@ pub const GenerateHeader = struct {
             if (comptime Environment.isMac) {
                 platform_ = forMac();
                 return platform_.?;
+            } else if (comptime Environment.isFreeBSD) {
+                platform_ = forFreeBSD();
             } else if (comptime Environment.isPosix) {
                 platform_ = forLinux();
             } else {
@@ -304,6 +312,15 @@ pub const GenerateHeader = struct {
             const result = Semver.Version.parse(sliced_string);
             // we only care about major, minor, patch so we don't care about the string
             return result.version.fill();
+        }
+
+        pub fn forFreeBSD() Analytics.Platform {
+            linux_os_name = std.mem.zeroes(@TypeOf(linux_os_name));
+            _ = c.uname(&linux_os_name);
+
+            const version = std.mem.sliceTo(&linux_os_name.version, @as(u8, 0));
+
+            return Analytics.Platform{ .os = Analytics.OperatingSystem.freebsd, .version = version, .arch = platform_arch };
         }
 
         pub fn forLinux() Analytics.Platform {

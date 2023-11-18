@@ -1878,6 +1878,7 @@ pub fn isRegularFile(mode: Mode) bool {
 pub const sys = @import("./sys.zig");
 
 pub const Mode = C.Mode;
+pub const Flags = C.Flags;
 
 pub const windows = @import("./windows.zig");
 

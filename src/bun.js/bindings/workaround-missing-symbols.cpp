@@ -11,12 +11,17 @@
 #include <string.h>
 #include <cstdlib>
 
+#if defined(__FreeBSD__)
+extern "C" char** environ;
+extern "C" char** _environ;
+#else
 #undef _environ
 #undef environ
 
-// Some libraries need these symbols. Windows makes it 
+// Some libraries need these symbols. Windows makes it
 extern "C" char** environ = nullptr;
 extern "C" char** _environ = nullptr;
+#endif
 
 extern "C" int strncasecmp(const char* s1, const char* s2, size_t n)
 {
@@ -76,7 +81,7 @@ extern "C" char* mkdtemp(char* template_name)
 {
     uv_fs_t req;
     int status_code = uv_fs_mkdtemp(uv_default_loop(), &req, template_name, nullptr);
-    
+
     if (status_code < 0)
         return nullptr;
     size_t outlen = std::min(strlen(req.path), strlen(template_name));
@@ -95,7 +100,7 @@ extern "C" char* mkdtemp(char* template_name)
 #endif
 
 // if linux
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
 
 #include <fcntl.h>
 // #include <sys/stat.h>
@@ -213,6 +218,8 @@ extern "C" double __wrap_log2(double x)
 #define _MKNOD_VER 1
 #endif
 
+#if !defined(__FreeBSD__)
+
 extern "C" int __lxstat(int ver, const char* filename, struct stat* stat);
 extern "C" int __wrap_lstat(const char* filename, struct stat* stat)
 {
@@ -272,6 +279,57 @@ extern "C" int __wrap_mknodat(int dirfd, const char* path, __mode_t mode, __dev_
 {
     return __xmknodat(_MKNOD_VER, dirfd, path, mode, dev);
 }
+
+#endif
+
+#if defined(__FreeBSD__)
+#warning "FreeBSD doesn't have __lxstat64, using lstat instead"
+extern "C" int lstat(const char* filename, struct stat* stat);
+extern "C" int __wrap_lstat64(const char* filename, struct stat* stat)
+{
+    return lstat(filename, stat);
+}
+
+#warning "FreeBSD doesn't have __lxstat, using lstat instead"
+extern "C" int __wrap_lstat(const char* filename, struct stat* stat)
+{
+    return lstat(filename, stat);
+}
+
+#warning "FreeBSD doesn't have __fxstatat, using fstatat instead"
+extern "C" int fstatat(int dirfd, const char* path, struct stat* stat, int flags);
+extern "C" int __wrap_fstatat(int dirfd, const char* path, struct stat* stat, int flags)
+{
+    return fstatat(dirfd, path, stat, flags);
+}
+
+#warning "FreeBSD doesn't have __fxstat, using fstat instead"
+extern "C" int fstat(int fd, struct stat* stat);
+extern "C" int __wrap_fstat(int fd, struct stat* stat)
+{
+    return fstat(fd, stat);
+}
+
+#warning "FreeBSD doesn't have __fxstat64, using fstat instead"
+extern "C" int fstat(int fd, struct stat* stat);
+extern "C" int __wrap_fstat64(int fd, struct stat* stat)
+{
+    return fstat(fd, stat);
+}
+
+#warning "FreeBSD doesn't have __xstat64, using stat instead"
+#include <sys/stat.h>
+extern "C" int __wrap_stat64(const char* filename, struct stat* stat_p)
+{
+    return stat(filename, stat_p);
+}
+
+#warning "FreeBSD doesn't have __xstat, using stat instead"
+extern "C" int __wrap_stat(const char* filename, struct stat* stat_p)
+{
+    return stat(filename, stat_p);
+}
+#endif
 
 #endif
 

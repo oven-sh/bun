@@ -1,0 +1,143 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 70db80b..3d2f152 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -348,8 +348,8 @@ if(MI_TRACK_ASAN)
+   set(mi_basename "${mi_basename}-asan")
+ endif()
+ string(TOLOWER "${CMAKE_BUILD_TYPE}" CMAKE_BUILD_TYPE_LC)
+-if(NOT(CMAKE_BUILD_TYPE_LC MATCHES "^(release|relwithdebinfo|minsizerel|none)$"))
+-  set(mi_basename "${mi_basename}-${CMAKE_BUILD_TYPE_LC}") #append build type (e.g. -debug) if not a release version
++if(NOT(CMAKE_BUILD_TYPE_LC MATCHES "^(debug|release|relwithdebinfo|minsizerel|none)$"))
++  set(mi_basename "${mi_basename}-${CMAKE_BUILD_TYPE_LC}") #append build type if not a release version or debug
+ endif()
+ 
+ if(MI_BUILD_SHARED)
+diff --git a/src/prim/unix/prim.c b/src/prim/unix/prim.c
+index 0ca9bc6..b0a4302 100644
+--- a/src/prim/unix/prim.c
++++ b/src/prim/unix/prim.c
+@@ -75,7 +75,7 @@ static bool unix_detect_overcommit(void) {
+     os_overcommit = (val != 0);
+   }
+ #else
+-  // default: overcommit is true  
++  // default: overcommit is true
+ #endif
+   return os_overcommit;
+ }
+@@ -123,12 +123,12 @@ static void* unix_mmap_prim(void* addr, size_t size, size_t try_alignment, int p
+     if (((size_t)1 << n) == try_alignment && n >= 12 && n <= 30) {  // alignment is a power of 2 and 4096 <= alignment <= 1GiB
+       flags |= MAP_ALIGNED(n);
+       p = mmap(addr, size, protect_flags, flags | MAP_ALIGNED(n), fd, 0);
+-      if (p==MAP_FAILED || !_mi_is_aligned(p,try_alignment)) { 
++      if (p==MAP_FAILED || !_mi_is_aligned(p,try_alignment)) {
+         int err = errno;
+-        _mi_warning_message("unable to directly request aligned OS memory (error: %d (0x%d), size: 0x%zx bytes, alignment: 0x%zx, hint address: %p)\n", err, err, size, try_alignment, hint);
++        _mi_warning_message("unable to directly request aligned OS memory (error: %d (0x%d), size: 0x%zx bytes, alignment: 0x%zx, hint address: %p)\n", err, err, size, try_alignment, addr);
+       }
+       if (p!=MAP_FAILED) return p;
+-      // fall back to regular mmap      
++      // fall back to regular mmap
+     }
+   }
+   #elif defined(MAP_ALIGN)  // Solaris
+@@ -144,12 +144,12 @@ static void* unix_mmap_prim(void* addr, size_t size, size_t try_alignment, int p
+     void* hint = _mi_os_get_aligned_hint(try_alignment, size);
+     if (hint != NULL) {
+       p = mmap(hint, size, protect_flags, flags, fd, 0);
+-      if (p==MAP_FAILED || !_mi_is_aligned(p,try_alignment)) { 
++      if (p==MAP_FAILED || !_mi_is_aligned(p,try_alignment)) {
+         int err = errno;
+         _mi_warning_message("unable to directly request hinted aligned OS memory (error: %d (0x%d), size: 0x%zx bytes, alignment: 0x%zx, hint address: %p)\n", err, err, size, try_alignment, hint);
+       }
+       if (p!=MAP_FAILED) return p;
+-      // fall back to regular mmap      
++      // fall back to regular mmap
+     }
+   }
+   #endif
+@@ -273,7 +273,7 @@ int _mi_prim_alloc(size_t size, size_t try_alignment, bool commit, bool allow_la
+   mi_assert_internal(size > 0 && (size % _mi_os_page_size()) == 0);
+   mi_assert_internal(commit || !allow_large);
+   mi_assert_internal(try_alignment > 0);
+-  
++
+   int protect_flags = (commit ? (PROT_WRITE | PROT_READ) : PROT_NONE);
+   *addr = unix_mmap(NULL, size, try_alignment, protect_flags, false, allow_large, is_large);
+   return (*addr != NULL ? 0 : errno);
+@@ -329,7 +329,7 @@ int _mi_prim_commit(void* start, size_t size, bool commit) {
+     // decommit: just disable access (also used in debug and secure mode to trap on illegal access)
+     err = mprotect(start, size, PROT_NONE);
+     if (err != 0) { err = errno; }
+-    #endif    
++    #endif
+   }
+   unix_mprotect_hint(err);
+   return err;
+@@ -354,7 +354,7 @@ int _mi_prim_reset(void* start, size_t size) {
+ 
+ int _mi_prim_protect(void* start, size_t size, bool protect) {
+   int err = mprotect(start, size, protect ? PROT_NONE : (PROT_READ | PROT_WRITE));
+-  if (err != 0) { err = errno; }  
++  if (err != 0) { err = errno; }
+   unix_mprotect_hint(err);
+   return err;
+ }
+@@ -396,7 +396,7 @@ int _mi_prim_alloc_huge_os_pages(void* hint_addr, size_t size, int numa_node, vo
+     if (err != 0) {
+       err = errno;
+       _mi_warning_message("failed to bind huge (1GiB) pages to numa node %d (error: %d (0x%d))\n", numa_node, err, err);
+-    }    
++    }
+   }
+   return (*addr != NULL ? 0 : errno);
+ }
+@@ -445,7 +445,7 @@ size_t _mi_prim_numa_node_count(void) {
+ 
+ #elif defined(__FreeBSD__) && __FreeBSD_version >= 1200000
+ 
+-size_t mi_prim_numa_node(void) {
++size_t _mi_prim_numa_node(void) {
+   domainset_t dom;
+   size_t node;
+   int policy;
+@@ -513,9 +513,9 @@ mi_msecs_t _mi_prim_clock_now(void) {
+ // low resolution timer
+ mi_msecs_t _mi_prim_clock_now(void) {
+   #if !defined(CLOCKS_PER_SEC) || (CLOCKS_PER_SEC == 1000) || (CLOCKS_PER_SEC == 0)
+-  return (mi_msecs_t)clock();  
++  return (mi_msecs_t)clock();
+   #elif (CLOCKS_PER_SEC < 1000)
+-  return (mi_msecs_t)clock() * (1000 / (mi_msecs_t)CLOCKS_PER_SEC);  
++  return (mi_msecs_t)clock() * (1000 / (mi_msecs_t)CLOCKS_PER_SEC);
+   #else
+   return (mi_msecs_t)clock() / ((mi_msecs_t)CLOCKS_PER_SEC / 1000);
+   #endif
+@@ -555,7 +555,7 @@ void _mi_prim_process_info(mi_process_info_t* pinfo)
+   pinfo->stime = timeval_secs(&rusage.ru_stime);
+ #if !defined(__HAIKU__)
+   pinfo->page_faults = rusage.ru_majflt;
+-#endif  
++#endif
+ #if defined(__HAIKU__)
+   // Haiku does not have (yet?) a way to
+   // get these stats per process
+@@ -688,7 +688,7 @@ bool _mi_prim_random_buf(void* buf, size_t buf_len) {
+ 
+ #elif defined(__ANDROID__) || defined(__DragonFly__) || \
+       defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) || \
+-      defined(__sun) 
++      defined(__sun)
+ 
+ #include <stdlib.h>
+ bool _mi_prim_random_buf(void* buf, size_t buf_len) {
+@@ -782,7 +782,7 @@ void _mi_prim_thread_associate_default_heap(mi_heap_t* heap) {
+   }
+ }
+ 
+-#else 
++#else
+ 
+ void _mi_prim_thread_init_auto_done(void) {
+   // nothing

@@ -9,8 +9,15 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Futex = @This();
 
+// Needed for FreeBSD as zig has time issues for it
+const c = @cImport({
+    @cInclude("time.h");
+});
+
 const target = builtin.target;
 const single_threaded = builtin.single_threaded;
+
+const is_freebsd = target.os.tag == .freebsd;
 
 const assert = std.debug.assert;
 const testing = std.testing;
@@ -352,7 +359,11 @@ const PosixFutex = struct {
             var ts_ptr: ?*const std.os.timespec = null;
             if (timeout) |timeout_ns| {
                 ts_ptr = &ts;
-                std.os.clock_gettime(std.os.CLOCK_REALTIME, &ts) catch unreachable;
+                if (is_freebsd) {
+                    std.os.clock_gettime(c.CLOCK_REALTIME, &ts) catch unreachable;
+                } else {
+                    std.os.clock_gettime(std.os.CLOCK_REALTIME, &ts) catch unreachable;
+                }
                 ts.tv_sec += @as(@TypeOf(ts.tv_sec), @intCast(timeout_ns / std.time.ns_per_s));
                 ts.tv_nsec += @as(@TypeOf(ts.tv_nsec), @intCast(timeout_ns % std.time.ns_per_s));
                 if (ts.tv_nsec >= std.time.ns_per_s) {

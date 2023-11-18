@@ -9,5 +9,9 @@ if [[ $(uname -s) == 'Darwin' ]]; then
   export CFLAGS="$CFLAGS -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}"
 fi
 CFLAGS="${CFLAGS}" ./configure --static
-make -j${CPUS}
+if [ "$(uname -s)" = "FreeBSD" ]; then
+    gmake -j${CPUS}
+else
+    make -j${CPUS}
+fi
 cp ./libz.a $BUN_DEPS_OUT_DIR/libz.a

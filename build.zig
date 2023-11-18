@@ -38,6 +38,10 @@ fn addInternalPackages(b: *Build, step: *CompileStep, _: std.mem.Allocator, _: [
             break :brk b.createModule(.{
                 .source_file = FileSource.relative("src/io/io_darwin.zig"),
             });
+        } else if (target.isFreeBSD()) {
+            break :brk b.createModule(.{
+                .source_file = FileSource.relative("src/io/io_freebsd.zig"),
+            });
         } else if (target.isLinux()) {
             break :brk b.createModule(.{
                 .source_file = FileSource.relative("src/io/io_linux.zig"),

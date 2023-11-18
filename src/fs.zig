@@ -774,14 +774,14 @@ pub const FileSystem = struct {
 
                     if (std.os.setrlimit(limit_type, new_limit)) {
                         if (i == 1) {
-                            Limit.handles = limit.max;
+                            Limit.handles = @intCast(limit.max);
                         } else {
-                            Limit.stack = limit.max;
+                            Limit.stack = @intCast(limit.max);
                         }
                     } else |_| {}
                 }
 
-                if (i == LIMITS.len - 1) return limit.max;
+                if (i == LIMITS.len - 1) return @intCast(limit.max);
             }
         }
 

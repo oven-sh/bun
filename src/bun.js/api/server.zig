@@ -1890,15 +1890,27 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             } else {
                 var sbytes: std.os.off_t = adjusted_count;
                 const signed_offset = @as(i64, @bitCast(@as(u64, this.sendfile.offset)));
-                const errcode = std.c.getErrno(std.c.sendfile(
-                    this.sendfile.fd,
-                    this.sendfile.socket_fd,
-
-                    signed_offset,
-                    &sbytes,
-                    null,
-                    0,
-                ));
+                var errcode: std.c.E = undefined;
+                if (comptime Environment.isFreeBSD) {
+                    errcode = std.c.getErrno(std.c.sendfile(
+                            this.sendfile.fd,
+                            this.sendfile.socket_fd,
+                            signed_offset,
+                            @intCast(sbytes),
+                            null,
+                            null,
+                            0,
+                    ));
+                } else {
+                    errcode = std.c.getErrno(std.c.sendfile(
+                            this.sendfile.fd,
+                            this.senfdile.socket_fd,
+                            signed_offset,
+                            &sbytes,
+                            null,
+                            0,
+                    ));
+                }
                 const wrote = @as(Blob.SizeType, @intCast(sbytes));
                 this.sendfile.offset +|= wrote;
                 this.sendfile.remain -|= wrote;

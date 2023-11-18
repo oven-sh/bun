@@ -14,6 +14,7 @@ const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
 const fd_t = bun.FileDescriptor;
 const C = @import("root").bun.C;
 const linux = os.linux;
+const freebsd = os.freebsd;
 const Maybe = JSC.Maybe;
 const kernel32 = bun.windows;
 
@@ -226,7 +227,7 @@ pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
     return Maybe(bun.Stat){ .result = stat_ };
 }
 
-pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
+pub fn mkdir(file_path: [:0]const u8, flags: bun.Flags) Maybe(void) {
     if (comptime Environment.isMac) {
         return Maybe(void).errnoSysP(system.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success;
     }
@@ -234,13 +235,17 @@ pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
     if (comptime Environment.isLinux) {
         return Maybe(void).errnoSysP(linux.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success;
     }
+
+    if (comptime Environment.isFreeBSD) {
+        return Maybe(void).errnoSysP(freebsd.mkdir(file_path, @intCast(flags)), .mkdir, file_path) orelse Maybe(void).success;
+    }
     var wbuf: bun.MAX_WPATH = undefined;
     _ = kernel32.CreateDirectoryW(bun.strings.toWPath(&wbuf, file_path).ptr, null);
 
     return Maybe(void).errnoSysP(0, .mkdir, file_path) orelse Maybe(void).success;
 }
 
-pub fn mkdirA(file_path: []const u8, flags: bun.Mode) Maybe(void) {
+pub fn mkdirA(file_path: []const u8, flags: bun.Flags) Maybe(void) {
     if (comptime Environment.isMac) {
         return Maybe(void).errnoSysP(system.mkdir(&(std.os.toPosixPath(file_path) catch return Maybe(void){
             .err = .{
@@ -257,6 +262,15 @@ pub fn mkdirA(file_path: []const u8, flags: bun.Mode) Maybe(void) {
                 .syscall = .open,
             },
         }), flags), .mkdir, file_path) orelse Maybe(void).success;
+    }
+
+    if (comptime Environment.isFreeBSD) {
+        return Maybe(void).errnoSysP(freebsd.mkdir(&(std.os.toPosixPath(file_path) catch return Maybe(void){
+            .err = .{
+                .errno = @intFromEnum(bun.C.E.NOMEM),
+                .syscall = .open,
+            },
+        }), @intCast(flags)), .mkdir, file_path) orelse Maybe(void).success;
     }
 
     var wbuf: bun.MAX_WPATH = undefined;
@@ -407,7 +421,7 @@ pub noinline fn openDirAtWindowsA(
     var wbuf: bun.MAX_WPATH = undefined;
     return openDirAtWindows(dirFd, bun.strings.toNTDir(&wbuf, path), iterable, no_follow);
 }
-pub fn openatWindows(dirfD: bun.FileDescriptor, path_: []const u16, flags: bun.Mode) Maybe(bun.FileDescriptor) {
+pub fn openatWindows(dirfD: bun.FileDescriptor, path_: []const u16, flags: bun.Flags) Maybe(bun.FileDescriptor) {
     const nonblock = flags & O.NONBLOCK != 0;
 
     var access_mask: w.ULONG = w.READ_CONTROL | w.FILE_WRITE_ATTRIBUTES | w.SYNCHRONIZE;
@@ -510,7 +524,7 @@ pub fn openatWindows(dirfD: bun.FileDescriptor, path_: []const u16, flags: bun.M
     }
 }
 
-pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSlice, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSlice, flags: bun.Flags, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isMac) {
         // https://opensource.apple.com/source/xnu/xnu-7195.81.3/libsyscall/wrappers/open-base.c
         const rc = bun.AsyncIO.darwin.@"openat$NOCANCEL"(dirfd, file_path.ptr, @as(c_uint, @intCast(flags)), @as(c_int, @intCast(perm)));
@@ -533,7 +547,7 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSlice, flags
     }
 
     while (true) {
-        const rc = Syscall.system.openat(@as(Syscall.system.fd_t, @intCast(dirfd)), file_path, flags, perm);
+        const rc = Syscall.system.openat(@as(Syscall.system.fd_t, @intCast(dirfd)), file_path, @intCast(flags), perm);
         if (comptime Environment.allow_assert)
             log("openat({d}, {s}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), rc });
         return switch (Syscall.getErrno(rc)) {
@@ -553,7 +567,7 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSlice, flags
     unreachable;
 }
 
-pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: bun.Flags, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isWindows) {
         if (flags & O.DIRECTORY != 0) {
             return openDirAtWindowsA(dirfd, file_path, false, flags & O.NOFOLLOW != 0);
@@ -566,7 +580,7 @@ pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: bun.Mod
     return openatOSPath(dirfd, file_path, flags, perm);
 }
 
-pub fn openatA(dirfd: bun.FileDescriptor, file_path: []const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+pub fn openatA(dirfd: bun.FileDescriptor, file_path: []const u8, flags: bun.Flags, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isWindows) {
         if (flags & O.DIRECTORY != 0) {
             return openDirAtWindowsA(dirfd, file_path, false, flags & O.NOFOLLOW != 0);
@@ -589,12 +603,12 @@ pub fn openatA(dirfd: bun.FileDescriptor, file_path: []const u8, flags: bun.Mode
     );
 }
 
-pub fn openA(file_path: []const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+pub fn openA(file_path: []const u8, flags: bun.Flags, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     // this is what open() does anyway.
     return openatA(bun.toFD((std.fs.cwd().fd)), file_path, flags, perm);
 }
 
-pub fn open(file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+pub fn open(file_path: [:0]const u8, flags: bun.Flags, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     // this is what open() does anyway.
     return openat(bun.toFD((std.fs.cwd().fd)), file_path, flags, perm);
 }
@@ -619,6 +633,13 @@ pub fn closeAllowingStdoutAndStderr(fd: bun.FileDescriptor) ?Syscall.Error {
     if (comptime Environment.isMac) {
         // This avoids the EINTR problem.
         return switch (system.getErrno(system.@"close$NOCANCEL"(fd))) {
+            .BADF => Syscall.Error{ .errno = @intFromEnum(os.E.BADF), .syscall = .close },
+            else => null,
+        };
+    }
+
+    if (comptime Environment.isFreeBSD) {
+        return switch (system.getErrno(system.@"close"(fd))) {
             .BADF => Syscall.Error{ .errno = @intFromEnum(os.E.BADF), .syscall = .close },
             else => null,
         };
@@ -701,7 +722,7 @@ pub fn writev(fd_: bun.FileDescriptor, buffers: []std.os.iovec) Maybe(usize) {
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
-            const rc = writev_sym(fd, @as([*]std.os.iovec_const, @ptrCast(buffers.ptr)), buffers.len);
+            const rc = writev_sym(fd, @as([*]std.os.iovec_const, @ptrCast(buffers.ptr)), @intCast(buffers.len));
             if (comptime Environment.allow_assert)
                 log("writev({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -730,7 +751,7 @@ pub fn pwritev(fd_: bun.FileDescriptor, buffers: []std.os.iovec, position: isize
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
-            const rc = pwritev_sym(fd, @as([*]std.os.iovec_const, @ptrCast(buffers.ptr)), buffers.len, position);
+            const rc = pwritev_sym(fd, @as([*]std.os.iovec_const, @ptrCast(buffers.ptr)), @intCast(buffers.len), position);
             if (comptime Environment.allow_assert)
                 log("pwritev({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -759,7 +780,7 @@ pub fn readv(fd_: bun.FileDescriptor, buffers: []std.os.iovec) Maybe(usize) {
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
-            const rc = readv_sym(fd, buffers.ptr, buffers.len);
+            const rc = readv_sym(fd, buffers.ptr, @intCast(buffers.len));
             if (comptime Environment.allow_assert)
                 log("readv({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -788,7 +809,7 @@ pub fn preadv(fd_: bun.FileDescriptor, buffers: []std.os.iovec, position: isize)
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
-            const rc = preadv_sym(fd, buffers.ptr, buffers.len, position);
+            const rc = preadv_sym(fd, buffers.ptr, @intCast(buffers.len), position);
             if (comptime Environment.allow_assert)
                 log("preadv({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -1048,7 +1069,7 @@ pub fn clonefile(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
     unreachable;
 }
 
-pub fn copyfile(from: [:0]const u8, to: [:0]const u8, flags: c_int) Maybe(void) {
+pub fn copyfile(from: [:0]const u8, to: [:0]const u8, flags: bun.Flags) Maybe(void) {
     if (comptime !Environment.isMac) @compileError("macOS only");
 
     while (true) {
@@ -1061,7 +1082,7 @@ pub fn copyfile(from: [:0]const u8, to: [:0]const u8, flags: c_int) Maybe(void) 
     unreachable;
 }
 
-pub fn fcopyfile(fd_in: std.os.fd_t, fd_out: std.os.fd_t, flags: u32) Maybe(void) {
+pub fn fcopyfile(fd_in: std.os.fd_t, fd_out: std.os.fd_t, flags: bun.Flags) Maybe(void) {
     if (comptime !Environment.isMac) @compileError("macOS only");
 
     while (true) {
@@ -1106,6 +1127,21 @@ pub fn getFdPath(fd_: bun.FileDescriptor, out_buffer: *[MAX_PATH_BYTES]u8) Maybe
             }
             const len = mem.indexOfScalar(u8, out_buffer[0..], @as(u8, 0)) orelse MAX_PATH_BYTES;
             return .{ .result = out_buffer[0..len] };
+        },
+        .freebsd => {
+            if (comptime builtin.os.version_range.semver.max.order(.{ .major = 13, .minor = 0, .patch = 0 }) == .gt) {
+                var kfile: system.kinfo_file = undefined;
+                kfile.structsize = system.KINFO_FILE_SIZE;
+                if (Maybe([]u8).errnoSys(system.fcntl(fd, system.F.KINFO, @intFromPtr(&kfile)), .fnctl)) |err| {
+                    return err;
+                }
+                const len = std.mem.indexOfScalar(u8, &kfile.path, 0) orelse MAX_PATH_BYTES;
+                const result = out_buffer[0..len];
+                @memcpy(result, kfile.path[0..len]);
+                return .{ .result = result[0..len] };
+            } else {
+                @panic("Sorry, too old FreeBSD :(");
+            }
         },
         .linux => {
             // TODO: alpine linux may not have /proc/self
@@ -1464,7 +1500,7 @@ pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
         ) orelse Maybe(void).success;
     }
 
-    if (comptime Environment.isMac) {
+    if (comptime Environment.isMac or Environment.isFreeBSD) {
         return Maybe(void).errnoSysFd(
             std.c.lseek(fd, @as(std.c.off_t, @intCast(offset)), os.SEEK.SET),
             .lseek,

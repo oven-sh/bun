@@ -26,5 +26,9 @@ cmake "${CMAKE_FLAGS[@]}" . \
 
 ninja
 
-cp libmimalloc-debug.a $BUN_DEPS_OUT_DIR/libmimalloc-debug.a
+if [ "$(uname -s)" = "FreeBSD" ]; then
+    cp libmimalloc.a $BUN_DEPS_OUT_DIR/libmimalloc-debug.a
+else
+    cp libmimalloc-debug.a $BUN_DEPS_OUT_DIR/libmimalloc-debug.a
+fi
 cp CMakeFiles/mimalloc-obj.dir/src/static.c.o $BUN_DEPS_OUT_DIR/libmimalloc-debug.o

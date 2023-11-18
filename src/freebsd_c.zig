@@ -2,7 +2,6 @@ const std = @import("std");
 const bun = @import("root").bun;
 const builtin = @import("builtin");
 const os = std.os;
-const Environment = bun.Environment;
 const mem = std.mem;
 const Stat = std.fs.File.Stat;
 const Kind = std.fs.File.Kind;
@@ -10,172 +9,6 @@ const StatError = std.fs.File.StatError;
 const off_t = std.c.off_t;
 const errno = os.errno;
 const zeroes = mem.zeroes;
-
-pub extern "c" fn copyfile(from: [*:0]const u8, to: [*:0]const u8, state: ?std.c.copyfile_state_t, flags: u32) c_int;
-pub const COPYFILE_STATE_SRC_FD = @as(c_int, 1);
-pub const COPYFILE_STATE_SRC_FILENAME = @as(c_int, 2);
-pub const COPYFILE_STATE_DST_FD = @as(c_int, 3);
-pub const COPYFILE_STATE_DST_FILENAME = @as(c_int, 4);
-pub const COPYFILE_STATE_QUARANTINE = @as(c_int, 5);
-pub const COPYFILE_STATE_STATUS_CB = @as(c_int, 6);
-pub const COPYFILE_STATE_STATUS_CTX = @as(c_int, 7);
-pub const COPYFILE_STATE_COPIED = @as(c_int, 8);
-pub const COPYFILE_STATE_XATTRNAME = @as(c_int, 9);
-pub const COPYFILE_STATE_WAS_CLONED = @as(c_int, 10);
-pub const COPYFILE_DISABLE_VAR = "COPYFILE_DISABLE";
-pub const COPYFILE_ACL = @as(c_int, 1) << @as(c_int, 0);
-pub const COPYFILE_STAT = @as(c_int, 1) << @as(c_int, 1);
-pub const COPYFILE_XATTR = @as(c_int, 1) << @as(c_int, 2);
-pub const COPYFILE_DATA = @as(c_int, 1) << @as(c_int, 3);
-pub const COPYFILE_SECURITY = COPYFILE_STAT | COPYFILE_ACL;
-pub const COPYFILE_METADATA = COPYFILE_SECURITY | COPYFILE_XATTR;
-pub const COPYFILE_ALL = COPYFILE_METADATA | COPYFILE_DATA;
-/// Descend into hierarchies
-pub const COPYFILE_RECURSIVE = @as(c_int, 1) << @as(c_int, 15);
-/// return flags for xattr or acls if set
-pub const COPYFILE_CHECK = @as(c_int, 1) << @as(c_int, 16);
-/// fail if destination exists
-pub const COPYFILE_EXCL = @as(c_int, 1) << @as(c_int, 17);
-/// don't follow if source is a symlink
-pub const COPYFILE_NOFOLLOW_SRC = @as(c_int, 1) << @as(c_int, 18);
-/// don't follow if dst is a symlink
-pub const COPYFILE_NOFOLLOW_DST = @as(c_int, 1) << @as(c_int, 19);
-/// unlink src after copy
-pub const COPYFILE_MOVE = @as(c_int, 1) << @as(c_int, 20);
-/// unlink dst before copy
-pub const COPYFILE_UNLINK = @as(c_int, 1) << @as(c_int, 21);
-pub const COPYFILE_NOFOLLOW = COPYFILE_NOFOLLOW_SRC | COPYFILE_NOFOLLOW_DST;
-pub const COPYFILE_PACK = @as(c_int, 1) << @as(c_int, 22);
-pub const COPYFILE_UNPACK = @as(c_int, 1) << @as(c_int, 23);
-pub const COPYFILE_CLONE = @as(c_int, 1) << @as(c_int, 24);
-pub const COPYFILE_CLONE_FORCE = @as(c_int, 1) << @as(c_int, 25);
-pub const COPYFILE_RUN_IN_PLACE = @as(c_int, 1) << @as(c_int, 26);
-pub const COPYFILE_DATA_SPARSE = @as(c_int, 1) << @as(c_int, 27);
-pub const COPYFILE_PRESERVE_DST_TRACKED = @as(c_int, 1) << @as(c_int, 28);
-pub const COPYFILE_VERBOSE = @as(c_int, 1) << @as(c_int, 30);
-pub const COPYFILE_RECURSE_ERROR = @as(c_int, 0);
-pub const COPYFILE_RECURSE_FILE = @as(c_int, 1);
-pub const COPYFILE_RECURSE_DIR = @as(c_int, 2);
-pub const COPYFILE_RECURSE_DIR_CLEANUP = @as(c_int, 3);
-pub const COPYFILE_COPY_DATA = @as(c_int, 4);
-pub const COPYFILE_COPY_XATTR = @as(c_int, 5);
-pub const COPYFILE_START = @as(c_int, 1);
-pub const COPYFILE_FINISH = @as(c_int, 2);
-pub const COPYFILE_ERR = @as(c_int, 3);
-pub const COPYFILE_PROGRESS = @as(c_int, 4);
-pub const COPYFILE_CONTINUE = @as(c_int, 0);
-pub const COPYFILE_SKIP = @as(c_int, 1);
-pub const COPYFILE_QUIT = @as(c_int, 2);
-
-// int clonefileat(int src_dirfd, const char * src, int dst_dirfd, const char * dst, int flags);
-pub extern "c" fn clonefileat(c_int, [*:0]const u8, c_int, [*:0]const u8, uint32_t: c_int) c_int;
-// int fclonefileat(int srcfd, int dst_dirfd, const char * dst, int flags);
-pub extern "c" fn fclonefileat(c_int, c_int, [*:0]const u8, uint32_t: c_int) c_int;
-// int clonefile(const char * src, const char * dst, int flags);
-pub extern "c" fn clonefile(src: [*:0]const u8, dest: [*:0]const u8, flags: c_int) c_int;
-
-// pub fn stat_absolute(path: [:0]const u8) StatError!Stat {
-//     if (builtin.os.tag == .windows) {
-//         var io_status_block: windows.IO_STATUS_BLOCK = undefined;
-//         var info: windows.FILE_ALL_INFORMATION = undefined;
-//         const rc = windows.ntdll.NtQueryInformationFile(self.handle, &io_status_block, &info, @sizeOf(windows.FILE_ALL_INFORMATION), .FileAllInformation);
-//         switch (rc) {
-//             .SUCCESS => {},
-//             .BUFFER_OVERFLOW => {},
-//             .INVALID_PARAMETER => unreachable,
-//             .ACCESS_DENIED => return error.AccessDenied,
-//             else => return windows.unexpectedStatus(rc),
-//         }
-//         return Stat{
-//             .inode = info.InternalInformation.IndexNumber,
-//             .size = @bitCast(u64, info.StandardInformation.EndOfFile),
-//             .mode = 0,
-//             .kind = if (info.StandardInformation.Directory == 0) .File else .Directory,
-//             .atime = windows.fromSysTime(info.BasicInformation.LastAccessTime),
-//             .mtime = windows.fromSysTime(info.BasicInformation.LastWriteTime),
-//             .ctime = windows.fromSysTime(info.BasicInformation.CreationTime),
-//         };
-//     }
-
-//     var st = zeroes(libc_stat);
-//     switch (errno(stat(path.ptr, &st))) {
-//         0 => {},
-//         // .EINVAL => unreachable,
-//         .EBADF => unreachable, // Always a race condition.
-//         .ENOMEM => return error.SystemResources,
-//         .EACCES => return error.AccessDenied,
-//         else => |err| return os.unexpectedErrno(err),
-//     }
-
-//     const atime = st.atime();
-//     const mtime = st.mtime();
-//     const ctime = st.ctime();
-//     return Stat{
-//         .inode = st.ino,
-//         .size = @bitCast(u64, st.size),
-//         .mode = st.mode,
-//         .kind = switch (builtin.os.tag) {
-//             .wasi => switch (st.filetype) {
-//                 os.FILETYPE_BLOCK_DEVICE => Kind.BlockDevice,
-//                 os.FILETYPE_CHARACTER_DEVICE => Kind.CharacterDevice,
-//                 os.FILETYPE_DIRECTORY => Kind.Directory,
-//                 os.FILETYPE_SYMBOLIC_LINK => Kind.SymLink,
-//                 os.FILETYPE_REGULAR_FILE => Kind.File,
-//                 os.FILETYPE_SOCKET_STREAM, os.FILETYPE_SOCKET_DGRAM => Kind.UnixDomainSocket,
-//                 else => Kind.Unknown,
-//             },
-//             else => switch (st.mode & os.S.IFMT) {
-//                 os.S.IFBLK => Kind.BlockDevice,
-//                 os.S.IFCHR => Kind.CharacterDevice,
-//                 os.S.IFDIR => Kind.Directory,
-//                 os.S.IFIFO => Kind.NamedPipe,
-//                 os.S.IFLNK => Kind.SymLink,
-//                 os.S.IFREG => Kind.File,
-//                 os.S.IFSOCK => Kind.UnixDomainSocket,
-//                 else => Kind.Unknown,
-//             },
-//         },
-//         .atime = @as(i128, atime.tv_sec) * std.time.ns_per_s + atime.tv_nsec,
-//         .mtime = @as(i128, mtime.tv_sec) * std.time.ns_per_s + mtime.tv_nsec,
-//         .ctime = @as(i128, ctime.tv_sec) * std.time.ns_per_s + ctime.tv_nsec,
-//     };
-// }
-
-// benchmarking this did nothing on macOS
-// i verified it wasn't returning -1
-pub fn preallocate_file(_: os.fd_t, _: off_t, _: off_t) !void {
-    //     pub const struct_fstore = extern struct {
-    //     fst_flags: c_uint,
-    //     fst_posmode: c_int,
-    //     fst_offset: off_t,
-    //     fst_length: off_t,
-    //     fst_bytesalloc: off_t,
-    // };
-    // pub const fstore_t = struct_fstore;
-
-    // pub const F_ALLOCATECONTIG = @as(c_int, 0x00000002);
-    // pub const F_ALLOCATEALL = @as(c_int, 0x00000004);
-    // pub const F_PEOFPOSMODE = @as(c_int, 3);
-    // pub const F_VOLPOSMODE = @as(c_int, 4);
-    // var fstore = zeroes(fstore_t);
-    // fstore.fst_flags = F_ALLOCATECONTIG;
-    // fstore.fst_posmode = F_PEOFPOSMODE;
-    // fstore.fst_offset = 0;
-    // fstore.fst_length = len + offset;
-
-    // // Based on https://api.kde.org/frameworks/kcoreaddons/html/posix__fallocate__mac_8h_source.html
-    // var rc = os.system.fcntl(fd, os.F.PREALLOCATE, &fstore);
-
-    // switch (rc) {
-    //     0 => return,
-    //     else => {
-    //         fstore.fst_flags = F_ALLOCATEALL;
-    //         rc = os.system.fcntl(fd, os.F.PREALLOCATE, &fstore);
-    //     },
-    // }
-
-    // std.mem.doNotOptimizeAway(&fstore);
-}
 
 pub const SystemErrno = enum(u8) {
     SUCCESS = 0,
@@ -223,9 +56,9 @@ pub const SystemErrno = enum(u8) {
     ENOPROTOOPT = 42,
     EPROTONOSUPPORT = 43,
     ESOCKTNOSUPPORT = 44,
-    ENOTSUP = 45,
+    EOPNOTSUPP = 45,
     EPFNOSUPPORT = 46,
-    EAFNOSUPPORT = 47,
+    EARNOSUPPORT = 47,
     EADDRINUSE = 48,
     EADDRNOTAVAIL = 49,
     ENETDOWN = 50,
@@ -237,7 +70,6 @@ pub const SystemErrno = enum(u8) {
     EISCONN = 56,
     ENOTCONN = 57,
     ESHUTDOWN = 58,
-    ETOOMANYREFS = 59,
     ETIMEDOUT = 60,
     ECONNREFUSED = 61,
     ELOOP = 62,
@@ -249,7 +81,6 @@ pub const SystemErrno = enum(u8) {
     EUSERS = 68,
     EDQUOT = 69,
     ESTALE = 70,
-    EREMOTE = 71,
     EBADRPC = 72,
     ERPCMISMATCH = 73,
     EPROGUNAVAIL = 74,
@@ -260,41 +91,36 @@ pub const SystemErrno = enum(u8) {
     EFTYPE = 79,
     EAUTH = 80,
     ENEEDAUTH = 81,
-    EPWROFF = 82,
-    EDEVERR = 83,
+    EIDRM = 82,
+    ENOMSG = 83,
     EOVERFLOW = 84,
-    EBADEXEC = 85,
-    EBADARCH = 86,
-    ESHLIBVERS = 87,
-    EBADMACHO = 88,
-    ECANCELED = 89,
-    EIDRM = 90,
-    ENOMSG = 91,
-    EILSEQ = 92,
-    ENOATTR = 93,
-    EBADMSG = 94,
-    EMULTIHOP = 95,
-    ENODATA = 96,
-    ENOLINK = 97,
-    ENOSR = 98,
-    ENOSTR = 99,
-    EPROTO = 100,
-    ETIME = 101,
-    EOPNOTSUPP = 102,
-    ENOPOLICY = 103,
-    ENOTRECOVERABLE = 104,
-    EOWNERDEAD = 105,
-    EQFULL = 106,
+    ECANCELED = 85,
+    EILSEQ = 86,
+    ENOATTR = 87,
+    EDOOFUS = 88,
+    EBADMSG = 89,
+    EMULTIHOP = 90,
+    ENOLINK = 91,
+    EPROTO = 92,
+    ENOTCAPABLE = 93,
+    ECAPMODE = 94,
+    ENOTRECOVERABLE = 95,
+    EOWNERDEAD = 96,
+    EINTEGRITY = 97,
 
-    pub const max = 107;
+    pub const max = 96;
 
     pub fn init(code: anytype) ?SystemErrno {
         if (comptime std.meta.trait.isSignedInt(@TypeOf(code))) {
+            if (code == 59 or code == 71)
+                return null;
+
             if (code < 0)
                 return init(-code);
         }
-
         if (code >= max) return null;
+        if (code == 59 or code == 71) return null;
+
         return @as(SystemErrno, @enumFromInt(code));
     }
 
@@ -302,118 +128,107 @@ pub const SystemErrno = enum(u8) {
         return labels.get(this) orelse null;
     }
 
-    const LabelMap = std.EnumMap(SystemErrno, []const u8);
+    const LabelMap = bun.enums.EnumMap(SystemErrno, []const u8);
     pub const labels: LabelMap = brk: {
+        @setEvalBranchQuota(20000069);
         var map: LabelMap = LabelMap.initFull("");
+        map.put(.EPERM, "Operation not permitted");
+        map.put(.ENOENT, "No such file or directory");
+        map.put(.ESRCH, "No such process");
+        map.put(.EINTR, "Interrupted system call");
+        map.put(.EIO, "Input/output error");
+        map.put(.ENXIO, "Device not configured");
         map.put(.E2BIG, "Argument list too long");
+        map.put(.ENOEXEC, "Exec format error");
+        map.put(.EBADF, "Bad file descriptor");
+        map.put(.ECHILD, "No child processes");
+        map.put(.EDEADLK, "Resource deadlock avoided");
+        map.put(.ENOMEM, "Cannot allocate memory");
         map.put(.EACCES, "Permission denied");
+        map.put(.EFAULT, "Bad address");
+        map.put(.ENOTBLK, "Block device required");
+        map.put(.EBUSY, "Device or resource busy");
+        map.put(.EEXIST, "File exists");
+        map.put(.EXDEV, "Cross-device link");
+        map.put(.ENODEV, "Operation not supported by device");
+        map.put(.ENOTDIR, "Not a directory");
+        map.put(.EISDIR, "Is a directory");
+        map.put(.EINVAL, "Invalid argument");
+        map.put(.ENFILE, "Too many open files in system");
+        map.put(.EMFILE, "Too many open files");
+        map.put(.ENOTTY, "Inappropriate ioctl for device");
+        map.put(.ETXTBSY, "Text file busy");
+        map.put(.EFBIG, "File too large");
+        map.put(.ENOSPC, "No space left on device");
+        map.put(.ESPIPE, "Illegal seek");
+        map.put(.EROFS, "Read-only file system");
+        map.put(.EMLINK, "Too many links");
+        map.put(.EPIPE, "Broken pipe");
+        map.put(.EDOM, "Numerical argument out of domain");
+        map.put(.ERANGE, "Result too large");
+        map.put(.EAGAIN, "Resource temporarily unavailable");
+        map.put(.EINPROGRESS, "Operation now in progress");
+        map.put(.EALREADY, "Operation already in progress");
+        map.put(.ENOTSOCK, "Socket operation on non-socket");
+        map.put(.EDESTADDRREQ, "Destination address required");
+        map.put(.EMSGSIZE, "Message too long");
+        map.put(.EPROTOTYPE, "Protocol wrong type for socket");
+        map.put(.ENOPROTOOPT, "Protocal not available");
+        map.put(.ESOCKTNOSUPPORT, "Protocol not supported");
+        map.put(.EOPNOTSUPP, "Operation not supported");
+        map.put(.EPFNOSUPPORT, "Protocol family not supported");
         map.put(.EADDRINUSE, "Address already in use");
         map.put(.EADDRNOTAVAIL, "Can't assign requested address");
-        map.put(.EAFNOSUPPORT, "Address family not supported by protocol family");
-        map.put(.EAGAIN, "non-blocking and interrupt i/o. Resource temporarily unavailable");
-        map.put(.EALREADY, "Operation already in progress");
-        map.put(.EAUTH, "Authentication error");
-        map.put(.EBADARCH, "Bad CPU type in executable");
-        map.put(.EBADEXEC, "Program loading errors. Bad executable");
-        map.put(.EBADF, "Bad file descriptor");
-        map.put(.EBADMACHO, "Malformed Macho file");
-        map.put(.EBADMSG, "Bad message");
-        map.put(.EBADRPC, "RPC struct is bad");
-        map.put(.EBUSY, "Device / Resource busy");
-        map.put(.ECANCELED, "Operation canceled");
-        map.put(.ECHILD, "No child processes");
+        map.put(.ENETDOWN, "Network is down");
+        map.put(.ENETUNREACH, "Network is unreachable");
+        map.put(.ENETRESET, "Network dropped connection on reset");
         map.put(.ECONNABORTED, "Software caused connection abort");
-        map.put(.ECONNREFUSED, "Connection refused");
         map.put(.ECONNRESET, "Connection reset by peer");
-        map.put(.EDEADLK, "Resource deadlock avoided");
-        map.put(.EDESTADDRREQ, "Destination address required");
-        map.put(.EDEVERR, "Device error, for example paper out");
-        map.put(.EDOM, "math software. Numerical argument out of domain");
-        map.put(.EDQUOT, "Disc quota exceeded");
-        map.put(.EEXIST, "File or folder exists");
-        map.put(.EFAULT, "Bad address");
-        map.put(.EFBIG, "File too large");
-        map.put(.EFTYPE, "Inappropriate file type or format");
+        map.put(.ENOBUFS, "No buffer space available");
+        map.put(.ENOTCONN, "Socket is not connected");
+        map.put(.ESHUTDOWN, "Can't send after socket shutdown");
+        map.put(.ETIMEDOUT, "Operation timed out");
+        map.put(.ECONNREFUSED, "Connection refused");
+        map.put(.ELOOP, "Too many levels of symbolic links");
+        map.put(.ENAMETOOLONG, "File name too long");
         map.put(.EHOSTDOWN, "Host is down");
         map.put(.EHOSTUNREACH, "No route to host");
-        map.put(.EIDRM, "Identifier removed");
-        map.put(.EILSEQ, "Illegal byte sequence");
-        map.put(.EINPROGRESS, "Operation now in progress");
-        map.put(.EINTR, "Interrupted system call");
-        map.put(.EINVAL, "Invalid argument");
-        map.put(.EIO, "Input/output error");
-        map.put(.EISCONN, "Socket is already connected");
-        map.put(.EISDIR, "Is a directory");
-        map.put(.ELOOP, "Too many levels of symbolic links");
-        map.put(.EMFILE, "Too many open files");
-        map.put(.EMLINK, "Too many links");
-        map.put(.EMSGSIZE, "Message too long");
-        map.put(.EMULTIHOP, "Reserved");
-        map.put(.ENAMETOOLONG, "File name too long");
-        map.put(.ENEEDAUTH, "Need authenticator");
-        map.put(.ENETDOWN, "ipc/network software - operational errors Network is down");
-        map.put(.ENETRESET, "Network dropped connection on reset");
-        map.put(.ENETUNREACH, "Network is unreachable");
-        map.put(.ENFILE, "Too many open files in system");
-        map.put(.ENOATTR, "Attribute not found");
-        map.put(.ENOBUFS, "No buffer space available");
-        map.put(.ENODATA, "No message available on STREAM");
-        map.put(.ENODEV, "Operation not supported by device");
-        map.put(.ENOENT, "No such file or directory");
-        map.put(.ENOEXEC, "Exec format error");
-        map.put(.ENOLCK, "No locks available");
-        map.put(.ENOLINK, "Reserved");
-        map.put(.ENOMEM, "Cannot allocate memory");
-        map.put(.ENOMSG, "No message of desired type");
-        map.put(.ENOPOLICY, "No such policy registered");
-        map.put(.ENOPROTOOPT, "Protocol not available");
-        map.put(.ENOSPC, "No space left on device");
-        map.put(.ENOSR, "No STREAM resources");
-        map.put(.ENOSTR, "Not a STREAM");
-        map.put(.ENOSYS, "Function not implemented");
-        map.put(.ENOTBLK, "Block device required");
-        map.put(.ENOTCONN, "Socket is not connected");
-        map.put(.ENOTDIR, "Not a directory");
         map.put(.ENOTEMPTY, "Directory not empty");
-        map.put(.ENOTRECOVERABLE, "State not recoverable");
-        map.put(.ENOTSOCK, "ipc/network software - argument errors. Socket operation on non-socket");
-        map.put(.ENOTSUP, "Operation not supported");
-        map.put(.ENOTTY, "Inappropriate ioctl for device");
-        map.put(.ENXIO, "Device not configured");
-        map.put(.EOVERFLOW, "Value too large to be stored in data type");
-        map.put(.EOWNERDEAD, "Previous owner died");
-        map.put(.EPERM, "Operation not permitted");
-        map.put(.EPFNOSUPPORT, "Protocol family not supported");
-        map.put(.EPIPE, "Broken pipe");
-        map.put(.EPROCLIM, "quotas & mush. Too many processes");
-        map.put(.EPROCUNAVAIL, "Bad procedure for program");
-        map.put(.EPROGMISMATCH, "Program version wrong");
-        map.put(.EPROGUNAVAIL, "RPC prog. not avail");
-        map.put(.EPROTO, "Protocol error");
-        map.put(.EPROTONOSUPPORT, "Protocol not supported");
-        map.put(.EPROTOTYPE, "Protocol wrong type for socket");
-        map.put(.EPWROFF, "Intelligent device errors. Device power is off");
-        map.put(.EQFULL, "Interface output queue is full");
-        map.put(.ERANGE, "Result too large");
-        map.put(.EREMOTE, "Too many levels of remote in path");
-        map.put(.EROFS, "Read-only file system");
-        map.put(.ERPCMISMATCH, "RPC version wrong");
-        map.put(.ESHLIBVERS, "Shared library version mismatch");
-        map.put(.ESHUTDOWN, "Can’t send after socket shutdown");
-        map.put(.ESOCKTNOSUPPORT, "Socket type not supported");
-        map.put(.ESPIPE, "Illegal seek");
-        map.put(.ESRCH, "No such process");
-        map.put(.ESTALE, "Network File System. Stale NFS file handle");
-        map.put(.ETIME, "STREAM ioctl timeout");
-        map.put(.ETIMEDOUT, "Operation timed out");
-        map.put(.ETOOMANYREFS, "Too many references: can't splice");
-        map.put(.ETXTBSY, "Text file busy");
+        map.put(.EPROCLIM, "Too many processes");
         map.put(.EUSERS, "Too many users");
-        // map.put(.EWOULDBLOCK, "Operation would block");
-        map.put(.EXDEV, "Cross-device link");
+        map.put(.EDQUOT, "Disc quota exceeded");
+        map.put(.ESTALE, "Stale NFS file handle");
+        map.put(.EBADRPC, "RPC struct is bad");
+        map.put(.ERPCMISMATCH, "RPC version wrong");
+        map.put(.EPROGUNAVAIL, "RPC prog. not avail.");
+        map.put(.EPROGMISMATCH, "Program version wrong");
+        map.put(.EPROCUNAVAIL, "Bad procedure for program");
+        map.put(.ENOSYS, "Function not implemented");
+        map.put(.EFTYPE, "Inappropriate file type or format");
+        map.put(.EAUTH, "Authentication error");
+        map.put(.ENEEDAUTH, "Need authenticator");
+        map.put(.EIDRM, "Identifier removed");
+        map.put(.ENOMSG, "No message of desired type");
+        map.put(.EOVERFLOW, "Value too large to be stored in data type");
+        map.put(.ECANCELED, "Operation canceled");
+        map.put(.EILSEQ, "Illegal byte sequence");
+        map.put(.ENOATTR, "Attribute not found");
+        map.put(.EDOOFUS, "Programming error");
+        map.put(.EBADMSG, "Bad message");
+        map.put(.EMULTIHOP, "Multihop attempted");
+        map.put(.ENOLINK, "Link has been severed");
+        map.put(.EPROTO, "Protocol error");
+        map.put(.ENOTCAPABLE, "Capabilities insufficient");
+        map.put(.ECAPMODE, "Not permitted in capability mode");
+        map.put(.ENOTRECOVERABLE, "State not recoverable");
+        map.put(.EOWNERDEAD, "Previous owner died");
+        map.put(.EINTEGRITY, "Integrity check failed");
         break :brk map;
     };
 };
+
+pub fn preallocate_file(_: os.fd_t, _: off_t, _: off_t) !void {
+}
 
 // Courtesy of https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-stub.h
 pub const struct_CFArrayCallBacks = opaque {};
@@ -529,6 +344,7 @@ pub const struct_LoadAvg = struct {
     ldavg: [3]u32,
     fscale: c_long,
 };
+
 pub fn getSystemLoadavg() [3]f64 {
     var loadavg_: [24]struct_LoadAvg = undefined;
     var size: usize = loadavg_.len;
@@ -764,16 +580,99 @@ pub const sockaddr_dl = extern struct {
     //#endif
 };
 
-pub usingnamespace @cImport({
-    @cInclude(if (Environment.isFreeBSD) "spawn.h" else "sys/spawn.h");
-});
-
 // it turns out preallocating on APFS on an M1 is slower.
 // so this is a linux-only optimization for now.
 pub const preallocate_length = std.math.maxInt(u51);
 
 pub const Mode = std.os.mode_t;
 pub const Flags = i32;
+const fd_t = std.os.fd_t;
+const pid_t = std.os.pid_t;
+const mode_t = std.os.mode_t;
+const sigset_t = std.c.sigset_t;
+const sched_param = std.os.sched_param;
+
+pub const posix_spawnattr_t = extern struct {
+    __flags: c_short,
+    __pgrp: pid_t,
+    __sd: sigset_t,
+    __ss: sigset_t,
+    __sp: struct_sched_param,
+    __policy: c_int,
+    __pad: [16]c_int,
+};
+pub const struct_sched_param = extern struct {
+    sched_priority: c_int,
+};
+pub const struct___spawn_action = opaque {};
+pub const posix_spawn_file_actions_t = extern struct {
+    __allocated: c_int,
+    __used: c_int,
+    __actions: ?*struct___spawn_action,
+    __pad: [16]c_int,
+};
+
+pub extern "c" fn posix_spawn(
+    pid: *pid_t,
+    path: [*:0]const u8,
+    actions: ?*const posix_spawn_file_actions_t,
+    attr: ?*const posix_spawnattr_t,
+    argv: [*:null]?[*:0]const u8,
+    env: [*:null]?[*:0]const u8,
+) c_int;
+pub extern "c" fn posix_spawnp(
+    pid: *pid_t,
+    path: [*:0]const u8,
+    actions: ?*const posix_spawn_file_actions_t,
+    attr: ?*const posix_spawnattr_t,
+    argv: [*:null]?[*:0]const u8,
+    env: [*:null]?[*:0]const u8,
+) c_int;
+pub extern fn posix_spawnattr_init(__attr: *posix_spawnattr_t) c_int;
+pub extern fn posix_spawnattr_destroy(__attr: *posix_spawnattr_t) c_int;
+pub extern fn posix_spawnattr_getsigdefault(noalias __attr: [*c]const posix_spawnattr_t, noalias __sigdefault: [*c]sigset_t) c_int;
+pub extern fn posix_spawnattr_setsigdefault(noalias __attr: [*c]posix_spawnattr_t, noalias __sigdefault: [*c]const sigset_t) c_int;
+pub extern fn posix_spawnattr_getsigmask(noalias __attr: [*c]const posix_spawnattr_t, noalias __sigmask: [*c]sigset_t) c_int;
+pub extern fn posix_spawnattr_setsigmask(noalias __attr: [*c]posix_spawnattr_t, noalias __sigmask: [*c]const sigset_t) c_int;
+pub extern fn posix_spawnattr_getflags(noalias __attr: [*c]const posix_spawnattr_t, noalias __flags: [*c]c_short) c_int;
+pub extern fn posix_spawnattr_setflags(_attr: [*c]posix_spawnattr_t, __flags: c_short) c_int;
+pub extern fn posix_spawnattr_getpgroup(noalias __attr: [*c]const posix_spawnattr_t, noalias __pgroup: [*c]pid_t) c_int;
+pub extern fn posix_spawnattr_setpgroup(__attr: [*c]posix_spawnattr_t, __pgroup: pid_t) c_int;
+pub extern fn posix_spawnattr_getschedpolicy(noalias __attr: [*c]const posix_spawnattr_t, noalias __schedpolicy: [*c]c_int) c_int;
+pub extern fn posix_spawnattr_setschedpolicy(__attr: [*c]posix_spawnattr_t, __schedpolicy: c_int) c_int;
+pub extern fn posix_spawnattr_getschedparam(noalias __attr: [*c]const posix_spawnattr_t, noalias __schedparam: [*c]struct_sched_param) c_int;
+pub extern fn posix_spawnattr_setschedparam(noalias __attr: [*c]posix_spawnattr_t, noalias __schedparam: [*c]const struct_sched_param) c_int;
+pub extern fn posix_spawn_file_actions_init(__file_actions: *posix_spawn_file_actions_t) c_int;
+pub extern fn posix_spawn_file_actions_destroy(__file_actions: *posix_spawn_file_actions_t) c_int;
+pub extern fn posix_spawn_file_actions_addopen(noalias __file_actions: *posix_spawn_file_actions_t, __fd: c_int, noalias __path: [*:0]const u8, __oflag: c_int, __mode: mode_t) c_int;
+pub extern fn posix_spawn_file_actions_addclose(__file_actions: *posix_spawn_file_actions_t, __fd: c_int) c_int;
+pub extern fn posix_spawn_file_actions_adddup2(__file_actions: *posix_spawn_file_actions_t, __fd: c_int, __newfd: c_int) c_int;
+pub const POSIX_SPAWN_RESETIDS = @as(c_int, 0x01);
+pub const POSIX_SPAWN_SETPGROUP = @as(c_int, 0x02);
+pub const POSIX_SPAWN_SETSIGDEF = @as(c_int, 0x04);
+pub const POSIX_SPAWN_SETSIGMASK = @as(c_int, 0x08);
+pub const POSIX_SPAWN_SETSCHEDPARAM = @as(c_int, 0x10);
+pub const POSIX_SPAWN_SETSCHEDULER = @as(c_int, 0x20);
+pub const POSIX_SPAWN_SETSID = @as(c_int, 0x80);
+
+const posix_spawn_file_actions_addfchdir_np_type = *const fn (actions: *posix_spawn_file_actions_t, filedes: fd_t) c_int;
+const posix_spawn_file_actions_addchdir_np_type = *const fn (actions: *posix_spawn_file_actions_t, path: [*:0]const u8) c_int;
+
+/// When not available, these functions will return 0.
+pub fn posix_spawn_file_actions_addfchdir_np(actions: *posix_spawn_file_actions_t, filedes: std.os.fd_t) c_int {
+    var function = bun.C.dlsym(posix_spawn_file_actions_addfchdir_np_type, "posix_spawn_file_actions_addfchdir_np") orelse
+        return 0;
+    return function(actions, filedes);
+}
+
+/// When not available, these functions will return 0.
+pub fn posix_spawn_file_actions_addchdir_np(actions: *posix_spawn_file_actions_t, path: [*:0]const u8) c_int {
+    var function = bun.C.dlsym(posix_spawn_file_actions_addchdir_np_type, "posix_spawn_file_actions_addchdir_np") orelse
+        return 0;
+    return function(actions, path);
+}
+
+
 
 pub const E = std.os.E;
 pub fn getErrno(rc: anytype) E {

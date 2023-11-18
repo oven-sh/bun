@@ -52,6 +52,14 @@
 #include <fcntl.h>
 #endif
 
+#if defined(__FreeBSD__)
+#include <sys/types.h>
+#include <sys/resource.h>
+#include <sys/user.h>
+#include <sys/sysctl.h>
+#include <libutil.h>
+#endif
+
 #if !defined(_MSC_VER)
 #include <unistd.h> // setuid, getuid
 #endif
@@ -1721,6 +1729,32 @@ static JSValue constructArgv(VM& vm, JSObject* processObject)
     return JSValue::decode(Bun__Process__getArgv(globalObject));
 }
 
+static JSValue constructArch(VM& vm, JSObject* processObject)
+{
+#if CPU(X86_64)
+    return JSC::jsString(vm, makeAtomString("x64"));
+#elif CPU(ARM64)
+    return JSC::jsString(vm, makeAtomString("arm64"));
+#else
+#error "Unknown architecture"
+#endif
+}
+
+static JSValue constructPlatform(VM& vm, JSObject* processObject)
+{
+#if defined(__APPLE__)
+    return JSC::jsString(vm, makeAtomString("darwin"));
+#elif defined(__FreeBSD__)
+    return JSC::jsString(vm, makeAtomString("freebsd"));
+#elif defined(__linux__)
+    return JSC::jsString(vm, makeAtomString("linux"));
+#elif OS(WINDOWS)
+    return JSC::jsString(vm, makeAtomString("win32"));
+#else
+#error "Unknown platform"
+#endif
+}
+
 static JSValue constructBrowser(VM& vm, JSObject* processObject)
 {
     return jsBoolean(false);
@@ -2156,6 +2190,27 @@ int getRSS(size_t* rss)
     }
 
     return -1;
+#elif defined(__FreeBSD__)
+    struct kinfo_proc kinfo;
+    size_t page_size;
+    size_t kinfo_size;
+    int mib[4];
+
+    mib[0] = CTL_KERN;
+    mib[1] = KERN_PROC;
+    mib[2] = KERN_PROC_PID;
+    mib[3] = getpid();
+
+    kinfo_size = sizeof(kinfo);
+
+    if (sysctl(mib, ARRAY_SIZE(mib), &kinfo, &kinfo_size, NULL, 0))
+        return errno;
+
+    page_size = getpagesize();
+
+    *rss = kinfo.ki_rssize * page_size;
+
+    return 0;
 #elif defined(__linux__)
     // Taken from libuv.
     char buf[1024];

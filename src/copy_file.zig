@@ -77,15 +77,19 @@ pub fn canUseCopyFileRangeSyscall() bool {
             return false;
         }
 
-        const kernel = Platform.kernelVersion();
-        if (kernel.orderWithoutTag(.{ .major = 4, .minor = 5 }).compare(.gte)) {
-            bun.Output.debug("copy_file_range is supported", .{});
-            can_use_copy_file_range.store(1, .Monotonic);
+        if (comptime bun.Environment.isLinux) {
+            const kernel = Platform.kernelVersion();
+            if (kernel.orderWithoutTag(.{ .major = 4, .minor = 5 }).compare(.gte)) {
+                bun.Output.debug("copy_file_range is supported", .{});
+                can_use_copy_file_range.store(1, .Monotonic);
+                return true;
+            } else {
+                bun.Output.debug("copy_file_range is NOT supported", .{});
+                can_use_copy_file_range.store(-1, .Monotonic);
+                return false;
+            }
+        } else if (comptime bun.Environment.isFreeBSD) {
             return true;
-        } else {
-            bun.Output.debug("copy_file_range is NOT supported", .{});
-            can_use_copy_file_range.store(-1, .Monotonic);
-            return false;
         }
     }
 

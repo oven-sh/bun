@@ -43,10 +43,62 @@ pub const Iterator = switch (builtin.os.tag) {
         /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
         const next = switch (builtin.os.tag) {
             .macos, .ios => nextDarwin,
+            .freebsd => nextBsd,
             // .freebsd, .netbsd, .dragonfly, .openbsd => nextBsd,
             // .solaris => nextSolaris,
             else => @compileError("unimplemented"),
         };
+
+        fn nextBsd(self: *Self) Result {
+            start_over: while (true) {
+                if (self.index >= self.end_index) {
+                    const rc = os.system.getdirentries(
+                        self.dir.fd,
+                        &self.buf,
+                        self.buf.len,
+                        &self.seek,
+                    );
+
+                    if (rc < 1) {
+                        if (rc == 0) return Result{ .result = null };
+                        if (Result.errnoSys(rc, .getdirentries64)) |err| {
+                            return err;
+                        }
+                    }
+
+                    self.index = 0;
+                    self.end_index = @as(usize, @intCast(rc));
+                }
+                const bsd_entry = @as(*align(1) os.system.dirent, @ptrCast(&self.buf[self.index]));
+                const next_index = self.index + bsd_entry.reclen();
+                self.index = next_index;
+
+                const name = @as([*]u8, @ptrCast(&bsd_entry.d_name))[0..bsd_entry.d_namlen];
+
+                if (strings.eqlComptime(name, ".") or strings.eqlComptime(name, "..") or (bsd_entry.d_fileno == 0)) {
+                    continue :start_over;
+                }
+
+                const entry_kind = switch (bsd_entry.d_type) {
+                    os.DT.BLK => Entry.Kind.block_device,
+                    os.DT.CHR => Entry.Kind.character_device,
+                    os.DT.DIR => Entry.Kind.directory,
+                    os.DT.FIFO => Entry.Kind.named_pipe,
+                    os.DT.LNK => Entry.Kind.sym_link,
+                    os.DT.REG => Entry.Kind.file,
+                    os.DT.SOCK => Entry.Kind.unix_domain_socket,
+                    os.DT.WHT => Entry.Kind.whiteout,
+                    else => Entry.Kind.unknown,
+                };
+                return .{
+                    .result = IteratorResult{
+                        .name = PathString.init(name),
+                        .kind = entry_kind,
+                    },
+                };
+            }
+        }
+
 
         fn nextDarwin(self: *Self) Result {
             start_over: while (true) {

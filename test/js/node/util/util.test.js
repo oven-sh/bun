@@ -36,6 +36,22 @@ const deepStrictEqual = (...args) => {
 
 // Tests adapted from https://github.com/nodejs/node/blob/main/test/parallel/test-util.js
 describe("util", () => {
+  it("callbackify", done => {
+    const fn = util.callbackify(async arg => {
+      await 1;
+      if (arg !== "foo") {
+        throw new Error("bar");
+      }
+
+      return "baz";
+    });
+    fn("foo", (err, ret) => {
+      expect(err).toBeNull();
+      expect(ret).toBe("baz");
+      done();
+    });
+  });
+
   it("toUSVString", () => {
     const strings = [
       // Lone high surrogate

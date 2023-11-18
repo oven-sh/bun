@@ -27,6 +27,7 @@
 // ----------------------------------------------------------------------------
 const EventEmitter = require("node:events");
 const { StringDecoder } = require("node:string_decoder");
+var { kCustomPromisifiedSymbol } = require("internal/symbols");
 var isWritable;
 
 var { inspect } = Bun;
@@ -211,7 +212,6 @@ function stripVTControlCharacters(str) {
 
 // Promisify
 
-var kCustomPromisifiedSymbol = SymbolFor("nodejs.util.promisify.custom");
 var kCustomPromisifyArgsSymbol = Symbol("customPromisifyArgs");
 
 function promisify(original) {

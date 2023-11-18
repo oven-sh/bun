@@ -42,6 +42,7 @@ pub const BunObject = struct {
     pub const which = Bun.which;
     pub const write = JSC.WebCore.Blob.writeFile;
     pub const @"$" = Bun.shell;
+    pub const shellParse = Bun.shellParse;
     // --- Callbacks ---
 
     // --- Getters ---
@@ -153,6 +154,7 @@ pub const BunObject = struct {
         @export(BunObject.which, .{ .name = callbackName("which") });
         @export(BunObject.write, .{ .name = callbackName("write") });
         @export(BunObject.@"$", .{ .name = callbackName("$") });
+        @export(BunObject.shellParse, .{ .name = callbackName("shellParse") });
         // -- Callbacks --
     }
 };
@@ -290,6 +292,74 @@ pub fn getCSSImports() []ZigString {
     return css_imports_list_strings[0..tail];
 }
 
+pub fn shellCmdFromJS(
+    allocator: Allocator,
+    globalThis: *JSC.JSGlobalObject,
+    string_args: JSValue,
+    template_args: []const JSValue,
+) !std.ArrayList(u8) {
+    var script = std.ArrayList(u8).init(allocator);
+    var string_iter = string_args.arrayIterator(globalThis);
+    var i: u32 = 0;
+    const last = string_iter.len -| 1;
+    while (string_iter.next()) |js_value| {
+        const str = js_value.getZigString(globalThis);
+        try script.appendSlice(str.full());
+        if (i < last) {
+            const template_value = template_args[i];
+            const template_value_str = template_value.getZigString(globalThis);
+            try script.appendSlice(template_value_str.full());
+        }
+        i += 1;
+    }
+    return script;
+}
+
+pub fn shellParse(
+    globalThis: *JSC.JSGlobalObject,
+    callframe: *JSC.CallFrame,
+) callconv(.C) JSC.JSValue {
+    const arguments_ = callframe.arguments(1);
+    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    const string_args = arguments.nextEat() orelse {
+        globalThis.throw("shell_parse: expected 2 arguments, got 0", .{});
+        return JSC.JSValue.jsUndefined();
+    };
+
+    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+    defer arena.deinit();
+
+    const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
+    var script = shellCmdFromJS(arena.allocator(), globalThis, string_args, template_args) catch {
+        globalThis.throwOutOfMemory();
+        return JSValue.undefined;
+    };
+
+    var lexer = Shell.Lexer.new(arena.allocator(), script.items[0..]);
+    lexer.lex() catch |err| {
+        globalThis.throwError(err, "failed to lex shell");
+        return JSValue.undefined;
+    };
+    var parser = Shell.Parser.new(arena.allocator(), &lexer) catch |err| {
+        globalThis.throwError(err, "failed to create shell parser");
+        return JSValue.undefined;
+    };
+
+    const script_ast = parser.parse() catch |err| {
+        globalThis.throwError(err, "failed to parse shell");
+        return JSValue.undefined;
+    };
+
+    const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, script_ast, .{}) catch {
+        globalThis.throwOutOfMemory();
+        return JSValue.undefined;
+    };
+
+    defer globalThis.bunVM().allocator.free(str);
+    var bun_str = bun.String.fromBytes(str);
+    return bun_str.toJS(globalThis);
+}
+
 pub fn shell(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
@@ -304,24 +374,11 @@ pub fn shell(
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
 
-    var template_args = callframe.argumentsPtr()[0..callframe.argumentsCount()];
-    var script = std.ArrayList(u8).init(arena.allocator());
-    var string_iter = string_args.arrayIterator(globalThis);
-    var i: u32 = 0;
-    while (string_iter.next()) |js_value| {
-        const str = js_value.getZigString(globalThis);
-        script.appendSlice(str.full()) catch {
-            globalThis.throwOutOfMemory();
-            return JSValue.undefined;
-        };
-        const template_value = template_args[i];
-        const template_value_str = template_value.getZigString(globalThis);
-        script.appendSlice(template_value_str.full()) catch {
-            globalThis.throwOutOfMemory();
-            return JSValue.undefined;
-        };
-        i += 1;
-    }
+    const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
+    var script = shellCmdFromJS(arena.allocator(), globalThis, string_args, template_args) catch {
+        globalThis.throwOutOfMemory();
+        return JSValue.undefined;
+    };
 
     var interpreter = Shell.Interpreter.new(arena.allocator());
     interpreter.interpret(script.items[0..]) catch |err| {

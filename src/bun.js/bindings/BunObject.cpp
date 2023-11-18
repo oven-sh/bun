@@ -644,7 +644,6 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback
     which                                          BunObject_callback_which                                            DontDelete|Function 1
     write                                          BunObject_callback_write                                            DontDelete|Function 1
-    $                                              BunObject_callback_$                                                DontDelete|Function 1
 @end
 */
 
@@ -684,6 +683,13 @@ public:
         auto structure = createStructure(vm, globalObject, globalObject->objectPrototype());
         auto* object = new (NotNull, JSC::allocateCell<JSBunObject>(vm)) JSBunObject(vm, structure);
         object->finishCreation(vm);
+        auto mainShellFunc = JSFunction::create(vm, globalObject, 2, String("$"_s), BunObject_callback_$, ImplementationVisibility::Public);
+#ifdef BUN_DEBUG
+        auto identifier = Identifier::fromString(vm, String("parse"_s));
+        auto parseFunc = JSFunction::create(vm, globalObject, 2, String("shellParse"_s), BunObject_callback_shellParse, ImplementationVisibility::Private);
+        mainShellFunc->putDirect(vm, identifier, parseFunc);
+#endif
+        object->putDirect(vm, Identifier::fromString(vm, String("$"_s)), mainShellFunc);
         return object;
     }
 };

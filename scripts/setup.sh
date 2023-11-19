@@ -61,7 +61,7 @@ bash ./update-submodules.sh
 if [ "$(uname -s)" = "FreeBSD" ]; then
     PATCHES="$(pwd)/../patches"
     pushd ../src/deps/mimalloc/
-    patch < "$PATCHES/mimalloc-freebsd.patch"
+    patch < "$PATCHES/mimalloc-freebsd.patch" || true
     popd
     pwd
 fi

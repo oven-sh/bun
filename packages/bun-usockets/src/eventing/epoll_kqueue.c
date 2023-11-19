@@ -275,6 +275,15 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop, struct 
     * current poll being us AND we only poll for one thing */
 
     for (int i = loop->current_ready_poll; i < loop->num_ready_polls && num_entries_possibly_remaining; i++) {
+#if defined(__FreeBSD__)
+        if ((struct us_poll_t *) loop->ready_polls[i].udata == old_poll) {
+
+            // if new events does not contain the ready events of this poll then remove (no we filter that out later on)
+            loop->ready_polls[i].udata = new_poll;
+
+            num_entries_possibly_remaining--;
+        }
+#else
         if (GET_READY_POLL(loop, i) == old_poll) {
 
             // if new events does not contain the ready events of this poll then remove (no we filter that out later on)
@@ -282,6 +291,7 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop, struct 
 
             num_entries_possibly_remaining--;
         }
+#endif
     }
 }
 
@@ -300,7 +310,7 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
     /* Do they differ in readable? */
     if ((new_events & LIBUS_SOCKET_READABLE) != (old_events & LIBUS_SOCKET_READABLE)) {
 #if defined (__FreeBSD__)
-        EV_SET(&change_list[change_length++], fd, EVFILT_READ, (new_events & LIBUS_SOCKET_READABLE) ? EV_ADD : EV_DELETE, 0, 0, (uint64_t)(void*)user_data);
+        EV_SET(&change_list[change_length++], fd, EVFILT_READ, (new_events & LIBUS_SOCKET_READABLE) ? EV_ADD : EV_DELETE, 0, 0, user_data);
 #else
         EV_SET64(&change_list[change_length++], fd, EVFILT_READ, (new_events & LIBUS_SOCKET_READABLE) ? EV_ADD : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
 #endif
@@ -309,7 +319,7 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
     /* Do they differ in writable? */
     if ((new_events & LIBUS_SOCKET_WRITABLE) != (old_events & LIBUS_SOCKET_WRITABLE)) {
 #if defined (__FreeBSD__)
-        EV_SET(&change_list[change_length++], fd, EVFILT_WRITE, (new_events & LIBUS_SOCKET_WRITABLE) ? EV_ADD : EV_DELETE, 0, 0, (uint64_t)(void*)user_data);
+        EV_SET(&change_list[change_length++], fd, EVFILT_WRITE, (new_events & LIBUS_SOCKET_WRITABLE) ? EV_ADD : EV_DELETE, 0, 0, user_data);
 #else
         EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, (new_events & LIBUS_SOCKET_WRITABLE) ? EV_ADD : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
 #endif
@@ -477,7 +487,7 @@ void us_timer_close(struct us_timer_t *timer, int fallthrough) {
     struct us_internal_callback_t *internal_cb = (struct us_internal_callback_t *) timer;
 #if defined(__FreeBSD__)
     struct kevent event;
-    EV_SET(&event, (uint64_t) (void*) internal_cb, EVFILT_TIMER, EV_DELETE, 0, 0, (uint64_t)internal_cb);
+    EV_SET(&event, (uint64_t) (void*) internal_cb, EVFILT_TIMER, EV_DELETE, 0, 0, internal_cb);
     kevent(internal_cb->loop->fd, &event, 1, NULL, 0, NULL);
 #else
     struct kevent64_s event;
@@ -502,7 +512,7 @@ void us_timer_set(struct us_timer_t *t, void (*cb)(struct us_timer_t *t), int ms
 #if defined(__FreeBSD__)
     struct kevent event;
     uint64_t ptr = (uint64_t)(void*)internal_cb;
-    EV_SET(&event, ptr, EVFILT_TIMER, EV_ADD | (repeat_ms ? 0 : EV_ONESHOT), 0, ms, (uint64_t)internal_cb);
+    EV_SET(&event, ptr, EVFILT_TIMER, EV_ADD | (repeat_ms ? 0 : EV_ONESHOT), 0, ms, internal_cb);
     kevent(internal_cb->loop->fd, &event, 1, NULL, 0, NULL);
 #else
     struct kevent64_s event;
@@ -630,7 +640,7 @@ void us_internal_async_set(struct us_internal_async *a, void (*cb)(struct us_int
     event.ext[0] = (uint64_t)(void*)internal_cb->machport_buf;
     event.ext[1] = MACHPORT_BUF_LEN;
 #endif
-    event.udata = (uint64_t)(void*)internal_cb;
+    event.udata = internal_cb;
 
 #if defined(__FreeBSD__)
     int ret = kevent(internal_cb->loop->fd, &event, 1, NULL, 0, NULL);

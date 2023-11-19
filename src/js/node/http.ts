@@ -696,7 +696,6 @@ var typeSymbol = Symbol("type");
 var reqSymbol = Symbol("req");
 var pendingChunksSymbol = Symbol("pendingChunks");
 var bodyReaderSymbol = Symbol("bodyReader");
-var bodyStreamSymbol = Symbol("bodyStream");
 var noBodySymbol = Symbol("noBody");
 var abortedSymbol = Symbol("aborted");
 function IncomingMessage(req, defaultIncomingOpts) {
@@ -735,7 +734,6 @@ function IncomingMessage(req, defaultIncomingOpts) {
 
   this[pendingChunksSymbol] = [];
   this[bodyReaderSymbol] = undefined;
-  this[bodyStreamSymbol] = this[noBodySymbol] ? undefined : this[reqSymbol].body!;
   this.complete = !!this[noBodySymbol];
 }
 
@@ -859,11 +857,10 @@ function handleDone(self) {
 function abort(self) {
   if (self[abortedSymbol]) return;
   self[abortedSymbol] = true;
-  var bodyStream = self[bodyStreamSymbol];
-  if (!bodyStream) return;
-  bodyStream.cancel();
+  var bodyReader = self[bodyReaderSymbol];
+  if (!bodyReader) return;
+  bodyReader.cancel();
   self.complete = true;
-  self[bodyStreamSymbol] = undefined;
   self[bodyReaderSymbol] = undefined;
   self.push(null);
 }

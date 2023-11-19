@@ -1140,52 +1140,74 @@ pub const Subprocess = struct {
         return spawnMaybeSync(globalThis, args, secondaryArgsValue, true);
     }
 
-    pub fn spawnMaybeSync(
-        globalThis: *JSC.JSGlobalObject,
-        args_: JSValue,
-        secondaryArgsValue: ?JSValue,
-        comptime is_sync: bool,
-    ) JSValue {
-        if (comptime Environment.isWindows) {
-            globalThis.throwTODO("spawn() is not yet implemented on Windows");
-            return .zero;
-        }
-        var arena = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
-        defer arena.deinit();
-        var allocator = arena.allocator();
+    const SpawnArgs = struct {
+        arena: *bun.ArenaAllocator,
 
-        var env: [*:null]?[*:0]const u8 = undefined;
-
-        var override_env = false;
-        var env_array = std.ArrayListUnmanaged(?[*:0]const u8){
+        override_env: bool = false,
+        env_array: std.ArrayListUnmanaged(?[*:0]const u8) = .{
             .items = &.{},
             .capacity = 0,
-        };
-        var jsc_vm = globalThis.bunVM();
-
-        var cwd = jsc_vm.bundler.fs.top_level_dir;
-
-        var stdio = [3]Stdio{
+        },
+        cwd: []const u8,
+        stdio: [3]Stdio = .{
             .{ .ignore = {} },
             .{ .pipe = null },
             .{ .inherit = {} },
-        };
+        },
+        lazy: bool = false,
+        on_exit_callback: JSValue,
+        PATH: []const u8,
+        argv: std.ArrayListUnmanaged(?[*:0]const u8),
+        cmd_value: JSValue,
+        detached: bool,
+        ipc_mode: IPCMode,
+        ipc_callback: JSValue,
 
-        if (comptime is_sync) {
-            stdio[1] = .{ .pipe = null };
-            stdio[2] = .{ .pipe = null };
+        fn default(arena: *bun.ArenaAllocator, jsc_vm: *JSC.VirtualMachine, comptime is_sync: bool) SpawnArgs {
+            var out: SpawnArgs = .{
+                .arena = arena,
+
+                .override_env = false,
+                .env_array = .{
+                    .items = &.{},
+                    .capacity = 0,
+                },
+                .cwd = jsc_vm.bundler.fs.top_level_dir,
+                .stdio = .{
+                    .{ .ignore = {} },
+                    .{ .pipe = null },
+                    .{ .inherit = {} },
+                },
+                .lazy = false,
+                .on_exit_callback = .zero,
+                .PATH = jsc_vm.bundler.env.get("PATH") orelse "",
+                .argv = undefined,
+                .cmd_value = .zero,
+                .detached = false,
+                .ipc_mode = IPCMode.none,
+                .ipc_callback = .zero,
+            };
+
+            if (comptime is_sync) {
+                out.stdio[1] = .{ .pipe = null };
+                out.stdio[2] = .{ .pipe = null };
+            }
+            return out;
         }
-        var lazy = false;
-        var on_exit_callback = JSValue.zero;
-        var PATH = jsc_vm.bundler.env.get("PATH") orelse "";
-        var argv: std.ArrayListUnmanaged(?[*:0]const u8) = undefined;
-        var cmd_value = JSValue.zero;
-        var detached = false;
-        var args = args_;
-        var ipc_mode = IPCMode.none;
-        var ipc_callback: JSValue = .zero;
 
-        {
+        fn fromJS(
+            out: *SpawnArgs,
+            globalThis: *JSGlobalObject,
+            arena: *bun.ArenaAllocator,
+            jsc_vm: *JSC.VirtualMachine,
+            args_: JSValue,
+            secondaryArgsValue: ?JSValue,
+            comptime is_sync: bool,
+        ) ?JSValue {
+            _ = jsc_vm;
+            var allocator = arena.allocator();
+
+            var args = args_;
             if (args.isEmptyOrUndefinedOrNull()) {
                 globalThis.throwInvalidArguments("cmd must be an array", .{});
                 return .zero;
@@ -1193,26 +1215,26 @@ pub const Subprocess = struct {
 
             const args_type = args.jsType();
             if (args_type.isArray()) {
-                cmd_value = args;
+                out.cmd_value = args;
                 args = secondaryArgsValue orelse JSValue.zero;
             } else if (!args.isObject()) {
                 globalThis.throwInvalidArguments("cmd must be an array", .{});
                 return .zero;
             } else if (args.get(globalThis, "cmd")) |cmd_value_| {
-                cmd_value = cmd_value_;
+                out.cmd_value = cmd_value_;
             } else {
                 globalThis.throwInvalidArguments("cmd must be an array", .{});
                 return .zero;
             }
 
             {
-                var cmds_array = cmd_value.arrayIterator(globalThis);
-                argv = @TypeOf(argv).initCapacity(allocator, cmds_array.len) catch {
+                var cmds_array = out.cmd_value.arrayIterator(globalThis);
+                out.argv = @TypeOf(out.argv).initCapacity(allocator, cmds_array.len) catch {
                     globalThis.throw("out of memory", .{});
                     return .zero;
                 };
 
-                if (cmd_value.isEmptyOrUndefinedOrNull()) {
+                if (out.cmd_value.isEmptyOrUndefinedOrNull()) {
                     globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
                     return .zero;
                 }
@@ -1227,11 +1249,11 @@ pub const Subprocess = struct {
                     var arg0 = first_cmd.toSlice(globalThis, allocator);
                     defer arg0.deinit();
                     var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                    var resolved = Which.which(&path_buf, PATH, cwd, arg0.slice()) orelse {
+                    var resolved = Which.which(&path_buf, out.PATH, out.cwd, arg0.slice()) orelse {
                         globalThis.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{arg0.slice()});
                         return .zero;
                     };
-                    argv.appendAssumeCapacity(allocator.dupeZ(u8, bun.span(resolved)) catch {
+                    out.argv.appendAssumeCapacity(allocator.dupeZ(u8, bun.span(resolved)) catch {
                         globalThis.throw("out of memory", .{});
                         return .zero;
                     });
@@ -1245,13 +1267,13 @@ pub const Subprocess = struct {
                         continue;
                     }
 
-                    argv.appendAssumeCapacity(arg.toOwnedSliceZ(allocator) catch {
+                    out.argv.appendAssumeCapacity(arg.toOwnedSliceZ(allocator) catch {
                         globalThis.throw("out of memory", .{});
                         return .zero;
                     });
                 }
 
-                if (argv.items.len == 0) {
+                if (out.argv.items.len == 0) {
                     globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
                     return .zero;
                 }
@@ -1263,7 +1285,7 @@ pub const Subprocess = struct {
                     if (!cwd_.isEmptyOrUndefinedOrNull()) {
                         const cwd_str = cwd_.getZigString(globalThis);
                         if (cwd_str.len > 0) {
-                            cwd = cwd_str.toOwnedSliceZ(allocator) catch {
+                            out.cwd = cwd_str.toOwnedSliceZ(allocator) catch {
                                 globalThis.throw("out of memory", .{});
                                 return .zero;
                             };
@@ -1278,7 +1300,7 @@ pub const Subprocess = struct {
                             return .zero;
                         }
 
-                        on_exit_callback = if (comptime is_sync)
+                        out.on_exit_callback = if (comptime is_sync)
                             onExit_
                         else
                             onExit_.withAsyncContextIfNeeded(globalThis);
@@ -1292,19 +1314,19 @@ pub const Subprocess = struct {
                             return .zero;
                         }
 
-                        override_env = true;
+                        out.override_env = true;
                         var object_iter = JSC.JSPropertyIterator(.{
                             .skip_empty_name = false,
                             .include_value = true,
                         }).init(globalThis, object.asObjectRef());
                         defer object_iter.deinit();
-                        env_array.ensureTotalCapacityPrecise(allocator, object_iter.len) catch {
+                        out.env_array.ensureTotalCapacityPrecise(allocator, object_iter.len) catch {
                             globalThis.throw("out of memory", .{});
                             return .zero;
                         };
 
                         // If the env object does not include a $PATH, it must disable path lookup for argv[0]
-                        PATH = "";
+                        out.PATH = "";
 
                         while (object_iter.next()) |key| {
                             var value = object_iter.value;
@@ -1316,10 +1338,10 @@ pub const Subprocess = struct {
                             };
 
                             if (key.eqlComptime("PATH")) {
-                                PATH = bun.asByteSlice(line["PATH=".len..]);
+                                out.PATH = bun.asByteSlice(line["PATH=".len..]);
                             }
 
-                            env_array.append(allocator, line) catch {
+                            out.env_array.append(allocator, line) catch {
                                 globalThis.throw("out of memory", .{});
                                 return .zero;
                             };
@@ -1334,7 +1356,7 @@ pub const Subprocess = struct {
                             stdio_iter.len = @min(stdio_iter.len, 4);
                             var i: u32 = 0;
                             while (stdio_iter.next()) |value| : (i += 1) {
-                                if (!extractStdio(globalThis, i, value, &stdio))
+                                if (!extractStdio(globalThis, i, value, &out.stdio))
                                     return JSC.JSValue.jsUndefined();
                             }
                         } else {
@@ -1344,17 +1366,17 @@ pub const Subprocess = struct {
                     }
                 } else {
                     if (args.get(globalThis, "stdin")) |value| {
-                        if (!extractStdio(globalThis, bun.STDIN_FD, value, &stdio))
+                        if (!extractStdio(globalThis, bun.STDIN_FD, value, &out.stdio))
                             return .zero;
                     }
 
                     if (args.get(globalThis, "stderr")) |value| {
-                        if (!extractStdio(globalThis, bun.STDERR_FD, value, &stdio))
+                        if (!extractStdio(globalThis, bun.STDERR_FD, value, &out.stdio))
                             return .zero;
                     }
 
                     if (args.get(globalThis, "stdout")) |value| {
-                        if (!extractStdio(globalThis, bun.STDOUT_FD, value, &stdio))
+                        if (!extractStdio(globalThis, bun.STDOUT_FD, value, &out.stdio))
                             return .zero;
                     }
                 }
@@ -1362,14 +1384,14 @@ pub const Subprocess = struct {
                 if (comptime !is_sync) {
                     if (args.get(globalThis, "lazy")) |lazy_val| {
                         if (lazy_val.isBoolean()) {
-                            lazy = lazy_val.toBoolean();
+                            out.lazy = lazy_val.toBoolean();
                         }
                     }
                 }
 
                 if (args.get(globalThis, "detached")) |detached_val| {
                     if (detached_val.isBoolean()) {
-                        detached = detached_val.toBoolean();
+                        out.detached = detached_val.toBoolean();
                     }
                 }
 
@@ -1377,16 +1399,32 @@ pub const Subprocess = struct {
                     if (val.isCell() and val.isCallable(globalThis.vm())) {
                         // In the future, we should add a way to use a different IPC serialization format, specifically `json`.
                         // but the only use case this has is doing interop with node.js IPC and other programs.
-                        ipc_mode = .bun;
-                        ipc_callback = val.withAsyncContextIfNeeded(globalThis);
+                        out.ipc_mode = .bun;
+                        out.ipc_callback = val.withAsyncContextIfNeeded(globalThis);
                     }
                 }
             }
+
+            return null;
         }
+    };
+
+    pub fn spawnMaybeSyncImpl(
+        globalThis: *JSC.JSGlobalObject,
+        comptime is_sync: bool,
+        allocator: Allocator,
+        out_pidfd: *?std.os.fd_t,
+        out_pid: *?i32,
+        out_err: *?JSValue,
+        spawn_args: *SpawnArgs,
+    ) ?*Subprocess {
+        var env: [*:null]?[*:0]const u8 = undefined;
+        var jsc_vm = globalThis.bunVM();
+        out_err.* = null;
 
         var attr = PosixSpawn.Attr.init() catch {
             globalThis.throw("out of memory", .{});
-            return .zero;
+            return null;
         };
 
         var flags: i32 = bun.C.POSIX_SPAWN_SETSIGDEF | bun.C.POSIX_SPAWN_SETSIGMASK;
@@ -1395,68 +1433,92 @@ pub const Subprocess = struct {
             flags |= bun.C.POSIX_SPAWN_CLOEXEC_DEFAULT;
         }
 
-        if (detached) {
+        if (spawn_args.detached) {
             flags |= bun.C.POSIX_SPAWN_SETSID;
         }
 
         defer attr.deinit();
-        var actions = PosixSpawn.Actions.init() catch |err| return globalThis.handleError(err, "in posix_spawn");
+        var actions = PosixSpawn.Actions.init() catch |err| {
+            out_err.* = globalThis.handleError(err, "in posix_spawn");
+            return null;
+        };
         if (comptime Environment.isMac) {
-            attr.set(@intCast(flags)) catch |err| return globalThis.handleError(err, "in posix_spawn");
+            attr.set(@intCast(flags)) catch |err| {
+                out_err.* = globalThis.handleError(err, "in posix_spawn");
+                return null;
+            };
         } else if (comptime Environment.isLinux) {
-            attr.set(@intCast(flags)) catch |err| return globalThis.handleError(err, "in posix_spawn");
+            attr.set(@intCast(flags)) catch |err| {
+                out_err.* = globalThis.handleError(err, "in posix_spawn");
+                return null;
+            };
         }
 
         attr.resetSignals() catch {
             globalThis.throw("Failed to reset signals in posix_spawn", .{});
-            return .zero;
+            return null;
         };
 
         defer actions.deinit();
 
-        if (!override_env and env_array.items.len == 0) {
-            env_array.items = jsc_vm.bundler.env.map.createNullDelimitedEnvMap(allocator) catch |err| return globalThis.handleError(err, "in posix_spawn");
-            env_array.capacity = env_array.items.len;
+        if (!spawn_args.override_env and spawn_args.env_array.items.len == 0) {
+            spawn_args.env_array.items = jsc_vm.bundler.env.map.createNullDelimitedEnvMap(allocator) catch |err| {
+                out_err.* = globalThis.handleError(err, "in posix_spawn");
+                return null;
+            };
+            spawn_args.env_array.capacity = spawn_args.env_array.items.len;
         }
 
-        const stdin_pipe = if (stdio[0].isPiped()) os.pipe2(0) catch |err| {
+        const stdin_pipe = if (spawn_args.stdio[0].isPiped()) os.pipe2(0) catch |err| {
             globalThis.throw("failed to create stdin pipe: {s}", .{@errorName(err)});
-            return .zero;
+            return null;
         } else undefined;
 
-        const stdout_pipe = if (stdio[1].isPiped()) os.pipe2(0) catch |err| {
+        const stdout_pipe = if (spawn_args.stdio[1].isPiped()) os.pipe2(0) catch |err| {
             globalThis.throw("failed to create stdout pipe: {s}", .{@errorName(err)});
-            return .zero;
+            return null;
         } else undefined;
 
-        const stderr_pipe = if (stdio[2].isPiped()) os.pipe2(0) catch |err| {
+        const stderr_pipe = if (spawn_args.stdio[2].isPiped()) os.pipe2(0) catch |err| {
             globalThis.throw("failed to create stderr pipe: {s}", .{@errorName(err)});
-            return .zero;
+            return null;
         } else undefined;
 
-        stdio[0].setUpChildIoPosixSpawn(
+        spawn_args.stdio[0].setUpChildIoPosixSpawn(
             &actions,
             stdin_pipe,
             bun.STDIN_FD,
-        ) catch |err| return globalThis.handleError(err, "in configuring child stdin");
+        ) catch |err| {
+            out_err.* = globalThis.handleError(err, "in configuring child stdin");
+            return null;
+        };
 
-        stdio[1].setUpChildIoPosixSpawn(
+        spawn_args.stdio[1].setUpChildIoPosixSpawn(
             &actions,
             stdout_pipe,
             bun.STDOUT_FD,
-        ) catch |err| return globalThis.handleError(err, "in configuring child stdout");
+        ) catch |err| {
+            out_err.* = globalThis.handleError(err, "in configuring child stdout");
+            return null;
+        };
 
-        stdio[2].setUpChildIoPosixSpawn(
+        spawn_args.stdio[2].setUpChildIoPosixSpawn(
             &actions,
             stderr_pipe,
             bun.STDERR_FD,
-        ) catch |err| return globalThis.handleError(err, "in configuring child stderr");
+        ) catch |err| {
+            out_err.* = globalThis.handleError(err, "in configuring child stderr");
+            return null;
+        };
 
-        actions.chdir(cwd) catch |err| return globalThis.handleError(err, "in chdir()");
+        actions.chdir(spawn_args.cwd) catch |err| {
+            out_err.* = globalThis.handleError(err, "in chdir()");
+            return null;
+        };
 
-        argv.append(allocator, null) catch {
+        spawn_args.argv.append(allocator, null) catch {
             globalThis.throw("out of memory", .{});
-            return .zero;
+            return null;
         };
 
         // IPC is currently implemented in a very limited way.
@@ -1472,14 +1534,17 @@ pub const Subprocess = struct {
         //
         // When Bun.spawn() is given a `.onMessage` callback, it enables IPC as follows:
         var socket: IPC.Socket = undefined;
-        if (ipc_mode != .none) {
+        if (spawn_args.ipc_mode != .none) {
             if (comptime is_sync) {
                 globalThis.throwInvalidArguments("IPC is not supported in Bun.spawnSync", .{});
-                return .zero;
+                return null;
             }
 
-            env_array.ensureUnusedCapacity(allocator, 2) catch |err| return globalThis.handleError(err, "in posix_spawn");
-            env_array.appendAssumeCapacity("BUN_INTERNAL_IPC_FD=3");
+            spawn_args.env_array.ensureUnusedCapacity(allocator, 2) catch |err| {
+                out_err.* = globalThis.handleError(err, "in posix_spawn");
+                return null;
+            };
+            spawn_args.env_array.appendAssumeCapacity("BUN_INTERNAL_IPC_FD=3");
 
             var fds: [2]uws.LIBUS_SOCKET_DESCRIPTOR = undefined;
             socket = uws.newSocketFromPair(
@@ -1490,40 +1555,44 @@ pub const Subprocess = struct {
                 globalThis.throw("failed to create socket pair: E{s}", .{
                     @tagName(bun.sys.getErrno(-1)),
                 });
-                return .zero;
+                return null;
             };
-            actions.dup2(fds[1], 3) catch |err| return globalThis.handleError(err, "in posix_spawn");
+            actions.dup2(fds[1], 3) catch |err| {
+                out_err.* = globalThis.handleError(err, "in posix_spawn");
+                return null;
+            };
         }
 
-        env_array.append(allocator, null) catch {
+        spawn_args.env_array.append(allocator, null) catch {
             globalThis.throw("out of memory", .{});
-            return .zero;
+            return null;
         };
-        env = @as(@TypeOf(env), @ptrCast(env_array.items.ptr));
+        env = @as(@TypeOf(env), @ptrCast(spawn_args.env_array.items.ptr));
 
         const pid = brk: {
             defer {
-                if (stdio[0].isPiped()) {
+                if (spawn_args.stdio[0].isPiped()) {
                     _ = bun.sys.close(stdin_pipe[0]);
                 }
 
-                if (stdio[1].isPiped()) {
+                if (spawn_args.stdio[1].isPiped()) {
                     _ = bun.sys.close(stdout_pipe[1]);
                 }
 
-                if (stdio[2].isPiped()) {
+                if (spawn_args.stdio[2].isPiped()) {
                     _ = bun.sys.close(stderr_pipe[1]);
                 }
             }
 
-            break :brk switch (PosixSpawn.spawnZ(argv.items[0].?, actions, attr, @as([*:null]?[*:0]const u8, @ptrCast(argv.items[0..].ptr)), env)) {
+            break :brk switch (PosixSpawn.spawnZ(spawn_args.argv.items[0].?, actions, attr, @as([*:null]?[*:0]const u8, @ptrCast(spawn_args.argv.items[0..].ptr)), env)) {
                 .err => |err| {
                     globalThis.throwValue(err.toJSC(globalThis));
-                    return .zero;
+                    return null;
                 },
                 .result => |pid_| pid_,
             };
         };
+        out_pid.* = pid;
 
         const pidfd: std.os.fd_t = brk: {
             if (!Environment.isLinux or WaiterThread.shouldUseWaiterThread()) {
@@ -1577,38 +1646,40 @@ pub const Subprocess = struct {
                         var status: u32 = 0;
                         // ensure we don't leak the child process on error
                         _ = std.os.linux.waitpid(pid, &status, 0);
-                        return .zero;
+                        return null;
                     },
                 }
             }
         };
 
+        out_pidfd.* = pidfd;
+
         var subprocess = globalThis.allocator().create(Subprocess) catch {
             globalThis.throw("out of memory", .{});
-            return .zero;
+            return null;
         };
         // When run synchronously, subprocess isn't garbage collected
         subprocess.* = Subprocess{
             .globalThis = globalThis,
             .pid = pid,
             .pidfd = if (WaiterThread.shouldUseWaiterThread()) @truncate(bun.invalid_fd) else @truncate(pidfd),
-            .stdin = Writable.init(stdio[bun.STDIN_FD], stdin_pipe[1], globalThis) catch {
+            .stdin = Writable.init(spawn_args.stdio[bun.STDIN_FD], stdin_pipe[1], globalThis) catch {
                 globalThis.throw("out of memory", .{});
-                return .zero;
+                return null;
             },
             // stdout and stderr only uses allocator and default_max_buffer_size if they are pipes and not a array buffer
-            .stdout = Readable.init(stdio[bun.STDOUT_FD], stdout_pipe[0], jsc_vm.allocator, default_max_buffer_size),
-            .stderr = Readable.init(stdio[bun.STDERR_FD], stderr_pipe[0], jsc_vm.allocator, default_max_buffer_size),
-            .on_exit_callback = if (on_exit_callback != .zero) JSC.Strong.create(on_exit_callback, globalThis) else .{},
-            .ipc_mode = ipc_mode,
+            .stdout = Readable.init(spawn_args.stdio[bun.STDOUT_FD], stdout_pipe[0], jsc_vm.allocator, default_max_buffer_size),
+            .stderr = Readable.init(spawn_args.stdio[bun.STDERR_FD], stderr_pipe[0], jsc_vm.allocator, default_max_buffer_size),
+            .on_exit_callback = if (spawn_args.on_exit_callback != .zero) JSC.Strong.create(spawn_args.on_exit_callback, globalThis) else .{},
+            .ipc_mode = spawn_args.ipc_mode,
             // will be assigned in the block below
             .ipc = .{ .socket = socket },
-            .ipc_callback = if (ipc_callback != .zero) JSC.Strong.create(ipc_callback, globalThis) else undefined,
+            .ipc_callback = if (spawn_args.ipc_callback != .zero) JSC.Strong.create(spawn_args.ipc_callback, globalThis) else undefined,
             .flags = .{
                 .is_sync = is_sync,
             },
         };
-        if (ipc_mode != .none) {
+        if (spawn_args.ipc_mode != .none) {
             var ptr = socket.ext(*Subprocess);
             ptr.?.* = subprocess;
             subprocess.ipc.writeVersionPacket();
@@ -1618,6 +1689,47 @@ pub const Subprocess = struct {
             subprocess.stdin.pipe.signal = JSC.WebCore.Signal.init(&subprocess.stdin);
         }
 
+        return subprocess;
+    }
+
+    pub fn spawnMaybeSync(
+        globalThis: *JSC.JSGlobalObject,
+        args_: JSValue,
+        secondaryArgsValue: ?JSValue,
+        comptime is_sync: bool,
+    ) JSValue {
+        if (comptime Environment.isWindows) {
+            globalThis.throwTODO("spawn() is not yet implemented on Windows");
+            return .zero;
+        }
+        var arena = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
+        defer arena.deinit();
+        var jsc_vm = globalThis.bunVM();
+        var spawn_args = SpawnArgs.default(&arena, jsc_vm, is_sync);
+        if (spawn_args.fromJS(globalThis, &arena, jsc_vm, args_, secondaryArgsValue, is_sync)) |err| {
+            return err;
+        }
+
+        var out_err: ?JSValue = null;
+        var pidfd: ?std.os.fd_t = null;
+        var pid: ?i32 = null;
+        // FIXME some of the parameters don't need to be references since the function will take ownership
+        var subprocess = Subprocess.spawnMaybeSyncImpl(
+            globalThis,
+            is_sync,
+            arena.allocator(),
+            &pidfd,
+            &pid,
+            &out_err,
+            &spawn_args,
+        ) orelse
+            {
+            if (out_err) |err| {
+                globalThis.throwValue(err);
+            }
+            return .zero;
+        };
+
         const out = if (comptime !is_sync)
             subprocess.toJS(globalThis)
         else
@@ -1625,7 +1737,17 @@ pub const Subprocess = struct {
         subprocess.this_jsvalue = out;
 
         var send_exit_notification = false;
-        const watchfd = if (comptime Environment.isLinux) pidfd else pid;
+        const watchfd = if (comptime Environment.isLinux) brk: {
+            break :brk pidfd orelse {
+                globalThis.throw("Something went wrong!", .{});
+                return .zero;
+            };
+        } else brk: {
+            break :brk pid orelse {
+                globalThis.throw("Something went wrong!", .{});
+                return .zero;
+            };
+        };
 
         if (comptime !is_sync) {
             if (!WaiterThread.shouldUseWaiterThread()) {
@@ -1645,7 +1767,7 @@ pub const Subprocess = struct {
                         }
 
                         send_exit_notification = true;
-                        lazy = false;
+                        spawn_args.lazy = false;
                     },
                 }
             } else {
@@ -1672,7 +1794,7 @@ pub const Subprocess = struct {
         if (subprocess.stdout == .pipe and subprocess.stdout.pipe == .buffer) {
             if (comptime is_sync) {
                 subprocess.stdout.pipe.buffer.readAll();
-            } else if (!lazy) {
+            } else if (!spawn_args.lazy) {
                 subprocess.stdout.pipe.buffer.readAll();
             }
         }
@@ -1680,7 +1802,7 @@ pub const Subprocess = struct {
         if (subprocess.stderr == .pipe and subprocess.stderr.pipe == .buffer) {
             if (comptime is_sync) {
                 subprocess.stderr.pipe.buffer.readAll();
-            } else if (!lazy) {
+            } else if (!spawn_args.lazy) {
                 subprocess.stderr.pipe.buffer.readAll();
             }
         }

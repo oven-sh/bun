@@ -122,6 +122,8 @@ static JSValue constructPlatform(VM& vm, JSObject* processObject)
 {
 #if defined(__APPLE__)
     return JSC::jsString(vm, makeAtomString("darwin"));
+#elif defined(__FreeBSD__)
+    return JSC::jsString(vm, makeAtomString("linux"));
 #elif defined(__linux__)
     return JSC::jsString(vm, makeAtomString("linux"));
 #elif OS(WINDOWS)
@@ -1727,32 +1729,6 @@ static JSValue constructArgv(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
     return JSValue::decode(Bun__Process__getArgv(globalObject));
-}
-
-static JSValue constructArch(VM& vm, JSObject* processObject)
-{
-#if CPU(X86_64)
-    return JSC::jsString(vm, makeAtomString("x64"));
-#elif CPU(ARM64)
-    return JSC::jsString(vm, makeAtomString("arm64"));
-#else
-#error "Unknown architecture"
-#endif
-}
-
-static JSValue constructPlatform(VM& vm, JSObject* processObject)
-{
-#if defined(__APPLE__)
-    return JSC::jsString(vm, makeAtomString("darwin"));
-#elif defined(__FreeBSD__)
-    return JSC::jsString(vm, makeAtomString("freebsd"));
-#elif defined(__linux__)
-    return JSC::jsString(vm, makeAtomString("linux"));
-#elif OS(WINDOWS)
-    return JSC::jsString(vm, makeAtomString("win32"));
-#else
-#error "Unknown platform"
-#endif
 }
 
 static JSValue constructBrowser(VM& vm, JSObject* processObject)

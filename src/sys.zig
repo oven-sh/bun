@@ -300,7 +300,7 @@ pub fn getErrno(rc: anytype) bun.C.E {
 
     return switch (Type) {
         usize => std.os.linux.getErrno(@as(usize, rc)),
-        comptime_int, i32, c_int, isize => std.os.errno(rc),
+        comptime_int, i32, c_int, isize, i64 => std.os.errno(rc),
         else => @compileError("Not implemented yet for type " ++ @typeName(Type)),
     };
 }

@@ -7265,7 +7265,7 @@ pub const Macro = struct {
                     this.source,
                     this.caller.loc,
                     this.allocator,
-                    "cannot coerce {s} to Bun's AST. Please return a valid macro using the JSX syntax",
+                    "cannot coerce {s} to Bun's AST. Please return a simpler type",
                     .{@tagName(value.jsType())},
                 ) catch unreachable;
                 return error.MacroFailed;

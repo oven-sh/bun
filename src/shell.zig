@@ -67,7 +67,7 @@ pub const Interpreter = struct {
         };
     }
 
-    pub fn interpret(self: *Interpreter, script: ast.Script) !void {
+    pub fn interpret(self: *Interpreter, script: ast.Script) anyerror!void {
         var stdio = .{
             .stdin = bun.STDIN_FD,
             .stdout = bun.STDOUT_FD,
@@ -75,7 +75,7 @@ pub const Interpreter = struct {
         };
         for (script.stmts) |*stmt| {
             for (stmt.exprs) |*expr| {
-                try self.interpret_expr(expr, &stdio);
+                _ = try self.interpret_expr(expr, &stdio);
             }
         }
     }
@@ -84,20 +84,21 @@ pub const Interpreter = struct {
         self: *Interpreter,
         expr: *const ast.Expr,
         io: *IO,
-    ) !void {
+    ) anyerror!bool {
         switch (expr.*) {
             .assign => |assigns| {
                 for (assigns) |*assign| {
                     try self.interpret_assign(assign);
                 }
+                return true;
             },
-            .cond => {},
-            .pipeline => |pipeline| try self.interpret_pipeline(pipeline, io),
-            .cmd => |cmd| try self.interpret_cmd(cmd, io),
+            .cond => |cond| return try self.interpret_cond(&cond.left, &cond.right, cond.op, io),
+            .pipeline => |pipeline| return try self.interpret_pipeline(pipeline, io),
+            .cmd => |cmd| return try self.interpret_cmd(cmd, io),
         }
     }
 
-    fn interpret_assign(self: *Interpreter, assign: *const ast.Assign) !void {
+    fn interpret_assign(self: *Interpreter, assign: *const ast.Assign) anyerror!void {
         const value = try self.eval_atom(&assign.value);
         if (assign.exported) {
             try self.env.put(assign.label, value);
@@ -106,12 +107,18 @@ pub const Interpreter = struct {
         }
     }
 
-    // fn interpret_cond(self: *Interpreter, left: *const ast.Expr, right: *const ast.Expr, comptime op: ast.Conditional.Op) !void {
-    //     // self.interpret_expr(left);
-    //     // switch (comptime op) {
-    //     //     .And =>
-    //     // }
-    // }
+    fn interpret_cond(self: *Interpreter, left: *const ast.Expr, right: *const ast.Expr, op: ast.Conditional.Op, io: *IO) anyerror!bool {
+        const success = try self.interpret_expr(left, io);
+        switch (op) {
+            .And => {
+                if (!success) return false;
+                return try self.interpret_expr(right, io);
+            },
+            .Or => {
+                return try self.interpret_expr(right, io);
+            },
+        }
+    }
 
     // fn interpret_pipeline(self: *Interpreter, pipeline: *const ast.Pipeline, io: *IO) !void {
     //     _ = io;
@@ -120,7 +127,7 @@ pub const Interpreter = struct {
     // }
 
     // FIXME handle closing child processes properly
-    fn interpret_pipeline(self: *Interpreter, pipeline: *const ast.Pipeline, io: *IO) !void {
+    fn interpret_pipeline(self: *Interpreter, pipeline: *const ast.Pipeline, io: *IO) anyerror!bool {
         const cmd_count = brk: {
             var count: usize = 0;
             for (pipeline.items) |*item| {
@@ -133,7 +140,7 @@ pub const Interpreter = struct {
         };
 
         switch (cmd_count) {
-            0 => return,
+            0 => return true,
             1 => {
                 for (pipeline.items) |*item| {
                     switch (@as(ast.CmdOrAssigns.Tag, item.*)) {
@@ -141,7 +148,7 @@ pub const Interpreter = struct {
                         else => {},
                     }
                 }
-                return;
+                return true;
             },
             else => {},
         }
@@ -198,8 +205,6 @@ pub const Interpreter = struct {
                 log("Spawn: proc_idx={d} stdin={d} stdout={d} stderr={d}\n", .{ i, file_to_read_from, file_to_write_to, io.stderr });
 
                 var cmd_proc = try self.init_cmd(cmd, &cmd_io);
-                // closefd(file_to_write_to.handle);
-                // closefd(file_to_read_from.handle);
                 closefd(cmd_io.stdin);
                 closefd(cmd_io.stdout);
 
@@ -208,34 +213,34 @@ pub const Interpreter = struct {
                 cmd_procs_set_amount += 1;
             }
         }
-        // for (pipes, 0..) |pipe, i| {
-        //     _ = i;
-        //     // if (i != 0) {
-        //     // Close read end of all but the first pipe
-        //     closefd(pipe[0]);
-        //     // }
-        //     // if (i != pipes.len - 1) {
-        //     // Close write end of all but the last pipe
-        //     closefd(pipe[1]);
-        //     // }
-        // }
 
+        var fail_idx: ?u32 = null;
         for (cmd_procs, 0..) |cmd_proc, i| {
-            // const file_to_read_from = Interpreter.pipeline_file_to_read(pipes, i, io);
-            // closefd(file_to_read_from.handle);
-            // const file_to_write_to = Interpreter.pipeline_file_to_write(
-            //     pipes,
-            //     i,
-            //     cmd_count,
-            //     io,
-            // );
-            // closefd(file_to_write_to.handle);
-
             log("Wait {d}", .{i});
+            defer cmd_proc.unref(true);
 
             cmd_proc.wait(true);
-            cmd_proc.unref(true);
+            const result = cmd_proc.exit_code orelse 1;
+            if (result != 0 and i < cmd_count - 1) {
+                fail_idx = @intCast(i);
+                break;
+            }
         }
+
+        if (fail_idx) |idx| {
+            for (cmd_procs[idx..]) |proc| {
+                proc.unref(true);
+                switch (proc.tryKill(9)) {
+                    .err => |err| {
+                        _ = err;
+                        @panic("HANDLE THIS ERRROR");
+                    },
+                    else => {},
+                }
+            }
+            return false;
+        }
+        return true;
     }
 
     // cmd1 -> cmd2 -> cmd3
@@ -307,10 +312,11 @@ pub const Interpreter = struct {
         return subprocess;
     }
 
-    fn interpret_cmd(self: *Interpreter, cmd: *const ast.Cmd, io: *IO) !void {
+    fn interpret_cmd(self: *Interpreter, cmd: *const ast.Cmd, io: *IO) !bool {
         var child_proc = try self.init_cmd(cmd, io);
+        defer child_proc.unref(true);
         child_proc.wait(true);
-        child_proc.unref(true);
+        return (child_proc.exit_code orelse 1) == 0;
     }
 
     fn eval_atom(self: *Interpreter, atom: *const ast.Atom) ![:0]const u8 {

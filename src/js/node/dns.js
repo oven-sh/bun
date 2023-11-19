@@ -239,7 +239,7 @@ var InternalResolver = class Resolver {
             callback(null, results.map(mapResolveX));
             break;
           default:
-            callback(null, results);
+            callback(null, results.map(mapResolveX));
             break;
         }
       },
@@ -465,7 +465,10 @@ function resolve(hostname, rrtype, callback) {
           );
           break;
         default:
-          callback(null, results);
+          callback(
+            null,
+            results.map(({ address }) => address),
+          );
           break;
       }
     },
@@ -546,7 +549,7 @@ const promises = {
       case "aaaa":
         return dns.resolve(hostname, rrtype).then(promisifyResolveX);
       default:
-        return dns.resolve(hostname, rrtype);
+        return dns.resolve(hostname, rrtype).then(promisifyResolveX);
     }
   },
 

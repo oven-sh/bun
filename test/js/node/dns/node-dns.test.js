@@ -56,8 +56,8 @@ test("it exists", () => {
   expect(dns_promises.resolveCname).toBeDefined();
 });
 
-test("dns.resolve (bun.sh)", done => {
-  it("dns.resolve (bun.sh)", () => {
+test("dns.resolve returns records as string[]", done => {
+  it("sync", () => {
     dns.resolve("bun.sh", (err, results) => {
       expect(err).toBeNull();
       expect(results instanceof Array).toBe(true);
@@ -67,7 +67,7 @@ test("dns.resolve (bun.sh)", done => {
     });
   });
 
-  it("dns_promises.resolve should return only IPs", async () => {
+  it("async", async () => {
     const results = await dns_promises.resolve("bun.sh");
     expect(results instanceof Array).toBe(true);
     expect(results.every(e => typeof e === "string")).toBe(true);

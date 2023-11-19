@@ -1133,14 +1133,14 @@ pub const Subprocess = struct {
     }
 
     pub fn spawn(globalThis: *JSC.JSGlobalObject, args: JSValue, secondaryArgsValue: ?JSValue) JSValue {
-        return spawnMaybeSync(globalThis, args, secondaryArgsValue, false);
+        return spawnMaybeSyncFromJS(globalThis, args, secondaryArgsValue, false);
     }
 
     pub fn spawnSync(globalThis: *JSC.JSGlobalObject, args: JSValue, secondaryArgsValue: ?JSValue) JSValue {
-        return spawnMaybeSync(globalThis, args, secondaryArgsValue, true);
+        return spawnMaybeSyncFromJS(globalThis, args, secondaryArgsValue, true);
     }
 
-    const SpawnArgs = struct {
+    pub const SpawnArgs = struct {
         arena: *bun.ArenaAllocator,
 
         override_env: bool = false,
@@ -1163,7 +1163,7 @@ pub const Subprocess = struct {
         ipc_mode: IPCMode,
         ipc_callback: JSValue,
 
-        fn default(arena: *bun.ArenaAllocator, jsc_vm: *JSC.VirtualMachine, comptime is_sync: bool) SpawnArgs {
+        pub fn default(arena: *bun.ArenaAllocator, jsc_vm: *JSC.VirtualMachine, comptime is_sync: bool) SpawnArgs {
             var out: SpawnArgs = .{
                 .arena = arena,
 
@@ -1195,7 +1195,7 @@ pub const Subprocess = struct {
             return out;
         }
 
-        fn fromJS(
+        pub fn fromJS(
             out: *SpawnArgs,
             globalThis: *JSGlobalObject,
             arena: *bun.ArenaAllocator,
@@ -1409,12 +1409,13 @@ pub const Subprocess = struct {
         }
     };
 
+    pub const WatchFd = if (Environment.isLinux) std.os.fd_t else i32;
+
     pub fn spawnMaybeSyncImpl(
         globalThis: *JSC.JSGlobalObject,
         comptime is_sync: bool,
         allocator: Allocator,
-        out_pidfd: *?std.os.fd_t,
-        out_pid: *?i32,
+        out_watchfd: *?WatchFd,
         out_err: *?JSValue,
         spawn_args: *SpawnArgs,
     ) ?*Subprocess {
@@ -1592,7 +1593,6 @@ pub const Subprocess = struct {
                 .result => |pid_| pid_,
             };
         };
-        out_pid.* = pid;
 
         const pidfd: std.os.fd_t = brk: {
             if (!Environment.isLinux or WaiterThread.shouldUseWaiterThread()) {
@@ -1652,8 +1652,6 @@ pub const Subprocess = struct {
             }
         };
 
-        out_pidfd.* = pidfd;
-
         var subprocess = globalThis.allocator().create(Subprocess) catch {
             globalThis.throw("out of memory", .{});
             return null;
@@ -1689,47 +1687,6 @@ pub const Subprocess = struct {
             subprocess.stdin.pipe.signal = JSC.WebCore.Signal.init(&subprocess.stdin);
         }
 
-        return subprocess;
-    }
-
-    pub fn spawnMaybeSync(
-        globalThis: *JSC.JSGlobalObject,
-        args_: JSValue,
-        secondaryArgsValue: ?JSValue,
-        comptime is_sync: bool,
-    ) JSValue {
-        if (comptime Environment.isWindows) {
-            globalThis.throwTODO("spawn() is not yet implemented on Windows");
-            return .zero;
-        }
-        var arena = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
-        defer arena.deinit();
-        var jsc_vm = globalThis.bunVM();
-        var spawn_args = SpawnArgs.default(&arena, jsc_vm, is_sync);
-        if (spawn_args.fromJS(globalThis, &arena, jsc_vm, args_, secondaryArgsValue, is_sync)) |err| {
-            return err;
-        }
-
-        var out_err: ?JSValue = null;
-        var pidfd: ?std.os.fd_t = null;
-        var pid: ?i32 = null;
-        // FIXME some of the parameters don't need to be references since the function will take ownership
-        var subprocess = Subprocess.spawnMaybeSyncImpl(
-            globalThis,
-            is_sync,
-            arena.allocator(),
-            &pidfd,
-            &pid,
-            &out_err,
-            &spawn_args,
-        ) orelse
-            {
-            if (out_err) |err| {
-                globalThis.throwValue(err);
-            }
-            return .zero;
-        };
-
         const out = if (comptime !is_sync)
             subprocess.toJS(globalThis)
         else
@@ -1738,16 +1695,11 @@ pub const Subprocess = struct {
 
         var send_exit_notification = false;
         const watchfd = if (comptime Environment.isLinux) brk: {
-            break :brk pidfd orelse {
-                globalThis.throw("Something went wrong!", .{});
-                return .zero;
-            };
+            break :brk pidfd;
         } else brk: {
-            break :brk pid orelse {
-                globalThis.throw("Something went wrong!", .{});
-                return .zero;
-            };
+            break :brk pid;
         };
+        out_watchfd.* = watchfd;
 
         if (comptime !is_sync) {
             if (!WaiterThread.shouldUseWaiterThread()) {
@@ -1807,6 +1759,46 @@ pub const Subprocess = struct {
             }
         }
 
+        return subprocess;
+    }
+
+    pub fn spawnMaybeSyncFromJS(
+        globalThis: *JSC.JSGlobalObject,
+        args_: JSValue,
+        secondaryArgsValue: ?JSValue,
+        comptime is_sync: bool,
+    ) JSValue {
+        if (comptime Environment.isWindows) {
+            globalThis.throwTODO("spawn() is not yet implemented on Windows");
+            return .zero;
+        }
+        var arena = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
+        defer arena.deinit();
+        var jsc_vm = globalThis.bunVM();
+        var spawn_args = SpawnArgs.default(&arena, jsc_vm, is_sync);
+        if (spawn_args.fromJS(globalThis, &arena, jsc_vm, args_, secondaryArgsValue, is_sync)) |err| {
+            return err;
+        }
+
+        var out_err: ?JSValue = null;
+        var out_watchfd: if (Environment.isLinux) ?std.os.fd_t else ?i32 = null;
+        var subprocess = Subprocess.spawnMaybeSyncImpl(
+            globalThis,
+            is_sync,
+            arena.allocator(),
+            &out_watchfd,
+            &out_err,
+            &spawn_args,
+        ) orelse
+            {
+            if (out_err) |err| {
+                globalThis.throwValue(err);
+            }
+            return .zero;
+        };
+
+        const out = subprocess.this_jsvalue;
+
         if (comptime !is_sync) {
             return out;
         }
@@ -1817,6 +1809,11 @@ pub const Subprocess = struct {
             }
         }
         subprocess.closeIO(.stdin);
+
+        const watchfd = out_watchfd orelse {
+            globalThis.throw("watchfd is null", .{});
+            return .zero;
+        };
 
         if (!WaiterThread.shouldUseWaiterThread()) {
             var poll = Async.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);

@@ -348,7 +348,7 @@ pub fn shellLex(
         return JSValue.undefined;
     };
     for (lexer.tokens.items) |tok| {
-        const test_tok = Shell.Test.TestToken.from_real(tok, lexer.buf.items[0..lexer.buf.items.len]);
+        const test_tok = Shell.Test.TestToken.from_real(tok, lexer.strpool.items[0..lexer.strpool.items.len]);
         test_tokens.append(test_tok) catch {
             globalThis.throwOutOfMemory();
             return JSValue.undefined;
@@ -429,7 +429,7 @@ pub fn shell(
         return JSC.JSValue.jsUndefined();
     };
 
-    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+    var arena = bun.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
 
     const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
@@ -453,9 +453,9 @@ pub fn shell(
         return JSValue.undefined;
     };
 
-    var interpreter = Shell.Interpreter.new(arena.allocator());
-    interpreter.interpret(script_ast) catch |err| {
-        globalThis.throwError(err, "shell:");
+    var interpreter = Shell.Interpreter.new(&arena, globalThis);
+    interpreter.interpret(script_ast) catch {
+        // globalThis.throwError(err, "shell:");
         return JSValue.undefined;
     };
 

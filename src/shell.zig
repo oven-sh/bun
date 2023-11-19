@@ -3,6 +3,13 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
+const Subprocess =
+    @import("./bun.js/api/bun/subprocess.zig").Subprocess;
+const JSC = bun.JSC;
+const JSValue = bun.JSC.JSValue;
+const Which = @import("./which.zig");
+
+pub const ShellError = error{Process};
 
 extern "C" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: i32) i32;
 
@@ -14,14 +21,6 @@ fn setEnv(name: [*:0]const u8, value: [*:0]const u8) void {
 /// [0] => read end
 /// [1] => write end
 const Pipe = [2]bun.FileDescriptor;
-
-fn fdToFile(fd: bun.FileDescriptor) std.fs.File {
-    return std.fs.File{
-        .handle = fd,
-        .capable_io_mode = .blocking,
-        .intended_io_mode = .blocking,
-    };
-}
 
 const log = bun.Output.scoped(.SHELL, false);
 const logsys = bun.Output.scoped(.SYS, false);
@@ -39,29 +38,40 @@ fn closefd(fd: bun.FileDescriptor) void {
 // FIXME error when command not found needs to be handled gracefully
 pub const Interpreter = struct {
     pub const ast = AST;
+    arena: *bun.ArenaAllocator,
     allocator: Allocator,
-    env: std.StringArrayHashMap([]const u8),
-    cmd_local_env: std.StringArrayHashMap([]const u8),
+    env: std.StringArrayHashMap([:0]const u8),
+    cmd_local_env: std.StringArrayHashMap([:0]const u8),
+    globalThis: *JSC.JSGlobalObject,
 
     const IO = struct {
-        stdin: std.fs.File,
-        stdout: std.fs.File,
-        stderr: std.fs.File,
+        stdin: bun.FileDescriptor,
+        stdout: bun.FileDescriptor,
+        stderr: bun.FileDescriptor,
     };
 
-    pub fn new(allocator: Allocator) Interpreter {
+    const Exec = union(enum) {
+        subproc: std.ChildProcess,
+        echo,
+        cd,
+    };
+
+    pub fn new(arena: *bun.ArenaAllocator, globalThis: *JSC.JSGlobalObject) Interpreter {
+        const allocator = arena.allocator();
         return .{
+            .arena = arena,
             .allocator = allocator,
-            .env = std.StringArrayHashMap([]const u8).init(allocator),
-            .cmd_local_env = std.StringArrayHashMap([]const u8).init(allocator),
+            .env = std.StringArrayHashMap([:0]const u8).init(allocator),
+            .cmd_local_env = std.StringArrayHashMap([:0]const u8).init(allocator),
+            .globalThis = globalThis,
         };
     }
 
     pub fn interpret(self: *Interpreter, script: ast.Script) !void {
         var stdio = .{
-            .stdin = std.io.getStdIn(),
-            .stdout = std.io.getStdOut(),
-            .stderr = std.io.getStdErr(),
+            .stdin = bun.STDIN_FD,
+            .stdout = bun.STDOUT_FD,
+            .stderr = bun.STDERR_FD,
         };
         for (script.stmts) |*stmt| {
             for (stmt.exprs) |*expr| {
@@ -103,6 +113,12 @@ pub const Interpreter = struct {
     //     // }
     // }
 
+    // fn interpret_pipeline(self: *Interpreter, pipeline: *const ast.Pipeline, io: *IO) !void {
+    //     _ = io;
+    //     _ = pipeline;
+    //     _ = self;
+    // }
+
     // FIXME handle closing child processes properly
     fn interpret_pipeline(self: *Interpreter, pipeline: *const ast.Pipeline, io: *IO) !void {
         const cmd_count = brk: {
@@ -131,10 +147,10 @@ pub const Interpreter = struct {
         }
 
         var cmd_procs_set_amount: usize = 0;
-        var cmd_procs = try self.allocator.alloc(std.ChildProcess, cmd_count);
+        var cmd_procs = try self.allocator.alloc(*Subprocess, cmd_count);
         errdefer {
             for (0..cmd_procs_set_amount) |i| {
-                _ = cmd_procs[i].kill() catch {};
+                cmd_procs[i].unref(true);
             }
         }
 
@@ -179,14 +195,13 @@ pub const Interpreter = struct {
                     .stdout = file_to_write_to,
                     .stderr = io.stderr,
                 };
-                log("Spawn: proc_idx={d} stdin={d} stdout={d} stderr={d}\n", .{ i, file_to_read_from.handle, file_to_write_to.handle, io.stderr.handle });
+                log("Spawn: proc_idx={d} stdin={d} stdout={d} stderr={d}\n", .{ i, file_to_read_from, file_to_write_to, io.stderr });
 
                 var cmd_proc = try self.init_cmd(cmd, &cmd_io);
-                try cmd_proc.spawn();
                 // closefd(file_to_write_to.handle);
                 // closefd(file_to_read_from.handle);
-                closefd(cmd_io.stdin.handle);
-                closefd(cmd_io.stdout.handle);
+                closefd(cmd_io.stdin);
+                closefd(cmd_io.stdout);
 
                 cmd_procs[i] = cmd_proc;
                 i += 1;
@@ -205,7 +220,7 @@ pub const Interpreter = struct {
         //     // }
         // }
 
-        for (cmd_procs, 0..) |*cmd_proc, i| {
+        for (cmd_procs, 0..) |cmd_proc, i| {
             // const file_to_read_from = Interpreter.pipeline_file_to_read(pipes, i, io);
             // closefd(file_to_read_from.handle);
             // const file_to_write_to = Interpreter.pipeline_file_to_write(
@@ -218,79 +233,104 @@ pub const Interpreter = struct {
 
             log("Wait {d}", .{i});
 
-            _ = cmd_proc.wait() catch |err| {
-                std.debug.print("FUCK {any}\n", .{err});
-            };
-            _ = cmd_proc.kill() catch {};
+            cmd_proc.wait(true);
+            cmd_proc.unref(true);
         }
     }
 
     // cmd1 -> cmd2 -> cmd3
-    fn pipeline_file_to_write(pipes: []Pipe, proc_idx: usize, cmd_count: usize, io: *IO) std.fs.File {
+    fn pipeline_file_to_write(pipes: []Pipe, proc_idx: usize, cmd_count: usize, io: *IO) bun.FileDescriptor {
         if (proc_idx == cmd_count - 1) return io.stdout;
-        return fdToFile(pipes[proc_idx][1]);
+        return pipes[proc_idx][1];
     }
 
-    fn pipeline_file_to_read(pipes: []Pipe, proc_idx: usize, io: *IO) std.fs.File {
+    fn pipeline_file_to_read(pipes: []Pipe, proc_idx: usize, io: *IO) bun.FileDescriptor {
         if (proc_idx == 0) return io.stdin;
-        return fdToFile(pipes[proc_idx - 1][0]);
+        return pipes[proc_idx - 1][0];
     }
 
-    fn init_cmd(self: *Interpreter, cmd: *const ast.Cmd, io: *IO) !std.ChildProcess {
+    fn init_cmd(self: *Interpreter, cmd: *const ast.Cmd, io: *IO) !*Subprocess {
         self.cmd_local_env.clearRetainingCapacity();
         for (cmd.assigns) |*assign| {
             try self.interpret_assign(assign);
         }
+
+        // TODO redirects, env vars
+        var spawn_args = Subprocess.SpawnArgs.default(self.arena, self.globalThis.bunVM(), false);
+
         const args = args: {
-            var args = try self.allocator.alloc([]const u8, cmd.name_and_args.len);
+            var args = try self.allocator.alloc(?[*:0]const u8, cmd.name_and_args.len);
             for (cmd.name_and_args, 0..) |*arg_atom, i| {
-                args[i] = try self.eval_atom(arg_atom);
+                const atom_str = try self.eval_atom(arg_atom);
+                if (i == 0) {
+                    var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var resolved = Which.which(&path_buf, spawn_args.PATH, spawn_args.cwd, atom_str[0..]) orelse {
+                        self.globalThis.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{atom_str});
+                        return ShellError.Process;
+                    };
+                    const duped = self.allocator.dupeZ(u8, bun.span(resolved)) catch {
+                        self.globalThis.throw("out of memory", .{});
+                        return ShellError.Process;
+                    };
+                    args[i] = duped.ptr;
+                    continue;
+                }
+                args[i] = atom_str.ptr;
             }
             break :args args;
         };
 
-        // TODO redirects
-        var child_proc = std.ChildProcess.init(args, self.allocator);
-        child_proc.stdin = io.stdin;
-        child_proc.stdout = io.stdout;
-        child_proc.stderr = io.stderr;
+        spawn_args.argv = std.ArrayListUnmanaged(?[*:0]const u8){ .items = args, .capacity = args.len };
+        spawn_args.stdio[bun.STDIN_FD] = if (io.stdin == bun.STDIN_FD) .inherit else .{ .fd = io.stdin };
+        spawn_args.stdio[bun.STDOUT_FD] = if (io.stdout == bun.STDOUT_FD) .inherit else .{ .fd = io.stdout };
+        spawn_args.stdio[bun.STDERR_FD] = if (io.stderr == bun.STDERR_FD) .inherit else .{ .fd = io.stderr };
 
-        // if (io.stdin.handle != bun.STDIN_FD) child_proc.stdin_behavior = .Close;
-        // if (io.stdout.handle != bun.STDOUT_FD) child_proc.stdout_behavior = .Close;
-        // if (io.stderr.handle != bun.STDERR_FD) child_proc.stderr_behavior = .;
+        var out_watchfd: ?Subprocess.WatchFd = null;
+        var out_err: ?JSValue = null;
+        var subprocess = Subprocess.spawnMaybeSyncImpl(
+            self.globalThis,
+            false,
+            self.arena.allocator(),
+            &out_watchfd,
+            &out_err,
+            &spawn_args,
+        ) orelse {
+            if (out_err) |err| {
+                const zigstr = err.getZigString(self.globalThis);
+                std.debug.print("VALUe: {s}\n", .{zigstr.full()});
+                self.globalThis.throwValue(err);
+            }
+            return ShellError.Process;
+        };
+        subprocess.ref();
 
-        return child_proc;
+        return subprocess;
     }
 
     fn interpret_cmd(self: *Interpreter, cmd: *const ast.Cmd, io: *IO) !void {
         var child_proc = try self.init_cmd(cmd, io);
-        defer {
-            _ = child_proc.kill() catch {};
-        }
-        const result = try child_proc.spawnAndWait();
-        _ = result;
-        // return result;
-        // return result;
+        child_proc.wait(true);
+        child_proc.unref(true);
     }
 
-    fn eval_atom(self: *Interpreter, atom: *const ast.Atom) ![]const u8 {
+    fn eval_atom(self: *Interpreter, atom: *const ast.Atom) ![:0]const u8 {
         const string_size = self.eval_atom_size(atom);
-        var string = try self.allocator.alloc(u8, string_size);
+        var str = try self.allocator.allocSentinel(u8, string_size, 0);
         switch (atom.*) {
             .simple => |*simp| {
-                @memcpy(string, self.eval_atom_simpl(simp));
+                @memcpy(str, self.eval_atom_simpl(simp));
             },
             .compound => |cmp| {
                 var i: usize = 0;
                 for (cmp.atoms) |*simple_atom| {
                     const txt = self.eval_atom_simpl(simple_atom);
-                    var slice = string[i .. i + txt.len];
-                    @memcpy(slice, txt);
+                    var slice = str[i .. i + txt.len];
+                    @memcpy(slice, txt[0..txt.len]);
                     i += txt.len;
                 }
             },
         }
-        return string;
+        return str;
     }
 
     fn eval_atom_size(self: *const Interpreter, atom: *const ast.Atom) usize {
@@ -331,11 +371,6 @@ pub const Interpreter = struct {
 pub const AST = struct {
     pub const Script = struct {
         stmts: []Stmt,
-
-        pub fn format(self: *const Script, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = options;
-            try std.fmt.format(writer, "{s} Stmt({any})", .{ fmt, self.stmts });
-        }
     };
 
     pub const Stmt = struct {
@@ -349,16 +384,6 @@ pub const AST = struct {
         cmd: *Cmd,
 
         const Tag = enum { assign, cond, pipeline, cmd };
-
-        pub fn format(self: *const Expr, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = options;
-            switch (@as(Expr.Tag, self.*)) {
-                .cmd => try std.fmt.format(writer, "{s} Expr.Cmd({any})", .{ fmt, self.cmd }),
-                .cond => try std.fmt.format(writer, "{s} Expr.Cond({any})", .{ fmt, self.cond }),
-                .pipeline => try std.fmt.format(writer, "{s} Expr.Pipeline({any})", .{ fmt, self.pipeline }),
-                .assign => try std.fmt.format(writer, "{s} Expr.Assign({any})", .{ fmt, self.assign }),
-            }
-        }
     };
 
     pub const Conditional = struct {
@@ -378,14 +403,6 @@ pub const AST = struct {
         assigns: []Assign,
 
         const Tag = enum { cmd, assigns };
-
-        pub fn format(self: *const CmdOrAssigns, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = options;
-            switch (@as(CmdOrAssigns.Tag, self.*)) {
-                .cmd => try std.fmt.format(writer, "{s} CmdOrAssigns.Cmd({any})", .{ fmt, self.cmd }),
-                .assigns => try std.fmt.format(writer, "{s} CmdOrAssigns.Assigns({any})", .{ fmt, self.assigns }),
-            }
-        }
 
         pub fn to_expr(this: CmdOrAssigns, alloc: Allocator) !Expr {
             switch (this) {
@@ -465,23 +482,10 @@ pub const AST = struct {
     pub const SimpleAtom = union(enum) {
         Var: []const u8,
         Text: []const u8,
-
-        pub fn format(self: *const SimpleAtom, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = options;
-            switch (self.*) {
-                .Var => |x| try std.fmt.format(writer, "{s} Var({s})", .{ fmt, x }),
-                .Text => |x| try std.fmt.format(writer, "{s} Text({s})", .{ fmt, x }),
-            }
-        }
     };
 
     pub const CompoundAtom = struct {
         atoms: []SimpleAtom,
-
-        pub fn format(self: *const CompoundAtom, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = options;
-            try std.fmt.format(writer, "{s} {any}", .{ fmt, self.atoms });
-        }
     };
 };
 
@@ -494,7 +498,7 @@ pub const Parser = struct {
 
     pub fn new(allocator: Allocator, lexer: *const Lexer) !Parser {
         return .{
-            .strpool = lexer.buf.items[0..lexer.buf.items.len],
+            .strpool = lexer.strpool.items[0..lexer.strpool.items.len],
             .tokens = lexer.tokens.items[0..lexer.tokens.items.len],
             .alloc = allocator,
         };
@@ -888,7 +892,7 @@ pub const Lexer = struct {
     /// anytime characters are added to the string pool this needs to be updated
     j: u32 = 0,
 
-    buf: ArrayList(u8),
+    strpool: ArrayList(u8),
     tokens: ArrayList(Token),
     state: State = .Normal,
     delimit_quote: bool = false,
@@ -916,7 +920,7 @@ pub const Lexer = struct {
         return .{
             .src = src,
             .tokens = ArrayList(Token).init(alloc),
-            .buf = ArrayList(u8).init(alloc),
+            .strpool = ArrayList(u8).init(alloc),
         };
     }
 
@@ -1051,7 +1055,7 @@ pub const Lexer = struct {
                 continue;
             }
 
-            try self.buf.append(char);
+            try self.strpool.append(char);
             self.j += 1;
         }
 
@@ -1107,7 +1111,7 @@ pub const Lexer = struct {
                 },
                 else => {
                     _ = self.eat() orelse unreachable;
-                    try self.buf.append(char);
+                    try self.strpool.append(char);
                     self.j += 1;
                 },
             }
@@ -1178,7 +1182,7 @@ pub const Lexer = struct {
         std.debug.print("Tokens: \n", .{});
         for (self.tokens.items, 0..) |tok, i| {
             std.debug.print("{d}: ", .{i});
-            tok.debug(self.buf.items[0..self.buf.items.len]);
+            tok.debug(self.strpool.items[0..self.strpool.items.len]);
         }
     }
 };
@@ -1190,7 +1194,7 @@ fn test_lex(src: []const u8, expected: []const Test.TestToken) !Lexer {
     lexer.debug_tokens();
     try std.testing.expectEqual(expected.len, lexer.tokens.items.len);
     for (lexer.tokens.items, expected) |tok, expected_tok| {
-        const test_tok = Test.TestToken.from_real(tok, lexer.buf.items[0..lexer.buf.items.len]);
+        const test_tok = Test.TestToken.from_real(tok, lexer.strpool.items[0..lexer.strpool.items.len]);
         switch (expected_tok) {
             .Var => |txt| {
                 try std.testing.expectEqualStrings(txt, test_tok.Var);

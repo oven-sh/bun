@@ -3681,7 +3681,17 @@ pub const Package = extern struct {
                     };
                     defer file.close();
                     const matched_path = Path.dirname(matched_path_, .auto);
-                    std.debug.print("matched path: {s}\n", .{matched_path_});
+
+                    const entry_dir: []const u8 = Path.dirname(matched_path, .auto);
+                    const entry_base: []const u8 = Path.basename(matched_path);
+
+                    var parts = [2]string{ entry_dir, entry_base };
+                    var entry_path = Path.joinAbsStringBufZ(
+                        Fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(),
+                        filepath_buf,
+                        &parts,
+                        .auto,
+                    );
 
                     const workspace_entry = processWorkspaceNameImpl(
                         allocator,
@@ -3689,15 +3699,12 @@ pub const Package = extern struct {
                         file,
                         matched_path,
                         matched_path,
-                        filepath_buf,
+                        workspace_name_buf,
                         log,
                     ) catch |err| {
                         switch (err) {
                             error.FileNotFound, error.PermissionDenied => continue,
                             error.MissingPackageName => {
-                                const entry_dir: []const u8 = Path.dirname(matched_path, .auto);
-                                const entry_base: []const u8 = Path.basename(matched_path);
-
                                 log.addErrorFmt(
                                     source,
                                     logger.Loc.Empty,
@@ -3707,9 +3714,6 @@ pub const Package = extern struct {
                                 ) catch {};
                             },
                             else => {
-                                const entry_dir: []const u8 = Path.dirname(matched_path, .auto);
-                                const entry_base: []const u8 = Path.basename(matched_path);
-
                                 log.addErrorFmt(
                                     source,
                                     logger.Loc.Empty,
@@ -3724,17 +3728,6 @@ pub const Package = extern struct {
                     };
 
                     if (workspace_entry.name.len == 0) continue;
-
-                    const entry_dir: []const u8 = Path.dirname(matched_path, .auto);
-                    const entry_base: []const u8 = Path.basename(matched_path);
-
-                    var parts = [2]string{ entry_dir, entry_base };
-                    var entry_path = Path.joinAbsStringBufZ(
-                        Fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(),
-                        filepath_buf,
-                        &parts,
-                        .auto,
-                    );
 
                     const workspace_path: string = if (string_builder) |builder| brk: {
                         second_buf_fixed.reset();

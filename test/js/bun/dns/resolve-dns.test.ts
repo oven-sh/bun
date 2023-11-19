@@ -3,10 +3,18 @@ import { describe, expect, it, test } from "bun:test";
 import { withoutAggressiveGC } from "harness";
 import { isIP, isIPv4, isIPv6 } from "node:net";
 
-const backends = ["system", "libc", "c-ares"];
+const backends = ["system", "libc", "c-ares"] as const;
 const validHostnames = ["localhost", "example.com"];
 const invalidHostnames = [`this-should-not-exist-${Math.floor(Math.random() * 99999)}.com`];
 const malformedHostnames = ["", " ", ".", " .", "localhost:80", "this is not a hostname"];
+const malformedHostnameCodes = [
+  "ERR_INVALID_ARG_TYPE",
+  "DNS_ENOTFOUND",
+  "DNS_ENOTFOUND",
+  "DNS_ENOTFOUND",
+  "DNS_ENOTFOUND",
+  "DNS_ENOTFOUND",
+];
 
 describe("dns", () => {
   describe.each(backends)("lookup() [backend: %s]", backend => {
@@ -80,17 +88,26 @@ describe("dns", () => {
       });
     });
     test.each(invalidHostnames)("%s", hostname => {
-      // @ts-expect-error
       expect(dns.lookup(hostname, { backend })).rejects.toMatchObject({
         code: "DNS_ENOTFOUND",
       });
     });
-    // TODO: causes segfaults
-    // test.each(malformedHostnames)("%s", (hostname) => {
-    //   // @ts-expect-error
-    //   expect(dns.lookup(hostname, { backend })).rejects.toMatchObject({
-    //     code: "DNS_ENOTFOUND",
-    //   });
-    // });
+    test.each(malformedHostnames)("%s", async hostname => {
+      let code = malformedHostnameCodes[malformedHostnames.indexOf(hostname)];
+
+      // c-ares reports a different error here...
+      if (backend === "c-ares" && hostname === ".") {
+        code = "DNS_ENODATA";
+      }
+
+      try {
+        await dns.lookup(hostname, { backend });
+        expect.unreachable();
+      } catch (e) {
+        expect(e).toMatchObject({
+          code,
+        });
+      }
+    });
   });
 });

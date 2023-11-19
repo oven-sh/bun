@@ -56,7 +56,7 @@ test("it exists", () => {
   expect(dns_promises.resolveCname).toBeDefined();
 });
 
-describe("dns.resolve returns records as string[", () => {
+describe("dns.resolve returns records as string[]", () => {
   it("sync", done => {
     dns.resolve("bun.sh", (err, results) => {
       expect(err).toBeNull();

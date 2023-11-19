@@ -1304,3 +1304,49 @@ it("should response with HTTP 413 when request body is larger than maxRequestBod
 
   server.stop(true);
 });
+
+describe("strips headers", () => {
+  const toStrip = ["Strict-Transport-Security", "Content-Length", "Transfer-Encoding"];
+
+  // all and any permutations of the above
+  // 3! = 6
+  for (let i = 0; i < toStrip.length; i++) {
+    for (let j = 0; j < toStrip.length; j++) {
+      for (let k = 0; k < toStrip.length; k++) {
+        const [first, second, third] = [toStrip[i], toStrip[j], toStrip[k]];
+        it(`${first}, ${second}, ${third}`, async () => {
+          const server = Bun.serve({
+            port: 0,
+            fetch(req, server) {
+              return new Response("OK", {
+                headers: {
+                  "X-Test": "123",
+                  "User-Agent": "Custom",
+                  [first]: "123",
+                  [second]: "123",
+                  [third]: "123",
+                },
+              });
+            },
+          });
+
+          const resp = await fetch(server.url, {
+            method: "GET",
+          });
+
+          for (const header of [first, second, third]) {
+            if (header === "Content-Length") {
+              expect(resp.headers.get(header)).toBe("2");
+            } else {
+              expect(resp.headers.get(header)).toBeNull();
+            }
+          }
+          expect(resp.headers.get("X-Test")).toBe("123");
+          expect(resp.headers.get("User-Agent")).toBe("Custom");
+
+          server.stop(true);
+        });
+      }
+    }
+  }
+});

@@ -129,7 +129,6 @@ pub extern fn WebCore__FetchHeaders__isEmpty(arg0: ?*bindings.FetchHeaders) bool
 pub extern fn WebCore__FetchHeaders__put_(arg0: ?*bindings.FetchHeaders, arg1: [*c]const ZigString, arg2: [*c]const ZigString, arg3: *bindings.JSGlobalObject) void;
 pub extern fn WebCore__FetchHeaders__remove(arg0: ?*bindings.FetchHeaders, arg1: [*c]const ZigString, arg2: *bindings.JSGlobalObject) void;
 pub extern fn WebCore__FetchHeaders__toJS(arg0: ?*bindings.FetchHeaders, arg1: *bindings.JSGlobalObject) JSC__JSValue;
-pub extern fn WebCore__FetchHeaders__toUWSResponse(arg0: ?*bindings.FetchHeaders, arg1: bool, arg2: ?*anyopaque) void;
 pub extern fn SystemError__toErrorInstance(arg0: [*c]const SystemError, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSCell__getObject(arg0: [*c]bindings.JSCell) [*c]bindings.JSObject;
 pub extern fn JSC__JSCell__getType(arg0: [*c]bindings.JSCell) u8;

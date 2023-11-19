@@ -56,14 +56,15 @@ test("it exists", () => {
   expect(dns_promises.resolveCname).toBeDefined();
 });
 
-test("dns.resolve returns records as string[]", done => {
-  it("sync", () => {
+describe("dns.resolve returns records as string[", () => {
+  it("sync", done => {
     dns.resolve("bun.sh", (err, results) => {
       expect(err).toBeNull();
       expect(results instanceof Array).toBe(true);
 
       // check if it contains only IPs
       expect(results.every(e => typeof e === "string")).toBe(true);
+      done(err);
     });
   });
 

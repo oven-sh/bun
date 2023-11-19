@@ -55,4 +55,5 @@ pub const Classes = struct {
     pub const DebugHTTPSServer = JSC.API.DebugHTTPSServer;
     pub const Crypto = JSC.WebCore.Crypto;
     pub const FFI = JSC.FFI;
+    pub const H2FrameParser = JSC.API.H2FrameParser;
 };

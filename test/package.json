@@ -25,6 +25,7 @@
     "lodash": "4.17.21",
     "mongodb": "6.0.0",
     "msgpackr-extract": "3.0.2",
+    "node-gyp": "10.0.1",
     "nodemailer": "6.9.3",
     "pg": "8.11.1",
     "pg-connection-string": "2.6.1",
@@ -32,6 +33,7 @@
     "prisma": "5.1.1",
     "prompts": "2.4.2",
     "reflect-metadata": "0.1.13",
+    "rollup": "4.4.1",
     "sinon": "6.0.0",
     "socket.io": "4.7.1",
     "socket.io-client": "4.7.1",
@@ -44,7 +46,8 @@
     "webpack": "5.88.0",
     "webpack-cli": "4.7.2",
     "yargs": "17.7.2",
-    "rollup": "4.4.1"
+    "@grpc/grpc-js": "1.9.9",
+    "@grpc/proto-loader": "0.7.10"
   },
   "private": true,
   "scripts": {

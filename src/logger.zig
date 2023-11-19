@@ -192,8 +192,8 @@ pub const Location = struct {
                 .namespace = source.path.namespace,
                 .line = usize2Loc(data.line_count).start,
                 .column = usize2Loc(data.column_count).start,
-                .length = full_line.len,
-                .line_text = full_line,
+                .length = if (r.len > -1) @as(u32, @intCast(r.len)) else 1,
+                .line_text = std.mem.trimLeft(u8, full_line, "\n\r"),
                 .offset = @as(usize, @intCast(@max(r.loc.start, 0))),
             };
         } else {
@@ -273,7 +273,7 @@ pub const Data = struct {
             else => comptime Output.color_map.get("d").?,
         };
 
-        try to.writeAll("\n\n");
+        try to.writeAll("\n");
 
         if (comptime enable_ansi_colors) {
             try to.writeAll(color_name);
@@ -287,65 +287,88 @@ pub const Data = struct {
             try to.writeAll(message_color);
         }
 
-        try std.fmt.format(to, comptime Output.prettyFmt("{s}<r>\n", enable_ansi_colors), .{this.text});
+        try std.fmt.format(to, comptime Output.prettyFmt("{s}<r>", enable_ansi_colors), .{this.text});
 
         if (this.location) |location| {
             if (location.line_text) |line_text_| {
-                const line_text = std.mem.trimRight(u8, line_text_, "\r\n\t");
+                try to.writeAll("\n");
+                const location_in_line_text_original = @as(usize, @intCast(@max(location.column, 1) - 1));
 
-                const location_in_line_text = @as(u32, @intCast(@max(location.column, 1) - 1));
+                const line_text_right_trimmed = std.mem.trimRight(u8, line_text_, " \r\n\t");
+                const line_text = std.mem.trimLeft(u8, line_text_right_trimmed, "\n\r");
+                const line_text_left_trimmed_offset = line_text_right_trimmed.len -| line_text.len;
+                const location_in_line_text: usize = line_text_left_trimmed_offset + (location_in_line_text_original -| @as(usize, @intCast(line_text_.len -| line_text.len)));
+
                 const has_position = location.column > -1 and line_text.len > 0 and location_in_line_text < line_text.len;
+
+                var line_offset_for_second_line: usize = location_in_line_text;
 
                 if (has_position) {
                     if (comptime enable_ansi_colors) {
                         const is_colored = message_color.len > 0;
 
-                        const before_segment = line_text[0..location_in_line_text];
-
-                        try to.writeAll(before_segment);
-                        if (is_colored) {
-                            try to.writeAll(color_name);
+                        var before_segment = line_text[0..location_in_line_text];
+                        if (before_segment.len > 40) {
+                            before_segment = before_segment[before_segment.len - 40 ..];
                         }
 
+                        try to.writeAll(before_segment);
+
                         const rest_of_line = line_text[location_in_line_text..];
+                        line_offset_for_second_line = before_segment.len;
 
-                        if (rest_of_line.len > 0) {
-                            var end_of_segment: usize = 1;
+                        const end_of_segment: usize = brk: {
+                            if (rest_of_line.len == 0) break :brk 0;
+                            if (location.length > 0 and location.length < rest_of_line.len) {
+                                break :brk location.length;
+                            }
+
                             var iter = strings.CodepointIterator.initOffset(rest_of_line, 1);
-                            // extremely naive: we should really use IsIdentifierContinue || isIdentifierStart here
-
-                            // highlight until we reach the next matching
                             switch (line_text[location_in_line_text]) {
                                 '\'' => {
-                                    end_of_segment = iter.scanUntilQuotedValueOrEOF('\'');
+                                    break :brk iter.scanUntilQuotedValueOrEOF('\'');
                                 },
                                 '"' => {
-                                    end_of_segment = iter.scanUntilQuotedValueOrEOF('"');
+                                    break :brk iter.scanUntilQuotedValueOrEOF('"');
                                 },
                                 '<' => {
-                                    end_of_segment = iter.scanUntilQuotedValueOrEOF('>');
+                                    break :brk iter.scanUntilQuotedValueOrEOF('>');
                                 },
                                 '`' => {
-                                    end_of_segment = iter.scanUntilQuotedValueOrEOF('`');
+                                    break :brk iter.scanUntilQuotedValueOrEOF('`');
                                 },
                                 else => {},
                             }
-                            try to.writeAll(rest_of_line[0..end_of_segment]);
+
+                            break :brk 1;
+                        };
+
+                        var middle_segment: []const u8 = rest_of_line[0..end_of_segment];
+
+                        if (middle_segment.len > 0) {
+                            try to.writeAll(Output.color_map.get("b").?);
+                            try to.writeAll(middle_segment);
+
                             if (is_colored) {
                                 try to.writeAll("\x1b[0m");
                             }
 
-                            try to.writeAll(rest_of_line[end_of_segment..]);
+                            var after = rest_of_line[middle_segment.len..];
+                            if (after.len > 40) {
+                                after = after[0..40];
+                            }
+                            try to.writeAll(after);
                         } else if (is_colored) {
                             try to.writeAll("\x1b[0m");
                         }
                     } else {
+                        line_offset_for_second_line = location_in_line_text;
                         try to.writeAll(line_text);
                     }
 
                     try to.writeAll("\n");
 
-                    try to.writeByteNTimes(' ', location_in_line_text);
+                    try to.writeByteNTimes(' ', line_offset_for_second_line);
                     if (comptime enable_ansi_colors) {
                         const is_colored = message_color.len > 0;
                         if (is_colored) {
@@ -545,6 +568,9 @@ pub const Msg = struct {
         try msg.data.writeFormat(to, msg.kind, enable_ansi_colors, false);
 
         if (msg.notes) |notes| {
+            if (notes.len > 0)
+                try to.writeAll("\n");
+
             for (notes) |note| {
                 try note.writeFormat(to, .note, enable_ansi_colors, true);
             }
@@ -1245,7 +1271,7 @@ pub const Log = struct {
     }
 
     pub fn printForLogLevelWithEnableAnsiColors(self: *Log, to: anytype, comptime enable_ansi_colors: bool) !void {
-        var printed = false;
+        var needs_newline = false;
 
         if (self.warnings > 0 and self.errors > 0) {
             // Print warnings at the top
@@ -1253,12 +1279,12 @@ pub const Log = struct {
             // This is so if you're reading from a terminal
             // and there are a bunch of warnings
             // You can more easily see where the errors are
-
             for (self.msgs.items) |msg| {
                 if (msg.kind != .err) {
                     if (msg.kind.shouldPrint(self.level)) {
+                        if (needs_newline) _ = try to.write("\n");
                         try msg.writeFormat(to, enable_ansi_colors);
-                        printed = true;
+                        needs_newline = true;
                     }
                 }
             }
@@ -1266,21 +1292,23 @@ pub const Log = struct {
             for (self.msgs.items) |msg| {
                 if (msg.kind == .err) {
                     if (msg.kind.shouldPrint(self.level)) {
+                        if (needs_newline) _ = try to.write("\n");
                         try msg.writeFormat(to, enable_ansi_colors);
-                        printed = true;
+                        needs_newline = true;
                     }
                 }
             }
         } else {
             for (self.msgs.items) |msg| {
                 if (msg.kind.shouldPrint(self.level)) {
+                    if (needs_newline) _ = try to.write("\n");
                     try msg.writeFormat(to, enable_ansi_colors);
-                    printed = true;
+                    needs_newline = true;
                 }
             }
         }
 
-        if (printed) _ = try to.write("\n");
+        if (needs_newline) _ = try to.write("\n");
     }
 
     pub fn toZigException(this: *const Log, allocator: std.mem.Allocator) *js.ZigException.Holder {

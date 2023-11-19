@@ -63,6 +63,9 @@ if [ "$(uname -s)" = "FreeBSD" ]; then
     pushd ../src/deps/mimalloc/
     patch < "$PATCHES/mimalloc-freebsd.patch" || true
     popd
+    pushd ../
+    patch < "$PATCHES/linker_lds_freebsd.patch" || true
+    popd
     pwd
 fi
 bash ./all-dependencies.sh

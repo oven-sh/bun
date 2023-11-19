@@ -1,0 +1,14 @@
+diff --git a/src/linker.lds b/src/linker.lds
+index 2304e6ac4..a371ae0af 100644
+--- a/src/linker.lds
++++ b/src/linker.lds
+@@ -4,6 +4,9 @@ BUN_1.0 {
+ 	node_api_*;
+ 	__cxa_atexit;
+ 	__cxa_thread_atexit_impl;
++    # Symbols from libcsu
++    __progname;
++    environ;
+     local:
+ 	*;
+ };

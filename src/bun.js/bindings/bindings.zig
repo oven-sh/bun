@@ -1205,16 +1205,21 @@ pub const FetchHeaders = opaque {
         });
     }
 
+    extern fn WebCore__FetchHeaders__toUWSResponse(arg0: ?*FetchHeaders, arg1: bool, arg2: ?*anyopaque, exclude_ptr: [*]const HTTPHeaderName, exclude_len: usize) void;
+
     pub fn toUWSResponse(
         headers: *FetchHeaders,
         is_ssl: bool,
         uws_response: *anyopaque,
+        exclusions: []const HTTPHeaderName,
     ) void {
-        return shim.cppFn("toUWSResponse", .{
+        return WebCore__FetchHeaders__toUWSResponse(
             headers,
             is_ssl,
             uws_response,
-        });
+            exclusions.ptr,
+            exclusions.len,
+        );
     }
 
     const PicoHeaders = extern struct {
@@ -1575,7 +1580,6 @@ pub const FetchHeaders = opaque {
         "put_",
         "remove",
         "toJS",
-        "toUWSResponse",
         "isEmpty",
     };
 };

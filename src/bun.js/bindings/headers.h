@@ -200,8 +200,7 @@ CPP_DECL bool WebCore__FetchHeaders__has(WebCore__FetchHeaders* arg0, const ZigS
 CPP_DECL bool WebCore__FetchHeaders__isEmpty(WebCore__FetchHeaders* arg0);
 CPP_DECL void WebCore__FetchHeaders__put_(WebCore__FetchHeaders* arg0, const ZigString* arg1, const ZigString* arg2, JSC__JSGlobalObject* arg3);
 CPP_DECL void WebCore__FetchHeaders__remove(WebCore__FetchHeaders* arg0, const ZigString* arg1, JSC__JSGlobalObject* arg2);
-CPP_DECL JSC__JSValue WebCore__FetchHeaders__toJS(WebCore__FetchHeaders* arg0, JSC__JSGlobalObject* arg1);
-CPP_DECL void WebCore__FetchHeaders__toUWSResponse(WebCore__FetchHeaders* arg0, bool arg1, void* arg2);
+CPP_DECL JSC__JSValue WebCore__FetchHeaders__toJS(WebCore__FetchHeaders* arg0, JSC__JSGlobalObject* arg1);;
 CPP_DECL JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0, JSC__JSGlobalObject* arg1);
 
 #pragma mark - JSC::JSCell

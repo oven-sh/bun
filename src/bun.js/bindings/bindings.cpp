@@ -99,7 +99,7 @@
 #include "JavaScriptCore/InternalFieldTuple.h"
 
 template<typename UWSResponse>
-static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
+static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res, const std::span<const WebCore::HTTPHeaderName> exclude)
 {
     auto& internalHeaders = headers->internalHeaders();
 
@@ -107,13 +107,43 @@ static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
         res->writeHeader(std::string_view("set-cookie", 10), std::string_view(value.is8Bit() ? reinterpret_cast<const char*>(value.characters8()) : value.utf8().data(), value.length()));
     }
 
-    for (const auto& header : internalHeaders.commonHeaders()) {
-        const auto& name = WebCore::httpHeaderNameString(header.key);
-        const auto& value = header.value;
+    bool anyToExclude = false;
+    for (auto excludeName : exclude) {
+        if (internalHeaders.contains(excludeName)) {
+            anyToExclude = true;
+            break;
+        }
+    }
 
-        res->writeHeader(
-            std::string_view(name.is8Bit() ? reinterpret_cast<const char*>(name.characters8()) : name.utf8().data(), name.length()),
-            std::string_view(value.is8Bit() ? reinterpret_cast<const char*>(value.characters8()) : value.utf8().data(), value.length()));
+    if (!anyToExclude) {
+        for (const auto& header : internalHeaders.commonHeaders()) {
+            const auto& name = WebCore::httpHeaderNameString(header.key);
+            const auto& value = header.value;
+
+            res->writeHeader(
+                std::string_view(name.is8Bit() ? reinterpret_cast<const char*>(name.characters8()) : name.utf8().data(), name.length()),
+                std::string_view(value.is8Bit() ? reinterpret_cast<const char*>(value.characters8()) : value.utf8().data(), value.length()));
+        }
+    } else {
+        const auto shouldSkip = [exclude](const WebCore::HTTPHeaderName name) -> bool {
+            for (auto excludeName : exclude) {
+                if (name == excludeName) {
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        for (const auto& header : internalHeaders.commonHeaders()) {
+            if (!shouldSkip(header.key)) {
+                const auto& name = WebCore::httpHeaderNameString(header.key);
+                const auto& value = header.value;
+
+                res->writeHeader(
+                    std::string_view(name.is8Bit() ? reinterpret_cast<const char*>(name.characters8()) : name.utf8().data(), name.length()),
+                    std::string_view(value.is8Bit() ? reinterpret_cast<const char*>(value.characters8()) : value.utf8().data(), value.length()));
+            }
+        }
     }
 
     for (auto& header : internalHeaders.uncommonHeaders()) {
@@ -1072,12 +1102,12 @@ bool WebCore__FetchHeaders__isEmpty(WebCore__FetchHeaders* arg0)
     return arg0->size() == 0;
 }
 
-void WebCore__FetchHeaders__toUWSResponse(WebCore__FetchHeaders* arg0, bool is_ssl, void* arg2)
+void WebCore__FetchHeaders__toUWSResponse(WebCore__FetchHeaders* arg0, bool is_ssl, void* arg2, const WebCore::HTTPHeaderName* exclusions_list, size_t exclusions_list_length)
 {
     if (is_ssl) {
-        copyToUWS<uWS::HttpResponse<true>>(arg0, reinterpret_cast<uWS::HttpResponse<true>*>(arg2));
+        copyToUWS<uWS::HttpResponse<true>>(arg0, reinterpret_cast<uWS::HttpResponse<true>*>(arg2), std::span<const WebCore::HTTPHeaderName> { exclusions_list, exclusions_list_length });
     } else {
-        copyToUWS<uWS::HttpResponse<false>>(arg0, reinterpret_cast<uWS::HttpResponse<false>*>(arg2));
+        copyToUWS<uWS::HttpResponse<false>>(arg0, reinterpret_cast<uWS::HttpResponse<false>*>(arg2), std::span<const WebCore::HTTPHeaderName> { exclusions_list, exclusions_list_length });
     }
 }
 

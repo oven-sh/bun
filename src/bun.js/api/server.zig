@@ -1812,16 +1812,28 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             server.request_pool_allocator.put(this);
         }
 
+        const headers_to_exclude = brk: {
+            if (ssl_enabled) {
+                break :brk [_]JSC.FetchHeaders.HTTPHeaderName{
+                    .ContentLength,
+                    .TransferEncoding,
+                };
+            }
+
+            break :brk [_]JSC.FetchHeaders.HTTPHeaderName{
+                .ContentLength,
+                .TransferEncoding,
+                .StrictTransportSecurity,
+            };
+        };
+
         fn writeHeaders(
             this: *RequestContext,
             headers: *JSC.FetchHeaders,
         ) void {
             ctxLog("writeHeaders", .{});
-            headers.fastRemove(.ContentLength);
-            headers.fastRemove(.TransferEncoding);
-            if (!ssl_enabled) headers.fastRemove(.StrictTransportSecurity);
             if (this.resp) |resp| {
-                headers.toUWSResponse(ssl_enabled, resp);
+                headers.toUWSResponse(ssl_enabled, resp, &headers_to_exclude);
             }
         }
 
@@ -5054,7 +5066,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         // TODO: should we cork?
                         // we must write the status first so that 200 OK isn't written
                         resp.writeStatus("101 Switching Protocols");
-                        fetch_headers_to_use.toUWSResponse(comptime ssl_enabled, resp);
+                        fetch_headers_to_use.toUWSResponse(comptime ssl_enabled, resp, &.{});
                     }
                 }
             }

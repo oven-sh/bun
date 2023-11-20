@@ -135,9 +135,7 @@ function fakeParentPort() {
   });
 
   Object.defineProperty(fake, "close", {
-    value() {
-      return process.exit(0);
-    },
+    value() {},
   });
 
   Object.defineProperty(fake, "start", {

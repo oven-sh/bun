@@ -3808,7 +3808,7 @@ void JSC__JSValue__getClassName(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1
 {
     JSValue value = JSValue::decode(JSValue0);
     JSC::JSCell* cell = value.asCell();
-    if (cell == nullptr) {
+    if (cell == nullptr || !cell->isObject()) {
         arg2->len = 0;
         return;
     }
@@ -3823,7 +3823,8 @@ void JSC__JSValue__getClassName(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1
     }
 
     JSObject* obj = value.toObject(arg1);
-    StringView calculated = StringView(JSObject::calculatedClassName(obj));
+
+    auto calculated = JSObject::calculatedClassName(obj);
     if (calculated.length() > 0) {
         *arg2 = Zig::toZigString(calculated);
         return;
@@ -4773,4 +4774,10 @@ CPP_DECL void JSC__VM__setControlFlowProfiler(JSC__VM* vm, bool isEnabled)
     } else {
         vm->disableControlFlowProfiler();
     }
+}
+
+extern "C" EncodedJSValue JSC__createError(JSC::JSGlobalObject* globalObject, BunString* str)
+{
+    return JSValue::encode(
+        JSC::createError(globalObject, str->toWTFString()));
 }

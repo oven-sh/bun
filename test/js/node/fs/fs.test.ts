@@ -492,9 +492,13 @@ it("mkdtempSync() non-exist dir #2568", () => {
 
 it("mkdtemp() non-exist dir #2568", done => {
   mkdtemp("/tmp/hello/world", (err, folder) => {
-    expect(err?.errno).toBe(-2);
-    expect(folder).toBeUndefined();
-    done();
+    try {
+      expect(err?.errno).toBe(process.platform === "win32" ? -4058 : -2);
+      expect(folder).toBeUndefined();
+      done();
+    } catch (e) {
+      done(e);
+    }
   });
 });
 

@@ -226,6 +226,10 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(DEFAULT_USE_DEBUG_JSC ON)
 endif()
 
+if(WIN32)
+    set(DEFAULT_USE_DEBUG_JSC ON)
+endif()
+
 if(UNIX AND NOT APPLE)
     execute_process(COMMAND cat /etc/os-release COMMAND head -n1 OUTPUT_VARIABLE LINUX_DISTRO)
 

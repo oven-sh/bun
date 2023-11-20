@@ -812,6 +812,24 @@ class Test extends Bar {
 }
                   `.trim(),
         ],
+        [
+          `class Test {
+            b = this.a;
+
+            constructor(private a: string) {}
+          }`,
+
+          `
+class Test {
+  a;
+  b;
+  constructor(a) {
+    this.a = a;
+    this.b = this.a;
+  }
+}
+                  `.trim(),
+        ],
       ];
 
       for (const [code, out] of fixtures) {

@@ -1315,3 +1315,172 @@ if (process.platform === "linux")
       });
     }).toThrow("permission denied 0.0.0.0:1003");
   });
+
+it("handle invalid protocol(#6583)", async () => {
+  const server = await Bun.serve({
+    port: 0,
+    fetch(req) {
+      return new Response("Pass!");
+    },
+  });
+  const request = () => {
+    return fetch(`https://${server.hostname}:${server.port}/`);
+  };
+  expect(request).toThrow();
+  server.stop(true);
+}, 2000);
+
+it("can handle invalid requests", async done => {
+  const server = await Bun.serve({
+    port: 0,
+    fetch(req) {
+      return new Response("Pass!");
+    },
+  });
+  const writeVerify = (socket, str) => {
+    const data = Buffer.from(str, "utf-8");
+    let written = socket.write(data);
+    if (written !== data.length) written += socket.flush();
+    expect(written).toEqual(data.length);
+  };
+  const request = (data, output) => {
+    let dataValid = false;
+    let received = null;
+    return new Promise((resolve, reject) => {
+      const tm = setTimeout(() => {
+        reject(new Error("timeout"));
+      }, 2000);
+      Bun.connect({
+        hostname: server.hostname,
+        port: server.port,
+        socket: {
+          open(socket) {
+            writeVerify(socket, data);
+          },
+          connectError(socket, error) {
+            clearTimeout(tm);
+            reject(error);
+          },
+          error(socket, error) {
+            clearTimeout(tm);
+            reject(error);
+          },
+          close(socket) {
+            clearTimeout(tm);
+            if (dataValid) resolve();
+            else reject(new Error("Connection closed before data validation"));
+          },
+          data(socket, recv) {
+            if (!received) received = recv.toString();
+            else received += recv.toString();
+            if (received.length < output.length) {
+              if (!output.startsWith(received)) {
+                clearTimeout(tm);
+                reject("Missmatch");
+              }
+            } else {
+              expect(received.substr(0, output.length)).toEqual(output);
+              dataValid = true;
+            }
+          },
+
+          end(socket) {
+            clearTimeout(tm);
+            if (dataValid) resolve();
+            else reject(new Error("Connection closed before data validation"));
+          },
+        },
+      });
+    });
+  };
+  const list = [
+    [
+      [
+        "GET / HTTP/1.1",
+        "Hos localhost",
+        "User-agent: test-client",
+        "Connection: keep-alive",
+        "Content-type: application/json",
+        "Content-length: 0",
+        "\r\n",
+      ].join("\r\n"),
+      "HTTP/1.1 400 Bad Request\r\n\r\n<h1>Bad Request</h1><hr><i>uWebSockets/20 Server</i>",
+    ],
+    [
+      [
+        "GET / HTTP/1.1",
+        "\r\n",
+        "User-agent: test-client",
+        "Connection: keep-alive",
+        "Content-type: application/json",
+        "Content-length: 0",
+        "\r\n",
+      ].join("\r\n"),
+      "HTTP/1.1 400 Bad Request\r\n\r\n<h1>Bad Request</h1><hr><i>uWebSockets/20 Server</i>",
+    ],
+    [
+      [
+        "GET / HTTP/1.1",
+        "Host :localhost",
+        "User-agent: test-client",
+        "Connection: keep-alive",
+        "Content-type: application/json",
+        "Content-length: 0",
+        "\r\n",
+      ].join("\r\n"),
+      "HTTP/1.1 400 Bad Request\r\n\r\n<h1>Bad Request</h1><hr><i>uWebSockets/20 Server</i>",
+    ],
+    [
+      [
+        "aaaaaa",
+        "Host: localhost",
+        "User-agent: test-client",
+        "Connection: keep-alive",
+        "Content-type: application/json",
+        "Content-length: 0",
+        "\r\n",
+      ].join("\r\n"),
+      "HTTP/1.1 400 Bad Request\r\n\r\n<h1>Bad Request</h1><hr><i>uWebSockets/20 Server</i>",
+    ],
+    [
+      [
+        "GET / HTTP/1.1",
+        "Host: localhost",
+        "User-agent: test-client",
+        "Connection: keep-alive",
+        "Content-type: application/json",
+        "Content-length: 0",
+        ...Array(2000)
+          .fill()
+          .map((_, i) => `SomeHeader-${i}: Some abitrary value`),
+        "\r\n",
+      ].join("\r\n"),
+      "HTTP/1.1 431 Request Header Fields Too Large\r\n\r\n<h1>Request Header Fields Too Large</h1><hr><i>uWebSockets/20 Server</i>",
+    ],
+    [
+      [
+        "GET / HTTP/1.1",
+        "Host: localhost",
+        "User-agent: test-client",
+        "Connection: close",
+        "Content-type: application/json",
+        "Content-length: 0",
+        ...Array(20)
+          .fill()
+          .map((_, i) => `SomeHeader-${i}: Some abitrary value`),
+        "\r\n",
+      ].join("\r\n"),
+      "HTTP/1.1 200 OK\r\ncontent-type: text/plain;charset=utf-8\r\n",
+    ],
+  ];
+  for (const [req, res] of list) {
+    try {
+      await request(req, res);
+    } catch (err) {
+      server.stop(true);
+      done(err);
+    }
+  }
+  server.stop(true);
+  done();
+}, 150000);

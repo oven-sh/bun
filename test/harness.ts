@@ -15,7 +15,7 @@ export function bunExe() {
 }
 
 export function withoutMimalloc(input: string) {
-  return input.replaceAll(/^mimalloc warning: .*$/gm, "");
+  return input.replaceAll(/^mimalloc warning:.*$/gm, "");
 }
 
 export function nodeExe(): string | null {

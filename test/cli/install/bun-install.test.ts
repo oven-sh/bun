@@ -1,6 +1,6 @@
 import { file, listen, Socket, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, describe, test } from "bun:test";
-import { bunExe, bunEnv as env } from "harness";
+import { bunExe, bunEnv as env, withoutMimalloc } from "harness";
 import { access, mkdir, readlink, realpath, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import {
@@ -20,6 +20,20 @@ beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
 beforeEach(dummyBeforeEach);
 afterEach(dummyAfterEach);
+
+// TODO: fix the underlying cause of this
+const origResponseText = Response.prototype.text;
+beforeAll(() => {
+  // @ts-expect-error
+  Response.prototype.text = async function () {
+    return withoutMimalloc(await origResponseText.call(this));
+  };
+});
+
+afterAll(() => {
+  // @ts-expect-error
+  Response.prototype.text = origResponseText;
+});
 
 describe("chooses", () => {
   async function runTest(latest: string, range: string, chosen = "0.0.5") {

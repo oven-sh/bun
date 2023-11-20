@@ -14,6 +14,10 @@ export function bunExe() {
   return process.execPath;
 }
 
+export function withoutMimalloc(input: string) {
+  return input.replaceAll(/^mimalloc: .*$/gm, "");
+}
+
 export function nodeExe(): string | null {
   return which("node") || null;
 }

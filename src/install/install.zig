@@ -2793,10 +2793,6 @@ pub const PackageManager = struct {
     ) !?ResolvedPackageResult {
         name.assertDefined();
 
-        if (resolution < this.lockfile.packages.len) {
-            return .{ .package = this.lockfile.packages.get(resolution) };
-        }
-
         if (install_peer and behavior.isPeer()) {
             if (this.lockfile.package_index.get(name_hash)) |index| {
                 const resolutions: []Resolution = this.lockfile.packages.items(.resolution);
@@ -2873,6 +2869,10 @@ pub const PackageManager = struct {
                     },
                 }
             }
+        }
+
+        if (resolution < this.lockfile.packages.len) {
+            return .{ .package = this.lockfile.packages.get(resolution) };
         }
 
         switch (version.tag) {
@@ -6635,6 +6635,8 @@ pub const PackageManager = struct {
         }
 
         pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !CommandLineArguments {
+            Output.is_verbose = Output.isVerbose();
+
             comptime var params: []const ParamType = &switch (subcommand) {
                 .install => install_params,
                 .update => update_params,
@@ -6674,7 +6676,7 @@ pub const PackageManager = struct {
             // cli.no_dedupe = args.flag("--no-dedupe");
             cli.no_cache = args.flag("--no-cache");
             cli.silent = args.flag("--silent");
-            cli.verbose = args.flag("--verbose");
+            cli.verbose = args.flag("--verbose") or Output.is_verbose;
             cli.ignore_scripts = args.flag("--ignore-scripts");
             cli.no_summary = args.flag("--no-summary");
 

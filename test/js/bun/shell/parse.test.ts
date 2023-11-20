@@ -291,3 +291,23 @@ describe("parse shell", () => {
     expect(result).toEqual(expected);
   });
 });
+
+describe("parse shell invalid input", () => {
+  function run(cb: Function): Error | undefined {
+    try {
+      cb();
+    } catch (err) {
+      return err as Error;
+    }
+    return undefined;
+  }
+
+  test("invalid js obj", () => {
+    const error = run(() => {
+      const file = new Uint8Array(1 << 20);
+      const result = $.parse`${file} | cat`;
+    });
+
+    expect(error).toBeDefined();
+  });
+});

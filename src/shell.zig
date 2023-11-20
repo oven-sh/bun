@@ -10,6 +10,10 @@ const JSValue = bun.JSC.JSValue;
 const Which = @import("./which.zig");
 
 pub const ShellError = error{Process};
+pub const ParseError = error{
+    Expected,
+    Unknown,
+};
 
 extern "C" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: i32) i32;
 
@@ -621,8 +625,11 @@ pub const Parser = struct {
     tokens: []const Token,
     alloc: Allocator,
     jsobjs: []JSValue,
-
     current: u32 = 0,
+    errors: std.ArrayList(Error),
+
+    // FIXME error location
+    const Error = struct { msg: []const u8 };
 
     pub fn new(allocator: Allocator, lexer: *const Lexer, jsobjs: []JSValue) !Parser {
         return .{
@@ -630,6 +637,7 @@ pub const Parser = struct {
             .tokens = lexer.tokens.items[0..lexer.tokens.items.len],
             .alloc = allocator,
             .jsobjs = jsobjs,
+            .errors = std.ArrayList(Error).init(allocator),
         };
     }
 
@@ -723,9 +731,22 @@ pub const Parser = struct {
             }
         }
 
-        if (self.match_any(&.{ .Semicolon, .Eof })) return .{ .assigns = assigns.items[0..] };
+        if (self.match_any(&.{ .Semicolon, .Eof })) {
+            if (assigns.items.len == 0) {
+                try self.add_error("expected a command or assignment", .{});
+                return ParseError.Expected;
+            }
+            return .{ .assigns = assigns.items[0..] };
+        }
 
-        const name = try self.parse_atom() orelse return .{ .assigns = assigns.items[0..] };
+        const name = try self.parse_atom() orelse {
+            if (assigns.items.len == 0) {
+                try self.add_error("expected a command or assignment", .{});
+                return ParseError.Expected;
+            }
+            return .{ .assigns = assigns.items[0..] };
+        };
+
         var name_and_args = std.ArrayList(AST.Atom).init(self.alloc);
         try name_and_args.append(name);
         while (try self.parse_atom()) |arg| {
@@ -742,7 +763,10 @@ pub const Parser = struct {
                     break :redirect_file .{ .jsbuf = AST.JSBuf.new(obj_ref) };
                 }
 
-                const redirect_file = try self.parse_atom() orelse @panic("Redirection with no file");
+                const redirect_file = try self.parse_atom() orelse {
+                    try self.add_error("redirection with no file", .{});
+                    return ParseError.Expected;
+                };
                 break :redirect_file .{ .atom = redirect_file };
             }
             break :redirect_file null;
@@ -775,7 +799,10 @@ pub const Parser = struct {
                         const label = txt[0..eq_idx];
 
                         if (eq_idx == txt.len - 1) {
-                            const atom = try self.parse_atom() orelse @panic("OOPS");
+                            const atom = try self.parse_atom() orelse {
+                                try self.add_error("Expected an atom", .{});
+                                return ParseError.Expected;
+                            };
                             break :var_decl .{
                                 .label = label,
                                 .value = atom,
@@ -933,6 +960,11 @@ pub const Parser = struct {
 
     fn prev(self: *Parser) Token {
         return self.tokens[self.current - 1];
+    }
+
+    fn add_error(self: *Parser, comptime fmt: []const u8, args: anytype) !void {
+        const error_msg = try std.fmt.allocPrint(self.alloc, fmt, args);
+        try self.errors.append(.{ .msg = error_msg });
     }
 };
 

@@ -1087,7 +1087,7 @@ describe("Response", () => {
     });
     try {
       await body.json();
-      expect(false).toBe(true);
+      expect.unreachable();
     } catch (exception) {
       expect(exception instanceof SyntaxError).toBe(true);
     }

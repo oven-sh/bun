@@ -144,15 +144,22 @@ pub inline fn isNPMPackageName(target: string) bool {
         '@' => true,
         else => return false,
     };
+
     var slash_index: usize = 0;
     for (target[1..], 0..) |c, i| {
         switch (c) {
             // Old packages may have capital letters
-            'A'...'Z', 'a'...'z', '0'...'9', '$', '-', '_', '.' => {},
+            'A'...'Z', 'a'...'z', '0'...'9', '-', '_', '.' => {},
             '/' => {
                 if (!scoped) return false;
                 if (slash_index > 0) return false;
                 slash_index = i + 1;
+            },
+            // issue#7045, package "@~3/svelte_mount"
+            // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/encodeURIComponent#description
+            // It escapes all characters except: A–Z a–z 0–9 - _ . ! ~ * ' ( )
+            '!', '~', '*', '\'', '(', ')' => {
+                if (!scoped or slash_index > 0) return false;
             },
             else => return false,
         }
@@ -4367,10 +4374,14 @@ pub fn trim(slice: anytype, comptime values_to_strip: []const u8) @TypeOf(slice)
     return slice[begin..end];
 }
 
+pub const whitespace_chars = [_]u8{ ' ', '\t', '\n', '\r', std.ascii.control_code.vt, std.ascii.control_code.ff };
+
 pub fn lengthOfLeadingWhitespaceASCII(slice: string) usize {
     for (slice) |*c| {
         switch (c.*) {
-            ' ', '\t', '\n', '\r', std.ascii.control_code.vt, std.ascii.control_code.ff => {},
+            whitespace: {
+                inline for (whitespace_chars) |wc| break :whitespace wc;
+            } => {},
             else => {
                 return @intFromPtr(c) - @intFromPtr(slice.ptr);
             },

@@ -147,19 +147,19 @@ it("crypto.timingSafeEqual", () => {
   expect(crypto.timingSafeEqual(uuid, uuid.slice())).toBe(true);
   try {
     crypto.timingSafeEqual(uuid, uuid.slice(1));
-    expect(false).toBe(true);
+    expect.unreachable();
   } catch (e) {}
 
   try {
     crypto.timingSafeEqual(uuid, uuid.slice(0, uuid.length - 2));
-    expect(false).toBe(true);
+    expect.unreachable();
   } catch (e) {
     expect(e.message).toBe("Input buffers must have the same length");
   }
 
   try {
     expect(crypto.timingSafeEqual(uuid, crypto.randomUUID())).toBe(false);
-    expect(false).toBe(true);
+    expect.unreachable();
   } catch (e) {
     expect(e.name).toBe("TypeError");
   }

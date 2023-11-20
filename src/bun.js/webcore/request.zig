@@ -86,6 +86,7 @@ pub const Request = struct {
     pub const getArrayBuffer = RequestMixin.getArrayBuffer;
     pub const getBlob = RequestMixin.getBlob;
     pub const getFormData = RequestMixin.getFormData;
+    pub const getBlobWithoutCallFrame = RequestMixin.getBlobWithoutCallFrame;
 
     pub export fn Request__getUWSRequest(
         this: *Request,

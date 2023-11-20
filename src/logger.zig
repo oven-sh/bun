@@ -257,41 +257,23 @@ pub const Data = struct {
         to: anytype,
         kind: Kind,
         comptime enable_ansi_colors: bool,
-        comptime is_note: bool,
     ) !void {
         if (this.text.len == 0) return;
 
         const message_color = switch (kind) {
             .err => comptime Output.color_map.get("b").?,
-            .note => comptime Output.color_map.get("cyan").? ++ Output.color_map.get("d").?,
+            .note => comptime Output.color_map.get("blue").?,
             else => comptime Output.color_map.get("d").? ++ Output.color_map.get("b").?,
         };
 
         const color_name: string = switch (kind) {
             .err => comptime Output.color_map.get("red").?,
-            .note => comptime Output.color_map.get("cyan").?,
+            .note => comptime Output.color_map.get("blue").?,
             else => comptime Output.color_map.get("d").?,
         };
 
-        try to.writeAll("\n");
-
-        if (comptime enable_ansi_colors) {
-            try to.writeAll(color_name);
-        }
-
-        try to.writeAll(kind.string());
-
-        try std.fmt.format(to, comptime Output.prettyFmt("<r><d>: <r>", enable_ansi_colors), .{});
-
-        if (comptime enable_ansi_colors) {
-            try to.writeAll(message_color);
-        }
-
-        try std.fmt.format(to, comptime Output.prettyFmt("{s}<r>", enable_ansi_colors), .{this.text});
-
-        if (this.location) |location| {
+        if (this.location) |*location| {
             if (location.line_text) |line_text_| {
-                try to.writeAll("\n");
                 const location_in_line_text_original = @as(usize, @intCast(@max(location.column, 1) - 1));
 
                 const line_text_right_trimmed = std.mem.trimRight(u8, line_text_, " \r\n\t");
@@ -312,10 +294,16 @@ pub const Data = struct {
                             before_segment = before_segment[before_segment.len - 40 ..];
                         }
 
+                        if (location.line > -1) {
+                            try std.fmt.format(to, comptime Output.prettyFmt("<d>{d} | <r>", true), .{
+                                location.line,
+                            });
+                        }
+
                         try to.writeAll(before_segment);
 
                         const rest_of_line = line_text[location_in_line_text..];
-                        line_offset_for_second_line = before_segment.len;
+                        line_offset_for_second_line = before_segment.len + " | ".len + bun.fmt.fastDigitCount(@intCast(location.line));
 
                         const end_of_segment: usize = brk: {
                             if (rest_of_line.len == 0) break :brk 0;
@@ -388,15 +376,28 @@ pub const Data = struct {
                     }
                 }
             }
+        }
 
+        if (comptime enable_ansi_colors) {
+            try to.writeAll(color_name);
+        }
+
+        try to.writeAll(kind.string());
+
+        try std.fmt.format(to, comptime Output.prettyFmt("<r><d>: <r>", enable_ansi_colors), .{});
+
+        if (comptime enable_ansi_colors) {
+            try to.writeAll(message_color);
+        }
+
+        try std.fmt.format(to, comptime Output.prettyFmt("{s}<r>", enable_ansi_colors), .{this.text});
+
+        if (this.location) |*location| {
             if (location.file.len > 0) {
-                if (comptime enable_ansi_colors) {
-                    if (!is_note and kind == .err) {
-                        try to.writeAll(comptime Output.color_map.get("b").?);
-                    }
-                }
+                try to.writeAll("\n");
+                try to.writeByteNTimes(' ', (kind.string().len + ": ".len) - "at ".len);
 
-                try std.fmt.format(to, comptime Output.prettyFmt("{s}<r>", enable_ansi_colors), .{
+                try std.fmt.format(to, comptime Output.prettyFmt("<d>at <r><cyan>{s}<r>", enable_ansi_colors), .{
                     location.file,
                 });
 
@@ -565,14 +566,17 @@ pub const Msg = struct {
         to: anytype,
         comptime enable_ansi_colors: bool,
     ) !void {
-        try msg.data.writeFormat(to, msg.kind, enable_ansi_colors, false);
+        try msg.data.writeFormat(to, msg.kind, enable_ansi_colors);
 
         if (msg.notes) |notes| {
-            if (notes.len > 0)
+            if (notes.len > 0) {
                 try to.writeAll("\n");
+            }
 
             for (notes) |note| {
-                try note.writeFormat(to, .note, enable_ansi_colors, true);
+                try to.writeAll("\n");
+
+                try note.writeFormat(to, .note, enable_ansi_colors);
             }
         }
     }
@@ -1272,36 +1276,35 @@ pub const Log = struct {
 
     pub fn printForLogLevelWithEnableAnsiColors(self: *Log, to: anytype, comptime enable_ansi_colors: bool) !void {
         var needs_newline = false;
-
         if (self.warnings > 0 and self.errors > 0) {
             // Print warnings at the top
             // errors at the bottom
             // This is so if you're reading from a terminal
             // and there are a bunch of warnings
             // You can more easily see where the errors are
-            for (self.msgs.items) |msg| {
+            for (self.msgs.items) |*msg| {
                 if (msg.kind != .err) {
                     if (msg.kind.shouldPrint(self.level)) {
-                        if (needs_newline) _ = try to.write("\n");
+                        if (needs_newline) try to.writeAll("\n\n");
                         try msg.writeFormat(to, enable_ansi_colors);
                         needs_newline = true;
                     }
                 }
             }
 
-            for (self.msgs.items) |msg| {
+            for (self.msgs.items) |*msg| {
                 if (msg.kind == .err) {
                     if (msg.kind.shouldPrint(self.level)) {
-                        if (needs_newline) _ = try to.write("\n");
+                        if (needs_newline) try to.writeAll("\n\n");
                         try msg.writeFormat(to, enable_ansi_colors);
                         needs_newline = true;
                     }
                 }
             }
         } else {
-            for (self.msgs.items) |msg| {
+            for (self.msgs.items) |*msg| {
                 if (msg.kind.shouldPrint(self.level)) {
-                    if (needs_newline) _ = try to.write("\n");
+                    if (needs_newline) try to.writeAll("\n\n");
                     try msg.writeFormat(to, enable_ansi_colors);
                     needs_newline = true;
                 }

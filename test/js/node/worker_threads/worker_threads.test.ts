@@ -33,15 +33,15 @@ test("all worker_threads module properties are present", () => {
   expect(wt).toHaveProperty("MessagePort");
   expect(wt).toHaveProperty("Worker");
 
-  expect(getEnvironmentData).toBeDefined();
-  expect(isMainThread).toBeDefined();
-  expect(markAsUntransferable).toBeDefined();
-  expect(moveMessagePortToContext).toBeDefined();
-  expect(parentPort).toBeDefined();
-  expect(receiveMessageOnPort).toBeDefined();
+  expect(getEnvironmentData).toBeFunction();
+  expect(isMainThread).toBeBoolean();
+  expect(markAsUntransferable).toBeFunction();
+  expect(moveMessagePortToContext).toBeFunction();
+  expect(parentPort).toBeNull();
+  expect(receiveMessageOnPort).toBeFunction();
   expect(resourceLimits).toBeDefined();
   expect(SHARE_ENV).toBeDefined();
-  expect(setEnvironmentData).toBeDefined();
+  expect(setEnvironmentData).toBeFunction();
   expect(threadId).toBeNumber();
   expect(workerData).toBeUndefined();
   expect(BroadcastChannel).toBeDefined();
@@ -128,6 +128,21 @@ test("threadId module and worker property is consistent", async () => {
   await worker2.terminate();
 });
 
+test("message port starts at message listener registration", async () => {
+  const worker = new Worker(new URL("./worker-message-port.ts", import.meta.url).href);
+  const messageChannel = new MessageChannel();
+  const responsePromise = new Promise(resolve => {
+    messageChannel.port1.on("message", message => resolve(message));
+  });
+  worker.postMessage({ port: messageChannel.port2 }, [messageChannel.port2]);
+  const messageText = "Hello, world!";
+  messageChannel.port1.postMessage({ text: messageText });
+  await expect(responsePromise).resolves.toStrictEqual({ text: messageText });
+  messageChannel.port1.close();
+  messageChannel.port2.close();
+  worker.terminate();
+});
+
 test("receiveMessageOnPort works across threads", async () => {
   const { port1, port2 } = new MessageChannel();
   const worker = new Worker(new URL("./worker.js", import.meta.url).href, {
@@ -145,7 +160,7 @@ test("receiveMessageOnPort works across threads", async () => {
   await worker.terminate();
 });
 
-test("receiveMessageOnPort works with FIFO", () => {
+test("receiveMessageOnPort works as FIFO", () => {
   const { port1, port2 } = new MessageChannel();
 
   const message1 = { hello: "world" };
@@ -171,7 +186,7 @@ test("receiveMessageOnPort works with FIFO", () => {
 
   for (const value of [null, 0, -1, {}, []]) {
     expect(() => {
-      // @ts-ignore
+      // @ts-expect-error invalid type
       receiveMessageOnPort(value);
     }).toThrow();
   }

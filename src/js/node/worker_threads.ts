@@ -1,10 +1,8 @@
-// import type { Readable, Writable } from "node:stream";
-// import type { WorkerOptions } from "node:worker_threads";
+const EventEmitter = require("node:events");
+const { throwNotImplemented } = require("$shared");
+
 declare const self: typeof globalThis;
 type WebWorker = InstanceType<typeof globalThis.Worker>;
-
-const EventEmitter = require("node:events");
-const { throwNotImplemented } = require("../internal/shared");
 
 const { MessageChannel, BroadcastChannel, Worker: WebWorker } = globalThis;
 const SHARE_ENV = Symbol("nodejs.worker_threads.SHARE_ENV");
@@ -14,8 +12,8 @@ let [_workerData, _threadId, _receiveMessageOnPort] = $lazy("worker_threads");
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 
-const emittedWarnings = new Set();
-function emitWarning(type, message) {
+const emittedWarnings = new Set<string>();
+function emitWarning(type: string, message: string) {
   if (emittedWarnings.has(type)) return;
   emittedWarnings.add(type);
   // process.emitWarning(message); // our printing is bad
@@ -77,11 +75,16 @@ function injectFakeEmitter(Class) {
   };
 
   function EventClass(eventName) {
-    if (eventName === "error" || eventName === "messageerror") {
-      return ErrorEvent;
-    }
+    switch (eventName) {
+      case "error":
+      case "messageerror": {
+        return ErrorEvent;
+      }
 
-    return MessageEvent;
+      default: {
+        return MessageEvent;
+      }
+    }
   }
 
   Class.prototype.emit = function (event, ...args) {
@@ -178,7 +181,7 @@ function getEnvironmentData() {
   return process.env;
 }
 
-function setEnvironmentData(env: any) {
+function setEnvironmentData(env) {
   process.env = env;
 }
 
@@ -205,7 +208,7 @@ class Worker extends EventEmitter {
   #worker: WebWorker;
   #performance;
 
-  // this is used by wt.Worker.terminate();
+  // this is used by terminate();
   // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
   #onExitPromise: Promise<number> | number | undefined = undefined;
 
@@ -287,7 +290,7 @@ class Worker extends EventEmitter {
     return this.#worker.postMessage(...args);
   }
 
-  #onClose(e) {
+  #onClose(e: CloseEvent) {
     this.#onExitPromise = e.code;
     this.emit("exit", e.code);
   }

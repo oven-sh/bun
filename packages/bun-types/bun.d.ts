@@ -70,7 +70,12 @@ declare module "bun" {
     options?: { PATH?: string; cwd?: string },
   ): string | null;
 
-  type ShellExpression = string | BunFile | ArrayBufferView | Subprocess;
+  export type ShellExpression =
+    | string
+    | Subprocess
+    | SpawnOptions.Readable
+    | SpawnOptions.Writable;
+
   export interface Shell {
     (
       strings: TemplateStringsArray,

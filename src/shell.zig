@@ -43,6 +43,7 @@ pub const Interpreter = struct {
     env: std.StringArrayHashMap([:0]const u8),
     cmd_local_env: std.StringArrayHashMap([:0]const u8),
     globalThis: *JSC.JSGlobalObject,
+    jsobjs: []JSValue,
 
     const IO = struct {
         stdin: bun.FileDescriptor,
@@ -56,7 +57,7 @@ pub const Interpreter = struct {
         cd,
     };
 
-    pub fn new(arena: *bun.ArenaAllocator, globalThis: *JSC.JSGlobalObject) Interpreter {
+    pub fn new(arena: *bun.ArenaAllocator, globalThis: *JSC.JSGlobalObject, jsobjs: []JSValue) Interpreter {
         const allocator = arena.allocator();
         return .{
             .arena = arena,
@@ -64,6 +65,7 @@ pub const Interpreter = struct {
             .env = std.StringArrayHashMap([:0]const u8).init(allocator),
             .cmd_local_env = std.StringArrayHashMap([:0]const u8).init(allocator),
             .globalThis = globalThis,
+            .jsobjs = jsobjs,
         };
     }
 
@@ -290,6 +292,26 @@ pub const Interpreter = struct {
         spawn_args.stdio[bun.STDOUT_FD] = if (io.stdout == bun.STDOUT_FD) .inherit else .{ .fd = io.stdout };
         spawn_args.stdio[bun.STDERR_FD] = if (io.stderr == bun.STDERR_FD) .inherit else .{ .fd = io.stderr };
 
+        if (cmd.redirect_file) |redirect| {
+            switch (redirect) {
+                .jsbuf => |val| {
+                    if (self.jsobjs[val.idx].asArrayBuffer(self.globalThis)) |buf| {
+                        spawn_args.stdio[bun.STDOUT_FD] = .{ .array_buffer = JSC.ArrayBuffer.Strong{
+                            .array_buffer = buf,
+                            .held = JSC.Strong.create(buf.value, self.globalThis),
+                        } };
+                    } else if (self.jsobjs[val.idx].as(JSC.WebCore.Blob)) |blob| {
+                        if (!Subprocess.extractStdioBlob(self.globalThis, .{ .Blob = blob.dupe() }, bun.STDOUT_FD, &spawn_args.stdio)) {
+                            @panic("OOPS");
+                        }
+                    } else {
+                        @panic("Unhandled");
+                    }
+                },
+                else => @panic("TODO"),
+            }
+        }
+
         var out_watchfd: ?Subprocess.WatchFd = null;
         var out_err: ?JSValue = null;
         var subprocess = Subprocess.spawnMaybeSyncImpl(
@@ -313,9 +335,11 @@ pub const Interpreter = struct {
     }
 
     fn interpret_cmd(self: *Interpreter, cmd: *const ast.Cmd, io: *IO) !bool {
+        log("Interpret cmd", .{});
         var child_proc = try self.init_cmd(cmd, io);
-        defer child_proc.unref(true);
+        defer child_proc.unref(false);
         child_proc.wait(true);
+        log("Done waiting {any}", .{child_proc.hasExited()});
         return (child_proc.exit_code orelse 1) == 0;
     }
 
@@ -424,6 +448,20 @@ pub const AST = struct {
         }
     };
 
+    /// A "buffer" from a JS object can be piped from and to, and also have
+    /// output from commands redirected into it. Only BunFile, ArrayBufferView
+    /// are supported.
+    pub const JSBuf = struct {
+        idx: u32,
+
+        pub fn new(idx: u32) JSBuf {
+            return .{ .idx = idx };
+        }
+    };
+
+    /// A Subprocess from JS
+    pub const JSProc = struct { idx: JSValue };
+
     pub const Assign = struct {
         label: []const u8,
         value: Atom,
@@ -441,8 +479,8 @@ pub const AST = struct {
     pub const Cmd = struct {
         assigns: []Assign,
         name_and_args: []Atom,
-        redirect: Redirect = .None,
-        redirect_file: ?Atom = null,
+        redirect: RedirectFlags = .None,
+        redirect_file: ?Redirect = null,
 
         /// Bit flags for redirects:
         /// -  `>`  = Redirect.Stdout
@@ -455,11 +493,16 @@ pub const AST = struct {
         /// - `&>>` = Redirect.Append | Redirect.Stdout | Redirect.Stderr
         ///
         /// Multiple redirects and redirecting stdin is not supported yet.
-        pub const Redirect = enum(u8) {
+        pub const RedirectFlags = enum(u8) {
             None = 0,
             Stdout = 1,
             Stderr = 2,
             Append = 4,
+        };
+
+        pub const Redirect = union(enum) {
+            atom: Atom,
+            jsbuf: JSBuf,
         };
     };
 
@@ -499,14 +542,16 @@ pub const Parser = struct {
     strpool: []const u8,
     tokens: []const Token,
     alloc: Allocator,
+    jsobjs: []JSValue,
 
     current: u32 = 0,
 
-    pub fn new(allocator: Allocator, lexer: *const Lexer) !Parser {
+    pub fn new(allocator: Allocator, lexer: *const Lexer, jsobjs: []JSValue) !Parser {
         return .{
             .strpool = lexer.strpool.items[0..lexer.strpool.items.len],
             .tokens = lexer.tokens.items[0..lexer.tokens.items.len],
             .alloc = allocator,
+            .jsobjs = jsobjs,
         };
     }
 
@@ -611,10 +656,15 @@ pub const Parser = struct {
 
         // TODO Parse redirects (need to update lexer to have tokens for different parts e.g. &>>)
         const redirect = self.parse_redirect();
-        const redirect_file = redirect_file: {
-            if (redirect != AST.Cmd.Redirect.None) {
+        const redirect_file: ?AST.Cmd.Redirect = redirect_file: {
+            if (redirect != AST.Cmd.RedirectFlags.None) {
+                if (self.match(.JSObjRef)) {
+                    const obj_ref = self.prev().JSObjRef;
+                    break :redirect_file .{ .jsbuf = AST.JSBuf.new(obj_ref) };
+                }
+
                 const redirect_file = try self.parse_atom() orelse @panic("Redirection with no file");
-                break :redirect_file redirect_file;
+                break :redirect_file .{ .atom = redirect_file };
             }
             break :redirect_file null;
         };
@@ -629,12 +679,12 @@ pub const Parser = struct {
     }
 
     // TODO Other redirects (e.g. &>>), probably should have tokens for each kind
-    fn parse_redirect(self: *Parser) AST.Cmd.Redirect {
+    fn parse_redirect(self: *Parser) AST.Cmd.RedirectFlags {
         if (self.match(.RightArrow)) {
-            return AST.Cmd.Redirect.Stdout;
+            return AST.Cmd.RedirectFlags.Stdout;
         }
 
-        return AST.Cmd.Redirect.None;
+        return AST.Cmd.RedirectFlags.None;
     }
 
     /// Try to parse an assignment. If no assignment could be parsed then return
@@ -831,6 +881,7 @@ pub const TokenTag = enum {
     Export,
     Var,
     Text,
+    JSObjRef,
     Delimit,
     Eof,
 };
@@ -862,6 +913,7 @@ pub const Token = union(TokenTag) {
 
     Var: TextRange,
     Text: TextRange,
+    JSObjRef: u32,
 
     Delimit,
     Eof,
@@ -902,6 +954,8 @@ pub const Lexer = struct {
     tokens: ArrayList(Token),
     state: State = .Normal,
     delimit_quote: bool = false,
+
+    pub const js_objref_prefix = "$__bun_";
 
     const State = enum {
         Normal,
@@ -983,8 +1037,12 @@ pub const Lexer = struct {
 
                         // Handle variable
                         try self.break_word(false);
-                        const var_tok = try self.eat_var();
-                        try self.tokens.append(.{ .Var = var_tok });
+                        if (self.eat_js_obj_ref()) |ref| {
+                            try self.tokens.append(ref);
+                        } else {
+                            const var_tok = try self.eat_var();
+                            try self.tokens.append(.{ .Var = var_tok });
+                        }
                         self.word_start = self.j;
                         continue;
                     },
@@ -1088,6 +1146,7 @@ pub const Lexer = struct {
     }
 
     /// Assumes the first character of the literal has been eaten
+    /// Backtracks and returns false if unsuccessful
     fn eat_literal(self: *Lexer, comptime literal: []const u8) bool {
         const literal_skip_first = literal[1..];
         const snapshot = self.make_snapshot();
@@ -1101,6 +1160,51 @@ pub const Lexer = struct {
 
         self.backtrack(snapshot);
         return false;
+    }
+
+    fn eat_number_word(self: *Lexer) ?usize {
+        const snap = self.make_snapshot();
+        var count: usize = 0;
+        var buf: [32]u8 = [_]u8{0} ** 32;
+
+        while (self.eat()) |result| {
+            const char = result.char;
+            switch (char) {
+                '0'...'9' => {
+                    buf[count] = char;
+                    count += 1;
+                    continue;
+                },
+                else => {
+                    break;
+                },
+            }
+        }
+
+        if (count == 0) {
+            self.backtrack(snap);
+            return null;
+        }
+
+        var num = std.fmt.parseInt(usize, buf[0..count], 10) catch {
+            self.backtrack(snap);
+            return null;
+        };
+
+        return num;
+    }
+
+    fn eat_js_obj_ref(self: *Lexer) ?Token {
+        const snap = self.make_snapshot();
+        if (self.eat_literal(Lexer.js_objref_prefix)) {
+            if (self.eat_number_word()) |num| {
+                if (num <= std.math.maxInt(u32)) {
+                    return .{ .JSObjRef = @truncate(num) };
+                }
+            }
+        }
+        self.backtrack(snap);
+        return null;
     }
 
     fn eat_var(self: *Lexer) !Token.TextRange {
@@ -1244,6 +1348,7 @@ pub const Test = struct {
 
         Var: []const u8,
         Text: []const u8,
+        JSObjRef: u32,
 
         Delimit,
         Eof,
@@ -1253,6 +1358,7 @@ pub const Test = struct {
                 .Export => return .Export,
                 .Var => |txt| return .{ .Var = buf[txt.start..txt.end] },
                 .Text => |txt| return .{ .Text = buf[txt.start..txt.end] },
+                .JSObjRef => |val| return .{ .JSObjRef = val },
                 .Pipe => return .Pipe,
                 .DoublePipe => return .DoublePipe,
                 .Ampersand => return .Ampersand,

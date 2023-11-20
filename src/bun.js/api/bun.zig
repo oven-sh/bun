@@ -299,20 +299,43 @@ pub fn shellCmdFromJS(
     globalThis: *JSC.JSGlobalObject,
     string_args: JSValue,
     template_args: []const JSValue,
+    out_jsobjs: *std.ArrayList(JSValue),
 ) !std.ArrayList(u8) {
+    var jsobjref_buf: [128]u8 = [_]u8{0} ** 128;
+
     var script = std.ArrayList(u8).init(allocator);
     var string_iter = string_args.arrayIterator(globalThis);
     var i: u32 = 0;
     const last = string_iter.len -| 1;
     while (string_iter.next()) |js_value| {
+        defer i += 1;
         const str = js_value.getZigString(globalThis);
         try script.appendSlice(str.full());
         if (i < last) {
             const template_value = template_args[i];
+            if (!template_value.isEmpty()) {
+                if (template_value.asArrayBuffer(globalThis)) |array_buffer| {
+                    _ = array_buffer;
+                    const idx = out_jsobjs.items.len;
+                    template_value.protect();
+                    try out_jsobjs.append(template_value);
+                    const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ Shell.Lexer.js_objref_prefix, idx });
+                    try script.appendSlice(slice);
+                    continue;
+                } else if (template_value.as(JSC.WebCore.Blob)) |blob| {
+                    _ = blob;
+                    const idx = out_jsobjs.items.len;
+                    template_value.protect();
+                    try out_jsobjs.append(template_value);
+                    const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ Shell.Lexer.js_objref_prefix, idx });
+                    try script.appendSlice(slice);
+                    continue;
+                }
+                @panic("Unsupported");
+            }
             const template_value_str = template_value.getZigString(globalThis);
             try script.appendSlice(template_value_str.full());
         }
-        i += 1;
     }
     return script;
 }
@@ -332,7 +355,13 @@ pub fn shellLex(
     defer arena.deinit();
 
     const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
-    var script = shellCmdFromJS(arena.allocator(), globalThis, string_args, template_args) catch {
+    var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
+    defer {
+        for (jsobjs.items) |jsval| {
+            jsval.unprotect();
+        }
+    }
+    var script = shellCmdFromJS(arena.allocator(), globalThis, string_args, template_args, &jsobjs) catch {
         globalThis.throwOutOfMemory();
         return JSValue.undefined;
     };
@@ -380,7 +409,13 @@ pub fn shellParse(
     defer arena.deinit();
 
     const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
-    var script = shellCmdFromJS(arena.allocator(), globalThis, string_args, template_args) catch {
+    var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
+    defer {
+        for (jsobjs.items) |jsval| {
+            jsval.unprotect();
+        }
+    }
+    var script = shellCmdFromJS(arena.allocator(), globalThis, string_args, template_args, &jsobjs) catch {
         globalThis.throwOutOfMemory();
         return JSValue.undefined;
     };
@@ -390,7 +425,7 @@ pub fn shellParse(
         globalThis.throwError(err, "failed to lex shell");
         return JSValue.undefined;
     };
-    var parser = Shell.Parser.new(arena.allocator(), &lexer) catch |err| {
+    var parser = Shell.Parser.new(arena.allocator(), &lexer, jsobjs.items[0..]) catch |err| {
         globalThis.throwError(err, "failed to create shell parser");
         return JSValue.undefined;
     };
@@ -433,7 +468,14 @@ pub fn shell(
     defer arena.deinit();
 
     const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
-    var script = shellCmdFromJS(arena.allocator(), globalThis, string_args, template_args) catch {
+    var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
+    defer {
+        for (jsobjs.items) |jsval| {
+            _ = jsval;
+            // jsval.unprotect();
+        }
+    }
+    var script = shellCmdFromJS(arena.allocator(), globalThis, string_args, template_args, &jsobjs) catch {
         globalThis.throwOutOfMemory();
         return JSValue.undefined;
     };
@@ -443,7 +485,7 @@ pub fn shell(
         globalThis.throwError(err, "failed to lex shell");
         return JSValue.undefined;
     };
-    var parser = Shell.Parser.new(arena.allocator(), &lexer) catch |err| {
+    var parser = Shell.Parser.new(arena.allocator(), &lexer, jsobjs.items[0..]) catch |err| {
         globalThis.throwError(err, "failed to create shell parser");
         return JSValue.undefined;
     };
@@ -453,7 +495,7 @@ pub fn shell(
         return JSValue.undefined;
     };
 
-    var interpreter = Shell.Interpreter.new(&arena, globalThis);
+    var interpreter = Shell.Interpreter.new(&arena, globalThis, jsobjs.items[0..]);
     interpreter.interpret(script_ast) catch {
         // globalThis.throwError(err, "shell:");
         return JSValue.undefined;

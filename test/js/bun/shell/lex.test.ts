@@ -291,4 +291,55 @@ describe("lex shell", () => {
     const result = JSON.parse($.lex`echo foo > cat secrets.txt`);
     expect(result).toEqual(expected);
   });
+
+  test("obj_ref", () => {
+    const expected = [
+      {
+        Text: "echo",
+      },
+      {
+        Delimit: {},
+      },
+      {
+        Text: "foo",
+      },
+      {
+        Delimit: {},
+      },
+      {
+        RightArrow: {},
+      },
+      {
+        JSObjRef: 0,
+      },
+      {
+        DoubleAmpersand: {},
+      },
+      {
+        Text: "echo",
+      },
+      {
+        Delimit: {},
+      },
+      {
+        Text: "lmao",
+      },
+      {
+        Delimit: {},
+      },
+      {
+        RightArrow: {},
+      },
+      {
+        JSObjRef: 1,
+      },
+      {
+        Eof: {},
+      },
+    ];
+    const buffer = new Uint8Array(1 << 20);
+    const buffer2 = new Uint8Array(1 << 20);
+    const result = JSON.parse($.lex`echo foo > ${buffer} && echo lmao > ${buffer2}`);
+    expect(result).toEqual(expected);
+  });
 });

@@ -53,7 +53,7 @@ describe("parse shell", () => {
                 "assigns": [],
                 "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "foo" } }],
                 "redirect": "Stdout",
-                "redirect_file": { "simple": { "Text": "lmao.txt" } },
+                "redirect_file": { atom: { "simple": { "Text": "lmao.txt" } } },
               },
             },
           ],
@@ -101,7 +101,7 @@ describe("parse shell", () => {
                       "assigns": [],
                       "name_and_args": [{ "simple": { "Text": "echo" } }],
                       "redirect": "Stdout",
-                      "redirect_file": { "simple": { "Text": "foo.txt" } },
+                      "redirect_file": { atom: { "simple": { "Text": "foo.txt" } } },
                     },
                   },
                   {
@@ -220,7 +220,7 @@ describe("parse shell", () => {
                           "assigns": [],
                           "name_and_args": [{ "simple": { "Text": "cat" } }],
                           "redirect": "Stdout",
-                          "redirect_file": { "simple": { "Text": "foo.txt" } },
+                          "redirect_file": { atom: { "simple": { "Text": "foo.txt" } } },
                         },
                       },
                     ],
@@ -256,6 +256,45 @@ describe("parse shell", () => {
     };
 
     const result = JSON.parse($.parse`FOO=bar export BAR=baz export LMAO=nice`);
+    // console.log("Result", JSON.stringify(result));
+    expect(result).toEqual(expected);
+  });
+
+  test("redirect js obj", () => {
+    const expected = {
+      "stmts": [
+        {
+          "exprs": [
+            {
+              "cond": {
+                "op": "And",
+                "left": {
+                  "cmd": {
+                    "assigns": [],
+                    "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "foo" } }],
+                    "redirect": "Stdout",
+                    "redirect_file": { "jsbuf": { "idx": 0 } },
+                  },
+                },
+                "right": {
+                  "cmd": {
+                    "assigns": [],
+                    "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "foo" } }],
+                    "redirect": "Stdout",
+                    "redirect_file": { "jsbuf": { "idx": 1 } },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const buffer = new Uint8Array(1 << 20);
+    const buffer2 = new Uint8Array(1 << 20);
+    const result = JSON.parse($.parse`echo foo > ${buffer} && echo foo > ${buffer2}`);
+
     // console.log("Result", JSON.stringify(result));
     expect(result).toEqual(expected);
   });

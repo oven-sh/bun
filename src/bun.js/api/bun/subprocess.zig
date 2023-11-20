@@ -2082,7 +2082,7 @@ pub const Subprocess = struct {
         if (pipe[0] != pipe[1]) os.close(pipe[1]);
     }
 
-    const Stdio = union(enum) {
+    pub const Stdio = union(enum) {
         inherit: void,
         ignore: void,
         fd: bun.FileDescriptor,
@@ -2134,7 +2134,7 @@ pub const Subprocess = struct {
         }
     };
 
-    fn extractStdioBlob(
+    pub fn extractStdioBlob(
         globalThis: *JSC.JSGlobalObject,
         blob: JSC.WebCore.AnyBlob,
         i: u32,

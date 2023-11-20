@@ -1655,6 +1655,10 @@ pub const Expect = struct {
         const result_: ?JSValue = brk: {
             var vm = globalObject.bunVM();
             var return_value: JSValue = .zero;
+
+            // Drain existing unhandled rejections
+            vm.global.handleRejectedPromises();
+
             var scope = vm.unhandledRejectionScope();
             var prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
             vm.unhandled_pending_rejection_to_capture = &return_value;
@@ -1662,12 +1666,14 @@ pub const Expect = struct {
             const return_value_from_fucntion: JSValue = value.call(globalObject, &.{});
             vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
 
+            vm.global.handleRejectedPromises();
+
             if (return_value == .zero) {
                 return_value = return_value_from_fucntion;
             }
 
             if (return_value.asAnyPromise()) |promise| {
-                globalObject.bunVM().waitForPromise(promise);
+                vm.waitForPromise(promise);
                 scope.apply(vm);
                 const promise_result = promise.result(globalObject.vm());
 
@@ -1676,15 +1682,24 @@ pub const Expect = struct {
                         break :brk null;
                     },
                     .Rejected => {
+                        promise.setHandled(globalObject.vm());
+
                         // since we know for sure it rejected, we should always return the error
                         break :brk promise_result.toError() orelse promise_result;
                     },
                     .Pending => unreachable,
                 }
             }
+
+            if (return_value != return_value_from_fucntion) {
+                if (return_value_from_fucntion.asAnyPromise()) |existing| {
+                    existing.setHandled(globalObject.vm());
+                }
+            }
+
             scope.apply(vm);
 
-            break :brk return_value.toError();
+            break :brk return_value.toError() orelse return_value_from_fucntion.toError();
         };
 
         const did_throw = result_ != null;
@@ -3547,6 +3562,27 @@ pub const Expect = struct {
     pub fn postMatch(_: *Expect, globalObject: *JSC.JSGlobalObject) void {
         var vm = globalObject.bunVM();
         vm.autoGarbageCollect();
+    }
+
+    pub fn doUnreachable(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const arg = callframe.arguments(1).ptr[0];
+
+        if (arg.isEmptyOrUndefinedOrNull()) {
+            const error_value = bun.String.init("reached unreachable code").toErrorInstance(globalObject);
+            error_value.put(globalObject, ZigString.static("name"), bun.String.init("UnreachableError").toJSConst(globalObject));
+            globalObject.throwValue(error_value);
+            return .zero;
+        }
+
+        if (arg.isString()) {
+            const error_value = arg.toBunString(globalObject).toErrorInstance(globalObject);
+            error_value.put(globalObject, ZigString.static("name"), bun.String.init("UnreachableError").toJSConst(globalObject));
+            globalObject.throwValue(error_value);
+            return .zero;
+        }
+
+        globalObject.throwValue(arg);
+        return .zero;
     }
 };
 

@@ -33,7 +33,7 @@ it("clearInterval", async () => {
   var called = false;
   const id = setInterval(() => {
     called = true;
-    expect(false).toBe(true);
+    expect.unreachable();
   }, 1);
   clearInterval(id);
   await new Promise((resolve, reject) => {

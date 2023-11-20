@@ -995,7 +995,7 @@ pub const Printer = struct {
         var lockfile_path: stringZ = "";
 
         if (!std.fs.path.isAbsolute(path)) {
-            var cwd = try std.os.getcwd(&lockfile_path_buf1);
+            var cwd = try bun.getcwd(&lockfile_path_buf1);
             var parts = [_]string{path};
             var lockfile_path__ = Path.joinAbsStringBuf(cwd, &lockfile_path_buf2, &parts, .auto);
             lockfile_path_buf2[lockfile_path__.len] = 0;
@@ -1076,7 +1076,7 @@ pub const Printer = struct {
         };
 
         env_loader.loadProcess();
-        try env_loader.load(entries_option.entries, .production);
+        try env_loader.load(entries_option.entries, &[_][]u8{}, .production);
         var log = logger.Log.init(allocator);
         try options.load(
             allocator,
@@ -1295,7 +1295,7 @@ pub const Printer = struct {
             // internal for debugging, print the lockfile as custom json
             // limited to debug because we don't want people to rely on this format.
             if (Environment.isDebug) {
-                if (std.os.getenv("JSON")) |_| {
+                if (std.process.hasEnvVarConstant("JSON")) {
                     try std.json.stringify(
                         this.lockfile,
                         .{
@@ -1400,12 +1400,7 @@ pub const Printer = struct {
                     const dependency_versions = requested_versions.get(i).?;
 
                     // https://github.com/yarnpkg/yarn/blob/158d96dce95313d9a00218302631cd263877d164/src/lockfile/stringify.js#L9
-                    const always_needs_quote = switch (name[0]) {
-                        'A'...'Z', 'a'...'z' => strings.hasPrefixComptime(name, "true") or
-                            strings.hasPrefixComptime(name, "false") or
-                            std.mem.indexOfAnyPos(u8, name, 1, ": \t\r\n\x0B\x0C\\\",[]") != null,
-                        else => true,
-                    };
+                    const always_needs_quote = strings.mustEscapeYAMLString(name);
 
                     var prev_dependency_version: ?Dependency.Version = null;
                     var needs_comma = false;
@@ -1487,7 +1482,9 @@ pub const Printer = struct {
 
                             try writer.writeAll("    ");
                             const dependency_name = dep.name.slice(string_buf);
-                            const needs_quote = dependency_name[0] == '@';
+
+                            const needs_quote = strings.mustEscapeYAMLString(dependency_name);
+
                             if (needs_quote) {
                                 try writer.writeByte('"');
                             }
@@ -1582,8 +1579,8 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
     tmpname_buf[0..8].* = "bunlock-".*;
     var tmpfile = FileSystem.RealFS.Tmpfile{};
     var secret: [32]u8 = undefined;
-    std.mem.writeIntNative(u64, secret[0..8], @as(u64, @intCast(std.time.milliTimestamp())));
-    var base64_bytes: [64]u8 = undefined;
+    std.mem.writeInt(u64, secret[0..8], @as(u64, @intCast(std.time.milliTimestamp())), .little);
+    var base64_bytes: [16]u8 = undefined;
     std.crypto.random.bytes(&base64_bytes);
 
     const tmpname__ = std.fmt.bufPrint(tmpname_buf[8..], "{s}", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
@@ -1596,12 +1593,38 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
     };
 
     var file = tmpfile.file();
+    {
+        var bytes = std.ArrayList(u8).init(bun.default_allocator);
+        defer bytes.deinit();
+        var total_size: usize = 0;
+        var end_pos: usize = 0;
+        Lockfile.Serializer.save(this, &bytes, &total_size, &end_pos) catch |err| {
+            tmpfile.dir().deleteFileZ(tmpname) catch {};
+            Output.prettyErrorln("<r><red>error:<r> failed to serialize lockfile: {s}", .{@errorName(err)});
+            Global.crash();
+        };
+        if (bytes.items.len >= end_pos)
+            bytes.items[end_pos..][0..@sizeOf(usize)].* = @bitCast(total_size);
 
-    Lockfile.Serializer.save(this, std.fs.File, file) catch |err| {
-        tmpfile.dir().deleteFileZ(tmpname) catch {};
-        Output.prettyErrorln("<r><red>error:<r> failed to serialize lockfile: {s}", .{@errorName(err)});
-        Global.crash();
-    };
+        var node_fs: bun.JSC.Node.NodeFS = undefined;
+        switch (node_fs.writeFile(
+            .{
+                .file = .{
+                    .fd = bun.toFD(file.handle),
+                },
+                .dirfd = bun.invalid_fd,
+                .data = .{ .string = bytes.items },
+            },
+            .sync,
+        )) {
+            .err => |e| {
+                tmpfile.dir().deleteFileZ(tmpname) catch {};
+                Output.prettyErrorln("<r><red>error:<r> failed to write lockfile\n{}", .{e});
+                Global.crash();
+            },
+            .result => {},
+        }
+    }
 
     if (comptime Environment.isWindows) {
         // TODO: make this executable
@@ -1614,7 +1637,7 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
         );
     }
 
-    tmpfile.promote(tmpname, std.fs.cwd().fd, filename) catch |err| {
+    tmpfile.promoteToCWD(tmpname, filename) catch |err| {
         tmpfile.dir().deleteFileZ(tmpname) catch {};
         Output.prettyErrorln("<r><red>error:<r> failed to save lockfile: {s}", .{@errorName(err)});
         Global.crash();
@@ -1664,7 +1687,8 @@ pub fn initEmpty(this: *Lockfile, allocator: Allocator) !void {
 pub fn getPackageID(
     this: *Lockfile,
     name_hash: u64,
-    // if it's a peer dependency, a folder, or a symlink
+    // If non-null, attempt to use an existing package
+    // that satisfies this version range.
     version: ?Dependency.Version,
     resolution: *const Resolution,
 ) ?PackageID {
@@ -1674,29 +1698,30 @@ pub fn getPackageID(
         .npm => v.value.npm.version,
         else => null,
     } else null;
+    const buf = this.buffers.string_bytes.items;
 
     switch (entry) {
         .PackageID => |id| {
             if (comptime Environment.allow_assert) std.debug.assert(id < resolutions.len);
 
-            if (resolutions[id].eql(resolution, this.buffers.string_bytes.items, this.buffers.string_bytes.items)) {
+            if (resolutions[id].eql(resolution, buf, buf)) {
                 return id;
             }
 
             if (npm_version) |range| {
-                if (range.satisfies(resolutions[id].value.npm.version)) return id;
+                if (range.satisfies(resolutions[id].value.npm.version, buf, buf)) return id;
             }
         },
         .PackageIDMultiple => |ids| {
             for (ids.items) |id| {
                 if (comptime Environment.allow_assert) std.debug.assert(id < resolutions.len);
 
-                if (resolutions[id].eql(resolution, this.buffers.string_bytes.items, this.buffers.string_bytes.items)) {
+                if (resolutions[id].eql(resolution, buf, buf)) {
                     return id;
                 }
 
                 if (npm_version) |range| {
-                    if (range.satisfies(resolutions[id].value.npm.version)) return id;
+                    if (range.satisfies(resolutions[id].value.npm.version, buf, buf)) return id;
                 }
             }
         },
@@ -1712,16 +1737,35 @@ pub fn getOrPutID(this: *Lockfile, id: PackageID, name_hash: PackageNameHash) !v
         var index: *PackageIndex.Entry = gpe.value_ptr;
 
         switch (index.*) {
-            .PackageID => |single| {
+            .PackageID => |existing_id| {
                 var ids = try PackageIDList.initCapacity(this.allocator, 8);
-                ids.appendAssumeCapacity(single);
-                ids.appendAssumeCapacity(id);
+                ids.items.len = 2;
+
+                const resolutions = this.packages.items(.resolution);
+                const buf = this.buffers.string_bytes.items;
+
+                ids.items[0..2].* = if (resolutions[id].order(&resolutions[existing_id], buf, buf) == .gt)
+                    .{ id, existing_id }
+                else
+                    .{ existing_id, id };
+
                 index.* = .{
                     .PackageIDMultiple = ids,
                 };
             },
-            .PackageIDMultiple => {
-                try index.PackageIDMultiple.append(this.allocator, id);
+            .PackageIDMultiple => |*existing_ids| {
+                const resolutions = this.packages.items(.resolution);
+                const buf = this.buffers.string_bytes.items;
+
+                for (existing_ids.items, 0..) |existing_id, i| {
+                    if (resolutions[id].order(&resolutions[existing_id], buf, buf) == .gt) {
+                        try existing_ids.insert(this.allocator, i, id);
+                        return;
+                    }
+                }
+
+                // append to end because it's the smallest or equal to the smallest
+                try existing_ids.append(this.allocator, id);
             },
         }
     } else {
@@ -2334,9 +2378,13 @@ pub const Package = extern struct {
             subpath: [:0]const u8,
             cwd: string,
         ) !void {
-            var pkg_dir = try bun.openDir(node_modules, subpath);
-            defer pkg_dir.close();
-            const json_file = try pkg_dir.dir.openFileZ("package.json", .{ .mode = .read_only });
+            var json_file_fd = try bun.sys.openat(
+                bun.toFD(node_modules.fd),
+                bun.path.joinZ([_]string{ subpath, "package.json" }, .auto),
+                std.os.O.RDONLY,
+                0,
+            ).unwrap();
+            const json_file = std.fs.File{ .handle = bun.fdcast(json_file_fd) };
             defer json_file.close();
             const json_stat_size = try json_file.getEndPos();
             const json_buf = try lockfile.allocator.alloc(u8, json_stat_size + 64);
@@ -2910,10 +2958,14 @@ pub const Package = extern struct {
                         if (switch (version.tag) {
                             .workspace => if (to_lockfile.workspace_paths.getPtr(from_dep.name_hash)) |path_ptr| brk: {
                                 const path = to_lockfile.str(path_ptr);
-                                var file = std.fs.cwd().openFile(Path.join(
+                                var local_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                                var package_json_path = Path.joinZBuf(
+                                    &local_buf,
                                     &[_]string{ path, "package.json" },
                                     .auto,
-                                ), .{ .mode = .read_only }) catch break :brk false;
+                                );
+                                var file = try bun.openFileZ(package_json_path, .{ .mode = .read_only });
+
                                 defer file.close();
                                 const bytes = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
                                 defer allocator.free(bytes);
@@ -3101,7 +3153,7 @@ pub const Package = extern struct {
             .npm => if (comptime tag != null)
                 unreachable
             else if (workspace_version) |ver| {
-                if (dependency_version.value.npm.version.satisfies(ver)) {
+                if (dependency_version.value.npm.version.satisfies(ver, buf, buf)) {
                     for (package_dependencies[0..dependencies_count]) |dep| {
                         // `dependencies` & `workspaces` defined within the same `package.json`
                         if (dep.version.tag == .workspace and dep.name_hash == name_hash) {
@@ -3126,7 +3178,7 @@ pub const Package = extern struct {
             .workspace => if (workspace_path) |path| {
                 if (workspace_range) |range| {
                     if (workspace_version) |ver| {
-                        if (range.satisfies(ver)) {
+                        if (range.satisfies(ver, buf, buf)) {
                             dependency_version.literal = path;
                             dependency_version.value.workspace = path;
                         }
@@ -3137,20 +3189,21 @@ pub const Package = extern struct {
                 }
             } else {
                 const workspace = dependency_version.value.workspace.slice(buf);
-                const path = string_builder.append(
-                    String,
-                    if (strings.eqlComptime(workspace, "*")) "*" else Path.relative(
+                const path = string_builder.append(String, if (strings.eqlComptime(workspace, "*")) "*" else brk: {
+                    var buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    break :brk Path.relative(
                         FileSystem.instance.top_level_dir,
-                        Path.joinAbsString(
+                        Path.joinAbsStringBuf(
                             FileSystem.instance.top_level_dir,
+                            &buf2,
                             &[_]string{
                                 source.path.name.dir,
                                 workspace,
                             },
                             .posix,
                         ),
-                    ),
-                );
+                    );
+                });
                 if (comptime Environment.allow_assert) {
                     std.debug.assert(path.len() > 0);
                     std.debug.assert(!std.fs.path.isAbsolute(path.slice(buf)));
@@ -3181,7 +3234,7 @@ pub const Package = extern struct {
                         if (switch (package_dep.version.tag) {
                             // `dependencies` & `workspaces` defined within the same `package.json`
                             .npm => String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash and
-                                package_dep.version.value.npm.version.satisfies(ver),
+                                package_dep.version.value.npm.version.satisfies(ver, buf, buf),
                             // `workspace:*`
                             .workspace => workspace_entry.found_existing and
                                 String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash,
@@ -3257,7 +3310,7 @@ pub const Package = extern struct {
         const Map = bun.StringArrayHashMap(Entry);
         pub const Entry = struct {
             name: string,
-            version: ?Semver.Version,
+            version: ?string,
         };
 
         pub fn init(allocator: std.mem.Allocator) WorkspaceMap {
@@ -3312,7 +3365,7 @@ pub const Package = extern struct {
     const WorkspaceEntry = struct {
         path: []const u8 = "",
         name: []const u8 = "",
-        version: ?Semver.Version = null,
+        version: ?[]const u8 = null,
     };
 
     fn processWorkspaceName(
@@ -3328,7 +3381,13 @@ pub const Package = extern struct {
             const paths = [_]string{ path, "package.json" };
             break :brk bun.path.joinStringBuf(path_buf, &paths, .auto);
         };
-        var workspace_file = try dir.openFile(path_to_use, .{ .mode = .read_only });
+
+        // TODO: windows
+        var workspace_file = dir.openFile(path_to_use, .{ .mode = .read_only }) catch |err| {
+            debug("processWorkspaceName({s}) = {} ", .{ path_to_use, err });
+            return err;
+        };
+
         defer workspace_file.close();
 
         const workspace_bytes = try workspace_file.readToEndAlloc(workspace_allocator, std.math.maxInt(usize));
@@ -3341,17 +3400,14 @@ pub const Package = extern struct {
         if (!workspace_json.has_found_name) {
             return error.MissingPackageName;
         }
-        bun.copy(u8, name_to_copy[0..], workspace_json.found_name);
+        @memcpy(name_to_copy[0..workspace_json.found_name.len], workspace_json.found_name);
         var entry = WorkspaceEntry{
             .name = name_to_copy[0..workspace_json.found_name.len],
             .path = path_to_use,
         };
+        debug("processWorkspaceName({s}) = {s}", .{ path_to_use, entry.name });
         if (workspace_json.has_found_version) {
-            const version = SlicedString.init(workspace_json.found_version, workspace_json.found_version);
-            const result = Semver.Version.parse(version);
-            if (result.valid and result.wildcard == .none) {
-                entry.version = result.version.fill();
-            }
+            entry.version = try allocator.dupe(u8, workspace_json.found_version);
         }
         return entry;
     }
@@ -3453,7 +3509,7 @@ pub const Package = extern struct {
                             item.loc,
                             allocator,
                             "{s} reading package.json for workspace package \"{s}\" from \"{s}\"",
-                            .{ @errorName(err), input_path, std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable },
+                            .{ @errorName(err), input_path, bun.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable },
                         ) catch {};
                     },
                 }
@@ -3466,6 +3522,9 @@ pub const Package = extern struct {
                 builder.count(workspace_entry.name);
                 builder.count(input_path);
                 builder.cap += bun.MAX_PATH_BYTES;
+                if (workspace_entry.version) |version_string| {
+                    builder.count(version_string);
+                }
             }
 
             try workspace_names.insert(input_path, .{
@@ -3500,7 +3559,7 @@ pub const Package = extern struct {
                     0,
                     true,
                 ) catch |err| switch (err) {
-                    error.FileNotFound => {
+                    error.ENOENT => {
                         log.addWarningFmt(
                             source,
                             loc,
@@ -3510,7 +3569,7 @@ pub const Package = extern struct {
                         ) catch {};
                         continue;
                     },
-                    error.NotDir => {
+                    error.ENOTDIR => {
                         log.addWarningFmt(
                             source,
                             loc,
@@ -3542,16 +3601,15 @@ pub const Package = extern struct {
                     );
 
                     if (entry.cache.fd == 0) {
-                        entry.cache.fd = bun.toFD(std.os.openatZ(
-                            std.fs.cwd().fd,
+                        entry.cache.fd = bun.toFD(bun.sys.open(
                             entry_path,
-                            std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.NOCTTY,
+                            std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.NOCTTY | std.os.O.RDONLY,
                             0,
-                        ) catch continue);
+                        ).unwrap() catch continue);
                     }
 
                     const dir_fd = entry.cache.fd;
-                    std.debug.assert(dir_fd != 0); // kind() should've opened
+                    std.debug.assert(dir_fd != bun.invalid_fd); // kind() should've opened
                     defer fallback.fixed_buffer_allocator.reset();
 
                     const workspace_entry = processWorkspaceName(
@@ -4036,6 +4094,20 @@ pub const Package = extern struct {
                 for (workspace_names.values(), workspace_names.keys()) |entry, path| {
                     const external_name = string_builder.append(ExternalString, entry.name);
 
+                    const workspace_version = brk: {
+                        if (entry.version) |version_string| {
+                            const external_version = string_builder.append(ExternalString, version_string);
+                            allocator.free(version_string);
+                            const sliced = external_version.value.sliced(lockfile.buffers.string_bytes.items);
+                            const result = Semver.Version.parse(sliced);
+                            if (result.valid and result.wildcard == .none) {
+                                break :brk result.version.fill();
+                            }
+                        }
+
+                        break :brk null;
+                    };
+
                     if (try parseDependency(
                         lockfile,
                         allocator,
@@ -4048,7 +4120,7 @@ pub const Package = extern struct {
                         total_dependencies_count,
                         in_workspace,
                         .workspace,
-                        entry.version,
+                        workspace_version,
                         external_name,
                         path,
                         logger.Loc.Empty,
@@ -4063,8 +4135,8 @@ pub const Package = extern struct {
                         total_dependencies_count += 1;
 
                         try lockfile.workspace_paths.put(allocator, external_name.hash, dep.version.value.workspace);
-                        if (entry.version) |v| {
-                            try lockfile.workspace_versions.put(allocator, external_name.hash, v);
+                        if (workspace_version) |version| {
+                            try lockfile.workspace_versions.put(allocator, external_name.hash, version);
                         }
                     }
                 }
@@ -4239,13 +4311,13 @@ pub const Package = extern struct {
         const AlignmentType = sizes.Types[sizes.fields[0]];
 
         pub fn save(list: Lockfile.Package.List, comptime StreamType: type, stream: StreamType, comptime Writer: type, writer: Writer) !void {
-            try writer.writeIntLittle(u64, list.len);
-            try writer.writeIntLittle(u64, @alignOf(@TypeOf(list.bytes)));
-            try writer.writeIntLittle(u64, sizes.Types.len);
+            try writer.writeInt(u64, list.len, .little);
+            try writer.writeInt(u64, @alignOf(@TypeOf(list.bytes)), .little);
+            try writer.writeInt(u64, sizes.Types.len, .little);
             const begin_at = try stream.getPos();
-            try writer.writeIntLittle(u64, 0);
+            try writer.writeInt(u64, 0, .little);
             const end_at = try stream.getPos();
-            try writer.writeIntLittle(u64, 0);
+            try writer.writeInt(u64, 0, .little);
 
             _ = try Aligner.write(@TypeOf(list.bytes), Writer, writer, try stream.getPos());
 
@@ -4263,8 +4335,8 @@ pub const Package = extern struct {
 
             const really_end_at = try stream.getPos();
 
-            _ = try std.os.pwrite(stream.handle, std.mem.asBytes(&really_begin_at), begin_at);
-            _ = try std.os.pwrite(stream.handle, std.mem.asBytes(&really_end_at), end_at);
+            _ = stream.pwrite(std.mem.asBytes(&really_begin_at), begin_at);
+            _ = stream.pwrite(std.mem.asBytes(&really_end_at), end_at);
         }
 
         pub fn load(
@@ -4274,11 +4346,11 @@ pub const Package = extern struct {
         ) !Lockfile.Package.List {
             var reader = stream.reader();
 
-            const list_len = try reader.readIntLittle(u64);
+            const list_len = try reader.readInt(u64, .little);
             if (list_len > std.math.maxInt(u32) - 1)
                 return error.@"Lockfile validation failed: list is impossibly long";
 
-            const input_alignment = try reader.readIntLittle(u64);
+            const input_alignment = try reader.readInt(u64, .little);
 
             var list = Lockfile.Package.List{};
             const Alingee = @TypeOf(list.bytes);
@@ -4287,7 +4359,7 @@ pub const Package = extern struct {
                 return error.@"Lockfile validation failed: alignment mismatch";
             }
 
-            const field_count = try reader.readIntLittle(u64);
+            const field_count = try reader.readInt(u64, .little);
             switch (field_count) {
                 sizes.Types.len => {},
                 // "scripts" field is absent before v0.6.8
@@ -4298,8 +4370,8 @@ pub const Package = extern struct {
                 },
             }
 
-            const begin_at = try reader.readIntLittle(u64);
-            const end_at = try reader.readIntLittle(u64);
+            const begin_at = try reader.readInt(u64, .little);
+            const end_at = try reader.readInt(u64, .little);
             if (begin_at > end or end_at > end or begin_at > end_at) {
                 return error.@"Lockfile validation failed: invalid package list range";
             }
@@ -4423,8 +4495,8 @@ const Buffers = struct {
         const PointerType = std.meta.Child(@TypeOf(arraylist.items.ptr));
 
         var reader = stream.reader();
-        const start_pos = try reader.readIntLittle(u64);
-        const end_pos = try reader.readIntLittle(u64);
+        const start_pos = try reader.readInt(u64, .little);
+        const end_pos = try reader.readInt(u64, .little);
 
         stream.pos = end_pos;
         const byte_len = end_pos - start_pos;
@@ -4451,8 +4523,8 @@ const Buffers = struct {
         const bytes = std.mem.sliceAsBytes(array);
 
         const start_pos = try stream.getPos();
-        try writer.writeIntLittle(u64, 0xDEADBEEF);
-        try writer.writeIntLittle(u64, 0xDEADBEEF);
+        try writer.writeInt(u64, 0xDEADBEEF, .little);
+        try writer.writeInt(u64, 0xDEADBEEF, .little);
 
         const prefix = comptime std.fmt.comptimePrint(
             "\n<{s}> {d} sizeof, {d} alignof\n",
@@ -4473,14 +4545,14 @@ const Buffers = struct {
             const positioned = [2]u64{ real_start_pos, real_end_pos };
             var written: usize = 0;
             while (written < 16) {
-                written += try std.os.pwrite(stream.handle, std.mem.asBytes(&positioned)[written..], start_pos + written);
+                written += stream.pwrite(std.mem.asBytes(&positioned)[written..], start_pos + written);
             }
         } else {
             const real_end_pos = try stream.getPos();
             const positioned = [2]u64{ real_end_pos, real_end_pos };
             var written: usize = 0;
             while (written < 16) {
-                written += try std.os.pwrite(stream.handle, std.mem.asBytes(&positioned)[written..], start_pos + written);
+                written += stream.pwrite(std.mem.asBytes(&positioned)[written..], start_pos + written);
             }
         }
     }
@@ -4644,23 +4716,40 @@ pub const Serializer = struct {
     const has_trusted_dependencies_tag: u64 = @bitCast([_]u8{ 't', 'R', 'u', 'S', 't', 'E', 'D', 'd' });
     const has_overrides_tag: u64 = @bitCast([_]u8{ 'o', 'V', 'e', 'R', 'r', 'i', 'D', 's' });
 
-    pub fn save(this: *Lockfile, comptime StreamType: type, stream: StreamType) !void {
+    pub fn save(this: *Lockfile, bytes: *std.ArrayList(u8), total_size: *usize, end_pos: *usize) !void {
         var old_package_list = this.packages;
         this.packages = try this.packages.clone(z_allocator);
         old_package_list.deinit(this.allocator);
 
-        var writer = stream.writer();
+        var writer = bytes.writer();
         try writer.writeAll(header_bytes);
-        try writer.writeIntLittle(u32, @intFromEnum(this.format));
+        try writer.writeInt(u32, @intFromEnum(this.format), .little);
 
         try writer.writeAll(&this.meta_hash);
 
-        const pos = try stream.getPos();
-        try writer.writeIntLittle(u64, 0);
+        end_pos.* = bytes.items.len;
+        try writer.writeInt(u64, 0, .little);
 
-        try Lockfile.Package.Serializer.save(this.packages, StreamType, stream, @TypeOf(&writer), &writer);
-        try Lockfile.Buffers.save(this.buffers, z_allocator, StreamType, stream, @TypeOf(&writer), &writer);
-        try writer.writeIntLittle(u64, 0);
+        const StreamType = struct {
+            bytes: *std.ArrayList(u8),
+            pub inline fn getPos(s: @This()) anyerror!usize {
+                return s.bytes.items.len;
+            }
+
+            pub fn pwrite(
+                s: @This(),
+                data: []const u8,
+                index: usize,
+            ) usize {
+                @memcpy(s.bytes.items[index..][0..data.len], data);
+                return data.len;
+            }
+        };
+        const stream = StreamType{ .bytes = bytes };
+
+        try Lockfile.Package.Serializer.save(this.packages, StreamType, stream, @TypeOf(writer), writer);
+        try Lockfile.Buffers.save(this.buffers, z_allocator, StreamType, stream, @TypeOf(writer), writer);
+        try writer.writeInt(u64, 0, .little);
 
         // < Bun v1.0.4 stopped right here when reading the lockfile
         // So we add an extra 8 byte tag to say "hey, there's more data here"
@@ -4672,16 +4761,16 @@ pub const Serializer = struct {
             try Lockfile.Buffers.writeArray(
                 StreamType,
                 stream,
-                @TypeOf(&writer),
-                &writer,
+                @TypeOf(writer),
+                writer,
                 []PackageNameHash,
                 this.workspace_versions.keys(),
             );
             try Lockfile.Buffers.writeArray(
                 StreamType,
                 stream,
-                @TypeOf(&writer),
-                &writer,
+                @TypeOf(writer),
+                writer,
                 []Semver.Version,
                 this.workspace_versions.values(),
             );
@@ -4689,16 +4778,16 @@ pub const Serializer = struct {
             try Lockfile.Buffers.writeArray(
                 StreamType,
                 stream,
-                @TypeOf(&writer),
-                &writer,
+                @TypeOf(writer),
+                writer,
                 []PackageNameHash,
                 this.workspace_paths.keys(),
             );
             try Lockfile.Buffers.writeArray(
                 StreamType,
                 stream,
-                @TypeOf(&writer),
-                &writer,
+                @TypeOf(writer),
+                writer,
                 []String,
                 this.workspace_paths.values(),
             );
@@ -4710,8 +4799,8 @@ pub const Serializer = struct {
             try Lockfile.Buffers.writeArray(
                 StreamType,
                 stream,
-                @TypeOf(&writer),
-                &writer,
+                @TypeOf(writer),
+                writer,
                 []u32,
                 this.trusted_dependencies.keys(),
             );
@@ -4723,8 +4812,8 @@ pub const Serializer = struct {
             try Lockfile.Buffers.writeArray(
                 StreamType,
                 stream,
-                @TypeOf(&writer),
-                &writer,
+                @TypeOf(writer),
+                writer,
                 []PackageNameHash,
                 this.overrides.map.keys(),
             );
@@ -4738,19 +4827,16 @@ pub const Serializer = struct {
             try Lockfile.Buffers.writeArray(
                 StreamType,
                 stream,
-                @TypeOf(&writer),
-                &writer,
+                @TypeOf(writer),
+                writer,
                 []Dependency.External,
                 external_overrides.items,
             );
         }
 
-        const end = try stream.getPos();
+        total_size.* = try stream.getPos();
 
         try writer.writeAll(&alignment_bytes_to_repeat_buffer);
-
-        _ = try std.os.pwrite(stream.handle, std.mem.asBytes(&end), pos);
-        try std.os.ftruncate(stream.handle, try stream.getPos());
     }
     pub fn load(
         lockfile: *Lockfile,
@@ -4766,7 +4852,7 @@ pub const Serializer = struct {
             return error.InvalidLockfile;
         }
 
-        var format = try reader.readIntLittle(u32);
+        var format = try reader.readInt(u32, .little);
         if (format != @intFromEnum(Lockfile.FormatVersion.current)) {
             return error.@"Outdated lockfile version";
         }
@@ -4776,7 +4862,7 @@ pub const Serializer = struct {
 
         _ = try reader.readAll(&lockfile.meta_hash);
 
-        const total_buffer_size = try reader.readIntLittle(u64);
+        const total_buffer_size = try reader.readInt(u64, .little);
         if (total_buffer_size > stream.buffer.len) {
             return error.@"Lockfile is missing data";
         }
@@ -4787,7 +4873,7 @@ pub const Serializer = struct {
             allocator,
         );
         lockfile.buffers = try Lockfile.Buffers.load(stream, allocator, log);
-        if ((try stream.reader().readIntLittle(u64)) != 0) {
+        if ((try stream.reader().readInt(u64, .little)) != 0) {
             return error.@"Lockfile is malformed (expected 0 at the end)";
         }
 
@@ -4798,7 +4884,7 @@ pub const Serializer = struct {
             const remaining_in_buffer = total_buffer_size -| stream.pos;
 
             if (remaining_in_buffer > 8 and total_buffer_size <= stream.buffer.len) {
-                const next_num = try reader.readIntLittle(u64);
+                const next_num = try reader.readInt(u64, .little);
                 if (next_num == has_workspace_package_ids_tag) {
                     {
                         var workspace_package_name_hashes = try Lockfile.Buffers.readArray(
@@ -4860,7 +4946,7 @@ pub const Serializer = struct {
             const remaining_in_buffer = total_buffer_size -| stream.pos;
 
             if (remaining_in_buffer > 8 and total_buffer_size <= stream.buffer.len) {
-                const next_num = try reader.readIntLittle(u64);
+                const next_num = try reader.readInt(u64, .little);
                 if (next_num == has_trusted_dependencies_tag) {
                     var trusted_dependencies_hashes = try Lockfile.Buffers.readArray(
                         stream,
@@ -4884,7 +4970,7 @@ pub const Serializer = struct {
             const remaining_in_buffer = total_buffer_size -| stream.pos;
 
             if (remaining_in_buffer > 8 and total_buffer_size <= stream.buffer.len) {
-                const next_num = try reader.readIntLittle(u64);
+                const next_num = try reader.readInt(u64, .little);
                 if (next_num == has_overrides_tag) {
                     var overrides_name_hashes = try Lockfile.Buffers.readArray(
                         stream,
@@ -4946,7 +5032,7 @@ pub const Serializer = struct {
 
         if (comptime Environment.allow_assert) std.debug.assert(stream.pos == total_buffer_size);
 
-        // const end = try reader.readIntLittle(u64);
+        // const end = try reader.readInt(u64, .little);
     }
 };
 
@@ -5058,6 +5144,7 @@ pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaH
 pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Version) ?PackageID {
     const name_hash = String.Builder.stringHash(package_name);
     const entry = this.package_index.get(name_hash) orelse return null;
+    const buf = this.buffers.string_bytes.items;
 
     switch (version.tag) {
         .npm => switch (entry) {
@@ -5065,7 +5152,7 @@ pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Ve
                 const resolutions = this.packages.items(.resolution);
 
                 if (comptime Environment.allow_assert) std.debug.assert(id < resolutions.len);
-                if (version.value.npm.version.satisfies(resolutions[id].value.npm.version)) {
+                if (version.value.npm.version.satisfies(resolutions[id].value.npm.version, buf, buf)) {
                     return id;
                 }
             },
@@ -5074,7 +5161,7 @@ pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Ve
 
                 for (ids.items) |id| {
                     if (comptime Environment.allow_assert) std.debug.assert(id < resolutions.len);
-                    if (version.value.npm.version.satisfies(resolutions[id].value.npm.version)) {
+                    if (version.value.npm.version.satisfies(resolutions[id].value.npm.version, buf, buf)) {
                         return id;
                     }
                 }

@@ -91,6 +91,8 @@ pub fn detectAndLoadOtherLockfile(this: *Lockfile, allocator: Allocator, log: *l
     return LoadFromDiskResult{ .not_found = {} };
 }
 
+const ResolvedURLsMap = std.StringHashMapUnmanaged(string);
+
 const IdMap = std.StringHashMapUnmanaged(IdMapValue);
 const IdMapValue = struct {
     /// index into the old package-lock.json package entries.
@@ -187,6 +189,16 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
         }
         break :workspace_map null;
     };
+
+    // constructed "resolved" urls
+    var resolved_urls = ResolvedURLsMap{};
+    defer {
+        var itr = resolved_urls.iterator();
+        while (itr.next()) |entry| {
+            allocator.free(entry.value_ptr.*);
+        }
+        resolved_urls.deinit(allocator);
+    }
 
     // Counting Phase
     // This "IdMap" is used to make object key lookups faster for the `packages` object
@@ -307,7 +319,51 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                 };
             }
         } else {
-            builder.count(pkg_path);
+            const version_prop = pkg.get("version");
+            const pkg_name = packageNameFromPath(pkg_path);
+            if (version_prop != null and pkg_name.len > 0) {
+                // construct registry url
+                const registry = Install.PackageManager.instance.scopeForPackageName(pkg_name);
+                var count: usize = 0;
+                count += registry.url.href.len + pkg_name.len + "/-/".len;
+                if (pkg_name[0] == '@') {
+                    // scoped
+                    const slash_index = strings.indexOfChar(pkg_name, '/') orelse return error.InvalidNPMLockfile;
+                    if (slash_index >= pkg_name.len - 1) return error.InvalidNPMLockfile;
+                    count += pkg_name[slash_index + 1 ..].len;
+                } else {
+                    count += pkg_name.len;
+                }
+                const version_str = version_prop.?.asString(allocator) orelse return error.InvalidNPMLockfile;
+                count += "-.tgz".len + version_str.len;
+
+                var resolved_url = allocator.alloc(u8, count) catch unreachable;
+                var remain = resolved_url;
+                @memcpy(remain[0..registry.url.href.len], registry.url.href);
+                remain = remain[registry.url.href.len..];
+                @memcpy(remain[0..pkg_name.len], pkg_name);
+                remain = remain[pkg_name.len..];
+                remain[0.."/-/".len].* = "/-/".*;
+                remain = remain["/-/".len..];
+                if (pkg_name[0] == '@') {
+                    const slash_index = strings.indexOfChar(pkg_name, '/') orelse unreachable;
+                    @memcpy(remain[0..pkg_name[slash_index + 1 ..].len], pkg_name[slash_index + 1 ..]);
+                    remain = remain[pkg_name[slash_index + 1 ..].len..];
+                } else {
+                    @memcpy(remain[0..pkg_name.len], pkg_name);
+                    remain = remain[pkg_name.len..];
+                }
+                remain[0] = '-';
+                remain = remain[1..];
+                @memcpy(remain[0..version_str.len], version_str);
+                remain = remain[version_str.len..];
+                remain[0..".tgz".len].* = ".tgz".*;
+
+                builder.count(resolved_url);
+                try resolved_urls.put(allocator, pkg_path, resolved_url);
+            } else {
+                builder.count(pkg_path);
+            }
         }
     }
     if (num_deps == std.math.maxInt(u32)) return error.InvalidNPMLockfile; // lol
@@ -331,7 +387,14 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
         for (wksp.map.keys(), wksp.map.values()) |k, v| {
             const name_hash = stringHash(v.name);
             this.workspace_paths.putAssumeCapacity(name_hash, builder.append(String, k));
-            if (v.version) |version| this.workspace_versions.putAssumeCapacity(name_hash, version);
+
+            if (v.version) |version_string| {
+                const sliced_version = Semver.SlicedString.init(version_string, version_string);
+                const result = Semver.Version.parse(sliced_version);
+                if (result.valid and result.wildcard == .none) {
+                    this.workspace_versions.putAssumeCapacity(name_hash, result.version.fill());
+                }
+            }
         }
     }
 
@@ -705,7 +768,17 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
 
                                 const res = resolved: {
                                     const dep_pkg = packages_properties.at(found.old_json_index).value.?.data.e_object;
-                                    const npm_resolution = dep_pkg.get("resolved") orelse {
+                                    const dep_resolved: string = dep_resolved: {
+                                        if (dep_pkg.get("resolved")) |resolved| {
+                                            break :dep_resolved resolved.asString(this.allocator) orelse return error.InvalidNPMLockfile;
+                                        }
+
+                                        if (version.tag == .npm) {
+                                            if (resolved_urls.get(name_checking_buf[0..buf_len])) |resolved_url| {
+                                                break :dep_resolved resolved_url;
+                                            }
+                                        }
+
                                         break :resolved Resolution.init(.{
                                             .folder = builder.append(
                                                 String,
@@ -713,7 +786,6 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                                             ),
                                         });
                                     };
-                                    const dep_resolved = npm_resolution.asString(this.allocator) orelse return error.InvalidNPMLockfile;
 
                                     break :resolved switch (version.tag) {
                                         .uninitialized => std.debug.panic("Version string {s} resolved to `.uninitialized`", .{version_bytes}),

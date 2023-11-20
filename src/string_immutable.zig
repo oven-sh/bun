@@ -144,15 +144,22 @@ pub inline fn isNPMPackageName(target: string) bool {
         '@' => true,
         else => return false,
     };
+
     var slash_index: usize = 0;
     for (target[1..], 0..) |c, i| {
         switch (c) {
             // Old packages may have capital letters
-            'A'...'Z', 'a'...'z', '0'...'9', '$', '-', '_', '.' => {},
+            'A'...'Z', 'a'...'z', '0'...'9', '-', '_', '.' => {},
             '/' => {
                 if (!scoped) return false;
                 if (slash_index > 0) return false;
                 slash_index = i + 1;
+            },
+            // issue#7045, package "@~3/svelte_mount"
+            // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/encodeURIComponent#description
+            // It escapes all characters except: A–Z a–z 0–9 - _ . ! ~ * ' ( )
+            '!', '~', '*', '\'', '(', ')' => {
+                if (!scoped or slash_index > 0) return false;
             },
             else => return false,
         }
@@ -418,7 +425,7 @@ pub const StringOrTinyString = struct {
         // This is a switch expression instead of a statement to make sure it uses the faster assembly
         return switch (this.is_tiny_string) {
             1 => this.remainder_buf[0..this.remainder_len],
-            0 => @as([*]const u8, @ptrFromInt(std.mem.readIntNative(usize, this.remainder_buf[0..@sizeOf(usize)])))[0..std.mem.readIntNative(usize, this.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2])],
+            0 => @as([*]const u8, @ptrFromInt(std.mem.readInt(usize, this.remainder_buf[0..@sizeOf(usize)], .little)))[0..std.mem.readInt(usize, this.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2], .little)],
         };
     }
 
@@ -464,8 +471,8 @@ pub const StringOrTinyString = struct {
                     .is_tiny_string = 0,
                     .remainder_len = 0,
                 };
-                std.mem.writeIntNative(usize, tiny.remainder_buf[0..@sizeOf(usize)], @intFromPtr(stringy.ptr));
-                std.mem.writeIntNative(usize, tiny.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2], stringy.len);
+                std.mem.writeInt(usize, tiny.remainder_buf[0..@sizeOf(usize)], @intFromPtr(stringy.ptr), .little);
+                std.mem.writeInt(usize, tiny.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2], stringy.len, .little);
                 return tiny;
             },
         }
@@ -490,8 +497,8 @@ pub const StringOrTinyString = struct {
                     .is_tiny_string = 0,
                     .remainder_len = 0,
                 };
-                std.mem.writeIntNative(usize, tiny.remainder_buf[0..@sizeOf(usize)], @intFromPtr(stringy.ptr));
-                std.mem.writeIntNative(usize, tiny.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2], stringy.len);
+                std.mem.writeInt(usize, tiny.remainder_buf[0..@sizeOf(usize)], @intFromPtr(stringy.ptr), .little);
+                std.mem.writeInt(usize, tiny.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2], stringy.len, .little);
                 return tiny;
             },
         }
@@ -711,7 +718,11 @@ pub inline fn endsWithChar(self: string, char: u8) bool {
 
 pub fn withoutTrailingSlash(this: string) []const u8 {
     var href = this;
-    while (href.len > 1 and href[href.len - 1] == '/') {
+    while (href.len > 1 and (switch (href[href.len - 1]) {
+        '/' => true,
+        '\\' => true,
+        else => false,
+    })) {
         href.len -= 1;
     }
 
@@ -923,6 +934,10 @@ pub fn eqlComptimeIgnoreLen(self: string, comptime alt: anytype) bool {
 
 pub fn hasPrefixComptime(self: string, comptime alt: anytype) bool {
     return self.len >= alt.len and eqlComptimeCheckLenWithType(u8, self[0..alt.len], alt, false);
+}
+
+pub fn hasPrefixComptimeUTF16(self: []const u16, comptime alt: []const u8) bool {
+    return self.len >= alt.len and eqlComptimeCheckLenWithType(u16, self[0..alt.len], comptime toUTF16Literal(alt), false);
 }
 
 pub fn hasSuffixComptime(self: string, comptime alt: anytype) bool {
@@ -1603,16 +1618,93 @@ pub fn fromWPath(buf: []u8, utf16: []const u16) [:0]const u8 {
     return buf[0..encode_into_result.written :0];
 }
 
+pub fn toNTPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+    if (!std.fs.path.isAbsoluteWindows(utf8)) {
+        return toWPathNormalized(wbuf, utf8);
+    }
+
+    wbuf[0..4].* = [_]u16{ '\\', '?', '?', '\\' };
+    return wbuf[0 .. toWPathNormalized(wbuf[4..], utf8).len + 4 :0];
+}
+
+// These are the same because they don't have rules like needing a trailing slash
+pub const toNTDir = toNTPath;
+
+pub fn toExtendedPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+    std.debug.assert(wbuf.len > 4);
+    wbuf[0..4].* = [_]u16{ '\\', '\\', '?', '\\' };
+    return wbuf[0 .. toWPathNormalized(wbuf[4..], utf8).len + 4 :0];
+}
+
+pub fn toWPathNormalizeAutoExtend(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+    if (std.fs.path.isAbsoluteWindows(utf8)) {
+        return toExtendedPathNormalized(wbuf, utf8);
+    }
+
+    return toWPathNormalized(wbuf, utf8);
+}
+
+pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+    var renormalized: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var path_to_use = utf8;
+
+    if (bun.strings.containsChar(utf8, '/')) {
+        @memcpy(renormalized[0..utf8.len], utf8);
+        for (renormalized[0..utf8.len]) |*c| {
+            if (c.* == '/') {
+                c.* = '\\';
+            }
+        }
+        path_to_use = renormalized[0..utf8.len];
+    }
+
+    // is there a trailing slash? Let's remove it before converting to UTF-16
+    if (path_to_use.len > 3 and bun.path.isSepAny(path_to_use[path_to_use.len - 1])) {
+        path_to_use = path_to_use[0 .. path_to_use.len - 1];
+    }
+
+    return toWPath(wbuf, path_to_use);
+}
+
+pub fn toWDirNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+    var renormalized: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var path_to_use = utf8;
+
+    if (bun.strings.containsChar(utf8, '/')) {
+        @memcpy(renormalized[0..utf8.len], utf8);
+        for (renormalized[0..utf8.len]) |*c| {
+            if (c.* == '/') {
+                c.* = '\\';
+            }
+        }
+        path_to_use = renormalized[0..utf8.len];
+    }
+
+    return toWDirPath(wbuf, path_to_use);
+}
+
 pub fn toWPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+    return toWPathMaybeDir(wbuf, utf8, false);
+}
+
+pub fn toWDirPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+    return toWPathMaybeDir(wbuf, utf8, true);
+}
+
+pub fn toWPathMaybeDir(wbuf: []u16, utf8: []const u8, comptime add_trailing_lash: bool) [:0]const u16 {
     std.debug.assert(wbuf.len > 0);
     var result = bun.simdutf.convert.utf8.to.utf16.with_errors.le(
         utf8,
-        wbuf[0..wbuf.len -| 1],
+        wbuf[0..wbuf.len -| (1 + @as(usize, @intFromBool(add_trailing_lash)))],
     );
 
-    // TODO: error handling
-    // if (result.status == .surrogate) {
-    // }
+    if (add_trailing_lash and result.count > 0 and wbuf[result.count - 1] != '\\') {
+        wbuf[result.count] = '\\';
+        result.count += 1;
+    }
+
+    wbuf[result.count] = 0;
+
     return wbuf[0..result.count :0];
 }
 
@@ -4156,6 +4248,18 @@ pub fn formatUTF16(slice_: []align(1) const u16, writer: anytype) !void {
     return formatUTF16Type([]align(1) const u16, slice_, writer);
 }
 
+pub const FormatUTF16 = struct {
+    buf: []const u16,
+    pub fn format(self: @This(), comptime _: []const u8, opts: anytype, writer: anytype) !void {
+        _ = opts;
+        try formatUTF16Type([]const u16, self.buf, writer);
+    }
+};
+
+pub fn fmtUTF16(buf: []const u16) FormatUTF16 {
+    return FormatUTF16{ .buf = buf };
+}
+
 pub fn formatLatin1(slice_: []const u8, writer: anytype) !void {
     var chunk = getSharedBuffer();
     var slice = slice_;
@@ -4268,6 +4372,23 @@ pub fn trim(slice: anytype, comptime values_to_strip: []const u8) @TypeOf(slice)
     while (begin < end and std.mem.indexOfScalar(u8, values_to_strip, slice[begin]) != null) : (begin += 1) {}
     while (end > begin and std.mem.indexOfScalar(u8, values_to_strip, slice[end - 1]) != null) : (end -= 1) {}
     return slice[begin..end];
+}
+
+pub const whitespace_chars = [_]u8{ ' ', '\t', '\n', '\r', std.ascii.control_code.vt, std.ascii.control_code.ff };
+
+pub fn lengthOfLeadingWhitespaceASCII(slice: string) usize {
+    for (slice) |*c| {
+        switch (c.*) {
+            whitespace: {
+                inline for (whitespace_chars) |wc| break :whitespace wc;
+            } => {},
+            else => {
+                return @intFromPtr(c) - @intFromPtr(slice.ptr);
+            },
+        }
+    }
+
+    return slice.len;
 }
 
 pub fn containsNonBmpCodePointUTF16(_text: []const u16) bool {
@@ -4850,4 +4971,80 @@ pub fn concatIfNeeded(
         remain = remain[arg.len..];
     }
     std.debug.assert(remain.len == 0);
+}
+
+pub const HostFormatter = struct {
+    host: string,
+    port: ?u16 = null,
+    is_https: bool = false,
+
+    pub fn format(formatter: HostFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        if (strings.indexOfChar(formatter.host, ':') != null) {
+            try writer.writeAll(formatter.host);
+            return;
+        }
+
+        try writer.writeAll(formatter.host);
+
+        const is_port_optional = formatter.port == null or (formatter.is_https and formatter.port == 443) or
+            (!formatter.is_https and formatter.port == 80);
+        if (!is_port_optional) {
+            try writer.print(":{d}", .{formatter.port.?});
+            return;
+        }
+    }
+};
+
+const Proto = enum {
+    http,
+    https,
+    unix,
+};
+
+pub const URLFormatter = struct {
+    proto: Proto = .http,
+    hostname: ?string = null,
+    port: ?u16 = null,
+
+    pub fn format(this: URLFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try writer.print("{s}://", .{switch (this.proto) {
+            .http => "http",
+            .https => "https",
+            .unix => "unix",
+        }});
+
+        if (this.hostname) |hostname| {
+            const needs_brackets = hostname[0] != '[' and strings.isIPV6Address(hostname);
+            if (needs_brackets) {
+                try writer.print("[{s}]", .{hostname});
+            } else {
+                try writer.writeAll(hostname);
+            }
+        } else {
+            try writer.writeAll("localhost");
+        }
+
+        if (this.proto == .unix) {
+            return;
+        }
+
+        const is_port_optional = this.port == null or (this.proto == .https and this.port == 443) or
+            (this.proto == .http and this.port == 80);
+        if (is_port_optional) {
+            try writer.writeAll("/");
+        } else {
+            try writer.print(":{d}/", .{this.port.?});
+        }
+    }
+};
+
+pub fn mustEscapeYAMLString(contents: []const u8) bool {
+    if (contents.len == 0) return true;
+
+    return switch (contents[0]) {
+        'A'...'Z', 'a'...'z' => strings.hasPrefixComptime(contents, "Yes") or strings.hasPrefixComptime(contents, "No") or strings.hasPrefixComptime(contents, "true") or
+            strings.hasPrefixComptime(contents, "false") or
+            std.mem.indexOfAnyPos(u8, contents, 1, ": \t\r\n\x0B\x0C\\\",[]") != null,
+        else => true,
+    };
 }

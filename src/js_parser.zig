@@ -87,13 +87,13 @@ const SkipTypeParameterResult = enum {
 
 const TypeParameterFlag = packed struct {
     /// TypeScript 4.7
-    allow_in_out_variance_annoatations: bool = false,
+    allow_in_out_variance_annotations: bool = false,
 
     /// TypeScript 5.0
     allow_const_modifier: bool = false,
 
     pub const all = TypeParameterFlag{
-        .allow_in_out_variance_annoatations = true,
+        .allow_in_out_variance_annotations = true,
         .allow_const_modifier = true,
     };
 };
@@ -958,7 +958,6 @@ pub const ImportScanner = struct {
                     //
                     var did_remove_star_loc = false;
                     const keep_unused_imports = !p.options.features.trim_unused_imports;
-
                     // TypeScript always trims unused imports. This is important for
                     // correctness since some imports might be fake (only in the type
                     // system and used for type-only imports).
@@ -3630,7 +3629,7 @@ pub const Parser = struct {
             exports_kind = .cjs;
         } else if (p.esm_export_keyword.len > 0 or p.top_level_await_keyword.len > 0) {
             exports_kind = .esm;
-        } else if (uses_exports_ref or uses_module_ref or p.has_top_level_return) {
+        } else if (uses_exports_ref or uses_module_ref or p.has_top_level_return or p.has_with_scope) {
             exports_kind = .cjs;
             if (p.options.features.commonjs_at_runtime) {
                 wrapper_expr = .{
@@ -4420,6 +4419,9 @@ fn NewParser_(
         has_export_default: bool = false,
         has_export_keyword: bool = false,
 
+        // Used for forcing CommonJS
+        has_with_scope: bool = false,
+
         is_file_considered_to_have_esm_exports: bool = false,
 
         hmr_module: GeneratedSymbol = GeneratedSymbol{ .primary = Ref.None, .backup = Ref.None, .ref = Ref.None },
@@ -4854,17 +4856,15 @@ fn NewParser_(
                     return p.callRuntime(arg.loc, "__require", args);
                 },
                 else => {
-                    if (p.options.bundle) {
-                        const args = p.allocator.alloc(Expr, 1) catch unreachable;
-                        args[0] = arg;
-                        return p.newExpr(
-                            E.Call{
-                                .target = p.valueForRequire(arg.loc),
-                                .args = ExprNodeList.init(args),
-                            },
-                            arg.loc,
-                        );
-                    }
+                    const args = p.allocator.alloc(Expr, 1) catch unreachable;
+                    args[0] = arg;
+                    return p.newExpr(
+                        E.Call{
+                            .target = p.valueForRequire(arg.loc),
+                            .args = ExprNodeList.init(args),
+                        },
+                        arg.loc,
+                    );
                 },
             }
 
@@ -6517,6 +6517,14 @@ fn NewParser_(
             scope.strict_mode = parent.strict_mode;
 
             p.current_scope = scope;
+
+            if (comptime kind == .with) {
+                // "with" statements change the default from ESModule to CommonJS at runtime.
+                // "with" statements are not allowed in strict mode.
+                if (p.options.features.commonjs_at_runtime) {
+                    p.has_with_scope = true;
+                }
+            }
 
             if (comptime !Environment.isRelease) {
                 // Enforce that scope locations are strictly increasing to help catch bugs
@@ -8196,7 +8204,7 @@ fn NewParser_(
                     }
 
                     if (p.lexer.token == .t_in) {
-                        if (invalid_modifier_range.len == 0 and (!flags.allow_in_out_variance_annoatations or has_in or has_out)) {
+                        if (invalid_modifier_range.len == 0 and (!flags.allow_in_out_variance_annotations or has_in or has_out)) {
                             // Valid:
                             //   "type Foo<in T> = T"
                             // Invalid:
@@ -8213,7 +8221,7 @@ fn NewParser_(
 
                     if (p.lexer.isContextualKeyword("out")) {
                         const r = p.lexer.range();
-                        if (invalid_modifier_range.len == 0 and !flags.allow_in_out_variance_annoatations) {
+                        if (invalid_modifier_range.len == 0 and !flags.allow_in_out_variance_annotations) {
                             // Valid:
                             //   "type Foo<out T> = T"
                             // Invalid:
@@ -8369,7 +8377,7 @@ fn NewParser_(
             // Even anonymous classes can have TypeScript type parameters
             if (is_typescript_enabled) {
                 _ = try p.skipTypeScriptTypeParameters(.{
-                    .allow_in_out_variance_annoatations = true,
+                    .allow_in_out_variance_annotations = true,
                     .allow_const_modifier = true,
                 });
             }
@@ -8665,12 +8673,12 @@ fn NewParser_(
                                         .s_function => |func_container| {
                                             if (func_container.func.name) |name| {
                                                 break :default_name_getter LocRef{ .loc = name.loc, .ref = name.ref };
-                                            } else {}
+                                            }
                                         },
                                         .s_class => |class| {
                                             if (class.class.class_name) |name| {
                                                 break :default_name_getter LocRef{ .loc = name.loc, .ref = name.ref };
-                                            } else {}
+                                            }
                                         },
                                         else => {},
                                     }
@@ -8710,12 +8718,12 @@ fn NewParser_(
                                                 .s_function => |func_container| {
                                                     if (func_container.func.name) |_name| {
                                                         break :default_name_getter LocRef{ .loc = defaultLoc, .ref = _name.ref };
-                                                    } else {}
+                                                    }
                                                 },
                                                 .s_class => |class| {
                                                     if (class.class.class_name) |_name| {
                                                         break :default_name_getter LocRef{ .loc = defaultLoc, .ref = _name.ref };
-                                                    } else {}
+                                                    }
                                                 },
                                                 else => {},
                                             }
@@ -9034,12 +9042,18 @@ fn NewParser_(
                     try p.lexer.next();
                     try p.lexer.expect(.t_open_paren);
                     const test_ = try p.parseExpr(.lowest);
+                    const body_loc = p.lexer.loc();
                     try p.lexer.expect(.t_close_paren);
 
+                    // Push a scope so we make sure to prevent any bare identifiers referenced
+                    // within the body from being renamed. Renaming them might change the
+                    // semantics of the code.
+                    _ = try p.pushScopeForParsePass(.with, body_loc);
                     var stmtOpts = ParseStatementOptions{};
                     const body = try p.parseStmt(&stmtOpts);
+                    p.popScope();
 
-                    return p.s(S.With{ .body = body, .value = test_ }, loc);
+                    return p.s(S.With{ .body = body, .body_loc = body_loc, .value = test_ }, loc);
                 },
                 .t_switch => {
                     try p.lexer.next();
@@ -9804,7 +9818,7 @@ fn NewParser_(
                 p.local_type_names.put(p.allocator, name, true) catch unreachable;
             }
 
-            _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annoatations = true });
+            _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annotations = true });
 
             try p.lexer.expect(.t_equals);
             try p.skipTypeScriptType(.lowest);
@@ -9932,7 +9946,7 @@ fn NewParser_(
                 p.local_type_names.put(p.allocator, name, true) catch unreachable;
             }
 
-            _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annoatations = true });
+            _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annotations = true });
 
             if (p.lexer.token == .t_extends) {
                 try p.lexer.next();
@@ -10951,6 +10965,10 @@ fn NewParser_(
                                         } else if (str.eqlComptime("use asm")) {
                                             skip = true;
                                             stmt.data = Prefill.Data.SEmpty;
+                                        } else {
+                                            stmt = Stmt.alloc(S.Directive, S.Directive{
+                                                .value = str.slice(p.allocator),
+                                            }, stmt.loc);
                                         }
                                     }
                                 },
@@ -11049,8 +11067,9 @@ fn NewParser_(
             return p.current_scope.strict_mode != .sloppy_mode;
         }
 
-        pub inline fn isStrictModeOutputFormat(_: *P) bool {
-            return true;
+        pub inline fn isStrictModeOutputFormat(p: *P) bool {
+            // TODO: once CJS or IIFE is supported, this will need to be updated
+            return p.options.bundle;
         }
 
         pub fn declareCommonJSSymbol(p: *P, comptime kind: Symbol.Kind, comptime name: string) !Ref {
@@ -13677,7 +13696,7 @@ fn NewParser_(
 
                     // Even anonymous classes can have TypeScript type parameters
                     if (is_typescript_enabled) {
-                        _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annoatations = true, .allow_const_modifier = true });
+                        _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annotations = true, .allow_const_modifier = true });
                     }
 
                     const class = try p.parseClass(classKeyword, name, ParseClassOptions{});
@@ -14131,7 +14150,7 @@ fn NewParser_(
 
             var previous_string_with_backslash_loc = logger.Loc{};
             var properties = G.Property.List{};
-            var key_prop: ?ExprNodeIndex = null;
+            var key_prop_i: i32 = -1;
             var flags = Flags.JSXElement.Bitset{};
             var start_tag: ?ExprNodeIndex = null;
             var can_be_inlined = false;
@@ -14144,7 +14163,6 @@ fn NewParser_(
 
                 var spread_loc: logger.Loc = logger.Loc.Empty;
                 var props = ListManaged(G.Property).init(p.allocator);
-                var key_prop_i: i32 = -1;
                 var spread_prop_i: i32 = -1;
                 var i: i32 = 0;
                 parse_attributes: while (true) {
@@ -14166,8 +14184,6 @@ fn NewParser_(
                                 }
 
                                 key_prop_i = i;
-                                key_prop = try p.parseJSXPropValueIdentifier(&previous_string_with_backslash_loc);
-                                continue;
                             }
 
                             can_be_inlined = can_be_inlined and special_prop != .ref;
@@ -14309,7 +14325,7 @@ fn NewParser_(
                 return p.newExpr(E.JSXElement{
                     .tag = start_tag,
                     .properties = properties,
-                    .key = key_prop,
+                    .key_prop_index = key_prop_i,
                     .flags = flags,
                     .close_tag_loc = close_tag_loc,
                 }, loc);
@@ -14384,7 +14400,7 @@ fn NewParser_(
                             .tag = end_tag.data.asExpr(),
                             .children = ExprNodeList.fromList(children),
                             .properties = properties,
-                            .key = key_prop,
+                            .key_prop_index = key_prop_i,
                             .flags = flags,
                             .close_tag_loc = end_tag.range.loc,
                         }, loc);
@@ -14913,23 +14929,19 @@ fn NewParser_(
                                 }
                             };
 
-                            const jsx_props = e_.properties.slice();
-                            for (jsx_props, 0..) |property, i| {
+                            const all_props: []G.Property = e_.properties.slice();
+                            for (all_props) |*property| {
                                 if (property.kind != .spread) {
-                                    e_.properties.ptr[i].key = p.visitExpr(e_.properties.ptr[i].key.?);
+                                    property.key = p.visitExpr(property.key.?);
                                 }
 
                                 if (property.value != null) {
-                                    e_.properties.ptr[i].value = p.visitExpr(e_.properties.ptr[i].value.?);
+                                    property.value = p.visitExpr(property.value.?);
                                 }
 
                                 if (property.initializer != null) {
-                                    e_.properties.ptr[i].initializer = p.visitExpr(e_.properties.ptr[i].initializer.?);
+                                    property.initializer = p.visitExpr(property.initializer.?);
                                 }
-                            }
-
-                            if (e_.key) |key| {
-                                e_.key = p.visitExpr(key);
                             }
 
                             const runtime = if (p.options.jsx.runtime == .automatic and !e_.flags.contains(.is_key_before_rest)) options.JSX.Runtime.automatic else options.JSX.Runtime.classic;
@@ -14964,13 +14976,10 @@ fn NewParser_(
                                     var i: usize = 2;
                                     args[0] = tag;
 
-                                    const num_props = e_.properties.len + @intFromBool(e_.key != null);
+                                    const num_props = e_.properties.len;
                                     if (num_props > 0) {
                                         var props = p.allocator.alloc(G.Property, num_props) catch unreachable;
                                         bun.copy(G.Property, props, e_.properties.slice());
-                                        if (e_.key) |key| {
-                                            props[props.len - 1] = G.Property{ .key = Expr{ .loc = key.loc, .data = keyExprData }, .value = key };
-                                        }
                                         args[1] = p.newExpr(E.Object{ .properties = G.Property.List.init(props) }, expr.loc);
                                     } else {
                                         args[1] = p.newExpr(E.Null{}, expr.loc);
@@ -14997,7 +15006,11 @@ fn NewParser_(
                                 .automatic => {
                                     // --- These must be done in all cases --
                                     const allocator = p.allocator;
-                                    var props = e_.properties.list();
+                                    var props: std.ArrayListUnmanaged(G.Property) = e_.properties.list();
+
+                                    const maybe_key_value: ?ExprNodeIndex =
+                                        if (e_.key_prop_index > -1) props.orderedRemove(@intCast(e_.key_prop_index)).value else null;
+
                                     // arguments needs to be like
                                     // {
                                     //    ...props,
@@ -15032,6 +15045,7 @@ fn NewParser_(
                                     const is_static_jsx = e_.children.len > 1;
 
                                     // if (p.options.jsx.development) {
+
                                     switch (e_.children.len) {
                                         0 => {},
                                         1 => {
@@ -15065,30 +15079,31 @@ fn NewParser_(
                                         //     _owner: null
                                         // };
                                         //
-                                        const key = if (e_.key) |key_| brk: {
+                                        const key = if (maybe_key_value) |key_value| brk: {
                                             // key: void 0 === key ? null : "" + key,
-                                            break :brk switch (key_.data) {
-                                                .e_string => break :brk key_,
-                                                .e_undefined, .e_null => p.newExpr(E.Null{}, key_.loc),
+                                            break :brk switch (key_value.data) {
+                                                .e_string => break :brk key_value,
+                                                .e_undefined, .e_null => p.newExpr(E.Null{}, key_value.loc),
                                                 else => p.newExpr(E.If{
                                                     .test_ = p.newExpr(E.Binary{
-                                                        .left = p.newExpr(E.Undefined{}, key_.loc),
+                                                        .left = p.newExpr(E.Undefined{}, key_value.loc),
                                                         .op = Op.Code.bin_strict_eq,
-                                                        .right = key_,
-                                                    }, key_.loc),
-                                                    .yes = p.newExpr(E.Null{}, key_.loc),
+                                                        .right = key_value,
+                                                    }, key_value.loc),
+                                                    .yes = p.newExpr(E.Null{}, key_value.loc),
                                                     .no = p.newExpr(
                                                         E.Binary{
                                                             .op = Op.Code.bin_add,
-                                                            .left = p.newExpr(&E.String.empty, key_.loc),
-                                                            .right = key_,
+                                                            .left = p.newExpr(&E.String.empty, key_value.loc),
+                                                            .right = key_value,
                                                         },
-                                                        key_.loc,
+                                                        key_value.loc,
                                                     ),
-                                                }, key_.loc),
+                                                }, key_value.loc),
                                             };
                                         } else p.newExpr(E.Null{}, expr.loc);
                                         var jsx_element = p.allocator.alloc(G.Property, 6) catch unreachable;
+
                                         const props_object = p.newExpr(
                                             E.Object{
                                                 .properties = G.Property.List.fromList(props),
@@ -15183,14 +15198,14 @@ fn NewParser_(
                                         // Either:
                                         // jsxDEV(type, arguments, key, isStaticChildren, source, self)
                                         // jsx(type, arguments, key)
-                                        const args = p.allocator.alloc(Expr, if (p.options.jsx.development) @as(usize, 6) else @as(usize, 2) + @as(usize, @intFromBool(e_.key != null))) catch unreachable;
+                                        const args = p.allocator.alloc(Expr, if (p.options.jsx.development) @as(usize, 6) else @as(usize, 2) + @as(usize, @intFromBool(maybe_key_value != null))) catch unreachable;
                                         args[0] = tag;
 
                                         args[1] = p.newExpr(E.Object{
                                             .properties = G.Property.List.fromList(props),
                                         }, expr.loc);
 
-                                        if (e_.key) |key| {
+                                        if (maybe_key_value) |key| {
                                             args[2] = key;
                                         } else if (p.options.jsx.development) {
                                             // if (maybeKey !== undefined)
@@ -15272,13 +15287,7 @@ fn NewParser_(
                                         p.source,
                                         record.range,
                                         expr,
-                                        &.{},
                                         name,
-                                        MacroVisitor,
-                                        MacroVisitor{
-                                            .p = p,
-                                            .loc = expr.loc,
-                                        },
                                     ) catch return expr);
 
                                     if (macro_result.data != .e_template) {
@@ -16379,17 +16388,14 @@ fn NewParser_(
                                 p.source,
                                 record.range,
                                 copied,
-                                &.{},
                                 name,
-                                MacroVisitor,
-                                MacroVisitor{ .p = p, .loc = expr.loc },
                             ) catch |err| {
                                 if (err == error.MacroFailed) {
                                     if (p.log.msgs.items.len == start_error_count) {
                                         p.log.addError(p.source, expr.loc, "macro threw exception") catch unreachable;
                                     }
                                 } else {
-                                    p.log.addErrorFmt(p.source, expr.loc, p.allocator, "{s} error in macro", .{@errorName(err)}) catch unreachable;
+                                    p.log.addErrorFmt(p.source, expr.loc, p.allocator, "\"{s}\" error in macro", .{@errorName(err)}) catch unreachable;
                                 }
                                 return expr;
                             };
@@ -16557,7 +16563,7 @@ fn NewParser_(
                         continue;
                     },
                     .s_directive => |dir| {
-                        if (strings.utf16EqlString(dir.value, "use strict")) {
+                        if (strings.eqlComptime(dir.value, "use strict")) {
                             return stmt.loc;
                         }
                     },
@@ -17587,10 +17593,6 @@ fn NewParser_(
                 },
                 .s_directive => {
                     p.current_scope.is_after_const_local_prefix = was_after_after_const_local_prefix;
-                    //         	if p.isStrictMode() && s.LegacyOctalLoc.Start > 0 {
-                    // 	p.markStrictModeFeature(legacyOctalEscape, p.source.RangeOfLegacyOctalEscape(s.LegacyOctalLoc), "")
-                    // }
-                    return;
                 },
                 .s_import => |data| {
                     try p.recordDeclaredSymbol(data.namespace_ref);
@@ -18170,14 +18172,21 @@ fn NewParser_(
                     }
                 },
                 .s_with => |data| {
-                    // using with is forbidden in strict mode
-                    // we largely only deal with strict mode
-                    // however, old code should still technically transpile
-                    // we do not attempt to preserve all the semantics of with
                     data.value = p.visitExpr(data.value);
-                    // This stmt can be a block or an expression
-                    if (comptime Environment.allow_assert) assert(data.body.data == .s_block or data.body.data == .s_expr);
+
+                    p.pushScopeForVisitPass(.with, data.body_loc) catch unreachable;
+
+                    // This can be many different kinds of statements.
+                    // example code:
+                    //
+                    //      with(this.document.defaultView || Object.create(null))
+                    //         with(this.document)
+                    //           with(this.form)
+                    //             with(this.element)
+                    //
                     data.body = p.visitSingleStmt(data.body, StmtsKind.none);
+
+                    p.popScope();
                 },
                 .s_while => |data| {
                     data.test_ = p.visitExpr(data.test_);
@@ -21037,6 +21046,10 @@ fn NewParser_(
             // operations, so they should all be child scopes and should all be popped
             // by the time we get here.
             p.scopes_in_order.items[scope_index] = null;
+            // Decrement the length so that in code with lots of scopes, we use
+            // less memory and do less work
+            p.scopes_in_order.items.len -= @as(usize, @intFromBool(p.scopes_in_order.items.len == scope_index + 1));
+
             // Remove the last child from the parent scope
             const last = parent.children.len - 1;
             if (comptime Environment.allow_assert) assert(parent.children.ptr[last] == to_flatten);

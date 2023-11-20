@@ -27,6 +27,42 @@ declare module "bun:test" {
 
   export const mock: {
     <T extends AnyFunction>(Function: T): Mock<T>;
+
+    /**
+     * Replace the module `id` with the return value of `factory`.
+     *
+     * This is useful for mocking modules.
+     *
+     * @param id module ID to mock
+     * @param factory a function returning an object that will be used as the exports of the mocked module
+     *
+     * @example
+     * ## Example
+     * ```ts
+     * import { mock } from "bun:test";
+     *
+     * mock.module("fs/promises", () => {
+     *  return {
+     *    readFile: () => Promise.resolve("hello world"),
+     *  };
+     * });
+     *
+     * import { readFile } from "fs/promises";
+     *
+     * console.log(await readFile("hello.txt", "utf8")); // hello world
+     * ```
+     *
+     * ## More notes
+     *
+     * If the module is already loaded, exports are overwritten with the return
+     * value of `factory`. If the export didn't exist before, it will not be
+     * added to existing import statements. This is due to how ESM works.
+     */
+    module(id: string, factory: () => any): void | Promise<void>;
+    /**
+     * Restore the previous value of mocks.
+     */
+    restore(): void;
   };
 
   /**
@@ -486,6 +522,30 @@ declare module "bun:test" {
     anything: () => Expect;
     stringContaining: (str: string) => Expect<string>;
     stringMatching: <T extends RegExp | string>(regex: T) => Expect<T>;
+
+    /**
+     * Throw an error if this function is called.
+     *
+     * @param msg Optional message to display if the test fails
+     * @returns never
+     *
+     * @example
+     * ## Example
+     *
+     * ```ts
+     * import { expect, test } from "bun:test";
+     *
+     * test("!!abc!! is not a module", () => {
+     *  try {
+     *     require("!!abc!!");
+     *     expect.unreachable();
+     *  } catch(e) {
+     *     expect(e.name).not.toBe("UnreachableError");
+     *  }
+     * });
+     * ```
+     */
+    unreachable(msg?: string | Error): never;
   };
   /**
    * Asserts that a value matches some criteria.
@@ -735,14 +795,14 @@ declare module "bun:test" {
      */
     toBeNull(): void;
     /**
-     * Asserts that a value can be coerced to `NaN`.
+     * Asserts that a value is `NaN`.
      *
      * Same as using `Number.isNaN()`.
      *
      * @example
      * expect(NaN).toBeNaN();
-     * expect(Infinity).toBeNaN();
-     * expect("notanumber").toBeNaN();
+     * expect(Infinity).toBeNaN(); // fail
+     * expect("notanumber").toBeNaN(); // fail
      */
     toBeNaN(): void;
     /**

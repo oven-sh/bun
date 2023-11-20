@@ -2,10 +2,10 @@
 
 #include "CommonJSModuleRecord.h"
 #include "ImportMetaObject.h"
-#include "JavaScriptCore/JSBoundFunction.h"
-#include "JavaScriptCore/ObjectConstructor.h"
 #include "_NativeModule.h"
 #include "isBuiltinModule.h"
+#include <JavaScriptCore/JSBoundFunction.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 
 using namespace Zig;
 using namespace JSC;
@@ -188,8 +188,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
       scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(
                  vm, globalObject, val)));
 }
-extern "C" EncodedJSValue Resolver__nodeModulePathsForJS(JSGlobalObject *,
-                                                         CallFrame *);
+extern "C" JSC::EncodedJSValue Resolver__nodeModulePathsForJS(JSGlobalObject *,
+                                                              CallFrame *);
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionFindSourceMap,
                          (JSGlobalObject * globalObject,

@@ -53,6 +53,7 @@ const BodyMixin = JSC.WebCore.BodyMixin;
 const Body = JSC.WebCore.Body;
 const Request = JSC.WebCore.Request;
 const Blob = JSC.WebCore.Blob;
+const Async = bun.Async;
 
 const BoringSSL = bun.BoringSSL;
 const X509 = @import("../api/bun/x509.zig");
@@ -76,6 +77,7 @@ pub const Response = struct {
     pub const getJSON = ResponseMixin.getJSON;
     pub const getArrayBuffer = ResponseMixin.getArrayBuffer;
     pub const getBlob = ResponseMixin.getBlob;
+    pub const getBlobWithoutCallFrame = ResponseMixin.getBlobWithoutCallFrame;
     pub const getFormData = ResponseMixin.getFormData;
 
     pub fn getFormDataEncoding(this: *Response) ?*bun.FormData.AsyncFormData {
@@ -782,7 +784,7 @@ pub const Fetch = struct {
         request_headers: Headers = Headers{ .allocator = undefined },
         promise: JSC.JSPromise.Strong,
         concurrent_task: JSC.ConcurrentTask = .{},
-        poll_ref: JSC.PollRef = .{},
+        poll_ref: Async.KeepAlive = .{},
         memory_reporter: *JSC.MemoryReportingAllocator,
         /// For Http Client requests
         /// when Content-Length is provided this represents the whole size of the request
@@ -1279,6 +1281,73 @@ pub const Fetch = struct {
                     error.FailedToOpenSocket => bun.String.static("Was there a typo in the url or port?"),
                     error.TooManyRedirects => bun.String.static("The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()"),
                     error.ConnectionRefused => bun.String.static("Unable to connect. Is the computer able to access the url?"),
+
+                    error.UNABLE_TO_GET_ISSUER_CERT => bun.String.static("unable to get issuer certificate"),
+                    error.UNABLE_TO_GET_CRL => bun.String.static("unable to get certificate CRL"),
+                    error.UNABLE_TO_DECRYPT_CERT_SIGNATURE => bun.String.static("unable to decrypt certificate's signature"),
+                    error.UNABLE_TO_DECRYPT_CRL_SIGNATURE => bun.String.static("unable to decrypt CRL's signature"),
+                    error.UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY => bun.String.static("unable to decode issuer public key"),
+                    error.CERT_SIGNATURE_FAILURE => bun.String.static("certificate signature failure"),
+                    error.CRL_SIGNATURE_FAILURE => bun.String.static("CRL signature failure"),
+                    error.CERT_NOT_YET_VALID => bun.String.static("certificate is not yet valid"),
+                    error.CRL_NOT_YET_VALID => bun.String.static("CRL is not yet valid"),
+                    error.CERT_HAS_EXPIRED => bun.String.static("certificate has expired"),
+                    error.CRL_HAS_EXPIRED => bun.String.static("CRL has expired"),
+                    error.ERROR_IN_CERT_NOT_BEFORE_FIELD => bun.String.static("format error in certificate's notBefore field"),
+                    error.ERROR_IN_CERT_NOT_AFTER_FIELD => bun.String.static("format error in certificate's notAfter field"),
+                    error.ERROR_IN_CRL_LAST_UPDATE_FIELD => bun.String.static("format error in CRL's lastUpdate field"),
+                    error.ERROR_IN_CRL_NEXT_UPDATE_FIELD => bun.String.static("format error in CRL's nextUpdate field"),
+                    error.OUT_OF_MEM => bun.String.static("out of memory"),
+                    error.DEPTH_ZERO_SELF_SIGNED_CERT => bun.String.static("self signed certificate"),
+                    error.SELF_SIGNED_CERT_IN_CHAIN => bun.String.static("self signed certificate in certificate chain"),
+                    error.UNABLE_TO_GET_ISSUER_CERT_LOCALLY => bun.String.static("unable to get local issuer certificate"),
+                    error.UNABLE_TO_VERIFY_LEAF_SIGNATURE => bun.String.static("unable to verify the first certificate"),
+                    error.CERT_CHAIN_TOO_LONG => bun.String.static("certificate chain too long"),
+                    error.CERT_REVOKED => bun.String.static("certificate revoked"),
+                    error.INVALID_CA => bun.String.static("invalid CA certificate"),
+                    error.INVALID_NON_CA => bun.String.static("invalid non-CA certificate (has CA markings)"),
+                    error.PATH_LENGTH_EXCEEDED => bun.String.static("path length constraint exceeded"),
+                    error.PROXY_PATH_LENGTH_EXCEEDED => bun.String.static("proxy path length constraint exceeded"),
+                    error.PROXY_CERTIFICATES_NOT_ALLOWED => bun.String.static("proxy certificates not allowed, please set the appropriate flag"),
+                    error.INVALID_PURPOSE => bun.String.static("unsupported certificate purpose"),
+                    error.CERT_UNTRUSTED => bun.String.static("certificate not trusted"),
+                    error.CERT_REJECTED => bun.String.static("certificate rejected"),
+                    error.APPLICATION_VERIFICATION => bun.String.static("application verification failure"),
+                    error.SUBJECT_ISSUER_MISMATCH => bun.String.static("subject issuer mismatch"),
+                    error.AKID_SKID_MISMATCH => bun.String.static("authority and subject key identifier mismatch"),
+                    error.AKID_ISSUER_SERIAL_MISMATCH => bun.String.static("authority and issuer serial number mismatch"),
+                    error.KEYUSAGE_NO_CERTSIGN => bun.String.static("key usage does not include certificate signing"),
+                    error.UNABLE_TO_GET_CRL_ISSUER => bun.String.static("unable to get CRL issuer certificate"),
+                    error.UNHANDLED_CRITICAL_EXTENSION => bun.String.static("unhandled critical extension"),
+                    error.KEYUSAGE_NO_CRL_SIGN => bun.String.static("key usage does not include CRL signing"),
+                    error.KEYUSAGE_NO_DIGITAL_SIGNATURE => bun.String.static("key usage does not include digital signature"),
+                    error.UNHANDLED_CRITICAL_CRL_EXTENSION => bun.String.static("unhandled critical CRL extension"),
+                    error.INVALID_EXTENSION => bun.String.static("invalid or inconsistent certificate extension"),
+                    error.INVALID_POLICY_EXTENSION => bun.String.static("invalid or inconsistent certificate policy extension"),
+                    error.NO_EXPLICIT_POLICY => bun.String.static("no explicit policy"),
+                    error.DIFFERENT_CRL_SCOPE => bun.String.static("Different CRL scope"),
+                    error.UNSUPPORTED_EXTENSION_FEATURE => bun.String.static("Unsupported extension feature"),
+                    error.UNNESTED_RESOURCE => bun.String.static("RFC 3779 resource not subset of parent's resources"),
+                    error.PERMITTED_VIOLATION => bun.String.static("permitted subtree violation"),
+                    error.EXCLUDED_VIOLATION => bun.String.static("excluded subtree violation"),
+                    error.SUBTREE_MINMAX => bun.String.static("name constraints minimum and maximum not supported"),
+                    error.UNSUPPORTED_CONSTRAINT_TYPE => bun.String.static("unsupported name constraint type"),
+                    error.UNSUPPORTED_CONSTRAINT_SYNTAX => bun.String.static("unsupported or invalid name constraint syntax"),
+                    error.UNSUPPORTED_NAME_SYNTAX => bun.String.static("unsupported or invalid name syntax"),
+                    error.CRL_PATH_VALIDATION_ERROR => bun.String.static("CRL path validation error"),
+                    error.SUITE_B_INVALID_VERSION => bun.String.static("Suite B: certificate version invalid"),
+                    error.SUITE_B_INVALID_ALGORITHM => bun.String.static("Suite B: invalid public key algorithm"),
+                    error.SUITE_B_INVALID_CURVE => bun.String.static("Suite B: invalid ECC curve"),
+                    error.SUITE_B_INVALID_SIGNATURE_ALGORITHM => bun.String.static("Suite B: invalid signature algorithm"),
+                    error.SUITE_B_LOS_NOT_ALLOWED => bun.String.static("Suite B: curve not allowed for this LOS"),
+                    error.SUITE_B_CANNOT_SIGN_P_384_WITH_P_256 => bun.String.static("Suite B: cannot sign P-384 with P-256"),
+                    error.HOSTNAME_MISMATCH => bun.String.static("Hostname mismatch"),
+                    error.EMAIL_MISMATCH => bun.String.static("Email address mismatch"),
+                    error.IP_ADDRESS_MISMATCH => bun.String.static("IP address mismatch"),
+                    error.INVALID_CALL => bun.String.static("Invalid certificate verification context"),
+                    error.STORE_LOOKUP => bun.String.static("Issuer certificate lookup error"),
+                    error.NAME_CONSTRAINTS_WITHOUT_SANS => bun.String.static("Issuer has name constraints but leaf has no SANs"),
+                    error.UNKKNOW_CERTIFICATE_VERIFICATION_ERROR => bun.String.static("unknown certificate verification error"),
                     else => bun.String.static("fetch() failed. For more information, pass `verbose: true` in the second argument to fetch()"),
                 },
                 .path = path,

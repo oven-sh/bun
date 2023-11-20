@@ -14,6 +14,7 @@ const IdentityContext = @import("../../identity_context.zig").IdentityContext;
 const Fs = @import("../../fs.zig");
 const Resolver = @import("../../resolver/resolver.zig");
 const ast = @import("../../import_record.zig");
+const Sys = @import("../../sys.zig");
 
 const MacroEntryPoint = bun.bundler.MacroEntryPoint;
 const logger = @import("root").bun.logger;
@@ -49,7 +50,6 @@ const MarkedArrayBuffer = @import("../base.zig").MarkedArrayBuffer;
 const getAllocator = @import("../base.zig").getAllocator;
 const JSValue = @import("root").bun.JSC.JSValue;
 
-const Microtask = @import("root").bun.JSC.Microtask;
 const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
 const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;
 const JSPrivateDataPtr = @import("root").bun.JSC.JSPrivateDataPtr;
@@ -90,6 +90,7 @@ const SendfileContext = struct {
 };
 const DateTime = bun.DateTime;
 const linux = std.os.linux;
+const Async = bun.Async;
 
 const BlobFileContentResult = struct {
     data: [:0]const u8,
@@ -4628,12 +4629,34 @@ pub const ServerWebSocket = struct {
             return .undefined;
         }
 
-        this.closed = true;
+        const code = brk: {
+            if (args.ptr[0].isEmpty() or args.ptr[0].isUndefined()) {
+                // default exception code
+                break :brk 1000;
+            }
 
-        const code = if (args.len > 0) args.ptr[0].toInt32() else @as(i32, 1000);
-        var message_value = if (args.len > 1) args.ptr[1].toSlice(globalThis, bun.default_allocator) else ZigString.Slice.empty;
+            if (!args.ptr[0].isNumber()) {
+                globalThis.throwInvalidArguments("close requires a numeric code or undefined", .{});
+                return .zero;
+            }
+
+            break :brk args.ptr[0].coerce(i32, globalThis);
+        };
+
+        var message_value: ZigString.Slice = brk: {
+            if (args.ptr[1].isEmpty() or args.ptr[1].isUndefined()) break :brk ZigString.Slice.empty;
+
+            if (args.ptr[1].toSliceOrNull(globalThis)) |slice| {
+                break :brk slice;
+            }
+
+            // toString() failed, that means an exception occurred.
+            return .zero;
+        };
+
         defer message_value.deinit();
 
+        this.closed = true;
         this.websocket.end(code, message_value.slice());
         return .undefined;
     }
@@ -4830,7 +4853,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
         listen_callback: JSC.AnyTask = undefined,
         allocator: std.mem.Allocator,
-        poll_ref: JSC.PollRef = .{},
+        poll_ref: Async.KeepAlive = .{},
         temporary_url_buffer: std.ArrayListUnmanaged(u8) = .{},
 
         cached_hostname: bun.String = bun.String.empty,
@@ -5266,8 +5289,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this: *ThisServer,
             _: *JSC.JSGlobalObject,
         ) callconv(.C) JSC.JSValue {
-            if (this.config.address != .tcp) {
-                return JSValue.undefined;
+            switch (this.config.address) {
+                .unix => return .undefined,
+                else => {},
             }
 
             var listener = this.listener orelse return JSC.JSValue.jsNumber(this.config.address.tcp.port);
@@ -5328,7 +5352,38 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
         }
 
+        pub fn getURL(this: *ThisServer, globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {
+            const fmt = switch (this.config.address) {
+                .unix => |unix| strings.URLFormatter{
+                    .proto = .unix,
+                    .hostname = bun.sliceTo(@constCast(unix), 0),
+                },
+                .tcp => |tcp| blk: {
+                    var port: u16 = tcp.port;
+                    if (this.listener) |listener| {
+                        port = @intCast(listener.getLocalPort());
+                    }
+                    break :blk strings.URLFormatter{
+                        .proto = if (comptime ssl_enabled_) .https else .http,
+                        .hostname = if (tcp.hostname) |hostname| bun.sliceTo(@constCast(hostname), 0) else null,
+                        .port = port,
+                    };
+                },
+            };
+
+            var buf = std.fmt.allocPrint(default_allocator, "{any}", .{fmt}) catch @panic("Out of memory");
+            defer default_allocator.free(buf);
+
+            var value = bun.String.create(buf);
+            return value.toJSDOMURL(globalThis);
+        }
+
         pub fn getHostname(this: *ThisServer, globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {
+            switch (this.config.address) {
+                .unix => return .undefined,
+                else => {},
+            }
+
             if (this.cached_hostname.isEmpty()) {
                 if (this.listener) |listener| {
                     var buf: [1024]u8 = [_]u8{0} ** 1024;
@@ -5547,11 +5602,25 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             if (error_instance == .zero) {
                 switch (this.config.address) {
                     .tcp => |tcp| {
-                        error_instance = (JSC.SystemError{
-                            .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to start server. Is port {d} in use?", .{tcp.port}) catch "Failed to start server"),
-                            .code = bun.String.static("EADDRINUSE"),
-                            .syscall = bun.String.static("listen"),
-                        }).toErrorInstance(this.globalThis);
+                        error_set: {
+                            if (comptime Environment.isLinux) {
+                                var rc: i32 = -1;
+                                const code = Sys.getErrno(rc);
+                                if (code == bun.C.E.ACCES) {
+                                    error_instance = (JSC.SystemError{
+                                        .message = bun.String.init(std.fmt.bufPrint(&output_buf, "permission denied {s}:{d}", .{ tcp.hostname orelse "0.0.0.0", tcp.port }) catch "Failed to start server"),
+                                        .code = bun.String.static("EACCES"),
+                                        .syscall = bun.String.static("listen"),
+                                    }).toErrorInstance(this.globalThis);
+                                    break :error_set;
+                                }
+                            }
+                            error_instance = (JSC.SystemError{
+                                .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to start server. Is port {d} in use?", .{tcp.port}) catch "Failed to start server"),
+                                .code = bun.String.static("EADDRINUSE"),
+                                .syscall = bun.String.static("listen"),
+                            }).toErrorInstance(this.globalThis);
+                        }
                     },
                     .unix => |unix| {
                         error_instance = (JSC.SystemError{
@@ -5580,7 +5649,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             this.listener = socket;
-            this.vm.event_loop_handle = uws.Loop.get();
+            this.vm.event_loop_handle = Async.Loop.get();
             if (!ssl_enabled_)
                 this.vm.addListeningSocketForWatchMode(@intCast(socket.?.socket().fd()));
         }

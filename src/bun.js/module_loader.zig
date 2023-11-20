@@ -56,7 +56,7 @@ const MarkedArrayBuffer = @import("./base.zig").MarkedArrayBuffer;
 const getAllocator = @import("./base.zig").getAllocator;
 const JSValue = @import("root").bun.JSC.JSValue;
 const NewClass = @import("./base.zig").NewClass;
-const Microtask = @import("root").bun.JSC.Microtask;
+
 const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
 const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;
 const JSPrivateDataPtr = @import("root").bun.JSC.JSPrivateDataPtr;
@@ -85,7 +85,7 @@ const PackageManager = @import("../install/install.zig").PackageManager;
 const Install = @import("../install/install.zig");
 const VirtualMachine = JSC.VirtualMachine;
 const Dependency = @import("../install/dependency.zig");
-
+const Async = bun.Async;
 const String = bun.String;
 
 // Setting BUN_OVERRIDE_MODULE_PATH to the path to the bun repo will make it so modules are loaded
@@ -143,9 +143,10 @@ inline fn jsSyntheticModule(comptime name: ResolvedSource.Tag, specifier: String
         .allocator = null,
         .source_code = bun.String.empty,
         .specifier = specifier,
-        .source_url = ZigString.init(@tagName(name)),
+        .source_url = bun.String.init(@tagName(name)),
         .hash = 0,
         .tag = name,
+        .needs_deref = false,
     };
 }
 
@@ -159,6 +160,7 @@ const BunDebugHolder = struct {
 /// This can technically fail if concurrent access across processes happens, or permission issues.
 /// Errors here should always be ignored.
 fn dumpSource(specifier: string, printer: anytype) void {
+    if (comptime Environment.isWindows) return;
     if (BunDebugHolder.dir == null) {
         BunDebugHolder.dir = std.fs.cwd().makeOpenPathIterable("/tmp/bun-debug-src/", .{}) catch return;
         BunDebugHolder.lock = bun.Lock.init();
@@ -235,7 +237,7 @@ pub const RuntimeTranspilerStore = struct {
         vm: *JSC.VirtualMachine,
         globalThis: *JSC.JSGlobalObject,
         fetcher: Fetcher,
-        poll_ref: JSC.PollRef = .{},
+        poll_ref: Async.KeepAlive = .{},
         generation_number: u32 = 0,
         log: logger.Log,
         parse_error: ?anyerror = null,
@@ -287,7 +289,7 @@ pub const RuntimeTranspilerStore = struct {
             var log = this.log;
             this.log = logger.Log.init(bun.default_allocator);
             var resolved_source = this.resolved_source;
-            resolved_source.source_url = specifier.toZigString();
+            resolved_source.source_url = specifier.dupeRef();
 
             resolved_source.tag = brk: {
                 if (resolved_source.commonjs_exports_len > 0) {
@@ -330,6 +332,7 @@ pub const RuntimeTranspilerStore = struct {
         pub fn run(this: *TranspilerJob) void {
             var arena = bun.ArenaAllocator.init(bun.default_allocator);
             defer arena.deinit();
+            const allocator = arena.allocator();
 
             defer this.dispatchToMainThread();
             if (this.generation_number != this.vm.transpiler_store.generation_number.load(.Monotonic)) {
@@ -340,13 +343,13 @@ pub const RuntimeTranspilerStore = struct {
             if (ast_memory_store == null) {
                 ast_memory_store = bun.default_allocator.create(js_ast.ASTMemoryAllocator) catch @panic("out of memory!");
                 ast_memory_store.?.* = js_ast.ASTMemoryAllocator{
-                    .allocator = arena.allocator(),
+                    .allocator = allocator,
                     .previous = null,
                 };
             }
 
+            ast_memory_store.?.allocator = allocator;
             ast_memory_store.?.reset();
-            ast_memory_store.?.allocator = arena.allocator();
             ast_memory_store.?.push();
 
             const path = this.path;
@@ -357,7 +360,6 @@ pub const RuntimeTranspilerStore = struct {
             var vm = this.vm;
             var bundler: bun.Bundler = undefined;
             bundler = vm.bundler;
-            var allocator = arena.allocator();
             bundler.setAllocator(allocator);
             bundler.setLog(&this.log);
             bundler.resolver.opts = bundler.options;
@@ -480,11 +482,12 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             if (parse_result.already_bundled) {
+                const duped = String.create(specifier);
                 this.resolved_source = ResolvedSource{
                     .allocator = null,
                     .source_code = bun.String.createLatin1(parse_result.source.contents),
-                    .specifier = String.create(specifier),
-                    .source_url = ZigString.init(path.text),
+                    .specifier = duped,
+                    .source_url = if (duped.eqlUTF8(path.text)) duped.dupeRef() else String.init(path.text),
                     .hash = 0,
                 };
                 return;
@@ -553,11 +556,22 @@ pub const RuntimeTranspilerStore = struct {
                 dumpSource(specifier, &printer);
             }
 
+            const duped = String.create(specifier);
             this.resolved_source = ResolvedSource{
                 .allocator = null,
-                .source_code = bun.String.createLatin1(printer.ctx.getWritten()),
-                .specifier = String.create(specifier),
-                .source_url = ZigString.init(path.text),
+                .source_code = brk: {
+                    const written = printer.ctx.getWritten();
+                    const result = bun.String.createLatin1(written);
+
+                    if (written.len > 1024 * 1024 * 2 or vm.smol) {
+                        printer.ctx.buffer.deinit();
+                        source_code_printer.?.* = printer;
+                    }
+
+                    break :brk result;
+                },
+                .specifier = duped,
+                .source_url = if (duped.eqlUTF8(path.text)) duped.dupeRef() else String.create(path.text),
                 .commonjs_exports = null,
                 .commonjs_exports_len = if (parse_result.ast.exports_kind == .cjs)
                     std.math.maxInt(u32)
@@ -570,7 +584,23 @@ pub const RuntimeTranspilerStore = struct {
 };
 
 pub const ModuleLoader = struct {
+    transpile_source_code_arena: ?*bun.ArenaAllocator = null,
+    eval_script: ?*logger.Source = null,
+
     const debug = Output.scoped(.ModuleLoader, true);
+
+    /// This must be called after calling transpileSourceCode
+    pub fn resetArena(this: *ModuleLoader, jsc_vm: *VirtualMachine) void {
+        std.debug.assert(&jsc_vm.module_loader == this);
+        if (this.transpile_source_code_arena) |arena| {
+            if (jsc_vm.smol) {
+                _ = arena.reset(.free_all);
+            } else {
+                _ = arena.reset(.{ .retain_with_limit = 8 * 1024 * 1024 });
+            }
+        }
+    }
+
     pub const AsyncModule = struct {
 
         // This is all the state used by the printer to print the module
@@ -587,10 +617,10 @@ pub const ModuleLoader = struct {
         loader: Api.Loader,
         hash: u32 = std.math.maxInt(u32),
         globalThis: *JSC.JSGlobalObject = undefined,
-        arena: bun.ArenaAllocator,
+        arena: *bun.ArenaAllocator,
 
         // This is the specific state for making it async
-        poll_ref: JSC.PollRef = .{},
+        poll_ref: Async.KeepAlive = .{},
         any_task: JSC.AnyTask = undefined,
 
         pub const Id = u32;
@@ -1280,7 +1310,7 @@ pub const ModuleLoader = struct {
                 .allocator = null,
                 .source_code = bun.String.createLatin1(printer.ctx.getWritten()),
                 .specifier = String.init(specifier),
-                .source_url = ZigString.init(path.text),
+                .source_url = String.init(path.text),
                 .commonjs_exports = if (commonjs_exports.len > 0)
                     commonjs_exports.ptr
                 else
@@ -1300,6 +1330,7 @@ pub const ModuleLoader = struct {
             this.promise.deinit();
             this.parse_result.deinit();
             this.arena.deinit();
+            this.globalThis.bunVM().allocator.destroy(this.arena);
             // bun.default_allocator.free(this.stmt_blocks);
             // bun.default_allocator.free(this.expr_blocks);
 
@@ -1336,7 +1367,6 @@ pub const ModuleLoader = struct {
         loader: options.Loader,
         log: *logger.Log,
         virtual_source: ?*const logger.Source,
-        ret: *ErrorableResolvedSource,
         promise_ptr: ?*?*JSC.JSInternalPromise,
         source_code_printer: *js_printer.BufferPrinter,
         globalObject: ?*JSC.JSGlobalObject,
@@ -1353,33 +1383,43 @@ pub const ModuleLoader = struct {
                     jsc_vm.main_hash == hash and
                     strings.eqlLong(jsc_vm.main, path.text, false);
 
-                var arena: bun.ArenaAllocator = undefined;
+                var arena_: ?*bun.ArenaAllocator = brk: {
+                    // Attempt to reuse the Arena from the parser when we can
+                    // This code is potentially re-entrant, so only one Arena can be reused at a time
+                    // That's why we have to check if the Arena is null
+                    //
+                    // Using an Arena here is a significant memory optimization when loading many files
+                    if (jsc_vm.module_loader.transpile_source_code_arena) |shared| {
+                        jsc_vm.module_loader.transpile_source_code_arena = null;
+                        break :brk shared;
+                    }
 
-                // Attempt to reuse the Arena from the parser when we can
-                // This code is potentially re-entrant, so only one Arena can be reused at a time
-                // That's why we have to check if the Arena is null
-                //
-                // Using an Arena here is a significant memory optimization when loading many files
-                if (jsc_vm.parser_arena) |shared| {
-                    arena = shared;
-                    jsc_vm.parser_arena = null;
-                    _ = arena.reset(.retain_capacity);
-                } else {
-                    arena = bun.ArenaAllocator.init(jsc_vm.allocator);
-                }
+                    // we must allocate the arena so that the pointer it points to is always valid.
+                    var arena = try jsc_vm.allocator.create(bun.ArenaAllocator);
+                    arena.* = bun.ArenaAllocator.init(bun.default_allocator);
+                    break :brk arena;
+                };
+
                 var give_back_arena = true;
                 defer {
                     if (give_back_arena) {
-                        if (jsc_vm.parser_arena == null) {
-                            jsc_vm.parser_arena = arena;
+                        if (jsc_vm.module_loader.transpile_source_code_arena == null) {
+                            if (jsc_vm.smol) {
+                                _ = arena_.?.reset(.free_all);
+                            } else {
+                                _ = arena_.?.reset(.{ .retain_with_limit = 8 * 1024 * 1024 });
+                            }
+
+                            jsc_vm.module_loader.transpile_source_code_arena = arena_;
                         } else {
-                            arena.deinit();
+                            arena_.?.deinit();
+                            jsc_vm.allocator.destroy(arena_.?);
                         }
                     }
                 }
 
-                // var allocator = arena.allocator();
-                var allocator = bun.default_allocator;
+                var arena = arena_.?;
+                var allocator = arena.allocator();
 
                 var fd: ?StoredFileDescriptorType = null;
                 var package_json: ?*PackageJSON = null;
@@ -1424,12 +1464,12 @@ pub const ModuleLoader = struct {
                 //
                 var should_close_input_file_fd = fd == null;
 
-                var input_file_fd: StoredFileDescriptorType = 0;
+                var input_file_fd: StoredFileDescriptorType = bun.invalid_fd;
                 var parse_options = Bundler.ParseOptions{
                     .allocator = allocator,
                     .path = path,
                     .loader = loader,
-                    .dirname_fd = 0,
+                    .dirname_fd = bun.invalid_fd,
                     .file_descriptor = fd,
                     .file_fd_ptr = &input_file_fd,
                     .file_hash = hash,
@@ -1443,9 +1483,9 @@ pub const ModuleLoader = struct {
                     .set_breakpoint_on_first_line = is_main and jsc_vm.debugger != null and jsc_vm.debugger.?.set_breakpoint_on_first_line and setBreakPointOnFirstLine(),
                 };
                 defer {
-                    if (should_close_input_file_fd and input_file_fd != 0) {
+                    if (should_close_input_file_fd and input_file_fd != bun.invalid_fd) {
                         _ = bun.sys.close(input_file_fd);
-                        input_file_fd = 0;
+                        input_file_fd = bun.invalid_fd;
                     }
                 }
 
@@ -1484,6 +1524,7 @@ pub const ModuleLoader = struct {
                                 }
                             }
 
+                            give_back_arena = false;
                             return error.ParseError;
                         };
                     },
@@ -1500,7 +1541,6 @@ pub const ModuleLoader = struct {
                         .wasm,
                         log,
                         &parse_result.source,
-                        ret,
                         promise_ptr,
                         source_code_printer,
                         globalObject,
@@ -1528,6 +1568,7 @@ pub const ModuleLoader = struct {
                 }
 
                 if (jsc_vm.bundler.log.errors > 0) {
+                    give_back_arena = false;
                     return error.ParseError;
                 }
 
@@ -1536,7 +1577,7 @@ pub const ModuleLoader = struct {
                         .allocator = null,
                         .source_code = bun.String.create(parse_result.source.contents),
                         .specifier = input_specifier,
-                        .source_url = ZigString.init(path.text),
+                        .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
 
                         .hash = 0,
                         .tag = ResolvedSource.Tag.json_for_object_loader,
@@ -1552,7 +1593,7 @@ pub const ModuleLoader = struct {
                             else => unreachable,
                         },
                         .specifier = input_specifier,
-                        .source_url = ZigString.init(path.text),
+                        .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
                         .hash = 0,
                     };
                 }
@@ -1562,7 +1603,7 @@ pub const ModuleLoader = struct {
                         .allocator = null,
                         .source_code = bun.String.createLatin1(parse_result.source.contents),
                         .specifier = input_specifier,
-                        .source_url = ZigString.init(path.text),
+                        .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
 
                         .hash = 0,
                     };
@@ -1608,7 +1649,6 @@ pub const ModuleLoader = struct {
                             .arena = arena,
                         },
                     );
-                    arena = bun.ArenaAllocator.init(bun.default_allocator);
                     give_back_arena = false;
                     return error.AsyncModule;
                 }
@@ -1684,9 +1724,19 @@ pub const ModuleLoader = struct {
 
                 return .{
                     .allocator = null,
-                    .source_code = bun.String.createLatin1(printer.ctx.getWritten()),
+                    .source_code = brk: {
+                        const written = printer.ctx.getWritten();
+                        const result = bun.String.createLatin1(written);
+
+                        if (written.len > 1024 * 1024 * 2 or jsc_vm.smol) {
+                            printer.ctx.buffer.deinit();
+                            source_code_printer.* = printer;
+                        }
+
+                        break :brk result;
+                    },
                     .specifier = input_specifier,
-                    .source_url = ZigString.init(path.text),
+                    .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
                     .commonjs_exports = if (commonjs_exports.len > 0)
                         commonjs_exports.ptr
                     else
@@ -1740,7 +1790,7 @@ pub const ModuleLoader = struct {
             //         .allocator = if (jsc_vm.has_loaded) &jsc_vm.allocator else null,
             //         .source_code = ZigString.init(jsc_vm.allocator.dupe(u8, parse_result.source.contents) catch unreachable),
             //         .specifier = ZigString.init(specifier),
-            //         .source_url = ZigString.init(path.text),
+            //         .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
             //         .hash = 0,
             //         .tag = ResolvedSource.Tag.wasm,
             //     };
@@ -1765,7 +1815,7 @@ pub const ModuleLoader = struct {
                         .allocator = null,
                         .source_code = bun.String.static(@embedFile("../js/wasi-runner.js")),
                         .specifier = input_specifier,
-                        .source_url = ZigString.init(path.text),
+                        .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
                         .tag = .esm,
                         .hash = 0,
                     };
@@ -1781,7 +1831,6 @@ pub const ModuleLoader = struct {
                     .file,
                     log,
                     virtual_source,
-                    ret,
                     promise_ptr,
                     source_code_printer,
                     globalObject,
@@ -1812,7 +1861,7 @@ pub const ModuleLoader = struct {
                     .allocator = &jsc_vm.allocator,
                     .source_code = public_url,
                     .specifier = input_specifier,
-                    .source_url = ZigString.init(path.text),
+                    .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
                     .hash = 0,
                 };
             },
@@ -1916,9 +1965,18 @@ pub const ModuleLoader = struct {
         );
         const path = Fs.Path.init(specifier);
 
+        var virtual_source: ?*logger.Source = null;
+
         // Deliberately optional.
         // The concurrent one only handles javascript-like loaders right now.
-        const loader: ?options.Loader = jsc_vm.bundler.options.loaders.get(path.name.ext);
+        var loader: ?options.Loader = jsc_vm.bundler.options.loaders.get(path.name.ext);
+
+        if (jsc_vm.module_loader.eval_script) |eval_script| {
+            if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
+                virtual_source = eval_script;
+                loader = .tsx;
+            }
+        }
 
         // We only run the transpiler concurrently when we can.
         // Today, that's:
@@ -1960,6 +2018,8 @@ pub const ModuleLoader = struct {
             }
         };
 
+        defer jsc_vm.module_loader.resetArena(jsc_vm);
+
         var promise: ?*JSC.JSInternalPromise = null;
         ret.* = ErrorableResolvedSource.ok(
             ModuleLoader.transpileSourceCode(
@@ -1971,8 +2031,7 @@ pub const ModuleLoader = struct {
                 path,
                 synchronous_loader,
                 &log,
-                null,
-                ret,
+                virtual_source,
                 if (allow_promise) &promise else null,
                 VirtualMachine.source_code_printer.?,
                 globalObject,
@@ -2019,9 +2078,9 @@ pub const ModuleLoader = struct {
         if (specifier.eqlComptime(Runtime.Runtime.Imports.Name)) {
             return ResolvedSource{
                 .allocator = null,
-                .source_code = bun.String.init(Runtime.Runtime.sourceContentBun()),
-                .specifier = bun.String.init(Runtime.Runtime.Imports.Name),
-                .source_url = ZigString.init(Runtime.Runtime.Imports.Name),
+                .source_code = String.init(Runtime.Runtime.sourceContentBun()),
+                .specifier = specifier,
+                .source_url = specifier,
                 .hash = Runtime.Runtime.versionHash(),
             };
         } else if (HardcodedModule.Map.getWithEql(specifier, bun.String.eqlComptime)) |hardcoded| {
@@ -2031,9 +2090,10 @@ pub const ModuleLoader = struct {
                         .allocator = null,
                         .source_code = bun.String.create(jsc_vm.entry_point.source.contents),
                         .specifier = specifier,
-                        .source_url = ZigString.init(bun.asByteSlice(JSC.VirtualMachine.main_file_name)),
+                        .source_url = specifier,
                         .hash = 0,
                         .tag = .esm,
+                        .needs_deref = true,
                     };
                 },
 
@@ -2112,7 +2172,7 @@ pub const ModuleLoader = struct {
                     .allocator = null,
                     .source_code = bun.String.create(entry.source.contents),
                     .specifier = specifier,
-                    .source_url = specifier.toZigString(),
+                    .source_url = specifier.dupeRef(),
                     .hash = 0,
                 };
             }
@@ -2124,8 +2184,9 @@ pub const ModuleLoader = struct {
                     .allocator = null,
                     .source_code = bun.String.static(file.contents),
                     .specifier = specifier,
-                    .source_url = specifier.toZigString(),
+                    .source_url = specifier.dupeRef(),
                     .hash = 0,
+                    .needs_deref = false,
                 };
             }
         }
@@ -2169,6 +2230,8 @@ pub const ModuleLoader = struct {
             };
 
         defer log.deinit();
+        defer jsc_vm.module_loader.resetArena(jsc_vm);
+
         ret.* = ErrorableResolvedSource.ok(
             ModuleLoader.transpileSourceCode(
                 jsc_vm,
@@ -2180,7 +2243,6 @@ pub const ModuleLoader = struct {
                 loader,
                 &log,
                 &virtual_source,
-                ret,
                 null,
                 VirtualMachine.source_code_printer.?,
                 globalObject,

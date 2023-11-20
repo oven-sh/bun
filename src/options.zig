@@ -987,6 +987,7 @@ pub const JSX = struct {
         }
 
         pub fn parsePackageName(str: string) string {
+            if (str.len == 0) return str;
             if (str[0] == '@') {
                 if (strings.indexOfChar(str[1..], '/')) |first_slash| {
                     var remainder = str[1 + first_slash + 1 ..];
@@ -1607,6 +1608,10 @@ pub const BundleOptions = struct {
         Analytics.Features.define = Analytics.Features.define or transform.define != null;
         Analytics.Features.loaders = Analytics.Features.loaders or transform.loaders != null;
 
+        if (transform.env_files.len > 0) {
+            opts.env.files = transform.env_files;
+        }
+
         if (transform.origin) |origin| {
             opts.origin = URL.parse(origin);
         }
@@ -1907,7 +1912,7 @@ pub const TransformOptions = struct {
 
         var cwd: string = "/";
         if (Environment.isWasi or Environment.isWindows) {
-            cwd = try std.process.getCwdAlloc(allocator);
+            cwd = try bun.getcwdAlloc(allocator);
         }
 
         var define = bun.StringHashMap(string).init(allocator);
@@ -2276,6 +2281,9 @@ pub const Env = struct {
     prefix: string = "",
     defaults: List = List{},
     allocator: std.mem.Allocator = undefined,
+
+    /// List of explicit env files to load (e..g specified by --env-file args)
+    files: []const []const u8 = &[_][]u8{},
 
     pub fn init(
         allocator: std.mem.Allocator,

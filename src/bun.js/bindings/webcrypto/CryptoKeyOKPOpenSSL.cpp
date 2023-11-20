@@ -33,6 +33,7 @@
 #include <wtf/text/Base64.h>
 #include <openssl/curve25519.h>
 #include "CommonCryptoDERUtilities.h"
+#include "Bun_base64URLEncodeToString.h"
 
 namespace WebCore {
 
@@ -338,10 +339,13 @@ String CryptoKeyOKP::generateJwkX() const
     ASSERT(type() == CryptoKeyType::Private);
 
     if (namedCurve() == NamedCurve::Ed25519)
-        return Bun::base64URLEncodeToString(WTFMove(ed25519PublicFromPrivate(const_cast<KeyMaterial&>(m_data))));
+        // TODO(@paperdave 2023-10-19): i removed WTFMove from ed25519PublicFromPrivate() as per MSVC compiler error.
+        // We need to evaluate if that is the proper fix here.
+        return Bun::base64URLEncodeToString(ed25519PublicFromPrivate(const_cast<KeyMaterial&>(m_data)));
 
     ASSERT(namedCurve() == NamedCurve::X25519);
-    return Bun::base64URLEncodeToString(WTFMove(x25519PublicFromPrivate(const_cast<KeyMaterial&>(m_data))));
+    // TODO(@paperdave 2023-10-19): see above
+    return Bun::base64URLEncodeToString(x25519PublicFromPrivate(const_cast<KeyMaterial&>(m_data)));
 }
 
 CryptoKeyOKP::KeyMaterial CryptoKeyOKP::platformExportRaw() const
@@ -349,9 +353,9 @@ CryptoKeyOKP::KeyMaterial CryptoKeyOKP::platformExportRaw() const
     if (namedCurve() == NamedCurve::Ed25519 && type() == CryptoKeyType::Private) {
         ASSERT(m_exportKey);
         const auto& exportKey = *m_exportKey;
-        return WTFMove(Vector<uint8_t>(exportKey.data(), exportKey.size()));
+        return Vector<uint8_t>(exportKey.data(), exportKey.size());
     }
-    return WTFMove(KeyMaterial(m_data.data(), m_data.size()));
+    return KeyMaterial(m_data.data(), m_data.size());
 }
 
 } // namespace WebCore

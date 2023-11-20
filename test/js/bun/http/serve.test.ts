@@ -40,7 +40,7 @@ afterAll(() => {
   }
 });
 
-[101, 418, 599, 200, 200n, 101n, 599n].forEach(statusCode => {
+[200, 200n, 303, 418, 599, 599n].forEach(statusCode => {
   it(`should response with HTTP status code (${statusCode})`, async () => {
     await runTest(
       {
@@ -1304,3 +1304,14 @@ it("should response with HTTP 413 when request body is larger than maxRequestBod
 
   server.stop(true);
 });
+if (process.platform === "linux")
+  it("should use correct error when using a root range port(#7187)", () => {
+    expect(() => {
+      const server = Bun.serve({
+        port: 1003,
+        fetch(req) {
+          return new Response("request answered");
+        },
+      });
+    }).toThrow("permission denied 0.0.0.0:1003");
+  });

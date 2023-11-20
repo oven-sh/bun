@@ -1,4 +1,4 @@
-import { define } from "../scripts/class-definitions";
+import { define } from "../../codegen/class-definitions";
 
 export default [
   define({
@@ -117,6 +117,10 @@ export default [
       },
       rejects: {
         getter: "getStaticRejects",
+      },
+      unreachable: {
+        fn: "doUnreachable",
+        length: 1,
       },
     },
     proto: {

@@ -5,9 +5,9 @@
 #include "helpers.h"
 #include "IDLTypes.h"
 #include "DOMURL.h"
-#include "JavaScriptCore/JSPromise.h"
-#include "JavaScriptCore/JSBase.h"
-#include "JavaScriptCore/BuiltinNames.h"
+#include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/JSBase.h>
+#include <JavaScriptCore/BuiltinNames.h>
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/JSFunction.h>
@@ -20,7 +20,7 @@
 #include "headers.h"
 #include "BunObject.h"
 #include "WebCoreJSBuiltins.h"
-#include "JavaScriptCore/JSObject.h"
+#include <JavaScriptCore/JSObject.h>
 #include "DOMJITIDLConvert.h"
 #include "DOMJITIDLType.h"
 #include "DOMJITIDLTypeFilter.h"
@@ -46,7 +46,7 @@ static JSValue constructEnvObject(VM& vm, JSObject* object)
     return jsCast<Zig::GlobalObject*>(object->globalObject())->processEnvObject();
 }
 
-static inline EncodedJSValue flattenArrayOfBuffersIntoArrayBuffer(JSGlobalObject* lexicalGlobalObject, JSValue arrayValue)
+static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBuffer(JSGlobalObject* lexicalGlobalObject, JSValue arrayValue)
 {
     auto& vm = lexicalGlobalObject->vm();
 
@@ -195,7 +195,7 @@ static JSValue constructPluginObject(VM& vm, JSObject* bunObject)
     return pluginFunction;
 }
 
-extern "C" EncodedJSValue JSPasswordObject__create(JSGlobalObject*);
+extern "C" JSC::EncodedJSValue JSPasswordObject__create(JSGlobalObject*);
 
 static JSValue constructPasswordObject(VM& vm, JSObject* bunObject)
 {
@@ -223,7 +223,7 @@ static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
     JSC::JSObject* dnsObject = JSC::constructEmptyObject(globalObject);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "lookup"_s), 2, Bun__DNSResolver__lookup, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolve"_s), 2, Bun__DNSResolver__resolve, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, builtinNames(vm).resolvePublicName(), 2, Bun__DNSResolver__resolve, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveSrv"_s), 2, Bun__DNSResolver__resolveSrv, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
@@ -390,8 +390,8 @@ JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
     return JSC::JSValue::encode(promise);
 }
 
-extern "C" EncodedJSValue Bun__escapeHTML8(JSGlobalObject* globalObject, EncodedJSValue input, const LChar* ptr, size_t length);
-extern "C" EncodedJSValue Bun__escapeHTML16(JSGlobalObject* globalObject, EncodedJSValue input, const UChar* ptr, size_t length);
+extern "C" JSC::EncodedJSValue Bun__escapeHTML8(JSGlobalObject* globalObject, JSC::EncodedJSValue input, const LChar* ptr, size_t length);
+extern "C" JSC::EncodedJSValue Bun__escapeHTML16(JSGlobalObject* globalObject, JSC::EncodedJSValue input, const UChar* ptr, size_t length);
 
 // JSC_DEFINE_JIT_OPERATION(functionBunEscapeHTMLWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSObject* castedglobalObject, JSString* string))
 // {
@@ -429,7 +429,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunEscapeHTML, (JSC::JSGlobalObject * lexicalGl
         RELEASE_AND_RETURN(scope, JSValue::encode(string));
 
     auto resolvedString = string->value(lexicalGlobalObject);
-    EncodedJSValue encodedInput = JSValue::encode(string);
+    JSC::EncodedJSValue encodedInput = JSValue::encode(string);
     if (!resolvedString.is8Bit()) {
         RELEASE_AND_RETURN(scope, Bun__escapeHTML16(lexicalGlobalObject, encodedInput, resolvedString.characters16(), length));
     } else {
@@ -628,6 +628,7 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     resolve                                        BunObject_callback_resolve                                          DontDelete|Function 1
     resolveSync                                    BunObject_callback_resolveSync                                      DontDelete|Function 1
     revision                                       constructBunRevision                                                ReadOnly|DontDelete|PropertyCallback
+    semver                                         BunObject_getter_wrap_semver                                        ReadOnly|DontDelete|PropertyCallback
     serve                                          BunObject_callback_serve                                            DontDelete|Function 1
     sha                                            BunObject_callback_sha                                              DontDelete|Function 1
     shrink                                         BunObject_callback_shrink                                           DontDelete|Function 1

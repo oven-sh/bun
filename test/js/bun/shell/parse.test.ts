@@ -1,13 +1,5 @@
 import { $ } from "bun";
-
-declare module "bun" {
-  // Define the additional methods
-  interface Shell {
-    (strings: TemplateStringsArray, ...expressions: any[]): void;
-    parse: (strings: TemplateStringsArray, ...expressions: any[]) => string; // Define the return type for parse
-    lex: (strings: TemplateStringsArray, ...expressions: any[]) => string; // Define the return type for lex
-  }
-}
+import { redirect } from "./util";
 
 describe("parse shell", () => {
   test("basic", () => {
@@ -30,7 +22,7 @@ describe("parse shell", () => {
                     },
                   },
                 ],
-                redirect: "None",
+                redirect: redirect({}),
                 redirect_file: null,
               },
             },
@@ -52,7 +44,7 @@ describe("parse shell", () => {
               "cmd": {
                 "assigns": [],
                 "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "foo" } }],
-                "redirect": "Stdout",
+                "redirect": redirect({ stdout: true }),
                 "redirect_file": { atom: { "simple": { "Text": "lmao.txt" } } },
               },
             },
@@ -74,7 +66,7 @@ describe("parse shell", () => {
               "cmd": {
                 "assigns": [],
                 "name_and_args": [{ "compound": { "atoms": [{ "Text": "FOO " }, { "Var": "NICE!" }] } }],
-                "redirect": "None",
+                "redirect": redirect({}),
                 "redirect_file": null,
               },
             },
@@ -100,7 +92,7 @@ describe("parse shell", () => {
                     "cmd": {
                       "assigns": [],
                       "name_and_args": [{ "simple": { "Text": "echo" } }],
-                      "redirect": "Stdout",
+                      "redirect": redirect({ stdout: true }),
                       "redirect_file": { atom: { "simple": { "Text": "foo.txt" } } },
                     },
                   },
@@ -108,7 +100,7 @@ describe("parse shell", () => {
                     "cmd": {
                       "assigns": [],
                       "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "hi" } }],
-                      "redirect": "None",
+                      "redirect": redirect({}),
                       "redirect_file": null,
                     },
                   },
@@ -139,7 +131,7 @@ describe("parse shell", () => {
                       "cmd": {
                         "assigns": [],
                         "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "foo" } }],
-                        "redirect": "None",
+                        "redirect": redirect(),
                         "redirect_file": null,
                       },
                     },
@@ -147,7 +139,7 @@ describe("parse shell", () => {
                       "cmd": {
                         "assigns": [],
                         "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "bar" } }],
-                        "redirect": "None",
+                        "redirect": redirect(),
                         "redirect_file": null,
                       },
                     },
@@ -157,7 +149,7 @@ describe("parse shell", () => {
                   "cmd": {
                     "assigns": [],
                     "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "lmao" } }],
-                    "redirect": "None",
+                    "redirect": redirect(),
                     "redirect_file": null,
                   },
                 },
@@ -190,7 +182,7 @@ describe("parse shell", () => {
                       "cmd": {
                         "assigns": [],
                         "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "foo" } }],
-                        "redirect": "None",
+                        "redirect": redirect(),
                         "redirect_file": null,
                       },
                     },
@@ -203,7 +195,7 @@ describe("parse shell", () => {
                         "cmd": {
                           "assigns": [],
                           "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "bar" } }],
-                          "redirect": "None",
+                          "redirect": redirect(),
                           "redirect_file": null,
                         },
                       },
@@ -211,7 +203,7 @@ describe("parse shell", () => {
                         "cmd": {
                           "assigns": [],
                           "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "lmao" } }],
-                          "redirect": "None",
+                          "redirect": redirect(),
                           "redirect_file": null,
                         },
                       },
@@ -219,7 +211,7 @@ describe("parse shell", () => {
                         "cmd": {
                           "assigns": [],
                           "name_and_args": [{ "simple": { "Text": "cat" } }],
-                          "redirect": "Stdout",
+                          "redirect": redirect({ stdout: true }),
                           "redirect_file": { atom: { "simple": { "Text": "foo.txt" } } },
                         },
                       },
@@ -235,7 +227,7 @@ describe("parse shell", () => {
 
     const result = $.parse`FOO=bar && echo foo && echo bar | echo lmao | cat > foo.txt`;
     // console.log(result);
-    expect(result).toEqual(JSON.stringify(expected));
+    expect(JSON.parse(result)).toEqual(expected);
   });
 
   test("assigns", () => {
@@ -272,7 +264,7 @@ describe("parse shell", () => {
                   "cmd": {
                     "assigns": [],
                     "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "foo" } }],
-                    "redirect": "Stdout",
+                    "redirect": redirect({ stdout: true }),
                     "redirect_file": { "jsbuf": { "idx": 0 } },
                   },
                 },
@@ -280,7 +272,7 @@ describe("parse shell", () => {
                   "cmd": {
                     "assigns": [],
                     "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "foo" } }],
-                    "redirect": "Stdout",
+                    "redirect": redirect({ stdout: true }),
                     "redirect_file": { "jsbuf": { "idx": 1 } },
                   },
                 },

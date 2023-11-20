@@ -296,13 +296,39 @@ pub const Interpreter = struct {
             switch (redirect) {
                 .jsbuf => |val| {
                     if (self.jsobjs[val.idx].asArrayBuffer(self.globalThis)) |buf| {
-                        spawn_args.stdio[bun.STDOUT_FD] = .{ .array_buffer = JSC.ArrayBuffer.Strong{
+                        const stdio: Subprocess.Stdio = .{ .array_buffer = JSC.ArrayBuffer.Strong{
                             .array_buffer = buf,
                             .held = JSC.Strong.create(buf.value, self.globalThis),
                         } };
+
+                        if (cmd.redirect.stdin) {
+                            spawn_args.stdio[bun.STDIN_FD] = stdio;
+                        }
+
+                        if (cmd.redirect.stdout) {
+                            spawn_args.stdio[bun.STDOUT_FD] = stdio;
+                        }
+
+                        if (cmd.redirect.stderr) {
+                            spawn_args.stdio[bun.STDERR_FD] = stdio;
+                        }
                     } else if (self.jsobjs[val.idx].as(JSC.WebCore.Blob)) |blob| {
-                        if (!Subprocess.extractStdioBlob(self.globalThis, .{ .Blob = blob.dupe() }, bun.STDOUT_FD, &spawn_args.stdio)) {
-                            @panic("OOPS");
+                        if (cmd.redirect.stdout) {
+                            if (!Subprocess.extractStdioBlob(self.globalThis, .{ .Blob = blob.dupe() }, bun.STDOUT_FD, &spawn_args.stdio)) {
+                                @panic("OOPS");
+                            }
+                        }
+
+                        if (cmd.redirect.stdin) {
+                            if (!Subprocess.extractStdioBlob(self.globalThis, .{ .Blob = blob.dupe() }, bun.STDIN_FD, &spawn_args.stdio)) {
+                                @panic("OOPS");
+                            }
+                        }
+
+                        if (cmd.redirect.stderr) {
+                            if (!Subprocess.extractStdioBlob(self.globalThis, .{ .Blob = blob.dupe() }, bun.STDERR_FD, &spawn_args.stdio)) {
+                                @panic("OOPS");
+                            }
                         }
                     } else {
                         @panic("Unhandled");
@@ -479,7 +505,7 @@ pub const AST = struct {
     pub const Cmd = struct {
         assigns: []Assign,
         name_and_args: []Atom,
-        redirect: RedirectFlags = .None,
+        redirect: RedirectFlags = .{},
         redirect_file: ?Redirect = null,
 
         /// Bit flags for redirects:
@@ -493,11 +519,34 @@ pub const AST = struct {
         /// - `&>>` = Redirect.Append | Redirect.Stdout | Redirect.Stderr
         ///
         /// Multiple redirects and redirecting stdin is not supported yet.
-        pub const RedirectFlags = enum(u8) {
-            None = 0,
-            Stdout = 1,
-            Stderr = 2,
-            Append = 4,
+        pub const RedirectFlags = packed struct(u8) {
+            stdin: bool = false,
+            stdout: bool = false,
+            stderr: bool = false,
+            append: bool = false,
+            __unused: u4 = 0,
+
+            pub fn @">"() RedirectFlags {
+                return .{ .stdout = true };
+            }
+
+            pub fn @">>"() RedirectFlags {
+                return .{ .append = true, .stdout = true };
+            }
+
+            pub fn @"&>"() RedirectFlags {
+                return .{ .stdout = true, .stderr = true };
+            }
+
+            pub fn @"&>>"() RedirectFlags {
+                return .{ .append = true, .stdout = true, .stderr = true };
+            }
+
+            pub fn merge(a: RedirectFlags, b: RedirectFlags) RedirectFlags {
+                var anum: u8 = @bitCast(a);
+                var bnum: u8 = @bitCast(b);
+                return @bitCast(anum | bnum);
+            }
         };
 
         pub const Redirect = union(enum) {
@@ -655,9 +704,10 @@ pub const Parser = struct {
         }
 
         // TODO Parse redirects (need to update lexer to have tokens for different parts e.g. &>>)
-        const redirect = self.parse_redirect();
+        const has_redirect = self.match(.Redirect);
+        const redirect = if (has_redirect) self.prev().Redirect else AST.Cmd.RedirectFlags{};
         const redirect_file: ?AST.Cmd.Redirect = redirect_file: {
-            if (redirect != AST.Cmd.RedirectFlags.None) {
+            if (has_redirect) {
                 if (self.match(.JSObjRef)) {
                     const obj_ref = self.prev().JSObjRef;
                     break :redirect_file .{ .jsbuf = AST.JSBuf.new(obj_ref) };
@@ -676,15 +726,6 @@ pub const Parser = struct {
             .redirect = redirect,
             .redirect_file = redirect_file,
         } };
-    }
-
-    // TODO Other redirects (e.g. &>>), probably should have tokens for each kind
-    fn parse_redirect(self: *Parser) AST.Cmd.RedirectFlags {
-        if (self.match(.RightArrow)) {
-            return AST.Cmd.RedirectFlags.Stdout;
-        }
-
-        return AST.Cmd.RedirectFlags.None;
     }
 
     /// Try to parse an assignment. If no assignment could be parsed then return
@@ -871,7 +912,7 @@ pub const TokenTag = enum {
     DoublePipe,
     Ampersand,
     DoubleAmpersand,
-    RightArrow,
+    Redirect,
     Dollar,
     Asterisk,
     Eq,
@@ -895,8 +936,9 @@ pub const Token = union(TokenTag) {
     Ampersand,
     // &&
     DoubleAmpersand,
-    // >
-    RightArrow,
+
+    Redirect: AST.Cmd.RedirectFlags,
+
     // $
     Dollar,
     // *
@@ -1063,7 +1105,8 @@ pub const Lexer = struct {
                     '>' => {
                         if (self.state == .Single or self.state == .Double) break :escaped;
                         try self.break_word(true);
-                        try self.tokens.append(.RightArrow);
+                        const redirect = self.eat_simple_redirect();
+                        try self.tokens.append(.{ .Redirect = redirect });
                         continue;
                     },
                     '&' => {
@@ -1071,13 +1114,19 @@ pub const Lexer = struct {
                         try self.break_word(true);
 
                         const next = self.peek() orelse @panic("Unexpected EOF");
-                        if (next.escaped or next.char != '&') {
+                        if (next.char == '>' and !next.escaped) {
+                            _ = self.eat();
+                            const inner = if (self.eat_simple_redirect_operator())
+                                AST.Cmd.RedirectFlags.@"&>>"()
+                            else
+                                AST.Cmd.RedirectFlags.@"&>"();
+                            try self.tokens.append(.{ .Redirect = inner });
+                        } else if (next.escaped or next.char != '&') {
                             try self.tokens.append(.Ampersand);
                         } else if (next.char == '&') {
                             _ = self.eat() orelse unreachable;
                             try self.tokens.append(.DoubleAmpersand);
-                        }
-                        continue;
+                        } else continue;
                     },
 
                     // 2. State switchers
@@ -1119,6 +1168,19 @@ pub const Lexer = struct {
                 continue;
             }
 
+            switch (char) {
+                '0'...'9' => {
+                    const snapshot = self.make_snapshot();
+                    if (self.eat_redirect(input)) |redirect| {
+                        try self.break_word(true);
+                        try self.tokens.append(.{ .Redirect = redirect });
+                        continue;
+                    }
+                    self.backtrack(snapshot);
+                },
+                else => {},
+            }
+
             try self.strpool.append(char);
             self.j += 1;
         }
@@ -1143,6 +1205,86 @@ pub const Lexer = struct {
 
     fn eat_export(self: *Lexer) bool {
         return self.eat_literal("export");
+    }
+
+    fn eat_simple_redirect(self: *Lexer) AST.Cmd.RedirectFlags {
+        return if (self.eat_simple_redirect_operator())
+            AST.Cmd.RedirectFlags.@">>"()
+        else
+            AST.Cmd.RedirectFlags.@">"();
+    }
+
+    fn eat_simple_redirect_operator(self: *Lexer) bool {
+        if (self.peek()) |peeked| {
+            if (peeked.escaped) return false;
+            switch (peeked.char) {
+                '>' => {
+                    _ = self.eat();
+                    return true;
+                },
+                else => return false,
+            }
+        }
+        @panic("Unexpected EOF");
+    }
+
+    fn eat_redirect(self: *Lexer, first: InputChar) ?AST.Cmd.RedirectFlags {
+        var flags: AST.Cmd.RedirectFlags = .{};
+        switch (first.char) {
+            '0'...'9' => {
+                var count: usize = 1;
+                var buf: [32]u8 = [_]u8{first.char} ** 32;
+
+                while (self.peek()) |peeked| {
+                    const char = peeked.char;
+                    switch (char) {
+                        '0'...'9' => {
+                            _ = self.eat();
+                            buf[count] = char;
+                            count += 1;
+                            continue;
+                        },
+                        else => break,
+                    }
+                }
+
+                var num = std.fmt.parseInt(u8, buf[0..count], 10) catch {
+                    @panic("Invalid redirection");
+                };
+
+                switch (num) {
+                    0 => {
+                        flags.stdin = true;
+                    },
+                    1 => {
+                        flags.stdout = true;
+                    },
+                    2 => {
+                        flags.stderr = true;
+                    },
+                    else => {
+                        @panic("Invalid redirection");
+                    },
+                }
+            },
+            '&' => {
+                if (first.escaped) return null;
+                flags.stdout = true;
+                flags.stderr = true;
+                _ = self.eat();
+            },
+            else => return null,
+        }
+
+        if (self.peek()) |input| {
+            if (input.escaped or input.char != '>') return null;
+            _ = self.eat();
+        }
+
+        if (self.eat_simple_redirect_operator()) {
+            flags.append = true;
+        }
+        return flags;
     }
 
     /// Assumes the first character of the literal has been eaten
@@ -1331,8 +1473,10 @@ pub const Test = struct {
         Ampersand,
         // &&
         DoubleAmpersand,
+
         // >
-        RightArrow,
+        Redirect: AST.Cmd.RedirectFlags,
+
         // $
         Dollar,
         // *
@@ -1363,7 +1507,7 @@ pub const Test = struct {
                 .DoublePipe => return .DoublePipe,
                 .Ampersand => return .Ampersand,
                 .DoubleAmpersand => return .DoubleAmpersand,
-                .RightArrow => return .RightArrow,
+                .Redirect => |r| return .{ .Redirect = r },
                 .Dollar => return .Dollar,
                 .Asterisk => return .Asterisk,
                 .Eq => return .Eq,

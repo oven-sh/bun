@@ -1,13 +1,5 @@
 import { $ } from "bun";
-
-declare module "bun" {
-  // Define the additional methods
-  interface Shell {
-    (strings: TemplateStringsArray, ...expressions: any[]): void;
-    parse: (strings: TemplateStringsArray, ...expressions: any[]) => string; // Define the return type for parse
-    lex: (strings: TemplateStringsArray, ...expressions: any[]) => string; // Define the return type for lex
-  }
-}
+import { redirect } from "./util";
 
 describe("lex shell", () => {
   test("basic", () => {
@@ -276,20 +268,99 @@ describe("lex shell", () => {
   });
 
   test("op_redirect", () => {
-    const expected = [
+    let expected = [
       { "Text": "echo" },
       { "Delimit": {} },
       { "Text": "foo" },
       { "Delimit": {} },
-      { "RightArrow": {} },
+      {
+        "Redirect": redirect({ stdout: true }),
+      },
       { "Text": "cat" },
       { "Delimit": {} },
       { "Text": "secrets.txt" },
       { "Delimit": {} },
       { "Eof": {} },
     ];
-    const result = JSON.parse($.lex`echo foo > cat secrets.txt`);
+    let result = JSON.parse($.lex`echo foo > cat secrets.txt`);
     expect(result).toEqual(expected);
+
+    expected = [
+      { "Text": "cmd1" },
+      { "Delimit": {} },
+      { "Redirect": { "stdin": true, "stdout": false, "stderr": false, "append": false, "__unused": 0 } },
+      { "Text": "file.txt" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ];
+    result = $.lex`cmd1 0> file.txt`;
+    expect(JSON.parse(result)).toEqual(expected);
+
+    expected = [
+      { "Text": "cmd1" },
+      { "Delimit": {} },
+      { "Redirect": { "stdin": false, "stdout": true, "stderr": false, "append": false, "__unused": 0 } },
+      { "Text": "file.txt" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ];
+    result = $.lex`cmd1 1> file.txt`;
+    expect(JSON.parse(result)).toEqual(expected);
+
+    expected = [
+      { "Text": "cmd1" },
+      { "Delimit": {} },
+      { "Redirect": { "stdin": false, "stdout": false, "stderr": true, "append": false, "__unused": 0 } },
+      { "Text": "file.txt" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ];
+    result = $.lex`cmd1 2> file.txt`;
+    expect(JSON.parse(result)).toEqual(expected);
+
+    expected = [
+      { "Text": "cmd1" },
+      { "Delimit": {} },
+      { "Redirect": { "stdin": false, "stdout": true, "stderr": true, "append": false, "__unused": 0 } },
+      { "Text": "file.txt" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ];
+    result = $.lex`cmd1 &> file.txt`;
+    expect(JSON.parse(result)).toEqual(expected);
+
+    expected = [
+      { "Text": "cmd1" },
+      { "Delimit": {} },
+      { "Redirect": { "stdin": false, "stdout": true, "stderr": false, "append": true, "__unused": 0 } },
+      { "Text": "file.txt" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ];
+    result = $.lex`cmd1 1>> file.txt`;
+    expect(JSON.parse(result)).toEqual(expected);
+
+    expected = [
+      { "Text": "cmd1" },
+      { "Delimit": {} },
+      { "Redirect": { "stdin": false, "stdout": false, "stderr": true, "append": true, "__unused": 0 } },
+      { "Text": "file.txt" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ];
+    result = $.lex`cmd1 2>> file.txt`;
+    expect(JSON.parse(result)).toEqual(expected);
+
+    expected = [
+      { "Text": "cmd1" },
+      { "Delimit": {} },
+      { "Redirect": { "stdin": false, "stdout": true, "stderr": true, "append": true, "__unused": 0 } },
+      { "Text": "file.txt" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ];
+    result = $.lex`cmd1 &>> file.txt`;
+    expect(JSON.parse(result)).toEqual(expected);
   });
 
   test("obj_ref", () => {
@@ -307,7 +378,7 @@ describe("lex shell", () => {
         Delimit: {},
       },
       {
-        RightArrow: {},
+        Redirect: redirect({ stdout: true }),
       },
       {
         JSObjRef: 0,
@@ -328,7 +399,7 @@ describe("lex shell", () => {
         Delimit: {},
       },
       {
-        RightArrow: {},
+        Redirect: redirect({ stdout: true }),
       },
       {
         JSObjRef: 1,

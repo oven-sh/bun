@@ -4180,17 +4180,7 @@ it("should report error on invalid format for package.json", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err.replace(/^bun install v.+\n/, "bun install\n").split(/\r?\n/)).toEqual([
-    "bun install",
-    "",
-    "",
-    "error: Unexpected foo",
-    "foo",
-    "^",
-    `${package_dir}/package.json:1:1 0`,
-    `ParserError parsing package.json in "${package_dir}/"`,
-    "",
-  ]);
+  expect(err.replace(/^bun install v.+\n/, "bun install\n").replaceAll(package_dir, "[dir]")).toMatchSnapshot();
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out).toEqual("");
@@ -4216,19 +4206,7 @@ it("should report error on invalid format for dependencies", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err.replace(/^bun install v.+\n/, "bun install\n").split(/\r?\n/)).toEqual([
-    "bun install",
-    "",
-    "",
-    "error: dependencies expects a map of specifiers, e.g.",
-    '"dependencies": {',
-    '  "bun": "latest"',
-    "}",
-    '{"name":"foo","version":"0.0.1","dependencies":[]}',
-    "                                ^",
-    `${package_dir}/package.json:1:33 32`,
-    "",
-  ]);
+  expect(err.replace(/^bun install v.+\n/, "bun install\n").replaceAll(package_dir, "[dir]")).toMatchSnapshot();
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out).toEqual("");
@@ -4254,19 +4232,7 @@ it("should report error on invalid format for optionalDependencies", async () =>
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err.replace(/^bun install v.+\n/, "bun install\n").split(/\r?\n/)).toEqual([
-    "bun install",
-    "",
-    "",
-    "error: optionalDependencies expects a map of specifiers, e.g.",
-    '"optionalDependencies": {',
-    '  "bun": "latest"',
-    "}",
-    '{"name":"foo","version":"0.0.1","optionalDependencies":"bar"}',
-    "                                ^",
-    `${package_dir}/package.json:1:33 32`,
-    "",
-  ]);
+  expect(err.replace(/^bun install v.+\n/, "bun install\n").replaceAll(package_dir, "[dir]")).toMatchSnapshot();
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out).toEqual("");
@@ -4294,19 +4260,7 @@ it("should report error on invalid format for workspaces", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err.replace(/^bun install v.+\n/, "bun install\n").split(/\r?\n/)).toEqual([
-    "bun install",
-    "",
-    "",
-    "error: Workspaces expects an array of strings, e.g.",
-    '"workspaces": [',
-    '  "path/to/package"',
-    "]",
-    '{"name":"foo","version":"0.0.1","workspaces":{"packages":{"bar":true}}}',
-    "                                ^",
-    `${package_dir}/package.json:1:33 32`,
-    "",
-  ]);
+  expect(err.replace(/^bun install v.+\n/, "bun install\n").replaceAll(package_dir, "[dir]")).toMatchSnapshot();
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out).toEqual("");
@@ -4348,17 +4302,7 @@ it("should report error on duplicated workspace packages", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err.replace(/^bun install v.+\n/, "bun install\n").split(/\r?\n/)).toEqual([
-    "bun install",
-    "",
-    "",
-    'error: Workspace name "moo" already exists',
-    '{"name":"foo","version":"0.0.1","workspaces":["bar","baz"]}',
-    // we don't have a name location anymore
-    "^",
-    `${package_dir}/package.json:1:1 0`,
-    "",
-  ]);
+  expect(err.replace(/^bun install v.+\n/, "bun install\n").replaceAll(package_dir, "[dir]")).toMatchSnapshot();
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out).toEqual("");

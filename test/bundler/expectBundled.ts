@@ -28,11 +28,17 @@ function errorOrWarnParser(isError = true) {
       i = errorLineI + 1;
       const fileLineI = text.indexOf(" at ", errorLineI + message.length);
 
-      if (fileLineI === -1) return list;
-      const fileLineEnd = text.indexOf("\n", fileLineI + 1);
-      const fileLine = text.slice(fileLineI + "\n    at ".length, fileLineEnd);
-      i = fileLineEnd;
+      let fileLine = "";
+      if (fileLineI !== -1) {
+        const fileLineEnd = text.indexOf("\n", fileLineI + 1);
+        fileLine = text.slice(fileLineI + "\n    at ".length, fileLineEnd);
+        i = fileLineEnd;
+      }
       list.push([message, fileLine]);
+
+      if (i === -1) {
+        break;
+      }
     }
     return list;
   };

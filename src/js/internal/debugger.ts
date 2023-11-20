@@ -270,17 +270,17 @@ function parseUrl(url: string): URL {
       return new URL(randomId(), `ws://${defaultHostname}:${defaultPort}/`);
     } else if (url.startsWith("/")) {
       return new URL(url, `ws://${defaultHostname}:${defaultPort}/`);
-    } else if (/^[a-z+]+:\/\//i.test(url)) {
-      return new URL(url);
     } else if (/^\d+$/.test(url)) {
       return new URL(randomId(), `ws://${defaultHostname}:${url}/`);
-    } else if (!url.includes("/") && url.includes(":")) {
-      return new URL(randomId(), `ws://${url}/`);
-    } else if (!url.includes(":")) {
-      const [hostname, pathname] = url.split("/", 2);
-      return new URL(`ws://${hostname}:${defaultPort}/${pathname}`);
     } else {
-      return new URL(randomId(), `ws://${url}`);
+      const base = new URL(`ws://${url}`);
+      if (base.port === "") {
+        base.port = defaultPort.toString();
+      }
+      if (base.pathname !== "/") {
+        return base;
+      }
+      return new URL(randomId(), base);
     }
   } catch {
     throw new TypeError(`Invalid hostname or URL: '${url}'`);

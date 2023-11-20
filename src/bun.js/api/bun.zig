@@ -464,15 +464,14 @@ pub fn shell(
         return JSC.JSValue.jsUndefined();
     };
 
-    var arena = bun.ArenaAllocator.init(bun.default_allocator);
+    var arena = bun.ArenaAllocator.init(globalThis.bunVM().allocator);
     defer arena.deinit();
 
     const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
     var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
     defer {
         for (jsobjs.items) |jsval| {
-            _ = jsval;
-            // jsval.unprotect();
+            jsval.unprotect();
         }
     }
     var script = shellCmdFromJS(arena.allocator(), globalThis, string_args, template_args, &jsobjs) catch {

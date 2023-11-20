@@ -216,13 +216,28 @@ pub const Interpreter = struct {
             }
         }
 
-        var fail_idx: ?u32 = null;
-        for (cmd_procs, 0..) |cmd_proc, i| {
-            log("Wait {d}", .{i});
-            defer cmd_proc.unref(true);
+        var jsc_vm = self.globalThis.bunVM();
 
-            cmd_proc.wait(true);
-            const result = cmd_proc.exit_code orelse 1;
+        var fail_idx: ?u32 = null;
+        for (cmd_procs, 0..) |subprocess, i| {
+            log("Wait {d}", .{i});
+            defer subprocess.unref(true);
+
+            // this seems hacky and bad
+            while (!subprocess.hasExited()) {
+                if (subprocess.stderr == .pipe and subprocess.stderr.pipe == .buffer) {
+                    subprocess.stderr.pipe.buffer.readAll();
+                }
+
+                if (subprocess.stdout == .pipe and subprocess.stdout.pipe == .buffer) {
+                    subprocess.stdout.pipe.buffer.readAll();
+                }
+
+                jsc_vm.tick();
+                jsc_vm.eventLoop().autoTick();
+            }
+            subprocess.wait(true);
+            const result = subprocess.exit_code orelse 1;
             if (result != 0 and i < cmd_count - 1) {
                 fail_idx = @intCast(i);
                 break;
@@ -362,11 +377,25 @@ pub const Interpreter = struct {
 
     fn interpret_cmd(self: *Interpreter, cmd: *const ast.Cmd, io: *IO) !bool {
         log("Interpret cmd", .{});
-        var child_proc = try self.init_cmd(cmd, io);
-        defer child_proc.unref(false);
-        child_proc.wait(true);
-        log("Done waiting {any}", .{child_proc.hasExited()});
-        return (child_proc.exit_code orelse 1) == 0;
+        var jsc_vm = self.globalThis.bunVM();
+        var subprocess = try self.init_cmd(cmd, io);
+        defer subprocess.unref(false);
+        log("Done waiting {any}", .{subprocess.hasExited()});
+        // this seems hacky and bad
+        while (!subprocess.hasExited()) {
+            if (subprocess.stderr == .pipe and subprocess.stderr.pipe == .buffer) {
+                subprocess.stderr.pipe.buffer.readAll();
+            }
+
+            if (subprocess.stdout == .pipe and subprocess.stdout.pipe == .buffer) {
+                subprocess.stdout.pipe.buffer.readAll();
+            }
+
+            jsc_vm.tick();
+            jsc_vm.eventLoop().autoTick();
+        }
+        subprocess.wait(true);
+        return (subprocess.exit_code orelse 1) == 0;
     }
 
     fn eval_atom(self: *Interpreter, atom: *const ast.Atom) ![:0]const u8 {

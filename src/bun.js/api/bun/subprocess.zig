@@ -289,6 +289,7 @@ pub const Subprocess = struct {
         pub fn onStart(_: *Readable) void {}
 
         pub fn close(this: *Readable) void {
+            log("READABLE close", .{});
             switch (this.*) {
                 .fd => |fd| {
                     _ = bun.sys.close(fd);
@@ -301,6 +302,7 @@ pub const Subprocess = struct {
         }
 
         pub fn finalize(this: *Readable) void {
+            log("Readable::finalize", .{});
             switch (this.*) {
                 .fd => |fd| {
                     _ = bun.sys.close(fd);
@@ -671,6 +673,10 @@ pub const Subprocess = struct {
         internal_buffer: bun.ByteList = .{},
         fifo: JSC.WebCore.FIFO = undefined,
         auto_sizer: ?JSC.WebCore.AutoSizer = null,
+        /// Sometimes the `internal_buffer` may be filled with memory from JSC,
+        /// for example an array buffer. In that case we shouldn't dealloc
+        /// memory and let the GC do it.
+        from_jsc: bool = false,
         status: Status = .{
             .pending = {},
         },
@@ -688,6 +694,11 @@ pub const Subprocess = struct {
                     .fd = fd,
                 },
             };
+        }
+
+        pub fn initWithArrayBuffer(fd: bun.FileDescriptor, slice: []u8) BufferedOutput {
+            var out = BufferedOutput.initWithSlice(fd, slice);
+            out.from_jsc = true;
         }
 
         pub fn initWithSlice(fd: bun.FileDescriptor, slice: []u8) BufferedOutput {
@@ -889,6 +900,7 @@ pub const Subprocess = struct {
         }
 
         pub fn close(this: *BufferedOutput) void {
+            log("BufferedOutput close", .{});
             switch (this.status) {
                 .done => {},
                 .pending => {
@@ -898,7 +910,7 @@ pub const Subprocess = struct {
                 .err => {},
             }
 
-            if (this.internal_buffer.cap > 0) {
+            if (this.internal_buffer.cap > 0 and !this.from_jsc) {
                 this.internal_buffer.listManaged(bun.default_allocator).deinit();
                 this.internal_buffer = .{};
             }

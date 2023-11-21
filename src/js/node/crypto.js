@@ -12295,81 +12295,99 @@ crypto_exports.createPublicKey = _createPublicKey;
 crypto_exports.KeyObject = KeyObject;
 var webcrypto = crypto;
 var _subtle = webcrypto.subtle;
+const _createSign = crypto_exports.createSign;
 crypto_exports.sign = function (algorithm, data, key, callback) {
   // TODO: move this to native
   var dsaEncoding, padding, saltLength;
-  if ($isObject(key) && key.key) {
-    key = key.key;
-    padding = key.padding;
-    saltLength = key.saltLength;
-    dsaEncoding = key.dsaEncoding;
-  }
-  // key must be a CrytoKey
-  if (key instanceof KeyObject) {
-    key = key[kCryptoKey];
-  } else if (!(key instanceof CryptoKey)) {
+  // key must be a KeyObject
+  if (!(key instanceof KeyObject)) {
+    // if ($isObject(key) && key.key) {
+    //   padding = key.padding;
+    //   saltLength = key.saltLength;
+    //   dsaEncoding = key.dsaEncoding;
+    // }
     key = _createPrivateKey(key);
-    key = key[kCryptoKey];
   }
-  if (callback) {
-    //TODO: replace with custom async version to match nodejs behavior
-    _subtle
-      .sign(
-        {
-          name: key.algorithm.name,
-          hash: algorithm || "SHA-256",
-        },
-        key,
-        data,
-      )
-      .then(result => callback(null, result))
-      .catch(callback);
-    return;
+  if (typeof callback === "function") {
+    try {
+      let result;
+      if (key.asymmetricKeyType === "rsa") {
+        result = _createSign(algorithm || "sha256")
+          .update(data)
+          .sign(key);
+      } else {
+        if (algorithm) {
+          if (typeof algorithm !== "string") throw new TypeError("Algorithm must be a string");
+          algorithm = algorithm.replace(/sha/i, "SHA-");
+          result = nativeSign(key[kCryptoKey], data, algorithm);
+        }
+        result = nativeSign(key[kCryptoKey], data);
+      }
+      callback(null, result);
+    } catch (err) {
+      callback(err);
+    }
+  } else {
+    if (key.asymmetricKeyType === "rsa") {
+      return _createSign(algorithm || "sha256")
+        .update(data)
+        .sign(key);
+    } else {
+      if (algorithm) {
+        if (typeof algorithm !== "string") throw new TypeError("Algorithm must be a string");
+        algorithm = algorithm.replace(/sha/i, "SHA-");
+        return nativeSign(key[kCryptoKey], data, algorithm);
+      }
+      return nativeSign(key[kCryptoKey], data);
+    }
   }
-  // sync sign versions
-  if (algorithm) {
-    return nativeSign(key, data, algorithm);
-  }
-  return nativeSign(key, data);
 };
+const _createVerify = crypto_exports.createVerify;
 crypto_exports.verify = function (algorithm, data, key, signature, callback) {
   // TODO: move this to native
   var dsaEncoding, padding, saltLength;
-  if ($isObject(key) && key.key) {
-    key = key.key;
-    padding = key.padding;
-    saltLength = key.saltLength;
-    dsaEncoding = key.dsaEncoding;
-  }
   // key must be a CrytoKey
-  if (key instanceof KeyObject) {
-    key = key[kCryptoKey];
-  } else if (!(key instanceof CryptoKey)) {
+  if (!(key instanceof KeyObject)) {
+    // if ($isObject(key) && key.key) {
+    //   padding = key.padding;
+    //   saltLength = key.saltLength;
+    //   dsaEncoding = key.dsaEncoding;
+    // }
     key = _createPublicKey(key);
-    key = key[kCryptoKey];
   }
-  if (callback) {
-    //TODO: replace with custom async version to match nodejs behavior
-    _subtle
-      .verify(
-        {
-          name: key.algorithm.name,
-          hash: algorithm || "SHA-256",
-        },
-        key,
-        signature,
-        data,
-      )
-      .then(result => callback(null, result))
-      .catch(callback);
-    return;
+  if (typeof callback === "function") {
+    try {
+      let result;
+      if (key.asymmetricKeyType === "rsa") {
+        result = _createVerify(algorithm || "sha256")
+          .update(data)
+          .verify(key, signature);
+      } else {
+        if (algorithm) {
+          if (typeof algorithm !== "string") throw new TypeError("Algorithm must be a string");
+          algorithm = algorithm.replace(/sha/i, "SHA-");
+          result = nativeVerify(key[kCryptoKey], data, signature, algorithm);
+        }
+        result = nativeVerify(key[kCryptoKey], data, signature);
+      }
+      callback(null, result);
+    } catch (err) {
+      callback(err);
+    }
+  } else {
+    if (key.asymmetricKeyType === "rsa") {
+      return _createVerify(algorithm || "sha256")
+        .update(data)
+        .verify(key, signature);
+    } else {
+      if (algorithm) {
+        if (typeof algorithm !== "string") throw new TypeError("Algorithm must be a string");
+        algorithm = algorithm.replace(/sha/i, "SHA-");
+        return nativeVerify(key[kCryptoKey], data, signature, algorithm);
+      }
+      return nativeVerify(key[kCryptoKey], data, signature);
+    }
   }
-
-  // sync sign versions
-  if (algorithm) {
-    return nativeVerify(key, signature, data, algorithm);
-  }
-  return nativeVerify(key, signature, data);
 };
 
 __export(crypto_exports, {

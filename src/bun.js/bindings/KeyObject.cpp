@@ -1327,7 +1327,7 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
     auto hash = WebCore::CryptoAlgorithmIdentifier::SHA_256;
     auto customHash = count > 2;
     if (customHash) {
-        auto algorithm = callFrame->argument(3);
+        auto algorithm = callFrame->argument(2);
         if (algorithm.isUndefinedOrNull() || algorithm.isEmpty() || !algorithm.isString()) {
             JSC::throwTypeError(globalObject, scope, "algorithm is expected to be a string"_s);
             return JSC::JSValue::encode(JSC::JSValue {});
@@ -1391,10 +1391,6 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
         }
         case CryptoKeyClass::EC: {
             const auto& ec = downcast<WebCore::CryptoKeyEC>(wrapped);
-            if(ec.algorithmIdentifier() != WebCore::CryptoAlgorithmIdentifier::ECDSA) {
-                JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key type for EC only ECDSA is supported"_s);
-                return JSC::JSValue::encode(JSC::JSValue {});
-            }
             CryptoAlgorithmEcdsaParams params;
             params.identifier = CryptoAlgorithmIdentifier::ECDSA;
             params.hashIdentifier = hash;
@@ -1431,6 +1427,14 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
                 }
             }
         }
+        case CryptoKeyClass::AES: {
+            JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Sign not supported for AES key type"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        case CryptoKeyClass::Raw: {
+            JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Sign not supported for Raw key type"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
         default: {
             JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Sign not supported for this key type"_s);
             return JSC::JSValue::encode(JSC::JSValue {});
@@ -1445,7 +1449,7 @@ JSC::EncodedJSValue KeyObject__Verify(JSC::JSGlobalObject* globalObject, JSC::Ca
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (count < 3) {
-        JSC::throwTypeError(globalObject, scope, "verify requires 2 arguments"_s);
+        JSC::throwTypeError(globalObject, scope, "verify requires 3 arguments"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
@@ -1478,7 +1482,7 @@ JSC::EncodedJSValue KeyObject__Verify(JSC::JSGlobalObject* globalObject, JSC::Ca
     auto id = wrapped.keyClass();
 
     auto hash = WebCore::CryptoAlgorithmIdentifier::SHA_256;
-    auto customHash = count > 2;
+    auto customHash = count > 3;
     if (customHash) {
         auto algorithm = callFrame->argument(3);
         if (algorithm.isUndefinedOrNull() || algorithm.isEmpty() || !algorithm.isString()) {
@@ -1532,10 +1536,6 @@ JSC::EncodedJSValue KeyObject__Verify(JSC::JSGlobalObject* globalObject, JSC::Ca
         }
         case CryptoKeyClass::EC: {
             const auto& ec = downcast<WebCore::CryptoKeyEC>(wrapped);
-            if(ec.algorithmIdentifier() != WebCore::CryptoAlgorithmIdentifier::ECDSA) {
-                JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key type for EC only ECDSA is supported"_s);
-                return JSC::JSValue::encode(JSC::JSValue {});
-            }
             CryptoAlgorithmEcdsaParams params;
             params.identifier = CryptoAlgorithmIdentifier::ECDSA;
             params.hashIdentifier = hash;
@@ -1555,10 +1555,18 @@ JSC::EncodedJSValue KeyObject__Verify(JSC::JSGlobalObject* globalObject, JSC::Ca
                     return JSC::JSValue::encode(jsBoolean(result.releaseReturnValue()));
                 }
                 default: {
-                     JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Verify not supported for this key type"_s);
+                     JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Verify not supported for RSA-PSS key type"_s);
                     return JSC::JSValue::encode(JSC::JSValue {});
                 }
             }
+        }
+        case CryptoKeyClass::AES: {
+            JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Verify not supported for AES key type"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        case CryptoKeyClass::Raw: {
+            JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Verify not supported for Raw key type"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
         }
         default: {
             JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Verify not supported for this key type"_s);

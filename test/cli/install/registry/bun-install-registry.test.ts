@@ -438,7 +438,7 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
   ]);
   expect(await exited).toBe(0);
 
-  for (var i = 0; i < 10; i++) {
+  for (var i = 0; i < 100; i++) {
     // Situation:
     //
     // Root package has a dependency on one-fixed-dep, peer-deps-too and two-range-deps.

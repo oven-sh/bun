@@ -83,6 +83,18 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmHMAC::platformSign(const CryptoKeyHM
     return WTFMove(*result);
 }
 
+ExceptionOr<bool> CryptoAlgorithmHMAC::platformVerifyWithAlgorithm(const CryptoKeyHMAC& key, CryptoAlgorithmIdentifier algorithmIdentifier, const Vector<uint8_t>& signature, const Vector<uint8_t>& data) {
+
+    auto algorithm = digestAlgorithm(algorithmIdentifier);
+    if (!algorithm)
+        return Exception { OperationError };
+
+    auto expectedSignature = calculateSignature(algorithm, key.key(), data.data(), data.size());
+    if (!expectedSignature)
+        return Exception { OperationError };
+    // Using a constant time comparison to prevent timing attacks.
+    return signature.size() == expectedSignature->size() && !constantTimeMemcmp(expectedSignature->data(), signature.data(), expectedSignature->size());
+}
 ExceptionOr<bool> CryptoAlgorithmHMAC::platformVerify(const CryptoKeyHMAC& key, const Vector<uint8_t>& signature, const Vector<uint8_t>& data)
 {
     auto algorithm = digestAlgorithm(key.hashAlgorithmIdentifier());

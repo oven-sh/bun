@@ -12036,6 +12036,7 @@ const {
   generateKeySync,
   generateKeyPairSync,
   sign: nativeSign,
+  verify: nativeVerify,
 } = $lazy("internal/crypto");
 
 const kCryptoKey = Symbol.for("::bunKeyObjectCryptoKey::");
@@ -12295,6 +12296,14 @@ crypto_exports.KeyObject = KeyObject;
 var webcrypto = crypto;
 var _subtle = webcrypto.subtle;
 crypto_exports.sign = function (algorithm, data, key, callback) {
+  // TODO: move this to native
+  var dsaEncoding, padding, saltLength;
+  if ($isObject(key) && key.key) {
+    key = key.key;
+    padding = key.padding;
+    saltLength = key.saltLength;
+    dsaEncoding = key.dsaEncoding;
+  }
   // key must be a CrytoKey
   if (key instanceof KeyObject) {
     key = key[kCryptoKey];
@@ -12323,18 +12332,44 @@ crypto_exports.sign = function (algorithm, data, key, callback) {
   }
   return nativeSign(key, data);
 };
-const _createVerify = crypto_exports.createVerify;
 crypto_exports.verify = function (algorithm, data, key, signature, callback) {
-  if (typeof callback === "function") {
-    try {
-      const result = _createVerify(algorithm).update(data).verify(key, signature);
-      callback(null, result);
-    } catch (err) {
-      callback(err);
-    }
-  } else {
-    return _createVerify(algorithm).update(data).verify(key, signature);
+  // TODO: move this to native
+  var dsaEncoding, padding, saltLength;
+  if ($isObject(key) && key.key) {
+    key = key.key;
+    padding = key.padding;
+    saltLength = key.saltLength;
+    dsaEncoding = key.dsaEncoding;
   }
+  // key must be a CrytoKey
+  if (key instanceof KeyObject) {
+    key = key[kCryptoKey];
+  } else if (!(key instanceof CryptoKey)) {
+    key = _createPublicKey(key);
+    key = key[kCryptoKey];
+  }
+  if (callback) {
+    //TODO: replace with custom async version to match nodejs behavior
+    _subtle
+      .verify(
+        {
+          name: key.algorithm.name,
+          hash: algorithm || "SHA-256",
+        },
+        key,
+        signature,
+        data,
+      )
+      .then(result => callback(null, result))
+      .catch(callback);
+    return;
+  }
+
+  // sync sign versions
+  if (algorithm) {
+    return nativeVerify(key, signature, data, algorithm);
+  }
+  return nativeVerify(key, signature, data);
 };
 
 __export(crypto_exports, {

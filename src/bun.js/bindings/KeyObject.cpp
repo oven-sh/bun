@@ -1245,31 +1245,12 @@ JSC::EncodedJSValue KeyObject__createSecretKey(JSC::JSGlobalObject* lexicalGloba
     return JSValue::encode(JSC::jsUndefined());
 }
 
-JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+static ExceptionOr<Vector<uint8_t>> KeyObject__GetBuffer(JSValue bufferArg)
 {
-   auto count = callFrame->argumentCount();
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (count < 2) {
-        JSC::throwTypeError(globalObject, scope, "sign requires 2 arguments"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
-    }
-
-    auto* key = jsDynamicCast<JSCryptoKey*>(callFrame->argument(0));
-    if (!key) {
-        // No JSCryptoKey instance
-        JSC::throwTypeError(globalObject, scope, "expected CryptoKey as first argument"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
-    }
-    JSValue bufferArg = callFrame->uncheckedArgument(1);
     if (!bufferArg.isCell()) {
-        JSC::throwTypeError(globalObject, scope, "expected Buffer or uffer or array-like object as second argument"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
+        return Exception { OperationError };
     }
 
-    void* data = nullptr;
-    size_t byteLength = 0;
     auto bufferArgCell = bufferArg.asCell();
     auto type = bufferArgCell->type();
 
@@ -1288,8 +1269,12 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
     case BigUint64ArrayType: {
         JSC::JSArrayBufferView* view = jsCast<JSC::JSArrayBufferView*>(bufferArgCell);
 
-        data = view->vector();
-        byteLength = view->length();
+        void* data = view->vector();
+        size_t byteLength = view->length();
+        if (UNLIKELY(!data)) {
+            break;
+        }
+        return Vector<uint8_t>((uint8_t*)data, byteLength);
     }
     case ArrayBufferType: {
         auto* jsBuffer = jsDynamicCast<JSC::JSArrayBuffer*>(bufferArgCell);
@@ -1297,20 +1282,44 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
             break;
         }
         auto* buffer = jsBuffer->impl();
-        data = buffer->data();
-        byteLength = buffer->byteLength();
-        
+        void* data = buffer->data();
+        size_t byteLength = buffer->byteLength();
+        if (UNLIKELY(!data)) {
+            break;
+        }
+        return Vector<uint8_t>((uint8_t*)data, byteLength);
     }
     default: {
         break;
     }
     }
-    if (UNLIKELY(!data)) {
-        JSC::throwTypeError(globalObject, scope, "expected Buffer or uffer or array-like object as second argument"_s);
+    return Exception { OperationError };
+}
+JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+{
+   auto count = callFrame->argumentCount();
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (count < 2) {
+        JSC::throwTypeError(globalObject, scope, "sign requires 2 arguments"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
-    
-    auto vectorData = Vector<uint8_t>((uint8_t*)data, byteLength);
+
+    auto* key = jsDynamicCast<JSCryptoKey*>(callFrame->argument(0));
+    if (!key) {
+        // No JSCryptoKey instance
+        JSC::throwTypeError(globalObject, scope, "expected CryptoKey as first argument"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    JSValue bufferArg = callFrame->uncheckedArgument(1);
+
+    auto buffer = KeyObject__GetBuffer(bufferArg);
+    if(buffer.hasException()) {
+        JSC::throwTypeError(globalObject, scope, "expected Buffer or array-like object as second argument"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    auto vectorData = buffer.releaseReturnValue();
     auto& wrapped = key->wrapped();
     auto key_type = wrapped.type();
     auto id = wrapped.keyClass();
@@ -1428,6 +1437,136 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
         }
     }
 }
+
+JSC::EncodedJSValue KeyObject__Verify(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+{
+   auto count = callFrame->argumentCount();
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (count < 3) {
+        JSC::throwTypeError(globalObject, scope, "verify requires 2 arguments"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    auto* key = jsDynamicCast<JSCryptoKey*>(callFrame->argument(0));
+    if (!key) {
+        // No JSCryptoKey instance
+        JSC::throwTypeError(globalObject, scope, "expected CryptoKey as first argument"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    JSValue bufferArg = callFrame->uncheckedArgument(1);
+    auto buffer = KeyObject__GetBuffer(bufferArg);
+    if(buffer.hasException()) {
+        JSC::throwTypeError(globalObject, scope, "expected data to be Buffer or array-like object as second argument"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    auto vectorData = buffer.releaseReturnValue();
+
+    JSValue signatureBufferArg = callFrame->uncheckedArgument(2);
+    auto signatureBuffer = KeyObject__GetBuffer(signatureBufferArg);
+    if(signatureBuffer.hasException()) {
+        JSC::throwTypeError(globalObject, scope, "expected signature to be Buffer or array-like object as second argument"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    auto signatureData = buffer.releaseReturnValue();
+
+    
+
+    auto& wrapped = key->wrapped();
+    auto key_type = wrapped.type();
+    auto id = wrapped.keyClass();
+
+    auto hash = WebCore::CryptoAlgorithmIdentifier::SHA_256;
+    auto customHash = count > 2;
+    if (customHash) {
+        auto algorithm = callFrame->argument(3);
+        if (algorithm.isUndefinedOrNull() || algorithm.isEmpty() || !algorithm.isString()) {
+            JSC::throwTypeError(globalObject, scope, "algorithm is expected to be a string"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        auto algorithm_str = algorithm.toWTFString(globalObject);
+        auto identifier = CryptoAlgorithmRegistry::singleton().identifier(algorithm_str);
+        if (UNLIKELY(!identifier)) {
+            JSC::throwTypeError(globalObject, scope, "invalid algorithm"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+            
+        switch (*identifier)
+        {
+            case WebCore::CryptoAlgorithmIdentifier::SHA_1:
+            case WebCore::CryptoAlgorithmIdentifier::SHA_224:
+            case WebCore::CryptoAlgorithmIdentifier::SHA_256:
+            case WebCore::CryptoAlgorithmIdentifier::SHA_384:
+            case WebCore::CryptoAlgorithmIdentifier::SHA_512:{
+
+                hash = *identifier;
+                break;
+            }
+            default: {
+                JSC::throwTypeError(globalObject, scope, "invalid hash algorithm"_s);
+                return JSC::JSValue::encode(JSC::JSValue {});       
+            }
+        }
+    }
+
+
+    switch (id) {
+        case CryptoKeyClass::HMAC: {
+            const auto& hmac = downcast<WebCore::CryptoKeyHMAC>(wrapped);
+            auto result = (customHash) ? WebCore::CryptoAlgorithmHMAC::platformVerifyWithAlgorithm(hmac, hash, signatureData, vectorData) : WebCore::CryptoAlgorithmHMAC::platformVerify(hmac, signatureData, vectorData);
+            if (result.hasException()) {
+                WebCore::propagateException(*globalObject, scope, result.releaseException());
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+            return JSC::JSValue::encode(jsBoolean(result.releaseReturnValue()));
+        }
+        case CryptoKeyClass::OKP: {
+            const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(wrapped);
+            auto result = WebCore::CryptoAlgorithmEd25519::platformVerify(okpKey, signatureData, vectorData);
+            if (result.hasException()) {
+                WebCore::propagateException(*globalObject, scope, result.releaseException());
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+            return JSC::JSValue::encode(jsBoolean(result.releaseReturnValue()));
+        }
+        case CryptoKeyClass::EC: {
+            const auto& ec = downcast<WebCore::CryptoKeyEC>(wrapped);
+            if(ec.algorithmIdentifier() != WebCore::CryptoAlgorithmIdentifier::ECDSA) {
+                JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key type for EC only ECDSA is supported"_s);
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+            CryptoAlgorithmEcdsaParams params;
+            params.identifier = CryptoAlgorithmIdentifier::ECDSA;
+            params.hashIdentifier = hash;
+            // TODO: use the right encoding
+            auto result = WebCore::CryptoAlgorithmECDSA::platformVerify(params, ec, signatureData, vectorData);
+            return JSC::JSValue::encode(jsBoolean(result.releaseReturnValue()));
+        }
+        case CryptoKeyClass::RSA: {
+            const auto& rsa = downcast<WebCore::CryptoKeyRSA>(wrapped);
+            switch(rsa.algorithmIdentifier()) {
+                case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5: {
+                    auto result = (customHash) ? WebCore::CryptoAlgorithmRSASSA_PKCS1_v1_5::platformVerifyWithAlgorithm(rsa, hash, signatureData, vectorData) : CryptoAlgorithmRSASSA_PKCS1_v1_5::platformVerify(rsa, signatureData, vectorData);
+                    if (result.hasException()) {
+                        WebCore::propagateException(*globalObject, scope, result.releaseException());
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
+                    return JSC::JSValue::encode(jsBoolean(result.releaseReturnValue()));
+                }
+                default: {
+                     JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Verify not supported for this key type"_s);
+                    return JSC::JSValue::encode(JSC::JSValue {});
+                }
+            }
+        }
+        default: {
+            JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Verify not supported for this key type"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+    }
+}
+
 JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
 

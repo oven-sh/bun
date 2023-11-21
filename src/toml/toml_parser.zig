@@ -360,7 +360,7 @@ pub const TOML = struct {
             },
             .t_open_bracket => {
                 try p.lexer.next();
-                const is_single_line = !p.lexer.has_newline_before;
+                var is_single_line = !p.lexer.has_newline_before;
                 const array_ = p.e(E.Array{}, loc);
                 var array = array_.data.e_array;
                 const allocator = p.allocator;

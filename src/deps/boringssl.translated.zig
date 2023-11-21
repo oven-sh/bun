@@ -18780,7 +18780,7 @@ pub const struct_bio_st = extern struct {
     }
 
     pub fn slice(this: *struct_bio_st) []u8 {
-        const buf_mem: ?*BUF_MEM = null;
+        var buf_mem: ?*BUF_MEM = null;
         std.debug.assert(BIO_get_mem_ptr(this, &buf_mem) > -1);
         if (buf_mem) |buf| {
             if (buf.data == null) return &[_]u8{};

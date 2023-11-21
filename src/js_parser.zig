@@ -3635,6 +3635,52 @@ pub const Parser = struct {
                 wrapper_expr = .{
                     .bun_js = {},
                 };
+
+                const import_record: ?*const ImportRecord = brk: {
+                    for (p.import_records.items) |*import_record| {
+                        if (import_record.is_internal or import_record.is_unused) continue;
+                        if (import_record.kind == .stmt) break :brk import_record;
+                    }
+
+                    break :brk null;
+                };
+
+                // make it an error to use an import statement with a commonjs exports usage
+                if (import_record) |record| {
+                    // find the usage of the export symbol
+
+                    var notes = ListManaged(logger.Data).init(p.allocator);
+
+                    try notes.append(logger.Data{
+                        .text = try std.fmt.allocPrint(p.allocator, "Try require({}) instead", .{strings.QuotedFormatter{ .text = record.path.text }}),
+                    });
+
+                    if (uses_module_ref) {
+                        try notes.append(logger.Data{
+                            .text = "This file is CommonJS because 'module' was used",
+                        });
+                    }
+
+                    if (uses_exports_ref) {
+                        try notes.append(logger.Data{
+                            .text = "This file is CommonJS because 'exports' was used",
+                        });
+                    }
+
+                    if (p.has_top_level_return) {
+                        try notes.append(logger.Data{
+                            .text = "This file is CommonJS because top-level return was used",
+                        });
+                    }
+
+                    if (p.has_with_scope) {
+                        try notes.append(logger.Data{
+                            .text = "This file is CommonJS because a \"with\" statement is used",
+                        });
+                    }
+
+                    try p.log.addRangeErrorWithNotes(p.source, record.range, "Cannot use import statement with CommonJS-only features", notes.items);
+                }
             } else if (!p.options.bundle and !p.options.features.commonjs_at_runtime and (!p.options.transform_only or p.options.features.dynamic_require)) {
                 if (p.options.legacy_transform_require_to_import or p.options.features.dynamic_require) {
                     var args = p.allocator.alloc(Expr, 2) catch unreachable;

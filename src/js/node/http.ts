@@ -96,11 +96,13 @@ function isValidTLSArray(obj) {
   if (typeof obj === "string" || isTypedArray(obj) || obj instanceof ArrayBuffer || obj instanceof Blob) return true;
   if (Array.isArray(obj)) {
     for (var i = 0; i < obj.length; i++) {
-      if (typeof obj !== "string" && !isTypedArray(obj) && !(obj instanceof ArrayBuffer) && !(obj instanceof Blob))
+      const item = obj[i];
+      if (typeof item !== "string" && !isTypedArray(item) && !(item instanceof ArrayBuffer) && !(item instanceof Blob))
         return false;
     }
     return true;
   }
+  return false;
 }
 
 class ERR_INVALID_ARG_TYPE extends TypeError {

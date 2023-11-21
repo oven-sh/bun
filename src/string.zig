@@ -654,7 +654,7 @@ pub const String = extern struct {
     }
 
     pub fn substring(self: String, offset: usize) String {
-        return String.init(self.toZigString().substring(offset, 0));
+        return String.init(self.toZigString().substring(offset));
     }
 
     pub fn toUTF8(this: String, allocator: std.mem.Allocator) ZigString.Slice {
@@ -834,7 +834,10 @@ pub const String = extern struct {
             return this.value.WTFStringImpl.hasPrefix(value);
         }
 
-        return this.toZigString().substring(0, value.len).eqlComptime(value);
+        var str = this.toZigString();
+        if (str.len < value.len) return false;
+
+        return str.substringWithLen(0, value.len).eqlComptime(value);
     }
 
     pub fn isWTFAllocator(this: std.mem.Allocator) bool {

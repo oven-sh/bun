@@ -744,6 +744,14 @@ interface Process {
   constrainedMemory(): number | undefined;
 
   send(data: any): void;
+
+  report: {
+    getReport(): Object;
+    /**
+     * @TODO This is not implemented yet
+     */
+    writeReport(fileName?: string): void;
+  };
 }
 
 interface MemoryUsageObject {

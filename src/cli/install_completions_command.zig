@@ -58,7 +58,7 @@ pub const InstallCompletionsCommand = struct {
             return;
 
         // first try installing the symlink into the same directory as the bun executable
-        var exe = try std.fs.selfExePathAlloc(allocator);
+        const exe = try std.fs.selfExePathAlloc(allocator);
         var target_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var target = std.fmt.bufPrint(&target_buf, "{s}/" ++ bunx_name, .{std.fs.path.dirname(exe).?}) catch unreachable;
         std.os.symlink(exe, target) catch {
@@ -106,7 +106,7 @@ pub const InstallCompletionsCommand = struct {
             shell = ShellCompletions.Shell.fromEnv(@TypeOf(shell_name), shell_name);
         }
 
-        var cwd = bun.getcwd(&cwd_buf) catch {
+        const cwd = bun.getcwd(&cwd_buf) catch {
             // don't fail on this if we don't actually need to
             if (fail_exit_code == 1) {
                 if (!stdout.isTty()) {
@@ -385,7 +385,7 @@ pub const InstallCompletionsCommand = struct {
         // Check if they need to load the zsh completions file into their .zshrc
         if (shell == .zsh) {
             var completions_absolute_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            var completions_path = bun.getFdPath(output_file.handle, &completions_absolute_path_buf) catch unreachable;
+            const completions_path = bun.getFdPath(output_file.handle, &completions_absolute_path_buf) catch unreachable;
             var zshrc_filepath: [bun.MAX_PATH_BYTES]u8 = undefined;
             const needs_to_tell_them_to_add_completions_file = brk: {
                 var dot_zshrc: std.fs.File = zshrc: {
@@ -403,7 +403,7 @@ pub const InstallCompletionsCommand = struct {
                             bun.copy(u8, &zshrc_filepath, zdot_dir);
                             bun.copy(u8, zshrc_filepath[zdot_dir.len..], "/.zshrc");
                             zshrc_filepath[zdot_dir.len + "/.zshrc".len] = 0;
-                            var filepath = zshrc_filepath[0 .. zdot_dir.len + "/.zshrc".len :0];
+                            const filepath = zshrc_filepath[0 .. zdot_dir.len + "/.zshrc".len :0];
                             break :zshrc std.fs.openFileAbsoluteZ(filepath, .{ .mode = .read_write }) catch break :first;
                         }
                     }
@@ -413,7 +413,7 @@ pub const InstallCompletionsCommand = struct {
                             bun.copy(u8, &zshrc_filepath, zdot_dir);
                             bun.copy(u8, zshrc_filepath[zdot_dir.len..], "/.zshrc");
                             zshrc_filepath[zdot_dir.len + "/.zshrc".len] = 0;
-                            var filepath = zshrc_filepath[0 .. zdot_dir.len + "/.zshrc".len :0];
+                            const filepath = zshrc_filepath[0 .. zdot_dir.len + "/.zshrc".len :0];
                             break :zshrc std.fs.openFileAbsoluteZ(filepath, .{ .mode = .read_write }) catch break :second;
                         }
                     }
@@ -423,7 +423,7 @@ pub const InstallCompletionsCommand = struct {
                             bun.copy(u8, &zshrc_filepath, zdot_dir);
                             bun.copy(u8, zshrc_filepath[zdot_dir.len..], "/.zshenv");
                             zshrc_filepath[zdot_dir.len + "/.zshenv".len] = 0;
-                            var filepath = zshrc_filepath[0 .. zdot_dir.len + "/.zshenv".len :0];
+                            const filepath = zshrc_filepath[0 .. zdot_dir.len + "/.zshenv".len :0];
                             break :zshrc std.fs.openFileAbsoluteZ(filepath, .{ .mode = .read_write }) catch break :third;
                         }
                     }
@@ -442,7 +442,7 @@ pub const InstallCompletionsCommand = struct {
                     0,
                 ) catch break :brk true;
 
-                var contents = buf[0..read];
+                const contents = buf[0..read];
 
                 // Do they possibly have it in the file already?
                 if (std.mem.indexOf(u8, contents, completions_path) != null) {
@@ -452,8 +452,8 @@ pub const InstallCompletionsCommand = struct {
                 // Okay, we need to add it
 
                 // We need to add it to the end of the file
-                var remaining = buf[read..];
-                var extra = std.fmt.bufPrint(remaining, "\n# bun completions\n[ -s \"{s}\" ] && source \"{s}\"\n", .{
+                const remaining = buf[read..];
+                const extra = std.fmt.bufPrint(remaining, "\n# bun completions\n[ -s \"{s}\" ] && source \"{s}\"\n", .{
                     completions_path,
                     completions_path,
                 }) catch unreachable;

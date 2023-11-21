@@ -33,7 +33,7 @@ const color_map = std.ComptimeStringMap([]const u8, .{
 });
 
 fn addInternalPackages(b: *Build, step: *CompileStep, _: std.mem.Allocator, _: []const u8, target: anytype) !void {
-    var io: *Module = brk: {
+    const io: *Module = brk: {
         if (target.isDarwin()) {
             break :brk b.createModule(.{
                 .source_file = FileSource.relative("src/io/io_darwin.zig"),
@@ -63,7 +63,7 @@ fn addInternalPackages(b: *Build, step: *CompileStep, _: std.mem.Allocator, _: [
         break :brk b.createModule(.{ .source_file = FileSource.relative("src/deps/zlib.posix.zig") });
     });
 
-    var async_: *Module = brk: {
+    const async_: *Module = brk: {
         if (target.isDarwin() or target.isLinux() or target.isFreeBSD()) {
             break :brk b.createModule(.{
                 .source_file = FileSource.relative("src/async/posix_event_loop.zig"),
@@ -226,7 +226,7 @@ pub fn build_(b: *Build) !void {
     }
 
     var output_dir_buf = std.mem.zeroes([4096]u8);
-    var bin_label = if (optimize == std.builtin.OptimizeMode.Debug) "packages/debug-bun-" else "packages/bun-";
+    const bin_label = if (optimize == std.builtin.OptimizeMode.Debug) "packages/debug-bun-" else "packages/bun-";
 
     var triplet_buf: [64]u8 = undefined;
     var os_tagname = @tagName(target.getOs().tag);
@@ -244,7 +244,7 @@ pub fn build_(b: *Build) !void {
         &triplet_buf,
         os_tagname,
     );
-    var osname = triplet_buf[0..os_tagname.len];
+    const osname = triplet_buf[0..os_tagname.len];
     triplet_buf[osname.len] = '-';
 
     std.mem.copy(u8, triplet_buf[osname.len + 1 ..], @tagName(target.getCpuArch()));
@@ -255,7 +255,7 @@ pub fn build_(b: *Build) !void {
         cpuArchName = cpuArchName[0..3];
     }
 
-    var triplet = triplet_buf[0 .. osname.len + cpuArchName.len + 1];
+    const triplet = triplet_buf[0 .. osname.len + cpuArchName.len + 1];
 
     const outfile_maybe = b.option([]const u8, "output-file", "target to install to");
 
@@ -573,9 +573,9 @@ pub fn build_(b: *Build) !void {
     {
         const headers_step = b.step("test", "Build test");
 
-        var test_file = b.option([]const u8, "test-file", "Input file for test");
-        var test_bin_ = b.option([]const u8, "test-bin", "Emit bin to");
-        var test_filter = b.option([]const u8, "test-filter", "Filter for test");
+        const test_file = b.option([]const u8, "test-file", "Input file for test");
+        const test_bin_ = b.option([]const u8, "test-bin", "Emit bin to");
+        const test_filter = b.option([]const u8, "test-filter", "Filter for test");
 
         var headers_obj: *CompileStep = b.addTest(.{
             .root_source_file = FileSource.relative(test_file orelse "src/main.zig"),

@@ -168,25 +168,25 @@ pub const Integrity = extern struct {
         switch (tag) {
             .sha1 => {
                 const len = std.crypto.hash.Sha1.digest_length;
-                var ptr: *[len]u8 = digest[0..len];
+                const ptr: *[len]u8 = digest[0..len];
                 Crypto.SHA1.hash(bytes, ptr);
                 return strings.eqlLong(ptr, sum[0..len], true);
             },
             .sha512 => {
                 const len = std.crypto.hash.sha2.Sha512.digest_length;
-                var ptr: *[len]u8 = digest[0..len];
+                const ptr: *[len]u8 = digest[0..len];
                 Crypto.SHA512.hash(bytes, ptr);
                 return strings.eqlLong(ptr, sum[0..len], true);
             },
             .sha256 => {
                 const len = std.crypto.hash.sha2.Sha256.digest_length;
-                var ptr: *[len]u8 = digest[0..len];
+                const ptr: *[len]u8 = digest[0..len];
                 Crypto.SHA256.hash(bytes, ptr);
                 return strings.eqlLong(ptr, sum[0..len], true);
             },
             .sha384 => {
                 const len = std.crypto.hash.sha2.Sha384.digest_length;
-                var ptr: *[len]u8 = digest[0..len];
+                const ptr: *[len]u8 = digest[0..len];
                 Crypto.SHA384.hash(bytes, ptr);
                 return strings.eqlLong(ptr, sum[0..len], true);
             },
@@ -197,7 +197,7 @@ pub const Integrity = extern struct {
     }
 
     comptime {
-        var integrity = Integrity{ .tag = Tag.sha1 };
+        const integrity = Integrity{ .tag = Tag.sha1 };
         for (integrity.value) |c| {
             if (c != 0) {
                 @compileError("Integrity buffer is not zeroed");

@@ -350,7 +350,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             for (_value, 0..) |c, i| {
                 lowercase_append_buf[i] = std.ascii.toLower(c);
             }
-            var slice = lowercase_append_buf[0.._value.len];
+            const slice = lowercase_append_buf[0.._value.len];
 
             return self.doAppend(
                 @TypeOf(slice),
@@ -490,7 +490,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
 
             self.mutex.lock();
             defer self.mutex.unlock();
-            var index = try self.index.getOrPut(self.allocator, _key);
+            const index = try self.index.getOrPut(self.allocator, _key);
 
             if (index.found_existing) {
                 return Result{
@@ -558,7 +558,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
                 if (self.overflow_list.len() == result.index.index) {
                     return self.overflow_list.append(value);
                 } else {
-                    var ptr = self.overflow_list.atIndexMut(result.index);
+                    const ptr = self.overflow_list.atIndexMut(result.index);
                     ptr.* = value;
                     return ptr;
                 }
@@ -654,7 +654,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
         }
 
         pub fn put(self: *Self, key: anytype, comptime store_key: bool, result: *Result, value: ValueType) !*ValueType {
-            var ptr = try self.map.put(result, value);
+            const ptr = try self.map.put(result, value);
             if (store_key) {
                 try self.putKey(key, result);
             }

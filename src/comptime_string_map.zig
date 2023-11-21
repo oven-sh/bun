@@ -439,7 +439,7 @@ const TestEnum2 = enum {
 };
 
 pub fn compareString(input: []const u8) !void {
-    var str = try std.heap.page_allocator.dupe(u8, input);
+    const str = try std.heap.page_allocator.dupe(u8, input);
     if (TestEnum2.map.has(str) != TestEnum2.official.has(str)) {
         std.debug.panic("{s} - TestEnum2.map.has(str) ({d}) != TestEnum2.official.has(str) ({d})", .{
             str,

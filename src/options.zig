@@ -413,7 +413,7 @@ pub const Target = enum {
         var zig_str = JSC.ZigString.init("");
         value.toZigString(&zig_str, global);
 
-        var slice = zig_str.slice();
+        const slice = zig_str.slice();
 
         const Eight = strings.ExactSizeMatcher(8);
 
@@ -990,7 +990,7 @@ pub const JSX = struct {
             if (str.len == 0) return str;
             if (str[0] == '@') {
                 if (strings.indexOfChar(str[1..], '/')) |first_slash| {
-                    var remainder = str[1 + first_slash + 1 ..];
+                    const remainder = str[1 + first_slash + 1 ..];
 
                     if (strings.indexOfChar(remainder, '/')) |last_slash| {
                         return str[0 .. first_slash + 1 + last_slash + 1];
@@ -1161,7 +1161,7 @@ pub fn definesFromTransformOptions(
     debugger: bool,
 ) !*defines.Define {
     _ = debugger;
-    var input_user_define = _input_define orelse std.mem.zeroes(Api.StringMap);
+    const input_user_define = _input_define orelse std.mem.zeroes(Api.StringMap);
 
     var user_defines = try stringHashMapFromArrays(
         defines.RawDefines,
@@ -1199,7 +1199,7 @@ pub fn definesFromTransformOptions(
         }
     }
 
-    var quoted_node_env: string = brk: {
+    const quoted_node_env: string = brk: {
         if (NODE_ENV) |node_env| {
             if (node_env.len > 0) {
                 if ((strings.startsWithChar(node_env, '"') and strings.endsWithChar(node_env, '"')) or
@@ -1252,7 +1252,7 @@ pub fn definesFromTransformOptions(
         }
     }
 
-    var resolved_defines = try defines.DefineData.from_input(user_defines, log, allocator);
+    const resolved_defines = try defines.DefineData.from_input(user_defines, log, allocator);
 
     return try defines.Define.init(
         allocator,
@@ -1276,8 +1276,8 @@ const default_loader_ext = [_]string{
 };
 
 pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.LoaderMap, target: Target) !bun.StringArrayHashMap(Loader) {
-    var input_loaders = _loaders orelse std.mem.zeroes(Api.LoaderMap);
-    var loader_values = try allocator.alloc(Loader, input_loaders.loaders.len);
+    const input_loaders = _loaders orelse std.mem.zeroes(Api.LoaderMap);
+    const loader_values = try allocator.alloc(Loader, input_loaders.loaders.len);
 
     for (loader_values, input_loaders.loaders) |*loader, input| {
         loader.* = Loader.fromAPI(input);
@@ -1698,7 +1698,7 @@ pub const BundleOptions = struct {
 
                 opts.resolve_mode = .lazy;
 
-                var dir_to_use: string = opts.routes.static_dir;
+                const dir_to_use: string = opts.routes.static_dir;
                 const static_dir_set = opts.routes.static_dir_enabled or dir_to_use.len == 0;
                 var disabled_static = false;
 
@@ -1776,7 +1776,7 @@ pub const BundleOptions = struct {
 
                 if (opts.routes.static_dir_enabled and should_try_to_find_a_index_html_file) {
                     const dir = opts.routes.static_dir_handle.?;
-                    var index_html_file = dir.openFile("index.html", .{ .mode = .read_only }) catch |err| brk: {
+                    const index_html_file = dir.openFile("index.html", .{ .mode = .read_only }) catch |err| brk: {
                         switch (err) {
                             error.FileNotFound => {},
                             else => {
@@ -1802,9 +1802,9 @@ pub const BundleOptions = struct {
                         var abs_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                         // If it's not in static-dir/index.html, check if it's in top level dir/index.html
                         var parts = [_]string{"index.html"};
-                        var full_path = resolve_path.joinAbsStringBuf(fs.top_level_dir, &abs_buf, &parts, .auto);
+                        const full_path = resolve_path.joinAbsStringBuf(fs.top_level_dir, &abs_buf, &parts, .auto);
                         abs_buf[full_path.len] = 0;
-                        var abs_buf_z: [:0]u8 = abs_buf[0..full_path.len :0];
+                        const abs_buf_z: [:0]u8 = abs_buf[0..full_path.len :0];
 
                         const file = std.fs.openFileAbsoluteZ(abs_buf_z, .{ .mode = .read_only }) catch |err| {
                             switch (err) {
@@ -1876,7 +1876,7 @@ pub fn openOutputDir(output_dir: string) !std.fs.Dir {
             Global.crash();
         };
 
-        var handle = std.fs.cwd().openDir(output_dir, .{}) catch |err2| {
+        const handle = std.fs.cwd().openDir(output_dir, .{}) catch |err2| {
             Output.printErrorln("error: Unable to open \"{s}\": \"{s}\"", .{ output_dir, @errorName(err2) });
             Global.crash();
         };
@@ -1905,7 +1905,7 @@ pub const TransformOptions = struct {
     pub fn initUncached(allocator: std.mem.Allocator, entryPointName: string, code: string) !TransformOptions {
         assert(entryPointName.len > 0);
 
-        var entryPoint = Fs.File{
+        const entryPoint = Fs.File{
             .path = Fs.Path.init(entryPointName),
             .contents = code,
         };
@@ -2161,7 +2161,7 @@ pub const OutputFile = struct {
             .noop => JSC.JSValue.undefined,
             .copy => |copy| brk: {
                 var build_output = bun.default_allocator.create(JSC.API.BuildArtifact) catch @panic("Unable to allocate Artifact");
-                var file_blob = JSC.WebCore.Blob.Store.initFile(
+                const file_blob = JSC.WebCore.Blob.Store.initFile(
                     if (copy.fd != 0)
                         JSC.Node.PathOrFileDescriptor{
                             .fd = copy.fd,
@@ -2190,7 +2190,7 @@ pub const OutputFile = struct {
                 var build_output = bun.default_allocator.create(JSC.API.BuildArtifact) catch @panic("Unable to allocate Artifact");
                 const path_to_use = owned_pathname orelse this.src_path.text;
 
-                var file_blob = JSC.WebCore.Blob.Store.initFile(
+                const file_blob = JSC.WebCore.Blob.Store.initFile(
                     JSC.Node.PathOrFileDescriptor{
                         .path = JSC.Node.PathLike{ .string = bun.PathString.init(owned_pathname orelse (bun.default_allocator.dupe(u8, this.src_path.text) catch unreachable)) },
                     },
@@ -2635,8 +2635,8 @@ pub const RouteConfig = struct {
     pub fn fromApi(router_: Api.RouteConfig, allocator: std.mem.Allocator) !RouteConfig {
         var router = zero();
 
-        var static_dir: string = std.mem.trimRight(u8, router_.static_dir orelse "", "/\\");
-        var asset_prefix: string = std.mem.trimRight(u8, router_.asset_prefix orelse "", "/\\");
+        const static_dir: string = std.mem.trimRight(u8, router_.static_dir orelse "", "/\\");
+        const asset_prefix: string = std.mem.trimRight(u8, router_.asset_prefix orelse "", "/\\");
 
         switch (router_.dir.len) {
             0 => {},
@@ -2677,7 +2677,7 @@ pub const RouteConfig = struct {
                 count += 1;
             }
 
-            var extensions = try allocator.alloc(string, count);
+            const extensions = try allocator.alloc(string, count);
             var remainder = extensions;
 
             for (router_.extensions) |_ext| {

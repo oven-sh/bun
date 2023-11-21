@@ -154,8 +154,8 @@ pub const Mapping = struct {
         var count = generated.len;
         var index: usize = 0;
         while (count > 0) {
-            var step = count / 2;
-            var i: usize = index + step;
+            const step = count / 2;
+            const i: usize = index + step;
             const mapping = generated[i];
             if (mapping.lines < line or (mapping.lines == line and mapping.columns <= column)) {
                 index = i + 1;
@@ -541,20 +541,20 @@ pub const SourceMapPieces = struct {
                 continue;
             }
 
-            var potential_end_of_run = current;
+            const potential_end_of_run = current;
 
-            var decode_result = decodeVLQ(mappings, current);
+            const decode_result = decodeVLQ(mappings, current);
             generated.columns += decode_result.value;
             current = decode_result.start;
 
-            var potential_start_of_run = current;
+            const potential_start_of_run = current;
 
             current = decodeVLQ(mappings, current).start;
             current = decodeVLQ(mappings, current).start;
             current = decodeVLQ(mappings, current).start;
 
             if (current < mappings.len) {
-                var c = mappings[current];
+                const c = mappings[current];
                 if (c != ',' and c != ';') {
                     current = decodeVLQ(mappings, current).start;
                 }
@@ -574,7 +574,7 @@ pub const SourceMapPieces = struct {
                 continue;
             }
 
-            var shift = shifts[0];
+            const shift = shifts[0];
             if (shift.after.lines != generated.lines) {
                 continue;
             }
@@ -583,7 +583,7 @@ pub const SourceMapPieces = struct {
 
             std.debug.assert(shift.before.lines == shift.after.lines);
 
-            var shift_column_delta = shift.after.columns - shift.before.columns;
+            const shift_column_delta = shift.after.columns - shift.before.columns;
             const encode = encodeVLQ(decode_result.value + shift_column_delta - prev_shift_column_delta);
             j.push(encode.bytes[0..encode.len]);
             prev_shift_column_delta = shift_column_delta;

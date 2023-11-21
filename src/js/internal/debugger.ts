@@ -264,7 +264,7 @@ function bufferedWriter(writer: Writer): Writer {
 const defaultHostname = "localhost";
 const defaultPort = 6499;
 
-function parseUrl(url: string): URL {
+export function parseUrl(url: string): URL {
   try {
     if (!url) {
       return new URL(randomId(), `ws://${defaultHostname}:${defaultPort}/`);
@@ -287,7 +287,7 @@ function parseUrl(url: string): URL {
   }
 }
 
-function randomId() {
+export function randomId() {
   return Math.random().toString(36).slice(2);
 }
 

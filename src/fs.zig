@@ -70,11 +70,15 @@ pub const FileSystem = struct {
         return try this.dirname_store.append([]u8, dir);
     }
 
+    var tmpname_id_number = std.atomic.Atomic(u32).init(0);
     pub fn tmpname(_: *const FileSystem, extname: string, buf: []u8, hash: u64) ![*:0]u8 {
-        // PRNG was...not so random
-        const hex_value = @as(u64, @truncate(@as(u128, @intCast(hash)) * @as(u128, @intCast(std.time.nanoTimestamp()))));
+        const hex_value = @as(u64, @truncate(@as(u128, @intCast(hash)) ^ @as(u128, @intCast(std.time.nanoTimestamp()))));
 
-        return try std.fmt.bufPrintZ(buf, ".{any}{s}", .{ bun.fmt.hexIntLower(hex_value), extname });
+        return try std.fmt.bufPrintZ(buf, ".{any}-{any}.{s}", .{
+            bun.fmt.hexIntLower(hex_value),
+            bun.fmt.hexIntUpper(tmpname_id_number.fetchAdd(1, .Monotonic)),
+            extname,
+        });
     }
 
     pub var max_fd: FileDescriptorType = 0;

@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 set -euo pipefail
 source "$(dirname -- "${BASH_SOURCE[0]}")/env.sh"
 FORCE=
@@ -30,7 +31,7 @@ dep() {
                 break
             fi
         done
-        if [ "$HAS_ALL_DEPS" -eq 1 ]; then
+        if [ "$HAS_ALL_DEPS" == "1" ]; then
             printf "%s - already built\n" "$script"
             return
         fi
@@ -56,11 +57,12 @@ dep boringssl libcrypto.a libssl.a libdecrepit.a
 dep cares libcares.a
 dep libarchive libarchive.a
 dep lolhtml liblolhtml.a
-dep mimalloc-debug libmimalloc-debug.a
-dep mimalloc libmimalloc.a
+dep mimalloc-debug libmimalloc-debug.a libmimalloc-debug.o
+dep mimalloc libmimalloc.a libmimalloc.o
 dep tinycc libtcc.a
 dep zlib libz.a
 dep zstd libzstd.a
+dep lshpack liblshpack.a
 
 if [ "$BUILT_ANY" -eq 0 ]; then
     printf "(run with -f to rebuild)\n"

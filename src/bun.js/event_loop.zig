@@ -641,6 +641,7 @@ pub const EventLoop = struct {
     extern fn JSC__JSGlobalObject__drainMicrotasks(*JSC.JSGlobalObject) void;
     fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *JSC.JSGlobalObject) void {
         JSC.markBinding(@src());
+
         JSC__JSGlobalObject__drainMicrotasks(globalObject);
         this.drainDeferredTasks();
     }
@@ -1015,11 +1016,12 @@ pub const EventLoop = struct {
         if (loop.isActive()) {
             this.processGCTimer();
             loop.tick();
-            this.flushImmediateQueue();
-            ctx.onAfterEventLoop();
         } else {
-            this.flushImmediateQueue();
+            loop.tickWithoutIdle();
         }
+
+        this.flushImmediateQueue();
+        ctx.onAfterEventLoop();
     }
 
     pub fn autoTickWithTimeout(this: *EventLoop, timeoutMs: i64) void {
@@ -1046,11 +1048,12 @@ pub const EventLoop = struct {
         if (loop.isActive()) {
             this.processGCTimer();
             loop.tickWithTimeout(timeoutMs);
-            this.flushImmediateQueue();
-            ctx.onAfterEventLoop();
         } else {
-            this.flushImmediateQueue();
+            loop.tickWithoutIdle();
         }
+
+        this.flushImmediateQueue();
+        ctx.onAfterEventLoop();
     }
 
     pub fn flushImmediateQueue(this: *EventLoop) void {
@@ -1121,11 +1124,12 @@ pub const EventLoop = struct {
         if (loop.isActive()) {
             this.processGCTimer();
             loop.tick();
-            this.flushImmediateQueue();
-            ctx.onAfterEventLoop();
         } else {
-            this.flushImmediateQueue();
+            loop.tickWithoutIdle();
         }
+
+        this.flushImmediateQueue();
+        ctx.onAfterEventLoop();
     }
 
     pub fn processGCTimer(this: *EventLoop) void {
@@ -1168,6 +1172,22 @@ pub const EventLoop = struct {
                     this.tick();
 
                     if (promise.status(this.virtual_machine.jsc) == .Pending) {
+                        this.autoTick();
+                    }
+                }
+            },
+            else => {},
+        }
+    }
+
+    pub fn waitForPromiseWithTermination(this: *EventLoop, promise: JSC.AnyPromise) void {
+        var worker = this.virtual_machine.worker orelse @panic("EventLoop.waitForPromiseWithTermination: worker is not initialized");
+        switch (promise.status(this.virtual_machine.jsc)) {
+            JSC.JSPromise.Status.Pending => {
+                while (!worker.requested_terminate and promise.status(this.virtual_machine.jsc) == .Pending) {
+                    this.tick();
+
+                    if (!worker.requested_terminate and promise.status(this.virtual_machine.jsc) == .Pending) {
                         this.autoTick();
                     }
                 }
@@ -1266,6 +1286,11 @@ pub const EventLoop = struct {
     }
     pub fn enqueueTaskConcurrent(this: *EventLoop, task: *ConcurrentTask) void {
         JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            if (this.virtual_machine.has_terminated) {
+                @panic("EventLoop.enqueueTaskConcurrent: VM has terminated");
+            }
+        }
 
         this.concurrent_tasks.push(task);
         this.wakeup();

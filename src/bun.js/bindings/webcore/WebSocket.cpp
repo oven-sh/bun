@@ -74,9 +74,11 @@
 // #if USE(WEB_THREAD)
 // #include "WebCoreThreadRun.h"
 // #endif
+
 namespace WebCore {
 WTF_MAKE_ISO_ALLOCATED_IMPL(WebSocket);
 
+extern "C" bool Bun__defaultRejectUnauthorized(JSGlobalObject* lexicalGlobalObject);
 static size_t getFramingOverhead(size_t payloadSize)
 {
     static const size_t hybiBaseFramingOverhead = 2; // Every frame has at least two-byte header.
@@ -161,6 +163,7 @@ WebSocket::WebSocket(ScriptExecutionContext& context)
 {
     m_state = CONNECTING;
     m_hasPendingActivity.store(true);
+    m_rejectUnauthorized = Bun__defaultRejectUnauthorized(context.jsGlobalObject());
 }
 
 WebSocket::~WebSocket()
@@ -213,6 +216,23 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
         return Exception { SyntaxError };
 
     auto socket = adoptRef(*new WebSocket(context));
+    // socket->suspendIfNeeded();
+
+    auto result = socket->connect(url, protocols, WTFMove(headers));
+    // auto result = socket->connect(url, protocols);
+
+    if (result.hasException())
+        return result.releaseException();
+
+    return socket;
+}
+ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized)
+{
+    if (url.isNull())
+        return Exception { SyntaxError };
+
+    auto socket = adoptRef(*new WebSocket(context));
+    socket->setRejectUnauthorized(rejectUnauthorized);
     // socket->suspendIfNeeded();
 
     auto result = socket->connect(url, protocols, WTFMove(headers));
@@ -1436,7 +1456,7 @@ extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, int32_t
 }
 extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t errorCode, const BunString* reason)
 {
-    WTF::String wtf_reason = Bun::toWTFString(*reason);
+    WTF::String wtf_reason = reason->toWTFString(BunString::ZeroCopy);
     webSocket->didClose(0, errorCode, WTFMove(wtf_reason));
 }
 
@@ -1461,6 +1481,10 @@ extern "C" void WebSocket__didReceiveBytes(WebCore::WebSocket* webSocket, uint8_
     default:
         break;
     }
+}
+extern "C" bool WebSocket__rejectUnauthorized(WebCore::WebSocket* webSocket)
+{
+    return webSocket->rejectUnauthorized();
 }
 
 extern "C" void WebSocket__incrementPendingActivity(WebCore::WebSocket* webSocket)

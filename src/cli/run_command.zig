@@ -12,6 +12,8 @@ const std = @import("std");
 
 const lex = bun.js_lexer;
 const logger = @import("root").bun.logger;
+const clap = @import("root").bun.clap;
+const Arguments = @import("../cli.zig").Arguments;
 
 const options = @import("../options.zig");
 const js_parser = bun.js_parser;
@@ -37,7 +39,7 @@ const NpmArgs = struct {
     pub const package_name: string = "npm_package_name";
     pub const package_version: string = "npm_package_version";
 };
-
+const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const yarn_commands: []u64 = @import("./list-of-yarn-commands.zig").all_yarn_commands;
 
 const ShellCompletions = @import("./shell_completions.zig");
@@ -265,7 +267,11 @@ pub const RunCommand = struct {
             combined_script = combined_script_buf;
         }
 
-        var argv = [_]string{ shell_bin, "-c", combined_script };
+        var argv = [_]string{
+            shell_bin,
+            if (Environment.isWindows) "/c" else "-c",
+            combined_script,
+        };
 
         if (!silent) {
             Output.prettyErrorln("<r><d><magenta>$<r> <d><b>{s}<r>", .{combined_script});
@@ -539,9 +545,9 @@ pub const RunCommand = struct {
             if (root_dir_info.getEntries(0)) |dir| {
                 // Run .env again if it exists in a parent dir
                 if (this_bundler.options.production) {
-                    this_bundler.env.load(dir, .production) catch {};
+                    this_bundler.env.load(dir, this_bundler.options.env.files, .production) catch {};
                 } else {
-                    this_bundler.env.load(dir, .development) catch {};
+                    this_bundler.env.load(dir, this_bundler.options.env.files, .development) catch {};
                 }
             }
         }
@@ -595,11 +601,11 @@ pub const RunCommand = struct {
         }
 
         {
-            var needs_colon = false;
+            var needs_delim = false;
             if (package_json_dir.len > 0) {
-                defer needs_colon = true;
-                if (needs_colon) {
-                    try new_path.append(':');
+                defer needs_delim = true;
+                if (needs_delim) {
+                    try new_path.append(std.fs.path.delimiter);
                 }
                 try new_path.appendSlice(package_json_dir);
             }
@@ -609,19 +615,19 @@ pub const RunCommand = struct {
             // Directories are added to bin_dirs in top-down order
             // That means the parent-most node_modules/.bin will be first
             while (bin_dir_i >= 0) : (bin_dir_i -= 1) {
-                defer needs_colon = true;
-                if (needs_colon) {
-                    try new_path.append(':');
+                defer needs_delim = true;
+                if (needs_delim) {
+                    try new_path.append(std.fs.path.delimiter);
                 }
                 try new_path.appendSlice(bin_dirs[@as(usize, @intCast(bin_dir_i))]);
             }
 
-            if (needs_colon) {
-                try new_path.append(':');
+            if (needs_delim) {
+                try new_path.append(std.fs.path.delimiter);
             }
             try new_path.appendSlice(root_dir_info.abs_path);
-            try new_path.appendSlice("node_modules/.bin");
-            try new_path.append(':');
+            try new_path.appendSlice(bun.pathLiteral("node_modules/.bin"));
+            try new_path.append(std.fs.path.delimiter);
             try new_path.appendSlice(PATH);
         }
 
@@ -867,6 +873,66 @@ pub const RunCommand = struct {
         return shell_out;
     }
 
+    pub fn printHelp(package_json: ?*PackageJSON) void {
+        const intro_text =
+            \\<b>Usage<r>: <b><green>bun run<r> <cyan>[flags]<r> \<file or script\>
+        ;
+
+        const outro_text =
+            \\<b>Examples:<r>
+            \\  <d>Run a JavaScript or TypeScript file<r>
+            \\  <b><green>bun run<r> <blue>./index.js<r>
+            \\  <b><green>bun run<r> <blue>./index.tsx<r>
+            \\
+            \\  <d>Run a package.json script<r>
+            \\  <b><green>bun run <blue>dev<r>
+            \\  <b><green>bun run <blue>lint<r>
+            \\
+            \\Full documentation is available at <magenta>https://bun.sh/docs/cli/run<r>
+            \\
+        ;
+
+        Output.pretty(intro_text ++ "\n\n", .{});
+        Output.flush();
+        Output.pretty("<b>Flags:<r>", .{});
+        Output.flush();
+        clap.simpleHelp(&Arguments.run_params);
+
+        if (package_json) |pkg| {
+            if (pkg.scripts) |scripts| {
+                var display_name = pkg.name;
+
+                if (display_name.len == 0) {
+                    display_name = std.fs.path.basename(pkg.source.path.name.dir);
+                }
+
+                var iterator = scripts.iterator();
+
+                if (scripts.count() > 0) {
+                    Output.pretty("\n\n<b>package.json scripts ({d} found):<r>", .{scripts.count()});
+                    // Output.prettyln("<r><blue><b>{s}<r> scripts:<r>\n", .{display_name});
+                    while (iterator.next()) |entry| {
+                        Output.prettyln("\n", .{});
+                        Output.prettyln("  <d>$</r> bun run<r> <blue>{s}<r>\n", .{entry.key_ptr.*});
+                        Output.prettyln("  <d>  {s}<r>\n", .{entry.value_ptr.*});
+                    }
+
+                    // Output.prettyln("\n<d>{d} scripts<r>", .{scripts.count()});
+
+                    Output.flush();
+
+                    // return true;
+                } else {
+                    Output.prettyln("<r><yellow>No \"scripts\" found in package.json.<r>", .{});
+                    Output.flush();
+                    // return true;
+                }
+            }
+        }
+        Output.pretty("\n\n" ++ outro_text, .{});
+        Output.flush();
+    }
+
     pub fn exec(ctx_: Command.Context, comptime bin_dirs_only: bool, comptime log_errors: bool) !bool {
         var ctx = ctx_;
         // Step 1. Figure out what we're trying to run
@@ -1012,7 +1078,6 @@ pub const RunCommand = struct {
 
         Global.configureAllocator(.{ .long_running = false });
 
-        var did_print = false;
         var ORIGINAL_PATH: string = "";
         var this_bundler: bundler.Bundler = undefined;
         var root_dir_info = try configureEnvForRun(ctx, &this_bundler, null, &ORIGINAL_PATH, log_errors, force_using_bun);
@@ -1021,34 +1086,9 @@ pub const RunCommand = struct {
             if (package_json.scripts) |scripts| {
                 switch (script_name_to_search.len) {
                     0 => {
-                        var display_name = package_json.name;
-
-                        if (display_name.len == 0) {
-                            display_name = std.fs.path.basename(package_json.source.path.name.dir);
-                        }
-
-                        var iterator = scripts.iterator();
-
-                        if (scripts.count() > 0) {
-                            did_print = true;
-
-                            Output.prettyln("<r><blue><b>{s}<r> scripts:<r>\n", .{display_name});
-                            while (iterator.next()) |entry| {
-                                Output.prettyln("\n", .{});
-                                Output.prettyln(" bun run <blue>{s}<r>\n", .{entry.key_ptr.*});
-                                Output.prettyln(" <d>  {s}<r>\n", .{entry.value_ptr.*});
-                            }
-
-                            Output.prettyln("\n<d>{d} scripts<r>", .{scripts.count()});
-
-                            Output.flush();
-
-                            return true;
-                        } else {
-                            Output.prettyln("<r><blue><b>{s}<r> has no \"scripts\" in package.json.", .{display_name});
-                            Output.flush();
-                            return true;
-                        }
+                        // naked "bun run"
+                        RunCommand.printHelp(package_json);
+                        return true;
                     },
                     else => {
                         if (scripts.get(script_name_to_search)) |script_content| {
@@ -1063,7 +1103,7 @@ pub const RunCommand = struct {
                                     temp_script_buffer[1..],
                                     this_bundler.fs.top_level_dir,
                                     this_bundler.env,
-                                    passthrough,
+                                    &.{},
                                     ctx.debug.silent,
                                 )) {
                                     return false;
@@ -1089,7 +1129,7 @@ pub const RunCommand = struct {
                                     temp_script_buffer,
                                     this_bundler.fs.top_level_dir,
                                     this_bundler.env,
-                                    passthrough,
+                                    &.{},
                                     ctx.debug.silent,
                                 )) {
                                     return false;
@@ -1131,10 +1171,10 @@ pub const RunCommand = struct {
         const PATH = this_bundler.env.map.get("PATH") orelse "";
         var path_for_which = PATH;
         if (comptime bin_dirs_only) {
-            path_for_which = "";
-
             if (ORIGINAL_PATH.len < PATH.len) {
                 path_for_which = PATH[0 .. PATH.len - (ORIGINAL_PATH.len + 1)];
+            } else {
+                path_for_which = "";
             }
         }
 

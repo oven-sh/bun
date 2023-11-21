@@ -34,7 +34,7 @@ pub const Preallocate = struct {
 };
 
 pub const FileSystem = struct {
-    top_level_dir: string = "/",
+    top_level_dir: string = if (Environment.isWindows) "C:\\" else "/",
 
     // used on subsequent updates
     top_level_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
@@ -106,29 +106,26 @@ pub const FileSystem = struct {
     }
 
     pub fn initWithForce(
-        top_level_dir: ?string,
+        top_level_dir_: ?string,
         comptime force: bool,
     ) !*FileSystem {
         const allocator = bun.fs_allocator;
-        var _top_level_dir = top_level_dir orelse (if (Environment.isBrowser) "/project/" else try bun.getcwdAlloc(allocator));
+        var top_level_dir = top_level_dir_ orelse (if (Environment.isBrowser) "/project/" else try bun.getcwdAlloc(allocator));
 
         // Ensure there's a trailing separator in the top level directory
         // This makes path resolution more reliable
-        if (!bun.path.isSepAny(_top_level_dir[_top_level_dir.len - 1])) {
-            const tld = try allocator.alloc(u8, _top_level_dir.len + 1);
-            bun.copy(u8, tld, _top_level_dir);
-            tld[tld.len - 1] = '/';
-            // if (!isBrowser) {
-            //     allocator.free(_top_level_dir);
-            // }
-            _top_level_dir = tld;
+        if (!bun.path.isSepAny(top_level_dir[top_level_dir.len - 1])) {
+            const tld = try allocator.alloc(u8, top_level_dir.len + 1);
+            bun.copy(u8, tld, top_level_dir);
+            tld[tld.len - 1] = std.fs.path.sep;
+            top_level_dir = tld;
         }
 
         if (!instance_loaded or force) {
             instance = FileSystem{
-                .top_level_dir = _top_level_dir,
+                .top_level_dir = top_level_dir,
                 .fs = Implementation.init(
-                    _top_level_dir,
+                    top_level_dir,
                 ),
                 // must always use default_allocator since the other allocators may not be threadsafe when an element resizes
                 .dirname_store = DirnameStore.init(bun.default_allocator),
@@ -845,9 +842,9 @@ pub const FileSystem = struct {
                 // so if we're not going to do a full content hash, we should use mtime and size.
                 // even mtime is debatable.
                 var hash_bytes_remain: []u8 = hash_bytes[0..];
-                std.mem.writeIntNative(@TypeOf(this.size), hash_bytes_remain[0..@sizeOf(@TypeOf(this.size))], this.size);
+                std.mem.writeInt(@TypeOf(this.size), hash_bytes_remain[0..@sizeOf(@TypeOf(this.size))], this.size, .little);
                 hash_bytes_remain = hash_bytes_remain[@sizeOf(@TypeOf(this.size))..];
-                std.mem.writeIntNative(@TypeOf(this.mtime), hash_bytes_remain[0..@sizeOf(@TypeOf(this.mtime))], this.mtime);
+                std.mem.writeInt(@TypeOf(this.mtime), hash_bytes_remain[0..@sizeOf(@TypeOf(this.mtime))], this.mtime, .little);
                 hash_bytes_remain = hash_bytes_remain[@sizeOf(@TypeOf(this.mtime))..];
                 std.debug.assert(hash_bytes_remain.len == 8);
                 hash_bytes_remain[0..8].* = @as([8]u8, @bitCast(@as(u64, 0)));

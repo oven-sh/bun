@@ -744,6 +744,14 @@ interface Process {
   constrainedMemory(): number | undefined;
 
   send(data: any): void;
+
+  report: {
+    getReport(): Object;
+    /**
+     * @TODO This is not implemented yet
+     */
+    writeReport(fileName?: string): void;
+  };
 }
 
 interface MemoryUsageObject {
@@ -2397,6 +2405,12 @@ declare var WebSocket: {
        * Sets the sub-protocols the client is willing to accept.
        */
       protocols?: string[];
+      /**
+       * Override the default TLS options
+       */
+      tls?: {
+        rejectUnauthorized?: boolean | undefined; // Defaults to true
+      };
     },
   ): WebSocket;
 

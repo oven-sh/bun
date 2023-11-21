@@ -154,5 +154,8 @@ x64
 **/*.pdb
 
 /.webkit-cache
+/.cache
 /src/deps/libuv
 /build-*/
+
+.vs

@@ -220,20 +220,19 @@ pub const PosixSpawn = struct {
                 pid,
             });
 
-        if (comptime bun.Environment.isLinux) {
-            // rc is negative because it's libc errno
-            if (rc > 0) {
-                if (Maybe(pid_t).errnoSysP(-rc, .posix_spawn, path)) |err| {
-                    return err;
-                }
-            }
-        } else {
-            if (Maybe(pid_t).errnoSysP(rc, .posix_spawn, path)) |err| {
-                return err;
-            }
+        // Unlike most syscalls, posix_spawn returns 0 on success and an errno on failure.
+        // That is why std.c.getErrno() is not used here, since that checks for -1.
+        if (rc == 0) {
+            return Maybe(pid_t){ .result = pid };
         }
 
-        return Maybe(pid_t){ .result = pid };
+        return Maybe(pid_t){
+            .err = .{
+                .errno = @as(bun.sys.Error.Int, @truncate(@intFromEnum(@as(std.c.E, @enumFromInt(rc))))),
+                .syscall = .posix_spawn,
+                .path = bun.asByteSlice(path),
+            },
+        };
     }
 
     pub fn spawnp(
@@ -289,7 +288,7 @@ pub const PosixSpawn = struct {
     /// `execve` method.
     pub fn waitpid(pid: pid_t, flags: u32) Maybe(WaitPidResult) {
         const Status = c_int;
-        var status: Status = undefined;
+        var status: Status = 0;
         while (true) {
             const rc = system.waitpid(pid, &status, @as(c_int, @intCast(flags)));
             switch (errno(rc)) {

@@ -105,8 +105,9 @@ JSC_DEFINE_CUSTOM_SETTER(jsTimeZoneEnvironmentVariableSetter, (JSGlobalObject * 
     auto privateName = builtinNames->dataPrivateName();
     object->putDirect(vm, privateName, JSValue::decode(value), 0);
 
+    // TODO: this is an assertion failure
     // Recreate this because the property visibility needs to be set correctly
-    object->putDirectCustomAccessor(vm, propertyName, JSC::CustomGetterSetter::create(vm, jsTimeZoneEnvironmentVariableGetter, jsTimeZoneEnvironmentVariableSetter), JSC::PropertyAttribute::CustomAccessor | 0);
+    // object->putDirectWithoutTransition(vm, propertyName, JSC::CustomGetterSetter::create(vm, jsTimeZoneEnvironmentVariableGetter, jsTimeZoneEnvironmentVariableSetter), JSC::PropertyAttribute::CustomAccessor | 0);
     return true;
 }
 

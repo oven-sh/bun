@@ -59,6 +59,10 @@ declare module "bun:test" {
      * added to existing import statements. This is due to how ESM works.
      */
     module(id: string, factory: () => any): void | Promise<void>;
+    /**
+     * Restore the previous value of mocks.
+     */
+    restore(): void;
   };
 
   /**
@@ -518,6 +522,30 @@ declare module "bun:test" {
     anything: () => Expect;
     stringContaining: (str: string) => Expect<string>;
     stringMatching: <T extends RegExp | string>(regex: T) => Expect<T>;
+
+    /**
+     * Throw an error if this function is called.
+     *
+     * @param msg Optional message to display if the test fails
+     * @returns never
+     *
+     * @example
+     * ## Example
+     *
+     * ```ts
+     * import { expect, test } from "bun:test";
+     *
+     * test("!!abc!! is not a module", () => {
+     *  try {
+     *     require("!!abc!!");
+     *     expect.unreachable();
+     *  } catch(e) {
+     *     expect(e.name).not.toBe("UnreachableError");
+     *  }
+     * });
+     * ```
+     */
+    unreachable(msg?: string | Error): never;
   };
   /**
    * Asserts that a value matches some criteria.
@@ -767,14 +795,14 @@ declare module "bun:test" {
      */
     toBeNull(): void;
     /**
-     * Asserts that a value can be coerced to `NaN`.
+     * Asserts that a value is `NaN`.
      *
      * Same as using `Number.isNaN()`.
      *
      * @example
      * expect(NaN).toBeNaN();
-     * expect(Infinity).toBeNaN();
-     * expect("notanumber").toBeNaN();
+     * expect(Infinity).toBeNaN(); // fail
+     * expect("notanumber").toBeNaN(); // fail
      */
     toBeNaN(): void;
     /**

@@ -45,6 +45,7 @@ pub const API = struct {
     pub const TCPSocket = @import("./bun.js/api/bun/socket.zig").TCPSocket;
     pub const TLSSocket = @import("./bun.js/api/bun/socket.zig").TLSSocket;
     pub const Listener = @import("./bun.js/api/bun/socket.zig").Listener;
+    pub const H2FrameParser = @import("./bun.js/api/bun/h2_frame_parser.zig").H2FrameParser;
 };
 pub const DNS = @import("./bun.js/api/bun/dns_resolver.zig");
 pub const FFI = @import("./bun.js/api/ffi.zig").FFI;
@@ -85,6 +86,10 @@ pub const Subprocess = @import("./bun.js/api/bun.zig").Subprocess;
 ///        - pub usingnamespace JSC.Codegen.JSMyClassName;
 ///  5. make clean-bindings && make bindings -j10
 ///
-pub const Codegen = @import("generated/ZigGeneratedClasses.zig");
+pub const Codegen = struct {
+    pub const GeneratedClasses = @import("ZigGeneratedClasses");
+    pub usingnamespace GeneratedClasses;
+    pub usingnamespace @import("./bun.js/bindings/codegen.zig");
+};
 
 pub const GeneratedClassesList = @import("./bun.js/bindings/generated_classes_list.zig").Classes;

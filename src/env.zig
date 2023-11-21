@@ -24,7 +24,7 @@ pub const isLinux = @import("builtin").target.os.tag == .linux;
 pub const isAarch64 = @import("builtin").target.cpu.arch.isAARCH64();
 pub const isX86 = @import("builtin").target.cpu.arch.isX86();
 pub const isX64 = @import("builtin").target.cpu.arch == .x86_64;
-pub const allow_assert = isDebug or isTest;
+pub const allow_assert = isDebug or isTest or std.builtin.Mode.ReleaseSafe == @import("builtin").mode;
 pub const analytics_url = if (isDebug) "http://localhost:4000/events" else "http://i.bun.sh/events";
 
 const BuildOptions = if (isTest) struct {
@@ -32,12 +32,15 @@ const BuildOptions = if (isTest) struct {
     pub const sha = "0000000000000000000000000000000000000000";
     pub const is_canary = false;
     pub const base_path = "/tmp";
+    pub const canary_revision = 0;
 } else @import("root").build_options;
 
 pub const baseline = BuildOptions.baseline;
 pub const enableSIMD: bool = !baseline;
 pub const git_sha = BuildOptions.sha;
+pub const git_sha_short = if (BuildOptions.sha.len > 0) BuildOptions.sha[0..9] else "";
 pub const is_canary = BuildOptions.is_canary;
+pub const canary_revision = if (is_canary) BuildOptions.canary_revision else "";
 pub const dump_source = isDebug and !isTest;
 pub const base_path = BuildOptions.base_path ++ "/";
 
@@ -57,12 +60,23 @@ pub const OperatingSystem = enum {
     // wAsM is nOt aN oPeRaTiNg SyStEm
     wasm,
 
+    /// user-facing name with capitalization
     pub fn displayString(self: OperatingSystem) []const u8 {
         return switch (self) {
             .mac => "macOS",
             .linux => "Linux",
             .windows => "Windows",
             .wasm => "WASM",
+        };
+    }
+
+    /// same format as `process.platform`
+    pub fn nameString(self: OperatingSystem) []const u8 {
+        return switch (self) {
+            .mac => "darwin",
+            .linux => "linux",
+            .windows => "win32",
+            .wasm => "wasm",
         };
     }
 };

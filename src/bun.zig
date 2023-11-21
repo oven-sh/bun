@@ -448,15 +448,15 @@ pub const BabyList = @import("./baby_list.zig").BabyList;
 pub const ByteList = BabyList(u8);
 
 pub fn DebugOnly(comptime Type: type) type {
-    if (comptime Environment.isDebug) {
+    if (comptime Environment.allow_assert) {
         return Type;
     }
 
     return void;
 }
 
-pub fn DebugOnlyDefault(comptime val: anytype) if (Environment.isDebug) @TypeOf(val) else void {
-    if (comptime Environment.isDebug) {
+pub fn DebugOnlyDefault(comptime val: anytype) if (Environment.allow_assert) @TypeOf(val) else void {
+    if (comptime Environment.allow_assert) {
         return val;
     }
 
@@ -851,6 +851,34 @@ pub const FDHashMapContext = struct {
         }
     };
 };
+
+pub const U32HashMapContext = struct {
+    pub fn hash(_: @This(), value: u32) u64 {
+        return @intCast(value);
+    }
+    pub fn eql(_: @This(), a: u32, b: u32) bool {
+        return a == b;
+    }
+    pub fn pre(input: u32) Prehashed {
+        return Prehashed{
+            .value = @This().hash(.{}, input),
+            .input = input,
+        };
+    }
+
+    pub const Prehashed = struct {
+        value: u64,
+        input: u32,
+        pub fn hash(this: @This(), value: u32) u64 {
+            if (value == this.input) return this.value;
+            return @intCast(value);
+        }
+
+        pub fn eql(_: @This(), a: u32, b: u32) bool {
+            return a == b;
+        }
+    };
+};
 // These wrappers exist to use our strings.eqlLong function
 pub const StringArrayHashMapContext = struct {
     pub fn hash(_: @This(), s: []const u8) u32 {
@@ -957,6 +985,10 @@ pub fn FDHashMap(comptime Type: type) type {
     return std.HashMap(StoredFileDescriptorType, Type, FDHashMapContext, std.hash_map.default_max_load_percentage);
 }
 
+pub fn U32HashMap(comptime Type: type) type {
+    return std.HashMap(u32, Type, U32HashMapContext, std.hash_map.default_max_load_percentage);
+}
+
 const CopyFile = @import("./copy_file.zig");
 pub const copyFileRange = CopyFile.copyFileRange;
 pub const canUseCopyFileRangeSyscall = CopyFile.canUseCopyFileRangeSyscall;
@@ -1052,7 +1084,6 @@ pub const fs = @import("./fs.zig");
 pub const Bundler = bundler.Bundler;
 pub const bundler = @import("./bundler.zig");
 pub const which = @import("./which.zig").which;
-pub const is_executable_fileZ = @import("./which.zig").is_executable_file;
 pub const js_parser = @import("./js_parser.zig");
 pub const js_printer = @import("./js_printer.zig");
 pub const js_lexer = @import("./js_lexer.zig");
@@ -1140,11 +1171,13 @@ pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
 /// On Linux, when `/proc/self/fd` is not available, this function will attempt to use `fchdir` and `getcwd` to get the path instead.
 pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
     const fd = fdcast(toFD(fd_));
+
     if (comptime Environment.isWindows) {
         var temp: [MAX_PATH_BYTES]u8 = undefined;
         var temp_slice = try std.os.getFdPath(fd, &temp);
         return path.normalizeBuf(temp_slice, buf, .loose);
     }
+
     if (comptime !Environment.isLinux) {
         return try std.os.getFdPath(fd, buf);
     }
@@ -1990,3 +2023,32 @@ pub fn makePath(dir: std.fs.Dir, sub_path: []const u8) !void {
 }
 
 pub const Async = @import("async");
+
+/// This is a helper for writing path string literals that are compatible with Windows.
+/// Returns the string as-is on linux, on windows replace `/` with `\`
+pub inline fn pathLiteral(comptime literal: anytype) *const [literal.len:0]u8 {
+    if (!Environment.isWindows) return literal;
+    return comptime {
+        var buf: [literal.len:0]u8 = undefined;
+        for (literal, 0..) |c, i| {
+            buf[i] = if (c == '/') '\\' else c;
+        }
+        buf[buf.len] = 0;
+        return &buf;
+    };
+}
+
+pub fn exitThread() noreturn {
+    const exiter = struct {
+        pub extern "C" fn pthread_exit(?*anyopaque) noreturn;
+        pub extern "kernel32" fn ExitThread(windows.DWORD) noreturn;
+    };
+
+    if (comptime Environment.isWindows) {
+        exiter.ExitThread(0);
+    } else if (comptime Environment.isPosix) {
+        exiter.pthread_exit(null);
+    } else {
+        @panic("Unsupported platform");
+    }
+}

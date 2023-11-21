@@ -28,7 +28,6 @@ const {
   requireTransformer,
 } = createInternalModuleRegistry(path.join(import.meta.dir, "../js"));
 
-if (existsSync(TMP_DIR)) rmSync(TMP_DIR, { recursive: true });
 mkdirSync(TMP_DIR, { recursive: true });
 
 interface ParsedBuiltin {

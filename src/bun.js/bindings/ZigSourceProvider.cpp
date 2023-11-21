@@ -95,11 +95,18 @@ extern "C" bool BunTest__shouldGenerateCodeCoverage(BunString sourceURL);
 Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, ResolvedSource resolvedSource, JSC::SourceProviderSourceType sourceType, bool isBuiltin)
 {
 
-    auto stringImpl = Bun::toWTFString(resolvedSource.source_code);
-    auto sourceURLString = toStringCopy(resolvedSource.source_url);
+    auto stringImpl = resolvedSource.source_code.toWTFString(BunString::ZeroCopy);
+    auto sourceURLString = resolvedSource.source_url.toWTFString(BunString::ZeroCopy);
+
     bool isCodeCoverageEnabled = !!globalObject->vm().controlFlowProfiler();
 
-    bool shouldGenerateCodeCoverage = isCodeCoverageEnabled && !isBuiltin && BunTest__shouldGenerateCodeCoverage(Bun::toString(sourceURLString));
+    bool shouldGenerateCodeCoverage = isCodeCoverageEnabled && !isBuiltin && BunTest__shouldGenerateCodeCoverage(resolvedSource.source_url);
+
+    if (resolvedSource.needsDeref && !isBuiltin) {
+        resolvedSource.source_code.deref();
+        resolvedSource.specifier.deref();
+        // source_url gets deref'd by the WTF::String above.
+    }
 
     auto provider = adoptRef(*new SourceProvider(
         globalObject->isThreadLocalDefaultGlobalObject ? globalObject : nullptr,
@@ -152,6 +159,9 @@ void SourceProvider::cacheBytecode(const BytecodeCacheGenerator& generator)
     auto update = generator();
     if (update)
         m_cachedBytecode->addGlobalUpdate(*update);
+}
+SourceProvider::~SourceProvider()
+{
 }
 void SourceProvider::commitCachedBytecode()
 {

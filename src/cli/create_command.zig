@@ -198,7 +198,9 @@ const CreateOptions = struct {
         clap.parseParam("<POS>...                   ") catch unreachable,
     };
 
-    pub fn parse(ctx: Command.Context, comptime print_flags_only: bool) !CreateOptions {
+    pub fn parse(ctx: Command.Context) !CreateOptions {
+        Output.is_verbose = Output.isVerbose();
+
         var diag = clap.Diagnostic{};
 
         var args = clap.parse(clap.Help, &params, .{ .diagnostic = &diag, .allocator = ctx.allocator }) catch |err| {
@@ -206,25 +208,6 @@ const CreateOptions = struct {
             diag.report(Output.errorWriter(), err) catch {};
             return err;
         };
-
-        if (args.flag("--help") or comptime print_flags_only) {
-            if (comptime print_flags_only) {
-                clap.help(Output.writer(), params[1..]) catch {};
-                return undefined;
-            }
-
-            Output.prettyln("<r><b>bun create<r>\n\n  flags:\n", .{});
-            Output.flush();
-            clap.help(Output.writer(), params[1..]) catch {};
-            Output.pretty("\n", .{});
-            Output.prettyln("<r>  environment variables:\n\n", .{});
-            Output.prettyln("        GITHUB_ACCESS_TOKEN<r>      Downloading code from GitHub with a higher rate limit", .{});
-            Output.prettyln("        GITHUB_API_DOMAIN<r>        Change \"api.github.com\", useful for GitHub Enterprise\n", .{});
-            Output.prettyln("        NPM_CLIENT<r>               Absolute path to the npm client executable", .{});
-            Output.flush();
-
-            Global.exit(0);
-        }
 
         var opts = CreateOptions{ .positionals = args.positionals() };
 
@@ -234,7 +217,7 @@ const CreateOptions = struct {
 
         opts.skip_package_json = args.flag("--no-package-json");
 
-        opts.verbose = args.flag("--verbose");
+        opts.verbose = args.flag("--verbose") or Output.is_verbose;
         opts.open = args.flag("--open");
         opts.skip_install = args.flag("--no-install");
         opts.skip_git = args.flag("--no-git");
@@ -253,7 +236,7 @@ pub const CreateCommand = struct {
         Global.configureAllocator(.{ .long_running = false });
         try HTTP.HTTPThread.init();
 
-        var create_options = try CreateOptions.parse(ctx, false);
+        var create_options = try CreateOptions.parse(ctx);
         const positionals = create_options.positionals;
 
         if (positionals.len == 0) {
@@ -1584,7 +1567,7 @@ pub const CreateCommand = struct {
         var example_tag = Example.Tag.unknown;
         var filesystem = try fs.FileSystem.init(null);
 
-        var create_options = try CreateOptions.parse(ctx, false);
+        var create_options = try CreateOptions.parse(ctx);
         const positionals = create_options.positionals;
 
         var env_loader: DotEnv.Loader = brk: {

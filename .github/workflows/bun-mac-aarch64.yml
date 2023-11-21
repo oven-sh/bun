@@ -6,6 +6,7 @@ concurrency:
 
 env:
   LLVM_VERSION: 16
+  BUN_DOWNLOAD_URL_BASE: https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/latest
 
 on:
   push:
@@ -111,7 +112,7 @@ jobs:
         run: |
           brew install sccache ccache rust llvm@$LLVM_VERSION pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config --force
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
-          echo "$(brew --prefix sccache)/bin" >> $GITHUB_PATH
+          # echo "$(brew --prefix sccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
           brew link --overwrite llvm@$LLVM_VERSION
@@ -184,8 +185,8 @@ jobs:
           HOMEBREW_NO_INSTALL_CLEANUP: 1
         run: |
           brew install sccache ccache rust llvm@$LLVM_VERSION pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config --force
-          echo "$(brew --prefix sccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
+          # echo "$(brew --prefix sccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
           brew link --overwrite llvm@$LLVM_VERSION
@@ -210,9 +211,10 @@ jobs:
           cmake -S $SOURCE_DIR -B $OBJ_DIR \
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DBUN_CPP_ONLY=1
+            -DBUN_CPP_ONLY=1 \
+            -DNO_CONFIGURE_DEPENDS=1
 
-          bash compile-cpp-only.sh
+          bash compile-cpp-only.sh -v
 
       - name: Upload C++
         uses: actions/upload-artifact@v3
@@ -237,7 +239,11 @@ jobs:
             artifact: bun-obj-darwin-aarch64
             runner: macos-arm64
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          ref: ${{github.sha}}
+          clean: true
       - name: Checkout submodules
         run: git submodule update --init --recursive --depth=1 --progress --force
 
@@ -253,7 +259,7 @@ jobs:
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
           brew link --overwrite llvm@$LLVM_VERSION
 
-          curl -LO "https://github.com/oven-sh/bun/releases/download/bun-v1.0.7/bun-darwin-${{matrix.arch}}.zip"
+          curl -LO "$BUN_DOWNLOAD_URL_BASE/bun-darwin-${{matrix.arch}}.zip"
           unzip bun-darwin-${{matrix.arch}}.zip
           mkdir -p ${{ runner.temp }}/.bun/bin
           mv bun-darwin-${{matrix.arch}}/bun ${{ runner.temp }}/.bun/bin/bun
@@ -291,8 +297,9 @@ jobs:
             -DBUN_LINK_ONLY=1 \
             -DBUN_ZIG_OBJ="${{ runner.temp }}/release/bun-zig.o" \
             -DBUN_CPP_ARCHIVE="${{ runner.temp }}/bun-cpp-obj/bun-cpp-objects.a" \
-            -DBUN_DEPS_OUT_DIR="${{runner.temp}}/bun-deps"
-          ninja
+            -DBUN_DEPS_OUT_DIR="${{runner.temp}}/bun-deps" \
+            -DNO_CONFIGURE_DEPENDS=1
+          ninja -v
       - name: Zip
         run: |
           cd ${{runner.temp}}/link-build

@@ -1,4 +1,4 @@
-const recommended_zig_version = "0.12.0-dev.1297+a9e66ed73";
+const recommended_zig_version = "0.12.0-dev.1604+caae40c21";
 const zig_version = @import("builtin").zig_version;
 const std = @import("std");
 
@@ -82,7 +82,8 @@ fn addInternalPackages(b: *Build, step: *CompileStep, _: std.mem.Allocator, _: [
 }
 
 const BunBuildOptions = struct {
-    canary: bool = false,
+    is_canary: bool = false,
+    canary_revision: u32 = 0,
     sha: [:0]const u8 = "",
     version: []const u8 = "",
     baseline: bool = false,
@@ -125,7 +126,8 @@ const BunBuildOptions = struct {
 
     pub fn step(this: BunBuildOptions, b: anytype) *std.build.OptionsStep {
         var opts = b.addOptions();
-        opts.addOption(@TypeOf(this.canary), "is_canary", this.canary);
+        opts.addOption(@TypeOf(this.is_canary), "is_canary", this.is_canary);
+        opts.addOption(@TypeOf(this.canary_revision), "canary_revision", this.canary_revision);
         opts.addOption(
             std.SemanticVersion,
             "version",
@@ -167,7 +169,7 @@ const fmt = struct {
 };
 
 var x64 = "x64";
-var optimize: std.builtin.OptimizeMode = undefined;
+var optimize: std.builtin.OptimizeMode = .Debug;
 
 const Build = std.Build;
 const CrossTarget = std.zig.CrossTarget;
@@ -217,7 +219,11 @@ pub fn build_(b: *Build) !void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     optimize = b.standardOptimizeOption(.{});
 
-    const generated_code_directory = b.option([]const u8, "generated-code", "Set the generated code directory") orelse "./build";
+    var generated_code_directory = b.option([]const u8, "generated-code", "Set the generated code directory") orelse "";
+
+    if (generated_code_directory.len == 0) {
+        generated_code_directory = b.pathFromRoot("build/codegen");
+    }
 
     var output_dir_buf = std.mem.zeroes([4096]u8);
     var bin_label = if (optimize == std.builtin.OptimizeMode.Debug) "packages/debug-bun-" else "packages/bun-";
@@ -333,11 +339,16 @@ pub fn build_(b: *Build) !void {
             }
         }
 
-        const is_canary =
-            b.option(bool, "canary", "Treat this as a canary build") orelse
-            ((b.env_map.get("BUN_CANARY") orelse "0")[0] == '1');
+        const is_canary, const canary_revision = if (b.option(u32, "canary", "Treat this as a canary build")) |rev|
+            if (rev == 0)
+                .{ false, 0 }
+            else
+                .{ true, rev }
+        else
+            .{ false, 0 };
         break :brk .{
-            .canary = is_canary,
+            .is_canary = is_canary,
+            .canary_revision = canary_revision,
             .version = b.option([]const u8, "version", "Value of `Bun.version`") orelse "0.0.0",
             .sha = git_sha,
             .baseline = is_baseline,
@@ -396,11 +407,11 @@ pub fn build_(b: *Build) !void {
 
         // Generated Code
         // TODO: exit with a better error early if these files do not exist. it is an indication someone ran `zig build` directly without the code generators.
-        obj.addModule("generated/ZigGeneratedClasses.zig", b.createModule(.{
-            .source_file = .{ .path = b.fmt("{s}/ZigGeneratedClasses.zig", .{generated_code_directory}) },
+        obj.addModule("ZigGeneratedClasses", b.createModule(.{
+            .source_file = .{ .path = b.pathJoin(&.{ generated_code_directory, "ZigGeneratedClasses.zig" }) },
         }));
-        obj.addModule("generated/ResolvedSourceTag.zig", b.createModule(.{
-            .source_file = .{ .path = b.fmt("{s}/ResolvedSourceTag.zig", .{generated_code_directory}) },
+        obj.addModule("ResolvedSourceTag", b.createModule(.{
+            .source_file = .{ .path = b.pathJoin(&.{ generated_code_directory, "ResolvedSourceTag.zig" }) },
         }));
 
         obj.linkLibC();
@@ -408,6 +419,7 @@ pub fn build_(b: *Build) !void {
         obj.strip = false;
         obj.omit_frame_pointer = optimize != .Debug;
         obj.subsystem = .Console;
+
         // Disable stack probing on x86 so we don't need to include compiler_rt
         if (target.getCpuArch().isX86() or target.isWindows()) obj.disable_stack_probing = true;
 

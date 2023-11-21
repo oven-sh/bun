@@ -277,7 +277,7 @@ pub const BunxCommand = struct {
             PATH = try std.fmt.allocPrint(
                 ctx.allocator,
                 "{s}/{s}--bunx/node_modules/.bin",
-                .{temp_dir, package_fmt},
+                .{ temp_dir, package_fmt },
             );
         }
         try this_bundler.env.map.put("PATH", PATH);
@@ -367,7 +367,7 @@ pub const BunxCommand = struct {
         var bunx_install_dir_path = try std.fmt.allocPrint(
             ctx.allocator,
             "{s}/{s}--bunx",
-            .{temp_dir, package_fmt},
+            .{ temp_dir, package_fmt },
         );
 
         // TODO: fix this after zig upgrade

@@ -4289,7 +4289,7 @@ pub fn fmtUTF16(buf: []const u16) FormatUTF16 {
 }
 
 pub fn fmtOSPath(buf: bun.OSPathSliceWithoutSentinel) FormatUTF16 {
-    return if(Environment.isWindows) FormatUTF16{ .buf = buf } else @compileError("TODO");
+    return if (Environment.isWindows) FormatUTF16{ .buf = buf } else @compileError("TODO");
 }
 
 pub fn formatLatin1(slice_: []const u8, writer: anytype) !void {

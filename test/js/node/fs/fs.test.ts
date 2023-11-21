@@ -486,7 +486,7 @@ it("mkdtempSync() non-exist dir #2568", () => {
   try {
     expect(mkdtempSync("/tmp/hello/world")).toBeFalsy();
   } catch (err: any) {
-    expect(err?.errno).toBe(process.platform === 'win32' ? -4058 : -2);
+    expect(err?.errno).toBe(process.platform === "win32" ? -4058 : -2);
   }
 });
 

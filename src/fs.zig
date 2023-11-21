@@ -526,7 +526,7 @@ pub const FileSystem = struct {
         pub var win_tempdir_cache: ?[]const u8 = undefined;
 
         pub fn platformTempDir() []const u8 {
-            return switch(Environment.os) {
+            return switch (Environment.os) {
                 // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw#remarks
                 .windows => win_tempdir_cache orelse {
                     const value = bun.getenvZ("TMP") orelse bun.getenvZ("TEMP") orelse brk: {

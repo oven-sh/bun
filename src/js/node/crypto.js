@@ -12035,6 +12035,7 @@ const {
   createPrivateKey,
   generateKeySync,
   generateKeyPairSync,
+  sign: nativeSign,
 } = $lazy("internal/crypto");
 
 const kCryptoKey = Symbol.for("::bunKeyObjectCryptoKey::");
@@ -12291,52 +12292,36 @@ function _createPublicKey(key) {
 }
 crypto_exports.createPublicKey = _createPublicKey;
 crypto_exports.KeyObject = KeyObject;
-const _createSign = crypto_exports.createSign;
+var webcrypto = crypto;
+var _subtle = webcrypto.subtle;
 crypto_exports.sign = function (algorithm, data, key, callback) {
-  if (!algorithm) {
-    // if we dont have algorithm, we need to get it from key
-    if (key instanceof KeyObject) {
-      key = key[kCryptoKey];
-      algorithm = key.algorithm.name;
-    } else if (key instanceof CryptoKey) {
-      algorithm = key.algorithm.name;
-    } else {
-      key = _createPrivateKey(key);
-      key = key[kCryptoKey];
-      algorithm = key.algorithm.name;
-    }
+  // key must be a CrytoKey
+  if (key instanceof KeyObject) {
+    key = key[kCryptoKey];
+  } else if (!(key instanceof CryptoKey)) {
+    key = _createPrivateKey(key);
+    key = key[kCryptoKey];
   }
-
-  if (typeof data === "string") {
-    data = Buffer.from(data);
+  if (callback) {
+    //TODO: replace with custom async version to match nodejs behavior
+    _subtle
+      .sign(
+        {
+          name: key.algorithm.name,
+          hash: algorithm || "SHA-256",
+        },
+        key,
+        data,
+      )
+      .then(result => callback(null, result))
+      .catch(callback);
+    return;
   }
-  algorithm = algorithm?.toLowerCase();
-  if (typeof callback === "function") {
-    try {
-      if (algorithm === "ed25519") {
-        globalThis.crypto.subtle
-          .sign(
-            {
-              name: algorithm,
-              hash: "SHA-256",
-            },
-            key,
-            data,
-          )
-          .then(result => {
-            callback(null, result);
-          })
-          .catch(callback);
-      } else {
-        const result = _createSign(algorithm).update(data).sign(key);
-        callback(null, result);
-      }
-    } catch (err) {
-      callback(err);
-    }
-  } else {
-    return _createSign(algorithm).update(data).sign(key);
+  // sync sign versions
+  if (algorithm) {
+    return nativeSign(key, data, algorithm);
   }
+  return nativeSign(key, data);
 };
 const _createVerify = crypto_exports.createVerify;
 crypto_exports.verify = function (algorithm, data, key, signature, callback) {
@@ -12352,7 +12337,6 @@ crypto_exports.verify = function (algorithm, data, key, signature, callback) {
   }
 };
 
-var webcrypto = crypto;
 __export(crypto_exports, {
   DEFAULT_ENCODING: () => DEFAULT_ENCODING,
   getRandomValues: () => getRandomValues,
@@ -12363,7 +12347,7 @@ __export(crypto_exports, {
   scryptSync: () => scryptSync,
   timingSafeEqual: () => timingSafeEqual,
   webcrypto: () => webcrypto,
-  subtle: () => webcrypto.subtle,
+  subtle: () => _subtle,
 });
 
 export default crypto_exports;

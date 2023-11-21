@@ -41,6 +41,7 @@ public:
 
     // Operations can be performed directly.
     static ExceptionOr<Vector<uint8_t>> platformSign(const CryptoKeyHMAC&, const Vector<uint8_t>&);
+    static ExceptionOr<Vector<uint8_t>> platformSignWithAlgorithm(const CryptoKeyHMAC&, CryptoAlgorithmIdentifier algorithm, const Vector<uint8_t>&);
     static ExceptionOr<bool> platformVerify(const CryptoKeyHMAC&, const Vector<uint8_t>&, const Vector<uint8_t>&);
 
 private:

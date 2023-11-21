@@ -1352,8 +1352,7 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
     switch (id) {
         case CryptoKeyClass::HMAC: {
             const auto& hmac = downcast<WebCore::CryptoKeyHMAC>(wrapped);
-            // TODO: fix this hash should be the informed by the user
-            auto result = WebCore::CryptoAlgorithmHMAC::platformSign(hmac, vectorData);
+            auto result = (customHash) ? WebCore::CryptoAlgorithmHMAC::platformSignWithAlgorithm(hmac, hash, vectorData) : WebCore::CryptoAlgorithmHMAC::platformSign(hmac, vectorData);
             if (result.hasException()) {
                 WebCore::propagateException(*globalObject, scope, result.releaseException());
                 return JSC::JSValue::encode(JSC::JSValue {});
@@ -1368,10 +1367,6 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
         }
         case CryptoKeyClass::OKP: {
             const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(wrapped);
-            if(okpKey.namedCurve() != CryptoKeyOKP::NamedCurve::Ed25519) {
-                JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key type curve X25519 not supported"_s);
-                return JSC::JSValue::encode(JSC::JSValue {});
-            }
             auto result = WebCore::CryptoAlgorithmEd25519::platformSign(okpKey, vectorData);
             if (result.hasException()) {
                 WebCore::propagateException(*globalObject, scope, result.releaseException());
@@ -1394,6 +1389,7 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
             CryptoAlgorithmEcdsaParams params;
             params.identifier = CryptoAlgorithmIdentifier::ECDSA;
             params.hashIdentifier = hash;
+            // TODO: use the right encoding
             auto result = WebCore::CryptoAlgorithmECDSA::platformSign(params, ec, vectorData);
             auto resultData = result.releaseReturnValue();
             auto size = resultData.size();
@@ -1407,8 +1403,7 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
             const auto& rsa = downcast<WebCore::CryptoKeyRSA>(wrapped);
             switch(rsa.algorithmIdentifier()) {
                 case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5: {
-                    // TODO: fix this hash should be the informed by the user
-                    auto result = WebCore::CryptoAlgorithmRSASSA_PKCS1_v1_5::platformSign(rsa, vectorData);
+                    auto result = (customHash) ? WebCore::CryptoAlgorithmRSASSA_PKCS1_v1_5::platformSignWithAlgorithm(rsa, hash, vectorData) : CryptoAlgorithmRSASSA_PKCS1_v1_5::platformSign(rsa, vectorData);
                     if (result.hasException()) {
                         WebCore::propagateException(*globalObject, scope, result.releaseException());
                         return JSC::JSValue::encode(JSC::JSValue {});

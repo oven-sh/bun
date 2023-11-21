@@ -284,6 +284,30 @@ extern "C"
     }
   }
 
+  void uws_app_invalid_request(int ssl, uws_app_t *app, uws_invalid_request_handler handler, void *user_data)
+  {
+    if (ssl)
+    {
+      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
+      if (handler == nullptr)
+      {
+        return;
+      }
+      uwsApp->invalid_request([handler, user_data](auto * data, int length)
+                  { handler(data, length, user_data); });
+    }
+    else
+    {
+      uWS::App *uwsApp = (uWS::App *)app;
+      if (handler == nullptr)
+      {
+        return;
+      }
+      uwsApp->invalid_request([handler, user_data](auto * data, int length)
+                  { handler(data, length, user_data); });
+    }
+  }
+
   void uws_app_run(int ssl, uws_app_t *app)
   {
     if (ssl)

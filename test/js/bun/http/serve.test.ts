@@ -1331,10 +1331,14 @@ it("handle invalid protocol(#6583)", async () => {
 }, 2000);
 
 it("can handle invalid requests", async done => {
+  let invalidRequestCallback = null;
   const server = await Bun.serve({
     port: 0,
     fetch(req) {
       return new Response("Pass!");
+    },
+    invalidRequest(data) {
+      if (invalidRequestCallback) invalidRequestCallback(data);
     },
   });
   const writeVerify = (socket, str) => {
@@ -1471,11 +1475,27 @@ it("can handle invalid requests", async done => {
         "\r\n",
       ].join("\r\n"),
       "HTTP/1.1 200 OK\r\ncontent-type: text/plain;charset=utf-8\r\n",
+      true,
     ],
   ];
-  for (const [req, res] of list) {
+  for (const [req, res, ignoreServerInvalid] of list) {
     try {
+      let p = null;
+
+      if (ignoreServerInvalid !== true) {
+        p = new Promise((resolve, reject) => {
+          const tm = setTimeout(() => {
+            invalidRequestCallback = null;
+            reject(new Error("Timeout in invalidRequestCallback"));
+          }, 2000);
+          invalidRequestCallback = d => {
+            clearTimeout(tm);
+            resolve(d);
+          };
+        });
+      }
       await request(req, res);
+      if (p) await p;
     } catch (err) {
       server.stop(true);
       done(err);

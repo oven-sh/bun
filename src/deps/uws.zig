@@ -1443,6 +1443,7 @@ pub const WebSocketBehavior = extern struct {
 };
 pub const uws_listen_handler = ?*const fn (?*ListenSocket, ?*anyopaque) callconv(.C) void;
 pub const uws_method_handler = ?*const fn (*uws_res, *Request, ?*anyopaque) callconv(.C) void;
+pub const uws_invalid_request_handler = ?*const fn ([*c]const u8, c_int, ?*anyopaque) callconv(.C) void;
 pub const uws_filter_handler = ?*const fn (*uws_res, i32, ?*anyopaque) callconv(.C) void;
 pub const uws_missing_server_handler = ?*const fn ([*c]const u8, ?*anyopaque) callconv(.C) void;
 
@@ -1706,6 +1707,28 @@ pub fn NewApp(comptime ssl: bool) type {
                 unreachable;
             }
             uws_app_any(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, user_data);
+        }
+        pub fn invalid_request(
+            app: *ThisApp,
+            comptime UserDataType: type,
+            user_data: UserDataType,
+            comptime handler: (fn (UserDataType, [*c]const u8, c_int) void),
+        ) void {
+            if (comptime is_bindgen) {
+                unreachable;
+            }
+            const Wrapper = struct {
+                pub fn handle(req_data: [*c]const u8, length: c_int, data: ?*anyopaque) callconv(.C) void {
+                    if (comptime UserDataType != void) {
+                        @call(.always_inline, handler, .{
+                            @as(UserDataType, @ptrCast(@alignCast(data.?))),
+                            req_data,
+                            length,
+                        });
+                    }
+                }
+            };
+            uws_app_invalid_request(ssl_flag, @as(*uws_app_t, @ptrCast(app)), Wrapper.handle, user_data);
         }
         pub fn run(app: *ThisApp) void {
             if (comptime is_bindgen) {
@@ -2215,6 +2238,7 @@ extern fn uws_app_head(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler
 extern fn uws_app_connect(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
 extern fn uws_app_trace(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
 extern fn uws_app_any(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
+extern fn uws_app_invalid_request(ssl: i32, app: *uws_app_t, handler: uws_invalid_request_handler, user_data: ?*anyopaque) void;
 extern fn uws_app_run(ssl: i32, *uws_app_t) void;
 extern fn uws_app_listen(ssl: i32, app: *uws_app_t, port: i32, handler: uws_listen_handler, user_data: ?*anyopaque) void;
 extern fn uws_app_listen_with_config(

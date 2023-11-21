@@ -36,6 +36,8 @@ private:
     std::vector<MoveOnlyFunction<void(HttpResponse<SSL> *, int)>> filterHandlers;
 
     MoveOnlyFunction<void(const char *hostname)> missingServerNameHandler;
+    MoveOnlyFunction<void(const char* data, int length)> invalidRequestHandler;
+    bool hasInvalidRequestHandler = false;
 
     struct RouterData {
         HttpResponse<SSL> *httpResponse;

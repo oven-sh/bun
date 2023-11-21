@@ -542,6 +542,14 @@ public:
         return std::move(*this);
     }
 
+    TemplatedApp &&invalid_request(MoveOnlyFunction<void(const char*, int)> &&handler) {
+        if (httpContext) {
+            httpContext->getSocketContextData()->invalidRequestHandler = std::move(handler);
+            httpContext->getSocketContextData()->hasInvalidRequestHandler = true;
+        }
+        return std::move(*this);
+    }
+
     /* Host, port, callback */
     TemplatedApp &&listen(std::string host, int port, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler) {
         if (!host.length()) {

@@ -290,6 +290,48 @@ describe("parse shell", () => {
     // console.log("Result", JSON.stringify(result));
     expect(result).toEqual(expected);
   });
+
+  test("cmd subst edgecase", () => {
+    const expected = {
+      "stmts": [
+        {
+          "exprs": [
+            {
+              "cmd": {
+                "assigns": [],
+                "name_and_args": [
+                  { "simple": { "Text": "echo" } },
+                  {
+                    "simple": {
+                      "cmd_subst": {
+                        "cmd": {
+                          "assigns": [{ "label": "FOO", "value": { "simple": { "Text": "bar" } }, "exported": false }],
+                          "name_and_args": [{ "simple": { "Var": "FOO" } }],
+                          "redirect": {
+                            "stdin": false,
+                            "stdout": false,
+                            "stderr": false,
+                            "append": false,
+                            "__unused": 0,
+                          },
+                          "redirect_file": null,
+                        },
+                      },
+                    },
+                  },
+                ],
+                "redirect": { "stdin": false, "stdout": false, "stderr": false, "append": false, "__unused": 0 },
+                "redirect_file": null,
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = JSON.parse($.parse`echo $(FOO=bar $FOO)`);
+    expect(result).toEqual(expected);
+  });
 });
 
 describe("parse shell invalid input", () => {

@@ -413,4 +413,211 @@ describe("lex shell", () => {
     const result = JSON.parse($.lex`echo foo > ${buffer} && echo lmao > ${buffer2}`);
     expect(result).toEqual(expected);
   });
+
+  test("cmd_sub_dollar", () => {
+    const expected = [
+      {
+        Text: "echo",
+      },
+      {
+        Delimit: {},
+      },
+      {
+        Text: "foo",
+      },
+      {
+        Delimit: {},
+      },
+      {
+        CmdSubstBegin: {},
+      },
+      {
+        Text: "ls",
+      },
+      {
+        Delimit: {},
+      },
+      {
+        CmdSubstEnd: {},
+      },
+      {
+        Eof: {},
+      },
+    ];
+
+    const result = $.lex`echo foo $(ls)`;
+
+    expect(JSON.parse(result)).toEqual(expected);
+  });
+
+  test("cmd_sub_dollar_nested", () => {
+    const expected = [
+      {
+        Text: "echo",
+      },
+      {
+        Delimit: {},
+      },
+      {
+        Text: "foo",
+      },
+      {
+        Delimit: {},
+      },
+      {
+        CmdSubstBegin: {},
+      },
+      {
+        Text: "ls",
+      },
+      {
+        Delimit: {},
+      },
+      {
+        CmdSubstBegin: {},
+      },
+      {
+        Text: "ls",
+      },
+      {
+        Delimit: {},
+      },
+      {
+        CmdSubstEnd: {},
+      },
+      {
+        CmdSubstBegin: {},
+      },
+      {
+        Text: "ls",
+      },
+      {
+        Delimit: {},
+      },
+      {
+        CmdSubstEnd: {},
+      },
+      {
+        Delimit: {},
+      },
+      {
+        CmdSubstEnd: {},
+      },
+      {
+        Eof: {},
+      },
+    ];
+
+    const result = $.lex`echo foo $(ls $(ls) $(ls))`;
+    // console.log(JSON.parse(result));
+    expect(JSON.parse(result)).toEqual(expected);
+  });
+
+  test("cmd_sub_edgecase", () => {
+    const expected = [
+      {
+        Text: "echo",
+      },
+      {
+        Delimit: {},
+      },
+      {
+        CmdSubstBegin: {},
+      },
+      {
+        Text: "FOO=bar",
+      },
+      {
+        Delimit: {},
+      },
+      {
+        Var: "FOO",
+      },
+      {
+        Delimit: {},
+      },
+      {
+        CmdSubstEnd: {},
+      },
+      {
+        Eof: {},
+      },
+    ];
+
+    const result = $.lex`echo $(FOO=bar $FOO)`;
+
+    expect(JSON.parse(result)).toEqual(expected);
+  });
+
+  test("cmd_sub_combined_word", () => {
+    const expected = [
+      {
+        Text: "echo",
+      },
+      {
+        Delimit: {},
+      },
+      {
+        CmdSubstBegin: {},
+      },
+      {
+        Text: "FOO=bar",
+      },
+      {
+        Delimit: {},
+      },
+      {
+        Var: "FOO",
+      },
+      { Delimit: {} },
+      {
+        CmdSubstEnd: {},
+      },
+      { Text: "NICE" },
+      { Delimit: {} },
+      {
+        Eof: {},
+      },
+    ];
+
+    const result = $.lex`echo $(FOO=bar $FOO)NICE`;
+
+    expect(JSON.parse(result)).toEqual(expected);
+  });
+
+  test("cmd_sub_backtick", () => {
+    const expected = [
+      {
+        Text: "echo",
+      },
+      {
+        Delimit: {},
+      },
+      {
+        Text: "foo",
+      },
+      {
+        Delimit: {},
+      },
+      {
+        CmdSubstBegin: {},
+      },
+      {
+        Text: "ls",
+      },
+      {
+        Delimit: {},
+      },
+      {
+        CmdSubstEnd: {},
+      },
+      {
+        Eof: {},
+      },
+    ];
+
+    const result = $.lex`echo foo \`ls\``;
+
+    expect(JSON.parse(result)).toEqual(expected);
+  });
 });

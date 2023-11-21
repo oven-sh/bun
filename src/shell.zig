@@ -1,6 +1,7 @@
 const bun = @import("root").bun;
 const std = @import("std");
 const builtin = @import("builtin");
+const Arena = std.heap.ArenaAllocator;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 const Subprocess =
@@ -50,9 +51,40 @@ pub const Interpreter = struct {
     jsobjs: []JSValue,
 
     const IO = struct {
-        stdin: bun.FileDescriptor,
-        stdout: bun.FileDescriptor,
-        stderr: bun.FileDescriptor,
+        stdin: Kind = .std,
+        stdout: Kind = .std,
+        stderr: Kind = .std,
+
+        const Kind = union(enum) {
+            std,
+            fd: bun.FileDescriptor,
+            pipe,
+            ignore,
+
+            fn close(this: Kind) void {
+                switch (this) {
+                    .fd => {
+                        closefd(this.fd);
+                    },
+                    else => {},
+                }
+            }
+
+            fn to_subproc_stdio(this: Kind) Subprocess.Stdio {
+                return switch (this) {
+                    .std => .inherit,
+                    .fd => |val| .{ .fd = val },
+                    .pipe => .{ .pipe = null },
+                    .ignore => .ignore,
+                };
+            }
+        };
+
+        fn to_subproc_stdio(this: IO, stdio: *[3]Subprocess.Stdio) void {
+            stdio[bun.STDIN_FD] = this.stdin.to_subproc_stdio();
+            stdio[bun.STDOUT_FD] = this.stdout.to_subproc_stdio();
+            stdio[bun.STDERR_FD] = this.stderr.to_subproc_stdio();
+        }
     };
 
     const Exec = union(enum) {
@@ -74,16 +106,16 @@ pub const Interpreter = struct {
     }
 
     pub fn interpret(self: *Interpreter, script: ast.Script) anyerror!void {
-        var stdio = .{
-            .stdin = bun.STDIN_FD,
-            .stdout = bun.STDOUT_FD,
-            .stderr = bun.STDERR_FD,
-        };
+        var stdio = Interpreter.default_io();
         for (script.stmts) |*stmt| {
             for (stmt.exprs) |*expr| {
                 _ = try self.interpret_expr(expr, &stdio);
             }
         }
+    }
+
+    fn default_io() IO {
+        return .{};
     }
 
     fn interpret_expr(
@@ -200,19 +232,20 @@ pub const Interpreter = struct {
                     cmd_count,
                     io,
                 );
-
                 var file_to_read_from = Interpreter.pipeline_file_to_read(pipes, i, io);
+                defer {
+                    file_to_read_from.close();
+                    file_to_write_to.close();
+                }
 
                 var cmd_io = IO{
                     .stdin = file_to_read_from,
                     .stdout = file_to_write_to,
                     .stderr = io.stderr,
                 };
-                log("Spawn: proc_idx={d} stdin={d} stdout={d} stderr={d}\n", .{ i, file_to_read_from, file_to_write_to, io.stderr });
+                log("Spawn: proc_idx={d} stdin={any} stdout={any} stderr={any}\n", .{ i, file_to_read_from, file_to_write_to, io.stderr });
 
-                var cmd_proc = try self.init_cmd(cmd, &cmd_io);
-                closefd(cmd_io.stdin);
-                closefd(cmd_io.stdout);
+                var cmd_proc = try self.init_cmd(cmd, &cmd_io, false);
 
                 cmd_procs[i] = cmd_proc;
                 i += 1;
@@ -265,17 +298,17 @@ pub const Interpreter = struct {
     }
 
     // cmd1 -> cmd2 -> cmd3
-    fn pipeline_file_to_write(pipes: []Pipe, proc_idx: usize, cmd_count: usize, io: *IO) bun.FileDescriptor {
+    fn pipeline_file_to_write(pipes: []Pipe, proc_idx: usize, cmd_count: usize, io: *IO) IO.Kind {
         if (proc_idx == cmd_count - 1) return io.stdout;
-        return pipes[proc_idx][1];
+        return .{ .fd = pipes[proc_idx][1] };
     }
 
-    fn pipeline_file_to_read(pipes: []Pipe, proc_idx: usize, io: *IO) bun.FileDescriptor {
+    fn pipeline_file_to_read(pipes: []Pipe, proc_idx: usize, io: *IO) IO.Kind {
         if (proc_idx == 0) return io.stdin;
-        return pipes[proc_idx - 1][0];
+        return .{ .fd = pipes[proc_idx - 1][0] };
     }
 
-    fn init_cmd(self: *Interpreter, cmd: *const ast.Cmd, io: *IO) !*Subprocess {
+    fn init_cmd(self: *Interpreter, cmd: *const ast.Cmd, io: *IO, comptime in_cmd_subst: bool) !*Subprocess {
         self.cmd_local_env.clearRetainingCapacity();
         for (cmd.assigns) |*assign| {
             try self.interpret_assign(assign);
@@ -307,18 +340,31 @@ pub const Interpreter = struct {
         };
 
         spawn_args.argv = std.ArrayListUnmanaged(?[*:0]const u8){ .items = args, .capacity = args.len };
-        spawn_args.stdio[bun.STDIN_FD] = if (io.stdin == bun.STDIN_FD) .inherit else .{ .fd = io.stdin };
-        spawn_args.stdio[bun.STDOUT_FD] = if (io.stdout == bun.STDOUT_FD) .inherit else .{ .fd = io.stdout };
-        spawn_args.stdio[bun.STDERR_FD] = if (io.stderr == bun.STDERR_FD) .inherit else .{ .fd = io.stderr };
+        io.to_subproc_stdio(&spawn_args.stdio);
+        // spawn_args.stdio[bun.STDIN_FD] = if (io.stdin == bun.STDIN_FD) .inherit else .{ .fd = io.stdin };
+        // spawn_args.stdio[bun.STDOUT_FD] = if (io.stdout == bun.STDOUT_FD) .inherit else .{ .fd = io.stdout };
+        // spawn_args.stdio[bun.STDERR_FD] = if (io.stderr == bun.STDERR_FD) .inherit else .{ .fd = io.stderr };
 
         if (cmd.redirect_file) |redirect| {
-            switch (redirect) {
+            if (comptime in_cmd_subst) {
+                if (cmd.redirect.stdin) {
+                    spawn_args.stdio[bun.STDIN_FD] = .ignore;
+                }
+
+                if (cmd.redirect.stdout) {
+                    spawn_args.stdio[bun.STDOUT_FD] = .ignore;
+                }
+
+                if (cmd.redirect.stderr) {
+                    spawn_args.stdio[bun.STDERR_FD] = .ignore;
+                }
+            } else switch (redirect) {
                 .jsbuf => |val| {
                     if (self.jsobjs[val.idx].asArrayBuffer(self.globalThis)) |buf| {
-                        const stdio: Subprocess.Stdio = .{ .array_buffer = JSC.ArrayBuffer.Strong{
+                        const stdio: Subprocess.Stdio = .{ .array_buffer = .{ .buf = JSC.ArrayBuffer.Strong{
                             .array_buffer = buf,
                             .held = JSC.Strong.create(buf.value, self.globalThis),
-                        } };
+                        }, .from_jsc = true } };
 
                         if (cmd.redirect.stdin) {
                             spawn_args.stdio[bun.STDIN_FD] = stdio;
@@ -380,10 +426,14 @@ pub const Interpreter = struct {
     }
 
     fn interpret_cmd(self: *Interpreter, cmd: *const ast.Cmd, io: *IO) !bool {
+        var subprocess = try self.init_cmd(cmd, io, false);
+        defer subprocess.unref(false);
+        return try self.interpret_cmd_impl(subprocess);
+    }
+
+    fn interpret_cmd_impl(self: *Interpreter, subprocess: *Subprocess) !bool {
         log("Interpret cmd", .{});
         var jsc_vm = self.globalThis.bunVM();
-        var subprocess = try self.init_cmd(cmd, io);
-        defer subprocess.unref(false);
         log("Done waiting {any}", .{subprocess.hasExited()});
         // this seems hacky and bad
         while (!subprocess.hasExited()) {
@@ -402,45 +452,113 @@ pub const Interpreter = struct {
         return (subprocess.exit_code orelse 1) == 0;
     }
 
-    fn eval_atom(self: *Interpreter, atom: *const ast.Atom) ![:0]const u8 {
-        const string_size = self.eval_atom_size(atom);
-        var str = try self.allocator.allocSentinel(u8, string_size, 0);
+    fn eval_atom(self: *Interpreter, atom: *const ast.Atom) anyerror![:0]const u8 {
+        var has_cmd_subst = false;
+        const string_size = self.eval_atom_size_hint(atom, &has_cmd_subst);
+        if (!has_cmd_subst) {
+            var str = try self.allocator.allocSentinel(u8, string_size, 0);
+            switch (atom.*) {
+                .simple => |*simp| {
+                    @memcpy(str, self.eval_atom_simpl_no_cmd_subst(simp));
+                },
+                .compound => |cmp| {
+                    var i: usize = 0;
+                    for (cmp.atoms) |*simple_atom| {
+                        const txt = self.eval_atom_simpl_no_cmd_subst(simple_atom);
+                        var slice = str[i .. i + txt.len];
+                        @memcpy(slice, txt[0..txt.len]);
+                        i += txt.len;
+                    }
+                },
+            }
+            return str;
+        }
+
+        // + 1 for sentinel
+        var str_list = try std.ArrayList(u8).initCapacity(self.allocator, string_size + 1);
         switch (atom.*) {
             .simple => |*simp| {
-                @memcpy(str, self.eval_atom_simpl(simp));
+                try self.eval_atom_simpl_with_cmd_subst(simp, &str_list);
             },
             .compound => |cmp| {
-                var i: usize = 0;
                 for (cmp.atoms) |*simple_atom| {
-                    const txt = self.eval_atom_simpl(simple_atom);
-                    var slice = str[i .. i + txt.len];
-                    @memcpy(slice, txt[0..txt.len]);
-                    i += txt.len;
+                    try self.eval_atom_simpl_with_cmd_subst(simple_atom, &str_list);
                 }
             },
         }
-        return str;
+        try str_list.append(0);
+        return str_list.items[0 .. str_list.items.len - 1 :0];
     }
 
-    fn eval_atom_size(self: *const Interpreter, atom: *const ast.Atom) usize {
+    fn eval_atom_size_hint(self: *const Interpreter, atom: *const ast.Atom, has_cmd_subst: *bool) usize {
         return switch (@as(ast.Atom.Tag, atom.*)) {
-            .simple => self.eval_atom_size_simple(&atom.simple),
-            .compound => self.eval_atom_size_simple(&atom.simple),
+            .simple => self.eval_atom_size_simple(&atom.simple, has_cmd_subst),
+            .compound => {
+                var out: usize = 0;
+                for (atom.compound.atoms) |*simple| {
+                    out += self.eval_atom_size_simple(simple, has_cmd_subst);
+                }
+                return out;
+            },
         };
     }
 
-    fn eval_atom_simpl(self: *const Interpreter, atom: *const ast.SimpleAtom) []const u8 {
-        return switch (atom.*) {
-            .Text => |txt| txt,
-            .Var => |label| return self.eval_var(label),
-        };
-    }
-
-    fn eval_atom_size_simple(self: *const Interpreter, simple: *const ast.SimpleAtom) usize {
+    fn eval_atom_size_simple(self: *const Interpreter, simple: *const ast.SimpleAtom, has_cmd_subst: *bool) usize {
         return switch (simple.*) {
             .Text => |txt| txt.len,
             .Var => |label| self.eval_var(label).len,
+            .cmd_subst => |subst| {
+                if (@as(ast.CmdOrAssigns.Tag, subst.*) == .assigns) {
+                    return 0;
+                }
+                has_cmd_subst.* = true;
+                return 0;
+            },
         };
+    }
+
+    fn eval_atom_simpl_no_cmd_subst(self: *const Interpreter, atom: *const ast.SimpleAtom) []const u8 {
+        return switch (atom.*) {
+            .Text => |txt| txt,
+            .Var => |label| return self.eval_var(label),
+            .cmd_subst => {
+                if (bun.Environment.allow_assert) {
+                    @panic("Unexpected cmd_subst");
+                }
+                unreachable;
+            },
+        };
+    }
+
+    fn eval_atom_simpl_with_cmd_subst(self: *Interpreter, atom: *const ast.SimpleAtom, str_list: *std.ArrayList(u8)) !void {
+        return switch (atom.*) {
+            .Text => |txt| {
+                try str_list.appendSlice(txt);
+            },
+            .Var => |label| {
+                try str_list.appendSlice(self.eval_var(label));
+            },
+            .cmd_subst => |cmd| {
+                switch (cmd.*) {
+                    .assigns => {},
+                    .cmd => |*the_cmd| {
+                        try self.eval_atom_cmd_subst(the_cmd, str_list);
+                    },
+                }
+            },
+        };
+    }
+
+    fn eval_atom_cmd_subst(self: *Interpreter, cmd: *const ast.Cmd, array_list: *std.ArrayList(u8)) !void {
+        var io = Interpreter.default_io();
+        io.stdout = .pipe;
+        var subprocess = try self.init_cmd(cmd, &io, true);
+        defer subprocess.unref(false);
+        _ = try self.interpret_cmd_impl(subprocess);
+
+        // We set stdout to .pipe so it /should/ create a Pipe with buffered output
+        const output = subprocess.stdout.toSlice() orelse @panic("This should not happen");
+        try array_list.appendSlice(output);
     }
 
     fn eval_atom_size_compound(self: *const Interpreter, compound: *const ast.CompoundAtom) usize {
@@ -613,6 +731,7 @@ pub const AST = struct {
     pub const SimpleAtom = union(enum) {
         Var: []const u8,
         Text: []const u8,
+        cmd_subst: *CmdOrAssigns,
     };
 
     pub const CompoundAtom = struct {
@@ -620,6 +739,7 @@ pub const AST = struct {
     };
 };
 
+// FIXME command substitution can be any arbitrary expression not just command
 pub const Parser = struct {
     strpool: []const u8,
     tokens: []const Token,
@@ -840,11 +960,20 @@ pub const Parser = struct {
         var array_alloc = std.heap.stackFallback(@sizeOf(AST.SimpleAtom), self.alloc);
         var exprs = try std.ArrayList(AST.SimpleAtom).initCapacity(array_alloc.get(), 1);
         {
-            while (!self.match(.Delimit)) {
+            while (!self.match_any(&.{ .Delimit, .Eof })) {
                 const next = self.peek_n(1);
                 const next_delimits = next == .Delimit or next == .Eof;
                 const peeked = self.peek();
                 switch (peeked) {
+                    .CmdSubstBegin => {
+                        _ = self.expect(.CmdSubstBegin);
+                        const subst = try self.allocate(AST.CmdOrAssigns, try self.parse_cmd_subst());
+                        try exprs.append(.{ .cmd_subst = subst });
+                        if (next_delimits) {
+                            _ = self.expect_delimit();
+                            break;
+                        }
+                    },
                     .Text => |txtrng| {
                         _ = self.expect(.Text);
                         const txt = self.text(txtrng);
@@ -876,6 +1005,12 @@ pub const Parser = struct {
             },
             else => .{ .compound = .{ .atoms = exprs.items[0..exprs.items.len] } },
         };
+    }
+
+    fn parse_cmd_subst(self: *Parser) anyerror!AST.CmdOrAssigns {
+        const cmd_or_assigns = self.parse_cmd_or_assigns();
+        _ = self.expect(.CmdSubstEnd);
+        return cmd_or_assigns;
     }
 
     fn allocate(self: *const Parser, comptime T: type, val: T) !*T {
@@ -980,6 +1115,8 @@ pub const TokenTag = enum {
     Semicolon,
     BraceBegin,
     BraceEnd,
+    CmdSubstBegin,
+    CmdSubstEnd,
     Export,
     Var,
     Text,
@@ -1011,6 +1148,8 @@ pub const Token = union(TokenTag) {
 
     BraceBegin,
     BraceEnd,
+    CmdSubstBegin,
+    CmdSubstEnd,
 
     Export,
 
@@ -1057,6 +1196,9 @@ pub const Lexer = struct {
     tokens: ArrayList(Token),
     state: State = .Normal,
     delimit_quote: bool = false,
+    in_cmd_subst: ?CmdSubstKind = null,
+
+    const CmdSubstKind = enum { backtick, dollar };
 
     pub const js_objref_prefix = "$__bun_";
 
@@ -1087,6 +1229,31 @@ pub const Lexer = struct {
         };
     }
 
+    fn make_sublexer(self: *Lexer, kind: CmdSubstKind) Lexer {
+        var sublexer = .{
+            .src = self.src,
+            .strpool = self.strpool,
+            .tokens = self.tokens,
+            .in_cmd_subst = kind,
+
+            .i = self.i,
+            .word_start = self.word_start,
+            .j = self.j,
+        };
+        return sublexer;
+    }
+
+    fn continue_from_sublexer(self: *Lexer, sublexer: *Lexer) void {
+        self.strpool = sublexer.strpool;
+        self.tokens = sublexer.tokens;
+
+        self.i = sublexer.i;
+        self.word_start = sublexer.word_start;
+        self.j = sublexer.j;
+        self.state = sublexer.state;
+        self.delimit_quote = sublexer.delimit_quote;
+    }
+
     fn make_snapshot(self: *Lexer) BacktrackSnapshot {
         return .{
             .i = self.i,
@@ -1105,7 +1272,12 @@ pub const Lexer = struct {
         self.delimit_quote = snap.delimit_quote;
     }
 
-    pub fn lex(self: *Lexer) !void {
+    fn last_tok_tag(self: *Lexer) ?TokenTag {
+        if (self.tokens.items.len == 0) return null;
+        return @as(TokenTag, self.tokens.items[self.tokens.items.len - 1]);
+    }
+
+    pub fn lex(self: *Lexer) Allocator.Error!void {
         while (true) {
             const input = self.eat() orelse {
                 try self.break_word(true);
@@ -1135,8 +1307,27 @@ pub const Lexer = struct {
                         try self.tokens.append(.Semicolon);
                         continue;
                     },
+                    // Command substitution
+                    '`' => {
+                        if (self.in_cmd_subst == .backtick) {
+                            try self.break_word(true);
+                            if (self.last_tok_tag()) |toktag| {
+                                if (toktag != .Delimit) try self.tokens.append(.Delimit);
+                            }
+                            try self.tokens.append(.CmdSubstEnd);
+                            return;
+                        } else {
+                            try self.eat_cmd_subst(.backtick);
+                        }
+                    },
                     '$' => {
                         if (self.state == .Single) break :escaped;
+
+                        const peeked = self.peek() orelse InputChar{ .char = 0 };
+                        if (!peeked.escaped and peeked.char == '(') {
+                            try self.eat_cmd_subst(.dollar);
+                            continue;
+                        }
 
                         // Handle variable
                         try self.break_word(false);
@@ -1149,6 +1340,32 @@ pub const Lexer = struct {
                         self.word_start = self.j;
                         continue;
                     },
+                    ')' => {
+                        if (self.in_cmd_subst != .dollar) {
+                            if (self.state != .Normal) break :escaped;
+                            @panic("Unexpected ')'");
+                        }
+
+                        try self.break_word(true);
+                        if (self.last_tok_tag()) |toktag| {
+                            if (toktag != .Delimit) try self.tokens.append(.Delimit);
+                        }
+                        try self.tokens.append(.CmdSubstEnd);
+                        return;
+                    },
+
+                    '0'...'9' => {
+                        if (self.state != .Normal) break :escaped;
+                        const snapshot = self.make_snapshot();
+                        if (self.eat_redirect(input)) |redirect| {
+                            try self.break_word(true);
+                            try self.tokens.append(.{ .Redirect = redirect });
+                            continue;
+                        }
+                        self.backtrack(snapshot);
+                        break :escaped;
+                    },
+
                     // Operators
                     '|' => {
                         if (self.state == .Single or self.state == .Double) break :escaped;
@@ -1200,7 +1417,7 @@ pub const Lexer = struct {
                             self.state = .Single;
                             continue;
                         }
-                        continue;
+                        break :escaped;
                     },
                     '"' => {
                         if (self.state == .Single) break :escaped;
@@ -1229,21 +1446,12 @@ pub const Lexer = struct {
                 continue;
             }
 
-            switch (char) {
-                '0'...'9' => {
-                    const snapshot = self.make_snapshot();
-                    if (self.eat_redirect(input)) |redirect| {
-                        try self.break_word(true);
-                        try self.tokens.append(.{ .Redirect = redirect });
-                        continue;
-                    }
-                    self.backtrack(snapshot);
-                },
-                else => {},
-            }
-
             try self.strpool.append(char);
             self.j += 1;
+        }
+
+        if (self.in_cmd_subst != null) {
+            @panic("Unclosed command substitution");
         }
 
         try self.tokens.append(.Eof);
@@ -1397,6 +1605,16 @@ pub const Lexer = struct {
         return num;
     }
 
+    fn eat_cmd_subst(self: *Lexer, kind: CmdSubstKind) !void {
+        if (kind == .dollar) {
+            _ = self.eat();
+        }
+        try self.tokens.append(.CmdSubstBegin);
+        var sublexer = self.make_sublexer(kind);
+        try sublexer.lex();
+        self.continue_from_sublexer(&sublexer);
+    }
+
     fn eat_js_obj_ref(self: *Lexer) ?Token {
         const snap = self.make_snapshot();
         if (self.eat_literal(Lexer.js_objref_prefix)) {
@@ -1416,13 +1634,17 @@ pub const Lexer = struct {
         while (self.peek()) |result| {
             const char = result.char;
             const escaped = result.escaped;
-            _ = escaped;
 
             switch (char) {
                 '{', '}', ';', '\'', '\"', ' ', '|', '&', '>', ',' => {
                     return .{ .start = start, .end = self.j };
                 },
                 else => {
+                    if (!escaped and
+                        (self.in_cmd_subst == .dollar and char == ')') or (self.in_cmd_subst == .backtick and char == '`'))
+                    {
+                        return .{ .start = start, .end = self.j };
+                    }
                     _ = self.eat() orelse unreachable;
                     try self.strpool.append(char);
                     self.j += 1;
@@ -1548,6 +1770,8 @@ pub const Test = struct {
 
         BraceBegin,
         BraceEnd,
+        CmdSubstBegin,
+        CmdSubstEnd,
 
         Export,
 
@@ -1575,6 +1799,8 @@ pub const Test = struct {
                 .Semicolon => return .Semicolon,
                 .BraceBegin => return .BraceBegin,
                 .BraceEnd => return .BraceEnd,
+                .CmdSubstBegin => return .CmdSubstBegin,
+                .CmdSubstEnd => return .CmdSubstEnd,
                 .Delimit => return .Delimit,
                 .Eof => return .Eof,
             }

@@ -330,11 +330,13 @@ pub fn shellCmdFromJS(
                     const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ Shell.Lexer.js_objref_prefix, idx });
                     try script.appendSlice(slice);
                     continue;
+                } else if (template_value.isString()) {
+                    const template_value_str = template_value.getZigString(globalThis);
+                    try script.appendSlice(template_value_str.full());
+                    continue;
                 }
                 @panic("Unsupported");
             }
-            const template_value_str = template_value.getZigString(globalThis);
-            try script.appendSlice(template_value_str.full());
         }
     }
     return script;
@@ -452,6 +454,36 @@ const ShellTask = struct {
 
     pub const AsyncShellTask = JSC.ConcurrentPromiseTask(ShellTask);
 };
+
+fn runWithSubstitution(globalThis: *JSC.JSGlobalObject, arena: *bun.ArenaAllocator, script: []const u8, jsobjs: []JSValue) !void {
+    var ranges = std.ArrayList(Shell.Lexer.Range).init(arena.allocator());
+    var backtick_bitset = std.bit_set.IntegerBitSet(10).initEmpty();
+
+    var lexer = Shell.Lexer.new(arena.allocator(), script.items[0..]);
+    try lexer.detect_cmd_substs(&ranges, &backtick_bitset);
+
+    // while (ranges.l
+
+    lexer.lex() catch |err| {
+        globalThis.throwError(err, "failed to lex shell");
+        return JSValue.undefined;
+    };
+    var parser = Shell.Parser.new(arena.allocator(), &lexer, jsobjs.items[0..]) catch |err| {
+        globalThis.throwError(err, "failed to create shell parser");
+        return JSValue.undefined;
+    };
+
+    const script_ast = parser.parse() catch |err| {
+        globalThis.throwError(err, "failed to parse shell");
+        return JSValue.undefined;
+    };
+
+    var interpreter = Shell.Interpreter.new(&arena, globalThis, jsobjs.items[0..]);
+    interpreter.interpret(script_ast) catch {
+        // globalThis.throwError(err, "shell:");
+        return JSValue.undefined;
+    };
+}
 
 pub fn shell(
     globalThis: *JSC.JSGlobalObject,

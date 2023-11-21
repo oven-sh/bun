@@ -274,7 +274,7 @@ pub const Subprocess = struct {
                 .blob, .fd => Readable{ .fd = @as(bun.FileDescriptor, @intCast(fd)) },
                 .array_buffer => Readable{
                     .pipe = .{
-                        .buffer = BufferedOutput.initWithSlice(fd, stdio.array_buffer.slice()),
+                        .buffer = if (stdio.array_buffer.from_jsc) BufferedOutput.initWithArrayBuffer(fd, stdio.array_buffer.buf.slice()) else BufferedOutput.initWithSlice(fd, stdio.array_buffer.buf.slice()),
                     },
                 },
             };
@@ -329,6 +329,28 @@ pub const Subprocess = struct {
                 },
                 else => {
                     return JSValue.jsUndefined();
+                },
+            }
+        }
+
+        pub fn toSlice(this: *Readable) ?[]const u8 {
+            switch (this.*) {
+                .fd => return null,
+                .pipe => {
+                    this.pipe.buffer.fifo.close_on_empty_read = true;
+                    this.pipe.buffer.readAll();
+
+                    var bytes = this.pipe.buffer.internal_buffer.slice();
+                    // this.pipe.buffer.internal_buffer = .{};
+
+                    if (bytes.len > 0) {
+                        return bytes;
+                    }
+
+                    return "";
+                },
+                else => {
+                    return null;
                 },
             }
         }
@@ -699,6 +721,7 @@ pub const Subprocess = struct {
         pub fn initWithArrayBuffer(fd: bun.FileDescriptor, slice: []u8) BufferedOutput {
             var out = BufferedOutput.initWithSlice(fd, slice);
             out.from_jsc = true;
+            return out;
         }
 
         pub fn initWithSlice(fd: bun.FileDescriptor, slice: []u8) BufferedOutput {
@@ -989,7 +1012,7 @@ pub const Subprocess = struct {
                     var buffered_input: BufferedInput = .{ .fd = fd, .source = undefined };
                     switch (stdio) {
                         .array_buffer => |array_buffer| {
-                            buffered_input.source = .{ .array_buffer = array_buffer };
+                            buffered_input.source = .{ .array_buffer = array_buffer.buf };
                         },
                         .blob => |blob| {
                             buffered_input.source = .{ .blob = blob };
@@ -2101,7 +2124,7 @@ pub const Subprocess = struct {
         path: JSC.Node.PathLike,
         blob: JSC.WebCore.AnyBlob,
         pipe: ?JSC.WebCore.ReadableStream,
-        array_buffer: JSC.ArrayBuffer.Strong,
+        array_buffer: struct { buf: JSC.ArrayBuffer.Strong, from_jsc: bool = false },
 
         pub fn isPiped(self: Stdio) bool {
             return switch (self) {
@@ -2284,10 +2307,10 @@ pub const Subprocess = struct {
             }
 
             stdio_array[i] = .{
-                .array_buffer = JSC.ArrayBuffer.Strong{
+                .array_buffer = .{ .buf = JSC.ArrayBuffer.Strong{
                     .array_buffer = array_buffer,
                     .held = JSC.Strong.create(array_buffer.value, globalThis),
-                },
+                } },
             };
 
             return true;

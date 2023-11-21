@@ -1528,7 +1528,7 @@ pub const fs_t = extern struct {
     cb: uv_fs_cb,
     result: isize,
     ptr: ?*anyopaque,
-    path: [*]const u8,
+    path: [*:0]const u8,
     statbuf: uv_stat_t,
     work_req: struct_uv__work,
     flags: c_int,
@@ -2334,7 +2334,8 @@ pub const ReturnCode = extern struct {
 
     pub inline fn errno(this: ReturnCode) ?@TypeOf(@intFromEnum(bun.C.E.ACCES)) {
         return if (this.value < 0)
-            @intFromEnum(translateUVErrorToE(this.value))
+            // @intFromEnum(translateUVErrorToE(this.value))
+            @as(u16, @intCast(-this.value))
         else
             null;
     }

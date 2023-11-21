@@ -2119,13 +2119,14 @@ pub inline fn pathLiteral(comptime literal: anytype) *const [literal.len:0]u8 {
     };
 }
 
-noinline fn outOfMemoryPanic() noreturn {
+pub noinline fn outOfMemory() noreturn {
+    @setCold(true);
     // In the future, we should print jsc + mimalloc heap statistics
     @panic("Bun ran out of memory!");
 }
 
 pub inline fn new(comptime T: type, t: T) *T {
-    var ptr = default_allocator.create(T) catch outOfMemoryPanic();
+    var ptr = default_allocator.create(T) catch outOfMemory();
     ptr.* = t;
     return ptr;
 }
@@ -2135,7 +2136,7 @@ pub inline fn destroy(t: anytype) void {
 }
 
 pub inline fn newWithAlloc(allocator: std.mem.Allocator, comptime T: type, t: T) *T {
-    var ptr = allocator.create(T) catch outOfMemoryPanic();
+    var ptr = allocator.create(T) catch outOfMemory();
     ptr.* = t;
     return ptr;
 }

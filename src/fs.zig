@@ -523,30 +523,28 @@ pub const FileSystem = struct {
         file_limit: usize = 32,
         file_quota: usize = 32,
 
-        pub var tmpdir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        pub var win_tempdir_cache: ?[]const u8 = undefined;
 
-        pub const PLATFORM_TMP_DIR: string = switch (@import("builtin").target.os.tag) {
-            .windows => "TMPDIR",
-            .macos => "/private/tmp",
-            else => "/tmp",
-        };
-
-        fn platformTempDir() []const u8 {
-            if (comptime Environment.isWindows) {
+        pub fn platformTempDir() []const u8 {
+            return switch(Environment.os) {
                 // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw#remarks
-                return bun.getenvZ("TMP") orelse bun.getenvZ("TEMP") orelse brk: {
-                    if (bun.getenvZ("USERPROFILE")) |profile| {
-                        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                        var parts = [_]string{"AppData/Local/Temp"};
-                        var out = bun.path.joinAbsStringBuf(profile, &buf, &parts, .loose);
-                        break :brk bun.default_allocator.dupe(u8, out) catch unreachable;
-                    }
+                .windows => win_tempdir_cache orelse {
+                    const value = bun.getenvZ("TMP") orelse bun.getenvZ("TEMP") orelse brk: {
+                        if (bun.getenvZ("USERPROFILE")) |profile| {
+                            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                            var parts = [_]string{"AppData\\Local\\Temp"};
+                            var out = bun.path.joinAbsStringBuf(profile, &buf, &parts, .loose);
+                            break :brk bun.default_allocator.dupe(u8, out) catch unreachable;
+                        }
 
-                    return "C:/Windows/Temp";
-                };
-            }
-
-            return PLATFORM_TMP_DIR;
+                        break :brk "C:/Windows/Temp";
+                    };
+                    win_tempdir_cache = value;
+                    return value;
+                },
+                .mac => "/private/tmp",
+                else => "/tmp",
+            };
         }
 
         pub const Tmpfile = switch (Environment.os) {
@@ -607,7 +605,7 @@ pub const FileSystem = struct {
         }
 
         pub fn getDefaultTempDir() string {
-            return bun.getenvZ("BUN_TMPDIR") orelse bun.getenvZ("TMPDIR") orelse PLATFORM_TMP_DIR;
+            return bun.getenvZ("BUN_TMPDIR") orelse bun.getenvZ("TMPDIR") orelse platformTempDir();
         }
 
         pub fn setTempdir(path: ?string) void {

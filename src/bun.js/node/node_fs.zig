@@ -15,7 +15,7 @@ const Flavor = JSC.Node.Flavor;
 const system = std.os.system;
 const Maybe = JSC.Maybe;
 const Encoding = JSC.Node.Encoding;
-const PosixToWinNormalizer = @import("../../resolver/resolve_path.zig").PosixToWinNormalizer;
+const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
 
 const FileDescriptor = bun.FileDescriptor;
 const FDImpl = bun.FDImpl;
@@ -199,7 +199,7 @@ const Syscall = if (Environment.isWindows) struct {
 
         log("uv stat({s}) = {d}", .{ path, rc.value });
         return if (rc.errno()) |errno|
-            .{ .err = .{ .errno = errno, .syscall = .fstat } }
+            .{ .err = .{ .errno = errno, .syscall = .stat } }
         else
             .{ .result = req.statbuf };
     }
@@ -3464,6 +3464,18 @@ pub const StatOrNotFound = union(enum) {
     }
 };
 
+pub const StringOrUndefined = union(enum) {
+    string: bun.String,
+    none: void,
+
+    pub fn toJS(this: *StringOrUndefined, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        return switch (this.*) {
+            .string => this.string.toJS(globalObject),
+            .none => JSC.JSValue.undefined,
+        };
+    }
+};
+
 const Return = struct {
     pub const Access = void;
     pub const AppendFile = void;
@@ -3484,7 +3496,7 @@ const Return = struct {
     pub const Lchown = void;
     pub const Link = void;
     pub const Lstat = StatOrNotFound;
-    pub const Mkdir = void;
+    pub const Mkdir = StringOrUndefined;
     pub const Mkdtemp = JSC.ZigString;
     pub const Open = FDImpl;
     pub const WriteFile = void;
@@ -3948,7 +3960,13 @@ pub const NodeFS = struct {
         _ = flavor;
         const Ret = Maybe(Return.Exists);
         const path = args.path orelse return Ret{ .result = false };
-        const slice = path.sliceZ(&this.sync_error_buf);
+        const slice = path.sliceWithWinNormalizerCWDZ(&this.sync_error_buf);
+        
+        // Use libuv access on windows
+        if(Environment.isWindows){
+            return .{ .result = Syscall.access(slice, std.os.F_OK) != .err };
+        }
+
         // access() may not work correctly on NFS file systems with UID
         // mapping enabled, because UID mapping is done on the server and
         // hidden from the client, which checks permissions. Similar
@@ -4114,18 +4132,33 @@ pub const NodeFS = struct {
 
         const path = args.path.sliceZ(&this.sync_error_buf);
         return switch (Syscall.mkdir(path, args.mode)) {
-            .result => Maybe(Return.Mkdir){ .result = {} },
+            .result => Maybe(Return.Mkdir){ .result = .{ .none = {} } },
             .err => |err| Maybe(Return.Mkdir){ .err = err },
         };
     }
 
-    // TODO: windows
     // TODO: verify this works correctly with unicode codepoints
     pub fn mkdirRecursive(this: *NodeFS, args: Arguments.Mkdir, comptime flavor: Flavor) Maybe(Return.Mkdir) {
         _ = flavor;
-        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        const path = args.path.osPath(&buf);
-        return this.mkdirRecursiveOSPath(path, args.mode);
+        var buf: bun.OSPathBuffer = undefined;
+        const path: bun.OSPathSlice = if(!Environment.isWindows)
+            args.path.osPath(&buf)
+        else brk: {
+            // TODO(@paperdave): clean this up a lot.
+            var joined_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            if(std.fs.path.isAbsolute(args.path.slice())) {
+                const utf8 = PosixToWinNormalizer.resolveCWDWithExternalBufZ(&joined_buf, args.path.slice()) catch
+                    return .{ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOMEM), .syscall = .getcwd } };
+                break :brk strings.toWPath(&buf, utf8);
+            } else {
+                var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                const cwd = std.os.getcwd(&cwd_buf) catch return .{ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOMEM), .syscall = .getcwd } };
+                break :brk strings.toWPath(&buf, bun.path.joinAbsStringBuf(cwd, &joined_buf, &.{ args.path.slice() }, .windows));
+            }
+            
+
+        };
+        return this.mkdirRecursiveOSPath(path, args.mode, true);
     }
 
     pub fn _isSep(char: std.meta.Child(bun.OSPathSlice)) bool {
@@ -4135,9 +4168,11 @@ pub const NodeFS = struct {
             char == '/';
     }
 
-    pub fn mkdirRecursiveOSPath(this: *NodeFS, path: bun.OSPathSlice, mode: Mode) Maybe(Return.Mkdir) {
+    pub fn mkdirRecursiveOSPath(this: *NodeFS, path: bun.OSPathSlice, mode: Mode, comptime return_path: bool) Maybe(Return.Mkdir) {
         const Char = std.meta.Child(bun.OSPathSlice);
         const len = @as(u16, @truncate(path.len));
+
+        bun.Output.debug("mkdirRecursiveOSPath({s})", .{bun.strings.fmtOSPath(path)});
 
         // First, attempt to create the desired directory
         // If that fails, then walk back up the path until we have a match
@@ -4147,20 +4182,21 @@ pub const NodeFS = struct {
                     else => {
                         return .{ .err = err.withPath(this.osPathIntoSyncErrorBuf(path[0..len])) };
                     },
-
                     .EXIST => {
-                        return .{ .result = {} };
+                        std.debug.assert(false);
+                        return .{ .result = .{ .none = {} } };
                     },
                     // continue
                     .NOENT => {},
                 }
             },
             .result => {
-                return .{ .result = {} };
+                return .{ .result = if(return_path) .{ .string = bun.String.createFromOSPath(path) } else .{ .none = {} }, };
             },
         }
 
         var working_mem: *bun.OSPathBuffer = @alignCast(@ptrCast(&this.sync_error_buf));
+
         @memcpy(working_mem[0..len], path[0..len]);
 
         var i: u16 = len - 1;
@@ -4198,6 +4234,7 @@ pub const NodeFS = struct {
                 }
             }
         }
+        var first_match: u16 = i;
         i += 1;
         // after we find one that works, we go forward _after_ the first working directory
         while (i < len) : (i += 1) {
@@ -4232,9 +4269,7 @@ pub const NodeFS = struct {
             .err => |err| {
                 switch (err.getErrno()) {
                     // handle the race condition
-                    .EXIST => {
-                        return .{ .result = {} };
-                    },
+                    .EXIST => {},
 
                     // NOENT shouldn't happen here
                     else => return .{
@@ -4242,10 +4277,10 @@ pub const NodeFS = struct {
                     },
                 }
             },
-            .result => {
-                return .{ .result = {} };
-            },
+            .result => {},
         }
+
+        return .{ .result = if(return_path) .{ .string = bun.String.createFromOSPath(working_mem[0..first_match])} else .{ .none = {} }, };
     }
 
     pub fn mkdtemp(this: *NodeFS, args: Arguments.MkdirTemp, comptime _: Flavor) Maybe(Return.Mkdtemp) {
@@ -4262,10 +4297,21 @@ pub const NodeFS = struct {
         // string  on  success, and NULL on failure, in which case errno is set to
         // indicate the error
 
+        if(Environment.isWindows) {
+               var req: uv.fs_t = uv.fs_t.uninitialized;
+               const rc = uv.uv_fs_mkdtemp(bun.Async.Loop.get(), &req, @ptrCast(prefix_buf.ptr), null);
+               if (rc.errno()) |errno| {
+                    return .{ .err = .{ .errno = errno, .syscall = .mkdtemp, .path = prefix_buf[0..len+6] }};
+               }
+               return .{
+                    .result = JSC.ZigString.dupeForJS(bun.sliceTo(req.path, 0), bun.default_allocator) catch bun.outOfMemory(),
+                };
+        }
+
         const rc = C.mkdtemp(prefix_buf);
         if (rc) |ptr| {
             return .{
-                .result = JSC.ZigString.dupeForJS(bun.sliceTo(ptr, 0), bun.default_allocator) catch unreachable,
+                .result = JSC.ZigString.dupeForJS(bun.sliceTo(ptr, 0), bun.default_allocator) catch bun.outOfMemory(),
             };
         }
         // std.c.getErrno(rc) returns SUCCESS if rc is null so we call std.c._errno() directly
@@ -4337,11 +4383,11 @@ pub const NodeFS = struct {
             );
     }
 
-    pub fn readv(this: *NodeFS, args: Arguments.Readv, comptime flavor: Flavor) Maybe(Return.Read) {
+    pub fn readv(this: *NodeFS, args: Arguments.Readv, comptime flavor: Flavor) Maybe(Return.Readv) {
         return if (args.position != null) _preadv(this, args, flavor) else _readv(this, args, flavor);
     }
 
-    pub fn writev(this: *NodeFS, args: Arguments.Writev, comptime flavor: Flavor) Maybe(Return.Write) {
+    pub fn writev(this: *NodeFS, args: Arguments.Writev, comptime flavor: Flavor) Maybe(Return.Writev) {
         return if (args.position != null) _pwritev(this, args, flavor) else _writev(this, args, flavor);
     }
 
@@ -4479,7 +4525,13 @@ pub const NodeFS = struct {
 
         var path = args.path.sliceWithWinNormalizerCWDZ(buf);
         const flags = os.O.DIRECTORY | os.O.RDONLY;
-        const fd = switch (Syscall.open(path, flags, 0)) {
+        const fd = switch (
+            switch(Environment.os) {
+                else => Syscall.open(path, flags, 0),
+                // windows bun.sys.open does not pass iterable=true,
+                .windows => bun.sys.openDirAtWindowsA(bun.toFD(std.fs.cwd().fd), path, true, false),
+            }
+        ) {
             .err => |err| return .{
                 .err = err.withPath(args.path.slice()),
             },
@@ -5199,19 +5251,21 @@ pub const NodeFS = struct {
         }
     }
     pub fn stat(this: *NodeFS, args: Arguments.Stat, comptime _: Flavor) Maybe(Return.Stat) {
-        return @as(Maybe(Return.Stat), switch (Syscall.stat(
-            args.path.sliceZ(
-                &this.sync_error_buf,
-            ),
+        const errno_enoent = if(Environment.isWindows) .UV_ENOENT else .NOENT;
+
+        return switch (Syscall.stat(
+            args.path.sliceWithWinNormalizerCWDZ(
+                &this.sync_error_buf
+            )
         )) {
-            .result => |result| Maybe(Return.Stat){ .result = .{ .stats = Stats.init(result, args.big_int) } },
+            .result => |result| .{ .result = .{ .stats = Stats.init(result, args.big_int) }, },
             .err => |err| brk: {
-                if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
-                    return Maybe(Return.Stat){ .result = .{ .not_found = {} } };
+                if (!args.throw_if_no_entry and err.getErrno() == errno_enoent) {
+                    return .{ .result = .{ .not_found = {} } };
                 }
-                break :brk Maybe(Return.Stat){ .err = err };
+                break :brk .{ .err = err };
             },
-        });
+        };
     }
 
     pub fn symlink(this: *NodeFS, args: Arguments.Symlink, comptime _: Flavor) Maybe(Return.Symlink) {
@@ -5537,7 +5591,7 @@ pub const NodeFS = struct {
         };
         defer _ = Syscall.close(fd);
 
-        switch (this.mkdirRecursiveOSPath(dest, Arguments.Mkdir.DefaultMode)) {
+        switch (this.mkdirRecursiveOSPath(dest, Arguments.Mkdir.DefaultMode, false)) {
             .err => |err| return Maybe(Return.Cp){ .err = err },
             .result => {},
         }
@@ -5554,9 +5608,8 @@ pub const NodeFS = struct {
                     .buf = undefined,
                     .name_data = undefined,
                 };
-            } else {
-                break :iterator DirIterator.iterate(dir);
-            }
+            } 
+            break :iterator DirIterator.iterate(dir);    
         };
         var entry = iterator.next();
         while (switch (entry) {

@@ -265,22 +265,23 @@ pub const BunxCommand = struct {
             );
         };
 
+        const temp_dir = bun.fs.FileSystem.RealFS.platformTempDir();
         const PATH_FOR_BIN_DIRS = PATH;
         if (PATH.len > 0) {
             PATH = try std.fmt.allocPrint(
                 ctx.allocator,
-                bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR ++ "/{s}--bunx/node_modules/.bin:{s}",
-                .{ package_fmt, PATH },
+                "{s}/{s}--bunx/node_modules/.bin:{s}",
+                .{ temp_dir, package_fmt, PATH },
             );
         } else {
             PATH = try std.fmt.allocPrint(
                 ctx.allocator,
-                bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR ++ "/{s}--bunx/node_modules/.bin",
-                .{package_fmt},
+                "{s}/{s}--bunx/node_modules/.bin",
+                .{temp_dir, package_fmt},
             );
         }
         try this_bundler.env.map.put("PATH", PATH);
-        const bunx_cache_dir = PATH[0 .. bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR.len + "/--bunx".len + package_fmt.len];
+        const bunx_cache_dir = PATH[0 .. temp_dir.len + "/--bunx".len + package_fmt.len];
 
         var absolute_in_cache_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "/{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, initial_bin_name }) catch unreachable;
@@ -365,8 +366,8 @@ pub const BunxCommand = struct {
 
         var bunx_install_dir_path = try std.fmt.allocPrint(
             ctx.allocator,
-            bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR ++ "/{s}--bunx",
-            .{package_fmt},
+            "{s}/{s}--bunx",
+            .{temp_dir, package_fmt},
         );
 
         // TODO: fix this after zig upgrade

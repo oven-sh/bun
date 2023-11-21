@@ -11,7 +11,7 @@
       "request": "launch",
       "name": "bun test [file]",
       "program": "${workspaceFolder}/build/bun-debug.exe",
-      "args": ["C:/Users/windo/Code/Test/j.mjs", "--outfile", "yellow.js"],
+      "args": ["C:/Users/windo/Code/Test/wtf.mjs", "--outfile", "yellow.js"],
       // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
       "cwd": "C:/Users/windo/Code/Test/"
       // "env": {

@@ -400,7 +400,7 @@ pub fn openDirAtWindows(
     );
 
     if (comptime Environment.allow_assert) {
-        log("NtCreateFile({d}, {}) = {d} (dir) = {d}", .{ dirFd, bun.strings.fmtUTF16(path), rc, @intFromPtr(fd) });
+        log("NtCreateFile({d}, {}, ) = {d} (dir) = {d}", .{ dirFd, bun.strings.fmtUTF16(path), rc, @intFromPtr(fd) });
     }
 
     switch (windows.Win32Error.fromNTStatus(rc)) {
@@ -1279,11 +1279,21 @@ pub const Error = struct {
         };
 
         // errno label
-        if (this.errno > 0 and this.errno < C.SystemErrno.max) {
-            const system_errno = @as(C.SystemErrno, @enumFromInt(this.errno));
-            err.code = bun.String.static(@tagName(system_errno));
-            if (C.SystemErrno.labels.get(system_errno)) |label| {
-                err.message = bun.String.static(label);
+        if(!Environment.isWindows) {
+            if (this.errno > 0 and this.errno < C.SystemErrno.max) {
+                const system_errno = @as(C.SystemErrno, @enumFromInt(this.errno));
+                err.code = bun.String.static(@tagName(system_errno));
+                if (C.SystemErrno.labels.get(system_errno)) |label| {
+                    err.message = bun.String.static(label);
+                }
+            }
+        } else {
+            const system_errno = @as(C.SystemErrno, @enumFromInt(@intFromEnum(bun.windows.libuv.translateUVErrorToE(err.errno))));
+            if(std.enums.tagName(bun.C.SystemErrno, system_errno)) |errname| {
+                err.code = bun.String.static(errname);
+                if (C.SystemErrno.labels.get(system_errno)) |label| {
+                    err.message = bun.String.static(label);
+                }
             }
         }
 

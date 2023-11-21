@@ -273,6 +273,7 @@ pub const String = extern struct {
 
     extern fn BunString__fromLatin1(bytes: [*]const u8, len: usize) String;
     extern fn BunString__fromBytes(bytes: [*]const u8, len: usize) String;
+    extern fn BunString__fromUTF16(bytes: [*]const u16, len: usize) String;
     extern fn BunString__fromLatin1Unitialized(len: usize) String;
     extern fn BunString__fromUTF16Unitialized(len: usize) String;
 
@@ -332,6 +333,18 @@ pub const String = extern struct {
     pub fn create(bytes: []const u8) String {
         JSC.markBinding(@src());
         return BunString__fromBytes(bytes.ptr, bytes.len);
+    }
+    
+    pub fn createUTF16(bytes: []const u16) String {
+        return BunString__fromUTF16(bytes.ptr, bytes.len);
+    }
+
+    pub fn createFromOSPath(os_path: bun.OSPathSliceWithoutSentinel) String {
+        return switch(@TypeOf(os_path)) {
+            []const u8 => create(os_path),
+            []const u16 => createUTF16(os_path),
+            else => comptime unreachable
+        };
     }
 
     pub fn isEmpty(this: String) bool {

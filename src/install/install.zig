@@ -2199,7 +2199,7 @@ pub const PackageManager = struct {
                 Global.crash();
             };
         };
-        var tmpbuf: ["18446744073709551615".len + 8]u8 = undefined;
+        var tmpbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
         const tmpname = Fs.FileSystem.instance.tmpname("hm", &tmpbuf, 999) catch unreachable;
         var timer: std.time.Timer = if (this.options.log_level != .silent) std.time.Timer.start() catch unreachable else undefined;
         brk: while (true) {

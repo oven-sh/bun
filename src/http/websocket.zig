@@ -149,7 +149,7 @@ pub const Websocket = struct {
         fd: std.os.fd_t,
         comptime flags: u32,
     ) Websocket {
-        var stream = ReadStream{
+        const stream = ReadStream{
             .buffer = &[_]u8{},
             .pos = 0,
         };
@@ -264,7 +264,7 @@ pub const Websocket = struct {
         @memset(&self.buf, 0);
 
         // Read and retry if we hit the end of the stream buffer
-        var start = try self.stream.read(&self.buf);
+        const start = try self.stream.read(&self.buf);
         if (start == 0) {
             return error.ConnectionClosed;
         }
@@ -322,7 +322,7 @@ pub const Websocket = struct {
         const end = start + length;
 
         if (end > self.read_stream.pos) {
-            var extend_length = try self.stream.read(self.buf[self.read_stream.pos..]);
+            const extend_length = try self.stream.read(self.buf[self.read_stream.pos..]);
             if (self.read_stream.pos + extend_length > self.buf.len) {
                 return error.MessageTooLarge;
             }

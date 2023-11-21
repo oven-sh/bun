@@ -1,4 +1,4 @@
-import { expect, test, describe } from "bun:test";
+import { expect, test } from "bun:test";
 import { withoutAggressiveGC } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";

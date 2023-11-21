@@ -110,7 +110,7 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
                     if (@typeInfo(Function) != .Fn) {
                         @compileError("Expected " ++ @typeName(Parent) ++ "." ++ @typeName(Function) ++ " to be a function but received " ++ @tagName(@typeInfo(Function)));
                     }
-                    var Fn: std.builtin.Type.Fn = @typeInfo(Function).Fn;
+                    const Fn: std.builtin.Type.Fn = @typeInfo(Function).Fn;
                     if (Fn.calling_convention != .C) {
                         @compileError("Expected " ++ @typeName(Parent) ++ "." ++ @typeName(Function) ++ " to have a C Calling Convention.");
                     }
@@ -139,7 +139,7 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
                         if (@typeInfo(Function) != .Fn) {
                             @compileError("Expected " ++ @typeName(Parent) ++ "." ++ @typeName(Function) ++ " to be a function but received " ++ @tagName(@typeInfo(Function)));
                         }
-                        var Fn: std.builtin.Type.Fn = @typeInfo(Function).Fn;
+                        const Fn: std.builtin.Type.Fn = @typeInfo(Function).Fn;
                         if (Fn.calling_convention != .C) {
                             @compileError("Expected " ++ @typeName(Parent) ++ "." ++ @typeName(Function) ++ " to have a C Calling Convention.");
                         }

@@ -6634,7 +6634,7 @@ pub const PackageManager = struct {
         pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !CommandLineArguments {
             Output.is_verbose = Output.isVerbose();
 
-            comptime var params: []const ParamType = &switch (subcommand) {
+            const params: []const ParamType = comptime &switch (subcommand) {
                 .install => install_params,
                 .update => update_params,
                 .pm => pm_params,

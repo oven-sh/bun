@@ -211,8 +211,8 @@ var _source_for_test_set = false;
 pub fn initTest() void {
     if (_source_for_test_set) return;
     _source_for_test_set = true;
-    var in = std.io.getStdErr();
-    var out = std.io.getStdOut();
+    const in = std.io.getStdErr();
+    const out = std.io.getStdOut();
     _source_for_test = Output.Source.init(out, in);
     Output.Source.set(&_source_for_test);
 }
@@ -589,7 +589,7 @@ pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
                 i += 1;
                 var is_reset = fmt[i] == '/';
                 if (is_reset) i += 1;
-                var start: usize = i;
+                const start: usize = i;
                 while (i < fmt.len and fmt[i] != '>') {
                     i += 1;
                 }

@@ -28,7 +28,7 @@ var ctx_: ?*boring.SSL_CTX = null;
 pub fn initClient() *boring.SSL {
     if (ctx_ != null) _ = boring.SSL_CTX_up_ref(ctx_.?);
 
-    var ctx = ctx_ orelse brk: {
+    const ctx = ctx_ orelse brk: {
         ctx_ = boring.SSL_CTX.init().?;
         break :brk ctx_.?;
     };
@@ -139,7 +139,7 @@ pub fn checkX509ServerIdentity(
                 var canonicalIPBuf: [INET6_ADDRSTRLEN + 1]u8 = undefined;
                 var certIPBuf: [INET6_ADDRSTRLEN + 1]u8 = undefined;
                 // we try to canonicalize the IP before comparing
-                var host_ip = canonicalizeIP(hostname, &canonicalIPBuf) orelse hostname;
+                const host_ip = canonicalizeIP(hostname, &canonicalIPBuf) orelse hostname;
 
                 if (boring.X509V3_EXT_d2i(ext)) |names_| {
                     const names: *boring.struct_stack_st_GENERAL_NAME = bun.cast(*boring.struct_stack_st_GENERAL_NAME, names_);

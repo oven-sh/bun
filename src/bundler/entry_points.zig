@@ -94,7 +94,7 @@ pub const ClientEntryPoint = struct {
 
     pub fn decodeEntryPointPath(outbuffer: []u8, original_path: Fs.PathName) string {
         var joined_base_and_dir_parts = [_]string{ original_path.dir, original_path.base };
-        var generated_path = Fs.FileSystem.instance.absBuf(&joined_base_and_dir_parts, outbuffer);
+        const generated_path = Fs.FileSystem.instance.absBuf(&joined_base_and_dir_parts, outbuffer);
         var original_ext = original_path.ext;
         if (strings.indexOf(original_path.ext, "entry")) |entry_i| {
             original_ext = original_path.ext[entry_i + "entry".len ..];

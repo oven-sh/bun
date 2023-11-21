@@ -173,7 +173,7 @@ pub const Loader = struct {
 
         var node_path_to_use = override_node;
         if (node_path_to_use.len == 0) {
-            var node = this.getNodePath(fs, &buf) orelse return false;
+            const node = this.getNodePath(fs, &buf) orelse return false;
             node_path_to_use = try fs.dirname_store.append([]const u8, bun.asByteSlice(node));
         }
         try this.map.put("NODE", node_path_to_use);
@@ -273,7 +273,7 @@ pub const Loader = struct {
                 errdefer allocator.free(e_strings);
                 errdefer allocator.free(key_buf);
                 var key_fixed_allocator = std.heap.FixedBufferAllocator.init(key_buf);
-                var key_allocator = key_fixed_allocator.allocator();
+                const key_allocator = key_fixed_allocator.allocator();
 
                 if (behavior == .prefix) {
                     while (iter.next()) |entry| {
@@ -288,7 +288,7 @@ pub const Loader = struct {
                                 else
                                     &[_]u8{},
                             };
-                            var expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
+                            const expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
 
                             _ = try to_string.getOrPutValue(
                                 key_str,
@@ -312,7 +312,7 @@ pub const Loader = struct {
                                         &[_]u8{},
                                 };
 
-                                var expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
+                                const expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
 
                                 _ = try to_string.getOrPutValue(
                                     framework_defaults.keys[key_i],
@@ -338,7 +338,7 @@ pub const Loader = struct {
                                 &[_]u8{},
                         };
 
-                        var expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
+                        const expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
 
                         _ = try to_string.getOrPutValue(
                             key,
@@ -355,7 +355,7 @@ pub const Loader = struct {
         }
 
         for (framework_defaults.keys, 0..) |key, i| {
-            var value = framework_defaults.values[i];
+            const value = framework_defaults.values[i];
 
             if (!to_string.contains(key) and !to_json.contains(key)) {
                 _ = try to_json.getOrPutValue(key, value);
@@ -380,8 +380,8 @@ pub const Loader = struct {
         for (std.os.environ) |_env| {
             var env = bun.span(_env);
             if (strings.indexOfChar(env, '=')) |i| {
-                var key = env[0..i];
-                var value = env[i + 1 ..];
+                const key = env[0..i];
+                const value = env[i + 1 ..];
                 if (key.len > 0) {
                     this.map.put(key, value) catch unreachable;
                 }
@@ -431,7 +431,7 @@ pub const Loader = struct {
         // iterate backwards, so the latest entry in the latest arg instance assumes the highest priority
         var i: usize = env_files.len;
         while (i > 0) : (i -= 1) {
-            var arg_value = std.mem.trim(u8, env_files[i - 1], " ");
+            const arg_value = std.mem.trim(u8, env_files[i - 1], " ");
             if (arg_value.len > 0) { // ignore blank args
                 var iter = std.mem.splitBackwardsScalar(u8, arg_value, ',');
                 while (iter.next()) |file_path| {
@@ -453,7 +453,7 @@ pub const Loader = struct {
         dir: *Fs.FileSystem.DirEntry,
         comptime suffix: DotEnvFileSuffix,
     ) !void {
-        var dir_handle: std.fs.Dir = std.fs.cwd();
+        const dir_handle: std.fs.Dir = std.fs.cwd();
 
         switch (comptime suffix) {
             .development => {
@@ -964,7 +964,7 @@ const Parser = struct {
                 continue;
             };
             const value = this.parseValue(is_process);
-            var entry = map.map.getOrPut(key) catch unreachable;
+            const entry = map.map.getOrPut(key) catch unreachable;
             if (entry.found_existing) {
                 if (entry.index < count) {
                     // Allow keys defined later in the same file to override keys defined earlier

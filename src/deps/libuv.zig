@@ -527,7 +527,7 @@ pub const Loop = extern struct {
     }
 
     pub fn init() *Loop {
-        var this = get();
+        const this = get();
         uv_replace_allocator(
             this,
             @ptrCast(&bun.Mimalloc.mi_malloc),

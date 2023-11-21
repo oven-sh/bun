@@ -43,7 +43,7 @@ pub const WebWorker = struct {
     extern fn WebWorker__dispatchError(*JSC.JSGlobalObject, *anyopaque, bun.String, JSValue) void;
 
     export fn WebWorker__getParentWorker(vm: *JSC.VirtualMachine) ?*anyopaque {
-        var worker = vm.worker orelse return null;
+        const worker = vm.worker orelse return null;
         return worker.cpp_worker;
     }
 
@@ -77,7 +77,7 @@ pub const WebWorker = struct {
         log("[{d}] WebWorker.create", .{this_context_id});
         var spec_slice = specifier_str.toUTF8(bun.default_allocator);
         defer spec_slice.deinit();
-        var prev_log = parent.bundler.log;
+        const prev_log = parent.bundler.log;
         var temp_log = bun.logger.Log.init(bun.default_allocator);
         parent.bundler.setLog(&temp_log);
         defer parent.bundler.setLog(prev_log);
@@ -90,7 +90,7 @@ pub const WebWorker = struct {
             return null;
         };
 
-        var path = resolved_entry_point.path() orelse {
+        const path = resolved_entry_point.path() orelse {
             error_message.* = bun.String.static("Worker entry point is missing");
             return null;
         };
@@ -169,7 +169,7 @@ pub const WebWorker = struct {
         vm.is_main_thread = false;
         JSC.VirtualMachine.is_main_thread_vm = false;
         vm.onUnhandledRejection = onUnhandledRejection;
-        var callback = JSC.OpaqueWrap(WebWorker, WebWorker.spin);
+        const callback = JSC.OpaqueWrap(WebWorker, WebWorker.spin);
 
         this.vm = vm;
 
@@ -200,9 +200,9 @@ pub const WebWorker = struct {
 
         var buffered_writer_ = bun.MutableString.BufferedWriter{ .context = &array };
         var buffered_writer = &buffered_writer_;
-        var worker = vm.worker orelse @panic("Assertion failure: no worker");
+        const worker = vm.worker orelse @panic("Assertion failure: no worker");
 
-        var writer = buffered_writer.writer();
+        const writer = buffered_writer.writer();
         const Writer = @TypeOf(writer);
         // we buffer this because it'll almost always be < 4096
         // when it's under 4096, we want to avoid the dynamic allocation
@@ -325,7 +325,7 @@ pub const WebWorker = struct {
     pub fn exitAndDeinit(this: *WebWorker) noreturn {
         JSC.markBinding(@src());
         log("[{d}] exitAndDeinit", .{this.execution_context_id});
-        var cpp_worker = this.cpp_worker;
+        const cpp_worker = this.cpp_worker;
         var exit_code: i32 = 0;
         var globalObject: ?*JSC.JSGlobalObject = null;
         var vm_to_deinit: ?*JSC.VirtualMachine = null;

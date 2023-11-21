@@ -316,7 +316,7 @@ const PosixRequestContext = struct {
                 .values = router.getPublicPaths() catch unreachable,
             };
         } else std.mem.zeroes(Api.StringMap);
-        var preload: string = "";
+        const preload: string = "";
 
         var params: Api.StringMap = std.mem.zeroes(Api.StringMap);
         if (fallback_entry_point_created == false) {
@@ -352,7 +352,7 @@ const PosixRequestContext = struct {
                     false,
                 );
 
-                var buffer_writer = try JSPrinter.BufferWriter.init(default_allocator);
+                const buffer_writer = try JSPrinter.BufferWriter.init(default_allocator);
                 var writer = JSPrinter.BufferPrinter.init(buffer_writer);
                 _ = try bundler_.print(
                     result.*,
@@ -360,7 +360,7 @@ const PosixRequestContext = struct {
                     &writer,
                     .esm,
                 );
-                var slice = writer.ctx.buffer.toOwnedSliceLeaky();
+                const slice = writer.ctx.buffer.toOwnedSliceLeaky();
 
                 fallback_entry_point.built_code = try default_allocator.dupe(u8, slice);
 
@@ -424,7 +424,7 @@ const PosixRequestContext = struct {
             }
         }
 
-        var fallback_container = try allocator.create(Api.FallbackMessageContainer);
+        const fallback_container = try allocator.create(Api.FallbackMessageContainer);
         defer allocator.destroy(fallback_container);
         fallback_container.* = Api.FallbackMessageContainer{
             .message = try std.fmt.allocPrint(allocator, fmt, args),
@@ -456,7 +456,7 @@ const PosixRequestContext = struct {
 
         var bb = std.ArrayList(u8).init(allocator);
         defer bb.deinit();
-        var bb_writer = bb.writer();
+        const bb_writer = bb.writer();
 
         try Fallback.render(
             allocator,
@@ -917,7 +917,7 @@ const PosixRequestContext = struct {
             const loader = watchlist_slice.items(.loader)[index];
             const macro_remappings = this.bundler.options.macro_remap;
             const path = Fs.Path.init(file_path_str);
-            var old_log = this.bundler.log;
+            const old_log = this.bundler.log;
             this.bundler.setLog(&log);
 
             defer {
@@ -967,7 +967,7 @@ const PosixRequestContext = struct {
 
                     this.printer.ctx.reset();
                     {
-                        var old_allocator = this.bundler.linker.allocator;
+                        const old_allocator = this.bundler.linker.allocator;
                         this.bundler.linker.allocator = allocator;
                         defer this.bundler.linker.allocator = old_allocator;
                         this.bundler.linker.link(
@@ -994,7 +994,7 @@ const PosixRequestContext = struct {
                         };
                     }
 
-                    var written = this.bundler.print(parse_result, @TypeOf(&this.printer), &this.printer, .esm) catch
+                    const written = this.bundler.print(parse_result, @TypeOf(&this.printer), &this.printer, .esm) catch
                         return WatchBuildResult{
                         .value = .{
                             .fail = .{
@@ -1252,7 +1252,7 @@ const PosixRequestContext = struct {
         const CacheSet = @import("./cache.zig").Set;
         threadlocal var websocket_printer: JSPrinter.BufferWriter = undefined;
         pub fn handle(self: *WebsocketHandler) void {
-            var req_body = self.ctx.req_body_node;
+            const req_body = self.ctx.req_body_node;
             defer {
                 js_ast.Stmt.Data.Store.reset();
                 js_ast.Expr.Data.Store.reset();
@@ -1382,7 +1382,7 @@ const PosixRequestContext = struct {
                     is_socket_closed = true;
                 };
 
-                var frame = handler.websocket.read() catch |err| {
+                const frame = handler.websocket.read() catch |err| {
                     switch (err) {
                         error.ConnectionClosed => {
                             // Output.prettyErrorln("Websocket closed.", .{});
@@ -1406,7 +1406,7 @@ const PosixRequestContext = struct {
                         _ = try handler.websocket.writeText(frame.data);
                     },
                     .Binary => {
-                        var cnst_frame = constStrToU8(frame.data);
+                        const cnst_frame = constStrToU8(frame.data);
                         cmd_reader = ApiReader.init(cnst_frame, ctx.allocator);
                         cmd = try Api.WebsocketCommand.decode(&cmd_reader);
                         switch (cmd.kind) {
@@ -1432,7 +1432,7 @@ const PosixRequestContext = struct {
                                     // max file path is 4096
                                     var path_buf = bun.constStrToU8(file_path);
                                     path_buf.ptr[path_buf.len] = 0;
-                                    var file_path_z: [:0]u8 = path_buf.ptr[0..path_buf.len :0];
+                                    const file_path_z: [:0]u8 = path_buf.ptr[0..path_buf.len :0];
                                     const file = std.fs.openFileAbsoluteZ(file_path_z, .{ .mode = .read_only }) catch |err| {
                                         Output.prettyErrorln("<r><red>ERR:<r>{s} opening file <b>{s}<r> <r>", .{ @errorName(err), full_build.file_path });
                                         continue;
@@ -2263,7 +2263,7 @@ const PosixRequestContext = struct {
     fn sendBunInfoJSON(ctx: *RequestContext) anyerror!void {
         defer ctx.bundler.resetStore();
 
-        var buffer_writer = try JSPrinter.BufferWriter.init(default_allocator);
+        const buffer_writer = try JSPrinter.BufferWriter.init(default_allocator);
 
         var writer = JSPrinter.BufferPrinter.init(buffer_writer);
         defer writer.ctx.buffer.deinit();
@@ -2367,7 +2367,7 @@ const PosixRequestContext = struct {
                 const fd = if (resolve_result.file_fd != 0)
                     resolve_result.file_fd
                 else brk: {
-                    var file = std.fs.openFileAbsoluteZ(path.textZ(), .{ .mode = .read_only }) catch |err| {
+                    const file = std.fs.openFileAbsoluteZ(path.textZ(), .{ .mode = .read_only }) catch |err| {
                         Output.prettyErrorln("Failed to open {s} due to error {s}", .{ path.text, @errorName(err) });
                         return try ctx.sendInternalError(err);
                     };
@@ -2382,7 +2382,7 @@ const PosixRequestContext = struct {
 
                 const content_length = brk: {
                     var file = std.fs.File{ .handle = fd };
-                    var stat = file.stat() catch |err| {
+                    const stat = file.stat() catch |err| {
                         Output.prettyErrorln("Failed to read {s} due to error {s}", .{ path.text, @errorName(err) });
                         return try ctx.sendInternalError(err);
                     };
@@ -2747,7 +2747,7 @@ pub const Server = struct {
 
                                         break :brk path_string.slice();
                                     } else {
-                                        var file_path_without_trailing_slash = std.mem.trimRight(u8, file_path, std.fs.path.sep_str);
+                                        const file_path_without_trailing_slash = std.mem.trimRight(u8, file_path, std.fs.path.sep_str);
                                         @memcpy(_on_file_update_path_buf[0..file_path_without_trailing_slash.len], file_path_without_trailing_slash);
                                         _on_file_update_path_buf[file_path_without_trailing_slash.len] = std.fs.path.sep;
 
@@ -2933,7 +2933,7 @@ pub const Server = struct {
         var did_init = false;
         while (!did_init) {
             defer Output.flush();
-            var conn = listener.accept() catch
+            const conn = listener.accept() catch
                 continue;
 
             disableSIGPIPESoClosingTheTabDoesntCrash(conn.stream);
@@ -2955,7 +2955,7 @@ pub const Server = struct {
 
         while (true) {
             defer Output.flush();
-            var conn = listener.accept() catch
+            const conn = listener.accept() catch
                 continue;
 
             disableSIGPIPESoClosingTheTabDoesntCrash(conn.stream);
@@ -2982,7 +2982,7 @@ pub const Server = struct {
         var req_buf_node = RequestDataPool.get(server.allocator);
 
         // https://stackoverflow.com/questions/686217/maximum-on-http-header-values
-        var read_size = conn.read(&req_buf_node.data) catch {
+        const read_size = conn.read(&req_buf_node.data) catch {
             _ = conn.write(comptime RequestContext.printStatusLine(400) ++ "\r\n\r\n") catch {};
             return;
         };
@@ -2992,7 +2992,7 @@ pub const Server = struct {
             return;
         }
 
-        var req = picohttp.Request.parse(req_buf_node.data[0..read_size], &req_headers_buf) catch |err| {
+        const req = picohttp.Request.parse(req_buf_node.data[0..read_size], &req_headers_buf) catch |err| {
             _ = conn.write(comptime RequestContext.printStatusLine(400) ++ "\r\n\r\n") catch {};
             _ = Syscall.close(conn.handle);
             Output.printErrorln("ERR: {s}", .{@errorName(err)});
@@ -3291,8 +3291,8 @@ pub const Server = struct {
     pub fn start(allocator: std.mem.Allocator, options: Api.TransformOptions, comptime DebugType: type, debug: DebugType) !void {
         if (comptime Environment.isWindows) unreachable;
 
-        var log = logger.Log.init(allocator);
-        var server = try allocator.create(Server);
+        const log = logger.Log.init(allocator);
+        const server = try allocator.create(Server);
         server.* = Server{
             .allocator = allocator,
             .log = log,

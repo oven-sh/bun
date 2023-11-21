@@ -259,7 +259,7 @@ pub fn onImportCSS(
         css_imports_buf_loaded = true;
     }
 
-    var writer = css_imports_buf.writer();
+    const writer = css_imports_buf.writer();
     const offset = css_imports_buf.items.len;
     css_imports_list[css_imports_list_tail] = .{
         .offset = @as(u32, @truncate(offset)),
@@ -442,7 +442,7 @@ pub fn inspect(
     var buffered_writer_ = MutableString.BufferedWriter{ .context = &array };
     var buffered_writer = &buffered_writer_;
 
-    var writer = buffered_writer.writer();
+    const writer = buffered_writer.writer();
     const Writer = @TypeOf(writer);
     // we buffer this because it'll almost always be < 4096
     // when it's under 4096, we want to avoid the dynamic allocation
@@ -497,7 +497,7 @@ pub fn registerMacro(
         return .undefined;
     }
 
-    var get_or_put_result = VirtualMachine.get().macros.getOrPut(id) catch unreachable;
+    const get_or_put_result = VirtualMachine.get().macros.getOrPut(id) catch unreachable;
     if (get_or_put_result.found_existing) {
         get_or_put_result.value_ptr.*.?.value().unprotect();
     }
@@ -608,10 +608,10 @@ pub fn openInEditor(
         if (!opts.isUndefinedOrNull()) {
             if (opts.getTruthy(globalThis, "editor")) |editor_val| {
                 var sliced = editor_val.toSlice(globalThis, arguments.arena.allocator());
-                var prev_name = edit.name;
+                const prev_name = edit.name;
 
                 if (!strings.eqlLong(prev_name, sliced.slice(), true)) {
-                    var prev = edit.*;
+                    const prev = edit.*;
                     edit.name = sliced.slice();
                     edit.detectEditor(VirtualMachine.get().bundler.env);
                     editor_choice = edit.editor;
@@ -837,7 +837,7 @@ fn doResolveWithArgs(
 
 pub fn resolveSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
     var exception_ = [1]JSC.JSValueRef{null};
-    var exception = &exception_;
+    const exception = &exception_;
     const arguments = callframe.arguments(3);
     const result = doResolve(globalObject, arguments.slice(), exception);
 
@@ -850,7 +850,7 @@ pub fn resolveSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame)
 
 pub fn resolve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
     var exception_ = [1]JSC.JSValueRef{null};
-    var exception = &exception_;
+    const exception = &exception_;
     const arguments = callframe.arguments(3);
     const value = doResolve(globalObject, arguments.slice(), exception) orelse {
         return JSC.JSPromise.rejectedPromiseValue(globalObject, exception_[0].?.value());
@@ -865,7 +865,7 @@ export fn Bun__resolve(
     is_esm: bool,
 ) JSC.JSValue {
     var exception_ = [1]JSC.JSValueRef{null};
-    var exception = &exception_;
+    const exception = &exception_;
     const value = doResolveWithArgs(global, specifier.toBunString(global), source.toBunString(global), exception, is_esm, true) orelse {
         return JSC.JSPromise.rejectedPromiseValue(global, exception_[0].?.value());
     };
@@ -879,7 +879,7 @@ export fn Bun__resolveSync(
     is_esm: bool,
 ) JSC.JSValue {
     var exception_ = [1]JSC.JSValueRef{null};
-    var exception = &exception_;
+    const exception = &exception_;
     return doResolveWithArgs(global, specifier.toBunString(global), source.toBunString(global), exception, is_esm, true) orelse {
         return JSC.JSValue.fromRef(exception[0]);
     };
@@ -892,7 +892,7 @@ export fn Bun__resolveSyncWithSource(
     is_esm: bool,
 ) JSC.JSValue {
     var exception_ = [1]JSC.JSValueRef{null};
-    var exception = &exception_;
+    const exception = &exception_;
     return doResolveWithArgs(global, specifier.toBunString(global), source.*, exception, is_esm, true) orelse {
         return JSC.JSValue.fromRef(exception[0]);
     };
@@ -925,7 +925,7 @@ pub fn getPublicPathJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFr
 fn fs(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
     var module = globalObject.allocator().create(JSC.Node.NodeJSFS) catch unreachable;
     module.* = .{};
-    var vm = globalObject.bunVM();
+    const vm = globalObject.bunVM();
     if (vm.standalone_module_graph != null)
         module.node_fs.vm = vm;
 
@@ -1196,7 +1196,7 @@ pub const Crypto = struct {
         var outbuf: [128 + 1 + "BoringSSL error: ".len]u8 = undefined;
         @memset(&outbuf, 0);
         outbuf[0.."BoringSSL error: ".len].* = "BoringSSL error: ".*;
-        var message_buf = outbuf["BoringSSL error: ".len..];
+        const message_buf = outbuf["BoringSSL error: ".len..];
 
         _ = BoringSSL.ERR_error_string_n(err_code, message_buf, message_buf.len);
 
@@ -1573,7 +1573,7 @@ pub const Crypto = struct {
                     hash: []const u8,
 
                     pub fn toErrorInstance(this: Value, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-                        var error_code = std.fmt.allocPrint(bun.default_allocator, "PASSWORD_{}", .{PascalToUpperUnderscoreCaseFormatter{ .input = @errorName(this.err) }}) catch @panic("out of memory");
+                        const error_code = std.fmt.allocPrint(bun.default_allocator, "PASSWORD_{}", .{PascalToUpperUnderscoreCaseFormatter{ .input = @errorName(this.err) }}) catch @panic("out of memory");
                         defer bun.default_allocator.free(error_code);
                         const instance = globalObject.createErrorInstance("Password hashing failed with error \"{s}\"", .{@errorName(this.err)});
                         instance.put(globalObject, ZigString.static("code"), JSC.ZigString.init(error_code).toValueGC(globalObject));
@@ -1585,7 +1585,7 @@ pub const Crypto = struct {
                     var promise = this.promise;
                     this.promise = .{};
                     this.ref.unref(this.global.bunVM());
-                    var global = this.global;
+                    const global = this.global;
                     switch (this.value) {
                         .err => {
                             const error_instance = this.value.toErrorInstance(global);
@@ -1629,7 +1629,7 @@ pub const Crypto = struct {
                 this.ref = .{};
                 this.promise.strong = .{};
 
-                var concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch @panic("out of memory");
+                const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch @panic("out of memory");
                 concurrent_task.* = JSC.ConcurrentTask{
                     .task = JSC.Task.init(&result.task),
                     .auto_delete = true,
@@ -1823,7 +1823,7 @@ pub const Crypto = struct {
                     pass: bool,
 
                     pub fn toErrorInstance(this: Value, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-                        var error_code = std.fmt.allocPrint(bun.default_allocator, "PASSWORD{}", .{PascalToUpperUnderscoreCaseFormatter{ .input = @errorName(this.err) }}) catch @panic("out of memory");
+                        const error_code = std.fmt.allocPrint(bun.default_allocator, "PASSWORD{}", .{PascalToUpperUnderscoreCaseFormatter{ .input = @errorName(this.err) }}) catch @panic("out of memory");
                         defer bun.default_allocator.free(error_code);
                         const instance = globalObject.createErrorInstance("Password verification failed with error \"{s}\"", .{@errorName(this.err)});
                         instance.put(globalObject, ZigString.static("code"), JSC.ZigString.init(error_code).toValueGC(globalObject));
@@ -1835,7 +1835,7 @@ pub const Crypto = struct {
                     var promise = this.promise;
                     this.promise = .{};
                     this.ref.unref(this.global.bunVM());
-                    var global = this.global;
+                    const global = this.global;
                     switch (this.value) {
                         .err => {
                             const error_instance = this.value.toErrorInstance(global);
@@ -1879,7 +1879,7 @@ pub const Crypto = struct {
                 this.ref = .{};
                 this.promise.strong = .{};
 
-                var concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch @panic("out of memory");
+                const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch @panic("out of memory");
                 concurrent_task.* = JSC.ConcurrentTask{
                     .task = JSC.Task.init(&result.task),
                     .auto_delete = true,
@@ -2127,7 +2127,7 @@ pub const Crypto = struct {
         }
 
         pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) ?*CryptoHasher {
-            var arguments = callframe.arguments(2);
+            const arguments = callframe.arguments(2);
             if (arguments.len == 0) {
                 globalThis.throwInvalidArguments("Expected an algorithm name as an argument", .{});
                 return null;
@@ -2251,7 +2251,7 @@ pub const Crypto = struct {
         fn digestToEncoding(this: *CryptoHasher, globalThis: *JSGlobalObject, encoding: JSC.Node.Encoding) JSC.JSValue {
             var output_digest_buf: EVP.Digest = std.mem.zeroes(EVP.Digest);
 
-            var output_digest_slice: []u8 = &output_digest_buf;
+            const output_digest_slice: []u8 = &output_digest_buf;
 
             const out = this.evp.final(globalThis.bunVM().rareData().boringEngine(), output_digest_slice);
 
@@ -2363,7 +2363,7 @@ pub const Crypto = struct {
             }
 
             pub fn constructor(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*@This() {
-                var this = bun.default_allocator.create(@This()) catch return null;
+                const this = bun.default_allocator.create(@This()) catch return null;
 
                 this.* = .{ .hashing = Hasher.init() };
                 return this;
@@ -2458,7 +2458,7 @@ pub const Crypto = struct {
                     break :brk bytes;
                 };
 
-                var output_digest_slice: *Hasher.Digest = &output_digest_buf;
+                const output_digest_slice: *Hasher.Digest = &output_digest_buf;
 
                 this.hashing.final(output_digest_slice);
 
@@ -2496,7 +2496,7 @@ pub fn serve(
     const arguments = callframe.arguments(2).slice();
     var config: JSC.API.ServerConfig = brk: {
         var exception_ = [1]JSC.JSValueRef{null};
-        var exception = &exception_;
+        const exception = &exception_;
 
         var args = JSC.Node.ArgumentsSlice.init(globalObject.bunVM(), arguments);
         const config_ = JSC.API.ServerConfig.fromJS(globalObject.ptr(), &args, exception);
@@ -3071,7 +3071,7 @@ const TOMLObject = struct {
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
         var arena = @import("root").bun.ArenaAllocator.init(globalThis.allocator());
-        var allocator = arena.allocator();
+        const allocator = arena.allocator();
         defer arena.deinit();
         var log = logger.Log.init(default_allocator);
         const arguments = callframe.arguments(1).slice();
@@ -3079,13 +3079,13 @@ const TOMLObject = struct {
         var input_slice = arguments[0].toSlice(globalThis, bun.default_allocator);
         defer input_slice.deinit();
         var source = logger.Source.initPathString("input.toml", input_slice.slice());
-        var parse_result = TOMLParser.parse(&source, &log, allocator) catch {
+        const parse_result = TOMLParser.parse(&source, &log, allocator) catch {
             globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to parse toml"));
             return .zero;
         };
 
         // for now...
-        var buffer_writer = js_printer.BufferWriter.init(allocator) catch {
+        const buffer_writer = js_printer.BufferWriter.init(allocator) catch {
             globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to print toml"));
             return .zero;
         };
@@ -3095,7 +3095,7 @@ const TOMLObject = struct {
             return .zero;
         };
 
-        var slice = writer.ctx.buffer.toOwnedSliceLeaky();
+        const slice = writer.ctx.buffer.toOwnedSliceLeaky();
         var out = bun.String.fromUTF8(slice);
         defer out.deref();
 
@@ -3532,13 +3532,13 @@ pub const Timer = struct {
 
             var map = vm.timer.maps.get(timer_id.kind);
 
-            var this_: ?Timeout = map.get(
+            const this_: ?Timeout = map.get(
                 timer_id.id,
             ) orelse return;
             var this = this_ orelse
                 return;
 
-            var globalThis = this.globalThis;
+            const globalThis = this.globalThis;
 
             // Disable thundering herd of setInterval() calls
             // Skip setInterval() calls when the previous one has not been run yet.
@@ -3546,7 +3546,7 @@ pub const Timer = struct {
                 return;
             }
 
-            var cb: CallbackJob = .{
+            const cb: CallbackJob = .{
                 .callback = if (repeats)
                     JSC.Strong.create(
                         this.callback.get() orelse {
@@ -4561,7 +4561,7 @@ pub const JSZlib = struct {
             }
         }
 
-        var compressed = buffer.slice();
+        const compressed = buffer.slice();
         const allocator = JSC.VirtualMachine.get().allocator;
         var list = std.ArrayListUnmanaged(u8).initCapacity(allocator, if (compressed.len > 512) compressed.len else 32) catch unreachable;
         var reader = zlib.ZlibCompressorArrayList.init(compressed, &list, allocator, opts) catch |err| {
@@ -4591,7 +4591,7 @@ pub const JSZlib = struct {
         globalThis: *JSGlobalObject,
         buffer: JSC.Node.StringOrBuffer,
     ) JSValue {
-        var compressed = buffer.slice();
+        const compressed = buffer.slice();
         const allocator = JSC.VirtualMachine.get().allocator;
         var list = std.ArrayListUnmanaged(u8).initCapacity(allocator, if (compressed.len > 512) compressed.len else 32) catch unreachable;
         var reader = zlib.ZlibReaderArrayList.initWithOptions(compressed, &list, allocator, .{
@@ -4623,7 +4623,7 @@ pub const JSZlib = struct {
         globalThis: *JSGlobalObject,
         buffer: JSC.Node.StringOrBuffer,
     ) JSValue {
-        var compressed = buffer.slice();
+        const compressed = buffer.slice();
         const allocator = JSC.VirtualMachine.get().allocator;
         var list = std.ArrayListUnmanaged(u8).initCapacity(allocator, if (compressed.len > 512) compressed.len else 32) catch unreachable;
         var reader = zlib.ZlibReaderArrayList.init(compressed, &list, allocator) catch |err| {

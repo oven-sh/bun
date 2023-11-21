@@ -33,27 +33,27 @@ pub fn onStartIOThread(waker: AsyncIO.Waker) void {
             if (comptime Environment.isLinux) {
                 if (err == error.SystemOutdated) {
                     Output.prettyErrorln(
-                        \\<red>error<r>: Linux kernel version doesn't support io_uring, which Bun depends on. 
+                        \\<red>error<r>: Linux kernel version doesn't support io_uring, which Bun depends on.
                         \\
                         \\ To fix this error: please upgrade to a newer Linux kernel.
-                        \\ 
+                        \\
                         \\ If you're using Windows Subsystem for Linux, here's how:
                         \\  1. Open PowerShell as an administrator
                         \\  2. Run this:
                         \\      wsl --update
                         \\      wsl --shutdown
-                        \\ 
+                        \\
                         \\ Please make sure you're using WSL version 2 (not WSL 1). To check: wsl -l -v
                         \\ If you are on WSL 1, update to WSL 2 with the following commands:
                         \\  1. wsl --set-default-version 2
                         \\  2. wsl --set-version [distro_name] 2
                         \\  3. Now follow the WSL 2 instructions above.
                         \\     Where [distro_name] is one of the names from the list given by: wsl -l -v
-                        \\ 
+                        \\
                         \\ If that doesn't work (and you're on a Windows machine), try this:
                         \\  1. Open Windows Update
                         \\  2. Download any updates to Windows Subsystem for Linux
-                        \\ 
+                        \\
                         \\ If you're still having trouble, ask for help in bun's discord https://bun.sh/discord
                     , .{});
                     break :log;
@@ -64,7 +64,7 @@ pub fn onStartIOThread(waker: AsyncIO.Waker) void {
                         \\To fix this error: <b>please increase the memlock limit<r> or upgrade to Linux kernel 5.11+
                         \\
                         \\If Bun is running inside Docker, make sure to set the memlock limit to unlimited (-1)
-                        \\ 
+                        \\
                         \\    docker run --rm --init --ulimit memlock=-1:-1 jarredsumner/bun:edge
                         \\
                         \\To bump the memlock limit, check one of the following:
@@ -123,7 +123,7 @@ fn processEvents_(this: *@This()) !void {
         var count: usize = 0;
 
         while (this.processing_tasks.pop()) |task| {
-            var callback = task.callback;
+            const callback = task.callback;
             callback(task);
             if (comptime Environment.allow_assert) {
                 count += 1;
@@ -142,7 +142,7 @@ fn processEvents_(this: *@This()) !void {
         Output.flush();
         this.io.wait(this, queueEvents);
         if (comptime Environment.isDebug) {
-            var end = std.time.nanoTimestamp();
+            const end = std.time.nanoTimestamp();
             log("Waited {any}\n", .{std.fmt.fmtDurationSigned(@as(i64, @truncate(end - start)))});
             Output.flush();
         }

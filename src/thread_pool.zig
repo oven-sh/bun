@@ -93,7 +93,7 @@ pub const Batch = struct {
         if (len == 0) {
             return null;
         }
-        var task = this.head.?;
+        const task = this.head.?;
         if (task.node.next) |node| {
             this.head = @fieldParentPtr(Task, "node", node);
         } else {
@@ -227,7 +227,7 @@ pub fn ConcurrentFunction(
             task: Task = .{ .callback = callback },
 
             pub fn callback(task: *Task) void {
-                var routine = @fieldParentPtr(@This(), "task", task);
+                const routine = @fieldParentPtr(@This(), "task", task);
                 @call(.always_inline, Fn, routine.args);
             }
         };
@@ -320,7 +320,7 @@ pub fn Do(
             runner_task.ctx.wait_group.finish();
         }
     };
-    var wait_context = allocator.create(WaitContext) catch unreachable;
+    const wait_context = allocator.create(WaitContext) catch unreachable;
     wait_context.* = .{
         .ctx = ctx,
         .wait_group = wait_group,
@@ -360,8 +360,8 @@ pub fn Do(
 test "parallel for loop" {
     Output.initTest();
     var thread_pool = ThreadPool.init(.{ .max_threads = 12 });
-    var sleepy_time: u32 = 100;
-    var huge_array = &[_]u32{
+    const sleepy_time: u32 = 100;
+    const huge_array = &[_]u32{
         sleepy_time + std.rand.DefaultPrng.init(1).random().uintAtMost(u32, 20),
         sleepy_time + std.rand.DefaultPrng.init(2).random().uintAtMost(u32, 20),
         sleepy_time + std.rand.DefaultPrng.init(3).random().uintAtMost(u32, 20),
@@ -392,7 +392,7 @@ test "parallel for loop" {
             std.debug.assert(ctx.completed <= ctx.total);
         }
     };
-    var runny = try std.heap.page_allocator.create(Runner);
+    const runny = try std.heap.page_allocator.create(Runner);
     runny.* = .{ .total = huge_array.len };
     try thread_pool.doAndWait(std.heap.page_allocator, null, runny, Runner.run, std.mem.span(huge_array));
     try std.testing.expectEqual(huge_array.len, runny.completed);
@@ -1103,11 +1103,11 @@ pub const Node = struct {
 
         fn pop(self: *Buffer) ?*Node {
             var head = self.head.load(.Monotonic);
-            var tail = self.tail.loadUnchecked(); // we're the only thread that can change this
+            const tail = self.tail.loadUnchecked(); // we're the only thread that can change this
 
             while (true) {
                 // Quick sanity check and return null when not empty
-                var size = tail -% head;
+                const size = tail -% head;
                 assert(size <= capacity);
                 if (size == 0) {
                     return null;

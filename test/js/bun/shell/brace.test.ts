@@ -20,6 +20,7 @@ describe("brace_expansion", () => {
       { "text": "zig" },
       { "close": {} },
       { "text": "LOL" },
+      { eof: {} },
     ];
     const value = braces("LMAO{js,jsx}NICE{ts,tsx,zig}LOL", { tokenize: true });
     // console.log("Value", value);
@@ -34,6 +35,7 @@ describe("brace_expansion", () => {
       { comma: {} },
       { text: "tsx" },
       { close: {} },
+      { eof: {} },
     ];
     const value = braces("{js,jsx,hi{ts,tsx}", { tokenize: true });
     console.log("Value", value);

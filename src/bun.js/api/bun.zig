@@ -245,7 +245,8 @@ const is_bindgen = JSC.is_bindgen;
 const max_addressible_memory = std.math.maxInt(u56);
 const Async = bun.Async;
 const SemverObject = @import("../../install/semver.zig").SemverObject;
-const Shell = @import("../../shell.zig");
+const Braces = @import("../../shell/braces.zig");
+const Shell = @import("../../shell/shell.zig");
 
 threadlocal var css_imports_list_strings: [512]ZigString = undefined;
 threadlocal var css_imports_list: [512]Api.StringPointer = undefined;
@@ -533,15 +534,15 @@ pub fn braces(
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
 
-    var shell_braces = Shell.Braces.tokenize(arena.allocator(), brace_str.slice()) catch |err| {
+    var shell_braces = Braces.Lexer.tokenize(arena.allocator(), brace_str.slice()) catch |err| {
         globalThis.throwError(err, "failed to tokenize braces");
         return .undefined;
     };
 
     if (tokenize) {
-        var debug_tokens = std.ArrayList(Shell.Braces.DebugToken).init(arena.allocator());
+        var debug_tokens = std.ArrayList(Braces.DebugToken).init(arena.allocator());
         for (shell_braces.tokens.items) |tok| {
-            debug_tokens.append(Shell.Braces.DebugToken.fromNormal(arena.allocator(), &tok) catch {
+            debug_tokens.append(Braces.DebugToken.fromNormal(arena.allocator(), &tok) catch {
                 globalThis.throwOutOfMemory();
                 return .undefined;
             }) catch {

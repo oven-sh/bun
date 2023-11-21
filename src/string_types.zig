@@ -156,6 +156,15 @@ pub const SmolStr = packed struct {
         std.debug.assert(@sizeOf(SmolStr) == @sizeOf(Inlined));
     }
 
+    pub fn empty() SmolStr {
+        var inlined = Inlined{
+            .data = 0,
+            .__len = 0,
+            ._tag = 1,
+        };
+        return SmolStr.fromInlined(inlined);
+    }
+
     pub fn len(this: *const SmolStr) u32 {
         if (this.isInlined()) {
             return @intCast((@intFromPtr(this.__ptr) >> 56) & 0b01111111);
@@ -208,7 +217,7 @@ pub const SmolStr = packed struct {
 
     pub fn fromChar(char: u8) SmolStr {
         var inlined = Inlined{
-            .data = undefined,
+            .data = 0,
             .__len = 1,
             ._tag = 1,
         };
@@ -227,13 +236,15 @@ pub const SmolStr = packed struct {
         }
 
         var inlined = Inlined{
-            .data = undefined,
-            .__len = undefined,
+            .data = 0,
+            .__len = 0,
             ._tag = 1,
         };
 
-        @memcpy(inlined.allChars()[0..values.len], values[0..values.len]);
-        inlined.setLen(@intCast(values.len));
+        if (values.len > 0) {
+            @memcpy(inlined.allChars()[0..values.len], values[0..values.len]);
+            inlined.setLen(@intCast(values.len));
+        }
 
         return SmolStr.fromInlined(inlined);
     }

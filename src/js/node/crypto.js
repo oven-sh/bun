@@ -12301,17 +12301,18 @@ crypto_exports.sign = function (algorithm, data, key, callback) {
   var dsaEncoding, padding, saltLength;
   // key must be a KeyObject
   if (!(key instanceof KeyObject)) {
-    // if ($isObject(key) && key.key) {
-    //   padding = key.padding;
-    //   saltLength = key.saltLength;
-    //   dsaEncoding = key.dsaEncoding;
-    // }
+    if ($isObject(key) && key.key) {
+      padding = key.padding;
+      saltLength = key.saltLength;
+      dsaEncoding = key.dsaEncoding;
+    }
     key = _createPrivateKey(key);
   }
   if (typeof callback === "function") {
     try {
       let result;
       if (key.asymmetricKeyType === "rsa") {
+        // RSA-PSS is supported by native but other RSA algorithms are not
         result = _createSign(algorithm || "sha256")
           .update(data)
           .sign(key);
@@ -12343,30 +12344,51 @@ crypto_exports.sign = function (algorithm, data, key, callback) {
   }
 };
 const _createVerify = crypto_exports.createVerify;
+function getHashAlgorithm(algorithm) {
+  if (typeof algorithm !== "string") throw new TypeError("Algorithm must be a string");
+  switch (algorithm.toLowerCase()) {
+    case "sha-1":
+    case "sha1":
+      return "SHA-1";
+    case "sha-224":
+    case "sha224":
+      return "SHA-224";
+    case "sha-256":
+    case "sha256":
+      return "SHA-256";
+    case "sha-384":
+    case "sha384":
+      return "SHA-384";
+    case "sha-512":
+    case "sha512":
+      return "SHA-512";
+    default:
+      throw new TypeError(`Invalid hash algorithm "${algorithm}"`);
+  }
+}
 crypto_exports.verify = function (algorithm, data, key, signature, callback) {
   // TODO: move this to native
   var dsaEncoding, padding, saltLength;
-  // key must be a CrytoKey
+  // key must be a KeyObject
   if (!(key instanceof KeyObject)) {
-    // if ($isObject(key) && key.key) {
-    //   padding = key.padding;
-    //   saltLength = key.saltLength;
-    //   dsaEncoding = key.dsaEncoding;
-    // }
+    if ($isObject(key) && key.key) {
+      padding = key.padding;
+      saltLength = key.saltLength;
+      dsaEncoding = key.dsaEncoding;
+    }
     key = _createPublicKey(key);
   }
   if (typeof callback === "function") {
     try {
       let result;
       if (key.asymmetricKeyType === "rsa") {
+        // RSA-PSS is supported by native but other RSA algorithms are not
         result = _createVerify(algorithm || "sha256")
           .update(data)
           .verify(key, signature);
       } else {
         if (algorithm) {
-          if (typeof algorithm !== "string") throw new TypeError("Algorithm must be a string");
-          algorithm = algorithm.replace(/sha/i, "SHA-");
-          result = nativeVerify(key[kCryptoKey], data, signature, algorithm);
+          result = nativeVerify(key[kCryptoKey], data, signature, getHashAlgorithm(algorithm));
         }
         result = nativeVerify(key[kCryptoKey], data, signature);
       }
@@ -12381,9 +12403,7 @@ crypto_exports.verify = function (algorithm, data, key, signature, callback) {
         .verify(key, signature);
     } else {
       if (algorithm) {
-        if (typeof algorithm !== "string") throw new TypeError("Algorithm must be a string");
-        algorithm = algorithm.replace(/sha/i, "SHA-");
-        return nativeVerify(key[kCryptoKey], data, signature, algorithm);
+        return nativeVerify(key[kCryptoKey], data, signature, getHashAlgorithm(algorithm));
       }
       return nativeVerify(key[kCryptoKey], data, signature);
     }

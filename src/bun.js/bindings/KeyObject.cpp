@@ -1394,6 +1394,7 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
             CryptoAlgorithmEcdsaParams params;
             params.identifier = CryptoAlgorithmIdentifier::ECDSA;
             params.hashIdentifier = hash;
+            params.encoding = CryptoAlgorithmECDSAEncoding::DER;
             // TODO: use the right encoding
             auto result = WebCore::CryptoAlgorithmECDSA::platformSign(params, ec, vectorData);
             auto resultData = result.releaseReturnValue();
@@ -1539,6 +1540,7 @@ JSC::EncodedJSValue KeyObject__Verify(JSC::JSGlobalObject* globalObject, JSC::Ca
             CryptoAlgorithmEcdsaParams params;
             params.identifier = CryptoAlgorithmIdentifier::ECDSA;
             params.hashIdentifier = hash;
+            params.encoding = CryptoAlgorithmECDSAEncoding::DER;
             // TODO: use the right encoding
             auto result = WebCore::CryptoAlgorithmECDSA::platformVerify(params, ec, signatureData, vectorData);
             return JSC::JSValue::encode(jsBoolean(result.releaseReturnValue()));

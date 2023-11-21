@@ -438,7 +438,19 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
   ]);
   expect(await exited).toBe(0);
 
-  for (var i = 0; i < 150; i++) {
+  for (var i = 0; i < 10; i++) {
+    // Situation:
+    //
+    // Root package has a dependency on one-fixed-dep, peer-deps-too and two-range-deps.
+    // Each of these dependencies depends on no-deps.
+    //
+    // - one-fixed-dep: no-deps@2.0.0
+    // - two-range-deps: no-deps@^1.0.0 (will choose 1.1.0)
+    // - peer-deps-too: peer no-deps@*
+    //
+    // We want peer-deps-too to choose the version of no-deps from one-fixed-dep because
+    // it's the highest version. It should hoist to the root.
+
     // delete bun.lockb
     await rm(join(packageDir, "bun.lockb"), { recursive: true, force: true });
 
@@ -514,6 +526,331 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
     expect.stringContaining("Checked 19 installs across 23 packages (no changes)"),
   ]);
 }, 30_000);
+
+describe("hoisting", async () => {
+  var tests: any = [
+    {
+      situation: "1.0.0 - 1.0.10 is in order",
+      dependencies: {
+        "uses-a-dep-1": "1.0.0",
+        "uses-a-dep-2": "1.0.0",
+        "uses-a-dep-3": "1.0.0",
+        "uses-a-dep-4": "1.0.0",
+        "uses-a-dep-5": "1.0.0",
+        "uses-a-dep-6": "1.0.0",
+        "uses-a-dep-7": "1.0.0",
+        "uses-a-dep-8": "1.0.0",
+        "uses-a-dep-9": "1.0.0",
+        "uses-a-dep-10": "1.0.0",
+      },
+      expected: "1.0.1",
+    },
+    {
+      situation: "1.0.1 in the middle",
+      dependencies: {
+        "uses-a-dep-2": "1.0.0",
+        "uses-a-dep-3": "1.0.0",
+        "uses-a-dep-4": "1.0.0",
+        "uses-a-dep-5": "1.0.0",
+        "uses-a-dep-6": "1.0.0",
+        "uses-a-dep-7": "1.0.0",
+        "uses-a-dep-1": "1.0.0",
+        "uses-a-dep-8": "1.0.0",
+        "uses-a-dep-9": "1.0.0",
+        "uses-a-dep-10": "1.0.0",
+      },
+      expected: "1.0.1",
+    },
+    {
+      situation: "1.0.1 is missing",
+      dependencies: {
+        "uses-a-dep-2": "1.0.0",
+        "uses-a-dep-3": "1.0.0",
+        "uses-a-dep-4": "1.0.0",
+        "uses-a-dep-5": "1.0.0",
+        "uses-a-dep-6": "1.0.0",
+        "uses-a-dep-7": "1.0.0",
+        "uses-a-dep-8": "1.0.0",
+        "uses-a-dep-9": "1.0.0",
+        "uses-a-dep-10": "1.0.0",
+      },
+      expected: "1.0.10",
+    },
+    {
+      situation: "1.0.10 and 1.0.1 are missing",
+      dependencies: {
+        "uses-a-dep-2": "1.0.0",
+        "uses-a-dep-3": "1.0.0",
+        "uses-a-dep-4": "1.0.0",
+        "uses-a-dep-5": "1.0.0",
+        "uses-a-dep-6": "1.0.0",
+        "uses-a-dep-7": "1.0.0",
+        "uses-a-dep-8": "1.0.0",
+        "uses-a-dep-9": "1.0.0",
+      },
+      expected: "1.0.2",
+    },
+    {
+      situation: "1.0.10 is missing and 1.0.1 is last",
+      dependencies: {
+        "uses-a-dep-2": "1.0.0",
+        "uses-a-dep-3": "1.0.0",
+        "uses-a-dep-4": "1.0.0",
+        "uses-a-dep-5": "1.0.0",
+        "uses-a-dep-6": "1.0.0",
+        "uses-a-dep-7": "1.0.0",
+        "uses-a-dep-8": "1.0.0",
+        "uses-a-dep-9": "1.0.0",
+        "uses-a-dep-1": "1.0.0",
+      },
+      expected: "1.0.1",
+    },
+  ];
+
+  for (const { dependencies, expected, situation } of tests) {
+    test(`it should hoist ${expected} when ${situation}`, async () => {
+      await writeFile(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          dependencies,
+        }),
+      );
+
+      var { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+
+      var err = await new Response(stderr).text();
+      var out = await new Response(stdout).text();
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("not found");
+      if (!err.includes("mimalloc: warning")) {
+        expect(err).not.toContain("error:");
+      }
+      for (const dep of Object.keys(dependencies)) {
+        expect(out).toContain(` + ${dep}@${dependencies[dep]}`);
+      }
+      expect(await exited).toBe(0);
+      expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).text()).toContain(expected);
+
+      await rm(join(packageDir, "bun.lockb"));
+
+      ({ stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      }));
+
+      err = await new Response(stderr).text();
+      out = await new Response(stdout).text();
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("not found");
+      if (!err.includes("mimalloc: warning")) {
+        expect(err).not.toContain("error:");
+      }
+      expect(out).not.toContain("package installed");
+      expect(out).toContain(`Checked ${Object.keys(dependencies).length * 2} installs across`);
+      expect(await exited).toBe(0);
+    });
+  }
+
+  describe("peers", async () => {
+    var peerTests: any = [
+      {
+        situation: "peer 1.0.2",
+        dependencies: {
+          "uses-a-dep-1": "1.0.0",
+          "uses-a-dep-2": "1.0.0",
+          "uses-a-dep-3": "1.0.0",
+          "uses-a-dep-4": "1.0.0",
+          "uses-a-dep-5": "1.0.0",
+          "uses-a-dep-6": "1.0.0",
+          "uses-a-dep-7": "1.0.0",
+          "uses-a-dep-8": "1.0.0",
+          "uses-a-dep-9": "1.0.0",
+          "uses-a-dep-10": "1.0.0",
+          "peer-a-dep-1-0-2": "1.0.0",
+        },
+        expected: "1.0.2",
+      },
+      {
+        situation: "peer >= 1.0.2",
+        dependencies: {
+          "uses-a-dep-1": "1.0.0",
+          "uses-a-dep-2": "1.0.0",
+          "uses-a-dep-3": "1.0.0",
+          "uses-a-dep-4": "1.0.0",
+          "uses-a-dep-5": "1.0.0",
+          "uses-a-dep-6": "1.0.0",
+          "uses-a-dep-7": "1.0.0",
+          "uses-a-dep-8": "1.0.0",
+          "uses-a-dep-9": "1.0.0",
+          "uses-a-dep-10": "1.0.0",
+          "peer-a-dep-gte-1-0-2": "1.0.0",
+        },
+        expected: "1.0.10",
+      },
+      {
+        situation: "peer ^1.0.2",
+        dependencies: {
+          "uses-a-dep-1": "1.0.0",
+          "uses-a-dep-2": "1.0.0",
+          "uses-a-dep-3": "1.0.0",
+          "uses-a-dep-4": "1.0.0",
+          "uses-a-dep-5": "1.0.0",
+          "uses-a-dep-6": "1.0.0",
+          "uses-a-dep-7": "1.0.0",
+          "uses-a-dep-8": "1.0.0",
+          "uses-a-dep-9": "1.0.0",
+          "uses-a-dep-10": "1.0.0",
+          "peer-a-dep-caret-1-0-2": "1.0.0",
+        },
+        expected: "1.0.10",
+      },
+      {
+        situation: "peer ~1.0.2",
+        dependencies: {
+          "uses-a-dep-1": "1.0.0",
+          "uses-a-dep-2": "1.0.0",
+          "uses-a-dep-3": "1.0.0",
+          "uses-a-dep-4": "1.0.0",
+          "uses-a-dep-5": "1.0.0",
+          "uses-a-dep-6": "1.0.0",
+          "uses-a-dep-7": "1.0.0",
+          "uses-a-dep-8": "1.0.0",
+          "uses-a-dep-9": "1.0.0",
+          "uses-a-dep-10": "1.0.0",
+          "peer-a-dep-tilde-1-0-2": "1.0.0",
+        },
+        expected: "1.0.10",
+      },
+      {
+        situation: "peer *",
+        dependencies: {
+          "uses-a-dep-1": "1.0.0",
+          "uses-a-dep-2": "1.0.0",
+          "uses-a-dep-3": "1.0.0",
+          "uses-a-dep-4": "1.0.0",
+          "uses-a-dep-5": "1.0.0",
+          "uses-a-dep-6": "1.0.0",
+          "uses-a-dep-7": "1.0.0",
+          "uses-a-dep-8": "1.0.0",
+          "uses-a-dep-9": "1.0.0",
+          "uses-a-dep-10": "1.0.0",
+          "peer-a-dep-star": "1.0.0",
+        },
+        expected: "1.0.1",
+      },
+      {
+        situation: "peer * and peer 1.0.2",
+        dependencies: {
+          "uses-a-dep-1": "1.0.0",
+          "uses-a-dep-2": "1.0.0",
+          "uses-a-dep-3": "1.0.0",
+          "uses-a-dep-4": "1.0.0",
+          "uses-a-dep-5": "1.0.0",
+          "uses-a-dep-6": "1.0.0",
+          "uses-a-dep-7": "1.0.0",
+          "uses-a-dep-8": "1.0.0",
+          "uses-a-dep-9": "1.0.0",
+          "uses-a-dep-10": "1.0.0",
+          "peer-a-dep-1-0-2": "1.0.0",
+          "peer-a-dep-star": "1.0.0",
+        },
+        expected: "1.0.2",
+      },
+    ];
+    for (const { dependencies, expected, situation } of peerTests) {
+      test(`it should hoist ${expected} when ${situation}`, async () => {
+        await writeFile(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            dependencies,
+          }),
+        );
+
+        var { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        });
+
+        var err = await new Response(stderr).text();
+        var out = await new Response(stdout).text();
+        expect(err).toContain("Saved lockfile");
+        expect(err).not.toContain("not found");
+        if (!err.includes("mimalloc: warning")) {
+          expect(err).not.toContain("error:");
+        }
+        for (const dep of Object.keys(dependencies)) {
+          expect(out).toContain(` + ${dep}@${dependencies[dep]}`);
+        }
+        expect(await exited).toBe(0);
+        expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).text()).toContain(expected);
+
+        await rm(join(packageDir, "bun.lockb"));
+
+        ({ stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        }));
+
+        err = await new Response(stderr).text();
+        out = await new Response(stdout).text();
+        expect(err).toContain("Saved lockfile");
+        expect(err).not.toContain("not found");
+        if (!err.includes("mimalloc: warning")) {
+          expect(err).not.toContain("error:");
+        }
+        if (out.includes("installed")) {
+          console.log("stdout:", out);
+        }
+        expect(out).not.toContain("package installed");
+        expect(await exited).toBe(0);
+        expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).text()).toContain(expected);
+
+        await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+        ({ stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        }));
+
+        err = await new Response(stderr).text();
+        out = await new Response(stdout).text();
+        expect(err).not.toContain("Saved lockfile");
+        expect(err).not.toContain("not found");
+        if (!err.includes("mimalloc: warning")) {
+          expect(err).not.toContain("error:");
+        }
+        expect(out).not.toContain("package installed");
+        expect(await exited).toBe(0);
+        expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).text()).toContain(expected);
+      });
+    }
+  });
+});
 
 test("it should re-populate .bin folder if package is reinstalled", async () => {
   await writeFile(

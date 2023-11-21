@@ -1,0 +1,41 @@
+{
+	"name": "peer-a-dep-tilde-1-0-2",
+	"versions": {
+		"1.0.0": {
+			"name": "peer-a-dep-tilde-1-0-2",
+			"version": "1.0.0",
+			"peerDependencies": {
+				"a-dep": "~1.0.2"
+			},
+			"_id": "peer-a-dep-tilde-1-0-2@1.0.0",
+			"_nodeVersion": "21.1.0",
+			"_npmVersion": "8.19.4",
+			"dist": {
+				"integrity": "sha512-+IY6pBGQWtH48gK3a6q32HdjQjte86M5RhrGeqBXP/DSreqEWAxJu7cs5mbQ9llfHiJOq0nFJS62akq7Wz2/Hw==",
+				"shasum": "21042cc20fa9ef93c62ee962272025a8f5e4d67c",
+				"tarball": "http://localhost:4873/peer-a-dep-tilde-1-0-2/-/peer-a-dep-tilde-1-0-2-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-18T03:23:19.073Z",
+		"created": "2023-11-18T03:23:19.073Z",
+		"1.0.0": "2023-11-18T03:23:19.073Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"peer-a-dep-tilde-1-0-2-1.0.0.tgz": {
+			"shasum": "21042cc20fa9ef93c62ee962272025a8f5e4d67c",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "peer-a-dep-tilde-1-0-2",
+	"readme": "ERROR: No README data found!"
+}

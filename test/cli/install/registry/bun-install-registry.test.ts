@@ -1,5 +1,5 @@
 import { file, spawn } from "bun";
-import { bunExe, bunEnv as env } from "harness";
+import { bunExe, bunEnv as env, ignoreMimallocWarning } from "harness";
 import { join } from "path";
 import { mkdtempSync, realpathSync } from "fs";
 import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
@@ -12,6 +12,8 @@ var verdaccioServer: ChildProcess;
 var testCounter: number = 0;
 var port: number = 4784;
 var packageDir: string;
+
+ignoreMimallocWarning({ beforeAll, afterAll });
 
 beforeAll(async done => {
   verdaccioServer = fork(
@@ -382,9 +384,7 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
   var out = await new Response(stdout).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
-  if (!err.includes("mimalloc: warning")) {
-    expect(err).not.toContain("error:");
-  }
+  expect(err).not.toContain("error:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + dep-loop-entry@1.0.0",
     " + dep-with-tags@3.0.0",
@@ -404,7 +404,7 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
   expect(await exited).toBe(0);
 
   // delete node_modules
-  await await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
 
   ({ stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
@@ -415,13 +415,11 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
     env,
   }));
 
-  err = await new Response(stderr).text();
-  out = await new Response(stdout).text();
+  [err, out] = await Promise.all([new Response(stderr).text(), new Response(stdout).text()]);
+
   expect(err).not.toContain("Saved lockfile");
   expect(err).not.toContain("not found");
-  if (!err.includes("mimalloc: warning")) {
-    expect(err).not.toContain("error:");
-  }
+  expect(err).not.toContain("error:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + dep-loop-entry@1.0.0",
     " + dep-with-tags@3.0.0",
@@ -453,8 +451,8 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
       env,
     }));
 
-    err = await new Response(stderr).text();
-    out = await new Response(stdout).text();
+    [err, out] = await Promise.all([new Response(stderr).text(), new Response(stdout).text()]);
+
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     if (!err.includes("mimalloc: warning")) {
@@ -464,6 +462,7 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
       "",
       expect.stringContaining("Checked 19 installs across 23 packages (no changes)"),
     ]);
+
     expect(await exited).toBe(0);
   }
 
@@ -479,13 +478,11 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
     env,
   }));
 
-  err = await new Response(stderr).text();
-  out = await new Response(stdout).text();
+  [err, out] = await Promise.all([new Response(stderr).text(), new Response(stdout).text()]);
+
   expect(err).not.toContain("Saved lockfile");
   expect(err).not.toContain("not found");
-  if (!err.includes("mimalloc: warning")) {
-    expect(err).not.toContain("error:");
-  }
+  expect(err).not.toContain("error:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
     expect.stringContaining("Checked 19 installs across 23 packages (no changes)"),
@@ -505,18 +502,18 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
     env,
   }));
 
-  err = await new Response(stderr).text();
-  out = await new Response(stdout).text();
+  expect(await exited).toBe(0);
+
+  [err, out] = await Promise.all([new Response(stderr).text(), new Response(stdout).text()]);
+
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
-  if (!err.includes("mimalloc: warning")) {
-    expect(err).not.toContain("error:");
-  }
+  expect(err).not.toContain("error:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
     expect.stringContaining("Checked 19 installs across 23 packages (no changes)"),
   ]);
-});
+}, 30_000);
 
 test("it should re-populate .bin folder if package is reinstalled", async () => {
   await writeFile(
@@ -542,9 +539,7 @@ test("it should re-populate .bin folder if package is reinstalled", async () => 
   var out = await new Response(stdout).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
-  if (!err.includes("mimalloc: warning")) {
-    expect(err).not.toContain("error:");
-  }
+  expect(err).not.toContain("error:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + what-bin@1.5.0",
     "",
@@ -572,9 +567,7 @@ test("it should re-populate .bin folder if package is reinstalled", async () => 
   out = await new Response(stdout).text();
   expect(err).not.toContain("Saved lockfile");
   expect(err).not.toContain("not found");
-  if (!err.includes("mimalloc: warning")) {
-    expect(err).not.toContain("error:");
-  }
+  expect(err).not.toContain("error:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + what-bin@1.5.0",
     "",
@@ -622,9 +615,7 @@ test("missing package on reinstall, some with binaries", async () => {
   var out = await new Response(stdout).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
-  if (!err.includes("mimalloc: warning")) {
-    expect(err).not.toContain("error:");
-  }
+  expect(err).not.toContain("error:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + dep-loop-entry@1.0.0",
     " + dep-with-tags@3.0.0",
@@ -672,9 +663,7 @@ test("missing package on reinstall, some with binaries", async () => {
   out = await new Response(stdout).text();
   expect(err).not.toContain("Saved lockfile");
   expect(err).not.toContain("not found");
-  if (!err.includes("mimalloc: warning")) {
-    expect(err).not.toContain("error:");
-  }
+  expect(err).not.toContain("error:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + dep-loop-entry@1.0.0",
     " + left-pad@1.0.0",

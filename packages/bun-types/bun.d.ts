@@ -90,6 +90,11 @@ declare module "bun" {
 
   export const $: Shell;
 
+  export function braces(
+    pattern: string,
+    opts?: { tokenize?: boolean },
+  ): string;
+
   interface TOML {
     /**
      * Parse a TOML string into a JavaScript object.

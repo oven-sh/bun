@@ -35,6 +35,7 @@
     macro(_Os) \
     macro(_Path) \
     macro(allocUnsafe) \
+    macro(braces) \
     macro(build) \
     macro(connect) \
     macro(deflateSync) \

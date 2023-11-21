@@ -583,6 +583,7 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     argv                                           BunObject_getter_wrap_argv                                          DontDelete|PropertyCallback
     assetPrefix                                    BunObject_getter_wrap_assetPrefix                                   DontEnum|DontDelete|PropertyCallback
     build                                          BunObject_callback_build                                            DontDelete|Function 1
+    braces                                         BunObject_callback_braces                                           DontDelete|Function 1
     concatArrayBuffers                             functionConcatTypedArrays                                           DontDelete|Function 1
     connect                                        BunObject_callback_connect                                          DontDelete|Function 1
     cwd                                            BunObject_getter_wrap_cwd                                           DontEnum|DontDelete|PropertyCallback

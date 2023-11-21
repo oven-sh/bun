@@ -44,6 +44,7 @@ pub const BunObject = struct {
     pub const @"$" = Bun.shell;
     pub const shellParse = Bun.shellParse;
     pub const shellLex = Bun.shellLex;
+    pub const braces = Bun.braces;
     // --- Callbacks ---
 
     // --- Getters ---
@@ -126,6 +127,7 @@ pub const BunObject = struct {
         @export(BunObject._Os, .{ .name = callbackName("_Os") });
         @export(BunObject._Path, .{ .name = callbackName("_Path") });
         @export(BunObject.allocUnsafe, .{ .name = callbackName("allocUnsafe") });
+        @export(BunObject.braces, .{ .name = callbackName("braces") });
         @export(BunObject.build, .{ .name = callbackName("build") });
         @export(BunObject.connect, .{ .name = callbackName("connect") });
         @export(BunObject.deflateSync, .{ .name = callbackName("deflateSync") });
@@ -455,36 +457,6 @@ const ShellTask = struct {
     pub const AsyncShellTask = JSC.ConcurrentPromiseTask(ShellTask);
 };
 
-fn runWithSubstitution(globalThis: *JSC.JSGlobalObject, arena: *bun.ArenaAllocator, script: []const u8, jsobjs: []JSValue) !void {
-    var ranges = std.ArrayList(Shell.Lexer.Range).init(arena.allocator());
-    var backtick_bitset = std.bit_set.IntegerBitSet(10).initEmpty();
-
-    var lexer = Shell.Lexer.new(arena.allocator(), script.items[0..]);
-    try lexer.detect_cmd_substs(&ranges, &backtick_bitset);
-
-    // while (ranges.l
-
-    lexer.lex() catch |err| {
-        globalThis.throwError(err, "failed to lex shell");
-        return JSValue.undefined;
-    };
-    var parser = Shell.Parser.new(arena.allocator(), &lexer, jsobjs.items[0..]) catch |err| {
-        globalThis.throwError(err, "failed to create shell parser");
-        return JSValue.undefined;
-    };
-
-    const script_ast = parser.parse() catch |err| {
-        globalThis.throwError(err, "failed to parse shell");
-        return JSValue.undefined;
-    };
-
-    var interpreter = Shell.Interpreter.new(&arena, globalThis, jsobjs.items[0..]);
-    interpreter.interpret(script_ast) catch {
-        // globalThis.throwError(err, "shell:");
-        return JSValue.undefined;
-    };
-}
-
 pub fn shell(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
@@ -533,6 +505,60 @@ pub fn shell(
     };
 
     return JSValue.undefined;
+}
+
+pub fn braces(
+    globalThis: *JSC.JSGlobalObject,
+    callframe: *JSC.CallFrame,
+) callconv(.C) JSC.JSValue {
+    const arguments_ = callframe.arguments(2);
+    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    defer arguments.deinit();
+
+    const brace_str_js = arguments.nextEat() orelse {
+        globalThis.throw("braces: expected at least 1 argument, got 0", .{});
+        return JSC.JSValue.jsUndefined();
+    };
+    const brace_str = brace_str_js.getZigString(globalThis);
+
+    var tokenize: bool = false;
+    if (arguments.nextEat()) |opts_val| {
+        if (opts_val.isObject()) {
+            if (opts_val.getTruthy(globalThis, "tokenize")) |tokenize_val| {
+                tokenize = if (tokenize_val.isBoolean()) tokenize_val.asBoolean() else false;
+            }
+        }
+    }
+
+    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+    defer arena.deinit();
+
+    var shell_braces = Shell.Braces.tokenize(arena.allocator(), brace_str.slice()) catch |err| {
+        globalThis.throwError(err, "failed to tokenize braces");
+        return .undefined;
+    };
+
+    if (tokenize) {
+        var debug_tokens = std.ArrayList(Shell.Braces.DebugToken).init(arena.allocator());
+        for (shell_braces.tokens.items) |tok| {
+            debug_tokens.append(Shell.Braces.DebugToken.fromNormal(arena.allocator(), &tok) catch {
+                globalThis.throwOutOfMemory();
+                return .undefined;
+            }) catch {
+                globalThis.throwOutOfMemory();
+                return .undefined;
+            };
+        }
+        const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, debug_tokens.items[0..], .{}) catch {
+            globalThis.throwOutOfMemory();
+            return JSValue.undefined;
+        };
+        defer globalThis.bunVM().allocator.free(str);
+        var bun_str = bun.String.fromBytes(str);
+        return bun_str.toJS(globalThis);
+    }
+
+    return .undefined;
 }
 
 pub fn which(

@@ -6,28 +6,25 @@ const Arena = std.heap.ArenaAllocator;
 const Allocator = std.mem.Allocator;
 const SmolStr = @import("../string_types.zig").SmolStr;
 
-pub const AST = struct {
-    pub const Atom = union(enum) {
-        text: SmolStr,
-        expansion: *Expansion,
-    };
-
-    const Group = struct {
-        atoms: []Atom,
-    };
-
-    const Expansion = struct {
-        variants: []AST.Group,
-    };
+/// Using u16 because anymore tokens than that results in an unreasonably high
+/// amount of brace expansion (like around 32k variants to expand)
+pub const ExpansionVariant = struct {
+    start: u16 = 0,
+    end: u16 = 0,
 };
 
 const TokenTag = enum { open, comma, text, close, eof };
 const Token = union(TokenTag) {
-    open,
+    open: ExpansionVariants,
     comma,
     text: SmolStr,
     close,
     eof,
+
+    const ExpansionVariants = struct {
+        idx: u16 = 0,
+        len: u16 = 0,
+    };
 
     pub fn toText(self: *Token) SmolStr {
         return switch (self.*) {
@@ -40,26 +37,26 @@ const Token = union(TokenTag) {
     }
 };
 
-pub const DebugToken = union(TokenTag) {
-    open,
-    comma,
-    text: []const u8,
-    close,
-    eof,
+// pub const DebugToken = union(TokenTag) {
+//     open,
+//     comma,
+//     text: []const u8,
+//     close,
+//     eof,
 
-    pub fn fromNormal(allocator: Allocator, token: *const Token) !DebugToken {
-        return switch (token.*) {
-            .open => .open,
-            .comma => .comma,
-            .text => |txt| {
-                const slice = txt.slice();
-                return .{ .text = try allocator.dupe(u8, slice) };
-            },
-            .close => .close,
-            .eof => .eof,
-        };
-    }
-};
+//     pub fn fromNormal(allocator: Allocator, token: *const Token) !DebugToken {
+//         return switch (token.*) {
+//             .open => .open,
+//             .comma => .comma,
+//             .text => |txt| {
+//                 const slice = txt.slice();
+//                 return .{ .text = try allocator.dupe(u8, slice) };
+//             },
+//             .close => .close,
+//             .eof => .eof,
+//         };
+//     }
+// };
 
 const InputChar = struct {
     char: u8,
@@ -169,80 +166,55 @@ pub fn fastDetect(src: []const u8) bool {
 }
 
 /// `out` is preallocated by using the result from `calculateExpandedAmount`
-pub fn expand(root: *const AST.Group, out: []std.ArrayList(u8), out_key: u16, out_key_counter: *u16, start: usize) !void {
-    if (start >= root.atoms.len) return;
+pub fn expand(
+    tokens: []const Token,
+    expansion_table: []const ExpansionVariant,
+    out: []std.ArrayList(u8),
+    out_key: u16,
+    out_key_counter: *u16,
+    start: usize,
+    end: usize,
+) !void {
+    if (start >= tokens.len or end > tokens.len) return;
 
-    for (root.atoms[start..], 0..) |atom, _i| {
-        var i = start + _i;
+    for (tokens[start..end]) |atom| {
         switch (atom) {
             .text => |txt| {
                 try out[out_key].appendSlice(txt.slice());
             },
-            .expansion => |expansion| {
-                if (expansion.variants.len <= 1) {
-                    // Should not happen
-                    @panic("Should not happen");
+            .open => |expansion_variants| {
+                if (bun.Environment.allow_assert) {
+                    std.debug.assert(expansion_variants.len >= 1);
                 }
 
-                for (expansion.variants[1..]) |*variant| {
+                var variants = expansion_table[expansion_variants.idx .. expansion_variants.idx + expansion_variants.len];
+                const skip_over_idx = variants[variants.len - 1].end;
+
+                for (variants[1..]) |*variant| {
                     const new_key = out_key_counter.*;
                     out_key_counter.* += 1;
-                    std.debug.print("Branch: {s} {d} {d}\n", .{ out[out_key].items[0..], out_key, new_key });
+                    std.debug.print("Branch: {s} {d} {d} VARIANT: {any}\n", .{ out[out_key].items[0..], out_key, new_key, variant.* });
                     try out[new_key].appendSlice(out[out_key].items[0..]);
-                    try expand(variant, out, new_key, out_key_counter, 0);
-                    try expand(root, out, new_key, out_key_counter, i + 1);
+                    try expand(tokens, expansion_table, out, new_key, out_key_counter, variant.start, variant.end);
+                    try expand(tokens, expansion_table, out, new_key, out_key_counter, skip_over_idx, end);
                 }
 
-                const first_variant = &expansion.variants[0];
-                try expand(first_variant, out, out_key, out_key_counter, 0);
-                return try expand(root, out, out_key, out_key_counter, i + 1);
+                const first_variant = &variants[0];
+                try expand(tokens, expansion_table, out, out_key, out_key_counter, first_variant.start, first_variant.end);
+                return try expand(tokens, expansion_table, out, out_key, out_key_counter, skip_over_idx, end);
             },
+            else => {},
         }
     }
 }
 
-/// `out` is preallocated by using the result from `calculateExpandedAmount`
-// pub fn expand(tokens: []const Token, out: []std.ArrayList(u8), out_key: u16, i: usize) !void {
-//     if (i >= tokens.len) return;
-
-//     for (tokens[i..]) |tok| {
-//         switch (tok) {
-//             .text => |txt| {
-//                 try out[out_key].appendSlice(txt.slice());
-//             },
-//             .open => {
-//                 var last_comma_or_closing_brace = i;
-//                 for (tokens[i + 1 ..], (i + 1)..) |tok2, j| {
-//                     switch (tok2) {
-//                         .comma => {
-//                             last_comma_or_closing_brace = j;
-//                         },
-//                         .close => {
-//                             last_comma_or_closing_brace = j;
-//                         },
-//                         else => {},
-//                     }
-//                 }
-
-//                 const end_of_expansion = last_comma_or_closing_brace + 1;
-//                 for (tokens[i + 1..], (i + 1)..) |tok2, j| {
-//                     switch (tok2) {
-//                         .comma => {
-//                             expand(tokens[j..], out: []std.ArrayList(u8), out_key: u16, i: usize)
-//                         }
-//                     }
-//                 }
-//                 // Then recurse on this variant
-//                 expand(tokens, out, out_key, i + 1);
-
-//                 return expand(tokens, out, out_key, end_of_expansion);
-//             },
-//             .comma => {},
-//             .close => {},
-//             .eof => {},
-//         }
-//     }
-// }
+pub fn calculateVariantsAmount(tokens: []const Token) u32 {
+    var count: u32 = 0;
+    for (tokens) |tok| {
+        if (tok == .comma) count += 1 else if (tok == .close) count += 1;
+    }
+    return count;
+}
 
 pub fn calculateExpandedAmount(tokens: []const Token) !u32 {
     var nested_brace_stack = StackStack(u8, u8, MAX_NESTED_BRACES){};
@@ -282,152 +254,73 @@ pub fn calculateExpandedAmount(tokens: []const Token) !u32 {
     return variant_count;
 }
 
-const ParserError = error{
-    UnexpectedToken,
-};
-
-pub const Parser = struct {
-    current: usize = 0,
+pub fn buildExpansionTable(
     tokens: []Token,
-    alloc: Allocator,
-    errors: std.ArrayList(Error),
+    table: []ExpansionVariant,
+) !void {
+    const BraceState = struct { tok_idx: u16, variants: u16 };
+    var brace_stack = StackStack(BraceState, u8, MAX_NESTED_BRACES){};
 
-    // FIXME error location
-    const Error = struct { msg: []const u8 };
+    var table_len: u16 = 0;
 
-    pub fn init(tokens: std.ArrayList(Token), alloc: Allocator) Parser {
-        return .{
-            .tokens = tokens.items[0..],
-            .alloc = alloc,
-            .errors = std.ArrayList(Error).init(alloc),
-        };
-    }
-
-    pub fn parse(self: *Parser) !AST.Group {
-        var nodes = std.ArrayList(AST.Atom).init(self.alloc);
-        while (!self.match(.eof)) {
-            try nodes.append(try self.parseAtom() orelse break);
-        }
-        return .{ .atoms = nodes.items[0..] };
-    }
-
-    fn parseAtom(self: *Parser) anyerror!?AST.Atom {
-        switch (self.advance()) {
+    var i: u16 = 0;
+    while (i < tokens.len) : (i += 1) {
+        switch (tokens[i]) {
             .open => {
-                const expansion = try self.parseExpansion();
-                var expansion_ptr = try self.alloc.create(AST.Expansion);
-                expansion_ptr.* = expansion;
-                return .{ .expansion = expansion_ptr };
+                const table_idx = table_len;
+                tokens[i].open.idx = table_idx;
+                try brace_stack.push(.{ .tok_idx = i, .variants = 0 });
             },
-            .text => |txt| return .{ .text = txt },
-            .eof => return null,
-            .close, .comma => return ParserError.UnexpectedToken,
-        }
-    }
+            .close => {
+                if (brace_stack.len > 0) {
+                    var top = brace_stack.pop().?;
 
-    fn parseExpansion(self: *Parser) !AST.Expansion {
-        var variants = std.ArrayList(AST.Group).init(self.alloc);
-        while (!self.match_any(&.{ .close, .eof })) {
-            if (self.match(.eof)) break;
-            var group = std.ArrayList(AST.Atom).init(self.alloc);
-            var close = false;
-            while (!self.match(.eof)) {
-                if (self.match(.close)) {
-                    close = true;
-                    break;
+                    if (top.variants == 0) {
+                        table[table_len] = .{
+                            .end = i,
+                            .start = top.tok_idx + 1,
+                        };
+                    } else {
+                        table[table_len] = .{
+                            .end = i,
+                            .start = table[table_len - 1].end + 1,
+                        };
+                    }
+                    top.variants += 1;
+                    table_len += 1;
+
+                    tokens[top.tok_idx].open.len = top.variants;
                 }
-                if (self.match(.comma)) break;
-                var group_atom = try self.parseAtom() orelse break;
-                try group.append(group_atom);
-            }
-            try variants.append(.{ .atoms = group.items[0..] });
-            if (close) break;
+            },
+            .comma => {
+                if (brace_stack.len > 0) {
+                    var top = brace_stack.topPtr().?;
+                    if (top.variants == 0) {
+                        table[table_len] = .{
+                            .end = i,
+                            .start = top.tok_idx + 1,
+                        };
+                    } else {
+                        table[table_len] = .{
+                            .end = i,
+                            .start = table[table_len - 1].end + 1,
+                        };
+                    }
+                    top.variants += 1;
+                    table_len += 1;
+                }
+            },
+            else => {},
         }
-        return .{ .variants = variants.items[0..] };
     }
 
-    fn has_eq_sign(self: *Parser, str: []const u8) ?u32 {
-        _ = self;
-        // TODO: simd
-        for (str, 0..) |c, i| if (c == '=') return @intCast(i);
-        return null;
-    }
-
-    fn advance(self: *Parser) Token {
-        if (!self.is_at_end()) {
-            self.current += 1;
+    if (bun.Environment.allow_assert) {
+        for (table, 0..) |variant, kdjsd| {
+            std.debug.print("I: {d} VARIANT: {any}\n", .{ kdjsd, variant });
+            std.debug.assert(variant.start != 0 and variant.end != 0);
         }
-        return self.prev();
     }
-
-    fn is_at_end(self: *Parser) bool {
-        return self.peek() == .eof;
-    }
-
-    fn expect(self: *Parser, toktag: TokenTag) Token {
-        std.debug.assert(toktag == @as(TokenTag, self.peek()));
-        if (self.check(toktag)) {
-            return self.advance();
-        }
-        unreachable;
-    }
-
-    /// Consumes token if it matches
-    fn match(self: *Parser, toktag: TokenTag) bool {
-        if (@as(TokenTag, self.peek()) == toktag) {
-            _ = self.advance();
-            return true;
-        }
-        return false;
-    }
-
-    fn match_any2(self: *Parser, comptime toktags: []const TokenTag) ?Token {
-        const peeked = self.peek();
-        inline for (toktags) |tag| {
-            if (peeked == tag) {
-                _ = self.advance();
-                return peeked;
-            }
-        }
-        return null;
-    }
-
-    fn match_any(self: *Parser, comptime toktags: []const TokenTag) bool {
-        const peeked = @as(TokenTag, self.peek());
-        inline for (toktags) |tag| {
-            if (peeked == tag) {
-                _ = self.advance();
-                return true;
-            }
-        }
-        return false;
-    }
-
-    fn check(self: *Parser, toktag: TokenTag) bool {
-        return @as(TokenTag, self.peek()) == @as(TokenTag, toktag);
-    }
-
-    fn peek(self: *Parser) Token {
-        return self.tokens[self.current];
-    }
-
-    fn peek_n(self: *Parser, n: u32) Token {
-        if (self.current + n >= self.tokens.len) {
-            return self.tokens[self.tokens.len - 1];
-        }
-
-        return self.tokens[self.current + n];
-    }
-
-    fn prev(self: *Parser) Token {
-        return self.tokens[self.current - 1];
-    }
-
-    fn add_error(self: *Parser, comptime fmt: []const u8, args: anytype) !void {
-        const error_msg = try std.fmt.allocPrint(self.alloc, fmt, args);
-        try self.errors.append(.{ .msg = error_msg });
-    }
-};
+}
 
 pub const Lexer = struct {
     src: []const u8,
@@ -480,7 +373,7 @@ pub const Lexer = struct {
                 switch (char) {
                     '{' => {
                         try brace_stack.push(@intCast(self.tokens.items.len));
-                        try self.tokens.append(.open);
+                        try self.tokens.append(.{ .open = .{} });
                         continue;
                     },
                     '}' => {

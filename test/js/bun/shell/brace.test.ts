@@ -22,13 +22,23 @@ describe("brace_expansion", () => {
     test("basic", () => {
       const expected = [
         { "text": "LMAO" },
-        { "open": {} },
+        {
+          "open": {
+            idx: 0,
+            len: 2,
+          },
+        },
         { "text": "js" },
         { "comma": {} },
         { "text": "jsx" },
         { "close": {} },
         { "text": "NICE" },
-        { "open": {} },
+        {
+          "open": {
+            idx: 2,
+            len: 3,
+          },
+        },
         { "text": "ts" },
         { "comma": {} },
         { "text": "tsx" },
@@ -46,7 +56,12 @@ describe("brace_expansion", () => {
     test("unclosed", () => {
       const expected = [
         { text: "{js,jsx,hi" },
-        { open: {} },
+        {
+          open: {
+            idx: 0,
+            len: 2,
+          },
+        },
         { text: "ts" },
         { comma: {} },
         { text: "tsx" },

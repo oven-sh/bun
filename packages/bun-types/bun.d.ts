@@ -82,6 +82,7 @@ declare module "bun" {
       ...expressions: ShellExpression[]
     ): Promise<ShellOutput>;
   }
+
   export interface ShellOutput {
     readonly stdout: Buffer;
     readonly stderr: Buffer;
@@ -90,10 +91,17 @@ declare module "bun" {
 
   export const $: Shell;
 
-  export function braces(
-    pattern: string,
-    opts?: { tokenize?: boolean },
-  ): string;
+  /**
+   * Perform bash-like brace expansion on the given pattern.
+   * @param pattern - Brace pattern to expand
+   *
+   * @example
+   * ```js
+   * const result = braces('index.{js,jsx,ts,tsx}');
+   * console.log(result) // ['index.js', 'index.jsx', 'index.ts', 'index.tsx']
+   * ```
+   */
+  export function braces(pattern: string): string;
 
   interface TOML {
     /**

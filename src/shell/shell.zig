@@ -731,9 +731,9 @@ pub const AST = struct {
     pub const SimpleAtom = union(enum) {
         Var: []const u8,
         Text: []const u8,
-        brace_begin,
-        brace_end,
-        comma,
+        // brace_begin,
+        // brace_end,
+        // comma,
         cmd_subst: *CmdOrAssigns,
     };
 
@@ -950,31 +950,31 @@ pub const Parser = struct {
                 const next_delimits = next == .Delimit or next == .Eof;
                 const peeked = self.peek();
                 switch (peeked) {
-                    .BraceBegin => {
-                        _ = self.expect(.BraceBegin);
-                        try exprs.append(.brace_begin);
-                        // TODO in this case we know it can't possibly be the beginning of a brace expansion so maybe its faster to just change it to text here
-                        if (next_delimits) {
-                            _ = self.expect_delimit();
-                            break;
-                        }
-                    },
-                    .BraceEnd => {
-                        _ = self.expect(.BraceEnd);
-                        try exprs.append(.brace_end);
-                        if (next_delimits) {
-                            _ = self.expect_delimit();
-                            break;
-                        }
-                    },
-                    .BraceEnd => {
-                        _ = self.expect(.BraceEnd);
-                        try exprs.append(.brace_end);
-                        if (next_delimits) {
-                            _ = self.expect_delimit();
-                            break;
-                        }
-                    },
+                    // .BraceBegin => {
+                    //     _ = self.expect(.BraceBegin);
+                    //     try exprs.append(.brace_begin);
+                    //     // TODO in this case we know it can't possibly be the beginning of a brace expansion so maybe its faster to just change it to text here
+                    //     if (next_delimits) {
+                    //         _ = self.expect_delimit();
+                    //         break;
+                    //     }
+                    // },
+                    // .BraceEnd => {
+                    //     _ = self.expect(.BraceEnd);
+                    //     try exprs.append(.brace_end);
+                    //     if (next_delimits) {
+                    //         _ = self.expect_delimit();
+                    //         break;
+                    //     }
+                    // },
+                    // .BraceEnd => {
+                    //     _ = self.expect(.BraceEnd);
+                    //     try exprs.append(.brace_end);
+                    //     if (next_delimits) {
+                    //         _ = self.expect_delimit();
+                    //         break;
+                    //     }
+                    // },
                     .CmdSubstBegin => {
                         _ = self.expect(.CmdSubstBegin);
                         const subst = try self.allocate(AST.CmdOrAssigns, try self.parse_cmd_subst());

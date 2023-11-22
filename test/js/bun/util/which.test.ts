@@ -6,7 +6,15 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 test("which", () => {
-  let basedir = mkdtempSync(join(tmpdir(), "which-xxx"));
+  {
+    let existing = which("myscript.sh");
+    if (existing !== null) {
+      rmSync(existing!, { recursive: true, force: true });
+    }
+  }
+
+  let basedir = join(tmpdir(), "which-test-" + Math.random().toString(36).slice(2));
+  rmSync(basedir, { recursive: true, force: true });
   mkdirSync(basedir, { recursive: true });
   writeFixture(join(basedir, "myscript.sh"));
   const abs = realpathSync(join(basedir, "myscript.sh"));

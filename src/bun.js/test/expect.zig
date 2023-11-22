@@ -626,14 +626,10 @@ pub const Expect = struct {
         const value_fmt = value.toFmt(globalObject, &formatter);
         const expected_fmt = expected.toFmt(globalObject, &formatter);
         if (not) {
-            const expected_line = "Expected to not contain: <green>{any}<r>\n";
+            const received_fmt = value.toFmt(globalObject, &formatter);
+            const expected_line = "Expected to not contain: <green>{any}<r>\n\nReceived: <red>{any}<r>\n";
             const fmt = comptime getSignature("toContain", "<green>expected<r>", true) ++ "\n\n" ++ expected_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{expected_fmt});
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{expected_fmt});
+            globalObject.throwPretty(fmt, .{ expected_fmt, received_fmt });
             return .zero;
         }
 

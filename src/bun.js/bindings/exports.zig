@@ -1836,17 +1836,9 @@ pub const ZigConsoleClient = struct {
                             .failed = false,
                         };
 
-                        var name_str = value.getName(globalThis);
-                        defer name_str.deref();
-                        if (!name_str.isEmpty() and !name_str.eqlComptime("Object")) {
+                        var name_str = getObjectName(globalThis, value);
+                        if (name_str.len > 0) {
                             writer.print("{} ", .{name_str});
-                        } else {
-                            name_str.deref();
-                            name_str = value.getPrototype(globalThis).getName(globalThis);
-
-                            if (!name_str.isEmpty() and !name_str.eqlComptime("Object")) {
-                                writer.print("{} ", .{name_str});
-                            }
                         }
                     }
 
@@ -1971,6 +1963,15 @@ pub const ZigConsoleClient = struct {
                     }
                 }
             };
+        }
+
+        fn getObjectName(globalThis: *JSC.JSGlobalObject, value: JSValue) ZigString {
+            var name_str = ZigString.init("");
+            value.getClassName(globalThis, &name_str);
+            if (name_str.len > 0 and !strings.eqlComptime(name_str.slice(), "Object")) {
+                return name_str;
+            }
+            return ZigString.init("");
         }
 
         extern fn JSC__JSValue__callCustomInspectFunction(
@@ -2971,8 +2972,13 @@ pub const ZigConsoleClient = struct {
                             this.printAs(.Class, Writer, writer_, value, jsType, enable_ansi_colors)
                         else if (value.isCallable(this.globalThis.vm()))
                             this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors)
-                        else
+                        else {
+                            var name_str = getObjectName(this.globalThis, value);
+                            if (name_str.len > 0) {
+                                writer.print("{} ", .{name_str});
+                            }
                             writer.writeAll("{}");
+                        }
                     } else {
                         this.depth -= 1;
 

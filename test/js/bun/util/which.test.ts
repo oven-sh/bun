@@ -1,55 +1,70 @@
 import { test, expect } from "bun:test";
 
 import { which } from "bun";
-import { chmodSync, mkdirSync, unlinkSync } from "node:fs";
+import { mkdtempSync, rmSync, chmodSync, mkdirSync, unlinkSync, realpathSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 test("which", () => {
-  writeFixture("/tmp/myscript.sh");
+  let basedir = mkdtempSync(join(tmpdir(), "which-xxx"));
+  mkdirSync(basedir, { recursive: true });
+  writeFixture(join(basedir, "myscript.sh"));
+  const abs = realpathSync(join(basedir, "myscript.sh"));
 
-  // Our cwd is not /tmp
-  expect(which("myscript.sh")).toBe(null);
-
+  const origDir = process.cwd();
   try {
-    mkdirSync("myscript.sh");
-    chmodSync("myscript.sh", "755");
-  } catch (e) {}
+    basedir = realpathSync(basedir);
 
-  // directories should not be returned
-  expect(which("myscript.sh")).toBe(null);
+    process.chdir(basedir);
+    // Our cwd is not /tmp
+    expect(which("myscript.sh")).toBe(abs);
 
-  // "bun" is in our PATH
-  expect(which("bun")?.length > 0).toBe(true);
+    const orig = process.cwd();
+    process.chdir(tmpdir());
+    // Our cwd is not /tmp
+    expect(which("myscript.sh")).toBe(null);
 
-  expect(
-    // You can override PATH
-    which("myscript.sh", {
-      PATH: "/tmp",
-    }),
-  ).toBe("/tmp/myscript.sh");
+    expect(
+      // You can override PATH
+      which("myscript.sh", {
+        PATH: basedir,
+      }),
+    ).toBe(abs);
 
-  expect(
-    which("myscript.sh", {
-      PATH: "/not-tmp",
-    }),
-  ).toBe(null);
+    expect(
+      // PATH works like the $PATH environment variable, respecting colons
+      which("myscript.sh", {
+        PATH: "/not-tmp:" + basedir,
+      }),
+    ).toBe(abs);
 
-  expect(
-    // PATH works like the $PATH environment variable, respecting colons
-    which("myscript.sh", {
-      PATH: "/not-tmp:/tmp",
-    }),
-  ).toBe("/tmp/myscript.sh");
+    try {
+      mkdirSync("myscript.sh");
+      chmodSync("myscript.sh", "755");
+    } catch (e) {}
 
-  expect(
-    // cwd is checked first
-    which("myscript.sh", {
-      cwd: "/tmp",
-    }),
-  ).toBe("/tmp/myscript.sh");
+    // directories should not be returned
+    expect(which("myscript.sh")).toBe(null);
 
-  try {
-    unlinkSync("myscript.sh");
-  } catch (e) {}
+    // "bun" is in our PATH
+    expect(which("bun")!.length > 0).toBe(true);
+
+    expect(
+      which("myscript.sh", {
+        PATH: "/not-tmp",
+      }),
+    ).toBe(null);
+
+    expect(
+      // cwd is checked first
+      which("myscript.sh", {
+        cwd: basedir,
+      }),
+    ).toBe(abs);
+  } finally {
+    process.chdir(origDir);
+    rmSync(basedir, { recursive: true, force: true });
+  }
 });
 
 function writeFixture(path: string) {

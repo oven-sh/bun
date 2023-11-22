@@ -731,6 +731,9 @@ pub const AST = struct {
     pub const SimpleAtom = union(enum) {
         Var: []const u8,
         Text: []const u8,
+        brace_begin,
+        brace_end,
+        comma,
         cmd_subst: *CmdOrAssigns,
     };
 
@@ -772,24 +775,6 @@ pub const Parser = struct {
 
     pub fn parse_stmt(self: *Parser) !AST.Stmt {
         var exprs = std.ArrayList(AST.Expr).init(self.alloc);
-
-        // {
-        //     var assigns = std.ArrayList(AST.Assign).init(self.alloc);
-        //     // Parse leading var decls
-        //     while (!self.match_any(&.{ .Semicolon, .Eof })) {
-        //         if (try self.parse_assign()) |assign| {
-        //             try assigns.append(assign);
-        //         } else {
-        //             break;
-        //         }
-        //     }
-
-        //     if (assigns.items.len > 0) {
-        //         try exprs.append(.{ .assign = assigns.items[0..] });
-        //     }
-        // }
-
-        // if (self.match_any(&.{ .Semicolon, .Eof })) return .{ .exprs = exprs.items[0..] };
 
         while (!self.match_any(&.{ .Semicolon, .Eof })) {
             const expr = try self.parse_expr();
@@ -965,6 +950,31 @@ pub const Parser = struct {
                 const next_delimits = next == .Delimit or next == .Eof;
                 const peeked = self.peek();
                 switch (peeked) {
+                    .BraceBegin => {
+                        _ = self.expect(.BraceBegin);
+                        try exprs.append(.brace_begin);
+                        // TODO in this case we know it can't possibly be the beginning of a brace expansion so maybe its faster to just change it to text here
+                        if (next_delimits) {
+                            _ = self.expect_delimit();
+                            break;
+                        }
+                    },
+                    .BraceEnd => {
+                        _ = self.expect(.BraceEnd);
+                        try exprs.append(.brace_end);
+                        if (next_delimits) {
+                            _ = self.expect_delimit();
+                            break;
+                        }
+                    },
+                    .BraceEnd => {
+                        _ = self.expect(.BraceEnd);
+                        try exprs.append(.brace_end);
+                        if (next_delimits) {
+                            _ = self.expect_delimit();
+                            break;
+                        }
+                    },
                     .CmdSubstBegin => {
                         _ = self.expect(.CmdSubstBegin);
                         const subst = try self.allocate(AST.CmdOrAssigns, try self.parse_cmd_subst());
@@ -1114,6 +1124,7 @@ pub const TokenTag = enum {
     Eq,
     Semicolon,
     BraceBegin,
+    Comma,
     BraceEnd,
     CmdSubstBegin,
     CmdSubstEnd,
@@ -1147,6 +1158,7 @@ pub const Token = union(TokenTag) {
     Semicolon,
 
     BraceBegin,
+    Comma,
     BraceEnd,
     CmdSubstBegin,
     CmdSubstEnd,
@@ -1292,6 +1304,7 @@ pub const Lexer = struct {
             // 3. break words
             if (!escaped) escaped: {
                 switch (char) {
+                    // export
                     'e' => {
                         if (self.state == .Single or self.state == .Double) break :escaped;
                         if (self.eat_export()) {
@@ -1305,6 +1318,25 @@ pub const Lexer = struct {
                         if (self.state == .Single or self.state == .Double) break :escaped;
                         try self.break_word(true);
                         try self.tokens.append(.Semicolon);
+                        continue;
+                    },
+                    // brace expansion syntax
+                    '{' => {
+                        if (self.state == .Single or self.state == .Double) break :escaped;
+                        try self.break_word(true);
+                        try self.tokens.append(.BraceBegin);
+                        continue;
+                    },
+                    ',' => {
+                        if (self.state == .Single or self.state == .Double) break :escaped;
+                        try self.break_word(true);
+                        try self.tokens.append(.Comma);
+                        continue;
+                    },
+                    '}' => {
+                        if (self.state == .Single or self.state == .Double) break :escaped;
+                        try self.break_word(true);
+                        try self.tokens.append(.BraceEnd);
                         continue;
                     },
                     // Command substitution
@@ -1745,6 +1777,7 @@ pub const Test = struct {
         Semicolon,
 
         BraceBegin,
+        Comma,
         BraceEnd,
         CmdSubstBegin,
         CmdSubstEnd,
@@ -1774,6 +1807,7 @@ pub const Test = struct {
                 .Eq => return .Eq,
                 .Semicolon => return .Semicolon,
                 .BraceBegin => return .BraceBegin,
+                .Comma => return .Comma,
                 .BraceEnd => return .BraceEnd,
                 .CmdSubstBegin => return .CmdSubstBegin,
                 .CmdSubstEnd => return .CmdSubstEnd,

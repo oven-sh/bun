@@ -82,7 +82,7 @@ interface ScanOptions {
 
 Bun supports the following glob patterns:
 
-## `*` - Match any number of characters except `/`
+### `*` - Match any number of characters except `/`
 
 ```ts
 const glob = new Glob("*.ts");
@@ -90,7 +90,7 @@ glob.match("index.ts"); // => true
 glob.match("src/index.ts"); // => false
 ```
 
-## `**` - Match any number of characters including `/`
+### `**` - Match any number of characters including `/`
 
 ```ts
 const glob = new Glob("**/*.ts");
@@ -99,7 +99,7 @@ glob.match("src/index.ts"); // => true
 glob.match("src/index.js"); // => false
 ```
 
-## `{a,b,c}` - Match any of the given patterns
+### `{a,b,c}` - Match any of the given patterns
 
 ```ts
 const glob = new Glob("{a,b,c}.ts");

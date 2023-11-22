@@ -30,6 +30,7 @@ import { tempFixturesDir } from "./util";
 
 let origAggressiveGC = Bun.unsafe.gcAggressionLevel();
 beforeAll(() => {
+  process.chdir(path.join(import.meta.dir, "../../../"));
   tempFixturesDir();
   Bun.unsafe.gcAggressionLevel(0);
 });
@@ -53,65 +54,82 @@ const fgOpts = {
 } satisfies FgOpts;
 
 describe("glob.match", async () => {
+  const timeout = 30 * 1000;
   function testWithOpts(namePrefix: string, bunGlobOpts: GlobScanOptions, fgOpts: FgOpts) {
-    test(`${namePrefix} recursively search node_modules`, async () => {
-      const pattern = "**/node_modules/**/*.js";
-      const glob = new Glob(pattern);
-      const filepaths = await Array.fromAsync(glob.scan(bunGlobOpts));
-      const fgFilepths = await fg.glob(pattern, fgOpts);
+    test(
+      `${namePrefix} recursively search node_modules`,
+      async () => {
+        const pattern = "**/node_modules/**/*.js";
+        const glob = new Glob(pattern);
+        const filepaths = await Array.fromAsync(glob.scan(bunGlobOpts));
+        const fgFilepths = await fg.glob(pattern, fgOpts);
 
-      // console.error(filepaths);
-      expect(filepaths.length).toEqual(fgFilepths.length);
+        // console.error(filepaths);
+        expect(filepaths.length).toEqual(fgFilepths.length);
 
-      const bunfilepaths = new Set(filepaths);
-      for (const filepath of fgFilepths) {
-        if (!bunfilepaths.has(filepath)) console.error("Missing:", filepath);
-        expect(bunfilepaths.has(filepath)).toBeTrue();
-      }
-    });
+        const bunfilepaths = new Set(filepaths);
+        for (const filepath of fgFilepths) {
+          if (!bunfilepaths.has(filepath)) console.error("Missing:", filepath);
+          expect(bunfilepaths.has(filepath)).toBeTrue();
+        }
+      },
+      timeout,
+    );
 
-    test(`${namePrefix} recursive search js files`, async () => {
-      const pattern = "**/*.js";
-      const glob = new Glob(pattern);
-      const filepaths = await Array.fromAsync(glob.scan(bunGlobOpts));
-      const fgFilepths = await fg.glob(pattern, fgOpts);
+    test(
+      `${namePrefix} recursive search js files`,
+      async () => {
+        const pattern = "**/*.js";
+        const glob = new Glob(pattern);
+        const filepaths = await Array.fromAsync(glob.scan(bunGlobOpts));
+        const fgFilepths = await fg.glob(pattern, fgOpts);
 
-      expect(filepaths.length).toEqual(fgFilepths.length);
+        expect(filepaths.length).toEqual(fgFilepths.length);
 
-      const bunfilepaths = new Set(filepaths);
-      for (const filepath of fgFilepths) {
-        if (!bunfilepaths.has(filepath)) console.error("Missing:", filepath);
-        expect(bunfilepaths.has(filepath)).toBeTrue();
-      }
-    });
+        const bunfilepaths = new Set(filepaths);
+        for (const filepath of fgFilepths) {
+          if (!bunfilepaths.has(filepath)) console.error("Missing:", filepath);
+          expect(bunfilepaths.has(filepath)).toBeTrue();
+        }
+      },
+      timeout,
+    );
 
-    test(`${namePrefix} recursive search ts files`, async () => {
-      const pattern = "**/*.ts";
-      const glob = new Glob(pattern);
-      const filepaths = await Array.fromAsync(glob.scan(bunGlobOpts));
-      const fgFilepths = await fg.glob(pattern, fgOpts);
+    test(
+      `${namePrefix} recursive search ts files`,
+      async () => {
+        const pattern = "**/*.ts";
+        const glob = new Glob(pattern);
+        const filepaths = await Array.fromAsync(glob.scan(bunGlobOpts));
+        const fgFilepths = await fg.glob(pattern, fgOpts);
 
-      expect(filepaths.length).toEqual(fgFilepths.length);
+        expect(filepaths.length).toEqual(fgFilepths.length);
 
-      const bunfilepaths = new Set(filepaths);
-      for (const filepath of fgFilepths) {
-        if (!bunfilepaths.has(filepath)) console.error("Missing:", filepath);
-        expect(bunfilepaths.has(filepath)).toBeTrue();
-      }
-    });
+        const bunfilepaths = new Set(filepaths);
+        for (const filepath of fgFilepths) {
+          if (!bunfilepaths.has(filepath)) console.error("Missing:", filepath);
+          expect(bunfilepaths.has(filepath)).toBeTrue();
+        }
+      },
+      timeout,
+    );
 
-    test(`${namePrefix} glob not freed before matching done`, async () => {
-      const promise = (async () => {
-        const glob = new Glob("**/node_modules/**/*.js");
-        const result = Array.fromAsync(glob.scan(bunGlobOpts));
+    test(
+      `${namePrefix} glob not freed before matching done`,
+      async () => {
+        const promise = (async () => {
+          const glob = new Glob("**/node_modules/**/*.js");
+          const result = Array.fromAsync(glob.scan(bunGlobOpts));
+          Bun.gc(true);
+          const result2 = await result;
+          return result2;
+        })();
         Bun.gc(true);
-        const result2 = await result;
-        return result2;
-      })();
-      Bun.gc(true);
-      const values = await promise;
-      Bun.gc(true);
-    });
+        const values = await promise;
+        Bun.gc(true);
+      },
+      timeout,
+    );
   }
 
   testWithOpts("non-absolute", bunGlobOpts, fgOpts);

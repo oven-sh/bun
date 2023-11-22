@@ -12296,54 +12296,7 @@ crypto_exports.KeyObject = KeyObject;
 var webcrypto = crypto;
 var _subtle = webcrypto.subtle;
 const _createSign = crypto_exports.createSign;
-crypto_exports.sign = function (algorithm, data, key, callback) {
-  // TODO: move this to native
-  var dsaEncoding, padding, saltLength;
-  // key must be a KeyObject
-  if (!(key instanceof KeyObject)) {
-    if ($isObject(key) && key.key) {
-      padding = key.padding;
-      saltLength = key.saltLength;
-      dsaEncoding = key.dsaEncoding;
-    }
-    key = _createPrivateKey(key);
-  }
-  if (typeof callback === "function") {
-    try {
-      let result;
-      if (key.asymmetricKeyType === "rsa") {
-        // RSA-PSS is supported by native but other RSA algorithms are not
-        result = _createSign(algorithm || "sha256")
-          .update(data)
-          .sign(key);
-      } else {
-        if (algorithm) {
-          if (typeof algorithm !== "string") throw new TypeError("Algorithm must be a string");
-          algorithm = algorithm.replace(/sha/i, "SHA-");
-          result = nativeSign(key[kCryptoKey], data, algorithm);
-        }
-        result = nativeSign(key[kCryptoKey], data);
-      }
-      callback(null, result);
-    } catch (err) {
-      callback(err);
-    }
-  } else {
-    if (key.asymmetricKeyType === "rsa") {
-      return _createSign(algorithm || "sha256")
-        .update(data)
-        .sign(key);
-    } else {
-      if (algorithm) {
-        if (typeof algorithm !== "string") throw new TypeError("Algorithm must be a string");
-        algorithm = algorithm.replace(/sha/i, "SHA-");
-        return nativeSign(key[kCryptoKey], data, algorithm);
-      }
-      return nativeSign(key[kCryptoKey], data);
-    }
-  }
-};
-const _createVerify = crypto_exports.createVerify;
+
 function getHashAlgorithm(algorithm) {
   if (typeof algorithm !== "string") throw new TypeError("Algorithm must be a string");
   switch (algorithm.toLowerCase()) {
@@ -12366,14 +12319,60 @@ function getHashAlgorithm(algorithm) {
       throw new TypeError(`Invalid hash algorithm "${algorithm}"`);
   }
 }
+
+crypto_exports.sign = function (algorithm, data, key, callback) {
+  // TODO: move this to native
+  var dsaEncoding, padding, saltLength;
+  // key must be a KeyObject
+  if (!(key instanceof KeyObject)) {
+    if ($isObject(key) && key.key) {
+      // padding = key.padding;
+      // saltLength = key.saltLength;
+      dsaEncoding = key.dsaEncoding;
+    }
+    key = _createPrivateKey(key);
+  }
+  if (typeof callback === "function") {
+    try {
+      let result;
+      if (key.asymmetricKeyType === "rsa") {
+        // RSA-PSS is supported by native but other RSA algorithms are not
+        result = _createSign(algorithm || "sha256")
+          .update(data)
+          .sign(key);
+      } else {
+        if (algorithm) {
+          result = nativeSign(key[kCryptoKey], data, getHashAlgorithm(algorithm), dsaEncoding);
+        }
+        result = nativeSign(key[kCryptoKey], data, undefined, dsaEncoding);
+      }
+      callback(null, result);
+    } catch (err) {
+      callback(err);
+    }
+  } else {
+    if (key.asymmetricKeyType === "rsa") {
+      return _createSign(algorithm || "sha256")
+        .update(data)
+        .sign(key);
+    } else {
+      if (algorithm) {
+        return nativeSign(key[kCryptoKey], data, getHashAlgorithm(algorithm), dsaEncoding);
+      }
+      return nativeSign(key[kCryptoKey], data, undefined, dsaEncoding);
+    }
+  }
+};
+const _createVerify = crypto_exports.createVerify;
+
 crypto_exports.verify = function (algorithm, data, key, signature, callback) {
   // TODO: move this to native
   var dsaEncoding, padding, saltLength;
   // key must be a KeyObject
   if (!(key instanceof KeyObject)) {
     if ($isObject(key) && key.key) {
-      padding = key.padding;
-      saltLength = key.saltLength;
+      // padding = key.padding;
+      // saltLength = key.saltLength;
       dsaEncoding = key.dsaEncoding;
     }
     key = _createPublicKey(key);
@@ -12388,9 +12387,9 @@ crypto_exports.verify = function (algorithm, data, key, signature, callback) {
           .verify(key, signature);
       } else {
         if (algorithm) {
-          result = nativeVerify(key[kCryptoKey], data, signature, getHashAlgorithm(algorithm));
+          result = nativeVerify(key[kCryptoKey], data, signature, getHashAlgorithm(algorithm), dsaEncoding);
         }
-        result = nativeVerify(key[kCryptoKey], data, signature);
+        result = nativeVerify(key[kCryptoKey], data, signature, undefined, dsaEncoding);
       }
       callback(null, result);
     } catch (err) {
@@ -12405,7 +12404,7 @@ crypto_exports.verify = function (algorithm, data, key, signature, callback) {
       if (algorithm) {
         return nativeVerify(key[kCryptoKey], data, signature, getHashAlgorithm(algorithm));
       }
-      return nativeVerify(key[kCryptoKey], data, signature);
+      return nativeVerify(key[kCryptoKey], data, signature, undefined, dsaEncoding);
     }
   }
 };

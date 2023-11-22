@@ -1301,8 +1301,8 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (count < 2) {
-        JSC::throwTypeError(globalObject, scope, "sign requires 2 arguments"_s);
+    if (count < 3) {
+        JSC::throwTypeError(globalObject, scope, "sign requires 3 arguments"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
@@ -1325,10 +1325,11 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
     auto id = wrapped.keyClass();
 
     auto hash = WebCore::CryptoAlgorithmIdentifier::SHA_256;
-    auto customHash = count > 2;
-    if (customHash) {
-        auto algorithm = callFrame->argument(2);
-        if (algorithm.isUndefinedOrNull() || algorithm.isEmpty() || !algorithm.isString()) {
+    auto algorithm = callFrame->argument(2);
+    auto customHash = false;
+    if(!algorithm.isUndefinedOrNull() && !algorithm.isEmpty()) {  
+        customHash = true;
+        if (!algorithm.isString()) {
             JSC::throwTypeError(globalObject, scope, "algorithm is expected to be a string"_s);
             return JSC::JSValue::encode(JSC::JSValue {});
         }
@@ -1356,7 +1357,6 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
             }
         }
     }
-
 
     switch (id) {
         case CryptoKeyClass::HMAC: {
@@ -1395,7 +1395,26 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
             params.identifier = CryptoAlgorithmIdentifier::ECDSA;
             params.hashIdentifier = hash;
             params.encoding = CryptoAlgorithmECDSAEncoding::DER;
-            // TODO: use the right encoding
+            params.encoding = CryptoAlgorithmECDSAEncoding::DER;
+
+            if (count > 3) {
+                auto encoding = callFrame->argument(3);
+                if (!encoding.isUndefinedOrNull() && !encoding.isEmpty()) {
+                    if (!encoding.isString()) {
+                        JSC::throwTypeError(globalObject, scope, "dsaEncoding is expected to be a string"_s);
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
+                    auto encoding_str = encoding.toWTFString(globalObject);
+                    if (encoding_str == "ieee-p1363"_s) {
+                        params.encoding = CryptoAlgorithmECDSAEncoding::IeeeP1363;
+                    } else if (encoding_str == "der"_s) {
+                        params.encoding = CryptoAlgorithmECDSAEncoding::DER;
+                    } else {
+                        JSC::throwTypeError(globalObject, scope, "invalid dsaEncoding"_s);
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
+                }
+            }            
             auto result = WebCore::CryptoAlgorithmECDSA::platformSign(params, ec, vectorData);
             auto resultData = result.releaseReturnValue();
             auto size = resultData.size();
@@ -1449,8 +1468,8 @@ JSC::EncodedJSValue KeyObject__Verify(JSC::JSGlobalObject* globalObject, JSC::Ca
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (count < 3) {
-        JSC::throwTypeError(globalObject, scope, "verify requires 3 arguments"_s);
+    if (count < 4) {
+        JSC::throwTypeError(globalObject, scope, "verify requires 4 arguments"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
@@ -1483,10 +1502,12 @@ JSC::EncodedJSValue KeyObject__Verify(JSC::JSGlobalObject* globalObject, JSC::Ca
     auto id = wrapped.keyClass();
 
     auto hash = WebCore::CryptoAlgorithmIdentifier::SHA_256;
-    auto customHash = count > 3;
-    if (customHash) {
-        auto algorithm = callFrame->argument(3);
-        if (algorithm.isUndefinedOrNull() || algorithm.isEmpty() || !algorithm.isString()) {
+    auto customHash = false;
+    
+    auto algorithm = callFrame->argument(3);
+    if(!algorithm.isUndefinedOrNull() && !algorithm.isEmpty()) {  
+        customHash = true;
+        if (!algorithm.isString()) {
             JSC::throwTypeError(globalObject, scope, "algorithm is expected to be a string"_s);
             return JSC::JSValue::encode(JSC::JSValue {});
         }
@@ -1515,7 +1536,6 @@ JSC::EncodedJSValue KeyObject__Verify(JSC::JSGlobalObject* globalObject, JSC::Ca
         }
     }
 
-
     switch (id) {
         case CryptoKeyClass::HMAC: {
             const auto& hmac = downcast<WebCore::CryptoKeyHMAC>(wrapped);
@@ -1541,7 +1561,25 @@ JSC::EncodedJSValue KeyObject__Verify(JSC::JSGlobalObject* globalObject, JSC::Ca
             params.identifier = CryptoAlgorithmIdentifier::ECDSA;
             params.hashIdentifier = hash;
             params.encoding = CryptoAlgorithmECDSAEncoding::DER;
-            // TODO: use the right encoding
+
+            if (count > 4) {
+                auto encoding = callFrame->argument(4);
+                if (!encoding.isUndefinedOrNull() && !encoding.isEmpty()) {
+                    if (!encoding.isString()) {
+                        JSC::throwTypeError(globalObject, scope, "dsaEncoding is expected to be a string"_s);
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
+                    auto encoding_str = encoding.toWTFString(globalObject);
+                    if (encoding_str == "ieee-p1363"_s) {
+                        params.encoding = CryptoAlgorithmECDSAEncoding::IeeeP1363;
+                    } else if (encoding_str == "der"_s) {
+                        params.encoding = CryptoAlgorithmECDSAEncoding::DER;
+                    } else {
+                        JSC::throwTypeError(globalObject, scope, "invalid dsaEncoding"_s);
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
+                }
+            }
             auto result = WebCore::CryptoAlgorithmECDSA::platformVerify(params, ec, signatureData, vectorData);
             return JSC::JSValue::encode(jsBoolean(result.releaseReturnValue()));
         }

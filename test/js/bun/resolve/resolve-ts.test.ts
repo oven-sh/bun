@@ -12,6 +12,9 @@ const isTestingInNode = {};
 // - "package/dir" should resolve to "package/dir/index.js" if "package/dir/index.ts" does exist
 // - it should work when no node_modules/package/package.json exists
 
+// A good package to try this on is `capnp-ts`:
+// https://github.com/oven-sh/bun/issues/5426
+
 function runTest(
   { withPackageJSON = false, withPackageJSONExports = false, type = "", jsFile = false, asDir = false } = {} as {
     withPackageJSON?: boolean;

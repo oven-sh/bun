@@ -67,7 +67,6 @@ pub const Flags = enum {
     has_node_modules,
 
     inside_node_modules,
-    has_set_inside_node_modules,
 
     pub const Set = std.enums.EnumSet(Flags);
 };

@@ -233,7 +233,7 @@ describe("streaming", () => {
                 pull(controller) {
                   throw new Error("TestPassed");
                 },
-                cancel(reason) { },
+                cancel(reason) {},
               }),
               {
                 status: 402,
@@ -756,7 +756,7 @@ describe("parallel", () => {
         },
       },
       async server => {
-        for (let i = 0; i < count;) {
+        for (let i = 0; i < count; ) {
           let responses = await Promise.all([
             fetch(`http://${server.hostname}:${server.port}`),
             fetch(`http://${server.hostname}:${server.port}`),
@@ -782,7 +782,7 @@ describe("parallel", () => {
         },
       },
       async server => {
-        for (let i = 0; i < count;) {
+        for (let i = 0; i < count; ) {
           let responses = await Promise.all([
             fetch(`http://${server.hostname}:${server.port}`),
             fetch(`http://${server.hostname}:${server.port}`),
@@ -1038,8 +1038,8 @@ it("formats error responses correctly", async () => {
 });
 
 it("request body and signal life cycle", async () => {
-  renderToReadableStream = (await import('react-dom/server')).renderToReadableStream;
-  app_jsx = (await import('./app')).default;
+  renderToReadableStream = (await import("react-dom/server")).renderToReadableStream;
+  app_jsx = (await import("./app")).default;
   {
     const headers = {
       headers: {

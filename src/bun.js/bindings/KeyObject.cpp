@@ -48,6 +48,7 @@
 #include "CryptoAlgorithmRSASSA_PKCS1_v1_5.h"
 #include "CryptoAlgorithmECDSA.h"
 #include "CryptoAlgorithmEcdsaParams.h"
+#include "CryptoAlgorithmRsaPssParams.h"
 #include "CryptoAlgorithmRegistry.h";
 using namespace JSC;
 using namespace Bun;
@@ -1441,6 +1442,49 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
                     
                     return JSC::JSValue::encode(buffer);
                 }
+                case CryptoAlgorithmIdentifier::RSA_PSS: {
+                    CryptoAlgorithmRsaPssParams params;
+                    params.padding = RSA_PKCS1_PADDING;
+                    if (count > 4) {
+                        auto padding = callFrame->argument(4);
+                        if (!padding.isUndefinedOrNull() && !padding.isEmpty()) {
+                            if (!padding.isNumber()) {
+                                JSC::throwTypeError(globalObject, scope, "padding is expected to be a number"_s);
+                                return JSC::JSValue::encode(JSC::JSValue {});
+                            }
+                            params.padding = padding.toUInt32(globalObject);
+                          
+                        }
+                        // requires saltLength
+                        if(params.padding == RSA_PKCS1_PSS_PADDING) {
+                            if (count <= 5) {
+                                JSC::throwTypeError(globalObject, scope, "saltLength is expected to be a number"_s);
+                                return JSC::JSValue::encode(JSC::JSValue {});
+                            }
+
+                            auto saltLength = callFrame->argument(5);
+                            if (saltLength.isUndefinedOrNull() || saltLength.isEmpty() || saltLength.isNumber()) {
+                                JSC::throwTypeError(globalObject, scope, "saltLength is expected to be a number"_s);
+                                return JSC::JSValue::encode(JSC::JSValue {});
+                            
+                                params.saltLength = saltLength.toUInt32(globalObject);
+                            }
+                        }
+                    }
+                    params.identifier = CryptoAlgorithmIdentifier::RSA_PSS;
+                    auto result = (customHash) ? WebCore::CryptoAlgorithmRSA_PSS::platformSignWithAlgorithm(params, hash, rsa, vectorData) : CryptoAlgorithmRSA_PSS::platformSign(params, rsa, vectorData);
+                    if (result.hasException()) {
+                        WebCore::propagateException(*globalObject, scope, result.releaseException());
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
+                    auto resultData = result.releaseReturnValue();
+                    auto size = resultData.size();
+                    auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
+                    if (size > 0)
+                        memcpy(buffer->vector(), resultData.data(), size);
+                    
+                    return JSC::JSValue::encode(buffer);
+                }
                 default: {
                      JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Sign not supported for this key type"_s);
                     return JSC::JSValue::encode(JSC::JSValue {});
@@ -1594,8 +1638,46 @@ JSC::EncodedJSValue KeyObject__Verify(JSC::JSGlobalObject* globalObject, JSC::Ca
                     }
                     return JSC::JSValue::encode(jsBoolean(result.releaseReturnValue()));
                 }
+                case CryptoAlgorithmIdentifier::RSA_PSS: {
+                    CryptoAlgorithmRsaPssParams params;
+                    params.padding = RSA_PKCS1_PADDING;
+                    if (count > 5) {
+
+                        auto padding = callFrame->argument(5);
+                        if (!padding.isUndefinedOrNull() && !padding.isEmpty()) {
+                            if (!padding.isNumber()) {
+                                JSC::throwTypeError(globalObject, scope, "padding is expected to be a number"_s);
+                                return JSC::JSValue::encode(JSC::JSValue {});
+                            }
+                            params.padding = padding.toUInt32(globalObject);
+                          
+                        }
+                        // requires saltLength
+                        if(params.padding == RSA_PKCS1_PSS_PADDING) {
+                            if (count <= 6) {
+                                JSC::throwTypeError(globalObject, scope, "saltLength is expected to be a number"_s);
+                                return JSC::JSValue::encode(JSC::JSValue {});
+                            }
+
+                            auto saltLength = callFrame->argument(6);
+                            if (saltLength.isUndefinedOrNull() || saltLength.isEmpty() || saltLength.isNumber()) {
+                                JSC::throwTypeError(globalObject, scope, "saltLength is expected to be a number"_s);
+                                return JSC::JSValue::encode(JSC::JSValue {});
+                            
+                                params.saltLength = saltLength.toUInt32(globalObject);
+                            }
+                        }
+                    }
+                    params.identifier = CryptoAlgorithmIdentifier::RSA_PSS;
+                    auto result = (customHash) ? WebCore::CryptoAlgorithmRSA_PSS::platformVerifyWithAlgorithm(params, hash, rsa, signatureData, vectorData) : CryptoAlgorithmRSA_PSS::platformVerify(params, rsa, signatureData, vectorData);
+                    if (result.hasException()) {
+                        WebCore::propagateException(*globalObject, scope, result.releaseException());
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
+                    return JSC::JSValue::encode(jsBoolean(result.releaseReturnValue()));
+                }
                 default: {
-                     JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Verify not supported for RSA-PSS key type"_s);
+                     JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Verify not supported for RSA key type"_s);
                     return JSC::JSValue::encode(JSC::JSValue {});
                 }
             }

@@ -12300,6 +12300,7 @@ const _createSign = crypto_exports.createSign;
 function getHashAlgorithm(algorithm) {
   if (typeof algorithm !== "string") throw new TypeError("Algorithm must be a string");
   switch (algorithm.toLowerCase()) {
+    case "ecdsa-with-SHA1":
     case "sha-1":
     case "sha1":
       return "SHA-1";
@@ -12326,8 +12327,8 @@ crypto_exports.sign = function (algorithm, data, key, callback) {
   // key must be a KeyObject
   if (!(key instanceof KeyObject)) {
     if ($isObject(key) && key.key) {
-      // padding = key.padding;
-      // saltLength = key.saltLength;
+      padding = key.padding;
+      saltLength = key.saltLength;
       dsaEncoding = key.dsaEncoding;
     }
     key = _createPrivateKey(key);
@@ -12342,9 +12343,9 @@ crypto_exports.sign = function (algorithm, data, key, callback) {
           .sign(key);
       } else {
         if (algorithm) {
-          result = nativeSign(key[kCryptoKey], data, getHashAlgorithm(algorithm), dsaEncoding);
+          result = nativeSign(key[kCryptoKey], data, getHashAlgorithm(algorithm), dsaEncoding, padding, saltLength);
         }
-        result = nativeSign(key[kCryptoKey], data, undefined, dsaEncoding);
+        result = nativeSign(key[kCryptoKey], data, undefined, dsaEncoding, padding, saltLength);
       }
       callback(null, result);
     } catch (err) {
@@ -12357,9 +12358,9 @@ crypto_exports.sign = function (algorithm, data, key, callback) {
         .sign(key);
     } else {
       if (algorithm) {
-        return nativeSign(key[kCryptoKey], data, getHashAlgorithm(algorithm), dsaEncoding);
+        return nativeSign(key[kCryptoKey], data, getHashAlgorithm(algorithm), dsaEncoding, padding, saltLength);
       }
-      return nativeSign(key[kCryptoKey], data, undefined, dsaEncoding);
+      return nativeSign(key[kCryptoKey], data, undefined, dsaEncoding, padding, saltLength);
     }
   }
 };

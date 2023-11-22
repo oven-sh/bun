@@ -1854,9 +1854,9 @@ pub inline fn toFD(fd: anytype) FileDescriptor {
 }
 
 /// Converts a native file descriptor into a `bun.FileDescriptor`
-/// 
+///
 /// Accepts either a UV descriptor (i32) or a windows handle (*anyopaque)
-/// 
+///
 /// On windows, this file descriptor will always be backed by libuv, so calling .close() is safe.
 pub inline fn toLibUVOwnedFD(fd: anytype) FileDescriptor {
     const T = @TypeOf(fd);

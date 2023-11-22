@@ -121,7 +121,10 @@ pub const WTFStringImplStruct = extern struct {
             return ZigString.Slice.init(this.refCountAllocator(), this.latin1Slice());
         }
 
-        return ZigString.Slice.init(allocator, bun.strings.toUTF8Alloc(allocator, this.utf16Slice()) catch bun.outOfMemory(),);
+        return ZigString.Slice.init(
+            allocator,
+            bun.strings.toUTF8Alloc(allocator, this.utf16Slice()) catch bun.outOfMemory(),
+        );
     }
 
     pub fn toUTF8WithoutRef(this: WTFStringImpl, allocator: std.mem.Allocator) ZigString.Slice {
@@ -133,7 +136,10 @@ pub const WTFStringImplStruct = extern struct {
             return ZigString.Slice.fromUTF8NeverFree(this.latin1Slice());
         }
 
-        return ZigString.Slice.init(allocator, bun.strings.toUTF8Alloc(allocator, this.utf16Slice()) catch bun.outOfMemory(),);
+        return ZigString.Slice.init(
+            allocator,
+            bun.strings.toUTF8Alloc(allocator, this.utf16Slice()) catch bun.outOfMemory(),
+        );
     }
 
     pub fn toUTF8IfNeeded(this: WTFStringImpl, allocator: std.mem.Allocator) ?ZigString.Slice {
@@ -145,7 +151,10 @@ pub const WTFStringImplStruct = extern struct {
             return null;
         }
 
-        return ZigString.Slice.init(allocator, bun.strings.toUTF8Alloc(allocator, this.utf16Slice()) catch bun.outOfMemory(),);
+        return ZigString.Slice.init(
+            allocator,
+            bun.strings.toUTF8Alloc(allocator, this.utf16Slice()) catch bun.outOfMemory(),
+        );
     }
 
     /// Avoid using this in code paths that are about to get the string as a UTF-8

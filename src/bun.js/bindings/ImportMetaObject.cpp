@@ -53,6 +53,7 @@
 
 inline bool isAbsolutePath(WTF::String input)
 {
+    //
 #if OS(WINDOWS)
     if (input.is8Bit()) {
         auto len = input.length();

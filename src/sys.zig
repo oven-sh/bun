@@ -116,6 +116,8 @@ pub const Tag = enum(u8) {
     readv,
     preadv,
 
+    uv_spawn,
+
     WriteFile,
     NtQueryDirectoryFile,
     GetFinalPathNameByHandle,

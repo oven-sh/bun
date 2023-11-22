@@ -25,6 +25,9 @@ const sockaddr_storage = std.os.sockaddr_storage;
 const sockaddr_un = std.os.sockaddr_un;
 const BOOL = windows.BOOL;
 const Env = bun.Environment;
+
+const log = bun.Output.scoped(.uv, false);
+
 pub const CHAR = u8;
 pub const SHORT = c_short;
 pub const LONG = c_long;
@@ -271,7 +274,7 @@ pub const uv_tcp_flags = enum_uv_tcp_flags;
 pub const uv_udp_flags = enum_uv_udp_flags;
 pub const uv_poll_event = enum_uv_poll_event;
 pub const uv_stdio_container_s = struct_uv_stdio_container_s;
-pub const uv_process_options_s = struct_uv_process_options_s;
+pub const uv_process_options_s = uv_process_options_t;
 pub const uv_process_flags = enum_uv_process_flags;
 pub const uv_fs_event = enum_uv_fs_event;
 pub const uv_fs_event_flags = enum_uv_fs_event_flags;
@@ -1238,7 +1241,7 @@ const union_unnamed_424 = extern union {
     reserved: [4]?*anyopaque,
 };
 pub const uv_process_t = struct_uv_process_s;
-pub const uv_exit_cb = ?*const fn ([*c]uv_process_t, i64, c_int) callconv(.C) void;
+pub const uv_exit_cb = ?*const fn (*uv_process_t, i64, c_int) callconv(.C) void;
 const struct_unnamed_426 = extern struct {
     overlapped: OVERLAPPED,
     queued_bytes: usize,
@@ -1269,7 +1272,7 @@ pub const struct_uv_process_s = extern struct {
     u: union_unnamed_424,
     endgame_next: [*c]uv_handle_t,
     flags: c_uint,
-    exit_cb: uv_exit_cb,
+    exit_cb: ?*const fn ([*c]struct_uv_process_s, i64, c_int) callconv(.C) void,
     pid: c_int,
     exit_req: struct_uv_process_exit_s,
     unused: ?*anyopaque,
@@ -1955,19 +1958,18 @@ pub const struct_uv_stdio_container_s = extern struct {
     data: union_unnamed_463,
 };
 pub const uv_stdio_container_t = struct_uv_stdio_container_s;
-pub const struct_uv_process_options_s = extern struct {
+pub const uv_process_options_t = extern struct {
     exit_cb: uv_exit_cb,
-    file: [*]const u8,
-    args: [*c][*]u8,
-    env: [*c][*]u8,
-    cwd: [*]const u8,
+    file: [*:0]const u8,
+    args: [*:null]?[*:0]u8,
+    env: [*:null]?[*:0]const u8,
+    cwd: [*:0]const u8,
     flags: c_uint,
     stdio_count: c_int,
-    stdio: [*c]uv_stdio_container_t,
+    stdio: [*]uv_stdio_container_t,
     uid: uv_uid_t,
     gid: uv_gid_t,
 };
-pub const uv_process_options_t = struct_uv_process_options_s;
 pub const UV_PROCESS_SETUID: c_int = 1;
 pub const UV_PROCESS_SETGID: c_int = 2;
 pub const UV_PROCESS_WINDOWS_VERBATIM_ARGUMENTS: c_int = 4;
@@ -1976,7 +1978,7 @@ pub const UV_PROCESS_WINDOWS_HIDE: c_int = 16;
 pub const UV_PROCESS_WINDOWS_HIDE_CONSOLE: c_int = 32;
 pub const UV_PROCESS_WINDOWS_HIDE_GUI: c_int = 64;
 pub const enum_uv_process_flags = c_uint;
-pub extern fn uv_spawn(loop: *uv_loop_t, handle: *uv_process_t, options: [*c]const uv_process_options_t) c_int;
+pub extern fn uv_spawn(loop: *uv_loop_t, handle: *uv_process_t, options: *const uv_process_options_t) ReturnCode;
 pub extern fn uv_process_kill([*c]uv_process_t, signum: c_int) c_int;
 pub extern fn uv_kill(pid: c_int, signum: c_int) c_int;
 pub extern fn uv_process_get_pid([*c]const uv_process_t) uv_pid_t;

@@ -1802,6 +1802,8 @@ pub const PosixToWinNormalizer = struct {
 
     _raw_bytes: Buf = undefined,
 
+    // methods on PosixToWinNormalizer, to be minimal yet stack allocate the PathBuffer
+    // these do not force inline of much code
     pub inline fn resolve(
         this: *PosixToWinNormalizer,
         source_dir: []const u8,
@@ -1817,13 +1819,21 @@ pub const PosixToWinNormalizer = struct {
         return resolveCWDWithExternalBuf(&this._raw_bytes, maybe_posix_path);
     }
 
+    pub inline fn resolveCWDZ(
+        this: *PosixToWinNormalizer,
+        maybe_posix_path: []const u8,
+    ) ![:0]const u8 {
+        return resolveCWDWithExternalBufZ(&this._raw_bytes, maybe_posix_path);
+    }
+
+    // underlying implementation:
+
     pub fn resolveWithExternalBuf(
         buf: *Buf,
         source_dir: []const u8,
         maybe_posix_path: []const u8,
     ) []const u8 {
         std.debug.assert(std.fs.path.isAbsoluteWindows(maybe_posix_path));
-
         if (bun.Environment.isWindows) {
             const root = windowsFilesystemRoot(maybe_posix_path);
             if (root.len == 1) {
@@ -1856,6 +1866,7 @@ pub const PosixToWinNormalizer = struct {
                 return buf[0 .. source_root.len + maybe_posix_path.len - 1];
             }
         }
+
         return maybe_posix_path;
     }
 
@@ -1879,6 +1890,7 @@ pub const PosixToWinNormalizer = struct {
                 return buf[0 .. source_root.len + maybe_posix_path.len - 1 :0];
             }
         }
+
         @memcpy(buf.ptr, maybe_posix_path);
         buf[maybe_posix_path.len] = 0;
         return buf[0..maybe_posix_path.len :0];

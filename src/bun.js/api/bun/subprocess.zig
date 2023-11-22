@@ -16,6 +16,8 @@ const Which = @import("../../../which.zig");
 const Async = bun.Async;
 const IPC = @import("../../ipc.zig");
 const uws = bun.uws;
+const windows = bun.windows;
+const uv = windows.libuv;
 
 const PosixSpawn = @import("./spawn.zig").PosixSpawn;
 
@@ -1146,15 +1148,13 @@ pub const Subprocess = struct {
         secondaryArgsValue: ?JSValue,
         comptime is_sync: bool,
     ) JSValue {
-        if (comptime Environment.isWindows) {
-            globalThis.throwTODO("spawn() is not yet implemented on Windows");
+        if (comptime Environment.isWindows and !is_sync) {
+            globalThis.throwTODO("Async spawn() is not yet implemented on Windows");
             return .zero;
         }
         var arena = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var allocator = arena.allocator();
-
-        var env: [*:null]?[*:0]const u8 = undefined;
 
         var override_env = false;
         var env_array = std.ArrayListUnmanaged(?[*:0]const u8){
@@ -1185,6 +1185,8 @@ pub const Subprocess = struct {
         var ipc_mode = IPCMode.none;
         var ipc_callback: JSValue = .zero;
 
+        var windows_hide: if (Environment.isWindows) u1 else u0 = 0;
+
         {
             if (args.isEmptyOrUndefinedOrNull()) {
                 globalThis.throwInvalidArguments("cmd must be an array", .{});
@@ -1208,7 +1210,7 @@ pub const Subprocess = struct {
             {
                 var cmds_array = cmd_value.arrayIterator(globalThis);
                 argv = @TypeOf(argv).initCapacity(allocator, cmds_array.len) catch {
-                    globalThis.throw("out of memory", .{});
+                    globalThis.throwOutOfMemory();
                     return .zero;
                 };
 
@@ -1232,7 +1234,7 @@ pub const Subprocess = struct {
                         return .zero;
                     };
                     argv.appendAssumeCapacity(allocator.dupeZ(u8, bun.span(resolved)) catch {
-                        globalThis.throw("out of memory", .{});
+                        globalThis.throwOutOfMemory();
                         return .zero;
                     });
                 }
@@ -1246,7 +1248,7 @@ pub const Subprocess = struct {
                     }
 
                     argv.appendAssumeCapacity(arg.toOwnedSliceZ(allocator) catch {
-                        globalThis.throw("out of memory", .{});
+                        globalThis.throwOutOfMemory();
                         return .zero;
                     });
                 }
@@ -1263,8 +1265,9 @@ pub const Subprocess = struct {
                     if (!cwd_.isEmptyOrUndefinedOrNull()) {
                         const cwd_str = cwd_.getZigString(globalThis);
                         if (cwd_str.len > 0) {
+                            // TODO: leak?
                             cwd = cwd_str.toOwnedSliceZ(allocator) catch {
-                                globalThis.throw("out of memory", .{});
+                                globalThis.throwOutOfMemory();
                                 return .zero;
                             };
                         }
@@ -1299,7 +1302,7 @@ pub const Subprocess = struct {
                         }).init(globalThis, object.asObjectRef());
                         defer object_iter.deinit();
                         env_array.ensureTotalCapacityPrecise(allocator, object_iter.len) catch {
-                            globalThis.throw("out of memory", .{});
+                            globalThis.throwOutOfMemory();
                             return .zero;
                         };
 
@@ -1311,7 +1314,7 @@ pub const Subprocess = struct {
                             if (value == .undefined) continue;
 
                             var line = std.fmt.allocPrintZ(allocator, "{}={}", .{ key, value.getZigString(globalThis) }) catch {
-                                globalThis.throw("out of memory", .{});
+                                globalThis.throwOutOfMemory();
                                 return .zero;
                             };
 
@@ -1320,7 +1323,7 @@ pub const Subprocess = struct {
                             }
 
                             env_array.append(allocator, line) catch {
-                                globalThis.throw("out of memory", .{});
+                                globalThis.throwOutOfMemory();
                                 return .zero;
                             };
                         }
@@ -1344,17 +1347,17 @@ pub const Subprocess = struct {
                     }
                 } else {
                     if (args.get(globalThis, "stdin")) |value| {
-                        if (!extractStdio(globalThis, bun.STDIN_FD, value, &stdio))
+                        if (!extractStdio(globalThis, bun.posix.STDIN_FD, value, &stdio))
                             return .zero;
                     }
 
                     if (args.get(globalThis, "stderr")) |value| {
-                        if (!extractStdio(globalThis, bun.STDERR_FD, value, &stdio))
+                        if (!extractStdio(globalThis, bun.posix.STDERR_FD, value, &stdio))
                             return .zero;
                     }
 
                     if (args.get(globalThis, "stdout")) |value| {
-                        if (!extractStdio(globalThis, bun.STDOUT_FD, value, &stdio))
+                        if (!extractStdio(globalThis, bun.posix.STDOUT_FD, value, &stdio))
                             return .zero;
                     }
                 }
@@ -1374,6 +1377,10 @@ pub const Subprocess = struct {
                 }
 
                 if (args.get(globalThis, "ipc")) |val| {
+                    if(Environment.isWindows) {
+                        globalThis.throwInvalidArguments("TODO: IPC is not supported on Windows", .{});
+                        return .zero;
+                    }
                     if (val.isCell() and val.isCallable(globalThis.vm())) {
                         // In the future, we should add a way to use a different IPC serialization format, specifically `json`.
                         // but the only use case this has is doing interop with node.js IPC and other programs.
@@ -1381,11 +1388,145 @@ pub const Subprocess = struct {
                         ipc_callback = val.withAsyncContextIfNeeded(globalThis);
                     }
                 }
+
+                if(Environment.isWindows) {
+                    if (args.get(globalThis, "windowsHide")) |val| {
+                        if (val.isBoolean()) {
+                            windows_hide = @intFromBool(val.asBoolean());
+                        }
+                    }
+                }
             }
         }
 
+        // WINDOWS:
+        if(Environment.isWindows) {
+            argv.append(allocator, null) catch {
+                globalThis.throwOutOfMemory();
+                return .zero;
+            };
+
+            if (!override_env and env_array.items.len == 0) {
+                env_array.items = jsc_vm.bundler.env.map.createNullDelimitedEnvMap(allocator) catch |err| return globalThis.handleError(err, "in posix_spawn");
+                env_array.capacity = env_array.items.len;
+            }
+
+            env_array.append(allocator, null) catch {
+                globalThis.throwOutOfMemory();
+                return .zero;
+            };
+            const env: [*:null]?[*:0]const u8 = @ptrCast(env_array.items.ptr);
+
+            const TODO = struct {
+                fn windowsOnExit(process: *uv.uv_process_t, exit_status: i64, term_signal: c_int) callconv(.C) void {
+                    const subprocess: *Subprocess = @ptrCast(process.data.?);
+                    _ = subprocess;
+                    std.debug.panic("TODO: pid={d}, exit_status={d}, term_signal={d}", .{process.pid,exit_status, term_signal});
+                }
+            };
+
+            // TODO: spawn
+            var uv_stdio = [3]uv.uv_stdio_container_s{
+                uv.uv_stdio_container_s{
+                    .flags = uv.UV_INHERIT_FD,
+                    .data = .{
+                        .fd = bun.posix.STDIN_FD,
+                    }
+                },
+                uv.uv_stdio_container_s{
+                    .flags = uv.UV_INHERIT_FD,
+                    .data = .{
+                        .fd = bun.posix.STDOUT_FD,
+                    }
+                },
+                uv.uv_stdio_container_s{
+                    .flags = uv.UV_INHERIT_FD,
+                    .data = .{
+                        .fd = bun.posix.STDERR_FD,
+                    }
+                },
+            };
+
+            var cwd_resolver = bun.path.PosixToWinNormalizer{};
+
+            const options = uv.uv_process_options_t{
+                .exit_cb = &TODO.windowsOnExit,
+                .args = argv.items[0..argv.items.len - 1 :null],
+                .cwd = cwd_resolver.resolveCWDZ(cwd) catch |err| return globalThis.handleError(err, "in uv_spawn"),
+                .env = env,
+                .file = argv.items[0].?,
+                .gid = 0,
+                .uid = 0,
+                .stdio = &uv_stdio,
+                .stdio_count = uv_stdio.len,
+                .flags = if(windows_hide == 1) uv.UV_PROCESS_WINDOWS_HIDE else 0,
+            };
+            var handle: uv.uv_process_t = undefined;
+            if(uv.uv_spawn(jsc_vm.uvLoop(), &handle, &options).errEnum()) |errno| {
+                globalThis.throwValue(bun.sys.Error.fromCode(errno, .uv_spawn).toJSC(globalThis));
+                return .zero;
+            }
+
+            var subprocess = globalThis.allocator().create(Subprocess) catch {
+                globalThis.throwOutOfMemory();
+                return .zero;
+            };
+
+            // When run synchronously, subprocess isn't garbage collected
+            subprocess.* = Subprocess{
+                .globalThis = globalThis,
+                .pid = handle.pid,
+                .pidfd = 0,
+                .stdin = undefined,
+                // stdout and stderr only uses allocator and default_max_buffer_size if they are pipes and not a array buffer
+                .stdout = undefined,
+                .stderr = undefined,
+                .on_exit_callback = if (on_exit_callback != .zero) JSC.Strong.create(on_exit_callback, globalThis) else .{},
+                
+                .ipc_mode = ipc_mode,
+                .ipc = undefined,
+                .ipc_callback = undefined,
+
+                .flags = .{
+                    .is_sync = is_sync,
+                },
+            };
+            handle.data = subprocess;
+            std.debug.assert(ipc_mode == .none);//TODO:
+
+            while (!subprocess.hasExited()) {
+                // if (subprocess.stderr == .pipe and subprocess.stderr.pipe == .buffer) {
+                //     subprocess.stderr.pipe.buffer.readAll();
+                // }
+
+                // if (subprocess.stdout == .pipe and subprocess.stdout.pipe == .buffer) {
+                //     subprocess.stdout.pipe.buffer.readAll();
+                // }
+
+                jsc_vm.tick();
+                jsc_vm.eventLoop().autoTick();
+            }
+
+            @panic("J");
+
+            // const exitCode = subprocess.exit_code orelse 1;
+            // const stdout = subprocess.stdout.toBufferedValue(globalThis);
+            // const stderr = subprocess.stderr.toBufferedValue(globalThis);
+            // subprocess.finalizeSync();
+
+            // const sync_value = JSC.JSValue.createEmptyObject(globalThis, 4);
+            // sync_value.put(globalThis, JSC.ZigString.static("exitCode"), JSValue.jsNumber(@as(i32, @intCast(exitCode))));
+            // sync_value.put(globalThis, JSC.ZigString.static("stdout"), stdout);
+            // sync_value.put(globalThis, JSC.ZigString.static("stderr"), stderr);
+            // sync_value.put(globalThis, JSC.ZigString.static("success"), JSValue.jsBoolean(exitCode == 0));
+            // return sync_value;
+            
+            // return JSValue.jsNumber(4);
+        }
+        // POSIX:
+
         var attr = PosixSpawn.Attr.init() catch {
-            globalThis.throw("out of memory", .{});
+            globalThis.throwOutOfMemory();
             return .zero;
         };
 
@@ -1455,7 +1596,7 @@ pub const Subprocess = struct {
         actions.chdir(cwd) catch |err| return globalThis.handleError(err, "in chdir()");
 
         argv.append(allocator, null) catch {
-            globalThis.throw("out of memory", .{});
+            globalThis.throwOutOfMemory();
             return .zero;
         };
 
@@ -1496,10 +1637,10 @@ pub const Subprocess = struct {
         }
 
         env_array.append(allocator, null) catch {
-            globalThis.throw("out of memory", .{});
+            globalThis.throwOutOfMemory();
             return .zero;
         };
-        env = @as(@TypeOf(env), @ptrCast(env_array.items.ptr));
+        const env: [*:null]?[*:0]const u8 = @ptrCast(env_array.items.ptr);
 
         const pid = brk: {
             defer {
@@ -1584,7 +1725,7 @@ pub const Subprocess = struct {
         };
 
         var subprocess = globalThis.allocator().create(Subprocess) catch {
-            globalThis.throw("out of memory", .{});
+            globalThis.throwOutOfMemory();
             return .zero;
         };
         // When run synchronously, subprocess isn't garbage collected
@@ -1593,7 +1734,7 @@ pub const Subprocess = struct {
             .pid = pid,
             .pidfd = if (WaiterThread.shouldUseWaiterThread()) @truncate(bun.invalid_fd) else @truncate(pidfd),
             .stdin = Writable.init(stdio[bun.STDIN_FD], stdin_pipe[1], globalThis) catch {
-                globalThis.throw("out of memory", .{});
+                globalThis.throwOutOfMemory();
                 return .zero;
             },
             // stdout and stderr only uses allocator and default_max_buffer_size if they are pipes and not a array buffer
@@ -1670,17 +1811,13 @@ pub const Subprocess = struct {
         }
 
         if (subprocess.stdout == .pipe and subprocess.stdout.pipe == .buffer) {
-            if (comptime is_sync) {
-                subprocess.stdout.pipe.buffer.readAll();
-            } else if (!lazy) {
+            if (is_sync or !lazy) {
                 subprocess.stdout.pipe.buffer.readAll();
             }
         }
 
         if (subprocess.stderr == .pipe and subprocess.stderr.pipe == .buffer) {
-            if (comptime is_sync) {
-                subprocess.stderr.pipe.buffer.readAll();
-            } else if (!lazy) {
+            if (is_sync or !lazy) {
                 subprocess.stderr.pipe.buffer.readAll();
             }
         }

@@ -8,6 +8,8 @@ import app_jsx from "./app.jsx";
 import { spawn } from "child_process";
 import { tmpdir } from "os";
 
+console.log("started");
+
 type Handler = (req: Request) => Response;
 afterEach(() => gc(true));
 

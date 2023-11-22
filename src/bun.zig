@@ -1846,9 +1846,13 @@ pub inline fn toFD(fd: anytype) FileDescriptor {
             FDImpl.System => FDImpl.fromSystem(fd),
             FDImpl.UV => FDImpl.fromUV(fd),
             FileDescriptor => FDImpl.decode(fd),
+            // TODO: remove this case
+            u32 => FDImpl.fromUV(@as(FDImpl.UV, @intCast(fd))),
             else => @compileError("toFD() does not support type \"" ++ @typeName(T) ++ "\""),
         }).encode();
     } else {
+        // TODO: remove intCast. we should not be casting u32 -> i32
+        // even though file descriptors are always positive, linux/mac repesents them as signed integers
         return @intCast(fd);
     }
 }
@@ -1916,9 +1920,11 @@ const WindowsStat = extern struct {
 pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.os.Stat;
 
 pub const posix = struct {
-    pub const STDOUT_FD = std.os.STDOUT_FILENO;
-    pub const STDERR_FD = std.os.STDERR_FILENO;
-    pub const STDIN_FD = std.os.STDIN_FILENO;
+    // we use these on windows for crt/uv stuff, and std.os does not define them, hence the if
+    pub const STDIN_FD = if(Environment.isPosix) std.os.STDIN_FILENO else 0;
+    pub const STDOUT_FD = if(Environment.isPosix) std.os.STDOUT_FILENO else 1;
+    pub const STDERR_FD = if(Environment.isPosix) std.os.STDERR_FILENO else 2;
+
     pub inline fn argv() [][*:0]u8 {
         return std.os.argv;
     }

@@ -3,10 +3,13 @@ import { afterEach, describe, it, expect, afterAll } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { join, resolve } from "path";
 import { bunExe, bunEnv } from "harness";
-import { renderToReadableStream } from "react-dom/server";
-import app_jsx from "./app.jsx";
+// import { renderToReadableStream } from "react-dom/server";
+// import app_jsx from "./app.jsx";
 import { spawn } from "child_process";
 import { tmpdir } from "os";
+
+let renderToReadableStream: any = null;
+let app_jsx: any = null;
 
 type Handler = (req: Request) => Response;
 afterEach(() => gc(true));
@@ -228,7 +231,7 @@ describe("streaming", () => {
                 pull(controller) {
                   throw new Error("TestPassed");
                 },
-                cancel(reason) {},
+                cancel(reason) { },
               }),
               {
                 status: 402,
@@ -751,7 +754,7 @@ describe("parallel", () => {
         },
       },
       async server => {
-        for (let i = 0; i < count; ) {
+        for (let i = 0; i < count;) {
           let responses = await Promise.all([
             fetch(`http://${server.hostname}:${server.port}`),
             fetch(`http://${server.hostname}:${server.port}`),
@@ -777,7 +780,7 @@ describe("parallel", () => {
         },
       },
       async server => {
-        for (let i = 0; i < count; ) {
+        for (let i = 0; i < count;) {
           let responses = await Promise.all([
             fetch(`http://${server.hostname}:${server.port}`),
             fetch(`http://${server.hostname}:${server.port}`),
@@ -1033,6 +1036,8 @@ it("formats error responses correctly", async () => {
 });
 
 it("request body and signal life cycle", async () => {
+  renderToReadableStream = (await import('react-dom/server')).renderToReadableStream;
+  app_jsx = (await import('./app')).default;
   {
     const headers = {
       headers: {

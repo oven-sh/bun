@@ -228,6 +228,10 @@ if(UNIX AND NOT APPLE)
     if(${LINUX_DISTRO} STREQUAL "NAME=\"Arch Linux\"\n")
         set(DEFAULT_USE_STATIC_LIBATOMIC OFF)
     endif()
+
+    if(${LINUX_DISTRO} STREQUAL "NAME=\"Artix Linux\"\n")
+        set(DEFAULT_USE_STATIC_LIBATOMIC OFF)
+    endif()
 endif()
 
 # -- Build Flags --

@@ -56,6 +56,25 @@ test("it exists", () => {
   expect(dns_promises.resolveCname).toBeDefined();
 });
 
+describe("dns.resolve returns records as string[]", () => {
+  it("sync", done => {
+    dns.resolve("bun.sh", (err, results) => {
+      expect(err).toBeNull();
+      expect(results instanceof Array).toBe(true);
+
+      // check if it contains only IPs
+      expect(results.every(e => typeof e === "string")).toBe(true);
+      done(err);
+    });
+  });
+
+  it("async", async () => {
+    const results = await dns_promises.resolve("bun.sh");
+    expect(results instanceof Array).toBe(true);
+    expect(results.every(e => typeof e === "string")).toBe(true);
+  });
+});
+
 // //TODO: use a bun.sh SRV for testing
 test("dns.resolveSrv (_test._tcp.test.socketify.dev)", done => {
   dns.resolveSrv("_test._tcp.test.socketify.dev", (err, results) => {

@@ -236,10 +236,10 @@ var InternalResolver = class Resolver {
         switch (rrtype?.toLowerCase()) {
           case "a":
           case "aaaa":
-            callback(null, hostname, results.map(mapResolveX));
+            callback(null, results.map(mapResolveX));
             break;
           default:
-            callback(null, results);
+            callback(null, results.map(mapResolveX));
             break;
         }
       },
@@ -461,12 +461,14 @@ function resolve(hostname, rrtype, callback) {
         case "aaaa":
           callback(
             null,
-            hostname,
             results.map(({ address }) => address),
           );
           break;
         default:
-          callback(null, results);
+          callback(
+            null,
+            results.map(({ address }) => address),
+          );
           break;
       }
     },
@@ -545,9 +547,9 @@ const promises = {
     switch (rrtype?.toLowerCase()) {
       case "a":
       case "aaaa":
-        return dns.resolve(hostname, rrtype).then(promisifyLookup);
+        return dns.resolve(hostname, rrtype).then(promisifyResolveX);
       default:
-        return dns.resolve(hostname, rrtype);
+        return dns.resolve(hostname, rrtype).then(promisifyResolveX);
     }
   },
 

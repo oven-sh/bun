@@ -12297,30 +12297,6 @@ var webcrypto = crypto;
 var _subtle = webcrypto.subtle;
 const _createSign = crypto_exports.createSign;
 
-function getHashAlgorithm(algorithm) {
-  if (typeof algorithm !== "string") throw new TypeError("Algorithm must be a string");
-  switch (algorithm.toLowerCase()) {
-    case "ecdsa-with-SHA1":
-    case "sha-1":
-    case "sha1":
-      return "SHA-1";
-    case "sha-224":
-    case "sha224":
-      return "SHA-224";
-    case "sha-256":
-    case "sha256":
-      return "SHA-256";
-    case "sha-384":
-    case "sha384":
-      return "SHA-384";
-    case "sha-512":
-    case "sha512":
-      return "SHA-512";
-    default:
-      throw new TypeError(`Invalid hash algorithm "${algorithm}"`);
-  }
-}
-
 crypto_exports.sign = function (algorithm, data, key, callback) {
   // TODO: move this to native
   var dsaEncoding, padding, saltLength;
@@ -12346,10 +12322,7 @@ crypto_exports.sign = function (algorithm, data, key, callback) {
           .update(data)
           .sign(key);
       } else {
-        if (algorithm) {
-          result = nativeSign(key[kCryptoKey], data, getHashAlgorithm(algorithm), dsaEncoding, padding, saltLength);
-        }
-        result = nativeSign(key[kCryptoKey], data, undefined, dsaEncoding, padding, saltLength);
+        result = nativeSign(key[kCryptoKey], data, algorithm, dsaEncoding, padding, saltLength);
       }
       callback(null, result);
     } catch (err) {
@@ -12361,10 +12334,7 @@ crypto_exports.sign = function (algorithm, data, key, callback) {
         .update(data)
         .sign(key);
     } else {
-      if (algorithm) {
-        return nativeSign(key[kCryptoKey], data, getHashAlgorithm(algorithm), dsaEncoding, padding, saltLength);
-      }
-      return nativeSign(key[kCryptoKey], data, undefined, dsaEncoding, padding, saltLength);
+      return nativeSign(key[kCryptoKey], data, algorithm, dsaEncoding, padding, saltLength);
     }
   }
 };
@@ -12395,18 +12365,7 @@ crypto_exports.verify = function (algorithm, data, key, signature, callback) {
           .update(data)
           .verify(key, signature);
       } else {
-        if (algorithm) {
-          result = nativeVerify(
-            key[kCryptoKey],
-            data,
-            signature,
-            getHashAlgorithm(algorithm),
-            dsaEncoding,
-            padding,
-            saltLength,
-          );
-        }
-        result = nativeVerify(key[kCryptoKey], data, signature, undefined, dsaEncoding, padding, saltLength);
+        result = nativeVerify(key[kCryptoKey], data, signature, algorithm, dsaEncoding, padding, saltLength);
       }
       callback(null, result);
     } catch (err) {
@@ -12418,18 +12377,7 @@ crypto_exports.verify = function (algorithm, data, key, signature, callback) {
         .update(data)
         .verify(key, signature);
     } else {
-      if (algorithm) {
-        return nativeVerify(
-          key[kCryptoKey],
-          data,
-          signature,
-          getHashAlgorithm(algorithm),
-          dsaEncoding,
-          padding,
-          saltLength,
-        );
-      }
-      return nativeVerify(key[kCryptoKey], data, signature, undefined, dsaEncoding, padding, saltLength);
+      return nativeVerify(key[kCryptoKey], data, signature, algorithm, dsaEncoding, padding, saltLength);
     }
   }
 };

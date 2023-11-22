@@ -2612,11 +2612,45 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
             obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "privateKey"_s)), JSCryptoKey::create(structure, zigGlobalObject, pair.privateKey.releaseNonNull()), 0);
             returnValue = obj;
         };
+
+        auto hashAlgoJS = options->getIfPropertyExists(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "hashAlgorithm"_s)));
+        auto hasHash = false;
+        auto hash = CryptoAlgorithmIdentifier::SHA_1;
+        if (hashAlgoJS.isString()) {
+            hasHash = true;
+            auto hashAlgo = hashAlgoJS.toWTFString(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, encodedJSValue());
+           
+            auto identifier = CryptoAlgorithmRegistry::singleton().identifier(hashAlgo);
+            if (UNLIKELY(!identifier)) {
+                JSC::throwTypeError(lexicalGlobalObject, scope, "options.hashAlgorithm is invalid"_s);
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+
+            switch (*identifier) {
+                case WebCore::CryptoAlgorithmIdentifier::SHA_1:
+                case WebCore::CryptoAlgorithmIdentifier::SHA_224:
+                case WebCore::CryptoAlgorithmIdentifier::SHA_256:
+                case WebCore::CryptoAlgorithmIdentifier::SHA_384:
+                case WebCore::CryptoAlgorithmIdentifier::SHA_512: {
+
+                    hash = *identifier;
+                    break;
+                }
+                default: {
+                    JSC::throwTypeError(lexicalGlobalObject, scope, "options.hashAlgorithm is invalid"_s);
+                    return JSC::JSValue::encode(JSC::JSValue {});
+                }
+            }
+        } else if (!hashAlgoJS.isUndefinedOrNull() && !hashAlgoJS.isEmpty()) {
+            JSC::throwTypeError(lexicalGlobalObject, scope, "options.hashAlgorithm is expected to be a string"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
         auto failureCallback = [&]() {
             throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Failed to generate key pair"_s));
         };
         // this is actually sync
-        CryptoKeyRSA::generatePair(CryptoAlgorithmIdentifier::RSA_PSS, CryptoAlgorithmIdentifier::SHA_1, false, modulusLength, Vector<uint8_t>((uint8_t*)&publicExponentArray, 4), true, CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt, WTFMove(keyPairCallback), WTFMove(failureCallback), zigGlobalObject->scriptExecutionContext());
+        CryptoKeyRSA::generatePair(CryptoAlgorithmIdentifier::RSA_PSS, hash, hasHash, modulusLength, Vector<uint8_t>((uint8_t*)&publicExponentArray, 4), true, CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt, WTFMove(keyPairCallback), WTFMove(failureCallback), zigGlobalObject->scriptExecutionContext());
         return JSValue::encode(returnValue);
     } else if (type_str == "ec"_s) {
         if (count == 1) {

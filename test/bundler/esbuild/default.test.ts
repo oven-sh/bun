@@ -4106,7 +4106,7 @@ describe("bundler", () => {
     },
     run: {
       file: "/test.js",
-      stdout: '{}\n{"bar":123}',
+      stdout: 'Foo {}\n{"bar":123}',
     },
   });
   itBundled("default/DefineImportMeta", {

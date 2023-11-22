@@ -291,5 +291,5 @@ test("cp with missing callback throws", () => {
   expect(() => {
     // @ts-expect-error
     fs.cp("a", "b" as any);
-  }).toThrow(/callback/);
+  }).toThrow(/Callback/);
 });

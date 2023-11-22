@@ -150,13 +150,12 @@ pub const SavedSourceMap = struct {
                             Output.errorWriter(),
                             logger.Kind.warn,
                             true,
-                            false,
                         );
                     } else {
                         try fail.toData(path).writeFormat(
                             Output.errorWriter(),
                             logger.Kind.warn,
-                            false,
+
                             false,
                         );
                     }
@@ -2032,6 +2031,10 @@ pub const VirtualMachine = struct {
         if (!result.isEmptyOrUndefinedOrNull())
             this.last_reported_error_for_dedupe = result;
 
+        var prev_had_errors = this.had_errors;
+        this.had_errors = false;
+        defer this.had_errors = prev_had_errors;
+
         if (result.isException(this.global.vm())) {
             var exception = @as(*Exception, @ptrCast(result.asVoid()));
 
@@ -2439,9 +2442,12 @@ pub const VirtualMachine = struct {
             if (value.as(JSC.BuildMessage)) |build_error| {
                 defer Output.flush();
                 if (!build_error.logged) {
+                    if (this.had_errors) {
+                        writer.writeAll("\n") catch {};
+                    }
                     build_error.msg.writeFormat(writer, allow_ansi_color) catch {};
-                    writer.writeAll("\n") catch {};
                     build_error.logged = true;
+                    writer.writeAll("\n") catch {};
                 }
                 this.had_errors = this.had_errors or build_error.msg.kind == .err;
                 if (exception_list != null) {
@@ -2453,8 +2459,12 @@ pub const VirtualMachine = struct {
             } else if (value.as(JSC.ResolveMessage)) |resolve_error| {
                 defer Output.flush();
                 if (!resolve_error.logged) {
+                    if (this.had_errors) {
+                        writer.writeAll("\n") catch {};
+                    }
                     resolve_error.msg.writeFormat(writer, allow_ansi_color) catch {};
                     resolve_error.logged = true;
+                    writer.writeAll("\n") catch {};
                 }
 
                 this.had_errors = this.had_errors or resolve_error.msg.kind == .err;
@@ -2693,12 +2703,14 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn printErrorInstance(this: *VirtualMachine, error_instance: JSValue, exception_list: ?*ExceptionList, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool, comptime allow_side_effects: bool) !void {
+    pub fn printErrorInstance(this: *VirtualMachine, error_instance: JSValue, exception_list: ?*ExceptionList, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool, comptime allow_side_effects: bool) anyerror!void {
         var exception_holder = ZigException.Holder.init();
         var exception = exception_holder.zigException();
         defer exception_holder.deinit();
         this.remapZigException(exception, error_instance, exception_list);
+        var prev_had_errors = this.had_errors;
         this.had_errors = true;
+        defer this.had_errors = prev_had_errors;
 
         if (allow_side_effects) {
             defer if (this.on_exception) |cb| {
@@ -2817,27 +2829,41 @@ pub const VirtualMachine = struct {
             "info",
             "pkg",
             "errors",
+            "cause",
         };
+
+        // This is usually unsafe to do, but we are protecting them each time first
+        var errors_to_append = std.ArrayList(JSC.JSValue).init(this.allocator);
+        defer {
+            for (errors_to_append.items) |err| {
+                err.unprotect();
+            }
+            errors_to_append.deinit();
+        }
 
         if (error_instance != .zero and error_instance.isCell() and error_instance.jsType().canGet()) {
             inline for (extra_fields) |field| {
-                if (error_instance.get(this.global, field)) |value| {
-                    if (!value.isEmptyOrUndefinedOrNull()) {
-                        const kind = value.jsType();
-                        if (kind.isStringLike()) {
-                            if (value.toStringOrNull(this.global)) |str| {
-                                var zig_str = str.toSlice(this.global, bun.default_allocator);
-                                defer zig_str.deinit();
-                                try writer.print(comptime Output.prettyFmt(" {s}<d>: <r>\"{s}\"<r>\n", allow_ansi_color), .{ field, zig_str.slice() });
-                                add_extra_line = true;
-                            }
-                        } else if (kind.isObject() or kind.isArray()) {
-                            var bun_str = bun.String.empty;
-                            defer bun_str.deref();
-                            value.jsonStringify(this.global, 2, &bun_str); //2
-                            try writer.print(comptime Output.prettyFmt(" {s}<d>: <r>{any}<r>\n", allow_ansi_color), .{ field, bun_str });
+                if (error_instance.getTruthy(this.global, field)) |value| {
+                    const kind = value.jsType();
+                    if (kind.isStringLike()) {
+                        if (value.toStringOrNull(this.global)) |str| {
+                            var zig_str = str.toSlice(this.global, bun.default_allocator);
+                            defer zig_str.deinit();
+                            try writer.print(comptime Output.prettyFmt(" {s}<d>: <r>\"{s}\"<r>\n", allow_ansi_color), .{ field, zig_str.slice() });
                             add_extra_line = true;
                         }
+                    } else if (kind == .ErrorInstance and
+                        // avoid infinite recursion
+                        !prev_had_errors)
+                    {
+                        value.protect();
+                        try errors_to_append.append(value);
+                    } else if (kind.isObject() or kind.isArray()) {
+                        var bun_str = bun.String.empty;
+                        defer bun_str.deref();
+                        value.jsonStringify(this.global, 2, &bun_str); //2
+                        try writer.print(comptime Output.prettyFmt(" {s}<d>: <r>{any}<r>\n", allow_ansi_color), .{ field, bun_str });
+                        add_extra_line = true;
                     }
                 }
             }
@@ -2888,6 +2914,11 @@ pub const VirtualMachine = struct {
         if (add_extra_line) try writer.writeAll("\n");
 
         try printStackTrace(@TypeOf(writer), writer, exception.stack, allow_ansi_color);
+
+        for (errors_to_append.items) |err| {
+            try writer.writeAll("\n");
+            try this.printErrorInstance(err, exception_list, Writer, writer, allow_ansi_color, allow_side_effects);
+        }
     }
 
     fn printErrorNameAndMessage(_: *VirtualMachine, name: String, message: String, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool) !void {

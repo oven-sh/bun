@@ -42,6 +42,7 @@ pub const Classes = struct {
     pub const Subprocess = JSC.Subprocess;
     pub const TCPSocket = JSC.API.TCPSocket;
     pub const TLSSocket = JSC.API.TLSSocket;
+    pub const UDPSocket = JSC.API.UDPSocket;
     pub const TextDecoder = JSC.WebCore.TextDecoder;
     pub const Timeout = JSC.API.Bun.Timer.TimerObject;
     pub const BuildArtifact = JSC.API.BuildArtifact;

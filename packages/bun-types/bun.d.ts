@@ -3588,7 +3588,7 @@ declare module "bun" {
 
   type BinaryTypeList = {
     arraybuffer: ArrayBuffer;
-    buffer: Buffer;
+    nodebuffer: Buffer;
     uint8array: Uint8Array;
     // TODO: DataView
     // dataview: DataView;
@@ -3597,7 +3597,7 @@ declare module "bun" {
 
   interface SocketHandler<
     Data = unknown,
-    DataBinaryType extends BinaryType = "buffer",
+    DataBinaryType extends BinaryType = "nodebuffer",
   > {
     /**
      * Is called when the socket connects, or in case of TLS if no handshake is provided
@@ -4302,6 +4302,44 @@ declare module "bun" {
     buffer: ArrayBufferView | ArrayBufferLike,
     offset?: number,
   ): number;
+
+  export interface UDPSocketOptions<Type extends BinaryType = "nodebuffer"> {
+    hostname?: string;
+    port?: number;
+    binaryType?: Type;
+    socket?: {
+      data?(
+        socket: UDPSocket,
+        data: BinaryTypeList[Type],
+        port: number,
+        address: string,
+      ): void | Promise<void>;
+      drain?(socket: UDPSocket): void | Promise<void>;
+      error?(socket: UDPSocket, error: Error): void | Promise<void>;
+    };
+  }
+
+  export interface UDPSocket {
+    readonly hostname: string;
+    readonly port: number;
+    readonly address: SocketAddress;
+    readonly binaryType: BinaryType;
+
+    send(
+      data: string | ArrayBufferView | ArrayBufferLike,
+      port: number,
+      address: string,
+    ): number;
+
+    reload(handler: UDPSocketOptions): void;
+
+    ref(): void;
+    unref(): void;
+
+    close(): void;
+  }
+
+  export function bind(options: UDPSocketOptions): UDPSocket;
 }
 
 type TypedArray =

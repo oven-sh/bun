@@ -99,6 +99,7 @@ pub const Tag = enum(u8) {
     recv,
     send,
     sendfile,
+    sendmmsg,
     splice,
     rmdir,
 

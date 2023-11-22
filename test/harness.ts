@@ -180,3 +180,17 @@ export function ignoreMimallocWarning({
     Response.prototype.text = origResponseText;
   });
 }
+
+export function hasIP(v: "IPv4" | "IPv6"): boolean {
+  const { networkInterfaces } = require("node:os");
+  for (const addresses of Object.values(networkInterfaces())) {
+    for (const { family } of addresses as any[]) {
+      if (family === v) return true;
+    }
+  }
+  return false;
+}
+
+export function randomPort(): number {
+  return Math.floor(Math.random() * (65535 - 1024) + 1024);
+}

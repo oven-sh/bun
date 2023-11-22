@@ -1653,42 +1653,42 @@ test("ECDSA should work", async () => {
 
   // default format (DER)
   {
-    const signature = sign(undefined, Buffer.from("foo"), privateKey);
+    const signature = sign("sha256", Buffer.from("foo"), privateKey);
     expect(signature.byteLength).not.toBe(64);
-    const okay = verify(undefined, Buffer.from("foo"), publicKey, signature);
+    const okay = verify("sha256", Buffer.from("foo"), publicKey, signature);
     expect(okay).toBeTrue();
   }
   // IeeeP1363 format
   {
-    const signature = sign(undefined, Buffer.from("foo"), { key: privateKey, dsaEncoding: "ieee-p1363" });
+    const signature = sign("sha256", Buffer.from("foo"), { key: privateKey, dsaEncoding: "ieee-p1363" });
     expect(signature.byteLength).toBe(64);
 
-    const okay = verify(undefined, Buffer.from("foo"), { key: publicKey, dsaEncoding: "ieee-p1363" }, signature);
+    const okay = verify("sha256", Buffer.from("foo"), { key: publicKey, dsaEncoding: "ieee-p1363" }, signature);
     expect(okay).toBeTrue();
   }
   // DER format
   {
-    const signature = sign(undefined, Buffer.from("foo"), { key: privateKey, dsaEncoding: "der" });
+    const signature = sign("sha256", Buffer.from("foo"), { key: privateKey, dsaEncoding: "der" });
     expect(signature.byteLength).not.toBe(64);
 
-    const okay = verify(undefined, Buffer.from("foo"), { key: publicKey, dsaEncoding: "der" }, signature);
+    const okay = verify("sha256", Buffer.from("foo"), { key: publicKey, dsaEncoding: "der" }, signature);
     expect(okay).toBeTrue();
   }
 
   expect(() => {
     //@ts-ignore
-    sign(undefined, Buffer.from("foo"), { key: privateKey, dsaEncoding: "kjshdakjshd" });
+    sign("sha256", Buffer.from("foo"), { key: privateKey, dsaEncoding: "kjshdakjshd" });
   }).toThrow(/invalid dsaEncoding/);
 
   expect(() => {
-    const signature = sign(undefined, Buffer.from("foo"), privateKey);
+    const signature = sign("sha256", Buffer.from("foo"), privateKey);
     //@ts-ignore
-    verify(undefined, Buffer.from("foo"), { key: publicKey, dsaEncoding: "ieee-p136" }, signature);
+    verify("sha256", Buffer.from("foo"), { key: publicKey, dsaEncoding: "ieee-p136" }, signature);
   }).toThrow(/invalid dsaEncoding/);
 
   expect(() => {
     //@ts-ignore
-    const signature = sign(undefined, Buffer.from("foo"), { key: privateKey, dsaEncoding: "ieee-p136" });
-    verify(undefined, Buffer.from("foo"), { key: publicKey, dsaEncoding: "der" }, signature);
+    const signature = sign("sha256", Buffer.from("foo"), { key: privateKey, dsaEncoding: "ieee-p136" });
+    verify("sha256", Buffer.from("foo"), { key: publicKey, dsaEncoding: "der" }, signature);
   }).toThrow(/invalid dsaEncoding/);
 });

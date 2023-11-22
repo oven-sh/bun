@@ -14,12 +14,16 @@ let app_jsx: any = null;
 console.log("started");
 
 type Handler = (req: Request) => Response;
-afterEach(() => gc(true));
+afterEach(() => {
+  console.log("afterEach");
+  gc(true);
+});
 
 const count = 200;
 let server: Server | undefined;
 
 async function runTest({ port, ...serverOptions }: Serve<any>, test: (server: Server) => Promise<void> | void) {
+  console.trace("runTest");
   if (server) {
     server.reload({ ...serverOptions, port: 0 });
   } else {
@@ -39,6 +43,7 @@ async function runTest({ port, ...serverOptions }: Serve<any>, test: (server: Se
 }
 
 afterAll(() => {
+  console.log("afterAll");
   if (server) {
     server.stop(true);
     server = undefined;

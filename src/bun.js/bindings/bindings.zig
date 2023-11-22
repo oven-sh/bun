@@ -2941,6 +2941,10 @@ pub const JSGlobalObject = extern struct {
         return ZigGlobalObject__readableStreamToFormData(this, value, content_type);
     }
 
+    pub inline fn assertOnJSThread(this: *JSGlobalObject) void {
+        if(bun.Environment.allow_assert) this.bunVM().assertOnJSThread();
+    }
+
     pub const Extern = [_][]const u8{
         "reload",
         "bunVM",

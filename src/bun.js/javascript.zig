@@ -592,6 +592,8 @@ pub const VirtualMachine = struct {
     has_started_debugger: bool = false,
     has_terminated: bool = false,
 
+    debug_thread_id: if (Environment.allow_assert) std.Thread.Id else void,
+
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
 
     pub const OnException = fn (*ZigException) void;
@@ -1293,6 +1295,7 @@ pub const VirtualMachine = struct {
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = Lock.init(),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
+            .debug_thread_id = if(Environment.allow_assert) std.Thread.getCurrentId() else {},
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -1348,6 +1351,14 @@ pub const VirtualMachine = struct {
         vm.configureDebugger(opts.debugger);
 
         return vm;
+    }
+
+    pub inline fn assertOnJSThread(vm: *const VirtualMachine) void {
+        if (Environment.allow_assert) {
+            if (vm.debug_thread_id != std.Thread.getCurrentId()) {
+                std.debug.panic("Expected to be on the JS thread.", .{});
+            }
+        }
     }
 
     fn configureDebugger(this: *VirtualMachine, debugger: bun.CLI.Command.Debugger) void {
@@ -1431,6 +1442,7 @@ pub const VirtualMachine = struct {
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
             .standalone_module_graph = worker.parent.standalone_module_graph,
             .worker = worker,
+            .debug_thread_id = if(Environment.allow_assert) std.Thread.getCurrentId() else {},
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
         vm.regular_event_loop.tasks = EventLoop.Queue.init(

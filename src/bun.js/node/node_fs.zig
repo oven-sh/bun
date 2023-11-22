@@ -4155,8 +4155,6 @@ pub const NodeFS = struct {
                 const cwd = std.os.getcwd(&cwd_buf) catch return .{ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOMEM), .syscall = .getcwd } };
                 break :brk strings.toWPath(&buf, bun.path.joinAbsStringBuf(cwd, &joined_buf, &.{ args.path.slice() }, .windows));
             }
-            
-
         };
         return this.mkdirRecursiveOSPath(path, args.mode, true);
     }
@@ -4246,11 +4244,13 @@ pub const NodeFS = struct {
                     .err => |err| {
                         working_mem[i] = std.fs.path.sep;
                         switch (err.getErrno()) {
-                            .EXIST => {
-                                if (Environment.allow_assert) std.debug.assert(false);
-                                continue;
+                            // handle the race condition
+                            .EXIST => {},
+                            
+                            // NOENT shouldn't happen here
+                            else => return .{
+                                .err = err.withPath(this.osPathIntoSyncErrorBuf(path)),
                             },
-                            else => return .{ .err = err },
                         }
                     },
 

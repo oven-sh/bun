@@ -26,7 +26,7 @@ pub const Subprocess = struct {
     pub usingnamespace JSC.Codegen.JSSubprocess;
     const default_max_buffer_size = 1024 * 1024 * 4;
 
-    pid: std.os.pid_t,
+    pid: if(Environment.isWindows) c_int else std.os.pid_t,
     // on macOS, this is nothing
     // on linux, it's a pidfd
     pidfd: if (Environment.isLinux) bun.FileDescriptor else u0 = std.math.maxInt(if (Environment.isLinux) bun.FileDescriptor else u0),
@@ -159,6 +159,9 @@ pub const Subprocess = struct {
 
     /// This disables the keeping process alive flag on the poll and also in the stdin, stdout, and stderr
     pub fn unref(this: *Subprocess, comptime deactivate_poll_ref: bool) void {
+        if(Environment.isWindows) {
+            @panic("lose");
+        }
         var vm = this.globalThis.bunVM();
 
         switch (this.poll) {
@@ -420,6 +423,10 @@ pub const Subprocess = struct {
     }
 
     pub fn tryKill(this: *Subprocess, sig: i32) JSC.Node.Maybe(void) {
+        if(Environment.isWindows) {
+            @panic("lose");
+        }
+
         if (this.hasExited()) {
             return .{ .result = {} };
         }
@@ -1378,9 +1385,10 @@ pub const Subprocess = struct {
 
                 if (args.get(globalThis, "ipc")) |val| {
                     if(Environment.isWindows) {
-                        globalThis.throwInvalidArguments("TODO: IPC is not supported on Windows", .{});
+                        globalThis.throwTODO("TODO: IPC is not yet supported on Windows");
                         return .zero;
                     }
+
                     if (val.isCell() and val.isCallable(globalThis.vm())) {
                         // In the future, we should add a way to use a different IPC serialization format, specifically `json`.
                         // but the only use case this has is doing interop with node.js IPC and other programs.
@@ -1417,15 +1425,21 @@ pub const Subprocess = struct {
             };
             const env: [*:null]?[*:0]const u8 = @ptrCast(env_array.items.ptr);
 
-            const TODO = struct {
-                fn windowsOnExit(process: *uv.uv_process_t, exit_status: i64, term_signal: c_int) callconv(.C) void {
-                    const subprocess: *Subprocess = @ptrCast(process.data.?);
-                    _ = subprocess;
-                    std.debug.panic("TODO: pid={d}, exit_status={d}, term_signal={d}", .{process.pid,exit_status, term_signal});
-                }
-            };
+            const stdin_pipe = if (stdio[0].isPiped()) os.pipe2(0) catch |err| {
+                globalThis.throw("failed to create stdin pipe: {s}", .{@errorName(err)});
+                return .zero;
+            } else undefined;
 
-            // TODO: spawn
+            const stdout_pipe = if (stdio[1].isPiped()) os.pipe2(0) catch |err| {
+                globalThis.throw("failed to create stdout pipe: {s}", .{@errorName(err)});
+                return .zero;
+            } else undefined;
+
+            const stderr_pipe = if (stdio[2].isPiped()) os.pipe2(0) catch |err| {
+                globalThis.throw("failed to create stderr pipe: {s}", .{@errorName(err)});
+                return .zero;
+            } else undefined;
+
             var uv_stdio = [3]uv.uv_stdio_container_s{
                 uv.uv_stdio_container_s{
                     .flags = uv.UV_INHERIT_FD,
@@ -1450,8 +1464,8 @@ pub const Subprocess = struct {
             var cwd_resolver = bun.path.PosixToWinNormalizer{};
 
             const options = uv.uv_process_options_t{
-                .exit_cb = &TODO.windowsOnExit,
-                .args = argv.items[0..argv.items.len - 1 :null],
+                .exit_cb = uvExitCallback,
+                .args = @ptrCast(argv.items[0..argv.items.len - 1 :null]),
                 .cwd = cwd_resolver.resolveCWDZ(cwd) catch |err| return globalThis.handleError(err, "in uv_spawn"),
                 .env = env,
                 .file = argv.items[0].?,
@@ -1477,10 +1491,13 @@ pub const Subprocess = struct {
                 .globalThis = globalThis,
                 .pid = handle.pid,
                 .pidfd = 0,
-                .stdin = undefined,
+                .stdin = Writable.init(stdio[bun.STDIN_FD], stdin_pipe[1], globalThis) catch {
+                    globalThis.throwOutOfMemory();
+                    return .zero;
+                },
                 // stdout and stderr only uses allocator and default_max_buffer_size if they are pipes and not a array buffer
-                .stdout = undefined,
-                .stderr = undefined,
+                .stdout = Readable.init(stdio[bun.STDOUT_FD], stdout_pipe[0], jsc_vm.allocator, default_max_buffer_size),
+                .stderr = Readable.init(stdio[bun.STDERR_FD], stderr_pipe[0], jsc_vm.allocator, default_max_buffer_size),
                 .on_exit_callback = if (on_exit_callback != .zero) JSC.Strong.create(on_exit_callback, globalThis) else .{},
                 
                 .ipc_mode = ipc_mode,
@@ -1495,33 +1512,29 @@ pub const Subprocess = struct {
             std.debug.assert(ipc_mode == .none);//TODO:
 
             while (!subprocess.hasExited()) {
-                // if (subprocess.stderr == .pipe and subprocess.stderr.pipe == .buffer) {
-                //     subprocess.stderr.pipe.buffer.readAll();
-                // }
+                if (subprocess.stderr == .pipe and subprocess.stderr.pipe == .buffer) {
+                    subprocess.stderr.pipe.buffer.readAll();
+                }
 
-                // if (subprocess.stdout == .pipe and subprocess.stdout.pipe == .buffer) {
-                //     subprocess.stdout.pipe.buffer.readAll();
-                // }
+                if (subprocess.stdout == .pipe and subprocess.stdout.pipe == .buffer) {
+                    subprocess.stdout.pipe.buffer.readAll();
+                }
 
                 jsc_vm.tick();
                 jsc_vm.eventLoop().autoTick();
             }
 
-            @panic("J");
+            const exitCode = subprocess.exit_code orelse 1;
+            const stdout = subprocess.stdout.toBufferedValue(globalThis);
+            const stderr = subprocess.stderr.toBufferedValue(globalThis);
+            subprocess.finalizeSync();
 
-            // const exitCode = subprocess.exit_code orelse 1;
-            // const stdout = subprocess.stdout.toBufferedValue(globalThis);
-            // const stderr = subprocess.stderr.toBufferedValue(globalThis);
-            // subprocess.finalizeSync();
-
-            // const sync_value = JSC.JSValue.createEmptyObject(globalThis, 4);
-            // sync_value.put(globalThis, JSC.ZigString.static("exitCode"), JSValue.jsNumber(@as(i32, @intCast(exitCode))));
-            // sync_value.put(globalThis, JSC.ZigString.static("stdout"), stdout);
-            // sync_value.put(globalThis, JSC.ZigString.static("stderr"), stderr);
-            // sync_value.put(globalThis, JSC.ZigString.static("success"), JSValue.jsBoolean(exitCode == 0));
-            // return sync_value;
-            
-            // return JSValue.jsNumber(4);
+            const sync_value = JSC.JSValue.createEmptyObject(globalThis, 4);
+            sync_value.put(globalThis, JSC.ZigString.static("exitCode"), JSValue.jsNumber(@as(i32, @intCast(exitCode))));
+            sync_value.put(globalThis, JSC.ZigString.static("stdout"), stdout);
+            sync_value.put(globalThis, JSC.ZigString.static("stderr"), stderr);
+            sync_value.put(globalThis, JSC.ZigString.static("success"), JSValue.jsBoolean(exitCode == 0));
+            return sync_value;
         }
         // POSIX:
 
@@ -2005,6 +2018,15 @@ pub const Subprocess = struct {
 
             this.onExit(this.globalThis, this_jsvalue);
         }
+    }
+
+    fn uvExitCallback(process: *uv.uv_process_t, exit_status: i64, term_signal: c_int) callconv(.C) void {
+        const subprocess: *Subprocess = @alignCast(@ptrCast(process.data.?));
+        subprocess.globalThis.assertOnJSThread();
+        subprocess.exit_code = @intCast(exit_status);
+        std.debug.print("TODO : handle term signal: {d}\n", .{term_signal});
+        // subprocess.signal_code = @as(SignalCode, @enumFromInt(term_signal));
+        subprocess.onExit(subprocess.globalThis, subprocess.this_jsvalue);
     }
 
     fn runOnExit(this: *Subprocess, globalThis: *JSC.JSGlobalObject, this_jsvalue: JSC.JSValue) void {

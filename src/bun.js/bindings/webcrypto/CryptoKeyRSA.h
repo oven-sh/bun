@@ -93,6 +93,7 @@ public:
     std::unique_ptr<CryptoKeyRSAComponents> exportData() const;
 
     CryptoAlgorithmIdentifier hashAlgorithmIdentifier() const { return m_hash; }
+    bool isRestrictedToHash() const { return m_restrictedToSpecificHash; }
 
 private:
     CryptoKeyRSA(CryptoAlgorithmIdentifier, CryptoAlgorithmIdentifier hash, bool hasHash, CryptoKeyType, PlatformRSAKeyContainer&&, bool extractable, CryptoKeyUsageBitmap);

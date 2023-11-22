@@ -1434,6 +1434,10 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
     }
     case CryptoKeyClass::RSA: {
         const auto& rsa = downcast<WebCore::CryptoKeyRSA>(wrapped);
+        if (rsa.isRestrictedToHash() && hash != rsa.hashAlgorithmIdentifier()) {
+            JSC::throwTypeError(globalObject, scope, "Invalid hash algorithm"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
         switch (rsa.algorithmIdentifier()) {
         case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5: {
             auto result = (customHash) ? WebCore::CryptoAlgorithmRSASSA_PKCS1_v1_5::platformSignWithAlgorithm(rsa, hash, vectorData) : CryptoAlgorithmRSASSA_PKCS1_v1_5::platformSign(rsa, vectorData);
@@ -1647,6 +1651,10 @@ JSC::EncodedJSValue KeyObject__Verify(JSC::JSGlobalObject* globalObject, JSC::Ca
     }
     case CryptoKeyClass::RSA: {
         const auto& rsa = downcast<WebCore::CryptoKeyRSA>(wrapped);
+        if (rsa.isRestrictedToHash() && hash != rsa.hashAlgorithmIdentifier()) {
+            JSC::throwTypeError(globalObject, scope, "Invalid hash algorithm"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
         switch (rsa.algorithmIdentifier()) {
         case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5: {
             auto result = (customHash) ? WebCore::CryptoAlgorithmRSASSA_PKCS1_v1_5::platformVerifyWithAlgorithm(rsa, hash, signatureData, vectorData) : CryptoAlgorithmRSASSA_PKCS1_v1_5::platformVerify(rsa, signatureData, vectorData);
@@ -2616,11 +2624,15 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
         auto hashAlgoJS = options->getIfPropertyExists(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "hashAlgorithm"_s)));
         auto hasHash = false;
         auto hash = CryptoAlgorithmIdentifier::SHA_1;
-        if (hashAlgoJS.isString()) {
+        if (!hashAlgoJS.isUndefinedOrNull() && !hashAlgoJS.isEmpty()) {
+            if (!hashAlgoJS.isString()) {             
+                JSC::throwTypeError(lexicalGlobalObject, scope, "options.hashAlgorithm is expected to be a string"_s);
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
             hasHash = true;
             auto hashAlgo = hashAlgoJS.toWTFString(lexicalGlobalObject);
             RETURN_IF_EXCEPTION(scope, encodedJSValue());
-           
+        
             auto identifier = CryptoAlgorithmRegistry::singleton().identifier(hashAlgo);
             if (UNLIKELY(!identifier)) {
                 JSC::throwTypeError(lexicalGlobalObject, scope, "options.hashAlgorithm is invalid"_s);
@@ -2642,9 +2654,6 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
                     return JSC::JSValue::encode(JSC::JSValue {});
                 }
             }
-        } else if (!hashAlgoJS.isUndefinedOrNull() && !hashAlgoJS.isEmpty()) {
-            JSC::throwTypeError(lexicalGlobalObject, scope, "options.hashAlgorithm is expected to be a string"_s);
-            return JSC::JSValue::encode(JSC::JSValue {});
         }
         auto failureCallback = [&]() {
             throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Failed to generate key pair"_s));

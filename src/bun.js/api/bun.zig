@@ -534,14 +534,14 @@ pub fn braces(
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
 
-    var shell_braces = Braces.Lexer.tokenize(arena.allocator(), brace_str.slice()) catch |err| {
+    var lexer = Braces.Lexer.tokenize(arena.allocator(), brace_str.slice()) catch |err| {
         globalThis.throwError(err, "failed to tokenize braces");
         return .undefined;
     };
 
     if (tokenize) {
         var debug_tokens = std.ArrayList(Braces.DebugToken).init(arena.allocator());
-        for (shell_braces.tokens.items) |tok| {
+        for (lexer.tokens.items) |tok| {
             debug_tokens.append(Braces.DebugToken.fromNormal(arena.allocator(), &tok) catch {
                 globalThis.throwOutOfMemory();
                 return .undefined;
@@ -559,7 +559,33 @@ pub fn braces(
         return bun_str.toJS(globalThis);
     }
 
-    return .undefined;
+    var parser = Braces.Parser.init(lexer.tokens, arena.allocator());
+    const root = try parser.parse();
+
+    const expanded_strings_len = try Braces.calculateExpandedAmount(lexer.tokens.items[0..]);
+    var expanded_strings = arena.allocator().alloc(std.ArrayList(u8), expanded_strings_len) catch {
+        globalThis.throwOutOfMemory();
+        return .undefined;
+    };
+    for (0..expanded_strings_len) |i| {
+        expanded_strings[i].init(arena.allocator());
+    }
+
+    var out_key_counter: u16 = 1;
+    Braces.expand(&root, expanded_strings, 0, out_key_counter, 0) catch {
+        globalThis.throwOutOfMemory();
+        return .undefined;
+    };
+
+    var out_strings = arena.allocator().alloc(bun.String, expanded_strings_len) catch {
+        globalThis.throwOutOfMemory();
+        return .undefined;
+    };
+    for (0..expanded_strings_len) |i| {
+        out_strings[i] = bun.String.fromBytes(expanded_strings[i].items[0..]);
+    }
+
+    return bun.String.toJSArray(globalThis, out_strings[0..]);
 }
 
 pub fn which(

@@ -7,13 +7,17 @@ const Allocator = std.mem.Allocator;
 const SmolStr = @import("../string_types.zig").SmolStr;
 
 pub const AST = struct {
-    pub const Node = struct {
-        text: []SmolStr,
+    pub const Atom = union(enum) {
+        text: SmolStr,
         expansion: *Expansion,
     };
 
+    const Group = struct {
+        atoms: []Atom,
+    };
+
     const Expansion = struct {
-        variants: []AST.Node,
+        variants: []AST.Group,
     };
 };
 
@@ -108,6 +112,112 @@ pub fn StackStack(comptime T: type, comptime SizeType: type, comptime N: SizeTyp
     };
 }
 
+/// `out` is preallocated by using the result from `calculateExpandedAmount`
+pub fn expand(root: *const AST.Group, out: []std.ArrayList(u8), out_key: u16, out_key_counter: *u16, start: usize) !void {
+    if (start >= root.len) return;
+
+    for (root.atoms[start..], 0..) |atom, i| {
+        switch (atom) {
+            .text => |txt| {
+                try out[out_key].appendSlice(txt.slice());
+            },
+            .expansion => |*expansion| {
+                if (expansion.variants.len <= 1) {
+                    // Should not happen
+                    @panic("Should not happen");
+                }
+
+                for (expansion.variants[1..]) |*variant| {
+                    const new_key = out_key_counter.*;
+                    out_key_counter.* += 1;
+                    expand(variant, out, new_key, 0);
+                    expand(root, out, new_key, i + 1);
+                }
+
+                return expand(root, out, out_key, i + 1);
+            },
+        }
+    }
+}
+
+/// `out` is preallocated by using the result from `calculateExpandedAmount`
+// pub fn expand(tokens: []const Token, out: []std.ArrayList(u8), out_key: u16, i: usize) !void {
+//     if (i >= tokens.len) return;
+
+//     for (tokens[i..]) |tok| {
+//         switch (tok) {
+//             .text => |txt| {
+//                 try out[out_key].appendSlice(txt.slice());
+//             },
+//             .open => {
+//                 var last_comma_or_closing_brace = i;
+//                 for (tokens[i + 1 ..], (i + 1)..) |tok2, j| {
+//                     switch (tok2) {
+//                         .comma => {
+//                             last_comma_or_closing_brace = j;
+//                         },
+//                         .close => {
+//                             last_comma_or_closing_brace = j;
+//                         },
+//                         else => {},
+//                     }
+//                 }
+
+//                 const end_of_expansion = last_comma_or_closing_brace + 1;
+//                 for (tokens[i + 1..], (i + 1)..) |tok2, j| {
+//                     switch (tok2) {
+//                         .comma => {
+//                             expand(tokens[j..], out: []std.ArrayList(u8), out_key: u16, i: usize)
+//                         }
+//                     }
+//                 }
+//                 // Then recurse on this variant
+//                 expand(tokens, out, out_key, i + 1);
+
+//                 return expand(tokens, out, out_key, end_of_expansion);
+//             },
+//             .comma => {},
+//             .close => {},
+//             .eof => {},
+//         }
+//     }
+// }
+
+pub fn calculateExpandedAmount(tokens: []const Token) u32 {
+    var nested_brace_stack = StackStack(u8, u8, MAX_NESTED_BRACES){};
+    var variant_count: u32 = 0;
+    var i: usize = 0;
+
+    while (i < tokens.len) {
+        switch (tokens[i]) {
+            .open => {
+                try nested_brace_stack.push(0);
+            },
+            .comma => {
+                var val = nested_brace_stack.topPtr().?;
+                val.* += 1;
+            },
+            .close => {
+                const variants = nested_brace_stack.pop().?;
+                if (nested_brace_stack.len > 0) {
+                    var top = nested_brace_stack.topPtr().?;
+                    top.* += variants;
+                } else if (variant_count == 0) {
+                    variant_count = variants;
+                } else {
+                    variant_count *= variants;
+                }
+            },
+        }
+    }
+
+    return variant_count;
+}
+
+const ParserError = error{
+    UnexpectedToken,
+};
+
 pub const Parser = struct {
     current: usize = 0,
     tokens: []Token,
@@ -124,10 +234,33 @@ pub const Parser = struct {
         };
     }
 
-    pub fn parse(self: *Parser) !std.ArrayList(AST.Node) {
-        var nodes = std.ArrayList(AST.Node).init(self.alloc);
-        _ = nodes;
-        while (!self.match(.eof)) {}
+    pub fn parse(self: *Parser) !AST.Group {
+        var nodes = std.ArrayList(AST.Atom).init(self.alloc);
+        while (!self.match(.eof)) {
+            try nodes.append(try self.parseAtom());
+        }
+        return .{ .atoms = nodes };
+    }
+
+    fn parseAtom(self: *Parser) !AST.Atom {
+        switch (self.advance()) {
+            .open => return try self.parseExpansion(),
+            .text => |txt| return .{ .text = txt },
+            .close, .comma, .eof => return ParserError.UnexpectedToken,
+        }
+    }
+
+    fn parseExpansion(self: *Parser) !AST.Expansion {
+        var variants = std.ArrayList(AST.Group).init(self.alloc);
+        while (!self.match_any(&.{.close})) {
+            var group = std.ArrayList(AST.Atom).init(self.alloc);
+            while (!self.match_any(&.{.comma})) {
+                var group_atom = try self.parseAtom();
+                try group.append(group_atom);
+            }
+            try variants.append(.{ .atoms = group.items[0..] });
+        }
+        return .{ .variants = variants.items[0..] };
     }
 
     fn has_eq_sign(self: *Parser, str: []const u8) ?u32 {

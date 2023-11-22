@@ -5048,3 +5048,7 @@ pub fn mustEscapeYAMLString(contents: []const u8) bool {
         else => true,
     };
 }
+
+pub fn pathContainsNodeModulesFolder(path: []const u8) bool {
+    return strings.contains(path, comptime std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str);
+}

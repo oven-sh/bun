@@ -1836,8 +1836,7 @@ pub const ZigConsoleClient = struct {
                             .failed = false,
                         };
 
-                        var name_str = getObjectName(globalThis, value);
-                        if (name_str.len > 0) {
+                        if (getObjectName(globalThis, value)) |name_str| {
                             writer.print("{} ", .{name_str});
                         }
                     }
@@ -1965,13 +1964,13 @@ pub const ZigConsoleClient = struct {
             };
         }
 
-        fn getObjectName(globalThis: *JSC.JSGlobalObject, value: JSValue) ZigString {
+        fn getObjectName(globalThis: *JSC.JSGlobalObject, value: JSValue) ?ZigString {
             var name_str = ZigString.init("");
             value.getClassName(globalThis, &name_str);
-            if (name_str.len > 0 and !strings.eqlComptime(name_str.slice(), "Object")) {
+            if (!name_str.eqlComptime("Object")) {
                 return name_str;
             }
-            return ZigString.init("");
+            return null;
         }
 
         extern fn JSC__JSValue__callCustomInspectFunction(
@@ -2973,8 +2972,7 @@ pub const ZigConsoleClient = struct {
                         else if (value.isCallable(this.globalThis.vm()))
                             this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors)
                         else {
-                            var name_str = getObjectName(this.globalThis, value);
-                            if (name_str.len > 0) {
+                            if (getObjectName(this.globalThis, value)) |name_str| {
                                 writer.print("{} ", .{name_str});
                             }
                             writer.writeAll("{}");

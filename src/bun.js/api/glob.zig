@@ -39,6 +39,102 @@ const ScanOpts = struct {
     follow_symlinks: bool,
     error_on_broken_symlinks: bool,
 
+    fn parseCWD(globalThis: *JSGlobalObject, allocator: std.mem.Allocator, cwdVal: JSC.JSValue, absolute: bool, comptime fnName: string) ?[]const u8 {
+        const cwd_str_raw = cwd_str_raw: {
+            // Windows wants utf-16
+            if (comptime bun.Environment.isWindows) {
+                const cwd_zig_str = cwdVal.getZigString(globalThis);
+                // Dupe if already utf-16
+                if (cwd_zig_str.is16Bit()) {
+                    var duped = allocator.dupe(u8, cwd_zig_str.slice()) catch {
+                        globalThis.throwOutOfMemory();
+                        return null;
+                    };
+
+                    break :cwd_str_raw ZigString.Slice.from(duped, allocator);
+                }
+
+                // Conver to utf-16
+                const utf16 = (bun.strings.toUTF16Alloc(
+                    allocator,
+                    cwd_zig_str.slice(),
+                    // Let windows APIs handle errors with invalid surrogate pairs, etc.
+                    false,
+                ) catch {
+                    globalThis.throwOutOfMemory();
+                    return null;
+                }) orelse brk: {
+                    // All ascii
+                    var output = allocator.alloc(u16, cwd_zig_str.len) catch {
+                        globalThis.throwOutOfMemory();
+                        return null;
+                    };
+
+                    bun.strings.copyU8IntoU16(output, cwd_zig_str.slice());
+                    break :brk output;
+                };
+
+                const ptr: [*]u8 = @ptrCast(utf16.ptr);
+                break :cwd_str_raw ZigString.Slice.from(ptr[0 .. utf16.len * 2], allocator);
+            }
+
+            // `.toSlice()` internally converts to WTF-8
+            break :cwd_str_raw cwdVal.toSlice(globalThis, allocator);
+        };
+
+        if (cwd_str_raw.len == 0) return "";
+
+        const cwd_str = cwd_str: {
+            // If its absolute return as is
+            if (ResolvePath.Platform.auto.isAbsolute(cwd_str_raw.slice())) {
+                const cwd_str = cwd_str_raw.clone(allocator) catch {
+                    globalThis.throwOutOfMemory();
+                    return null;
+                };
+                break :cwd_str cwd_str.ptr[0..cwd_str.len];
+            }
+
+            var path_buf2: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
+
+            if (!absolute) {
+                const cwd_str = ResolvePath.joinStringBuf(&path_buf2, &[_][]const u8{cwd_str_raw.slice()}, .auto);
+                break :cwd_str allocator.dupe(u8, cwd_str) catch {
+                    globalThis.throwOutOfMemory();
+                    return null;
+                };
+            }
+
+            // Convert to an absolute path
+
+            var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            const cwd = switch (bun.sys.getcwd((&path_buf))) {
+                .result => |cwd| cwd,
+                .err => |err| {
+                    const errJs = err.toJSC(globalThis);
+                    globalThis.throwValue(errJs);
+                    return null;
+                },
+            };
+
+            const cwd_str = ResolvePath.joinStringBuf(&path_buf2, &[_][]const u8{
+                cwd,
+                cwd_str_raw.slice(),
+            }, .auto);
+
+            break :cwd_str allocator.dupe(u8, cwd_str) catch {
+                globalThis.throwOutOfMemory();
+                return null;
+            };
+        };
+
+        if (cwd_str.len > bun.MAX_PATH_BYTES) {
+            globalThis.throw("{s}: invalid `cwd`, longer than {d} bytes", .{ fnName, bun.MAX_PATH_BYTES });
+            return null;
+        }
+
+        return cwd_str;
+    }
+
     fn fromJS(globalThis: *JSGlobalObject, arguments: *ArgumentsSlice, comptime fnName: []const u8, arena: *Arena) ?ScanOpts {
         const optsObj: JSValue = arguments.nextEat() orelse return null;
         var out: ScanOpts = .{
@@ -51,6 +147,17 @@ const ScanOpts = struct {
         };
         if (optsObj.isUndefinedOrNull()) return out;
         if (!optsObj.isObject()) {
+            if (optsObj.isString()) {
+                if (parseCWD(globalThis, arena.allocator(), optsObj, out.absolute, fnName)) |result| {
+                    if (result.len > 0) {
+                        out.cwd = result;
+                    }
+                } else {
+                    // error
+                    return null;
+                }
+                return out;
+            }
             globalThis.throw("{s}: expected first argument to be an object", .{fnName});
             return null;
         }
@@ -71,105 +178,20 @@ const ScanOpts = struct {
             out.absolute = if (absoluteVal.isBoolean()) absoluteVal.asBoolean() else false;
         }
 
-        if (optsObj.getTruthy(globalThis, "cwd")) |cwdVal| parse_cwd: {
+        if (optsObj.getTruthy(globalThis, "cwd")) |cwdVal| {
             if (!cwdVal.isString()) {
                 globalThis.throw("{s}: invalid `cwd`, not a string", .{fnName});
                 return null;
             }
 
-            const cwd_str_raw = cwd_str_raw: {
-                // Windows wants utf-16
-                if (comptime bun.Environment.isWindows) {
-                    const cwd_zig_str = cwdVal.getZigString(globalThis);
-                    // Dupe if already utf-16
-                    if (cwd_zig_str.is16Bit()) {
-                        var duped = arena.allocator().dupe(u8, cwd_zig_str.slice()) catch {
-                            globalThis.throwOutOfMemory();
-                            return null;
-                        };
-
-                        break :cwd_str_raw ZigString.Slice.from(duped, arena.allocator());
-                    }
-
-                    // Conver to utf-16
-                    const utf16 = (bun.strings.toUTF16Alloc(
-                        arena.allocator(),
-                        cwd_zig_str.slice(),
-                        // Let windows APIs handle errors with invalid surrogate pairs, etc.
-                        false,
-                    ) catch {
-                        globalThis.throwOutOfMemory();
-                        return null;
-                    }) orelse brk: {
-                        // All ascii
-                        var output = arena.allocator().alloc(u16, cwd_zig_str.len) catch {
-                            globalThis.throwOutOfMemory();
-                            return null;
-                        };
-
-                        bun.strings.copyU8IntoU16(output, cwd_zig_str.slice());
-                        break :brk output;
-                    };
-
-                    const ptr: [*]u8 = @ptrCast(utf16.ptr);
-                    break :cwd_str_raw ZigString.Slice.from(ptr[0 .. utf16.len * 2], arena.allocator());
+            if (parseCWD(globalThis, arena.allocator(), cwdVal, out.absolute, fnName)) |result| {
+                if (result.len > 0) {
+                    out.cwd = result;
                 }
-
-                // `.toSlice()` internally converts to WTF-8
-                break :cwd_str_raw cwdVal.toSlice(globalThis, arena.allocator());
-            };
-
-            if (cwd_str_raw.len == 0) break :parse_cwd;
-
-            const cwd_str = cwd_str: {
-                // If its absolute return as is
-                if (ResolvePath.Platform.auto.isAbsolute(cwd_str_raw.slice())) {
-                    const cwd_str = cwd_str_raw.clone(arena.allocator()) catch {
-                        globalThis.throwOutOfMemory();
-                        return null;
-                    };
-                    break :cwd_str cwd_str.ptr[0..cwd_str.len];
-                }
-
-                var path_buf2: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
-
-                if (!out.absolute) {
-                    const cwd_str = ResolvePath.joinStringBuf(&path_buf2, &[_][]const u8{cwd_str_raw.slice()}, .auto);
-                    break :cwd_str arena.allocator().dupe(u8, cwd_str) catch {
-                        globalThis.throwOutOfMemory();
-                        return null;
-                    };
-                }
-
-                // Convert to an absolute path
-
-                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const cwd = switch (bun.sys.getcwd((&path_buf))) {
-                    .result => |cwd| cwd,
-                    .err => |err| {
-                        const errJs = err.toJSC(globalThis);
-                        globalThis.throwValue(errJs);
-                        return null;
-                    },
-                };
-
-                const cwd_str = ResolvePath.joinStringBuf(&path_buf2, &[_][]const u8{
-                    cwd,
-                    cwd_str_raw.slice(),
-                }, .auto);
-
-                break :cwd_str arena.allocator().dupe(u8, cwd_str) catch {
-                    globalThis.throwOutOfMemory();
-                    return null;
-                };
-            };
-
-            if (cwd_str.len > bun.MAX_PATH_BYTES) {
-                globalThis.throw("{s}: invalid `cwd`, longer than {d} bytes", .{ fnName, bun.MAX_PATH_BYTES });
+            } else {
+                // error
                 return null;
             }
-
-            out.cwd = cwd_str;
         }
 
         if (optsObj.getTruthy(globalThis, "dot")) |dot| {

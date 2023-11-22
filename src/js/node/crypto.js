@@ -12331,7 +12331,11 @@ crypto_exports.sign = function (algorithm, data, key, callback) {
       saltLength = key.saltLength;
       dsaEncoding = key.dsaEncoding;
     }
-    key = _createPrivateKey(key);
+    if (key.key instanceof KeyObject) {
+      key = key.key;
+    } else {
+      key = _createPrivateKey(key);
+    }
   }
   if (typeof callback === "function") {
     try {
@@ -12372,11 +12376,15 @@ crypto_exports.verify = function (algorithm, data, key, signature, callback) {
   // key must be a KeyObject
   if (!(key instanceof KeyObject)) {
     if ($isObject(key) && key.key) {
-      // padding = key.padding;
-      // saltLength = key.saltLength;
+      padding = key.padding;
+      saltLength = key.saltLength;
       dsaEncoding = key.dsaEncoding;
     }
-    key = _createPublicKey(key);
+    if (key.key instanceof KeyObject && key.key.type === "public") {
+      key = key.key;
+    } else {
+      key = _createPublicKey(key);
+    }
   }
   if (typeof callback === "function") {
     try {
@@ -12388,9 +12396,17 @@ crypto_exports.verify = function (algorithm, data, key, signature, callback) {
           .verify(key, signature);
       } else {
         if (algorithm) {
-          result = nativeVerify(key[kCryptoKey], data, signature, getHashAlgorithm(algorithm), dsaEncoding);
+          result = nativeVerify(
+            key[kCryptoKey],
+            data,
+            signature,
+            getHashAlgorithm(algorithm),
+            dsaEncoding,
+            padding,
+            saltLength,
+          );
         }
-        result = nativeVerify(key[kCryptoKey], data, signature, undefined, dsaEncoding);
+        result = nativeVerify(key[kCryptoKey], data, signature, undefined, dsaEncoding, padding, saltLength);
       }
       callback(null, result);
     } catch (err) {
@@ -12403,9 +12419,17 @@ crypto_exports.verify = function (algorithm, data, key, signature, callback) {
         .verify(key, signature);
     } else {
       if (algorithm) {
-        return nativeVerify(key[kCryptoKey], data, signature, getHashAlgorithm(algorithm));
+        return nativeVerify(
+          key[kCryptoKey],
+          data,
+          signature,
+          getHashAlgorithm(algorithm),
+          dsaEncoding,
+          padding,
+          saltLength,
+        );
       }
-      return nativeVerify(key[kCryptoKey], data, signature, undefined, dsaEncoding);
+      return nativeVerify(key[kCryptoKey], data, signature, undefined, dsaEncoding, padding, saltLength);
     }
   }
 };

@@ -1335,6 +1335,8 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
             return JSC::JSValue::encode(JSC::JSValue {});
         }
         auto algorithm_str = algorithm.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, encodedJSValue());
+
         auto identifier = CryptoAlgorithmRegistry::singleton().identifier(algorithm_str);
         if (UNLIKELY(!identifier)) {
             JSC::throwTypeError(globalObject, scope, "invalid algorithm"_s);
@@ -1405,6 +1407,8 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
                     return JSC::JSValue::encode(JSC::JSValue {});
                 }
                 auto encoding_str = encoding.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(scope, encodedJSValue());
+
                 if (encoding_str == "ieee-p1363"_s) {
                     params.encoding = CryptoAlgorithmECDSAEncoding::IeeeP1363;
                 } else if (encoding_str == "der"_s) {
@@ -1465,12 +1469,19 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
                     }
 
                     auto saltLength = callFrame->argument(5);
-                    if (saltLength.isUndefinedOrNull() || saltLength.isEmpty() || saltLength.isNumber()) {
+                    if (saltLength.isUndefinedOrNull() || saltLength.isEmpty() || !saltLength.isNumber()) {
                         JSC::throwTypeError(globalObject, scope, "saltLength is expected to be a number"_s);
                         return JSC::JSValue::encode(JSC::JSValue {});
-
-                        params.saltLength = saltLength.toUInt32(globalObject);
                     }
+                    params.saltLength = saltLength.toUInt32(globalObject);
+                } else if(count > 5) {
+                    auto saltLength = callFrame->argument(5);
+                     if (!saltLength.isUndefinedOrNull() && !saltLength.isEmpty() && !saltLength.isNumber()) {
+                        JSC::throwTypeError(globalObject, scope, "saltLength is expected to be a number"_s);
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
+                    params.saltLength = saltLength.toUInt32(globalObject);
+                    params.padding = RSA_PKCS1_PSS_PADDING; // if saltLength is provided, padding must be RSA_PKCS1_PSS_PADDING
                 }
             }
             params.identifier = CryptoAlgorithmIdentifier::RSA_PSS;
@@ -1556,6 +1567,8 @@ JSC::EncodedJSValue KeyObject__Verify(JSC::JSGlobalObject* globalObject, JSC::Ca
             return JSC::JSValue::encode(JSC::JSValue {});
         }
         auto algorithm_str = algorithm.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, encodedJSValue());
+
         auto identifier = CryptoAlgorithmRegistry::singleton().identifier(algorithm_str);
         if (UNLIKELY(!identifier)) {
             JSC::throwTypeError(globalObject, scope, "invalid algorithm"_s);
@@ -1613,6 +1626,8 @@ JSC::EncodedJSValue KeyObject__Verify(JSC::JSGlobalObject* globalObject, JSC::Ca
                     return JSC::JSValue::encode(JSC::JSValue {});
                 }
                 auto encoding_str = encoding.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(scope, encodedJSValue());
+
                 if (encoding_str == "ieee-p1363"_s) {
                     params.encoding = CryptoAlgorithmECDSAEncoding::IeeeP1363;
                 } else if (encoding_str == "der"_s) {
@@ -1660,14 +1675,21 @@ JSC::EncodedJSValue KeyObject__Verify(JSC::JSGlobalObject* globalObject, JSC::Ca
                         JSC::throwTypeError(globalObject, scope, "saltLength is expected to be a number"_s);
                         return JSC::JSValue::encode(JSC::JSValue {});
                     }
-
+            
                     auto saltLength = callFrame->argument(6);
-                    if (saltLength.isUndefinedOrNull() || saltLength.isEmpty() || saltLength.isNumber()) {
+                    if (saltLength.isUndefinedOrNull() || saltLength.isEmpty() || !saltLength.isNumber()) {
                         JSC::throwTypeError(globalObject, scope, "saltLength is expected to be a number"_s);
                         return JSC::JSValue::encode(JSC::JSValue {});
-
-                        params.saltLength = saltLength.toUInt32(globalObject);
                     }
+                    params.saltLength = saltLength.toUInt32(globalObject);
+                } else if(count > 6) {
+                    auto saltLength = callFrame->argument(6);
+                     if (!saltLength.isUndefinedOrNull() && !saltLength.isEmpty() && !saltLength.isNumber()) {
+                        JSC::throwTypeError(globalObject, scope, "saltLength is expected to be a number"_s);
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
+                    params.saltLength = saltLength.toUInt32(globalObject);
+                    params.padding = RSA_PKCS1_PSS_PADDING; // if saltLength is provided, padding must be RSA_PKCS1_PSS_PADDING
                 }
             }
             params.identifier = CryptoAlgorithmIdentifier::RSA_PSS;
@@ -2504,7 +2526,6 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
 
     Zig::GlobalObject* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto* structure = zigGlobalObject->JSCryptoKeyStructure();
-    // TODO: rsa-pss
     if (type_str == "rsa"_s) {
         if (count == 1) {
             JSC::throwTypeError(lexicalGlobalObject, scope, "options.modulusLength are required for rsa"_s);
@@ -2550,6 +2571,52 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
         };
         // this is actually sync
         CryptoKeyRSA::generatePair(CryptoAlgorithmIdentifier::RSA_OAEP, CryptoAlgorithmIdentifier::SHA_1, false, modulusLength, Vector<uint8_t>((uint8_t*)&publicExponentArray, 4), true, CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt, WTFMove(keyPairCallback), WTFMove(failureCallback), zigGlobalObject->scriptExecutionContext());
+        return JSValue::encode(returnValue);
+    } if (type_str == "rsa-pss"_s) {
+        if (count == 1) {
+            JSC::throwTypeError(lexicalGlobalObject, scope, "options.modulusLength are required for rsa"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        auto* options = jsDynamicCast<JSC::JSObject*>(callFrame->argument(1));
+        if (options == nullptr) {
+            JSC::throwTypeError(lexicalGlobalObject, scope, "options is expected to be a object"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        auto modulusLengthJS = options->getIfPropertyExists(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "modulusLength"_s)));
+        if (!modulusLengthJS.isNumber()) {
+            JSC::throwTypeError(lexicalGlobalObject, scope, "options.modulusLength is expected to be a number"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        auto publicExponentJS = options->getIfPropertyExists(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "publicExponent"_s)));
+        uint32_t publicExponent = 0x10001;
+        if (publicExponentJS.isNumber()) {
+            publicExponent = publicExponentJS.toUInt32(lexicalGlobalObject);
+        } else if (!publicExponentJS.isUndefinedOrNull() && !publicExponentJS.isEmpty()) {
+            JSC::throwTypeError(lexicalGlobalObject, scope, "options.publicExponent is expected to be a number"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        uint8_t publicExponentArray[4];
+        publicExponentArray[0] = (uint8_t)(publicExponent >> 24);
+        publicExponentArray[1] = (uint8_t)(publicExponent >> 16);
+        publicExponentArray[2] = (uint8_t)(publicExponent >> 8);
+        publicExponentArray[3] = (uint8_t)publicExponent;
+
+        int modulusLength = modulusLengthJS.toUInt32(lexicalGlobalObject);
+        auto returnValue = JSC::JSValue {};
+        auto keyPairCallback = [&](CryptoKeyPair&& pair) {
+            pair.publicKey->setUsagesBitmap(pair.publicKey->usagesBitmap() & CryptoKeyUsageVerify);
+            pair.privateKey->setUsagesBitmap(pair.privateKey->usagesBitmap() & CryptoKeyUsageSign);
+
+            auto obj = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), 2);
+            obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "publicKey"_s)), JSCryptoKey::create(structure, zigGlobalObject, pair.publicKey.releaseNonNull()), 0);
+            obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "privateKey"_s)), JSCryptoKey::create(structure, zigGlobalObject, pair.privateKey.releaseNonNull()), 0);
+            returnValue = obj;
+        };
+        auto failureCallback = [&]() {
+            throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Failed to generate key pair"_s));
+        };
+        // this is actually sync
+        CryptoKeyRSA::generatePair(CryptoAlgorithmIdentifier::RSA_PSS, CryptoAlgorithmIdentifier::SHA_1, false, modulusLength, Vector<uint8_t>((uint8_t*)&publicExponentArray, 4), true, CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt, WTFMove(keyPairCallback), WTFMove(failureCallback), zigGlobalObject->scriptExecutionContext());
         return JSValue::encode(returnValue);
     } else if (type_str == "ec"_s) {
         if (count == 1) {
@@ -2612,7 +2679,7 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
         obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "privateKey"_s)), JSCryptoKey::create(structure, zigGlobalObject, pair.privateKey.releaseNonNull()), 0);
         return JSValue::encode(obj);
     } else {
-        throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "algorithm should be 'rsa', 'ec', 'x25519' or 'ed25519'"_s));
+        throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "algorithm should be 'rsa', 'rsa-pss', 'ec', 'x25519' or 'ed25519'"_s));
         return JSValue::encode(JSC::jsUndefined());
     }
     return JSValue::encode(JSC::jsUndefined());

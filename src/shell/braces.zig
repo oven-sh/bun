@@ -22,7 +22,6 @@ pub const AST = struct {
 };
 
 const TokenTag = enum { open, comma, text, close, eof };
-
 const Token = union(TokenTag) {
     open,
     comma,
@@ -112,16 +111,74 @@ pub fn StackStack(comptime T: type, comptime SizeType: type, comptime N: SizeTyp
     };
 }
 
+/// This may have false positives but it is fast
+pub fn fastDetect(src: []const u8) bool {
+    const Quote = enum { single, double };
+    _ = Quote;
+
+    var has_open = false;
+    var has_close = false;
+    if (src.len < 16) {
+        for (src) |char| {
+            switch (char) {
+                '{' => {
+                    has_open = true;
+                },
+                '}' => {
+                    has_close = true;
+                },
+            }
+            if (has_close and has_close) return true;
+        }
+        return false;
+    }
+
+    const needles = comptime [2]@Vector(16, u8){
+        @splat('{'),
+        @splat('}'),
+        @splat('"'),
+    };
+
+    var i: usize = 0;
+    while (i + 16 <= src.len) {
+        const haystack = src[i .. i + 16].*;
+        if (std.simd.firstTrue(needles[0] == haystack)) {
+            has_open = true;
+        }
+        if (std.simd.firstTrue(needles[1] == haystack)) {
+            has_close = true;
+        }
+        if (has_open and has_close) return true;
+    }
+
+    if (i < src.len) {
+        for (src) |char| {
+            switch (char) {
+                '{' => {
+                    has_open = true;
+                },
+                '}' => {
+                    has_close = true;
+                },
+            }
+            if (has_close and has_close) return true;
+        }
+        return false;
+    }
+    return false;
+}
+
 /// `out` is preallocated by using the result from `calculateExpandedAmount`
 pub fn expand(root: *const AST.Group, out: []std.ArrayList(u8), out_key: u16, out_key_counter: *u16, start: usize) !void {
-    if (start >= root.len) return;
+    if (start >= root.atoms.len) return;
 
-    for (root.atoms[start..], 0..) |atom, i| {
+    for (root.atoms[start..], 0..) |atom, _i| {
+        var i = start + _i;
         switch (atom) {
             .text => |txt| {
                 try out[out_key].appendSlice(txt.slice());
             },
-            .expansion => |*expansion| {
+            .expansion => |expansion| {
                 if (expansion.variants.len <= 1) {
                     // Should not happen
                     @panic("Should not happen");
@@ -130,11 +187,15 @@ pub fn expand(root: *const AST.Group, out: []std.ArrayList(u8), out_key: u16, ou
                 for (expansion.variants[1..]) |*variant| {
                     const new_key = out_key_counter.*;
                     out_key_counter.* += 1;
-                    expand(variant, out, new_key, 0);
-                    expand(root, out, new_key, i + 1);
+                    std.debug.print("Branch: {s} {d} {d}\n", .{ out[out_key].items[0..], out_key, new_key });
+                    try out[new_key].appendSlice(out[out_key].items[0..]);
+                    try expand(variant, out, new_key, out_key_counter, 0);
+                    try expand(root, out, new_key, out_key_counter, i + 1);
                 }
 
-                return expand(root, out, out_key, i + 1);
+                const first_variant = &expansion.variants[0];
+                try expand(first_variant, out, out_key, out_key_counter, 0);
+                return try expand(root, out, out_key, out_key_counter, i + 1);
             },
         }
     }
@@ -183,12 +244,14 @@ pub fn expand(root: *const AST.Group, out: []std.ArrayList(u8), out_key: u16, ou
 //     }
 // }
 
-pub fn calculateExpandedAmount(tokens: []const Token) u32 {
+pub fn calculateExpandedAmount(tokens: []const Token) !u32 {
     var nested_brace_stack = StackStack(u8, u8, MAX_NESTED_BRACES){};
     var variant_count: u32 = 0;
     var i: usize = 0;
 
-    while (i < tokens.len) {
+    var prev_comma: bool = false;
+    while (i < tokens.len) : (i += 1) {
+        prev_comma = false;
         switch (tokens[i]) {
             .open => {
                 try nested_brace_stack.push(0);
@@ -196,9 +259,13 @@ pub fn calculateExpandedAmount(tokens: []const Token) u32 {
             .comma => {
                 var val = nested_brace_stack.topPtr().?;
                 val.* += 1;
+                prev_comma = true;
             },
             .close => {
-                const variants = nested_brace_stack.pop().?;
+                var variants = nested_brace_stack.pop().?;
+                if (!prev_comma) {
+                    variants += 1;
+                }
                 if (nested_brace_stack.len > 0) {
                     var top = nested_brace_stack.topPtr().?;
                     top.* += variants;
@@ -208,6 +275,7 @@ pub fn calculateExpandedAmount(tokens: []const Token) u32 {
                     variant_count *= variants;
                 }
             },
+            else => {},
         }
     }
 
@@ -229,36 +297,51 @@ pub const Parser = struct {
 
     pub fn init(tokens: std.ArrayList(Token), alloc: Allocator) Parser {
         return .{
-            .tokens = tokens,
+            .tokens = tokens.items[0..],
             .alloc = alloc,
+            .errors = std.ArrayList(Error).init(alloc),
         };
     }
 
     pub fn parse(self: *Parser) !AST.Group {
         var nodes = std.ArrayList(AST.Atom).init(self.alloc);
         while (!self.match(.eof)) {
-            try nodes.append(try self.parseAtom());
+            try nodes.append(try self.parseAtom() orelse break);
         }
-        return .{ .atoms = nodes };
+        return .{ .atoms = nodes.items[0..] };
     }
 
-    fn parseAtom(self: *Parser) !AST.Atom {
+    fn parseAtom(self: *Parser) anyerror!?AST.Atom {
         switch (self.advance()) {
-            .open => return try self.parseExpansion(),
+            .open => {
+                const expansion = try self.parseExpansion();
+                var expansion_ptr = try self.alloc.create(AST.Expansion);
+                expansion_ptr.* = expansion;
+                return .{ .expansion = expansion_ptr };
+            },
             .text => |txt| return .{ .text = txt },
-            .close, .comma, .eof => return ParserError.UnexpectedToken,
+            .eof => return null,
+            .close, .comma => return ParserError.UnexpectedToken,
         }
     }
 
     fn parseExpansion(self: *Parser) !AST.Expansion {
         var variants = std.ArrayList(AST.Group).init(self.alloc);
-        while (!self.match_any(&.{.close})) {
+        while (!self.match_any(&.{ .close, .eof })) {
+            if (self.match(.eof)) break;
             var group = std.ArrayList(AST.Atom).init(self.alloc);
-            while (!self.match_any(&.{.comma})) {
-                var group_atom = try self.parseAtom();
+            var close = false;
+            while (!self.match(.eof)) {
+                if (self.match(.close)) {
+                    close = true;
+                    break;
+                }
+                if (self.match(.comma)) break;
+                var group_atom = try self.parseAtom() orelse break;
                 try group.append(group_atom);
             }
             try variants.append(.{ .atoms = group.items[0..] });
+            if (close) break;
         }
         return .{ .variants = variants.items[0..] };
     }
@@ -296,6 +379,17 @@ pub const Parser = struct {
             return true;
         }
         return false;
+    }
+
+    fn match_any2(self: *Parser, comptime toktags: []const TokenTag) ?Token {
+        const peeked = self.peek();
+        inline for (toktags) |tag| {
+            if (peeked == tag) {
+                _ = self.advance();
+                return peeked;
+            }
+        }
+        return null;
     }
 
     fn match_any(self: *Parser, comptime toktags: []const TokenTag) bool {

@@ -523,10 +523,14 @@ pub fn braces(
     const brace_str = brace_str_js.getZigString(globalThis);
 
     var tokenize: bool = false;
+    var parse: bool = false;
     if (arguments.nextEat()) |opts_val| {
         if (opts_val.isObject()) {
             if (opts_val.getTruthy(globalThis, "tokenize")) |tokenize_val| {
                 tokenize = if (tokenize_val.isBoolean()) tokenize_val.asBoolean() else false;
+            }
+            if (opts_val.getTruthy(globalThis, "parse")) |parse_val| {
+                parse = if (parse_val.isBoolean()) parse_val.asBoolean() else false;
             }
         }
     }
@@ -560,19 +564,34 @@ pub fn braces(
     }
 
     var parser = Braces.Parser.init(lexer.tokens, arena.allocator());
-    const root = try parser.parse();
+    const root = parser.parse() catch |err| {
+        globalThis.throwError(err, "failed to parse braces");
+        return .undefined;
+    };
+    if (parse) {
+        const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, root, .{}) catch {
+            globalThis.throwOutOfMemory();
+            return JSValue.undefined;
+        };
+        defer globalThis.bunVM().allocator.free(str);
+        var bun_str = bun.String.fromBytes(str);
+        return bun_str.toJS(globalThis);
+    }
 
-    const expanded_strings_len = try Braces.calculateExpandedAmount(lexer.tokens.items[0..]);
+    const expanded_strings_len = Braces.calculateExpandedAmount(lexer.tokens.items[0..]) catch |err| {
+        globalThis.throwError(err, "failed to calculate brace expansion amount");
+        return .undefined;
+    };
     var expanded_strings = arena.allocator().alloc(std.ArrayList(u8), expanded_strings_len) catch {
         globalThis.throwOutOfMemory();
         return .undefined;
     };
     for (0..expanded_strings_len) |i| {
-        expanded_strings[i].init(arena.allocator());
+        expanded_strings[i] = std.ArrayList(u8).init(arena.allocator());
     }
 
     var out_key_counter: u16 = 1;
-    Braces.expand(&root, expanded_strings, 0, out_key_counter, 0) catch {
+    Braces.expand(&root, expanded_strings, 0, &out_key_counter, 0) catch {
         globalThis.throwOutOfMemory();
         return .undefined;
     };

@@ -130,6 +130,10 @@ pub const SmolStr = packed struct {
     const Tag: usize = 0x8000000000000000;
     const NegatedTag: usize = ~Tag;
 
+    pub fn jsonStringify(self: *const SmolStr, writer: anytype) !void {
+        try writer.write(self.slice());
+    }
+
     pub const Inlined = packed struct {
         data: u120,
         __len: u7,

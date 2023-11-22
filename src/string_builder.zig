@@ -50,6 +50,18 @@ pub fn append16(this: *StringBuilder, slice: []const u16) ?[:0]u8 {
     return null;
 }
 
+pub fn write(this: *StringBuilder, slice: string) void {
+    if (comptime Environment.allow_assert) {
+        assert(this.len <= this.cap); // didn't count everything
+        assert(this.ptr != null); // must call allocate first
+    }
+
+    bun.copy(u8, this.ptr.?[this.len..this.cap], slice);
+    this.len += slice.len;
+
+    if (comptime Environment.allow_assert) assert(this.len <= this.cap);
+}
+
 pub fn append(this: *StringBuilder, slice: string) string {
     if (comptime Environment.allow_assert) {
         assert(this.len <= this.cap); // didn't count everything
@@ -57,6 +69,7 @@ pub fn append(this: *StringBuilder, slice: string) string {
     }
 
     bun.copy(u8, this.ptr.?[this.len..this.cap], slice);
+
     const result = this.ptr.?[this.len..this.cap][0..slice.len];
     this.len += slice.len;
 
@@ -139,6 +152,14 @@ pub fn allocatedSlice(this: *StringBuilder) []u8 {
         assert(this.cap > 0);
     }
     return ptr[0..this.cap];
+}
+
+pub fn written(this: *StringBuilder) []u8 {
+    var ptr = this.ptr orelse return &[_]u8{};
+    if (comptime Environment.allow_assert) {
+        assert(this.cap > 0 and this.cap >= this.len);
+    }
+    return ptr[0..this.len];
 }
 
 pub fn writable(this: *StringBuilder) []u8 {

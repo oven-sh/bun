@@ -475,6 +475,18 @@ pub inline fn range(comptime min: anytype, comptime max: anytype) [max - min]usi
     };
 }
 
+pub fn isValgrindEnabled() bool {
+    const valgrind_status = &struct {
+        pub var is_valgrind_enabled: ?bool = null;
+    }.is_valgrind_enabled;
+
+    if (valgrind_status.* == null) {
+        valgrind_status.* = std.valgrind.runningOnValgrind() != 0;
+    }
+
+    return valgrind_status.*.?;
+}
+
 pub fn copy(comptime Type: type, dest: []Type, src: []const Type) void {
     if (comptime Environment.allow_assert) std.debug.assert(dest.len >= src.len);
     if (@intFromPtr(src.ptr) == @intFromPtr(dest.ptr) or src.len == 0) return;
@@ -484,6 +496,19 @@ pub fn copy(comptime Type: type, dest: []Type, src: []const Type) void {
 
     std.debug.assert(input.len > 0);
     std.debug.assert(output.len > 0);
+
+    if (comptime Environment.allow_assert) {
+        if (!isValgrindEnabled()) {
+            var undefined_memory: usize = 0;
+            for (input) |byte| {
+                undefined_memory += @as(usize, @intFromBool(byte == 0xAA));
+            }
+
+            // alignment bytes might be undefined
+            // but if the entire field is undefined, we have a problem
+            std.debug.assert(undefined_memory != input.len);
+        }
+    }
 
     const does_input_or_output_overlap = (@intFromPtr(input.ptr) < @intFromPtr(output.ptr) and
         @intFromPtr(input.ptr) + input.len > @intFromPtr(output.ptr)) or

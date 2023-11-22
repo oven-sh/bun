@@ -579,7 +579,6 @@ pub const TestCommand = struct {
 
         var snapshot_file_buf = std.ArrayList(u8).init(ctx.allocator);
         var snapshot_values = Snapshots.ValuesHashMap.init(ctx.allocator);
-        var snapshot_counts = bun.StringHashMap(usize).init(ctx.allocator);
         JSC.isBunTest = true;
 
         var reporter = try ctx.allocator.create(CommandLineReporter);
@@ -599,7 +598,6 @@ pub const TestCommand = struct {
                     .update_snapshots = ctx.test_options.update_snapshots,
                     .file_buf = &snapshot_file_buf,
                     .values = &snapshot_values,
-                    .counts = &snapshot_counts,
                 },
             },
             .callback = undefined,

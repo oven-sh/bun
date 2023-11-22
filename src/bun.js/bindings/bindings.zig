@@ -3687,40 +3687,6 @@ pub const JSValue = enum(JSValueReprInt) {
         );
 
         try buffered_writer.flush();
-
-        const count: usize = brk: {
-            var total: usize = 0;
-            var remain = out.list.items;
-            while (strings.indexOfChar(remain, '`')) |i| {
-                total += 1;
-                remain = remain[i + 1 ..];
-            }
-            break :brk total;
-        };
-
-        if (count > 0) {
-            var result = try out.allocator.alloc(u8, count + out.list.items.len);
-            var input = out.list.items;
-
-            var input_i: usize = 0;
-            var result_i: usize = 0;
-            while (strings.indexOfChar(input[input_i..], '`')) |i| {
-                bun.copy(u8, result[result_i..], input[input_i .. input_i + i]);
-                result_i += i;
-                result[result_i] = '\\';
-                result[result_i + 1] = '`';
-                result_i += 2;
-                input_i += i + 1;
-            }
-
-            if (result_i != result.len) {
-                bun.copy(u8, result[result_i..], input[input_i..]);
-            }
-
-            out.deinit();
-            out.list.items = result;
-            out.list.capacity = result.len;
-        }
     }
 
     pub fn jestPrettyFormat(this: JSValue, out: *MutableString, globalObject: *JSGlobalObject) !void {

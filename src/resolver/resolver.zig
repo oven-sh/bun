@@ -3586,7 +3586,7 @@ pub const Resolver = struct {
         // https://github.com/microsoft/TypeScript/issues/4595
         if (strings.lastIndexOfChar(base, '.')) |last_dot| {
             const ext = base[last_dot..base.len];
-            if (strings.eqlComptime(ext, ".js") or strings.eqlComptime(ext, ".jsx")) {
+            if ((strings.eqlComptime(ext, ".js") or strings.eqlComptime(ext, ".jsx") and (!FeatureFlags.disable_auto_js_to_ts_in_node_modules or !strings.pathContainsNodeModulesFolder(path)))) {
                 const segment = base[0..last_dot];
                 var tail = bufs(.load_as_file)[path.len - base.len ..];
                 bun.copy(u8, tail, segment);
@@ -3739,14 +3739,14 @@ pub const Resolver = struct {
         }
         // }
 
-        if (parent != null) {
+        if (parent) |parent_| {
 
             // Propagate the browser scope into child directories
-            info.enclosing_browser_scope = parent.?.enclosing_browser_scope;
-            info.package_json_for_browser_field = parent.?.package_json_for_browser_field;
-            info.enclosing_tsconfig_json = parent.?.enclosing_tsconfig_json;
+            info.enclosing_browser_scope = parent_.enclosing_browser_scope;
+            info.package_json_for_browser_field = parent_.package_json_for_browser_field;
+            info.enclosing_tsconfig_json = parent_.enclosing_tsconfig_json;
 
-            if (parent.?.package_json) |parent_package_json| {
+            if (parent_.package_json) |parent_package_json| {
                 // https://github.com/oven-sh/bun/issues/229
                 if (parent_package_json.name.len > 0 or r.care_about_bin_folder) {
                     info.enclosing_package_json = parent_package_json;
@@ -3757,12 +3757,12 @@ pub const Resolver = struct {
                 }
             }
 
-            info.enclosing_package_json = info.enclosing_package_json orelse parent.?.enclosing_package_json;
-            info.package_json_for_dependencies = info.package_json_for_dependencies orelse parent.?.package_json_for_dependencies;
+            info.enclosing_package_json = info.enclosing_package_json orelse parent_.enclosing_package_json;
+            info.package_json_for_dependencies = info.package_json_for_dependencies orelse parent_.package_json_for_dependencies;
 
             // Make sure "absRealPath" is the real path of the directory (resolving any symlinks)
             if (!r.opts.preserve_symlinks) {
-                if (parent.?.getEntries(r.generation)) |parent_entries| {
+                if (parent_.getEntries(r.generation)) |parent_entries| {
                     if (parent_entries.get(base)) |lookup| {
                         if (entries.fd != 0 and lookup.entry.cache.fd == 0 and r.store_fd) lookup.entry.cache.fd = entries.fd;
                         const entry = lookup.entry;
@@ -3773,7 +3773,7 @@ pub const Resolver = struct {
                                 logs.addNote(std.fmt.allocPrint(r.allocator, "Resolved symlink \"{s}\" to \"{s}\"", .{ path, symlink }) catch unreachable);
                             }
                             info.abs_real_path = symlink;
-                        } else if (parent.?.abs_real_path.len > 0) {
+                        } else if (parent_.abs_real_path.len > 0) {
                             // this might leak a little i'm not sure
                             const parts = [_]string{ parent.?.abs_real_path, base };
                             symlink = r.fs.dirname_store.append(string, r.fs.absBuf(&parts, bufs(.dir_info_uncached_filename))) catch unreachable;
@@ -3786,6 +3786,10 @@ pub const Resolver = struct {
                         }
                     }
                 }
+            }
+
+            if (parent_.isNodeModules() or parent_.isInsideNodeModules()) {
+                info.flags.setPresent(.inside_node_modules, true);
             }
         }
 

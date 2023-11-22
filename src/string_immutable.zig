@@ -5048,3 +5048,15 @@ pub fn mustEscapeYAMLString(contents: []const u8) bool {
         else => true,
     };
 }
+
+pub fn pathContainsNodeModulesFolder(path: []const u8) bool {
+    var remain = path;
+    while (strings.indexOfChar(remain, '/')) |char| {
+        remain = remain[char + 1 ..];
+        if (hasPrefixComptime(remain, "node_modules" ++ std.fs.path.sep_str)) {
+            return true;
+        }
+    }
+
+    return false;
+}

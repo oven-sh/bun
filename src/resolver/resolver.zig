@@ -579,7 +579,7 @@ pub const Resolver = struct {
             .timer = Timer.start() catch @panic("Timer fail"),
             .fs = _fs,
             .log = log,
-            .extension_order = opts.extension_order,
+            .extension_order = opts.extension_order.default.default,
             .care_about_browser_field = opts.target.isWebLike(),
         };
     }
@@ -771,8 +771,8 @@ pub const Resolver = struct {
         defer r.extension_order = original_order;
         r.extension_order = switch (kind) {
             .url, .at_conditional, .at => options.BundleOptions.Defaults.CSSExtensionOrder[0..],
-            .entry_point, .stmt, .dynamic => r.opts.esm_extension_order,
-            else => r.opts.extension_order,
+            .entry_point, .stmt, .dynamic => r.opts.extension_order.default.esm,
+            else => r.opts.extension_order.default.default,
         };
 
         if (FeatureFlags.tracing) {
@@ -1572,6 +1572,8 @@ pub const Resolver = struct {
                 if (r.debug_logs) |*debug| {
                     debug.addNoteFmt("Checking for a package in the directory \"{s}\"", .{abs_path});
                 }
+                var prev_extension_order = r.extension_order;
+                defer r.extension_order = prev_extension_order;
 
                 if (esm_) |esm| {
                     const abs_package_path = brk: {
@@ -1580,6 +1582,11 @@ pub const Resolver = struct {
                     };
 
                     if (r.dirInfoCached(abs_package_path) catch null) |pkg_dir_info| {
+                        r.extension_order = switch (kind) {
+                            .url, .at_conditional, .at => options.BundleOptions.Defaults.CSSExtensionOrder[0..],
+                            else => r.opts.extension_order.kind(kind, true),
+                        };
+
                         if (pkg_dir_info.package_json) |package_json| {
                             if (package_json.exports) |exports_map| {
 
@@ -2163,7 +2170,7 @@ pub const Resolver = struct {
             break :brk r.fs.absBuf(&parts, bufs(.esm_absolute_package_path_joined));
         };
 
-        var missing_suffix: string = undefined;
+        var missing_suffix: string = "";
 
         switch (esm_resolution.status) {
             .Exact, .ExactEndsWithStar => {
@@ -2175,11 +2182,12 @@ pub const Resolver = struct {
                     esm_resolution.status = .ModuleNotFound;
                     return null;
                 };
-                const base = std.fs.path.basename(abs_esm_path);
                 const extension_order = if (kind == .at or kind == .at_conditional)
                     r.extension_order
                 else
-                    r.opts.extension_order;
+                    r.opts.extension_order.kind(kind, resolved_dir_info.isInsideNodeModules());
+
+                const base = std.fs.path.basename(abs_esm_path);
                 const entry_query = entries.get(base) orelse {
                     const ends_with_star = esm_resolution.status == .ExactEndsWithStar;
                     esm_resolution.status = .ModuleNotFound;
@@ -2219,9 +2227,9 @@ pub const Resolver = struct {
                                     bun.copy(u8, file_name[index.len..], ext);
                                     const index_query = dir_entries.get(file_name);
                                     if (index_query != null and index_query.?.entry.kind(&r.fs.fs, r.store_fd) == .file) {
-                                        missing_suffix = std.fmt.allocPrint(r.allocator, "/{s}", .{file_name}) catch unreachable;
-                                        // defer r.allocator.free(missing_suffix);
                                         if (r.debug_logs) |*debug| {
+                                            missing_suffix = std.fmt.allocPrint(r.allocator, "/{s}", .{file_name}) catch unreachable;
+                                            defer r.allocator.free(missing_suffix);
                                             const parts = [_]string{ package_json.name, package_subpath };
                                             debug.addNoteFmt("The import {s} is missing the suffix {s}", .{ ResolvePath.join(parts, .auto), missing_suffix });
                                         }

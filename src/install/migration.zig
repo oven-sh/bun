@@ -952,6 +952,45 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
     this.buffers.resolutions.items.len = (@intFromPtr(resolutions_buf.ptr) - @intFromPtr(this.buffers.resolutions.items.ptr)) / @sizeOf(Install.PackageID);
     this.buffers.dependencies.items.len = this.buffers.resolutions.items.len;
 
+    // consult the corresponding package.json file for overrides, if possible
+    const overrides_copied = copied: {
+        const package_json_dir_path = path[0..(path.len - "package-lock.json".len)];
+        const package_json_path_buf = try this.allocator.alloc(u8, path.len - "package-lock.json".len + "package.json".len);
+        defer this.allocator.free(package_json_path_buf);
+        @memcpy(package_json_path_buf[0..package_json_dir_path.len], package_json_dir_path);
+        package_json_path_buf[package_json_dir_path.len..package_json_path_buf.len][0.."package.json".len].* = "package.json".*;
+
+        var json_file = bun.openFile(package_json_path_buf, .{ .mode = .read_only }) catch break :copied false;
+        defer json_file.close();
+        const json_stat_size = try json_file.getEndPos();
+        const json_buf = try this.allocator.alloc(u8, json_stat_size + 64);
+        defer this.allocator.free(json_buf);
+        const json_len = try json_file.preadAll(json_buf, 0);
+        const json_source = logger.Source.initPathString(package_json_path_buf, json_buf[0..json_len]);
+
+        var lockfile: Lockfile = undefined;
+        try lockfile.initEmpty(this.allocator);
+        defer lockfile.deinit();
+        var maybe_root = Lockfile.Package{};
+        try maybe_root.parseMain(
+            &lockfile,
+            this.allocator,
+            log,
+            json_source,
+            Install.Features.main,
+        );
+
+        var sb = this.stringBuilder();
+        lockfile.overrides.count(&lockfile, &sb);
+        try sb.allocate();
+        this.overrides = try lockfile.overrides.clone(&lockfile, this, &sb);
+        break :copied true;
+    };
+
+    if (overrides_copied) {
+        debug("copied {d} overrides from package.json", .{this.overrides.map.count()});
+    }
+
     // In allow_assert, we prefill this buffer with uninitialized values that we can detect later
     // It is our fault if we hit an error here, making it safe to disable in release.
     if (Environment.allow_assert) {

@@ -1921,9 +1921,9 @@ pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.os.
 
 pub const posix = struct {
     // we use these on windows for crt/uv stuff, and std.os does not define them, hence the if
-    pub const STDIN_FD = if(Environment.isPosix) std.os.STDIN_FILENO else 0;
-    pub const STDOUT_FD = if(Environment.isPosix) std.os.STDOUT_FILENO else 1;
-    pub const STDERR_FD = if(Environment.isPosix) std.os.STDERR_FILENO else 2;
+    pub const STDIN_FD = if (Environment.isPosix) std.os.STDIN_FILENO else 0;
+    pub const STDOUT_FD = if (Environment.isPosix) std.os.STDOUT_FILENO else 1;
+    pub const STDERR_FD = if (Environment.isPosix) std.os.STDERR_FILENO else 2;
 
     pub inline fn argv() [][*:0]u8 {
         return std.os.argv;

@@ -1339,7 +1339,7 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
 
         auto identifier = CryptoAlgorithmRegistry::singleton().identifier(algorithm_str);
         if (UNLIKELY(!identifier)) {
-            JSC::throwTypeError(globalObject, scope, "invalid algorithm"_s);
+            JSC::throwTypeError(globalObject, scope, "digest not allowed"_s);
             return JSC::JSValue::encode(JSC::JSValue {});
         }
 
@@ -1354,7 +1354,7 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
             break;
         }
         default: {
-            JSC::throwTypeError(globalObject, scope, "invalid hash algorithm"_s);
+            JSC::throwTypeError(globalObject, scope, "digest not allowed"_s);
             return JSC::JSValue::encode(JSC::JSValue {});
         }
         }
@@ -1397,7 +1397,6 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
         params.identifier = CryptoAlgorithmIdentifier::ECDSA;
         params.hashIdentifier = hash;
         params.encoding = CryptoAlgorithmECDSAEncoding::DER;
-        params.encoding = CryptoAlgorithmECDSAEncoding::DER;
 
         if (count > 3) {
             auto encoding = callFrame->argument(3);
@@ -1435,7 +1434,7 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
     case CryptoKeyClass::RSA: {
         const auto& rsa = downcast<WebCore::CryptoKeyRSA>(wrapped);
         if (rsa.isRestrictedToHash() && hash != rsa.hashAlgorithmIdentifier()) {
-            JSC::throwTypeError(globalObject, scope, "Invalid hash algorithm"_s);
+            JSC::throwTypeError(globalObject, scope, "digest not allowed"_s);
             return JSC::JSValue::encode(JSC::JSValue {});
         }
         switch (rsa.algorithmIdentifier()) {
@@ -1575,7 +1574,7 @@ JSC::EncodedJSValue KeyObject__Verify(JSC::JSGlobalObject* globalObject, JSC::Ca
 
         auto identifier = CryptoAlgorithmRegistry::singleton().identifier(algorithm_str);
         if (UNLIKELY(!identifier)) {
-            JSC::throwTypeError(globalObject, scope, "invalid algorithm"_s);
+            JSC::throwTypeError(globalObject, scope, "digest not allowed"_s);
             return JSC::JSValue::encode(JSC::JSValue {});
         }
 
@@ -1590,7 +1589,7 @@ JSC::EncodedJSValue KeyObject__Verify(JSC::JSGlobalObject* globalObject, JSC::Ca
             break;
         }
         default: {
-            JSC::throwTypeError(globalObject, scope, "invalid hash algorithm"_s);
+            JSC::throwTypeError(globalObject, scope, "digest not allowed"_s);
             return JSC::JSValue::encode(JSC::JSValue {});
         }
         }
@@ -1652,7 +1651,7 @@ JSC::EncodedJSValue KeyObject__Verify(JSC::JSGlobalObject* globalObject, JSC::Ca
     case CryptoKeyClass::RSA: {
         const auto& rsa = downcast<WebCore::CryptoKeyRSA>(wrapped);
         if (rsa.isRestrictedToHash() && hash != rsa.hashAlgorithmIdentifier()) {
-            JSC::throwTypeError(globalObject, scope, "Invalid hash algorithm"_s);
+            JSC::throwTypeError(globalObject, scope, "digest not allowed"_s);
             return JSC::JSValue::encode(JSC::JSValue {});
         }
         switch (rsa.algorithmIdentifier()) {
@@ -1806,11 +1805,16 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
         case CryptoKeyClass::RSA: {
             const auto& rsa = downcast<WebCore::CryptoKeyRSA>(wrapped);
             if (string == "jwk"_s) {
+                if(rsa.algorithmIdentifier() == CryptoAlgorithmIdentifier::RSA_PSS) {
+                    JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE: encryption is not supported for jwk format"_s);
+                    return JSC::JSValue::encode(JSC::JSValue {});
+                }
                 const JsonWebKey& jwkValue = rsa.exportJwk();
                 Zig::GlobalObject* domGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
                 return JSC::JSValue::encode(WebCore::convertDictionaryToJS(*globalObject, *domGlobalObject, jwkValue, true));
             } else {
                 WTF::String type = "pkcs1"_s;
+               
                 if (!typeJSValue.isUndefinedOrNull() && !typeJSValue.isEmpty()) {
                     if (!typeJSValue.isString()) {
                         JSC::throwTypeError(globalObject, scope, "type must be a string"_s);
@@ -1818,6 +1822,12 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                     }
                     type = typeJSValue.toWTFString(globalObject);
                     RETURN_IF_EXCEPTION(scope, encodedJSValue());
+                }
+                if(type == "pkcs1"_s){
+                    if(rsa.algorithmIdentifier() == CryptoAlgorithmIdentifier::RSA_PSS) {
+                        JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE: encryption is not supported for jwk format"_s);
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
                 }
 
                 auto* bio = BIO_new(BIO_s_mem());
@@ -2557,6 +2567,7 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
             JSC::throwTypeError(lexicalGlobalObject, scope, "options.publicExponent is expected to be a number"_s);
             return JSC::JSValue::encode(JSC::JSValue {});
         }
+        
         uint8_t publicExponentArray[4];
         publicExponentArray[0] = (uint8_t)(publicExponent >> 24);
         publicExponentArray[1] = (uint8_t)(publicExponent >> 16);
@@ -2655,6 +2666,9 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
                 }
             }
         }
+
+        auto saltLengthJS = options->getIfPropertyExists(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "hashAlgorithm"_s)));
+        
         auto failureCallback = [&]() {
             throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Failed to generate key pair"_s));
         };

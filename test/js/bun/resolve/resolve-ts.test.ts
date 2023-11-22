@@ -1,6 +1,12 @@
 import { test, expect, describe } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
+import * as Chooses from "./chooses-ts";
+
+test(".ts file is chosen over .js file locally", () => {
+  expect(Chooses.pass).toBeTrue();
+});
+
 // const isTestingInNode = { type: "module" };
 const isTestingInNode = {};
 

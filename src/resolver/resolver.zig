@@ -1215,7 +1215,7 @@ pub const Resolver = struct {
                 defer {
                     r.extension_order = prev_extension_order;
                 }
-                if (strings.contains(abs_path, comptime std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str)) {
+                if (strings.pathContainsNodeModulesFolder(abs_path)) {
                     r.extension_order = r.opts.extension_order.kind(kind, true);
                 }
                 if (r.loadAsFileOrDirectory(abs_path, kind)) |res| {

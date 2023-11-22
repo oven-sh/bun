@@ -1211,6 +1211,13 @@ pub const Resolver = struct {
             }
 
             if (check_relative) {
+                var prev_extension_order = r.extension_order;
+                defer {
+                    r.extension_order = prev_extension_order;
+                }
+                if (strings.contains(abs_path, comptime std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str)) {
+                    r.extension_order = r.opts.extension_order.kind(kind, true);
+                }
                 if (r.loadAsFileOrDirectory(abs_path, kind)) |res| {
                     check_package = false;
                     result = Result{

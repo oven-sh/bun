@@ -33,7 +33,9 @@ function runTest(
 
   const files: Record<string, string> = {};
   if (jsFile) {
-    files[asDir ? "node_modules/abc/dir/index.js" : "node_modules/abc/index.js"] = "export const foo = 1;";
+    files[asDir ? "node_modules/abc/dir/index.js" : "node_modules/abc/index.js"] =
+      "export * from './sibling'; export const foo = 1;";
+    files[asDir ? "node_modules/abc/dir/sibling.js" : "node_modules/abc/sibling.js"] = "export const sibling = 1;";
   }
 
   if (withPackageJSON) {
@@ -78,6 +80,10 @@ function runTest(
         if (${jsFile ? "pkg.foo !== 1" : "pkg.bar !== 2"}) {
             throw new Error("Unexpected value\\n" + JSON.stringify(pkg, null, 2));
         }
+
+        if (${jsFile ? "pkg.sibling !== 1" : "pkg.sibling !== 2"}) {
+          throw new Error("Unexpected value\\n" + JSON.stringify(pkg, null, 2));
+        }
     `;
 
     if (!jsFile) {
@@ -101,6 +107,7 @@ function runTest(
         if (pkg2 !== pkg3 || pkg3 !== pkg4) {
           throw new Error("Unexpected value\\n" + JSON.stringify(pkg2, null, 2));
         }
+      
       `;
     }
   } else {
@@ -115,7 +122,11 @@ function runTest(
 
   const dirname = tempDirWithFiles("resolve" + ((Math.random() * 10000) | 0).toString(16), {
     ...files,
-    [`node_modules/abc${asDir ? "/dir" : ""}/index.ts`]: "export const bar = 2;",
+    [`node_modules/abc${asDir ? "/dir" : ""}/index.ts`]: `
+    ${asDir ? `export * from "./sibling";` : ""}
+    export const bar = 2;
+`,
+    [`node_modules/abc${asDir ? "/dir" : ""}/sibling.ts`]: "export const sibling = 2;",
     "index.js": entry + extra,
   });
 

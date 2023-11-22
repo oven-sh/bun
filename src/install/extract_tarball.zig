@@ -155,7 +155,7 @@ threadlocal var json_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
 fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractData {
     var tmpdir = this.temp_dir;
-    var tmpname_buf: [256]u8 = undefined;
+    var tmpname_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
     const name = this.name.slice();
     const basename = brk: {
         if (name[0] == '@') {

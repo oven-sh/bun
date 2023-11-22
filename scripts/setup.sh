@@ -66,6 +66,7 @@ bun i
 cd test; bun i; cd ..
 
 # TODO(@paperdave): do not use the Makefile please
+has_exec "make" || fail "'make' is missing"
 make runtime_js fallback_decoder bun_error node-fallbacks
 
 mkdir -p build

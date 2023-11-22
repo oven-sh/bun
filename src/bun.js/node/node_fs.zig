@@ -5473,14 +5473,11 @@ pub const NodeFS = struct {
         );
     }
 
-    pub fn osPathIntoSyncErrorBuf(this: *NodeFS, slice: anytype) [:0]const u8 {
+    pub fn osPathIntoSyncErrorBuf(this: *NodeFS, slice: anytype) []const u8 {
         if (Environment.isWindows) {
             return bun.strings.fromWPath(&this.sync_error_buf, slice);
         } else {
             @memcpy(this.sync_error_buf[0..slice.len], slice);
-            if (std.meta.sentinel(@TypeOf(slice))) |_| {
-                this.sync_error_buf[slice.len] = 0;
-            }
             return this.sync_error_buf[0..slice.len];
         }
     }
@@ -5491,7 +5488,7 @@ pub const NodeFS = struct {
             @memcpy(tmp[0..slice.len], slice);
             return bun.strings.fromWPath(&this.sync_error_buf, tmp[0..slice.len]);
         } else {
-            @compileError("TODO");
+            
         }
     }
 

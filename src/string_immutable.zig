@@ -4284,12 +4284,21 @@ pub const FormatUTF16 = struct {
     }
 };
 
+pub const FormatUTF8 = struct {
+    buf: []const u8,
+    pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+        try writer.writeAll(self.buf);
+    }
+};
+
 pub fn fmtUTF16(buf: []const u16) FormatUTF16 {
     return FormatUTF16{ .buf = buf };
 }
 
-pub fn fmtOSPath(buf: bun.OSPathSliceWithoutSentinel) FormatUTF16 {
-    return if (Environment.isWindows) FormatUTF16{ .buf = buf } else @compileError("TODO");
+pub const FormatOSPath = if(Environment.isWindows) FormatUTF16 else FormatUTF8;
+
+pub fn fmtOSPath(buf: bun.OSPathSliceWithoutSentinel) FormatOSPath {
+    return FormatOSPath{ .buf = buf };
 }
 
 pub fn formatLatin1(slice_: []const u8, writer: anytype) !void {

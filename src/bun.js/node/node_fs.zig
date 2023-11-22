@@ -4327,7 +4327,9 @@ pub const NodeFS = struct {
             .err => |err| .{
                 .err = err.withPath(args.path.slice()),
             },
-            .result => |fd| .{ .result = FDImpl.decode(fd) },
+            .result => |fd| fd: {
+                break :fd .{ .result = FDImpl.decode(fd) };
+            },
         };
     }
     pub fn openDir(_: *NodeFS, _: Arguments.OpenDir, comptime _: Flavor) Maybe(Return.OpenDir) {
@@ -4618,7 +4620,7 @@ pub const NodeFS = struct {
 
     pub fn readFileWithOptions(this: *NodeFS, args: Arguments.ReadFile, comptime _: Flavor, comptime string_type: StringType) Maybe(Return.ReadFileWithOptions) {
         var path: [:0]const u8 = undefined;
-        const fd: FileDescriptor = switch (args.path) {
+        const fd: FileDescriptor = bun.toLibUVOwnedFD(switch (args.path) {
             .path => brk: {
                 path = args.path.path.sliceWithWinNormalizerCWDZ(&this.sync_error_buf);
                 if (this.vm) |vm| {
@@ -4662,7 +4664,7 @@ pub const NodeFS = struct {
                 };
             },
             .fd => |fd| fd,
-        };
+        });
 
         defer {
             if (args.path == .path)
@@ -4822,6 +4824,8 @@ pub const NodeFS = struct {
         }
 
         if (Environment.isWindows) {
+            const native_fd = bun.fdcast(fd);
+            
             var data = args.data.slice();
 
             // "WriteFile sets this value to zero before doing any work or error checking."
@@ -4829,8 +4833,8 @@ pub const NodeFS = struct {
 
             while (data.len > 0) {
                 const adjusted_len = @min(data.len, std.math.maxInt(u32));
-                const bytes = std.os.windows.kernel32.WriteFile(bun.fdcast(fd), data.ptr, adjusted_len, &bytes_written, null);
-                if (bytes == 0) {
+                const rc = std.os.windows.kernel32.WriteFile(native_fd, data.ptr, adjusted_len, &bytes_written, null);
+                if (rc == 0) {
                     return .{
                         .err = Syscall.Error{
                             .errno = @intFromEnum(std.os.windows.kernel32.GetLastError()),
@@ -4841,6 +4845,18 @@ pub const NodeFS = struct {
                 }
                 data = data[bytes_written..];
             }
+
+            const rc = std.os.windows.kernel32.SetEndOfFile(bun.fdcast(fd));
+            if (rc == 0) {
+                return .{
+                    .err = Syscall.Error{
+                        .errno = @intFromEnum(std.os.windows.kernel32.GetLastError()),
+                        .syscall = .WriteFile,
+                        .fd = fd,
+                    },
+                };
+            }
+
             return Maybe(Return.WriteFile).success;
         }
 

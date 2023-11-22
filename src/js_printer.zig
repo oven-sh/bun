@@ -3061,47 +3061,10 @@ fn NewPrinter(
         // Add one outer branch so the inner loop does fewer branches
         pub fn printUTF8StringEscapedQuotes(p: *Printer, str: string, c: u8) void {
             switch (c) {
-                '`' => _printUTF8StringEscapedQuotes(p, str, '`'),
-                '"' => _printUTF8StringEscapedQuotes(p, str, '"'),
-                '\'' => _printUTF8StringEscapedQuotes(p, str, '\''),
+                '`' => strings.printUTF8JavaScriptString(p, Printer.print, str, '`', void),
+                '"' => strings.printUTF8JavaScriptString(p, Printer.print, str, '"', void),
+                '\'' => strings.printUTF8JavaScriptString(p, Printer.print, str, '\'', void),
                 else => unreachable,
-            }
-        }
-
-        pub fn _printUTF8StringEscapedQuotes(p: *Printer, str: string, comptime c: u8) void {
-            var utf8 = str;
-            var i: usize = 0;
-            // Walk the string searching for quote characters
-            // Escape any we find
-            // Skip over already-escaped strings
-            var len = utf8.len;
-            while (i < len) {
-                switch (utf8[i]) {
-                    '\\' => i += 2,
-                    '$' => {
-                        if (comptime c == '`') {
-                            p.print(utf8[0..i]);
-                            p.print("\\$");
-                            utf8 = utf8[i + 1 ..];
-                            len = utf8.len;
-                            i = 0;
-                        } else {
-                            i += 1;
-                        }
-                    },
-                    c => {
-                        p.print(utf8[0..i]);
-                        p.print("\\" ++ &[_]u8{c});
-                        utf8 = utf8[i + 1 ..];
-                        len = utf8.len;
-                        i = 0;
-                    },
-
-                    else => i += 1,
-                }
-            }
-            if (utf8.len > 0) {
-                p.print(utf8);
             }
         }
 

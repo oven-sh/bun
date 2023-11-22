@@ -1,0 +1,9 @@
+// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`macros should not lead to seg faults under any given input`] = `
+"error: "Cannot convert argument type to JS" error in macro
+
+fn(\`©\${''}\`);
+^
+[dir]/index.ts:2:1 55"
+`;

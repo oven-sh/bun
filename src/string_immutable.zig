@@ -64,15 +64,28 @@ pub fn indexOfAny(slice: string, comptime str: anytype) ?OptionalUsize {
     if (remaining.len == 0) return null;
 
     if (comptime Environment.enableSIMD) {
-        while (remaining.len >= ascii_vector_size) {
-            const vec: AsciiVector = remaining[0..ascii_vector_size].*;
-            var cmp: AsciiVectorU1 = @bitCast(vec == @as(AsciiVector, @splat(@as(u8, str[0]))));
-            inline for (str[1..]) |c| {
-                cmp |= @bitCast(vec == @as(AsciiVector, @splat(@as(u8, c))));
+        const vecs: [str.len]AsciiVector = comptime brk: {
+            var out: [str.len]AsciiVector = undefined;
+            for (0..str.len) |i| {
+                out[i] = @splat(str[i]);
             }
 
+            break :brk out;
+        };
+
+        while (remaining.len >= ascii_vector_size) {
+            const vec: AsciiVector = remaining[0..ascii_vector_size].*;
+            const cmp: AsciiVector = brk: {
+                var out: AsciiVector = @as(AsciiVectorU1, @bitCast(vec == vecs[0]));
+
+                inline for (vecs[1..]) |v| {
+                    out |= @as(AsciiVector, @as(AsciiVectorU1, @bitCast(vec == v)));
+                }
+                break :brk out;
+            };
+
             if (@reduce(.Max, cmp) > 0) {
-                const bitmask = @as(AsciiVectorInt, @bitCast(cmp));
+                const bitmask = @as(AsciiVectorInt, @bitCast(@as(AsciiVectorU1, @bitCast(cmp > @as(AsciiVector, @splat(0))))));
                 const first = @ctz(bitmask);
 
                 return @as(OptionalUsize, @intCast(first + slice.len - remaining.len));
@@ -83,7 +96,6 @@ pub fn indexOfAny(slice: string, comptime str: anytype) ?OptionalUsize {
 
         if (comptime Environment.allow_assert) std.debug.assert(remaining.len < ascii_vector_size);
     }
-
     for (remaining, 0..) |c, i| {
         if (strings.indexOfChar(str, c) != null) {
             return @as(OptionalUsize, @intCast(i + slice.len - remaining.len));
@@ -3766,7 +3778,7 @@ pub fn indexOfNotChar(slice: []const u8, char: u8) ?u32 {
         while (remaining.len >= ascii_vector_size) {
             const vec: AsciiVector = remaining[0..ascii_vector_size].*;
             const cmp = @as(AsciiVector, @splat(char)) != vec;
-            if (@reduce(.Max, @as(AsciiVectorU1, @bitCast(cmp))) > 0) {
+            if (@reduce(.Or, cmp)) {
                 const bitmask = @as(AsciiVectorInt, @bitCast(cmp));
                 const first = @ctz(bitmask);
                 return @as(u32, first) + @as(u32, @intCast(slice.len - remaining.len));
@@ -4570,6 +4582,16 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
             }
         }
 
+        pub fn scanUntilNotIdentifier(iter: *Iterator) usize {
+            while (iter.c > -1) {
+                if (!bun.js_lexer.isIdentifierContinue(iter.nextCodepoint())) {
+                    return iter.i;
+                }
+            }
+
+            return iter.i;
+        }
+
         pub fn scanUntilQuotedValueOrEOF(iter: *Iterator, comptime quote: CodePointType) usize {
             while (iter.c > -1) {
                 if (!switch (iter.nextCodepoint()) {
@@ -5047,4 +5069,89 @@ pub fn mustEscapeYAMLString(contents: []const u8) bool {
             std.mem.indexOfAnyPos(u8, contents, 1, ": \t\r\n\x0B\x0C\\\",[]") != null,
         else => true,
     };
+}
+
+pub fn pathContainsNodeModulesFolder(path: []const u8) bool {
+    var remain = path;
+    while (strings.indexOfChar(remain, '/')) |char| {
+        remain = remain[char + 1 ..];
+        if (hasPrefixComptime(remain, "node_modules" ++ std.fs.path.sep_str)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+fn NewJavaScriptStringFormatter(comptime c: u8) type {
+    return struct {
+        const JavaScriptStringFormatter = @This();
+        pub fn format(self: void, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            return printUTF8JavaScriptString(self, @TypeOf(writer).print, comptime c, @typeInfo(@TypeOf(writer).print).Fn.return_type.?);
+        }
+    };
+}
+
+pub const JavaScriptStringFormatter = struct {
+    str: []const u8 = "",
+    const fmtSingleQuote = NewJavaScriptStringFormatter('\'').format;
+    const fmtDoubleQuote = NewJavaScriptStringFormatter('"').format;
+    const fmtBacktick = NewJavaScriptStringFormatter('`').format;
+
+    pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        return printUTF8JavaScriptString(writer, @TypeOf(writer).writeAll, self.str, '`', @typeInfo(@TypeOf(@TypeOf(writer).writeAll)).Fn.return_type.?);
+    }
+};
+
+pub fn printUTF8JavaScriptString(p: anytype, comptime printFn: anytype, str: string, comptime c: u8, comptime ReturnType: type) ReturnType {
+    var utf8 = str;
+    var i: usize = 0;
+    // Walk the string searching for quote characters
+    // Escape any we find
+    // Skip over already-escaped strings
+    var len = utf8.len;
+    while (i < len) {
+        switch (utf8[i]) {
+            '\\' => i += 2,
+            '$' => {
+                if (comptime c == '`') {
+                    if (comptime ReturnType != void) {
+                        try printFn(p, utf8[0..i]);
+                        try printFn(p, "\\$");
+                    } else {
+                        printFn(p, utf8[0..i]);
+                        printFn(p, "\\$");
+                    }
+
+                    utf8 = utf8[i + 1 ..];
+                    len = utf8.len;
+                    i = 0;
+                } else {
+                    i += 1;
+                }
+            },
+            c => {
+                if (comptime ReturnType != void) {
+                    try printFn(p, utf8[0..i]);
+                    try printFn(p, "\\" ++ &[_]u8{c});
+                } else {
+                    printFn(p, utf8[0..i]);
+                    printFn(p, "\\" ++ &[_]u8{c});
+                }
+
+                utf8 = utf8[i + 1 ..];
+                len = utf8.len;
+                i = 0;
+            },
+
+            else => i += 1,
+        }
+    }
+    if (utf8.len > 0) {
+        if (comptime ReturnType != void) {
+            try printFn(p, utf8);
+        } else {
+            printFn(p, utf8);
+        }
+    }
 }

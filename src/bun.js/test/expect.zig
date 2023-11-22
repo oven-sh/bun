@@ -221,44 +221,38 @@ pub const Expect = struct {
     pub fn getSnapshotName(this: *Expect, allocator: std.mem.Allocator, hint: string) ![]const u8 {
         const test_name = this.scope.tests.items[this.test_id].label;
 
-        var length: usize = 0;
+        var builder = bun.StringBuilder{};
+
         var curr_scope: ?*DescribeScope = this.scope;
         while (curr_scope) |scope| {
             if (scope.label.len > 0) {
-                length += scope.label.len + 1;
+                builder.count(scope.label);
+                builder.count(" ");
             }
             curr_scope = scope.parent;
         }
-        length += test_name.len;
+        builder.count(test_name);
         if (hint.len > 0) {
-            length += hint.len + 2;
+            builder.count(hint);
+            builder.count(": ");
         }
 
-        var buf = try allocator.alloc(u8, length);
+        try builder.allocate(allocator);
 
-        var index = buf.len;
-        if (hint.len > 0) {
-            index -= hint.len;
-            bun.copy(u8, buf[index..], hint);
-            index -= test_name.len + 2;
-            bun.copy(u8, buf[index..], test_name);
-            bun.copy(u8, buf[index + test_name.len ..], ": ");
-        } else {
-            index -= test_name.len;
-            bun.copy(u8, buf[index..], test_name);
-        }
-        // copy describe scopes in reverse order
-        curr_scope = this.scope;
         while (curr_scope) |scope| {
             if (scope.label.len > 0) {
-                index -= scope.label.len + 1;
-                bun.copy(u8, buf[index..], scope.label);
-                buf[index + scope.label.len] = ' ';
+                builder.write(scope.label);
+                builder.write(" ");
             }
             curr_scope = scope.parent;
         }
+        builder.write(test_name);
+        if (hint.len > 0) {
+            builder.write(": ");
+            builder.write(hint);
+        }
 
-        return buf;
+        return builder.written();
     }
 
     pub fn finalize(
@@ -2003,13 +1997,14 @@ pub const Expect = struct {
             globalObject.throwPretty(fmt, .{});
         }
 
-        var hint_string: ZigString = ZigString.Empty;
+        var hint: ZigString.Slice = ZigString.Slice.empty;
+        defer hint.deinit();
         var property_matchers: ?JSValue = null;
         switch (arguments.len) {
             0 => {},
             1 => {
                 if (arguments[0].isString()) {
-                    arguments[0].toZigString(&hint_string, globalObject);
+                    hint = arguments[0].toBunString(globalObject).toUTF8(bun.default_allocator);
                 } else if (arguments[0].isObject()) {
                     property_matchers = arguments[0];
                 }
@@ -2025,13 +2020,10 @@ pub const Expect = struct {
                 property_matchers = arguments[0];
 
                 if (arguments[1].isString()) {
-                    arguments[1].toZigString(&hint_string, globalObject);
+                    hint = arguments[1].toBunString(globalObject).toUTF8(bun.default_allocator);
                 }
             },
         }
-
-        var hint = hint_string.toSlice(default_allocator);
-        defer hint.deinit();
 
         const value: JSValue = this.getValue(globalObject, thisValue, "toMatchSnapshot", "<green>properties<r><d>, <r>hint") orelse return .zero;
 
@@ -2072,6 +2064,7 @@ pub const Expect = struct {
 
         if (result) |saved_value| {
             var pretty_value: MutableString = MutableString.init(default_allocator, 0) catch unreachable;
+            defer pretty_value.deinit();
             value.jestSnapshotPrettyFormat(&pretty_value, globalObject) catch {
                 var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
                 globalObject.throw("Failed to pretty format value: {s}", .{value.toFmt(globalObject, &formatter)});

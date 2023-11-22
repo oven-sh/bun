@@ -2451,6 +2451,28 @@ pub const E = struct {
             };
         };
 
+        pub fn toString(
+            this: *Template,
+            allocator: std.mem.Allocator,
+            loc: logger.Loc,
+        ) !Expr {
+            var folded = this.fold(allocator, loc);
+
+            // if it's still a template, that means it has UTF16 chars, so we need to convert it to UTF8
+            if (folded.data == .e_template and folded.data.e_template.head == .cooked) {
+                try folded.data.e_template.head.cooked.toUTF8(allocator);
+                return Expr.init(
+                    E.String,
+                    folded.data.e_template.head.cooked,
+                    loc,
+                );
+            }
+
+            std.debug.assert(folded.data == .e_string);
+
+            return folded;
+        }
+
         /// "`a${'b'}c`" => "`abc`"
         pub fn fold(
             this: *Template,
@@ -7197,20 +7219,13 @@ pub const Macro = struct {
                         return out;
                     },
 
-                    .JSON => {
+                    .toJSON, .JSON => {
                         this.is_top_level = false;
-                        // if (console_tag.cell == .JSDate) {
-                        //     // in the code for printing dates, it never exceeds this amount
-                        //     var iso_string_buf = this.allocator.alloc(u8, 36) catch unreachable;
-                        //     var str = JSC.ZigString.init("");
-                        //     value.jsonStringify(this.global, 0, &str);
-                        //     var out_buf: []const u8 = std.fmt.bufPrint(iso_string_buf, "{}", .{str}) catch "";
-                        //     if (out_buf.len > 2) {
-                        //         // trim the quotes
-                        //         out_buf = out_buf[1 .. out_buf.len - 1];
-                        //     }
-                        //     return Expr.init(E.New, E.New{.target = Expr.init(E.Dot{.target = E}) })
-                        // }
+                        if (value.get(this.global, "toJSON")) |to_json_func| {
+                            if (to_json_func.isCell() and to_json_func.isCallable(this.global.vm())) {
+                                return this.run(to_json_func.callWithThis(this.global, value, &.{}));
+                            }
+                        }
                     },
 
                     .Integer => {

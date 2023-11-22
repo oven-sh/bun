@@ -1187,6 +1187,7 @@ pub const VirtualMachine = struct {
             .ref_strings_mutex = Lock.init(),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
             .standalone_module_graph = opts.graph.?,
+            .debug_thread_id = if(Environment.allow_assert) std.Thread.getCurrentId() else {},
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
         vm.regular_event_loop.tasks = EventLoop.Queue.init(

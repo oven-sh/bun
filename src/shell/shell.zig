@@ -9,6 +9,7 @@ const Subprocess =
 const JSC = bun.JSC;
 const JSValue = bun.JSC.JSValue;
 const Which = @import("../which.zig");
+const Braces = @import("./braces.zig");
 
 pub const ShellError = error{Process};
 pub const ParseError = error{
@@ -38,6 +39,11 @@ fn closefd(fd: bun.FileDescriptor) void {
     logsys("close({d})", .{fd});
     std.os.close(fd);
 }
+
+const MaybeManyStrings = union {
+    one: [:0]const u8,
+    many: std.ArrayList([:0]const u8),
+};
 
 // FIXME avoid std.os if possible
 // FIXME error when command not found needs to be handled gracefully
@@ -137,11 +143,23 @@ pub const Interpreter = struct {
     }
 
     fn interpret_assign(self: *Interpreter, assign: *const ast.Assign) anyerror!void {
+        const brace_expansion = assign.value.has_brace_expansion();
         const value = try self.eval_atom(&assign.value);
+        if (brace_expansion) {
+            for (value.many.items) |val| {
+                if (assign.exported) {
+                    try self.env.put(assign.label, val);
+                } else {
+                    try self.cmd_local_env.put(assign.label, val);
+                }
+            }
+            return;
+        }
+
         if (assign.exported) {
-            try self.env.put(assign.label, value);
+            try self.env.put(assign.label, value.one);
         } else {
-            try self.cmd_local_env.put(assign.label, value);
+            try self.cmd_local_env.put(assign.label, value.one);
         }
     }
 
@@ -314,32 +332,38 @@ pub const Interpreter = struct {
             try self.interpret_assign(assign);
         }
 
-        // TODO redirects, env vars
+        // TODO env vars
         var spawn_args = Subprocess.SpawnArgs.default(self.arena, self.globalThis.bunVM(), false);
 
         const args = args: {
-            var args = try self.allocator.alloc(?[*:0]const u8, cmd.name_and_args.len);
+            // TODO optimization: allocate into one buffer of chars and create argv from slicing into that
+            var args = try std.ArrayList(?[*:0]const u8).initCapacity(self.allocator, cmd.name_and_args.len);
             for (cmd.name_and_args, 0..) |*arg_atom, i| {
-                const atom_str = try self.eval_atom(arg_atom);
-                if (i == 0) {
-                    var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                    var resolved = Which.which(&path_buf, spawn_args.PATH, spawn_args.cwd, atom_str[0..]) orelse {
-                        self.globalThis.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{atom_str});
-                        return ShellError.Process;
-                    };
-                    const duped = self.allocator.dupeZ(u8, bun.span(resolved)) catch {
-                        self.globalThis.throw("out of memory", .{});
-                        return ShellError.Process;
-                    };
-                    args[i] = duped.ptr;
-                    continue;
-                }
-                args[i] = atom_str.ptr;
+                _ = i;
+                try self.eval_atom_with_out(true, arg_atom, &args);
             }
+
+            const first_arg = args.items[0] orelse {
+                self.globalThis.throwInvalidArguments("No command specified", .{});
+                return ShellError.Process;
+            };
+            const first_arg_len = std.mem.len(first_arg);
+
+            var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var resolved = Which.which(&path_buf, spawn_args.PATH, spawn_args.cwd, first_arg[0..first_arg_len]) orelse {
+                self.globalThis.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{first_arg});
+                return ShellError.Process;
+            };
+            const duped = self.allocator.dupeZ(u8, bun.span(resolved)) catch {
+                self.globalThis.throw("out of memory", .{});
+                return ShellError.Process;
+            };
+            args.items[0] = duped;
+
             break :args args;
         };
 
-        spawn_args.argv = std.ArrayListUnmanaged(?[*:0]const u8){ .items = args, .capacity = args.len };
+        spawn_args.argv = std.ArrayListUnmanaged(?[*:0]const u8){ .items = args.items, .capacity = args.capacity };
         io.to_subproc_stdio(&spawn_args.stdio);
         // spawn_args.stdio[bun.STDIN_FD] = if (io.stdin == bun.STDIN_FD) .inherit else .{ .fd = io.stdin };
         // spawn_args.stdio[bun.STDOUT_FD] = if (io.stdout == bun.STDOUT_FD) .inherit else .{ .fd = io.stdout };
@@ -452,23 +476,95 @@ pub const Interpreter = struct {
         return (subprocess.exit_code orelse 1) == 0;
     }
 
-    fn eval_atom(self: *Interpreter, atom: *const ast.Atom) anyerror![:0]const u8 {
-        var has_cmd_subst = false;
-        const string_size = self.eval_atom_size_hint(atom, &has_cmd_subst);
-        if (!has_cmd_subst) {
+    fn eval_atom(
+        self: *Interpreter,
+        atom: *const ast.Atom,
+    ) !MaybeManyStrings {
+        if (atom.has_brace_expansion()) {
+            var out = std.ArrayList([:0]const u8).init(self.allocator);
+            try self.eval_atom_with_brace_expansion(false, atom, &out);
+            return .{ .many = out };
+        }
+
+        const brace_str = try self.eval_atom_no_brace_expansion(atom);
+        return .{ .one = brace_str };
+    }
+
+    fn eval_atom_with_out(
+        self: *Interpreter,
+        comptime for_spawn: bool,
+        atom: *const ast.Atom,
+        out: if (!for_spawn) *std.ArrayList([:0]const u8) else *std.ArrayList(?[*:0]const u8),
+    ) !void {
+        if (atom.has_brace_expansion()) {
+            try self.eval_atom_with_brace_expansion(for_spawn, atom, out);
+            return;
+        }
+
+        const brace_str = try self.eval_atom_no_brace_expansion(atom);
+        try out.append(brace_str);
+    }
+
+    fn eval_atom_with_brace_expansion(
+        self: *Interpreter,
+        comptime for_spawn: bool,
+        atom: *const ast.Atom,
+        out: if (!for_spawn) *std.ArrayList([:0]const u8) else *std.ArrayList(?[*:0]const u8),
+    ) anyerror!void {
+        if (bun.Environment.allow_assert) {
+            std.debug.assert(atom.* == .compound and atom.compound.brace_expansion_hint);
+        }
+        const brace_str = try self.eval_atom_no_brace_expansion(atom);
+        var lexer = try Braces.Lexer.tokenize(self.allocator, brace_str);
+        const variants_count = Braces.calculateVariantsAmount(lexer.tokens.items[0..]);
+        const expansion_count = try Braces.calculateExpandedAmount(lexer.tokens.items[0..]);
+        const expansions_table = try Braces.buildExpansionTableAlloc(self.allocator, lexer.tokens.items[0..], variants_count);
+
+        var expanded_strings = brk: {
+            const stack_max = comptime 16;
+            comptime {
+                std.debug.assert(@sizeOf([]std.ArrayList(u8)) * stack_max <= 256);
+            }
+            var maybe_stack_alloc = std.heap.stackFallback(@sizeOf([]std.ArrayList(u8)) * stack_max, self.allocator);
+            var expanded_strings = try maybe_stack_alloc.get().alloc(std.ArrayList(u8), expansion_count);
+            break :brk expanded_strings;
+        };
+
+        for (0..expansion_count) |i| {
+            expanded_strings[i] = std.ArrayList(u8).init(self.allocator);
+        }
+
+        try Braces.expand(lexer.tokens.items[0..], expansions_table, expanded_strings);
+
+        try out.ensureUnusedCapacity(expansion_count);
+        // Add sentinel values
+        for (0..expansion_count) |i| {
+            try expanded_strings[i].append(0);
+            if (comptime for_spawn) {
+                out.appendAssumeCapacity(expanded_strings[i].items[0 .. expanded_strings[i].items.len - 1 :0].ptr);
+            } else {
+                out.appendAssumeCapacity(expanded_strings[i].items[0 .. expanded_strings[i].items.len - 1 :0]);
+            }
+        }
+    }
+
+    fn eval_atom_no_brace_expansion(self: *Interpreter, atom: *const ast.Atom) anyerror![:0]const u8 {
+        var has_unknown = false;
+        const string_size = self.eval_atom_size_hint(atom, &has_unknown);
+        if (!has_unknown) {
             var str = try self.allocator.allocSentinel(u8, string_size, 0);
+            str.len = 0;
+            var str_list = std.ArrayList(u8){
+                .items = str,
+                .capacity = string_size,
+                .allocator = self.allocator,
+            };
             switch (atom.*) {
                 .simple => |*simp| {
-                    @memcpy(str, self.eval_atom_simpl_no_cmd_subst(simp));
+                    try self.eval_atom_simpl(simp, &str_list, true);
                 },
-                .compound => |cmp| {
-                    var i: usize = 0;
-                    for (cmp.atoms) |*simple_atom| {
-                        const txt = self.eval_atom_simpl_no_cmd_subst(simple_atom);
-                        var slice = str[i .. i + txt.len];
-                        @memcpy(slice, txt[0..txt.len]);
-                        i += txt.len;
-                    }
+                .compound => |*cmp| {
+                    try self.eval_atom_compound_no_brace_expansion(cmp, &str_list, true);
                 },
             }
             return str;
@@ -478,11 +574,11 @@ pub const Interpreter = struct {
         var str_list = try std.ArrayList(u8).initCapacity(self.allocator, string_size + 1);
         switch (atom.*) {
             .simple => |*simp| {
-                try self.eval_atom_simpl_with_cmd_subst(simp, &str_list);
+                try self.eval_atom_simpl(simp, &str_list, false);
             },
             .compound => |cmp| {
                 for (cmp.atoms) |*simple_atom| {
-                    try self.eval_atom_simpl_with_cmd_subst(simple_atom, &str_list);
+                    try self.eval_atom_simpl(simple_atom, &str_list, false);
                 }
             },
         }
@@ -490,58 +586,71 @@ pub const Interpreter = struct {
         return str_list.items[0 .. str_list.items.len - 1 :0];
     }
 
-    fn eval_atom_size_hint(self: *const Interpreter, atom: *const ast.Atom, has_cmd_subst: *bool) usize {
-        return switch (@as(ast.Atom.Tag, atom.*)) {
-            .simple => self.eval_atom_size_simple(&atom.simple, has_cmd_subst),
-            .compound => {
-                var out: usize = 0;
-                for (atom.compound.atoms) |*simple| {
-                    out += self.eval_atom_size_simple(simple, has_cmd_subst);
-                }
-                return out;
-            },
-        };
+    fn eval_atom_compound_no_brace_expansion(
+        self: *Interpreter,
+        atom: *const ast.CompoundAtom,
+        str_list: *std.ArrayList(u8),
+        comptime known_size: bool,
+    ) !void {
+        if (bun.Environment.allow_assert) {
+            std.debug.assert(!atom.brace_expansion_hint);
+        }
+        for (atom.atoms) |*simple_atom| {
+            try self.eval_atom_simpl(simple_atom, str_list, known_size);
+        }
     }
 
-    fn eval_atom_size_simple(self: *const Interpreter, simple: *const ast.SimpleAtom, has_cmd_subst: *bool) usize {
-        return switch (simple.*) {
-            .Text => |txt| txt.len,
-            .Var => |label| self.eval_var(label).len,
-            .cmd_subst => |subst| {
-                if (@as(ast.CmdOrAssigns.Tag, subst.*) == .assigns) {
-                    return 0;
-                }
-                has_cmd_subst.* = true;
-                return 0;
-            },
-        };
-    }
-
-    fn eval_atom_simpl_no_cmd_subst(self: *const Interpreter, atom: *const ast.SimpleAtom) []const u8 {
-        return switch (atom.*) {
-            .Text => |txt| txt,
-            .Var => |label| return self.eval_var(label),
-            .cmd_subst => {
-                if (bun.Environment.allow_assert) {
-                    @panic("Unexpected cmd_subst");
-                }
-                unreachable;
-            },
-        };
-    }
-
-    fn eval_atom_simpl_with_cmd_subst(self: *Interpreter, atom: *const ast.SimpleAtom, str_list: *std.ArrayList(u8)) !void {
+    fn eval_atom_simpl(
+        self: *Interpreter,
+        atom: *const ast.SimpleAtom,
+        str_list: *std.ArrayList(u8),
+        comptime known_size: bool,
+    ) !void {
         return switch (atom.*) {
             .Text => |txt| {
-                try str_list.appendSlice(txt);
+                if (comptime known_size) {
+                    str_list.appendSliceAssumeCapacity(txt);
+                } else {
+                    try str_list.appendSlice(txt);
+                }
             },
             .Var => |label| {
-                try str_list.appendSlice(self.eval_var(label));
+                if (comptime known_size) {
+                    str_list.appendSliceAssumeCapacity(self.eval_var(label));
+                } else {
+                    try str_list.appendSlice(self.eval_var(label));
+                }
+            },
+            .brace_begin => {
+                if (comptime known_size) {
+                    str_list.appendAssumeCapacity('{');
+                } else {
+                    try str_list.append('{');
+                }
+            },
+            .brace_end => {
+                if (comptime known_size) {
+                    str_list.appendAssumeCapacity('}');
+                } else {
+                    try str_list.append('}');
+                }
+            },
+            .comma => {
+                if (comptime known_size) {
+                    str_list.appendAssumeCapacity('{');
+                } else {
+                    try str_list.append('}');
+                }
             },
             .cmd_subst => |cmd| {
                 switch (cmd.*) {
                     .assigns => {},
                     .cmd => |*the_cmd| {
+                        if (comptime known_size) {
+                            if (bun.Environment.allow_assert) {
+                                @panic("Cmd substitution should not be present when `known_size` set to true");
+                            }
+                        }
                         try self.eval_atom_cmd_subst(the_cmd, str_list);
                     },
                 }
@@ -561,17 +670,43 @@ pub const Interpreter = struct {
         try array_list.appendSlice(output);
     }
 
-    fn eval_atom_size_compound(self: *const Interpreter, compound: *const ast.CompoundAtom) usize {
-        var size: usize = 0;
-        for (compound.atoms) |*atom| {
-            size += self.eval_atom_size_simple(atom);
-        }
-        return size;
-    }
-
     fn eval_var(self: *const Interpreter, label: []const u8) []const u8 {
         const value = self.env.get(label) orelse return "";
         return value;
+    }
+
+    /// Returns the size of the atom when expanded.
+    /// If the calculation cannot be computed trivially (cmd substitution, brace expansion), this value is not accurate and `has_unknown` is set to true
+    fn eval_atom_size_hint(self: *const Interpreter, atom: *const ast.Atom, has_unknown: *bool) usize {
+        return switch (@as(ast.Atom.Tag, atom.*)) {
+            .simple => self.eval_atom_size_simple(&atom.simple, has_unknown),
+            .compound => {
+                if (atom.compound.brace_expansion_hint) {
+                    has_unknown.* = true;
+                }
+
+                var out: usize = 0;
+                for (atom.compound.atoms) |*simple| {
+                    out += self.eval_atom_size_simple(simple, has_unknown);
+                }
+                return out;
+            },
+        };
+    }
+
+    fn eval_atom_size_simple(self: *const Interpreter, simple: *const ast.SimpleAtom, has_cmd_subst: *bool) usize {
+        return switch (simple.*) {
+            .Text => |txt| txt.len,
+            .Var => |label| self.eval_var(label).len,
+            .brace_begin, .brace_end, .comma => 1,
+            .cmd_subst => |subst| {
+                if (@as(ast.CmdOrAssigns.Tag, subst.*) == .assigns) {
+                    return 0;
+                }
+                has_cmd_subst.* = true;
+                return 0;
+            },
+        };
     }
 };
 
@@ -726,19 +861,27 @@ pub const AST = struct {
                 else => return false,
             }
         }
+
+        pub fn has_brace_expansion(self: *const Atom) bool {
+            return switch (self.*) {
+                .simple => false,
+                .compound => self.compound.brace_expansion_hint,
+            };
+        }
     };
 
     pub const SimpleAtom = union(enum) {
         Var: []const u8,
         Text: []const u8,
-        // brace_begin,
-        // brace_end,
-        // comma,
+        brace_begin,
+        brace_end,
+        comma,
         cmd_subst: *CmdOrAssigns,
     };
 
     pub const CompoundAtom = struct {
         atoms: []SimpleAtom,
+        brace_expansion_hint: bool = false,
     };
 };
 
@@ -944,44 +1087,51 @@ pub const Parser = struct {
     fn parse_atom(self: *Parser) !?AST.Atom {
         var array_alloc = std.heap.stackFallback(@sizeOf(AST.SimpleAtom), self.alloc);
         var exprs = try std.ArrayList(AST.SimpleAtom).initCapacity(array_alloc.get(), 1);
+        var has_brace_open = false;
+        var has_brace_close = false;
+        var has_comma = false;
         {
             while (!self.match_any(&.{ .Delimit, .Eof })) {
                 const next = self.peek_n(1);
                 const next_delimits = next == .Delimit or next == .Eof;
                 const peeked = self.peek();
+                const should_break = next_delimits and !has_brace_open;
                 switch (peeked) {
-                    // .BraceBegin => {
-                    //     _ = self.expect(.BraceBegin);
-                    //     try exprs.append(.brace_begin);
-                    //     // TODO in this case we know it can't possibly be the beginning of a brace expansion so maybe its faster to just change it to text here
-                    //     if (next_delimits) {
-                    //         _ = self.expect_delimit();
-                    //         break;
-                    //     }
-                    // },
-                    // .BraceEnd => {
-                    //     _ = self.expect(.BraceEnd);
-                    //     try exprs.append(.brace_end);
-                    //     if (next_delimits) {
-                    //         _ = self.expect_delimit();
-                    //         break;
-                    //     }
-                    // },
-                    // .BraceEnd => {
-                    //     _ = self.expect(.BraceEnd);
-                    //     try exprs.append(.brace_end);
-                    //     if (next_delimits) {
-                    //         _ = self.expect_delimit();
-                    //         break;
-                    //     }
-                    // },
+                    .BraceBegin => {
+                        has_brace_open = true;
+                        _ = self.expect(.BraceBegin);
+                        try exprs.append(.brace_begin);
+                        // TODO in this case we know it can't possibly be the beginning of a brace expansion so maybe its faster to just change it to text here
+                        if (next_delimits) {
+                            _ = self.expect_delimit();
+                            if (should_break) break;
+                        }
+                    },
+                    .BraceEnd => {
+                        has_brace_close = true;
+                        _ = self.expect(.BraceEnd);
+                        try exprs.append(.brace_end);
+                        if (next_delimits) {
+                            _ = self.expect_delimit();
+                            break;
+                        }
+                    },
+                    .Comma => {
+                        has_comma = true;
+                        _ = self.expect(.Comma);
+                        try exprs.append(.comma);
+                        if (next_delimits) {
+                            _ = self.expect_delimit();
+                            if (should_break) break;
+                        }
+                    },
                     .CmdSubstBegin => {
                         _ = self.expect(.CmdSubstBegin);
                         const subst = try self.allocate(AST.CmdOrAssigns, try self.parse_cmd_subst());
                         try exprs.append(.{ .cmd_subst = subst });
                         if (next_delimits) {
                             _ = self.expect_delimit();
-                            break;
+                            if (should_break) break;
                         }
                     },
                     .Text => |txtrng| {
@@ -990,7 +1140,7 @@ pub const Parser = struct {
                         try exprs.append(.{ .Text = txt });
                         if (next_delimits) {
                             _ = self.expect_delimit();
-                            break;
+                            if (should_break) break;
                         }
                     },
                     .Var => |txtrng| {
@@ -999,7 +1149,7 @@ pub const Parser = struct {
                         try exprs.append(.{ .Var = txt });
                         if (next_delimits) {
                             _ = self.expect_delimit();
-                            break;
+                            if (should_break) break;
                         }
                     },
                     else => return null,
@@ -1013,7 +1163,10 @@ pub const Parser = struct {
                 std.debug.assert(exprs.capacity == 1);
                 return AST.Atom.new_simple(exprs.items[0]);
             },
-            else => .{ .compound = .{ .atoms = exprs.items[0..exprs.items.len] } },
+            else => .{ .compound = .{
+                .atoms = exprs.items[0..exprs.items.len],
+                .brace_expansion_hint = has_brace_open and has_brace_close and has_comma,
+            } },
         };
     }
 

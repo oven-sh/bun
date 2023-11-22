@@ -170,6 +170,16 @@ pub fn expand(
     tokens: []const Token,
     expansion_table: []const ExpansionVariant,
     out: []std.ArrayList(u8),
+) !void {
+    var out_key_counter: u16 = 1;
+    return try expandImpl(tokens, expansion_table, out, 0, &out_key_counter, 0, tokens.len);
+}
+
+/// TODO optimization: allocate into one buffer of chars
+fn expandImpl(
+    tokens: []const Token,
+    expansion_table: []const ExpansionVariant,
+    out: []std.ArrayList(u8),
     out_key: u16,
     out_key_counter: *u16,
     start: usize,
@@ -195,13 +205,13 @@ pub fn expand(
                     out_key_counter.* += 1;
                     std.debug.print("Branch: {s} {d} {d} VARIANT: {any}\n", .{ out[out_key].items[0..], out_key, new_key, variant.* });
                     try out[new_key].appendSlice(out[out_key].items[0..]);
-                    try expand(tokens, expansion_table, out, new_key, out_key_counter, variant.start, variant.end);
-                    try expand(tokens, expansion_table, out, new_key, out_key_counter, skip_over_idx, end);
+                    try expandImpl(tokens, expansion_table, out, new_key, out_key_counter, variant.start, variant.end);
+                    try expandImpl(tokens, expansion_table, out, new_key, out_key_counter, skip_over_idx, end);
                 }
 
                 const first_variant = &variants[0];
-                try expand(tokens, expansion_table, out, out_key, out_key_counter, first_variant.start, first_variant.end);
-                return try expand(tokens, expansion_table, out, out_key, out_key_counter, skip_over_idx, end);
+                try expandImpl(tokens, expansion_table, out, out_key, out_key_counter, first_variant.start, first_variant.end);
+                return try expandImpl(tokens, expansion_table, out, out_key, out_key_counter, skip_over_idx, end);
             },
             else => {},
         }
@@ -252,6 +262,12 @@ pub fn calculateExpandedAmount(tokens: []const Token) !u32 {
     }
 
     return variant_count;
+}
+
+pub fn buildExpansionTableAlloc(alloc: Allocator, tokens: []Token, variants_count: usize) ![]ExpansionVariant {
+    var table = try alloc.alloc(ExpansionVariant, variants_count);
+    try buildExpansionTable(tokens, table);
+    return table;
 }
 
 pub fn buildExpansionTable(

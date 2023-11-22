@@ -53,6 +53,13 @@ describe("bunshell", () => {
   });
 
   test("pipeline", () => {});
+
+  test("brace expansion", () => {
+    const buffer = new Uint8Array(512);
+    const result = $`echo {a,b,c}{d,e,f} > ${buffer}`;
+    const sentinel = sentinelByte(buffer);
+    expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual("ad ae af bd be bf cd ce cf\n");
+  });
 });
 
 function sentinelByte(buf: Uint8Array): number {

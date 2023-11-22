@@ -578,15 +578,10 @@ pub fn braces(
         expanded_strings[i] = std.ArrayList(u8).init(arena.allocator());
     }
 
-    var out_key_counter: u16 = 1;
     Braces.expand(
         lexer.tokens.items[0..],
         expansion_table[0..],
         expanded_strings,
-        0,
-        &out_key_counter,
-        0,
-        lexer.tokens.items.len,
     ) catch {
         globalThis.throwOutOfMemory();
         return .undefined;

@@ -1818,6 +1818,7 @@ pub const Blob = struct {
                     return;
                 } else if (this.store == null) {
                     bun.default_allocator.destroy(this);
+                    if (Environment.isDebug) @panic("assertion failure - store should not be null");
                     cb(cb_ctx, ResultType{
                         .err = SystemError{
                             .code = bun.String.static("INTERNAL_ERROR"),

@@ -1392,7 +1392,7 @@ BunString WebCore__DOMURL__fileSystemPath(WebCore__DOMURL* arg0)
 {
     const WTF::URL& url = arg0->href();
     if (url.protocolIsFile()) {
-        return Bun::toString(url.fileSystemPath());
+        return Bun::toStringRef(url.fileSystemPath());
     }
 
     return BunStringEmpty;

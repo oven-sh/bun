@@ -174,6 +174,18 @@ pub const FDImpl = packed struct {
         return this.closeAllowingStdoutAndStderr();
     }
 
+    pub fn makeLibUVOwned(this: FDImpl) FDImpl {
+        return switch (env.os) {
+            else => this,
+            .windows => switch (this.kind) {
+                .system => fd: {
+                    break :fd FDImpl.fromUV(uv_open_osfhandle(numberToHandle(this.value.as_system)));
+                },
+                .uv => this,
+            },
+        };
+    }
+
     pub fn closeAllowingStdoutAndStderr(this: FDImpl) ?bun.sys.Error {
         if (allow_assert) {
             std.debug.assert(this.value.as_system != invalid_value); // probably a UAF

@@ -116,6 +116,8 @@ pub const Tag = enum(u8) {
     readv,
     preadv,
 
+    uv_spawn,
+
     WriteFile,
     NtQueryDirectoryFile,
     GetFinalPathNameByHandle,
@@ -488,9 +490,9 @@ pub fn openatWindows(dirfD: bun.FileDescriptor, path_: []const u16, flags: bun.M
             if (flags & O.EXCL != 0) {
                 break :blk w.FILE_CREATE;
             }
-            break :blk w.FILE_OPEN_IF;
+            break :blk if (flags & O.WRONLY != 0) w.FILE_OVERWRITE_IF else w.FILE_OPEN_IF;
         }
-        break :blk w.FILE_OPEN;
+        break :blk if (flags & O.WRONLY != 0) w.FILE_OVERWRITE else w.FILE_OPEN;
     };
 
     const wflags: windows.ULONG = if (follow_symlinks) file_or_dir_flag | blocking_flag else file_or_dir_flag | windows.FILE_OPEN_REPARSE_POINT;
@@ -1288,7 +1290,11 @@ pub const Error = struct {
                 }
             }
         } else {
-            const system_errno = @as(C.SystemErrno, @enumFromInt(@intFromEnum(bun.windows.libuv.translateUVErrorToE(err.errno))));
+            const system_errno = brk: {
+                // setRuntimeSafety(false) because we use tagName function, which will be null on invalid enum value.
+                @setRuntimeSafety(false);
+                break :brk @as(C.SystemErrno, @enumFromInt(@intFromEnum(bun.windows.libuv.translateUVErrorToE(err.errno))));
+            };
             if (std.enums.tagName(bun.C.SystemErrno, system_errno)) |errname| {
                 err.code = bun.String.static(errname);
                 if (C.SystemErrno.labels.get(system_errno)) |label| {

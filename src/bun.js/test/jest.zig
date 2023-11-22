@@ -523,20 +523,20 @@ pub const Jest = struct {
         const arguments = callframe.arguments(2).slice();
         var runner_ = runner orelse {
             globalObject.throw("Run \"bun test\" to run a test", .{});
-            return .undefined;
+            return .zero;
         };
 
         if (arguments.len < 1 or !arguments[0].isString()) {
             globalObject.throw("Bun.jest() expects a string filename", .{});
-            return .undefined;
+            return .zero;
         }
         var str = arguments[0].toSlice(globalObject, bun.default_allocator);
         defer str.deinit();
         var slice = str.slice();
 
-        if (str.len == 0 or slice[0] != '/') {
+        if (!std.fs.path.isAbsolute(slice)) {
             globalObject.throw("Bun.jest() expects an absolute file path", .{});
-            return .undefined;
+            return .zero;
         }
         var vm = globalObject.bunVM();
         if (vm.is_in_preload) {

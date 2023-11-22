@@ -29,12 +29,17 @@ console.log({
 console.log(new Promise(() => {}));
 
 class Foo {}
+class FooWithProp {
+  a = 1;
+}
 
+console.log({});
 console.log(() => {});
 console.log(function () {});
 console.log(Foo);
 console.log(class {});
 console.log(new Foo());
+console.log(new FooWithProp());
 console.log(function foooo() {});
 
 console.log(/FooRegex/);
@@ -87,3 +92,17 @@ const m = new Map([
 console.log(m.keys());
 console.log(m.values());
 console.log(new Map().keys(), new Map().values());
+class NestedClass {
+  a = 1;
+  b = 2;
+  foo = new FooWithProp();
+  test() {
+    return 3;
+  }
+}
+console.log(new NestedClass());
+
+const objectWithStringTag = {
+  [Symbol.toStringTag]: "myCustomName",
+};
+console.log(objectWithStringTag);

@@ -527,7 +527,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     if (!domURL) {
         if (arg0.isString()) {
             auto url = WTF::URL(arg0.toWTFString(globalObject));
-            if (UNLIKELY(!url.protocolIs("file"_s))) {
+            if (UNLIKELY(!url.protocolIsFile())) {
                 throwTypeError(globalObject, scope, "Argument must be a file URL"_s);
                 return JSC::JSValue::encode(JSC::JSValue {});
             }
@@ -539,7 +539,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     }
 
     auto& url = domURL->href();
-    if (UNLIKELY(!url.protocolIs("file"_s))) {
+    if (UNLIKELY(!url.protocolIsFile())) {
         throwTypeError(globalObject, scope, "Argument must be a file URL"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
     }

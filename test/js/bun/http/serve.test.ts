@@ -11,6 +11,8 @@ import { tmpdir } from "os";
 let renderToReadableStream: any = null;
 let app_jsx: any = null;
 
+console.log("started");
+
 type Handler = (req: Request) => Response;
 afterEach(() => gc(true));
 

@@ -14,6 +14,39 @@ import * as esbuild from "esbuild";
 
 let currentFile: string | undefined;
 
+function errorOrWarnParser(isError = true) {
+  const prefix = isError ? "error: " : "warn: ";
+  return function (text: string) {
+    var i = 0;
+    var list = [];
+    while (i < text.length) {
+      let errorLineI = text.indexOf(prefix, i);
+      if (errorLineI === -1) {
+        return list;
+      }
+      const message = text.slice(errorLineI + prefix.length, text.indexOf("\n", errorLineI + 1));
+      i = errorLineI + 1;
+      const fileLineI = text.indexOf(" at ", errorLineI + message.length);
+
+      let fileLine = "";
+      if (fileLineI !== -1) {
+        const fileLineEnd = text.indexOf("\n", fileLineI + 1);
+        fileLine = text.slice(fileLineI + "\n    at ".length, fileLineEnd);
+        i = fileLineEnd;
+      }
+      list.push([message, fileLine]);
+
+      if (i === -1) {
+        break;
+      }
+    }
+    return list;
+  };
+}
+
+const errorParser = errorOrWarnParser(true);
+const warnParser = errorOrWarnParser(false);
+
 type BunTestExports = typeof import("bun:test");
 export function testForFile(file: string): BunTestExports {
   if (file.startsWith("file://")) {
@@ -653,15 +686,16 @@ function expectBundled(
       if (!success) {
         if (!ESBUILD) {
           const errorText = stderr.toString("utf-8");
-          const errorRegex = /^error: (.*?)\n(?:.*?\n\s*\^\s*\n(.*?)\n)?/gms;
+
           var skip = false;
           if (errorText.includes("----- bun meta -----")) {
             skip = true;
           }
+
           const allErrors = skip
             ? []
-            : ([...errorText.matchAll(errorRegex)]
-                .map(([_str1, error, source]) => {
+            : (errorParser(errorText)
+                .map(([error, source]) => {
                   if (!source) {
                     if (error === "FileNotFound") {
                       return null;
@@ -674,7 +708,6 @@ function expectBundled(
                   return { error, file, line, col };
                 })
                 .filter(Boolean) as any[]);
-
           if (allErrors.length === 0) {
             console.log(errorText);
           }
@@ -746,8 +779,8 @@ function expectBundled(
 
       // Check for warnings
       if (!ESBUILD) {
-        const warningRegex = /^warn: (.*?)\n.*?\n\s*\^\s*\n(.*?)\n/gms;
-        const allWarnings = [...stderr!.toString("utf-8").matchAll(warningRegex)].map(([_str1, error, source]) => {
+        const warningText = stderr!.toString("utf-8");
+        const allWarnings = warnParser(warningText).map(([error, source]) => {
           const [_str2, fullFilename, line, col] = source.match(/bun-build-tests\/(.*):(\d+):(\d+)/)!;
           const file = fullFilename.slice(id.length + path.basename(outBase).length + 1);
           return { error, file, line, col };

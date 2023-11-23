@@ -62,8 +62,8 @@ const Token = union(TokenTag) {
 //     }
 // };
 
-const InputChar = struct {
-    char: u8,
+const InputChar = packed struct {
+    char: u7,
     escaped: bool = false,
 };
 
@@ -394,6 +394,8 @@ pub const Lexer = struct {
         //   - Start at beginning of brace, replacing special tokens back with
         //     chars, skipping over actual closed braces
         var brace_stack = StackStack(u32, u8, MAX_NESTED_BRACES){};
+        // var char_stack = StackStack(u8, u8, 16){};
+        // _ = char_stack;
 
         while (true) {
             const input = self.eat() orelse break;
@@ -424,6 +426,9 @@ pub const Lexer = struct {
                 }
             }
 
+            // if (char_stack.push(char) == char_stack.Error.StackFull) {
+            //     try self.app
+            // }
             try self.appendChar(char);
         }
 
@@ -521,18 +526,26 @@ pub const Lexer = struct {
 
     fn read_char(self: *Lexer) ?InputChar {
         if (self.i >= self.src.len) return null;
-        var char = self.src[self.i];
+        var char: u7 = brk: {
+            @setRuntimeSafety(false);
+            break :brk @intCast(self.src[self.i]);
+        };
         if (char != '\\' or self.state == .Single) return .{ .char = char };
 
         // Handle backslash
         switch (self.state) {
             .Normal => {
                 if (self.i + 1 >= self.src.len) return null;
-                char = self.src[self.i + 1];
+                char = brk: {
+                    @setRuntimeSafety(false);
+                    break :brk @intCast(self.src[self.i + 1]);
+                };
             },
             .Double => {
                 if (self.i + 1 >= self.src.len) return null;
-                const next_char = self.src[self.i + 1];
+                const next_char: u7 = brk: {
+                    break :brk @intCast(self.src[self.i + 1]);
+                };
                 switch (next_char) {
                     // Backslash only applies to these characters
                     '$', '`', '"', '\\', '\n' => {

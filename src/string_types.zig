@@ -262,7 +262,39 @@ pub const SmolStr = packed struct {
     }
 
     pub fn appendChar(this: *SmolStr, allocator: std.mem.Allocator, char: u8) !void {
-        return try this.appendSlice(allocator, &[_]u8{char});
+        if (this.isInlined()) {
+            var inlined = this.toInlined();
+            if (inlined.len() + 1 > 15) {
+                var baby_list = try BabyList(u8).initCapacity(allocator, inlined.len() + 1);
+                baby_list.appendSliceAssumeCapacity(inlined.slice());
+                try baby_list.push(allocator, char);
+                // this.* = SmolStr.fromBabyList(baby_list);
+                this.__len = baby_list.len;
+                this.__ptr = baby_list.ptr;
+                this.cap = baby_list.cap;
+                this.markHeap();
+                return;
+            }
+            inlined.allChars()[inlined.len()] = char;
+            inlined.setLen(@intCast(inlined.len() + 1));
+            // this.* = SmolStr.fromInlined(inlined);
+            this.* = @bitCast(inlined);
+            this.markInlined();
+            return;
+        }
+
+        var baby_list = BabyList(u8){
+            .ptr = this.ptr(),
+            .len = this.__len,
+            .cap = this.cap,
+        };
+        try baby_list.push(allocator, char);
+
+        // this.* = SmolStr.fromBabyList(baby_list);
+        this.__len = baby_list.len;
+        this.__ptr = baby_list.ptr;
+        this.cap = baby_list.cap;
+        return;
     }
 
     pub fn appendSlice(this: *SmolStr, allocator: std.mem.Allocator, values: []const u8) !void {

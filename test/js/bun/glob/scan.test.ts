@@ -20,12 +20,10 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-import { expect, test, describe, beforeAll, afterAll } from "bun:test";
-import fg from "fast-glob";
 import { Glob, GlobScanOptions } from "bun";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import fg from "fast-glob";
 import * as path from "path";
-import { tempDirWithFiles, withoutAggressiveGC } from "harness";
-import { i } from "../http/js-sink-sourmap-fixture/index.mjs";
 import { tempFixturesDir } from "./util";
 
 let origAggressiveGC = Bun.unsafe.gcAggressionLevel();
@@ -161,7 +159,7 @@ describe("glob.match", async () => {
     const glob = new Glob("lmaowtf");
     expect(returnError(() => glob.scan())).toBeUndefined();
     // @ts-expect-error
-    expect(returnError(() => glob.scan("sldkfjsldfj"))).toBeDefined();
+    expect(returnError(() => glob.scan(123456))).toBeDefined();
     expect(returnError(() => glob.scan({}))).toBeUndefined();
     expect(returnError(() => glob.scan({ cwd: "" }))).toBeUndefined();
     // @ts-expect-error
@@ -378,4 +376,17 @@ describe("fast-glob e2e tests", async () => {
       expect(entries).toMatchSnapshot(pattern);
     }),
   );
+});
+
+test("glob.scan(string)", async () => {
+  const glob = new Glob("*.md");
+  const entries = await Array.fromAsync(glob.scan(path.join(import.meta.dir, "fixtures")));
+  expect(entries.length).toBeGreaterThan(0);
+});
+
+test("glob.scan('.')", async () => {
+  const glob = new Glob("*.md");
+  const entries = await Array.fromAsync(glob.scan("."));
+  // bun root dir
+  expect(entries).toContain("README.md");
 });

@@ -32,11 +32,15 @@ Symbol(Symbol Description)
   name: "bar"
 }
 Promise { <pending> }
+{}
 [Function]
 [Function]
 [class Foo]
 [class (anonymous)]
-{}
+Foo {}
+FooWithProp {
+  a: 1
+}
 [Function: foooo]
 /FooRegex/
 Is it a bug or a feature that formatting numbers like 123 is colored
@@ -109,3 +113,14 @@ MapIterator {
   },
 }
 MapIterator { } MapIterator { }
+NestedClass {
+  a: 1,
+  b: 2,
+  foo: FooWithProp {
+    a: 1
+  },
+  test: [Function: test]
+}
+myCustomName {
+  [Symbol(Symbol.toStringTag)]: "myCustomName"
+}

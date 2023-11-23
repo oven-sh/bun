@@ -60,6 +60,7 @@ pub const BunObject = struct {
     pub const SHA512 = Crypto.SHA512.getter;
     pub const SHA512_256 = Crypto.SHA512_256.getter;
     pub const TOML = Bun.getTOMLObject;
+    pub const Glob = Bun.getGlobConstructor;
     pub const Transpiler = Bun.getTranspilerConstructor;
     pub const argv = Bun.getArgv;
     pub const assetPrefix = Bun.getAssetPrefix;
@@ -106,6 +107,7 @@ pub const BunObject = struct {
         @export(BunObject.SHA512, .{ .name = getterName("SHA512") });
         @export(BunObject.SHA512_256, .{ .name = getterName("SHA512_256") });
         @export(BunObject.TOML, .{ .name = getterName("TOML") });
+        @export(BunObject.Glob, .{ .name = getterName("Glob") });
         @export(BunObject.Transpiler, .{ .name = getterName("Transpiler") });
         @export(BunObject.argv, .{ .name = getterName("argv") });
         @export(BunObject.assetPrefix, .{ .name = getterName("assetPrefix") });
@@ -243,6 +245,7 @@ const Which = @import("../../which.zig");
 const ErrorableString = JSC.ErrorableString;
 const is_bindgen = JSC.is_bindgen;
 const max_addressible_memory = std.math.maxInt(u56);
+const glob = @import("../../glob.zig");
 const Async = bun.Async;
 const SemverObject = @import("../../install/semver.zig").SemverObject;
 const Braces = @import("../../shell/braces.zig");
@@ -3271,6 +3274,13 @@ pub fn getTOMLObject(
     _: *JSC.JSObject,
 ) callconv(.C) JSC.JSValue {
     return TOMLObject.create(globalThis);
+}
+
+pub fn getGlobConstructor(
+    globalThis: *JSC.JSGlobalObject,
+    _: *JSC.JSObject,
+) callconv(.C) JSC.JSValue {
+    return JSC.API.Glob.getConstructor(globalThis);
 }
 
 pub fn getSemver(

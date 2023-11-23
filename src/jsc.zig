@@ -29,6 +29,7 @@ pub const Jest = @import("./bun.js/test/jest.zig");
 pub const Expect = @import("./bun.js/test/expect.zig");
 pub const Snapshot = @import("./bun.js/test/snapshot.zig");
 pub const API = struct {
+    pub const Glob = @import("./bun.js/api/glob.zig");
     pub const JSBundler = @import("./bun.js/api/JSBundler.zig").JSBundler;
     pub const BuildArtifact = @import("./bun.js/api/JSBundler.zig").BuildArtifact;
     pub const JSTranspiler = @import("./bun.js/api/JSTranspiler.zig");
@@ -45,6 +46,7 @@ pub const API = struct {
     pub const TCPSocket = @import("./bun.js/api/bun/socket.zig").TCPSocket;
     pub const TLSSocket = @import("./bun.js/api/bun/socket.zig").TLSSocket;
     pub const Listener = @import("./bun.js/api/bun/socket.zig").Listener;
+    pub const H2FrameParser = @import("./bun.js/api/bun/h2_frame_parser.zig").H2FrameParser;
 };
 pub const DNS = @import("./bun.js/api/bun/dns_resolver.zig");
 pub const FFI = @import("./bun.js/api/ffi.zig").FFI;

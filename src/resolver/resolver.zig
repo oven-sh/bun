@@ -579,7 +579,7 @@ pub const Resolver = struct {
             .timer = Timer.start() catch @panic("Timer fail"),
             .fs = _fs,
             .log = log,
-            .extension_order = opts.extension_order,
+            .extension_order = opts.extension_order.default.default,
             .care_about_browser_field = opts.target.isWebLike(),
         };
     }
@@ -771,8 +771,8 @@ pub const Resolver = struct {
         defer r.extension_order = original_order;
         r.extension_order = switch (kind) {
             .url, .at_conditional, .at => options.BundleOptions.Defaults.CSSExtensionOrder[0..],
-            .entry_point, .stmt, .dynamic => r.opts.esm_extension_order,
-            else => r.opts.extension_order,
+            .entry_point, .stmt, .dynamic => r.opts.extension_order.default.esm,
+            else => r.opts.extension_order.default.default,
         };
 
         if (FeatureFlags.tracing) {
@@ -1211,6 +1211,13 @@ pub const Resolver = struct {
             }
 
             if (check_relative) {
+                var prev_extension_order = r.extension_order;
+                defer {
+                    r.extension_order = prev_extension_order;
+                }
+                if (strings.pathContainsNodeModulesFolder(abs_path)) {
+                    r.extension_order = r.opts.extension_order.kind(kind, true);
+                }
                 if (r.loadAsFileOrDirectory(abs_path, kind)) |res| {
                     check_package = false;
                     result = Result{
@@ -1572,6 +1579,8 @@ pub const Resolver = struct {
                 if (r.debug_logs) |*debug| {
                     debug.addNoteFmt("Checking for a package in the directory \"{s}\"", .{abs_path});
                 }
+                var prev_extension_order = r.extension_order;
+                defer r.extension_order = prev_extension_order;
 
                 if (esm_) |esm| {
                     const abs_package_path = brk: {
@@ -1580,6 +1589,11 @@ pub const Resolver = struct {
                     };
 
                     if (r.dirInfoCached(abs_package_path) catch null) |pkg_dir_info| {
+                        r.extension_order = switch (kind) {
+                            .url, .at_conditional, .at => options.BundleOptions.Defaults.CSSExtensionOrder[0..],
+                            else => r.opts.extension_order.kind(kind, true),
+                        };
+
                         if (pkg_dir_info.package_json) |package_json| {
                             if (package_json.exports) |exports_map| {
 
@@ -2163,7 +2177,7 @@ pub const Resolver = struct {
             break :brk r.fs.absBuf(&parts, bufs(.esm_absolute_package_path_joined));
         };
 
-        var missing_suffix: string = undefined;
+        var missing_suffix: string = "";
 
         switch (esm_resolution.status) {
             .Exact, .ExactEndsWithStar => {
@@ -2175,11 +2189,12 @@ pub const Resolver = struct {
                     esm_resolution.status = .ModuleNotFound;
                     return null;
                 };
-                const base = std.fs.path.basename(abs_esm_path);
                 const extension_order = if (kind == .at or kind == .at_conditional)
                     r.extension_order
                 else
-                    r.opts.extension_order;
+                    r.opts.extension_order.kind(kind, resolved_dir_info.isInsideNodeModules());
+
+                const base = std.fs.path.basename(abs_esm_path);
                 const entry_query = entries.get(base) orelse {
                     const ends_with_star = esm_resolution.status == .ExactEndsWithStar;
                     esm_resolution.status = .ModuleNotFound;
@@ -2219,9 +2234,9 @@ pub const Resolver = struct {
                                     bun.copy(u8, file_name[index.len..], ext);
                                     const index_query = dir_entries.get(file_name);
                                     if (index_query != null and index_query.?.entry.kind(&r.fs.fs, r.store_fd) == .file) {
-                                        missing_suffix = std.fmt.allocPrint(r.allocator, "/{s}", .{file_name}) catch unreachable;
-                                        // defer r.allocator.free(missing_suffix);
                                         if (r.debug_logs) |*debug| {
+                                            missing_suffix = std.fmt.allocPrint(r.allocator, "/{s}", .{file_name}) catch unreachable;
+                                            defer r.allocator.free(missing_suffix);
                                             const parts = [_]string{ package_json.name, package_subpath };
                                             debug.addNoteFmt("The import {s} is missing the suffix {s}", .{ ResolvePath.join(parts, .auto), missing_suffix });
                                         }
@@ -3586,7 +3601,7 @@ pub const Resolver = struct {
         // https://github.com/microsoft/TypeScript/issues/4595
         if (strings.lastIndexOfChar(base, '.')) |last_dot| {
             const ext = base[last_dot..base.len];
-            if (strings.eqlComptime(ext, ".js") or strings.eqlComptime(ext, ".jsx")) {
+            if ((strings.eqlComptime(ext, ".js") or strings.eqlComptime(ext, ".jsx") and (!FeatureFlags.disable_auto_js_to_ts_in_node_modules or !strings.pathContainsNodeModulesFolder(path)))) {
                 const segment = base[0..last_dot];
                 var tail = bufs(.load_as_file)[path.len - base.len ..];
                 bun.copy(u8, tail, segment);
@@ -3739,14 +3754,14 @@ pub const Resolver = struct {
         }
         // }
 
-        if (parent != null) {
+        if (parent) |parent_| {
 
             // Propagate the browser scope into child directories
-            info.enclosing_browser_scope = parent.?.enclosing_browser_scope;
-            info.package_json_for_browser_field = parent.?.package_json_for_browser_field;
-            info.enclosing_tsconfig_json = parent.?.enclosing_tsconfig_json;
+            info.enclosing_browser_scope = parent_.enclosing_browser_scope;
+            info.package_json_for_browser_field = parent_.package_json_for_browser_field;
+            info.enclosing_tsconfig_json = parent_.enclosing_tsconfig_json;
 
-            if (parent.?.package_json) |parent_package_json| {
+            if (parent_.package_json) |parent_package_json| {
                 // https://github.com/oven-sh/bun/issues/229
                 if (parent_package_json.name.len > 0 or r.care_about_bin_folder) {
                     info.enclosing_package_json = parent_package_json;
@@ -3757,12 +3772,12 @@ pub const Resolver = struct {
                 }
             }
 
-            info.enclosing_package_json = info.enclosing_package_json orelse parent.?.enclosing_package_json;
-            info.package_json_for_dependencies = info.package_json_for_dependencies orelse parent.?.package_json_for_dependencies;
+            info.enclosing_package_json = info.enclosing_package_json orelse parent_.enclosing_package_json;
+            info.package_json_for_dependencies = info.package_json_for_dependencies orelse parent_.package_json_for_dependencies;
 
             // Make sure "absRealPath" is the real path of the directory (resolving any symlinks)
             if (!r.opts.preserve_symlinks) {
-                if (parent.?.getEntries(r.generation)) |parent_entries| {
+                if (parent_.getEntries(r.generation)) |parent_entries| {
                     if (parent_entries.get(base)) |lookup| {
                         if (entries.fd != 0 and lookup.entry.cache.fd == 0 and r.store_fd) lookup.entry.cache.fd = entries.fd;
                         const entry = lookup.entry;
@@ -3773,7 +3788,7 @@ pub const Resolver = struct {
                                 logs.addNote(std.fmt.allocPrint(r.allocator, "Resolved symlink \"{s}\" to \"{s}\"", .{ path, symlink }) catch unreachable);
                             }
                             info.abs_real_path = symlink;
-                        } else if (parent.?.abs_real_path.len > 0) {
+                        } else if (parent_.abs_real_path.len > 0) {
                             // this might leak a little i'm not sure
                             const parts = [_]string{ parent.?.abs_real_path, base };
                             symlink = r.fs.dirname_store.append(string, r.fs.absBuf(&parts, bufs(.dir_info_uncached_filename))) catch unreachable;
@@ -3786,6 +3801,10 @@ pub const Resolver = struct {
                         }
                     }
                 }
+            }
+
+            if (parent_.isNodeModules() or parent_.isInsideNodeModules()) {
+                info.flags.setPresent(.inside_node_modules, true);
             }
         }
 

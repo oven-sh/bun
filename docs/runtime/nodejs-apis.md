@@ -64,7 +64,7 @@ Some methods are not optimized yet.
 
 ### [`node:http2`](https://nodejs.org/api/http2.html)
 
-🔴 Not implemented.
+🟡 Client is supported, but server isn't yet.
 
 ### [`node:https`](https://nodejs.org/api/https.html)
 

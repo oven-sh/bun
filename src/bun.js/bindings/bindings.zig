@@ -5784,6 +5784,11 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
             return nextMaybeFirstValue(self, .zero);
         }
 
+        pub fn reset(self: *Self) void {
+            self.iter_i = 0;
+            self.i = 0;
+        }
+
         pub fn nextMaybeFirstValue(self: *Self, first_value: JSValue) ?ZigString {
             if (self.iter_i >= self.len) {
                 self.i = self.iter_i;

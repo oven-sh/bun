@@ -1628,7 +1628,7 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
 
     if (comptime Environment.isWindows) {
         // TODO: make this executable
-        bun.todo(@src(), {});
+        @panic("TODO on Windows");
     } else {
         _ = C.fchmod(
             tmpfile.fd,

@@ -1087,8 +1087,7 @@ pub const GetAddrInfoRequest = struct {
 
             pub fn run(this: *@This()) void {
                 if (comptime Environment.isWindows) {
-                    bun.todo(@src(), {});
-                    return;
+                    @panic("TODO on Windows");
                 }
                 const query = this.query;
                 defer bun.default_allocator.free(bun.constStrToU8(query.name));
@@ -1843,8 +1842,7 @@ pub const DNSResolver = struct {
         writable: bool,
     ) void {
         if (comptime Environment.isWindows) {
-            bun.todo(@src(), {});
-            return;
+            @panic("TODO on Windows");
         }
 
         var vm = this.vm;

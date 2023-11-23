@@ -1310,7 +1310,7 @@ pub const Error = enum(i32) {
 
     pub fn initEAI(rc: i32) ?Error {
         if (comptime bun.Environment.isWindows) {
-            return bun.todo(@src(), Error.ENOTIMP);
+            @panic("TODO on Windows");
         }
 
         return switch (@as(std.os.system.EAI, @enumFromInt(rc))) {

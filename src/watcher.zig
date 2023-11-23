@@ -386,8 +386,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             errdefer allocator.destroy(watcher);
 
             if (comptime bun.Environment.isWindows) {
-                bun.todo(@src(), {});
-                return error.NotImplemented;
+                @panic("TODO on Windows");
             }
 
             if (!PlatformWatcher.isRunning()) {

@@ -197,7 +197,7 @@ pub fn copyFileZSlowWithHandle(in_handle: std.os.fd_t, to_dir: std.os.fd_t, dest
 
 pub fn kindFromMode(mode: os.mode_t) std.fs.File.Kind {
     if (comptime Environment.isWindows) {
-        return bun.todo(@src(), std.fs.File.Kind.unknown);
+        @panic("TODO on Windows");
     }
     return switch (mode & os.S.IFMT) {
         os.S.IFBLK => std.fs.File.Kind.block_device,
@@ -395,7 +395,7 @@ fn _dlsym(handle: ?*anyopaque, name: [:0]const u8) ?*anyopaque {
         return std.c.dlsym(handle, name.ptr);
     }
 
-    return bun.todo(@src(), null);
+    @compileError("dlsym unimplemented for this target");
 }
 
 pub fn dlsymWithHandle(comptime Type: type, comptime name: [:0]const u8, comptime handle_getter: fn () ?*anyopaque) ?Type {

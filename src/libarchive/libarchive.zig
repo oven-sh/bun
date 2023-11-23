@@ -557,20 +557,20 @@ pub const Archive = struct {
                         Kind.sym_link => {
                             const link_target = lib.archive_entry_symlink(entry).?;
                             if (comptime Environment.isWindows) {
-                                bun.todo(@src(), {});
-                            } else {
-                                std.os.symlinkatZ(link_target, dir_fd, pathname) catch |err| brk: {
-                                    switch (err) {
-                                        error.AccessDenied, error.FileNotFound => {
-                                            dir.makePath(std.fs.path.dirname(slice) orelse return err) catch {};
-                                            break :brk try std.os.symlinkatZ(link_target, dir_fd, pathname);
-                                        },
-                                        else => {
-                                            return err;
-                                        },
-                                    }
-                                };
+                                @panic("TODO on Windows");
                             }
+                            std.os.symlinkatZ(link_target, dir_fd, pathname) catch |err| brk: {
+                                switch (err) {
+                                    error.AccessDenied, error.FileNotFound => {
+                                        dir.makePath(std.fs.path.dirname(slice) orelse return err) catch {};
+                                        break :brk try std.os.symlinkatZ(link_target, dir_fd, pathname);
+                                    },
+                                    else => {
+                                        return err;
+                                    },
+                                }
+                            };
+                            
                         },
                         Kind.file => {
                             const mode = @as(std.os.mode_t, @intCast(lib.archive_entry_perm(entry)));

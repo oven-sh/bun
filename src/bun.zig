@@ -636,7 +636,7 @@ pub fn ensureNonBlocking(fd: anytype) void {
 const global_scope_log = Output.scoped(.bun, false);
 pub fn isReadable(fd: FileDescriptor) PollFlag {
     if (comptime Environment.isWindows) {
-        return todo(@src(), PollFlag.not_ready);
+        @panic("TODO on Windows");
     }
 
     var polls = [_]std.os.pollfd{
@@ -660,7 +660,7 @@ pub fn isReadable(fd: FileDescriptor) PollFlag {
 pub const PollFlag = enum { ready, not_ready, hup };
 pub fn isWritable(fd: FileDescriptor) PollFlag {
     if (comptime Environment.isWindows) {
-        return todo(@src(), PollFlag.not_ready);
+        @panic("TODO on Windows");
     }
 
     var polls = [_]std.os.pollfd{
@@ -1810,7 +1810,7 @@ pub inline fn assertComptime() void {
     }
 }
 
-const TODO_LOG = Output.scoped(.TODO, true);
+const TODO_LOG = Output.scoped(.TODO, false);
 pub inline fn todo(src: std.builtin.SourceLocation, value: anytype) @TypeOf(value) {
     if (comptime Environment.allow_assert) {
         TODO_LOG("{s}() at {s}:{d}:{d}", .{ src.fn_name, src.file, src.line, src.column });
@@ -1991,7 +1991,7 @@ pub fn isRegularFile(mode: Mode) bool {
     }
 
     if (comptime Environment.isWindows) {
-        return todo(@src(), true);
+        @panic("TODO on Windows");
     }
 
     @compileError("Unsupported platform");

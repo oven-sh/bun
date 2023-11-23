@@ -4005,7 +4005,6 @@ pub const FIFO = struct {
             else
                 null,
         );
-        std.debug.print("read_result: {}\n", .{read_result});
 
         if (read_result == .read) {
             if (this.to_read) |*to_read| {
@@ -4102,6 +4101,7 @@ pub const FIFO = struct {
         this: *FIFO,
         buf: []u8,
     ) ReadResult {
+        std.debug.print("DO READ\n", .{});
         switch (Syscall.sys_uv.read(this.fd, buf)) {
             .err => |err| {
                 const retry = E.AGAIN;
@@ -4242,27 +4242,27 @@ pub const File = struct {
 
         if (file.pathlike != .path and !(file.is_atty orelse false)) {
             if (comptime Environment.isWindows) {
-                bun.todo(@src(), {});
-            } else {
-                // ensure we have non-blocking IO set
-                switch (Syscall.fcntl(fd, std.os.F.GETFL, 0)) {
-                    .err => return .{ .err = Syscall.Error.fromCode(E.BADF, .fcntl) },
-                    .result => |flags| {
-                        // if we do not, clone the descriptor and set non-blocking
-                        // it is important for us to clone it so we don't cause Weird Things to happen
-                        if ((flags & std.os.O.NONBLOCK) == 0) {
-                            fd = switch (Syscall.fcntl(fd, std.os.F.DUPFD, 0)) {
-                                .result => |_fd| @as(@TypeOf(fd), @intCast(_fd)),
-                                .err => |err| return .{ .err = err },
-                            };
+                @panic("TODO on Windows");
+            }
+            
+            // ensure we have non-blocking IO set
+            switch (Syscall.fcntl(fd, std.os.F.GETFL, 0)) {
+                .err => return .{ .err = Syscall.Error.fromCode(E.BADF, .fcntl) },
+                .result => |flags| {
+                    // if we do not, clone the descriptor and set non-blocking
+                    // it is important for us to clone it so we don't cause Weird Things to happen
+                    if ((flags & std.os.O.NONBLOCK) == 0) {
+                        fd = switch (Syscall.fcntl(fd, std.os.F.DUPFD, 0)) {
+                            .result => |_fd| @as(@TypeOf(fd), @intCast(_fd)),
+                            .err => |err| return .{ .err = err },
+                        };
 
-                            switch (Syscall.fcntl(fd, std.os.F.SETFL, flags | std.os.O.NONBLOCK)) {
-                                .err => |err| return .{ .err = err },
-                                .result => |_| {},
-                            }
+                        switch (Syscall.fcntl(fd, std.os.F.SETFL, flags | std.os.O.NONBLOCK)) {
+                            .err => |err| return .{ .err = err },
+                            .result => |_| {},
                         }
-                    },
-                }
+                    }
+                },
             }
         }
         var size: Blob.SizeType = 0;
@@ -4732,8 +4732,7 @@ pub const FileReader = struct {
                     const is_fifo = if (comptime Environment.isPosix)
                         std.os.S.ISFIFO(readable_file.mode) or std.os.S.ISCHR(readable_file.mode)
                     else
-                        // TODO: windows
-                        bun.todo(@src(), false);
+                        @panic("TODO on Windows");
 
                     // for our purposes, ISCHR and ISFIFO are the same
                     if (is_fifo) {
@@ -4882,7 +4881,7 @@ pub fn NewReadyWatcher(
 
             if (comptime @hasField(Context, "mode")) {
                 if (comptime Environment.isWindows) {
-                    return bun.todo(@src(), false);
+                    @panic("TODO on Windows");
                 }
 
                 return std.os.S.ISFIFO(this.mode);
@@ -4898,8 +4897,7 @@ pub fn NewReadyWatcher(
 
         pub fn unwatch(this: *Context, fd_: anytype) void {
             if (comptime Environment.isWindows) {
-                bun.todo(@src(), {});
-                return;
+                @panic("TODO on Windows");
             }
 
             const fd = @as(c_int, @intCast(fd_));

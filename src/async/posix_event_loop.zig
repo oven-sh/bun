@@ -689,7 +689,7 @@ pub const FilePoll = struct {
                 };
             }
         } else {
-            bun.todo(@src(), {});
+            @compileError("unsupported platform");
         }
         this.activate(loop);
         this.flags.insert(switch (flag) {
@@ -831,7 +831,7 @@ pub const FilePoll = struct {
                 else => {},
             }
         } else {
-            bun.todo(@src(), {});
+            @compileError("unsupported platform");
         }
 
         this.flags.remove(.needs_rearm);

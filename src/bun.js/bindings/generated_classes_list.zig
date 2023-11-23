@@ -19,6 +19,7 @@ pub const Classes = struct {
     pub const ExpectStringMatching = JSC.Expect.ExpectStringMatching;
     pub const ExpectArrayContaining = JSC.Expect.ExpectArrayContaining;
     pub const FileSystemRouter = JSC.API.FileSystemRouter;
+    pub const Glob = JSC.API.Glob;
     pub const Bundler = JSC.API.JSBundler;
     pub const JSBundler = Bundler;
     pub const Transpiler = JSC.API.JSTranspiler;

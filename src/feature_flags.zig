@@ -178,3 +178,6 @@ pub const streaming_file_uploads_for_http_client = true;
 pub const concurrent_transpiler = true;
 
 pub const disable_on_windows_due_to_bugs = env.isWindows;
+
+// https://github.com/oven-sh/bun/issues/5426#issuecomment-1813865316
+pub const disable_auto_js_to_ts_in_node_modules = true;

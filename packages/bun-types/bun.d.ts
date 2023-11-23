@@ -4324,18 +4324,14 @@ declare module "bun" {
     readonly port: number;
     readonly address: SocketAddress;
     readonly binaryType: BinaryType;
-
     send(
       data: string | ArrayBufferView | ArrayBufferLike,
       port: number,
       address: string,
-    ): number;
-
+    ): void;
     reload(handler: UDPSocketOptions): void;
-
     ref(): void;
     unref(): void;
-
     close(): void;
   }
 

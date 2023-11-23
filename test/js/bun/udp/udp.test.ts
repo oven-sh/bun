@@ -232,8 +232,7 @@ describe("bind()", () => {
     });
     const client = bind({});
     test(label, () => {
-      const sent = client.send(data, server.port, "127.0.0.1");
-      expect(sent).toBe(bytes.length);
+      client.send(data, server.port, "127.0.0.1");
       expect(onData).toHaveBeenCalledTimes(1);
       expect(onData.mock.calls[0]).toHaveLength(4);
       expect(onData.mock.calls[0][0]).toStrictEqual(server);

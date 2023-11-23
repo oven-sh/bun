@@ -305,9 +305,8 @@ pub const UDPSocket = struct {
             if (arg0.asArrayBuffer(globalThis)) |arrayBuffer| {
                 break :init arrayBuffer.slice();
             } else if (bun.String.tryFromJS(arg0, globalThis)) |value| {
-                var str = value.toUTF8(default_allocator);
-                defer str.deinit();
-                break :init str.slice();
+                const slice = value.toUTF8(default_allocator);
+                break :init slice.slice();
             } else {
                 globalThis.throwInvalidArguments("Expected ArrayBufferView or string as first argument", .{});
                 return .zero;
@@ -328,9 +327,8 @@ pub const UDPSocket = struct {
         const arg2 = arguments.ptr[2];
         const address = init: {
             if (bun.String.tryFromJS(arg2, globalThis)) |value| {
-                var str = value.toUTF8(default_allocator);
-                defer str.deinit();
-                break :init str.slice();
+                const slice = value.toUTF8(default_allocator);
+                break :init slice.slice();
             } else {
                 globalThis.throwInvalidArguments("Expected string as third argument", .{});
                 return .zero;
@@ -355,16 +353,14 @@ pub const UDPSocket = struct {
 
         const buf = this.send_buf;
         uws.us_udp_buffer_set_packet_payload(buf, 0, 0, payload.ptr, @intCast(payload.len), @ptrCast(&addr));
-        const sent = uws.us_udp_socket_send(this.socket, buf, 1);
-
-        if (sent < 0) {
+        if (uws.us_udp_socket_send(this.socket, buf, 1) == -1) {
             const errno = @as(std.c.E, @enumFromInt(std.c._errno().*));
             const err = bun.sys.Error.fromCode(errno, .sendmmsg);
             globalThis.throwValue(err.toSystemError().toErrorInstance(globalThis));
             return .zero;
         }
 
-        return JSValue.jsNumber(sent);
+        return .undefined;
     }
 
     pub fn ref(this: *This, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {

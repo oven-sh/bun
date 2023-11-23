@@ -686,7 +686,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port) {
 int bsd_udp_packet_buffer_ecn(void *msgvec, int index) {
 
 #if defined(_WIN32) || defined(__APPLE__)
-    printf("ECN not supported!\n");
+    //printf("ECN not supported!\n");
 #else
     // we should iterate all control messages once, after recvmmsg and then only fetch them with these functions
     struct msghdr *mh = &((struct mmsghdr *) msgvec)[index].msg_hdr;
@@ -709,8 +709,7 @@ int bsd_udp_packet_buffer_ecn(void *msgvec, int index) {
     }
 #endif
 
-    printf("We got no ECN!\n");
-
+    //printf("We got no ECN!\n");
     return 0; // no ecn defaults to 0
 }
 

@@ -271,6 +271,12 @@ pub const FilePoll = struct {
         return this.flags.contains(.has_incremented_poll_count);
     }
 
+    pub fn onEnded(this: *FilePoll, vm: *JSC.VirtualMachine) void {
+        this.flags.remove(.keeps_event_loop_alive);
+        this.flags.insert(.closed);
+        this.deactivate(vm.event_loop_handle.?);
+    }
+
     /// Prevent a poll from keeping the process alive.
     pub fn unref(this: *FilePoll, vm: *JSC.VirtualMachine) void {
         if (!this.canUnref())

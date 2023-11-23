@@ -1825,7 +1825,7 @@ pub extern fn uv_send_buffer_size(handle: *uv_handle_t, value: [*c]c_int) c_int;
 pub extern fn uv_recv_buffer_size(handle: *uv_handle_t, value: [*c]c_int) c_int;
 pub extern fn uv_fileno(handle: *const uv_handle_t, fd: [*c]uv_os_fd_t) c_int;
 pub extern fn uv_buf_init(base: [*]u8, len: c_uint) uv_buf_t;
-pub extern fn uv_pipe(fds: [*c]uv_file, read_flags: c_int, write_flags: c_int) c_int;
+pub extern fn uv_pipe(fds: *[2]uv_file, read_flags: c_int, write_flags: c_int) ReturnCode;
 pub extern fn uv_socketpair(@"type": c_int, protocol: c_int, socket_vector: [*c]uv_os_sock_t, flags0: c_int, flags1: c_int) c_int;
 pub extern fn uv_stream_get_write_queue_size(stream: [*c]const uv_stream_t) usize;
 pub extern fn uv_listen(stream: [*c]uv_stream_t, backlog: c_int, cb: uv_connection_cb) c_int;

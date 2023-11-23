@@ -159,9 +159,6 @@ pub const Subprocess = struct {
 
     /// This disables the keeping process alive flag on the poll and also in the stdin, stdout, and stderr
     pub fn unref(this: *Subprocess, comptime deactivate_poll_ref: bool) void {
-        if(Environment.isWindows) {
-            @panic("lose");
-        }
         var vm = this.globalThis.bunVM();
 
         switch (this.poll) {
@@ -271,15 +268,15 @@ pub const Subprocess = struct {
                 .pipe => brk: {
                     break :brk .{
                         .pipe = .{
-                            .buffer = BufferedOutput.initWithAllocator(allocator, fd, max_size),
+                            .buffer = BufferedOutput.initWithAllocator(allocator, bun.toFD(fd), max_size),
                         },
                     };
                 },
                 .path => Readable{ .ignore = {} },
-                .blob, .fd => Readable{ .fd = @as(bun.FileDescriptor, @intCast(fd)) },
+                .blob, .fd => Readable{ .fd = bun.toFD(fd) },
                 .array_buffer => Readable{
                     .pipe = .{
-                        .buffer = BufferedOutput.initWithSlice(fd, stdio.array_buffer.slice()),
+                        .buffer = BufferedOutput.initWithSlice(bun.toFD(fd), stdio.array_buffer.slice()),
                     },
                 },
             };
@@ -424,7 +421,7 @@ pub const Subprocess = struct {
 
     pub fn tryKill(this: *Subprocess, sig: i32) JSC.Node.Maybe(void) {
         if(Environment.isWindows) {
-            @panic("lose");
+            @panic("todo: tryKill");
         }
 
         if (this.hasExited()) {
@@ -960,9 +957,10 @@ pub const Subprocess = struct {
         pub fn init(stdio: Stdio, fd: i32, globalThis: *JSC.JSGlobalObject) !Writable {
             switch (stdio) {
                 .pipe => {
+                    if(Environment.isWindows)@panic("TODO");
                     var sink = try globalThis.bunVM().allocator.create(JSC.WebCore.FileSink);
                     sink.* = .{
-                        .fd = fd,
+                        .fd = bun.toFD(fd),
                         .buffer = bun.ByteList{},
                         .allocator = globalThis.bunVM().allocator,
                         .auto_close = true,
@@ -983,7 +981,7 @@ pub const Subprocess = struct {
                     return Writable{ .pipe = sink };
                 },
                 .array_buffer, .blob => {
-                    var buffered_input: BufferedInput = .{ .fd = fd, .source = undefined };
+                    var buffered_input: BufferedInput = .{ .fd = bun.toFD(fd), .source = undefined };
                     switch (stdio) {
                         .array_buffer => |array_buffer| {
                             buffered_input.source = .{ .array_buffer = array_buffer };
@@ -996,7 +994,7 @@ pub const Subprocess = struct {
                     return Writable{ .buffered_input = buffered_input };
                 },
                 .fd => {
-                    return Writable{ .fd = @as(bun.FileDescriptor, @intCast(fd)) };
+                    return Writable{ .fd = bun.toFD(fd) };
                 },
                 .inherit => {
                     return Writable{ .inherit = {} };
@@ -1425,40 +1423,14 @@ pub const Subprocess = struct {
             };
             const env: [*:null]?[*:0]const u8 = @ptrCast(env_array.items.ptr);
 
-            const stdin_pipe = if (stdio[0].isPiped()) os.pipe2(0) catch |err| {
-                globalThis.throw("failed to create stdin pipe: {s}", .{@errorName(err)});
-                return .zero;
-            } else undefined;
-
-            const stdout_pipe = if (stdio[1].isPiped()) os.pipe2(0) catch |err| {
-                globalThis.throw("failed to create stdout pipe: {s}", .{@errorName(err)});
-                return .zero;
-            } else undefined;
-
-            const stderr_pipe = if (stdio[2].isPiped()) os.pipe2(0) catch |err| {
-                globalThis.throw("failed to create stderr pipe: {s}", .{@errorName(err)});
-                return .zero;
-            } else undefined;
+            const stdin_pipe = if (stdio[0].isPiped()) stdio[0].makeUVPipe(globalThis) orelse return .zero else undefined;
+            const stdout_pipe = if (stdio[1].isPiped()) stdio[1].makeUVPipe(globalThis) orelse return .zero else undefined;
+            const stderr_pipe = if (stdio[2].isPiped()) stdio[2].makeUVPipe(globalThis) orelse return .zero else undefined;
 
             var uv_stdio = [3]uv.uv_stdio_container_s{
-                uv.uv_stdio_container_s{
-                    .flags = uv.UV_INHERIT_FD,
-                    .data = .{
-                        .fd = bun.posix.STDIN_FD,
-                    }
-                },
-                uv.uv_stdio_container_s{
-                    .flags = uv.UV_INHERIT_FD,
-                    .data = .{
-                        .fd = bun.posix.STDOUT_FD,
-                    }
-                },
-                uv.uv_stdio_container_s{
-                    .flags = uv.UV_INHERIT_FD,
-                    .data = .{
-                        .fd = bun.posix.STDERR_FD,
-                    }
-                },
+                stdio[0].setUpChildIoUvSpawn(bun.posix.STDIN_FD, stdin_pipe[0]) catch |err| return globalThis.handleError(err, "in setting up uv_process stdin"),
+                stdio[1].setUpChildIoUvSpawn(bun.posix.STDOUT_FD, stdout_pipe[1]) catch |err| return globalThis.handleError(err, "in setting up uv_process stdout"),
+                stdio[2].setUpChildIoUvSpawn(bun.posix.STDERR_FD, stderr_pipe[1]) catch |err| return globalThis.handleError(err, "in setting up uv_process stderr"),
             };
 
             var cwd_resolver = bun.path.PosixToWinNormalizer{};
@@ -1491,13 +1463,13 @@ pub const Subprocess = struct {
                 .globalThis = globalThis,
                 .pid = handle.pid,
                 .pidfd = 0,
-                .stdin = Writable.init(stdio[bun.STDIN_FD], stdin_pipe[1], globalThis) catch {
+                .stdin = Writable.init(stdio[0], stdin_pipe[1], globalThis) catch {
                     globalThis.throwOutOfMemory();
                     return .zero;
                 },
                 // stdout and stderr only uses allocator and default_max_buffer_size if they are pipes and not a array buffer
-                .stdout = Readable.init(stdio[bun.STDOUT_FD], stdout_pipe[0], jsc_vm.allocator, default_max_buffer_size),
-                .stderr = Readable.init(stdio[bun.STDERR_FD], stderr_pipe[0], jsc_vm.allocator, default_max_buffer_size),
+                .stdout = Readable.init(stdio[1], stdout_pipe[0], jsc_vm.allocator, default_max_buffer_size),
+                .stderr = Readable.init(stdio[2], stderr_pipe[0], jsc_vm.allocator, default_max_buffer_size),
                 .on_exit_callback = if (on_exit_callback != .zero) JSC.Strong.create(on_exit_callback, globalThis) else .{},
                 
                 .ipc_mode = ipc_mode,
@@ -2171,6 +2143,45 @@ pub const Subprocess = struct {
                     try actions.openZ(std_fileno, "/dev/null", flag, 0o664);
                 },
             }
+        }
+
+        fn setUpChildIoUvSpawn(
+            stdio: @This(),
+            std_fileno: i32,
+            pipe_fd: i32,
+        ) !uv.uv_stdio_container_s {
+            return switch (stdio) {
+                .array_buffer, .blob, .pipe => uv.uv_stdio_container_s{
+                    .flags = uv.UV_INHERIT_FD,
+                    .data = .{ .fd = pipe_fd },
+                },
+                .fd => |fd| uv.uv_stdio_container_s{
+                    .flags = uv.UV_INHERIT_FD,
+                    .data = .{ .fd = bun.uvfdcast(fd) },
+                },
+                .path => |pathlike| {
+                    _ = pathlike;
+                    @panic("TODO");
+                },
+                .inherit => uv.uv_stdio_container_s{
+                    .flags = uv.UV_INHERIT_FD,
+                    .data = .{ .fd = std_fileno },
+                },
+                .ignore => uv.uv_stdio_container_s{
+                    .flags = uv.UV_IGNORE,
+                    .data = undefined,
+                },
+            };
+        }
+
+        pub fn makeUVPipe(stdio: @This(), global: *JSGlobalObject) ?[2]uv.uv_file {
+            std.debug.assert(stdio.isPiped());
+            var pipe: [2]uv.uv_file = undefined;
+            if(uv.uv_pipe(&pipe, 0, 0).errEnum()) |errno| {
+                global.throwValue(bun.sys.Error.fromCode(errno, .uv_pipe).toJSC(global));
+                return null;
+            }
+            return pipe;
         }
     };
 

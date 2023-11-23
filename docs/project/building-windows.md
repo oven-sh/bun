@@ -93,3 +93,7 @@ If this was successful, you should have a `bun-debug.exe` in the `build` folder.
 ### .rc file fails to build
 
 `llvm-rc.exe` is odd. don't use it. use `rc.exe`, to do this make sure you are in a visual studio dev terminal, check `rc /?` to ensure it is `Microsoft Resource Compiler`
+
+### failed to write output 'bun-debug.exe': permission denied
+
+you cannot overwrite `bun-debug.exe` if it is already open. you likely have a running instance, maybe in the vscode debugger?

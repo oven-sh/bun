@@ -4005,6 +4005,7 @@ pub const FIFO = struct {
             else
                 null,
         );
+        std.debug.print("read_result: {}\n", .{read_result});
 
         if (read_result == .read) {
             if (this.to_read) |*to_read| {
@@ -4064,12 +4065,6 @@ pub const FIFO = struct {
         /// provided via kqueue(), only on macOS
         kqueue_read_amt: ?u32,
     ) ReadResult {
-        if (comptime Environment.isWindows) {
-            return ReadResult{
-                .err = Syscall.Error.todo(),
-            };
-        }
-
         const available_to_read = this.getAvailableToRead(
             if (kqueue_read_amt != null)
                 @as(i64, @intCast(kqueue_read_amt.?))
@@ -4107,7 +4102,7 @@ pub const FIFO = struct {
         this: *FIFO,
         buf: []u8,
     ) ReadResult {
-        switch (Syscall.read(this.fd, buf)) {
+        switch (Syscall.sys_uv.read(this.fd, buf)) {
             .err => |err| {
                 const retry = E.AGAIN;
                 const errno: E = brk: {

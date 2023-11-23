@@ -17,6 +17,8 @@ const linux = os.linux;
 const Maybe = JSC.Maybe;
 const kernel32 = bun.windows;
 
+pub const sys_uv = if(Environment.isWindows) @import("./sys_uv.zig") else Syscall;
+
 const log = bun.Output.scoped(.SYS, false);
 pub const syslog = log;
 
@@ -117,6 +119,7 @@ pub const Tag = enum(u8) {
     preadv,
 
     uv_spawn,
+    uv_pipe,
 
     WriteFile,
     NtQueryDirectoryFile,
@@ -147,8 +150,7 @@ pub fn getcwd(buf: *[bun.MAX_PATH_BYTES]u8) Maybe([]const u8) {
         Result.errnoSys(0, .getcwd).?;
 }
 
-pub fn fchmod(fd_: bun.FileDescriptor, mode: bun.Mode) Maybe(void) {
-    const fd = bun.fdcast(fd_);
+pub fn fchmod(fd: bun.FileDescriptor, mode: bun.Mode) Maybe(void) {
     return Maybe(void).errnoSys(C.fchmod(fd, mode), .fchmod) orelse
         Maybe(void).success;
 }
@@ -298,8 +300,7 @@ pub fn mkdirOSPath(file_path: bun.OSPathSlice, flags: bun.Mode) Maybe(void) {
     };
 }
 
-pub fn fcntl(fd_: bun.FileDescriptor, cmd: i32, arg: usize) Maybe(usize) {
-    const fd = bun.fdcast(fd_);
+pub fn fcntl(fd: bun.FileDescriptor, cmd: i32, arg: usize) Maybe(usize) {
     const result = fcntl_symbol(fd, cmd, arg);
     if (Maybe(usize).errnoSys(result, .fcntl)) |err| return err;
     return .{ .result = @as(usize, @intCast(result)) };
@@ -647,33 +648,36 @@ pub const max_count = switch (builtin.os.tag) {
     else => std.math.maxInt(isize),
 };
 
-pub fn write(fd_: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
-    const fd = bun.fdcast(fd_);
+pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
     const adjusted_len = @min(max_count, bytes.len);
 
-    if (comptime Environment.isMac) {
-        const rc = system.@"write$NOCANCEL"(fd, bytes.ptr, adjusted_len);
-        log("write({d}, {d}) = {d}", .{ fd, adjusted_len, rc });
-
-        if (Maybe(usize).errnoSysFd(rc, .write, fd)) |err| {
-            return err;
-        }
-
-        return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
-    } else {
-        while (true) {
-            const rc = sys.write(fd, bytes.ptr, adjusted_len);
+    return switch(Environment.os) {
+        .mac => {
+            const rc = system.@"write$NOCANCEL"(fd, bytes.ptr, adjusted_len);
             log("write({d}, {d}) = {d}", .{ fd, adjusted_len, rc });
 
             if (Maybe(usize).errnoSysFd(rc, .write, fd)) |err| {
-                if (err.getErrno() == .INTR) continue;
                 return err;
             }
 
             return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
-        }
-        unreachable;
-    }
+        },
+        .linux => {
+            while (true) {
+                const rc = sys.write(fd, bytes.ptr, adjusted_len);
+                log("write({d}, {d}) = {d}", .{ fd, adjusted_len, rc });
+
+                if (Maybe(usize).errnoSysFd(rc, .write, fd)) |err| {
+                    if (err.getErrno() == .INTR) continue;
+                    return err;
+                }
+
+                return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
+            }
+        },
+        .windows => sys_uv.write(fd, bytes),
+        else => @compileError("Not implemented yet"),
+    };
 }
 
 fn veclen(buffers: anytype) usize {
@@ -684,8 +688,7 @@ fn veclen(buffers: anytype) usize {
     return len;
 }
 
-pub fn writev(fd_: bun.FileDescriptor, buffers: []std.os.iovec) Maybe(usize) {
-    const fd = bun.fdcast(fd_);
+pub fn writev(fd: bun.FileDescriptor, buffers: []std.os.iovec) Maybe(usize) {
     if (comptime Environment.isMac) {
         const rc = writev_sym(fd, @as([*]std.os.iovec_const, @ptrCast(buffers.ptr)), @as(i32, @intCast(buffers.len)));
         if (comptime Environment.allow_assert)
@@ -713,8 +716,7 @@ pub fn writev(fd_: bun.FileDescriptor, buffers: []std.os.iovec) Maybe(usize) {
     }
 }
 
-pub fn pwritev(fd_: bun.FileDescriptor, buffers: []std.os.iovec, position: isize) Maybe(usize) {
-    const fd = bun.fdcast(fd_);
+pub fn pwritev(fd: bun.FileDescriptor, buffers: []std.os.iovec, position: isize) Maybe(usize) {
     if (comptime Environment.isMac) {
         const rc = pwritev_sym(fd, @as([*]std.os.iovec_const, @ptrCast(buffers.ptr)), @as(i32, @intCast(buffers.len)), position);
         if (comptime Environment.allow_assert)
@@ -742,8 +744,7 @@ pub fn pwritev(fd_: bun.FileDescriptor, buffers: []std.os.iovec, position: isize
     }
 }
 
-pub fn readv(fd_: bun.FileDescriptor, buffers: []std.os.iovec) Maybe(usize) {
-    const fd = bun.fdcast(fd_);
+pub fn readv(fd: bun.FileDescriptor, buffers: []std.os.iovec) Maybe(usize) {
     if (comptime Environment.isMac) {
         const rc = readv_sym(fd, buffers.ptr, @as(i32, @intCast(buffers.len)));
         if (comptime Environment.allow_assert)
@@ -771,8 +772,7 @@ pub fn readv(fd_: bun.FileDescriptor, buffers: []std.os.iovec) Maybe(usize) {
     }
 }
 
-pub fn preadv(fd_: bun.FileDescriptor, buffers: []std.os.iovec, position: isize) Maybe(usize) {
-    const fd = bun.fdcast(fd_);
+pub fn preadv(fd: bun.FileDescriptor, buffers: []std.os.iovec, position: isize) Maybe(usize) {
     if (comptime Environment.isMac) {
         const rc = preadv_sym(fd, buffers.ptr, @as(i32, @intCast(buffers.len)), position);
         if (comptime Environment.allow_assert)
@@ -837,8 +837,7 @@ else
 
 const fcntl_symbol = system.fcntl;
 
-pub fn pread(fd_: bun.FileDescriptor, buf: []u8, offset: i64) Maybe(usize) {
-    const fd = bun.fdcast(fd_);
+pub fn pread(fd: bun.FileDescriptor, buf: []u8, offset: i64) Maybe(usize) {
     const adjusted_len = @min(buf.len, max_count);
 
     const ioffset = @as(i64, @bitCast(offset)); // the OS treats this as unsigned
@@ -858,8 +857,7 @@ const pwrite_sym = if (builtin.os.tag == .linux and builtin.link_libc)
 else
     sys.pwrite;
 
-pub fn pwrite(fd_: bun.FileDescriptor, bytes: []const u8, offset: i64) Maybe(usize) {
-    const fd = bun.fdcast(fd_);
+pub fn pwrite(fd: bun.FileDescriptor, bytes: []const u8, offset: i64) Maybe(usize) {
     const adjusted_len = @min(bytes.len, max_count);
 
     const ioffset = @as(i64, @bitCast(offset)); // the OS treats this as unsigned
@@ -876,37 +874,39 @@ pub fn pwrite(fd_: bun.FileDescriptor, bytes: []const u8, offset: i64) Maybe(usi
     unreachable;
 }
 
-pub fn read(fd_: bun.FileDescriptor, buf: []u8) Maybe(usize) {
-    const fd = bun.fdcast(fd_);
+pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
     const debug_timer = bun.Output.DebugTimer.start();
     const adjusted_len = @min(buf.len, max_count);
-    if (comptime Environment.isMac) {
-        const rc = system.@"read$NOCANCEL"(fd, buf.ptr, adjusted_len);
+    return switch(Environment.os) {
+        .mac => {
+            const rc = system.@"read$NOCANCEL"(fd, buf.ptr, adjusted_len);
 
-        log("read({d}, {d}) = {d} ({any})", .{ fd, adjusted_len, rc, debug_timer });
-
-        if (Maybe(usize).errnoSys(rc, .read)) |err| {
-            return err;
-        }
-
-        return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
-    } else {
-        while (true) {
-            const rc = sys.read(fd, buf.ptr, adjusted_len);
             log("read({d}, {d}) = {d} ({any})", .{ fd, adjusted_len, rc, debug_timer });
 
-            if (Maybe(usize).errnoSysFd(rc, .read, fd)) |err| {
-                if (err.getErrno() == .INTR) continue;
+            if (Maybe(usize).errnoSys(rc, .read)) |err| {
                 return err;
             }
+
             return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
-        }
-    }
-    comptime unreachable;
+        },
+        .linux => {
+            while (true) {
+                const rc = sys.read(fd, buf.ptr, adjusted_len);
+                log("read({d}, {d}) = {d} ({any})", .{ fd, adjusted_len, rc, debug_timer });
+
+                if (Maybe(usize).errnoSysFd(rc, .read, fd)) |err| {
+                    if (err.getErrno() == .INTR) continue;
+                    return err;
+                }
+                return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
+            }
+        },
+        .windows => sys_uv.read(fd, buf),
+        else => @compileError("read is not implemented on this platform"),
+    };
 }
 
-pub fn recv(fd_: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
-    const fd = bun.fdcast(fd_);
+pub fn recv(fd: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
     const adjusted_len = @min(buf.len, max_count);
 
     if (comptime Environment.isMac) {
@@ -933,8 +933,7 @@ pub fn recv(fd_: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
     unreachable;
 }
 
-pub fn send(fd_: bun.FileDescriptor, buf: []const u8, flag: u32) Maybe(usize) {
-    const fd = bun.fdcast(fd_);
+pub fn send(fd: bun.FileDescriptor, buf: []const u8, flag: u32) Maybe(usize) {
     if (comptime Environment.isMac) {
         const rc = system.@"sendto$NOCANCEL"(fd, buf.ptr, buf.len, flag, null, 0);
         if (Maybe(usize).errnoSys(rc, .send)) |err| {
@@ -990,14 +989,14 @@ pub fn ftruncate(fd: fd_t, size: isize) Maybe(void) {
 
         return Maybe(void).success;
     }
-    while (true) {
+    
+    return while (true) {
         if (Maybe(void).errnoSys(sys.ftruncate(fd, size), .ftruncate)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
         return Maybe(void).success;
-    }
-    unreachable;
+    };
 }
 
 pub fn rename(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
@@ -1083,12 +1082,11 @@ pub fn unlink(from: [:0]const u8) Maybe(void) {
     unreachable;
 }
 
-pub fn getFdPath(fd_: bun.FileDescriptor, out_buffer: *[MAX_PATH_BYTES]u8) Maybe([]u8) {
-    const fd = bun.fdcast(fd_);
+pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *[MAX_PATH_BYTES]u8) Maybe([]u8) {
     switch (comptime builtin.os.tag) {
         .windows => {
             var wide_buf: [windows.PATH_MAX_WIDE]u16 = undefined;
-            const wide_slice = std.os.windows.GetFinalPathNameByHandle(fd, .{}, wide_buf[0..]) catch {
+            const wide_slice = std.os.windows.GetFinalPathNameByHandle(bun.fdcast(fd), .{}, wide_buf[0..]) catch {
                 return Maybe([]u8){ .err = .{ .errno = @intFromEnum(bun.C.SystemErrno.EBADF), .syscall = .GetFinalPathNameByHandle } };
             };
 
@@ -1138,10 +1136,9 @@ fn mmap(
     length: usize,
     prot: u32,
     flags: u32,
-    fd_: bun.FileDescriptor,
+    fd: bun.FileDescriptor,
     offset: u64,
 ) Maybe([]align(mem.page_size) u8) {
-    const fd = bun.fdcast(fd_);
     const ioffset = @as(i64, @bitCast(offset)); // the OS treats this as unsigned
     const rc = std.c.mmap(ptr, length, prot, flags, fd, ioffset);
     const fail = std.c.MAP.FAILED;
@@ -1325,8 +1322,7 @@ pub const Error = struct {
     }
 };
 
-pub fn setPipeCapacityOnLinux(fd_: bun.FileDescriptor, capacity: usize) Maybe(usize) {
-    const fd = bun.fdcast(fd_);
+pub fn setPipeCapacityOnLinux(fd: bun.FileDescriptor, capacity: usize) Maybe(usize) {
     if (comptime !Environment.isLinux) @compileError("Linux-only");
     std.debug.assert(capacity > 0);
 

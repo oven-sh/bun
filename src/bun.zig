@@ -743,11 +743,7 @@ pub fn rangeOfSliceInBuffer(slice: []const u8, buffer: []const u8) ?[2]u32 {
     return r;
 }
 
-pub const invalid_fd = if (Environment.isWindows)
-    // on windows, max usize is the process handle, a very valid fd
-    std.math.maxInt(usize)
-else
-    std.math.maxInt(FileDescriptor);
+pub const invalid_fd: FileDescriptor = FDImpl.invalid.encode();
 
 pub const UFileDescriptor = if (Environment.isWindows) usize else u32;
 
@@ -1843,11 +1839,12 @@ pub inline fn toFD(fd: anytype) FileDescriptor {
     const T = @TypeOf(fd);
     if (Environment.isWindows) {
         return (switch (T) {
+            FDImpl => fd,
             FDImpl.System => FDImpl.fromSystem(fd),
             FDImpl.UV => FDImpl.fromUV(fd),
             FileDescriptor => FDImpl.decode(fd),
             // TODO: remove this case
-            u32 => FDImpl.fromUV(@as(FDImpl.UV, @intCast(fd))),
+            u32, i32 => FDImpl.fromUV(@as(FDImpl.UV, @intCast(fd))),
             else => @compileError("toFD() does not support type \"" ++ @typeName(T) ++ "\""),
         }).encode();
     } else {
@@ -1869,8 +1866,29 @@ pub inline fn toLibUVOwnedFD(fd: anytype) FileDescriptor {
             FDImpl.System => FDImpl.fromSystem(fd).makeLibUVOwned(),
             FDImpl.UV => FDImpl.fromUV(fd),
             FileDescriptor => FDImpl.decode(fd).makeLibUVOwned(),
+            FDImpl => fd.makeLibUVOwned(),
             else => @compileError("toLibUVOwnedFD() does not support type \"" ++ @typeName(T) ++ "\""),
         }).encode();
+    } else {
+        return @intCast(fd);
+    }
+}
+
+/// Converts a native file descriptor into a `bun.FileDescriptor`
+///
+/// Accepts either a UV descriptor (i32) or a windows handle (*anyopaque)
+///
+/// On windows, this file descriptor will always be backed by libuv, so calling .close() is safe.
+pub inline fn uvfdcast(fd: anytype) FDImpl.UV {
+    const T = @TypeOf(fd);
+    if (Environment.isWindows) {
+        return (switch (T) {
+            FDImpl => fd,
+            FDImpl.System => FDImpl.fromSystem(fd),
+            FDImpl.UV => FDImpl.fromUV(fd),
+            FileDescriptor => FDImpl.decode(fd),
+            else => @compileError("toLibUVOwnedFD() does not support type \"" ++ @typeName(T) ++ "\""),
+        }).uv();
     } else {
         return @intCast(fd);
     }

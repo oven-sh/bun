@@ -5,6 +5,7 @@ const builtin = @import("builtin");
 const Arena = std.heap.ArenaAllocator;
 const Allocator = std.mem.Allocator;
 const SmolStr = @import("../string_types.zig").SmolStr;
+const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
 
 /// Using u16 because anymore tokens than that results in an unreasonably high
 /// amount of brace expansion (like around 32k variants to expand)
@@ -13,6 +14,8 @@ pub const ExpansionVariant = packed struct {
     end: u16 = 0,
     depth: u8 = 0,
 };
+
+const log = bun.Output.scoped(.BRACES, false);
 
 const TokenTag = enum { open, comma, text, close, eof };
 const Token = union(TokenTag) {
@@ -294,7 +297,6 @@ pub fn buildExpansionTable(
         tok_idx: u16,
         variants: u16,
         prev_tok_end: u16,
-        prev_nested: bool = false,
     };
     var brace_stack = StackStack(BraceState, u8, MAX_NESTED_BRACES){};
 
@@ -343,7 +345,7 @@ pub fn buildExpansionTable(
 
     if (bun.Environment.allow_assert) {
         for (table.items[0..], 0..) |variant, kdjsd| {
-            std.debug.print("I: {d} VARIANT: {any}\n", .{ kdjsd, variant });
+            log("I: {d} VARIANT: {any}\n", .{ kdjsd, variant });
             std.debug.assert(variant.start != 0 and variant.end != 0);
         }
     }

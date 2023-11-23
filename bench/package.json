@@ -5,6 +5,7 @@
     "@babel/preset-react": "^7.16.7",
     "@swc/core": "^1.2.133",
     "benchmark": "^2.1.4",
+    "braces": "^3.0.2",
     "esbuild": "^0.14.12",
     "eventemitter3": "^5.0.0",
     "fast-glob": "3.3.1",

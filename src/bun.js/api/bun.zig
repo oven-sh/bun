@@ -526,14 +526,12 @@ pub fn braces(
     const brace_str = brace_str_js.getZigString(globalThis);
 
     var tokenize: bool = false;
-    var parse: bool = false;
     if (arguments.nextEat()) |opts_val| {
         if (opts_val.isObject()) {
-            if (opts_val.getTruthy(globalThis, "tokenize")) |tokenize_val| {
-                tokenize = if (tokenize_val.isBoolean()) tokenize_val.asBoolean() else false;
-            }
-            if (opts_val.getTruthy(globalThis, "parse")) |parse_val| {
-                parse = if (parse_val.isBoolean()) parse_val.asBoolean() else false;
+            if (comptime bun.Environment.allow_assert) {
+                if (opts_val.getTruthy(globalThis, "tokenize")) |tokenize_val| {
+                    tokenize = if (tokenize_val.isBoolean()) tokenize_val.asBoolean() else false;
+                }
             }
         }
     }
@@ -546,8 +544,8 @@ pub fn braces(
         return .undefined;
     };
 
-    const variants_count = Braces.calculateVariantsAmount(lexer.tokens.items[0..]);
-
+    // const variants_count = Braces.calculateVariantsAmount(lexer.tokens.items[0..]);
+    const variants_count = 4;
     const expansion_count = Braces.calculateExpandedAmount(lexer.tokens.items[0..]) catch |err| {
         globalThis.throwError(err, "failed to calculate brace expansion amount");
         return .undefined;

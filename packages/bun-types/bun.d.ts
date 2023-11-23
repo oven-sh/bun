@@ -166,7 +166,9 @@ declare module "bun" {
      * }
      * ```
      */
-    scan(options?: GlobScanOptions): AsyncIterableIterator<string>;
+    scan(
+      optionsOrCwd?: string | GlobScanOptions,
+    ): AsyncIterableIterator<string>;
 
     /**
      * Scan for files that match this glob pattern. Returns an iterator.
@@ -185,7 +187,7 @@ declare module "bun" {
      * }
      * ```
      */
-    scanSync(options?: GlobScanOptions): IterableIterator<string>;
+    scanSync(optionsOrCwd?: string | GlobScanOptions): IterableIterator<string>;
 
     /**
      * Match the glob against a string

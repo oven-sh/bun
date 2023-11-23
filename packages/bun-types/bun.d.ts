@@ -70,6 +70,8 @@ declare module "bun" {
     options?: { PATH?: string; cwd?: string },
   ): string | null;
 
+  export type ShellFunction = (input: Uint8Array) => Uint8Array;
+
   export type ShellExpression =
     | string
     | Subprocess

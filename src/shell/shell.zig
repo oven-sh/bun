@@ -516,6 +516,7 @@ pub const Interpreter = struct {
         }
         const brace_str = try self.eval_atom_no_brace_expansion(atom);
         var lexer = try Braces.Lexer.tokenize(self.allocator, brace_str);
+        std.debug.print("TOKENS: {s}\n", .{try std.json.stringifyAlloc(self.allocator, lexer.tokens.items[0..], .{})});
         const variants_count = Braces.calculateVariantsAmount(lexer.tokens.items[0..]);
         const expansion_count = try Braces.calculateExpandedAmount(lexer.tokens.items[0..]);
         const expansions_table = try Braces.buildExpansionTableAlloc(self.allocator, lexer.tokens.items[0..], variants_count);
@@ -637,9 +638,9 @@ pub const Interpreter = struct {
             },
             .comma => {
                 if (comptime known_size) {
-                    str_list.appendAssumeCapacity('{');
+                    str_list.appendAssumeCapacity(',');
                 } else {
-                    try str_list.append('}');
+                    try str_list.append(',');
                 }
             },
             .cmd_subst => |cmd| {
@@ -1095,7 +1096,7 @@ pub const Parser = struct {
                 const next = self.peek_n(1);
                 const next_delimits = next == .Delimit or next == .Eof;
                 const peeked = self.peek();
-                const should_break = next_delimits and !has_brace_open;
+                const should_break = next_delimits;
                 switch (peeked) {
                     .BraceBegin => {
                         has_brace_open = true;
@@ -1476,19 +1477,19 @@ pub const Lexer = struct {
                     // brace expansion syntax
                     '{' => {
                         if (self.state == .Single or self.state == .Double) break :escaped;
-                        try self.break_word(true);
+                        try self.break_word(false);
                         try self.tokens.append(.BraceBegin);
                         continue;
                     },
                     ',' => {
                         if (self.state == .Single or self.state == .Double) break :escaped;
-                        try self.break_word(true);
+                        try self.break_word(false);
                         try self.tokens.append(.Comma);
                         continue;
                     },
                     '}' => {
                         if (self.state == .Single or self.state == .Double) break :escaped;
-                        try self.break_word(true);
+                        try self.break_word(false);
                         try self.tokens.append(.BraceEnd);
                         continue;
                     },
@@ -1611,7 +1612,7 @@ pub const Lexer = struct {
                             self.state = .Double;
                         } else if (self.state == .Double) {
                             try self.break_word(false);
-                            self.delimit_quote = true;
+                            // self.delimit_quote = true;
                             self.state = .Normal;
                         }
                         continue;
@@ -1620,7 +1621,7 @@ pub const Lexer = struct {
                     // 3. Word breakers
                     ' ' => {
                         if (self.state == .Normal) {
-                            try self.break_word(true);
+                            try self.break_word_impl(true, true);
                             continue;
                         }
                         break :escaped;
@@ -1643,6 +1644,10 @@ pub const Lexer = struct {
     }
 
     fn break_word(self: *Lexer, add_delimiter: bool) !void {
+        return try self.break_word_impl(add_delimiter, false);
+    }
+
+    fn break_word_impl(self: *Lexer, add_delimiter: bool, in_normal_space: bool) !void {
         const start: u32 = self.word_start;
         const end: u32 = self.j;
         if (start != end) {
@@ -1650,7 +1655,11 @@ pub const Lexer = struct {
             if (add_delimiter) {
                 try self.tokens.append(.Delimit);
             }
-        } else if (self.delimit_quote) {
+        } else if (in_normal_space and self.tokens.items.len > 0 and
+            switch (self.tokens.items[self.tokens.items.len - 1]) {
+            .Var, .Text, .BraceBegin, .Comma, .BraceEnd => true,
+            else => false,
+        }) {
             try self.tokens.append(.Delimit);
             self.delimit_quote = false;
         }

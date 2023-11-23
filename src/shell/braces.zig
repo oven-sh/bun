@@ -8,9 +8,10 @@ const SmolStr = @import("../string_types.zig").SmolStr;
 
 /// Using u16 because anymore tokens than that results in an unreasonably high
 /// amount of brace expansion (like around 32k variants to expand)
-pub const ExpansionVariant = struct {
+pub const ExpansionVariant = packed struct {
     start: u16 = 0,
     end: u16 = 0,
+    depth: u8 = 0,
 };
 
 const TokenTag = enum { open, comma, text, close, eof };
@@ -172,7 +173,7 @@ pub fn expand(
     out: []std.ArrayList(u8),
 ) !void {
     var out_key_counter: u16 = 1;
-    return try expandImpl(tokens, expansion_table, out, 0, &out_key_counter, 0, tokens.len);
+    return try expandImpl(tokens, expansion_table, out, 0, &out_key_counter, 0, 0, tokens.len);
 }
 
 /// TODO optimization: allocate into one buffer of chars
@@ -182,17 +183,20 @@ fn expandImpl(
     out: []std.ArrayList(u8),
     out_key: u16,
     out_key_counter: *u16,
+    depth_: u8,
     start: usize,
     end: usize,
 ) !void {
     if (start >= tokens.len or end > tokens.len) return;
 
+    var depth = depth_;
     for (tokens[start..end]) |atom| {
         switch (atom) {
             .text => |txt| {
                 try out[out_key].appendSlice(txt.slice());
             },
             .open => |expansion_variants| {
+                depth += 1;
                 if (bun.Environment.allow_assert) {
                     std.debug.assert(expansion_variants.len >= 1);
                 }
@@ -200,18 +204,19 @@ fn expandImpl(
                 var variants = expansion_table[expansion_variants.idx .. expansion_variants.idx + expansion_variants.len];
                 const skip_over_idx = variants[variants.len - 1].end;
 
-                for (variants[1..]) |*variant| {
-                    const new_key = out_key_counter.*;
-                    out_key_counter.* += 1;
+                const starting_len = out[out_key].items.len;
+                for (variants[0..], 0..) |*variant, i| {
+                    const new_key = if (i == 0) out_key else brk: {
+                        const new_key = out_key_counter.*;
+                        try out[new_key].appendSlice(out[out_key].items[0..starting_len]);
+                        out_key_counter.* += 1;
+                        break :brk new_key;
+                    };
                     std.debug.print("Branch: {s} {d} {d} VARIANT: {any}\n", .{ out[out_key].items[0..], out_key, new_key, variant.* });
-                    try out[new_key].appendSlice(out[out_key].items[0..]);
-                    try expandImpl(tokens, expansion_table, out, new_key, out_key_counter, variant.start, variant.end);
-                    try expandImpl(tokens, expansion_table, out, new_key, out_key_counter, skip_over_idx, end);
+                    try expandImpl(tokens, expansion_table, out, new_key, out_key_counter, depth, variant.start, variant.end);
+                    try expandImpl(tokens, expansion_table, out, new_key, out_key_counter, depth - 1, skip_over_idx, end);
                 }
-
-                const first_variant = &variants[0];
-                try expandImpl(tokens, expansion_table, out, out_key, out_key_counter, first_variant.start, first_variant.end);
-                return try expandImpl(tokens, expansion_table, out, out_key, out_key_counter, skip_over_idx, end);
+                return;
             },
             else => {},
         }
@@ -219,9 +224,20 @@ fn expandImpl(
 }
 
 pub fn calculateVariantsAmount(tokens: []const Token) u32 {
+    var brace_count: u32 = 0;
     var count: u32 = 0;
     for (tokens) |tok| {
-        if (tok == .comma) count += 1 else if (tok == .close) count += 1;
+        switch (tok) {
+            .comma => count += 1,
+            .open => brace_count += 1,
+            .close => {
+                if (brace_count == 1) {
+                    count += 1;
+                }
+                brace_count -= 1;
+            },
+            else => {},
+        }
     }
     return count;
 }
@@ -250,7 +266,7 @@ pub fn calculateExpandedAmount(tokens: []const Token) !u32 {
                 }
                 if (nested_brace_stack.len > 0) {
                     var top = nested_brace_stack.topPtr().?;
-                    top.* += variants;
+                    top.* += variants - 1;
                 } else if (variant_count == 0) {
                     variant_count = variants;
                 } else {
@@ -274,7 +290,17 @@ pub fn buildExpansionTable(
     tokens: []Token,
     table: []ExpansionVariant,
 ) !void {
-    const BraceState = struct { tok_idx: u16, variants: u16 };
+    const BraceState = struct {
+        tok_idx: u16,
+        variants: u16,
+        prev_tok_end: u16,
+        prev_nested: bool = false,
+
+        fn merge(a: *@This(), b: *@This()) void {
+            a.variants += b.variants;
+            a.prev_tok_end = b.prev_tok_end;
+        }
+    };
     var brace_stack = StackStack(BraceState, u8, MAX_NESTED_BRACES){};
 
     var table_len: u16 = 0;
@@ -285,46 +311,55 @@ pub fn buildExpansionTable(
             .open => {
                 const table_idx = table_len;
                 tokens[i].open.idx = table_idx;
-                try brace_stack.push(.{ .tok_idx = i, .variants = 0 });
+                try brace_stack.push(.{
+                    .tok_idx = i,
+                    .variants = 0,
+                    .prev_tok_end = i,
+                });
             },
             .close => {
+                const depth = brace_stack.len;
+                var top = brace_stack.pop().?;
+
+                if (top.prev_nested) continue;
+
+                table[table_len] = .{
+                    .end = i,
+                    .start = top.prev_tok_end + 1,
+                    .depth = depth,
+                };
+
+                top.prev_tok_end = i;
+                top.variants += 1;
+
+                tokens[top.tok_idx].open.len = top.variants;
                 if (brace_stack.len > 0) {
-                    var top = brace_stack.pop().?;
-
-                    if (top.variants == 0) {
-                        table[table_len] = .{
-                            .end = i,
-                            .start = top.tok_idx + 1,
-                        };
-                    } else {
-                        table[table_len] = .{
-                            .end = i,
-                            .start = table[table_len - 1].end + 1,
-                        };
-                    }
-                    top.variants += 1;
+                    brace_stack.topPtr().?.merge(&top);
+                } else {
                     table_len += 1;
+                }
 
-                    tokens[top.tok_idx].open.len = top.variants;
+                if (brace_stack.topPtr()) |t| {
+                    t.prev_nested = true;
                 }
             },
             .comma => {
-                if (brace_stack.len > 0) {
-                    var top = brace_stack.topPtr().?;
-                    if (top.variants == 0) {
-                        table[table_len] = .{
-                            .end = i,
-                            .start = top.tok_idx + 1,
-                        };
-                    } else {
-                        table[table_len] = .{
-                            .end = i,
-                            .start = table[table_len - 1].end + 1,
-                        };
-                    }
-                    top.variants += 1;
-                    table_len += 1;
+                var top = brace_stack.topPtr().?;
+                if (top.prev_nested) {
+                    top.prev_nested = false;
+                    continue;
                 }
+
+                table[table_len] = .{
+                    .end = i,
+                    .start = top.prev_tok_end + 1,
+                    .depth = brace_stack.len,
+                };
+
+                top.prev_tok_end = i;
+                top.variants += 1;
+                table_len += 1;
+                // top.prev_nested = brace_stack.len > 1;
             },
             else => {},
         }
@@ -344,6 +379,8 @@ pub const Lexer = struct {
     tokens: ArrayList(Token),
     i: usize = 0,
     state: State = .Normal,
+
+    // pub fn tokenize_from_shell(alloc: Allocator, )
 
     pub fn tokenize(alloc: Allocator, src: []const u8) !Lexer {
         var this = Lexer{

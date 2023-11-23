@@ -28,7 +28,6 @@ describe("lex shell", () => {
       { "Text": "dev" },
       { "Delimit": {} },
       { "Var": "PORT" },
-      { "Delimit": {} },
       { "Eof": {} },
     ];
     const result = JSON.parse($.lex`next dev "$PORT"`);
@@ -43,7 +42,6 @@ describe("lex shell", () => {
       { "Delimit": {} },
       { "Text": "foo" },
       { "Var": "PORT" },
-      { "Delimit": {} },
       { "Eof": {} },
     ];
     const result = JSON.parse($.lex`next dev foo"$PORT"`);
@@ -58,7 +56,6 @@ describe("lex shell", () => {
       { "Var": "NICE" },
       { "Text": "good" },
       { "Text": "NICE" },
-      { "Delimit": {} },
       { "Eof": {} },
     ];
     const result = JSON.parse($.lex`echo foo"$NICE"good"NICE"`);
@@ -80,7 +77,6 @@ describe("lex shell", () => {
       { "Text": "echo" },
       { "Delimit": {} },
       { "Text": "NICE;" },
-      { "Delimit": {} },
       { "Eof": {} },
     ];
     const result = JSON.parse($.lex`echo foo; bar baz; echo "NICE;"`);
@@ -135,6 +131,7 @@ describe("lex shell", () => {
       {
         Var: "bar",
       },
+      { Delimit: {} },
       {
         Text: "echo",
       },
@@ -191,8 +188,15 @@ describe("lex shell", () => {
     const expected = [
       { "Text": "echo" },
       { "Delimit": {} },
-      { "Text": "{ts,tsx,js,jsx}" },
-      { "Delimit": {} },
+      { "BraceBegin": {} },
+      { "Text": "ts" },
+      { "Comma": {} },
+      { "Text": "tsx" },
+      { "Comma": {} },
+      { "Text": "js" },
+      { "Comma": {} },
+      { "Text": "jsx" },
+      { "BraceEnd": {} },
       { "Eof": {} },
     ];
     const result = JSON.parse($.lex`echo {ts,tsx,js,jsx}`);

@@ -65,7 +65,9 @@ describe("parse shell", () => {
             {
               "cmd": {
                 "assigns": [],
-                "name_and_args": [{ "compound": { "atoms": [{ "Text": "FOO " }, { "Var": "NICE!" }] } }],
+                "name_and_args": [
+                  { "compound": { "atoms": [{ "Text": "FOO " }, { "Var": "NICE!" }], brace_expansion_hint: false } },
+                ],
                 "redirect": redirect({}),
                 "redirect_file": null,
               },

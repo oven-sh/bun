@@ -52,13 +52,33 @@ describe("bunshell", () => {
     );
   });
 
-  test("pipeline", () => {});
+  test("pipeline", () => {
+    const buffer = new Uint8Array(1 << 20);
+    const result = $`echo "LMAO" | cat > ${buffer}`;
+
+    const sentinel = sentinelByte(buffer);
+    expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual("LMAO\n");
+  });
 
   test("brace expansion", () => {
     const buffer = new Uint8Array(512);
     const result = $`echo {a,b,c}{d,e,f} > ${buffer}`;
     const sentinel = sentinelByte(buffer);
     expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual("ad ae af bd be bf cd ce cf\n");
+  });
+
+  test("brace expansion nested", () => {
+    const buffer = new Uint8Array(512);
+    const result = $`echo {a,b,{c,d}} > ${buffer}`;
+    const sentinel = sentinelByte(buffer);
+    expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual("a b c d\n");
+  });
+
+  test("brace expansion in command", () => {
+    const buffer = new Uint8Array(512);
+    const result = $`{echo,a,b,c} {d,e,f} > ${buffer}`;
+    const sentinel = sentinelByte(buffer);
+    expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual("a b c d e f\n");
   });
 });
 

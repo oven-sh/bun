@@ -1,7 +1,6 @@
 declare module "bun" {
   // Define the additional methods
   interface Shell {
-    (strings: TemplateStringsArray, ...expressions: any[]): void;
     parse: (strings: TemplateStringsArray, ...expressions: any[]) => string; // Define the return type for parse
     lex: (strings: TemplateStringsArray, ...expressions: any[]) => string; // Define the return type for lex
   }

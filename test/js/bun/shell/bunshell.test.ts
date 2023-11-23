@@ -91,7 +91,7 @@ describe("bunshell", () => {
 
     {
       const buffer = new Uint8Array(512);
-      const result = $`echo "{a,b,HI{c,e,LMAO{d,f}Q}}{1,2,{3,4},5}" > ${buffer}`;
+      const result = $`echo {a,b,HI{c,e,LMAO{d,f}Q}}{1,2,{3,4},5} > ${buffer}`;
       const sentinel = sentinelByte(buffer);
       expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual(
         "a1 a2 a3 a4 a5 b1 b2 b3 b4 b5 HIc1 HIc2 HIc3 HIc4 HIc5 HIe1 HIe2 HIe3 HIe4 HIe5 HILMAOdQ1 HILMAOdQ2 HILMAOdQ3 HILMAOdQ4 HILMAOdQ5 HILMAOfQ1 HILMAOfQ2 HILMAOfQ3 HILMAOfQ4 HILMAOfQ5\n",

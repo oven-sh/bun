@@ -1726,7 +1726,9 @@ pub const Lexer = struct {
                         flags.stderr = true;
                     },
                     else => {
-                        @panic("Invalid redirection");
+                        // FIXME support redirection to any arbitrary fd
+                        log("redirection to fd {d} is invalid\n", .{num});
+                        return null;
                     },
                 }
             },

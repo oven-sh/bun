@@ -1,18 +1,33 @@
 import braces from "braces";
-import { bench, run } from "mitata";
+import { group, bench, run } from "mitata";
 
-const pattern = "{a,b,HI{c,e,LMAO{d,f}Q}}";
-bench("Bun.braces", () => {
-  for (let i = 0; i < 1000; i++) {
-    Bun.braces(pattern);
-  }
-});
+// const iterations = 1000;
+const iterations = 1;
 
-bench("braces", () => {
-  for (let i = 0; i < 1000; i++) {
-    braces(pattern, { expand: true });
-  }
-});
+const simplePattern = "foo.{js,jsx,ts,tsx}";
+const complexPattern = "{a,b,HI{c,e,LMAO{d,f}Q}} wow {a,b}";
+const veryComplexPattern = "{a,b,HI{c,e,LMAO{d,f}Q}}{1,2,{3,4},5}";
+
+console.log(braces(complexPattern, { expand: true }));
+function benchPattern(pattern, name) {
+  group({ name: `${name} pattern: "${pattern}"`, summary: true }, () => {
+    bench("Bun", () => {
+      for (let i = 0; i < iterations; i++) {
+        Bun.braces(pattern);
+      }
+    });
+
+    bench("micromatch/braces", () => {
+      for (let i = 0; i < iterations; i++) {
+        braces(pattern, { expand: true });
+      }
+    });
+  });
+}
+
+benchPattern(simplePattern, "simple");
+benchPattern(complexPattern, "complex");
+// benchPattern(veryComplexPattern, "very complex pattern");
 
 await run({
   avg: true,

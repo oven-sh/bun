@@ -853,7 +853,177 @@ describe("hoisting", async () => {
 });
 
 describe("workspaces", async () => {
+  test("it should detect duplicate workspace dependencies", async () => {
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        workspaces: ["packages/*"],
+      }),
+    );
+
+    await mkdir(join(packageDir, "packages", "pkg1"), { recursive: true });
+    await writeFile(join(packageDir, "packages", "pkg1", "package.json"), JSON.stringify({ name: "pkg1" }));
+    await mkdir(join(packageDir, "packages", "pkg2"), { recursive: true });
+    await writeFile(join(packageDir, "packages", "pkg2", "package.json"), JSON.stringify({ name: "pkg1" }));
+
+    var { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    var err = await new Response(stderr).text();
+    expect(err).toContain('Workspace name "pkg1" already exists');
+    expect(await exited).toBe(1);
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "bun.lockb"), { force: true });
+
+    ({ stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: join(packageDir, "packages", "pkg1"),
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await new Response(stderr).text();
+    expect(err).toContain('Workspace name "pkg1" already exists');
+    expect(await exited).toBe(1);
+  });
   const versions = ["workspace:1.0.0", "workspace:*", "workspace:^1.0.0", "1.0.0"];
+
+  for (const rootVersion of versions) {
+    for (const packageVersion of versions) {
+      test(`it should allow duplicates, root@${rootVersion}, package@${packageVersion}`, async () => {
+        await writeFile(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            version: "1.0.0",
+            workspaces: ["packages/*"],
+            dependencies: {
+              pkg2: rootVersion,
+            },
+          }),
+        );
+
+        await mkdir(join(packageDir, "packages", "pkg1"), { recursive: true });
+        await writeFile(
+          join(packageDir, "packages", "pkg1", "package.json"),
+          JSON.stringify({
+            name: "pkg1",
+            version: "1.0.0",
+            dependencies: {
+              pkg2: packageVersion,
+            },
+          }),
+        );
+
+        await mkdir(join(packageDir, "packages", "pkg2"), { recursive: true });
+        await writeFile(
+          join(packageDir, "packages", "pkg2", "package.json"),
+          JSON.stringify({ name: "pkg2", version: "1.0.0" }),
+        );
+
+        var { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        });
+
+        var err = await new Response(stderr).text();
+        var out = await new Response(stdout).text();
+        expect(err).toContain("Saved lockfile");
+        expect(err).not.toContain("not found");
+        expect(err).not.toContain("error:");
+        expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+          " + pkg1@workspace:packages/pkg1",
+          " + pkg2@workspace:packages/pkg2",
+          "",
+          " 2 packages installed",
+        ]);
+        expect(await exited).toBe(0);
+
+        ({ stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: join(packageDir, "packages", "pkg1"),
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        }));
+
+        err = await new Response(stderr).text();
+        out = await new Response(stdout).text();
+        expect(err).not.toContain("Saved lockfile");
+        expect(err).not.toContain("not found");
+        expect(err).not.toContain("error:");
+        expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+          " + pkg1@workspace:packages/pkg1",
+          " + pkg2@workspace:packages/pkg2",
+          "",
+          " 2 packages installed",
+        ]);
+        expect(await exited).toBe(0);
+
+        await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+        await rm(join(packageDir, "bun.lockb"), { recursive: true, force: true });
+
+        ({ stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: join(packageDir, "packages", "pkg1"),
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        }));
+
+        err = await new Response(stderr).text();
+        out = await new Response(stdout).text();
+        expect(err).toContain("Saved lockfile");
+        expect(err).not.toContain("not found");
+        expect(err).not.toContain("error:");
+        expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+          " + pkg1@workspace:packages/pkg1",
+          " + pkg2@workspace:packages/pkg2",
+          "",
+          " 2 packages installed",
+        ]);
+        expect(await exited).toBe(0);
+
+        ({ stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        }));
+
+        err = await new Response(stderr).text();
+        out = await new Response(stdout).text();
+        expect(err).not.toContain("Saved lockfile");
+        expect(err).not.toContain("not found");
+        expect(err).not.toContain("error:");
+        expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+          " + pkg1@workspace:packages/pkg1",
+          " + pkg2@workspace:packages/pkg2",
+          "",
+          " 2 packages installed",
+        ]);
+        expect(await exited).toBe(0);
+      });
+    }
+  }
   for (const version of versions) {
     test(`it should allow listing workspace as dependency of the root package version ${version}`, async () => {
       await writeFile(

@@ -146,12 +146,12 @@ pub const Interpreter = struct {
         const brace_expansion = assign.value.has_brace_expansion();
         const value = try self.eval_atom(&assign.value);
         if (brace_expansion) {
-            for (value.many.items) |val| {
-                if (assign.exported) {
-                    try self.env.put(assign.label, val);
-                } else {
-                    try self.cmd_local_env.put(assign.label, val);
-                }
+            // For some reason bash only sets the last value
+            const last_value = value.many.items[value.many.items.len - 1];
+            if (assign.exported) {
+                try self.env.put(assign.label, last_value);
+            } else {
+                try self.cmd_local_env.put(assign.label, last_value);
             }
             return;
         }

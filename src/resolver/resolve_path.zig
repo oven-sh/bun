@@ -450,16 +450,16 @@ pub fn relativeNormalized(from: []const u8, to: []const u8, comptime platform: P
 pub fn dirname(str: []const u8, comptime platform: Platform) []const u8 {
     switch (comptime platform.resolve()) {
         .loose => {
-            const separator = lastIndexOfSeparatorLoose(str);
-            return str[0 .. separator + 1];
+            const separator = lastIndexOfSeparatorLoose(str) orelse return "";
+            return str[0..separator];
         },
         .posix => {
-            const separator = lastIndexOfSeparatorPosix(str);
-            return str[0 .. separator + 1];
+            const separator = lastIndexOfSeparatorPosix(str) orelse return "";
+            return str[0..separator];
         },
         .windows => {
             const separator = lastIndexOfSeparatorWindows(str) orelse return std.fs.path.diskDesignatorWindows(str);
-            return str[0 .. separator + 1];
+            return str[0..separator];
         },
         else => unreachable,
     }

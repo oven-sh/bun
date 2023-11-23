@@ -1275,6 +1275,51 @@ const default_loader_ext = [_]string{
     ".txt",  ".text",
 };
 
+const node_modules_default_loader_ext_bun = [_]string{".node"};
+const node_modules_default_loader_ext = [_]string{
+    ".jsx",
+    ".js",
+    ".cjs",
+    ".mjs",
+    ".ts",
+    ".mts",
+    ".toml",
+    ".txt",
+    ".json",
+    ".css",
+    ".tsx",
+    ".cts",
+    ".wasm",
+    ".text",
+};
+
+pub const ResolveFileExtensions = struct {
+    node_modules: Group = .{
+        .esm = &BundleOptions.Defaults.NodeModules.ModuleExtensionOrder,
+        .default = &BundleOptions.Defaults.NodeModules.ExtensionOrder,
+    },
+    default: Group = .{},
+
+    inline fn group(this: *const ResolveFileExtensions, is_node_modules: bool) *const Group {
+        return switch (is_node_modules) {
+            true => &this.node_modules,
+            false => &this.default,
+        };
+    }
+
+    pub fn kind(this: *const ResolveFileExtensions, kind_: bun.ImportKind, is_node_modules: bool) []const string {
+        return switch (kind_) {
+            .stmt, .entry_point, .dynamic => this.group(is_node_modules).esm,
+            else => this.group(is_node_modules).default,
+        };
+    }
+
+    pub const Group = struct {
+        esm: []const string = &BundleOptions.Defaults.ModuleExtensionOrder,
+        default: []const string = &BundleOptions.Defaults.ExtensionOrder,
+    };
+};
+
 pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.LoaderMap, target: Target) !bun.StringArrayHashMap(Loader) {
     var input_loaders = _loaders orelse std.mem.zeroes(Api.LoaderMap);
     var loader_values = try allocator.alloc(Loader, input_loaders.loaders.len);
@@ -1409,8 +1454,7 @@ pub const BundleOptions = struct {
     asset_naming: []const u8 = "",
     chunk_naming: []const u8 = "",
     public_path: []const u8 = "",
-    extension_order: []const string = &Defaults.ExtensionOrder,
-    esm_extension_order: []const string = &Defaults.ModuleExtensionOrder,
+    extension_order: ResolveFileExtensions = .{},
     main_field_extension_order: []const string = &Defaults.MainFieldExtensionOrder,
     out_extensions: bun.StringHashMap(string),
     import_path_format: ImportPathFormat = ImportPathFormat.relative,
@@ -1582,6 +1626,32 @@ pub const BundleOptions = struct {
         pub const CSSExtensionOrder = [_]string{
             ".css",
         };
+
+        pub const NodeModules = struct {
+            pub const ExtensionOrder = [_]string{
+                ".jsx",
+                ".cjs",
+                ".js",
+                ".mjs",
+                ".mts",
+                ".tsx",
+                ".ts",
+                ".cts",
+                ".json",
+            };
+
+            pub const ModuleExtensionOrder = [_]string{
+                ".mjs",
+                ".jsx",
+                ".mts",
+                ".js",
+                ".cjs",
+                ".tsx",
+                ".ts",
+                ".cts",
+                ".json",
+            };
+        };
     };
 
     pub fn fromApi(
@@ -1621,7 +1691,7 @@ pub const BundleOptions = struct {
         }
 
         if (transform.extension_order.len > 0) {
-            opts.extension_order = transform.extension_order;
+            opts.extension_order.default.default = transform.extension_order;
         }
 
         if (transform.target) |t| {
@@ -1666,7 +1736,8 @@ pub const BundleOptions = struct {
                 opts.env.behavior = .load_all;
                 if (transform.extension_order.len == 0) {
                     // we must also support require'ing .node files
-                    opts.extension_order = Defaults.ExtensionOrder ++ &[_][]const u8{".node"};
+                    opts.extension_order.default.default = comptime Defaults.ExtensionOrder ++ &[_][]const u8{".node"};
+                    opts.extension_order.node_modules.default = comptime Defaults.NodeModules.ExtensionOrder ++ &[_][]const u8{".node"};
                 }
             },
             else => {},

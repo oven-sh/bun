@@ -20,7 +20,7 @@ const strings = @import("root").bun.strings;
 const Maybe = JSC.Maybe;
 const File = std.fs.File;
 
-const IteratorResult = struct {
+pub const IteratorResult = struct {
     name: PathString,
     kind: Entry.Kind,
 };
@@ -185,7 +185,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                     const w = os.windows;
                     if (self.index >= self.end_index) {
                         var io: w.IO_STATUS_BLOCK = undefined;
-                        
+
                         const rc = w.ntdll.NtQueryDirectoryFile(
                             self.dir.fd,
                             null,
@@ -199,7 +199,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                             null,
                             if (self.first) @as(w.BOOLEAN, w.TRUE) else @as(w.BOOLEAN, w.FALSE),
                         );
-                        std.debug.print("NtQueryDirectoryFile({d}) = {d}\n", .{self.dir.fd,rc});
+                        std.debug.print("NtQueryDirectoryFile({d}) = {d}\n", .{ self.dir.fd, rc });
                         self.first = false;
                         if (io.Information == 0) return .{ .result = null };
                         self.index = 0;
@@ -345,7 +345,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
     };
 }
 
-const WrappedIterator = struct {
+pub const WrappedIterator = struct {
     iter: Iterator,
     const Self = @This();
 

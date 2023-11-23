@@ -1,0 +1,10 @@
+{
+  "name": "bun",
+  "version": "0.0.0",
+  "dependencies": {
+    "rimraf": "^4.3.1"
+  },
+  "overrides": {
+    "glob": "npm:empty-npm-package@1.0.0"
+  }
+}

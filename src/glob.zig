@@ -646,8 +646,10 @@ pub fn GlobWalker_(
             err: Syscall.Error,
             path_buf: [:0]const u8,
         ) Syscall.Error {
-            @memcpy(this.pathBuf[0 .. path_buf.len + 1], @as([]const u8, @ptrCast(path_buf[0 .. path_buf.len + 1])));
-            // std.mem.copyBackwards(u8, this.pathBuf[0 .. path_buf.len + 1], @as([]const u8, @ptrCast(path_buf[0 .. path_buf.len + 1])));
+            if(!isWindows)
+                @memcpy(this.pathBuf[0 .. path_buf.len + 1], @as([]const u8, @ptrCast(path_buf[0 .. path_buf.len + 1])))
+            else
+                std.mem.copyBackwards(u8, this.pathBuf[0 .. path_buf.len + 1], @as([]const u8, @ptrCast(path_buf[0 .. path_buf.len + 1])));
             return err.withPath(this.pathBuf[0 .. path_buf.len + 1]);
         }
 

@@ -222,8 +222,8 @@ pub const FDImpl = packed struct {
                             null;
                     },
                     .system => {
-                        const handle: System = @ptrFromInt(@as(u64, this.value.as_system));
                         std.debug.assert(this.value.as_system != 0);
+                        const handle: System = @ptrFromInt(@as(u64, this.value.as_system));
                         if (std.os.windows.kernel32.CloseHandle(handle) == 0) {
                             break :result bun.sys.Error{
                                 .errno = @intFromEnum(std.os.windows.kernel32.GetLastError()),

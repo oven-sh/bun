@@ -3871,7 +3871,7 @@ pub const NodeFS = struct {
         const Char = std.meta.Child(bun.OSPathSlice);
         const len = @as(u16, @truncate(path.len));
 
-        bun.Output.debug("mkdirRecursiveOSPath({s})", .{bun.strings.fmtOSPath(path)});
+        // log("mkdirRecursiveOSPath({s})", .{bun.strings.fmtOSPath(path)});
 
         // First, attempt to create the desired directory
         // If that fails, then walk back up the path until we have a match
@@ -3882,7 +3882,6 @@ pub const NodeFS = struct {
                         return .{ .err = err.withPath(this.osPathIntoSyncErrorBuf(path[0..len])) };
                     },
                     .EXIST => {
-                        std.debug.assert(false);
                         return .{ .result = .{ .none = {} } };
                     },
                     // continue

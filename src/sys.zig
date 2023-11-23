@@ -17,7 +17,7 @@ const linux = os.linux;
 const Maybe = JSC.Maybe;
 const kernel32 = bun.windows;
 
-pub const sys_uv = if(Environment.isWindows) @import("./sys_uv.zig") else Syscall;
+pub const sys_uv = if (Environment.isWindows) @import("./sys_uv.zig") else Syscall;
 
 const log = bun.Output.scoped(.SYS, false);
 pub const syslog = log;
@@ -651,7 +651,7 @@ pub const max_count = switch (builtin.os.tag) {
 pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
     const adjusted_len = @min(max_count, bytes.len);
 
-    return switch(Environment.os) {
+    return switch (Environment.os) {
         .mac => {
             const rc = system.@"write$NOCANCEL"(fd, bytes.ptr, adjusted_len);
             log("write({d}, {d}) = {d}", .{ fd, adjusted_len, rc });
@@ -877,7 +877,7 @@ pub fn pwrite(fd: bun.FileDescriptor, bytes: []const u8, offset: i64) Maybe(usiz
 pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
     const debug_timer = bun.Output.DebugTimer.start();
     const adjusted_len = @min(buf.len, max_count);
-    return switch(Environment.os) {
+    return switch (Environment.os) {
         .mac => {
             const rc = system.@"read$NOCANCEL"(fd, buf.ptr, adjusted_len);
 
@@ -989,7 +989,7 @@ pub fn ftruncate(fd: fd_t, size: isize) Maybe(void) {
 
         return Maybe(void).success;
     }
-    
+
     return while (true) {
         if (Maybe(void).errnoSys(sys.ftruncate(fd, size), .ftruncate)) |err| {
             if (err.getErrno() == .INTR) continue;

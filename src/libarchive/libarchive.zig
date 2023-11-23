@@ -570,7 +570,6 @@ pub const Archive = struct {
                                     },
                                 }
                             };
-                            
                         },
                         Kind.file => {
                             const mode = @as(std.os.mode_t, @intCast(lib.archive_entry_perm(entry)));

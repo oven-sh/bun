@@ -3231,26 +3231,6 @@ pub const Package = extern struct {
                             return null;
                         }
                     }
-                }
-
-                workspace_entry.value_ptr.* = path;
-
-                if (workspace_version) |ver| {
-                    try lockfile.workspace_versions.put(allocator, name_hash, ver);
-                    for (package_dependencies[0..dependencies_count]) |*package_dep| {
-                        if (switch (package_dep.version.tag) {
-                            // `dependencies` & `workspaces` defined within the same `package.json`
-                            .npm => String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash and
-                                package_dep.version.value.npm.version.satisfies(ver, buf, buf),
-                            // `workspace:*`
-                            .workspace => found_matching_workspace and
-                                String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash,
-                            else => false,
-                        }) {
-                            package_dep.version = dependency_version;
-                            return null;
-                        }
-                    }
                 } else if (workspace_entry.found_existing) {
                     for (package_dependencies[0..dependencies_count]) |*package_dep| {
                         if (package_dep.version.tag == .workspace and
@@ -3262,6 +3242,8 @@ pub const Package = extern struct {
                     }
                     return error.InstallFailed;
                 }
+
+                workspace_entry.value_ptr.* = path;
             },
             else => {},
         }

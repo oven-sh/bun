@@ -190,13 +190,17 @@ fn expandImpl(
     start: usize,
     end: usize,
 ) !void {
+    log("expandImpl [{d}, {d}]", .{ start, end });
     if (start >= tokens.len or end > tokens.len) return;
 
     var depth = depth_;
-    for (tokens[start..end]) |atom| {
+    for (tokens[start..end], start..) |atom, j| {
         switch (atom) {
             .text => |txt| {
                 try out[out_key].appendSlice(txt.slice());
+            },
+            .close => {
+                depth -= 1;
             },
             .open => |expansion_variants| {
                 depth += 1;
@@ -206,9 +210,11 @@ fn expandImpl(
 
                 var variants = expansion_table[expansion_variants.idx..expansion_variants.end];
                 const skip_over_idx = variants[variants.len - 1].end;
+                log("d={d} VARIANTS: {any}\n", .{ depth, variants });
 
                 const starting_len = out[out_key].items.len;
                 for (variants[0..], 0..) |*variant, i| {
+                    log("j={d} variant={any} skip={any}\n", .{ j, variant, variant.depth != depth });
                     if (variant.depth != depth) continue;
                     const new_key = if (i == 0) out_key else brk: {
                         const new_key = out_key_counter.*;
@@ -216,9 +222,19 @@ fn expandImpl(
                         out_key_counter.* += 1;
                         break :brk new_key;
                     };
-                    try expandImpl(tokens, expansion_table, out, new_key, out_key_counter, depth, variant.start, variant.end);
-                    try expandImpl(tokens, expansion_table, out, new_key, out_key_counter, depth - 1, skip_over_idx, end);
+                    // try expandImpl(tokens, expansion_table, out, new_key, out_key_counter, depth, variant.start, variant.end);
+                    // try expandImpl(tokens, expansion_table, out, new_key, out_key_counter, depth, skip_over_idx, end);
+                    try expandImpl(tokens, expansion_table, out, @intCast(new_key), out_key_counter, depth, variant.start, variant.end);
+                    const key_end = out_key_counter.*;
+                    for (new_key..key_end) |key| {
+                        // try out[key].appendSlice(out[out_key].items[0..starting_len]);
+                        try expandImpl(tokens, expansion_table, out, @intCast(key), out_key_counter, depth, skip_over_idx, end);
+                    }
+
+                    // try expandImpl(tokens, expansion_table, out, new_key, out_key_counter, depth - 1, skip_over_idx, end);
+                    // try expandImpl(tokens, expansion_table, out, new_key, out_key_counter, depth, skip_over_idx, tokens.len);
                 }
+                log("str: {s}", .{out[out_key].items[0..]});
                 return;
             },
             else => {},

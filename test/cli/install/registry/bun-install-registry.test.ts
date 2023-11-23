@@ -896,7 +896,7 @@ describe("workspaces", async () => {
     expect(err).toContain('Workspace name "pkg1" already exists');
     expect(await exited).toBe(1);
   });
-  const versions = ["workspace:1.0.0", "workspace:*", "workspace:^1.0.0", "1.0.0"];
+  const versions = ["workspace:1.0.0", "workspace:*", "workspace:^1.0.0", "1.0.0", "*"];
 
   for (const rootVersion of versions) {
     for (const packageVersion of versions) {

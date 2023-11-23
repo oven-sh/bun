@@ -25,7 +25,7 @@ describe("brace_expansion", () => {
         {
           "open": {
             idx: 0,
-            len: 2,
+            end: 2,
           },
         },
         { "text": "js" },
@@ -36,7 +36,7 @@ describe("brace_expansion", () => {
         {
           "open": {
             idx: 2,
-            len: 3,
+            end: 5,
           },
         },
         { "text": "ts" },
@@ -59,7 +59,7 @@ describe("brace_expansion", () => {
         {
           open: {
             idx: 0,
-            len: 2,
+            end: 2,
           },
         },
         { text: "ts" },

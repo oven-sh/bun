@@ -535,7 +535,7 @@ pub const Interpreter = struct {
             expanded_strings[i] = std.ArrayList(u8).init(self.allocator);
         }
 
-        try Braces.expand(lexer.tokens.items[0..], expansions_table, expanded_strings);
+        try Braces.expand(lexer.tokens.items[0..], expansions_table.items[0..], expanded_strings);
 
         try out.ensureUnusedCapacity(expansion_count);
         // Add sentinel values

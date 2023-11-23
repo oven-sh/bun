@@ -550,13 +550,8 @@ pub fn braces(
         return .undefined;
     };
 
-    var expansion_table = arena.allocator().alloc(Braces.ExpansionVariant, variants_count) catch {
-        globalThis.throwOutOfMemory();
-        return .undefined;
-    };
-    @memset(expansion_table, Braces.ExpansionVariant{});
-    Braces.buildExpansionTable(lexer.tokens.items[0..], expansion_table) catch {
-        globalThis.throw("braces: too many nested braces", .{});
+    const expansion_table = Braces.buildExpansionTableAlloc(arena.allocator(), lexer.tokens.items[0..], variants_count) catch |err| {
+        globalThis.throwError(err, "braces");
         return .undefined;
     };
 
@@ -580,7 +575,7 @@ pub fn braces(
 
     Braces.expand(
         lexer.tokens.items[0..],
-        expansion_table[0..],
+        expansion_table.items[0..],
         expanded_strings,
     ) catch {
         globalThis.throwOutOfMemory();

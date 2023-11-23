@@ -24,7 +24,7 @@ const Token = union(TokenTag) {
 
     const ExpansionVariants = struct {
         idx: u16 = 0,
-        len: u16 = 0,
+        end: u16 = 0,
     };
 
     pub fn toText(self: *Token) SmolStr {
@@ -198,21 +198,21 @@ fn expandImpl(
             .open => |expansion_variants| {
                 depth += 1;
                 if (bun.Environment.allow_assert) {
-                    std.debug.assert(expansion_variants.len >= 1);
+                    std.debug.assert(expansion_variants.end - expansion_variants.idx >= 1);
                 }
 
-                var variants = expansion_table[expansion_variants.idx .. expansion_variants.idx + expansion_variants.len];
+                var variants = expansion_table[expansion_variants.idx..expansion_variants.end];
                 const skip_over_idx = variants[variants.len - 1].end;
 
                 const starting_len = out[out_key].items.len;
                 for (variants[0..], 0..) |*variant, i| {
+                    if (variant.depth != depth) continue;
                     const new_key = if (i == 0) out_key else brk: {
                         const new_key = out_key_counter.*;
                         try out[new_key].appendSlice(out[out_key].items[0..starting_len]);
                         out_key_counter.* += 1;
                         break :brk new_key;
                     };
-                    std.debug.print("Branch: {s} {d} {d} VARIANT: {any}\n", .{ out[out_key].items[0..], out_key, new_key, variant.* });
                     try expandImpl(tokens, expansion_table, out, new_key, out_key_counter, depth, variant.start, variant.end);
                     try expandImpl(tokens, expansion_table, out, new_key, out_key_counter, depth - 1, skip_over_idx, end);
                 }
@@ -280,36 +280,29 @@ pub fn calculateExpandedAmount(tokens: []const Token) !u32 {
     return variant_count;
 }
 
-pub fn buildExpansionTableAlloc(alloc: Allocator, tokens: []Token, variants_count: usize) ![]ExpansionVariant {
-    var table = try alloc.alloc(ExpansionVariant, variants_count);
-    try buildExpansionTable(tokens, table);
+pub fn buildExpansionTableAlloc(alloc: Allocator, tokens: []Token, variants_count: usize) !std.ArrayList(ExpansionVariant) {
+    var table = try std.ArrayList(ExpansionVariant).initCapacity(alloc, variants_count);
+    try buildExpansionTable(tokens, &table);
     return table;
 }
 
 pub fn buildExpansionTable(
     tokens: []Token,
-    table: []ExpansionVariant,
+    table: *std.ArrayList(ExpansionVariant),
 ) !void {
     const BraceState = struct {
         tok_idx: u16,
         variants: u16,
         prev_tok_end: u16,
         prev_nested: bool = false,
-
-        fn merge(a: *@This(), b: *@This()) void {
-            a.variants += b.variants;
-            a.prev_tok_end = b.prev_tok_end;
-        }
     };
     var brace_stack = StackStack(BraceState, u8, MAX_NESTED_BRACES){};
-
-    var table_len: u16 = 0;
 
     var i: u16 = 0;
     while (i < tokens.len) : (i += 1) {
         switch (tokens[i]) {
             .open => {
-                const table_idx = table_len;
+                const table_idx: u16 = @intCast(table.items.len);
                 tokens[i].open.idx = table_idx;
                 try brace_stack.push(.{
                     .tok_idx = i,
@@ -321,52 +314,35 @@ pub fn buildExpansionTable(
                 const depth = brace_stack.len;
                 var top = brace_stack.pop().?;
 
-                if (top.prev_nested) continue;
-
-                table[table_len] = .{
+                try table.append(.{
                     .end = i,
                     .start = top.prev_tok_end + 1,
                     .depth = depth,
-                };
+                });
 
                 top.prev_tok_end = i;
                 top.variants += 1;
 
-                tokens[top.tok_idx].open.len = top.variants;
-                if (brace_stack.len > 0) {
-                    brace_stack.topPtr().?.merge(&top);
-                } else {
-                    table_len += 1;
-                }
-
-                if (brace_stack.topPtr()) |t| {
-                    t.prev_nested = true;
-                }
+                tokens[top.tok_idx].open.end = @intCast(table.items.len);
             },
             .comma => {
                 var top = brace_stack.topPtr().?;
-                if (top.prev_nested) {
-                    top.prev_nested = false;
-                    continue;
-                }
 
-                table[table_len] = .{
+                try table.append(.{
                     .end = i,
                     .start = top.prev_tok_end + 1,
                     .depth = brace_stack.len,
-                };
+                });
 
                 top.prev_tok_end = i;
                 top.variants += 1;
-                table_len += 1;
-                // top.prev_nested = brace_stack.len > 1;
             },
             else => {},
         }
     }
 
     if (bun.Environment.allow_assert) {
-        for (table, 0..) |variant, kdjsd| {
+        for (table.items[0..], 0..) |variant, kdjsd| {
             std.debug.print("I: {d} VARIANT: {any}\n", .{ kdjsd, variant });
             std.debug.assert(variant.start != 0 and variant.end != 0);
         }

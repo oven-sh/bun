@@ -10,7 +10,7 @@ import { beforeAll, afterAll, beforeEach, afterEach, test, expect, describe } fr
 
 var verdaccioServer: ChildProcess;
 var testCounter: number = 0;
-var port: number = 4783;
+var port: number = 4784;
 var packageDir: string;
 
 ignoreMimallocWarning({ beforeAll, afterAll });

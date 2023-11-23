@@ -13,7 +13,7 @@ const default_allocator = bun.default_allocator;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const Arena = @import("../mimalloc_arena.zig").Arena;
 const C = bun.C;
-const NetworkThread = @import("root").bun.HTTP.NetworkThread;
+const NetworkThread = @import("root").bun.http.NetworkThread;
 const IO = @import("root").bun.AsyncIO;
 const Allocator = std.mem.Allocator;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
@@ -31,7 +31,6 @@ const ServerEntryPoint = bun.bundler.ServerEntryPoint;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
-const http = @import("../bun_dev_http_server.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
 const Analytics = @import("../analytics/analytics_thread.zig");
@@ -1378,7 +1377,7 @@ pub const ModuleLoader = struct {
             .js, .jsx, .ts, .tsx, .json, .toml, .text => {
                 jsc_vm.transpiled_count += 1;
                 jsc_vm.bundler.resetStore();
-                const hash = http.Watcher.getHash(path.text);
+                const hash = JSC.Watcher.getHash(path.text);
                 const is_main = jsc_vm.main.len == path.text.len and
                     jsc_vm.main_hash == hash and
                     strings.eqlLong(jsc_vm.main, path.text, false);

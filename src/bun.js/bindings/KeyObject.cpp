@@ -1433,7 +1433,9 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
     }
     case CryptoKeyClass::RSA: {
         const auto& rsa = downcast<WebCore::CryptoKeyRSA>(wrapped);
-        if (rsa.isRestrictedToHash() && hash != rsa.hashAlgorithmIdentifier()) {
+        CryptoAlgorithmIdentifier restrict_hash;
+        bool isRestrictedToHash = rsa.isRestrictedToHash(restrict_hash);
+        if (isRestrictedToHash && hash != restrict_hash) {
             JSC::throwTypeError(globalObject, scope, "digest not allowed"_s);
             return JSC::JSValue::encode(JSC::JSValue {});
         }
@@ -1477,9 +1479,9 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
                         return JSC::JSValue::encode(JSC::JSValue {});
                     }
                     params.saltLength = saltLength.toUInt32(globalObject);
-                } else if(count > 5) {
+                } else if (count > 5) {
                     auto saltLength = callFrame->argument(5);
-                     if (!saltLength.isUndefinedOrNull() && !saltLength.isEmpty() && !saltLength.isNumber()) {
+                    if (!saltLength.isUndefinedOrNull() && !saltLength.isEmpty() && !saltLength.isNumber()) {
                         JSC::throwTypeError(globalObject, scope, "saltLength is expected to be a number"_s);
                         return JSC::JSValue::encode(JSC::JSValue {});
                     }
@@ -1650,7 +1652,9 @@ JSC::EncodedJSValue KeyObject__Verify(JSC::JSGlobalObject* globalObject, JSC::Ca
     }
     case CryptoKeyClass::RSA: {
         const auto& rsa = downcast<WebCore::CryptoKeyRSA>(wrapped);
-        if (rsa.isRestrictedToHash() && hash != rsa.hashAlgorithmIdentifier()) {
+        CryptoAlgorithmIdentifier restrict_hash;
+        bool isRestrictedToHash = rsa.isRestrictedToHash(restrict_hash);
+        if (isRestrictedToHash && hash != restrict_hash) {
             JSC::throwTypeError(globalObject, scope, "digest not allowed"_s);
             return JSC::JSValue::encode(JSC::JSValue {});
         }
@@ -1682,16 +1686,16 @@ JSC::EncodedJSValue KeyObject__Verify(JSC::JSGlobalObject* globalObject, JSC::Ca
                         JSC::throwTypeError(globalObject, scope, "saltLength is expected to be a number"_s);
                         return JSC::JSValue::encode(JSC::JSValue {});
                     }
-            
+
                     auto saltLength = callFrame->argument(6);
                     if (saltLength.isUndefinedOrNull() || saltLength.isEmpty() || !saltLength.isNumber()) {
                         JSC::throwTypeError(globalObject, scope, "saltLength is expected to be a number"_s);
                         return JSC::JSValue::encode(JSC::JSValue {});
                     }
                     params.saltLength = saltLength.toUInt32(globalObject);
-                } else if(count > 6) {
+                } else if (count > 6) {
                     auto saltLength = callFrame->argument(6);
-                     if (!saltLength.isUndefinedOrNull() && !saltLength.isEmpty() && !saltLength.isNumber()) {
+                    if (!saltLength.isUndefinedOrNull() && !saltLength.isEmpty() && !saltLength.isNumber()) {
                         JSC::throwTypeError(globalObject, scope, "saltLength is expected to be a number"_s);
                         return JSC::JSValue::encode(JSC::JSValue {});
                     }
@@ -1805,7 +1809,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
         case CryptoKeyClass::RSA: {
             const auto& rsa = downcast<WebCore::CryptoKeyRSA>(wrapped);
             if (string == "jwk"_s) {
-                if(rsa.algorithmIdentifier() == CryptoAlgorithmIdentifier::RSA_PSS) {
+                if (rsa.algorithmIdentifier() == CryptoAlgorithmIdentifier::RSA_PSS) {
                     JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE: encryption is not supported for jwk format"_s);
                     return JSC::JSValue::encode(JSC::JSValue {});
                 }
@@ -1814,7 +1818,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                 return JSC::JSValue::encode(WebCore::convertDictionaryToJS(*globalObject, *domGlobalObject, jwkValue, true));
             } else {
                 WTF::String type = "pkcs1"_s;
-               
+
                 if (!typeJSValue.isUndefinedOrNull() && !typeJSValue.isEmpty()) {
                     if (!typeJSValue.isString()) {
                         JSC::throwTypeError(globalObject, scope, "type must be a string"_s);
@@ -1823,8 +1827,8 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                     type = typeJSValue.toWTFString(globalObject);
                     RETURN_IF_EXCEPTION(scope, encodedJSValue());
                 }
-                if(type == "pkcs1"_s){
-                    if(rsa.algorithmIdentifier() == CryptoAlgorithmIdentifier::RSA_PSS) {
+                if (type == "pkcs1"_s) {
+                    if (rsa.algorithmIdentifier() == CryptoAlgorithmIdentifier::RSA_PSS) {
                         JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE: encryption is not supported for jwk format"_s);
                         return JSC::JSValue::encode(JSC::JSValue {});
                     }
@@ -2567,7 +2571,7 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
             JSC::throwTypeError(lexicalGlobalObject, scope, "options.publicExponent is expected to be a number"_s);
             return JSC::JSValue::encode(JSC::JSValue {});
         }
-        
+
         uint8_t publicExponentArray[4];
         publicExponentArray[0] = (uint8_t)(publicExponent >> 24);
         publicExponentArray[1] = (uint8_t)(publicExponent >> 16);
@@ -2591,7 +2595,8 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
         // this is actually sync
         CryptoKeyRSA::generatePair(CryptoAlgorithmIdentifier::RSA_OAEP, CryptoAlgorithmIdentifier::SHA_1, false, modulusLength, Vector<uint8_t>((uint8_t*)&publicExponentArray, 4), true, CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt, WTFMove(keyPairCallback), WTFMove(failureCallback), zigGlobalObject->scriptExecutionContext());
         return JSValue::encode(returnValue);
-    } if (type_str == "rsa-pss"_s) {
+    }
+    if (type_str == "rsa-pss"_s) {
         if (count == 1) {
             JSC::throwTypeError(lexicalGlobalObject, scope, "options.modulusLength are required for rsa"_s);
             return JSC::JSValue::encode(JSC::JSValue {});
@@ -2636,14 +2641,14 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
         auto hasHash = false;
         auto hash = CryptoAlgorithmIdentifier::SHA_1;
         if (!hashAlgoJS.isUndefinedOrNull() && !hashAlgoJS.isEmpty()) {
-            if (!hashAlgoJS.isString()) {             
+            if (!hashAlgoJS.isString()) {
                 JSC::throwTypeError(lexicalGlobalObject, scope, "options.hashAlgorithm is expected to be a string"_s);
                 return JSC::JSValue::encode(JSC::JSValue {});
             }
             hasHash = true;
             auto hashAlgo = hashAlgoJS.toWTFString(lexicalGlobalObject);
             RETURN_IF_EXCEPTION(scope, encodedJSValue());
-        
+
             auto identifier = CryptoAlgorithmRegistry::singleton().identifier(hashAlgo);
             if (UNLIKELY(!identifier)) {
                 JSC::throwTypeError(lexicalGlobalObject, scope, "options.hashAlgorithm is invalid"_s);
@@ -2651,24 +2656,24 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
             }
 
             switch (*identifier) {
-                case WebCore::CryptoAlgorithmIdentifier::SHA_1:
-                case WebCore::CryptoAlgorithmIdentifier::SHA_224:
-                case WebCore::CryptoAlgorithmIdentifier::SHA_256:
-                case WebCore::CryptoAlgorithmIdentifier::SHA_384:
-                case WebCore::CryptoAlgorithmIdentifier::SHA_512: {
+            case WebCore::CryptoAlgorithmIdentifier::SHA_1:
+            case WebCore::CryptoAlgorithmIdentifier::SHA_224:
+            case WebCore::CryptoAlgorithmIdentifier::SHA_256:
+            case WebCore::CryptoAlgorithmIdentifier::SHA_384:
+            case WebCore::CryptoAlgorithmIdentifier::SHA_512: {
 
-                    hash = *identifier;
-                    break;
-                }
-                default: {
-                    JSC::throwTypeError(lexicalGlobalObject, scope, "options.hashAlgorithm is invalid"_s);
-                    return JSC::JSValue::encode(JSC::JSValue {});
-                }
+                hash = *identifier;
+                break;
+            }
+            default: {
+                JSC::throwTypeError(lexicalGlobalObject, scope, "options.hashAlgorithm is invalid"_s);
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
             }
         }
 
         auto saltLengthJS = options->getIfPropertyExists(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "hashAlgorithm"_s)));
-        
+
         auto failureCallback = [&]() {
             throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Failed to generate key pair"_s));
         };

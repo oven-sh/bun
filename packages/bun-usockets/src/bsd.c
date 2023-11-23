@@ -54,31 +54,32 @@ struct us_internal_udp_packet_buffer {
 
 /* We need to emulate sendmmsg, recvmmsg on platform who don't have it */
 int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, void *msgvec, unsigned int vlen, int flags) {
-#if defined(__APPLE__)
-
-struct mmsghdr {
-    struct msghdr msg_hdr;  /* Message header */
-    unsigned int  msg_len;  /* Number of bytes transmitted */
-};
-
-    struct mmsghdr *hdrs = (struct mmsghdr *) msgvec;
-
-    for (int i = 0; i < vlen; i++) {
-        int ret = sendmsg(fd, &hdrs[i].msg_hdr, flags);
-        if (ret == -1) {
-            if (i) {
-                return i;
-            } else {
-                return -1;
-            }
-        } else {
-            hdrs[i].msg_len = ret;
-        }
-    }
-
-    return vlen;
-
-#elif defined(_WIN32)
+// #if defined(__APPLE__)
+//
+// struct mmsghdr {
+//     struct msghdr msg_hdr;  /* Message header */
+//     unsigned int  msg_len;  /* Number of bytes transmitted */
+// };
+//
+//     struct mmsghdr *hdrs = (struct mmsghdr *) msgvec;
+//
+//     for (int i = 0; i < vlen; i++) {
+//         int ret = sendmsg(fd, &hdrs[i].msg_hdr, flags);
+//         if (ret == -1) {
+//             if (i) {
+//                 return i;
+//             } else {
+//                 return -1;
+//             }
+//         } else {
+//             hdrs[i].msg_len = ret;
+//         }
+//     }
+//
+//     return vlen;
+//
+//#elif defined(_WIN32)
+#if defined(_WIN32) || defined(__APPLE__)
 
     struct us_internal_udp_packet_buffer *packet_buffer = (struct us_internal_udp_packet_buffer *) msgvec;
 
@@ -241,7 +242,7 @@ void *bsd_create_udp_packet_buffer() {
         b->iov[n].iov_len = LIBUS_UDP_MAX_SIZE;
 
         b->msgvec[n].msg_hdr = (struct msghdr) {
-            .msg_name       = &b->addr,
+            .msg_name       = &b->addr[n],
             .msg_namelen    = sizeof (struct sockaddr_storage),
 
             .msg_iov        = &b->iov[n],
@@ -654,10 +655,10 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port) {
     if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_RECVPKTINFO, (void *) &enabled, sizeof(enabled)) == -1) {
         if (errno == 92) {
             if (setsockopt(listenFd, IPPROTO_IP, IP_PKTINFO, (void *) &enabled, sizeof(enabled)) != 0) {
-                printf("Error setting IPv4 pktinfo!\n");
+                //printf("Error setting IPv4 pktinfo!\n");
             }
         } else {
-            printf("Error setting IPv6 pktinfo!\n");
+            //printf("Error setting IPv6 pktinfo!\n");
         }
     }
 
@@ -665,10 +666,10 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port) {
     if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_RECVTCLASS, (void *) &enabled, sizeof(enabled)) == -1) {
         if (errno == 92) {
             if (setsockopt(listenFd, IPPROTO_IP, IP_RECVTOS, (void *) &enabled, sizeof(enabled)) != 0) {
-                printf("Error setting IPv4 ECN!\n");
+                //printf("Error setting IPv4 ECN!\n");
             }
         } else {
-            printf("Error setting IPv6 ECN!\n");
+            //printf("Error setting IPv6 ECN!\n");
         }
     }
 
@@ -686,7 +687,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port) {
 int bsd_udp_packet_buffer_ecn(void *msgvec, int index) {
 
 #if defined(_WIN32) || defined(__APPLE__)
-    printf("ECN not supported!\n");
+    //printf("ECN not supported!\n");
 #else
     // we should iterate all control messages once, after recvmmsg and then only fetch them with these functions
     struct msghdr *mh = &((struct mmsghdr *) msgvec)[index].msg_hdr;
@@ -709,8 +710,7 @@ int bsd_udp_packet_buffer_ecn(void *msgvec, int index) {
     }
 #endif
 
-    printf("We got no ECN!\n");
-
+    //printf("We got no ECN!\n");
     return 0; // no ecn defaults to 0
 }
 

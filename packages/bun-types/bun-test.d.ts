@@ -450,7 +450,7 @@ declare module "bun:test" {
      * @param condition if the test should be skipped
      */
     skipIf(
-      condition: boolean,
+      condition?: boolean | undefined,
     ): (
       label: string,
       fn:

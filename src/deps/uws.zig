@@ -1164,8 +1164,8 @@ pub const Poll = opaque {
         pub const write_flag = if (Environment.isLinux) std.os.linux.EPOLL.OUT else 2;
     };
 
-    pub fn deinit(self: *Poll) void {
-        us_poll_free(self);
+    pub fn deinit(self: *Poll, loop: *Loop) void {
+        us_poll_free(self, loop);
     }
 
     // (void* userData, int fd, int events, int error, struct us_poll_t *poll)
@@ -2530,3 +2530,21 @@ pub fn newSocketFromFd(ctx: *SocketContext, ext_size: c_int, fd: LIBUS_SOCKET_DE
         .socket = us_socket_from_fd(ctx, ext_size, fd) orelse return null,
     };
 }
+
+pub const UDPSocket = opaque {};
+pub const UDPPacketBuffer = opaque {};
+
+pub extern fn us_create_udp_packet_buffer() ?*UDPPacketBuffer;
+pub extern fn us_create_udp_socket(loop: ?*Loop, buf: ?*UDPPacketBuffer, data_cb: *const fn (*UDPSocket, *UDPPacketBuffer, c_int) callconv(.C) void, drain_cb: *const fn (*UDPSocket) callconv(.C) void, host: [*c]const u8, port: c_ushort, user_data: ?*anyopaque) ?*UDPSocket;
+pub extern fn us_udp_socket_send(socket: ?*UDPSocket, buf: ?*UDPPacketBuffer, num: c_int) c_int;
+pub extern fn us_udp_socket_receive(socket: ?*UDPSocket, buf: ?*UDPPacketBuffer) c_int;
+pub extern fn us_udp_packet_buffer_peer(buf: ?*UDPPacketBuffer, index: c_int) *std.os.sockaddr.storage;
+pub extern fn us_udp_socket_user(socket: ?*UDPSocket) ?*anyopaque;
+pub extern fn us_udp_socket_bind(socket: ?*UDPSocket, hostname: [*c]const u8, port: c_uint) c_int;
+pub extern fn us_udp_socket_bound_port(socket: ?*UDPSocket) c_int;
+pub extern fn us_udp_socket_bound_ip(socket: ?*UDPSocket, buf: [*c]u8, length: [*c]i32) void;
+pub extern fn us_udp_buffer_set_packet_payload(buf: ?*UDPPacketBuffer, index: c_int, offset: c_int, payload: ?*const anyopaque, length: c_int, peer_addr: ?*anyopaque) void;
+//char *us_udp_packet_buffer_payload(struct us_udp_packet_buffer_t *buf, int index);
+pub extern fn us_udp_packet_buffer_payload(buf: ?*UDPPacketBuffer, index: c_int) [*]u8;
+pub extern fn us_udp_packet_buffer_payload_length(buf: ?*UDPPacketBuffer, index: c_int) c_int;
+pub extern fn us_udp_socket_close(socket: ?*UDPSocket) void;

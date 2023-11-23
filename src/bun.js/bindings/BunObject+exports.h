@@ -50,6 +50,7 @@
     macro(inflateSync) \
     macro(jest) \
     macro(listen) \
+    macro(bind) \
     macro(mmap) \
     macro(nanoseconds) \
     macro(openInEditor) \

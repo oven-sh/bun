@@ -80,6 +80,18 @@ int us_udp_socket_bound_port(struct us_udp_socket_t *s) {
     return ((struct us_internal_udp_t *) s)->port;
 }
 
+void us_udp_socket_bound_ip(struct us_udp_socket_t *s, char *buf, int *length) {
+  struct us_internal_udp_t *udp = (struct us_internal_udp_t *)s;
+
+  struct bsd_addr_t addr;
+  if (bsd_local_addr(us_poll_fd((struct us_poll_t *)s), &addr) || *length < bsd_addr_get_ip_length(&addr)) {
+    *length = 0;
+  } else {
+    *length = bsd_addr_get_ip_length(&addr);
+    memcpy(buf, bsd_addr_get_ip(&addr), *length);
+  }
+}
+
 /* Internal wrapper, move from here */
 void internal_on_udp_read(struct us_udp_socket_t *s) {
 
@@ -99,6 +111,13 @@ void *us_udp_socket_user(struct us_udp_socket_t *s) {
     struct us_internal_udp_t *udp = (struct us_internal_udp_t *) s;
 
     return udp->user;
+}
+
+void us_udp_socket_close(struct us_udp_socket_t *s) {
+  struct us_poll_t *p = (struct us_poll_t *) s;
+  struct us_internal_udp_t *cb = (struct us_internal_udp_t *) p;
+  us_poll_stop(p, cb->cb.loop);
+  bsd_close_socket(us_poll_fd(p));
 }
 
 struct us_udp_socket_t *us_create_udp_socket(struct us_loop_t *loop, struct us_udp_packet_buffer_t *buf, void (*data_cb)(struct us_udp_socket_t *, struct us_udp_packet_buffer_t *, int), void (*drain_cb)(struct us_udp_socket_t *), const char *host, unsigned short port, void *user) {
@@ -129,7 +148,7 @@ struct us_udp_socket_t *us_create_udp_socket(struct us_loop_t *loop, struct us_u
     bsd_local_addr(fd, &tmp);
     cb->port = bsd_addr_get_port(&tmp);
 
-    printf("The port of UDP is: %d\n", cb->port);
+    //printf("The port of UDP is: %d\n", cb->port);
 
     /* There is no udp socket context, only user data */
     /* This should really be ext like everything else */

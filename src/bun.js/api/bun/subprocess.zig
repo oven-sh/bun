@@ -1240,11 +1240,6 @@ pub const Subprocess = struct {
                 while (cmds_array.next()) |value| {
                     const arg = value.getZigString(globalThis);
 
-                    // if the string is empty, ignore it, don't add it to the argv
-                    if (arg.len == 0) {
-                        continue;
-                    }
-
                     argv.appendAssumeCapacity(arg.toOwnedSliceZ(allocator) catch {
                         globalThis.throw("out of memory", .{});
                         return .zero;

@@ -3233,19 +3233,6 @@ pub const Package = extern struct {
                     }
                 }
 
-                if (workspace_entry.found_existing) {
-                    if (strings.eqlComptime(workspace, "*")) return null;
-
-                    const old_path = workspace_entry.value_ptr.slice(buf);
-                    if (!strings.eqlComptime(old_path, "*")) {
-                        if (strings.eql(old_path, path.slice(buf))) return null;
-
-                        log.addErrorFmt(&source, logger.Loc.Empty, allocator, "Workspace name \"{s}\" already exists", .{
-                            external_alias.slice(buf),
-                        }) catch {};
-                        return error.InstallFailed;
-                    }
-                }
                 workspace_entry.value_ptr.* = path;
 
                 if (workspace_version) |ver| {
@@ -4111,7 +4098,19 @@ pub const Package = extern struct {
 
         inline for (dependency_groups) |group| {
             if (group.behavior.isWorkspace()) {
+                var seen_workspace_names = NameHashSet{};
+                defer seen_workspace_names.deinit(allocator);
                 for (workspace_names.values(), workspace_names.keys()) |entry, path| {
+
+                    // workspace names from their package jsons. duplicates not allowed
+                    var gop = try seen_workspace_names.getOrPut(allocator, @truncate(String.Builder.stringHash(entry.name)));
+                    if (gop.found_existing) {
+                        log.addErrorFmt(&source, logger.Loc.Empty, allocator, "Workspace name \"{s}\" already exists", .{
+                            entry.name,
+                        }) catch {};
+                        return error.InstallFailed;
+                    }
+
                     const external_name = string_builder.append(ExternalString, entry.name);
 
                     const workspace_version = brk: {

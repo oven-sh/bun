@@ -18,7 +18,7 @@ const mem = std.mem;
 const strings = @import("root").bun.strings;
 const Maybe = JSC.Maybe;
 const File = std.fs.File;
-const IteratorResult = struct {
+pub const IteratorResult = struct {
     name: PathString,
     kind: Entry.Kind,
 };
@@ -318,7 +318,7 @@ pub const Iterator = switch (builtin.os.tag) {
     else => @compileError("unimplemented"),
 };
 
-const WrappedIterator = struct {
+pub const WrappedIterator = struct {
     iter: Iterator,
     const Self = @This();
 

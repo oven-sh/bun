@@ -1,0 +1,41 @@
+{
+	"name": "peer-a-dep-1-0-2",
+	"versions": {
+		"1.0.0": {
+			"name": "peer-a-dep-1-0-2",
+			"version": "1.0.0",
+			"peerDependencies": {
+				"a-dep": "1.0.2"
+			},
+			"_id": "peer-a-dep-1-0-2@1.0.0",
+			"_nodeVersion": "21.1.0",
+			"_npmVersion": "8.19.4",
+			"dist": {
+				"integrity": "sha512-gXX4/cBV9YrpLNA3Nb6Lf76HCHRhv35Q1wSXITzGuabN3Ctrc1IkljcOHbYpq7OL5yEF4DhVLqT9cvIv/TClJg==",
+				"shasum": "734d7e02b0376adf29956f6965f14df1ad665937",
+				"tarball": "http://localhost:4873/peer-a-dep-1-0-2/-/peer-a-dep-1-0-2-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-18T03:16:24.117Z",
+		"created": "2023-11-18T03:16:24.117Z",
+		"1.0.0": "2023-11-18T03:16:24.117Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"peer-a-dep-1-0-2-1.0.0.tgz": {
+			"shasum": "734d7e02b0376adf29956f6965f14df1ad665937",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "peer-a-dep-1-0-2",
+	"readme": "ERROR: No README data found!"
+}

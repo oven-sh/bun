@@ -3212,10 +3212,31 @@ pub const Package = extern struct {
                 dependency_version.value.workspace = path;
 
                 var workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, name_hash);
+                const found_matching_workspace = workspace_entry.found_existing or PackageManager.instance.workspaces.contains(lockfile.str(&external_alias.value));
+
+                if (workspace_version) |ver| {
+                    try lockfile.workspace_versions.put(allocator, name_hash, ver);
+                    for (package_dependencies[0..dependencies_count]) |*package_dep| {
+                        if (switch (package_dep.version.tag) {
+                            // `dependencies` & `workspaces` defined within the same `package.json`
+                            .npm => String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash and
+                                package_dep.version.value.npm.version.satisfies(ver, buf, buf),
+                            // `workspace:*`
+                            .workspace => found_matching_workspace and
+                                String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash,
+                            else => false,
+                        }) {
+                            package_dep.version = dependency_version;
+                            workspace_entry.value_ptr.* = path;
+                            return null;
+                        }
+                    }
+                }
+
                 if (workspace_entry.found_existing) {
                     if (strings.eqlComptime(workspace, "*")) return null;
 
-                    const old_path = workspace_entry.value_ptr.*.slice(buf);
+                    const old_path = workspace_entry.value_ptr.slice(buf);
                     if (!strings.eqlComptime(old_path, "*")) {
                         if (strings.eql(old_path, path.slice(buf))) return null;
 
@@ -3229,14 +3250,13 @@ pub const Package = extern struct {
 
                 if (workspace_version) |ver| {
                     try lockfile.workspace_versions.put(allocator, name_hash, ver);
-
                     for (package_dependencies[0..dependencies_count]) |*package_dep| {
                         if (switch (package_dep.version.tag) {
                             // `dependencies` & `workspaces` defined within the same `package.json`
                             .npm => String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash and
                                 package_dep.version.value.npm.version.satisfies(ver, buf, buf),
                             // `workspace:*`
-                            .workspace => workspace_entry.found_existing and
+                            .workspace => found_matching_workspace and
                                 String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash,
                             else => false,
                         }) {

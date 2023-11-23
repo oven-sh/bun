@@ -10,28 +10,28 @@ import { beforeAll, afterAll, beforeEach, afterEach, test, expect, describe } fr
 
 var verdaccioServer: ChildProcess;
 var testCounter: number = 0;
-var port: number = 4873;
+var port: number = 4783;
 var packageDir: string;
 
 ignoreMimallocWarning({ beforeAll, afterAll });
 
-// beforeAll(async done => {
-//   verdaccioServer = fork(
-//     await import.meta.resolve("verdaccio/bin/verdaccio"),
-//     ["-c", join(import.meta.dir, "verdaccio.yaml"), "-l", `${port}`],
-//     { silent: true, execPath: "bun" },
-//   );
+beforeAll(async done => {
+  verdaccioServer = fork(
+    await import.meta.resolve("verdaccio/bin/verdaccio"),
+    ["-c", join(import.meta.dir, "verdaccio.yaml"), "-l", `${port}`],
+    { silent: true, execPath: "bun" },
+  );
 
-//   verdaccioServer.on("message", (msg: { verdaccio_started: boolean }) => {
-//     if (msg.verdaccio_started) {
-//       done();
-//     }
-//   });
-// });
+  verdaccioServer.on("message", (msg: { verdaccio_started: boolean }) => {
+    if (msg.verdaccio_started) {
+      done();
+    }
+  });
+});
 
-// afterAll(() => {
-//   verdaccioServer.kill();
-// });
+afterAll(() => {
+  verdaccioServer.kill();
+});
 
 beforeEach(async () => {
   packageDir = mkdtempSync(join(realpathSync(tmpdir()), "bun-install-registry-" + testCounter++ + "-"));

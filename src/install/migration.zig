@@ -273,6 +273,11 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
             }
         }
 
+        if (pkg.get("name")) |pkg_name| {
+            const pkg_name_str = pkg_name.asString(this.allocator) orelse unreachable;
+            builder.count(pkg_name_str);
+        }
+
         if (pkg.get("bin")) |bin| {
             if (bin.data != .e_object) return error.InvalidNPMLockfile;
             switch (bin.data.e_object.properties.len) {

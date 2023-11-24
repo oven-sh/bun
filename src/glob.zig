@@ -248,6 +248,7 @@ pub fn GlobWalker_(
                 this.iter_state.directory.is_last = component_idx == this.walker.patternComponents.items.len - 1;
 
                 var fd: bun.FileDescriptor = fd: {
+                    if (work_item.fd) |fd| break :fd fd;
                     if (comptime root) {
                         if (had_dot_dot) break :fd switch (Syscall.openat(this.cwd_fd, dir_path, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
                             .err => |err| return .{
@@ -304,93 +305,68 @@ pub fn GlobWalker_(
                                     const next_pattern = if (component_idx + 1 < this.walker.patternComponents.items.len) &this.walker.patternComponents.items[component_idx + 1] else null;
                                     const is_last = component_idx == this.walker.patternComponents.items.len - 1;
 
-                                    const kind: EntryKind = kind: {
-                                        const stat_result = switch (Syscall.stat(symlink_full_path_z)) {
-                                            .err => |err| {
-                                                if (this.walker.error_on_broken_symlinks) return .{ .err = this.walker.handleSysErrWithPath(err, symlink_full_path_z) };
-                                                // Broken symlink
-                                                if (!this.walker.only_files) {
-                                                    // (See case A and B in the comment for `matchPatternFile()`)
-                                                    // When we encounter a symlink we call the catch all
-                                                    // matching function: `matchPatternImpl()` to see if we can avoid following the symlink.
-                                                    // So for case A, we just need to check if the pattern is the last pattern.
-                                                    if (is_last or
-                                                        (pattern.syntax_hint == .Double and
-                                                        component_idx + 1 == this.walker.patternComponents.items.len -| 1 and
-                                                        next_pattern.?.syntax_hint != .Double and
-                                                        this.walker.matchPatternImpl(next_pattern.?, entry_name)))
-                                                    {
-                                                        return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) };
-                                                    }
-                                                }
-                                                continue;
-                                            },
-                                            .result => |stat| stat,
-                                        };
-
-                                        if (comptime bun.Environment.isPosix) {
-                                            const m = stat_result.mode & std.os.S.IFMT;
-                                            switch (m) {
-                                                std.os.S.IFDIR => break :kind .directory,
-                                                std.os.S.IFLNK => break :kind .sym_link,
-                                                std.os.S.IFREG => break :kind .file,
-                                                else => {},
+                                    this.iter_state = .get_next;
+                                    const maybe_dir_fd: ?bun.FileDescriptor = switch (Syscall.openat(this.cwd_fd, symlink_full_path_z, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+                                        .err => |err| brk: {
+                                            if (@as(usize, @intCast(err.errno)) == @as(usize, @intFromEnum(bun.C.E.NOTDIR))) {
+                                                break :brk null;
                                             }
-                                        } else if (comptime bun.Environment.isWindows) {
-                                            return bun.todo(@src(), Maybe(?[]const u8).success);
-                                        } else {
-                                            // wasm?
-                                            return bun.todo(@src(), Maybe(?[]const u8).success);
+                                            if (this.walker.error_on_broken_symlinks) return .{ .err = this.walker.handleSysErrWithPath(err, symlink_full_path_z) };
+                                            // Broken symlink, but if `only_files` is false we still want to append
+                                            // it to the matched paths
+                                            if (!this.walker.only_files) {
+                                                // (See case A and B in the comment for `matchPatternFile()`)
+                                                // When we encounter a symlink we call the catch all
+                                                // matching function: `matchPatternImpl()` to see if we can avoid following the symlink.
+                                                // So for case A, we just need to check if the pattern is the last pattern.
+                                                if (is_last or
+                                                    (pattern.syntax_hint == .Double and
+                                                    component_idx + 1 == this.walker.patternComponents.items.len -| 1 and
+                                                    next_pattern.?.syntax_hint != .Double and
+                                                    this.walker.matchPatternImpl(next_pattern.?, entry_name)))
+                                                {
+                                                    return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) };
+                                                }
+                                            }
+                                            continue;
+                                        },
+                                        .result => |fd| fd,
+                                    };
+
+                                    const dir_fd = maybe_dir_fd orelse {
+                                        // No directory file descriptor, it's a file
+                                        if (is_last)
+                                            return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) };
+
+                                        if (pattern.syntax_hint == .Double and
+                                            component_idx + 1 == this.walker.patternComponents.items.len -| 1 and
+                                            next_pattern.?.syntax_hint != .Double and
+                                            this.walker.matchPatternImpl(next_pattern.?, entry_name))
+                                        {
+                                            return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) };
                                         }
 
                                         continue;
                                     };
 
-                                    this.iter_state = .get_next;
+                                    var add_dir: bool = false;
+                                    // TODO this function calls `matchPatternImpl(pattern,
+                                    // entry_name)` which is redundant because we already called
+                                    // that when we first encountered the symlink
+                                    const recursion_idx_bump_ = this.walker.matchPatternDir(&pattern, next_pattern, entry_name, component_idx, is_last, &add_dir);
 
-                                    switch (kind) {
-                                        .file => {
-                                            if (is_last)
-                                                return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) };
-
-                                            if (pattern.syntax_hint == .Double and
-                                                component_idx + 1 == this.walker.patternComponents.items.len -| 1 and
-                                                next_pattern.?.syntax_hint != .Double and
-                                                this.walker.matchPatternImpl(next_pattern.?, entry_name))
-                                            {
-                                                return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) };
-                                            }
-
-                                            continue;
-                                        },
-                                        .directory => {
-                                            var add_dir: bool = false;
-                                            // TODO this function calls `matchPatternImpl(pattern,
-                                            // entry_name)` which is redundant because we already called
-                                            // that when we first encountered the symlink
-                                            const recursion_idx_bump_ = this.walker.matchPatternDir(&pattern, next_pattern, entry_name, component_idx, is_last, &add_dir);
-
-                                            if (recursion_idx_bump_) |recursion_idx_bump| {
-                                                try this.walker.workbuf.append(
-                                                    this.walker.arena.allocator(),
-                                                    WorkItem.new(work_item.path, component_idx + recursion_idx_bump, .directory),
-                                                );
-                                            }
-
-                                            if (add_dir and !this.walker.only_files) {
-                                                return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) };
-                                            }
-
-                                            continue;
-                                        },
-                                        .sym_link => {
-                                            // This should not happen because if there's a symlink chain
-                                            // calling stat should follow it until it reaches the final
-                                            // file/dir
-                                            @panic("Unexpected symlink chain");
-                                        },
-                                        else => continue,
+                                    if (recursion_idx_bump_) |recursion_idx_bump| {
+                                        try this.walker.workbuf.append(
+                                            this.walker.arena.allocator(),
+                                            WorkItem.newWithFd(work_item.path, component_idx + recursion_idx_bump, .directory, dir_fd),
+                                        );
                                     }
+
+                                    if (add_dir and !this.walker.only_files) {
+                                        return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) };
+                                    }
+
+                                    continue;
                                 },
                             }
                         },
@@ -494,6 +470,7 @@ pub fn GlobWalker_(
             idx: u32,
             kind: Kind,
             entry_start: u32 = 0,
+            fd: ?bun.FileDescriptor = null,
 
             const Kind = enum {
                 directory,
@@ -505,6 +482,15 @@ pub fn GlobWalker_(
                     .path = path,
                     .idx = idx,
                     .kind = kind,
+                };
+            }
+
+            fn newWithFd(path: []const u8, idx: u32, kind: Kind, fd: bun.FileDescriptor) WorkItem {
+                return .{
+                    .path = path,
+                    .idx = idx,
+                    .kind = kind,
+                    .fd = fd,
                 };
             }
 
@@ -646,8 +632,8 @@ pub fn GlobWalker_(
             err: Syscall.Error,
             path_buf: [:0]const u8,
         ) Syscall.Error {
-            @memcpy(this.pathBuf[0 .. path_buf.len + 1], @as([]const u8, @ptrCast(path_buf[0 .. path_buf.len + 1])));
-            // std.mem.copyBackwards(u8, this.pathBuf[0 .. path_buf.len + 1], @as([]const u8, @ptrCast(path_buf[0 .. path_buf.len + 1])));
+            // @memcpy(this.pathBuf[0 .. path_buf.len + 1], @as([]const u8, @ptrCast(path_buf[0 .. path_buf.len + 1])));
+            std.mem.copyBackwards(u8, this.pathBuf[0 .. path_buf.len + 1], @as([]const u8, @ptrCast(path_buf[0 .. path_buf.len + 1])));
             return err.withPath(this.pathBuf[0 .. path_buf.len + 1]);
         }
 

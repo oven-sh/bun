@@ -36,8 +36,31 @@ url="https://ziglang.org/builds/zig-${platform}-${arch}-${zig_version}.tar.xz"
 dest=".cache/zig-${zig_version}.tar.xz"
 extract_at=".cache/zig"
 
+update_repo_if_needed() {
+  if [ "$update_repo" == "true" ]; then
+    files=(
+      build.zig
+      Dockerfile
+
+      .github/workflows/*
+
+      docs/project/contributing.md
+      docs/project/building-windows.md
+    );
+
+    zig_version_previous=$(grep 'recommended_zig_version = "' "build.zig" | cut -d'"' -f2)
+
+    for file in ${files[@]}; do
+      sed -i '' 's/'"${zig_version_previous}"'/'"${zig_version}"'/g' "$file"
+    done
+
+    printf "Zig was updated to ${zig_version}. Please commit new files."
+  fi
+}
+
 if [ -e "${extract_at}/.version" ]; then
   if [ "$(cat "${extract_at}/.version")" == "${zig_version}" ]; then
+    update_repo_if_needed
     exit 0
   fi
 fi
@@ -53,8 +76,4 @@ tar -xzf "${dest}" -C "${extract_at}" --strip-components=1
 
 echo "${zig_version}" > "${extract_at}/.version"
 
-printf "-- Installed Zig v%s to %s\n" "${zig_version}" "./.cache/zig"
-
-if [ "$update_repo" == "true" ]; then
-  # TODO:
-fi
+update_repo_if_needed

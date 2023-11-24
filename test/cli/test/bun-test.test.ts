@@ -104,6 +104,62 @@ describe("bun test", () => {
     });
     expect(stderr).toContain(path);
   });
+  test("works with require", () => {
+    const stderr = runTest({
+      args: [],
+      input: [
+        `
+          const { test, expect } = require("bun:test");
+          test("test #1", () => {
+            expect().pass();
+          })
+        `,
+      ],
+    });
+    expect(stderr).toContain("test #1");
+  });
+  test("works with dynamic import", () => {
+    const stderr = runTest({
+      args: [],
+      input: `
+        const { test, expect } = await import("bun:test");
+        test("test #1", () => {
+          expect().pass();
+        })
+      `,
+    });
+    expect(stderr).toContain("test #1");
+  });
+  test("works with cjs require", () => {
+    const cwd = createTest(
+      `
+        const { test, expect } = require("bun:test");
+        test("test #1", () => {
+          expect().pass();
+        })
+      `,
+      "test.test.cjs",
+    );
+    const stderr = runTest({
+      cwd,
+    });
+    expect(stderr).toContain("test #1");
+  });
+  test("works with cjs dynamic import", () => {
+    const cwd = createTest(
+      `
+        const { test, expect } = await import("bun:test");
+        test("test #1", () => {
+          expect().pass();
+        })
+      `,
+      "test.test.cjs",
+    );
+    const stderr = runTest({
+      cwd,
+    });
+    expect(stderr).toContain("test #1");
+  });
   test.todo("can provide a mix of files and directories");
   describe("--rerun-each", () => {
     test.todo("can rerun with a default value");

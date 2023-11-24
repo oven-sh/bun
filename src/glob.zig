@@ -476,7 +476,7 @@ pub fn GlobWalker_(
                                     const matches = this.walker.matchPatternFile(entry_name, dir_iter_state.component_idx, dir_iter_state.is_last, dir_iter_state.pattern, dir_iter_state.next_pattern);
                                     if (matches) {
                                         const prepared_path = try this.walker.prepareMatchedPath(entry_name, dir.dir_path);
-                                        _ = prepared_path;
+                                        return .{ .result = prepared_path };
                                     }
 
                                     continue;

@@ -346,7 +346,7 @@ pub const AsyncReaddirRecursiveTask = struct {
     /// All the subtasks will use this fd to open files
     root_fd: FileDescriptor = bun.invalid_fd,
 
-    ///
+    /// This isued when joining the file paths for error messages
     root_path: PathString = PathString.empty,
 
     pending_err: ?Syscall.Error = null,

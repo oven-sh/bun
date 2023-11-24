@@ -515,11 +515,8 @@ pub const Interpreter = struct {
             std.debug.assert(atom.* == .compound and atom.compound.brace_expansion_hint);
         }
         const brace_str = try self.eval_atom_no_brace_expansion(atom);
-        var lexer = try Braces.Lexer.tokenize(self.allocator, brace_str);
-        std.debug.print("TOKENS: {s}\n", .{try std.json.stringifyAlloc(self.allocator, lexer.tokens.items[0..], .{})});
-        const variants_count = Braces.calculateVariantsAmount(lexer.tokens.items[0..]);
-        const expansion_count = try Braces.calculateExpandedAmount(lexer.tokens.items[0..]);
-        const expansions_table = try Braces.buildExpansionTableAlloc(self.allocator, lexer.tokens.items[0..], variants_count);
+        var lexer_output = try Braces.Lexer.tokenize(self.allocator, brace_str);
+        const expansion_count = try Braces.calculateExpandedAmount(lexer_output.tokens.items[0..]);
 
         var expanded_strings = brk: {
             const stack_max = comptime 16;
@@ -535,7 +532,12 @@ pub const Interpreter = struct {
             expanded_strings[i] = std.ArrayList(u8).init(self.allocator);
         }
 
-        try Braces.expand(lexer.tokens.items[0..], expansions_table.items[0..], expanded_strings);
+        try Braces.expand(
+            self.allocator,
+            lexer_output.tokens.items[0..],
+            expanded_strings,
+            lexer_output.contains_nested,
+        );
 
         try out.ensureUnusedCapacity(expansion_count);
         // Add sentinel values

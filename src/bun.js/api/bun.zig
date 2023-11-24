@@ -539,25 +539,18 @@ pub fn braces(
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
 
-    var lexer = Braces.Lexer.tokenize(arena.allocator(), brace_str.slice()) catch |err| {
+    var lexer_output = Braces.Lexer.tokenize(arena.allocator(), brace_str.slice()) catch |err| {
         globalThis.throwError(err, "failed to tokenize braces");
         return .undefined;
     };
 
-    // const variants_count = Braces.calculateVariantsAmount(lexer.tokens.items[0..]);
-    const variants_count = 4;
-    const expansion_count = Braces.calculateExpandedAmount(lexer.tokens.items[0..]) catch |err| {
+    const expansion_count = Braces.calculateExpandedAmount(lexer_output.tokens.items[0..]) catch |err| {
         globalThis.throwError(err, "failed to calculate brace expansion amount");
         return .undefined;
     };
 
-    const expansion_table = Braces.buildExpansionTableAlloc(arena.allocator(), lexer.tokens.items[0..], variants_count) catch |err| {
-        globalThis.throwError(err, "braces");
-        return .undefined;
-    };
-
     if (tokenize) {
-        const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, lexer.tokens.items[0..], .{}) catch {
+        const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, lexer_output.tokens.items[0..], .{}) catch {
             globalThis.throwOutOfMemory();
             return JSValue.undefined;
         };
@@ -575,9 +568,10 @@ pub fn braces(
     }
 
     Braces.expand(
-        lexer.tokens.items[0..],
-        expansion_table.items[0..],
+        arena.allocator(),
+        lexer_output.tokens.items[0..],
         expanded_strings,
+        lexer_output.contains_nested,
     ) catch {
         globalThis.throwOutOfMemory();
         return .undefined;

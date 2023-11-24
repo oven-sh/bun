@@ -43,26 +43,20 @@ const Token = union(TokenTag) {
     }
 };
 
-// pub const DebugToken = union(TokenTag) {
-//     open,
-//     comma,
-//     text: []const u8,
-//     close,
-//     eof,
+pub const AST = struct {
+    pub const Atom = union(enum) {
+        text: SmolStr,
+        expansion: *Expansion,
+    };
 
-//     pub fn fromNormal(allocator: Allocator, token: *const Token) !DebugToken {
-//         return switch (token.*) {
-//             .open => .open,
-//             .comma => .comma,
-//             .text => |txt| {
-//                 const slice = txt.slice();
-//                 return .{ .text = try allocator.dupe(u8, slice) };
-//             },
-//             .close => .close,
-//             .eof => .eof,
-//         };
-//     }
-// };
+    const Group = struct {
+        atoms: []Atom,
+    };
+
+    const Expansion = struct {
+        variants: []AST.Group,
+    };
+};
 
 const InputChar = packed struct {
     char: u7,
@@ -173,97 +167,57 @@ pub fn fastDetect(src: []const u8) bool {
 
 /// `out` is preallocated by using the result from `calculateExpandedAmount`
 pub fn expand(
-    tokens: []const Token,
-    expansion_table: []const ExpansionVariant,
+    allocator: Allocator,
+    tokens: []Token,
     out: []std.ArrayList(u8),
+    contains_nested: bool,
 ) !void {
     var out_key_counter: u16 = 1;
-    // return try expandImpl(tokens, expansion_table, out, 0, &out_key_counter, 0, 0, tokens.len);
-    _ = try expand2(tokens, expansion_table, out, 0, &out_key_counter, false, 0, 0, @intCast(tokens.len));
-    return;
+    if (!contains_nested) {
+        var expansions_table = try buildExpansionTableAlloc(allocator, tokens);
+        return try expandFlat(tokens, expansions_table.items[0..], out, 0, &out_key_counter, 0, 0, tokens.len);
+    }
+
+    var parser = Parser.init(tokens, allocator);
+    const root_node = try parser.parse();
+    try expandNested(&root_node, out, 0, &out_key_counter, 0);
 }
 
-fn expand2(
-    tokens: []const Token,
-    expansion_table: []const ExpansionVariant,
-    out: []std.ArrayList(u8),
-    out_key: u16,
-    out_key_counter: *u16,
-    in_nested: bool,
-    depth_: u32,
-    start: u32,
-    end: u32,
-) !u32 {
-    if (start >= tokens.len or end > tokens.len) return end;
-    var depth = depth_;
+fn expandNested(root: *const AST.Group, out: []std.ArrayList(u8), out_key: u16, out_key_counter: *u16, start: usize) !void {
+    if (start >= root.atoms.len) return;
 
-    for (tokens[start..end], start..) |atom, j| {
+    for (root.atoms[start..], 0..) |atom, _i| {
+        var i = start + _i;
         switch (atom) {
             .text => |txt| {
                 try out[out_key].appendSlice(txt.slice());
             },
-            .close => {
-                depth -= 1;
-                if (in_nested) {
-                    return @intCast(j);
-                }
-            },
-            .open => |expansion| {
-                depth += 1;
-                // if (in_nested) continue;
-
-                if (bun.Environment.allow_assert) {
-                    std.debug.assert(expansion.end - expansion.idx >= 1);
+            .expansion => |expansion| {
+                if (expansion.variants.len <= 1) {
+                    // Should not happen
+                    @panic("Should not happen");
                 }
 
-                var variants = expansion_table[expansion.idx..expansion.end];
-                const skip_over_idx = variants[variants.len - 1].end;
-                const starting_len = out[out_key].items.len;
-                for (variants[0..], 0..) |*variant, i| {
-                    if (variant.depth != depth) continue;
-                    var new_key = if (i == 0) out_key else brk: {
-                        const new_key = out_key_counter.*;
-                        try out[new_key].appendSlice(out[out_key].items[0..starting_len]);
-                        out_key_counter.* += 1;
-                        break :brk new_key;
-                    };
-                    if (variant.nested) {
-                        // Execute a single variant
-                        var sub_variant_end = try expand2(tokens, expansion_table, out, new_key, out_key_counter, true, depth, variant.start + 1, variant.end);
-                        _ = try expand2(tokens, expansion_table, out, new_key, out_key_counter, false, depth, skip_over_idx, end);
-                        // if (in_nested) return sub_variant_end;
-                        log("sub_variant_end={d} variant.end={d}\n", .{ sub_variant_end, variant.end });
-                        while (sub_variant_end + 1 < variant.end) {
-                            new_key = out_key_counter.*;
-                            try out[new_key].appendSlice(out[out_key].items[0..starting_len]);
-                            out_key_counter.* += 1;
-                            sub_variant_end = try expand2(tokens, expansion_table, out, new_key, out_key_counter, true, depth, sub_variant_end + 1, variant.end);
-                            _ = try expand2(tokens, expansion_table, out, new_key, out_key_counter, false, depth, skip_over_idx, end);
-                            // if (in_nested) return sub_variant_end;
-                            log("sub_variant_end={d} variant.end={d}\n", .{ sub_variant_end, variant.end });
-                        }
-                    } else {
-                        _ = try expand2(tokens, expansion_table, out, new_key, out_key_counter, false, depth, variant.start, variant.end);
-                        _ = try expand2(tokens, expansion_table, out, new_key, out_key_counter, false, depth, skip_over_idx, end);
-                    }
+                for (expansion.variants[1..]) |*variant| {
+                    const new_key = out_key_counter.*;
+                    out_key_counter.* += 1;
+                    std.debug.print("Branch: {s} {d} {d}\n", .{ out[out_key].items[0..], out_key, new_key });
+                    try out[new_key].appendSlice(out[out_key].items[0..]);
+                    try expandNested(variant, out, new_key, out_key_counter, 0);
+                    try expandNested(root, out, new_key, out_key_counter, i + 1);
                 }
 
-                return end;
+                const first_variant = &expansion.variants[0];
+                try expandNested(first_variant, out, out_key, out_key_counter, 0);
+                return try expandNested(root, out, out_key, out_key_counter, i + 1);
             },
-            .comma => {
-                if (in_nested) {
-                    return @intCast(j);
-                }
-            },
-            else => {},
         }
     }
-
-    return end;
 }
 
+/// This function is fast but does not work for nested brace expansions
 /// TODO optimization: allocate into one buffer of chars
-fn expandImpl(
+fn expandFlat(
     tokens: []const Token,
     expansion_table: []const ExpansionVariant,
     out: []std.ArrayList(u8),
@@ -273,11 +227,12 @@ fn expandImpl(
     start: usize,
     end: usize,
 ) !void {
-    log("expandImpl [{d}, {d}]", .{ start, end });
+    log("expandFlat [{d}, {d}]", .{ start, end });
     if (start >= tokens.len or end > tokens.len) return;
 
     var depth = depth_;
     for (tokens[start..end], start..) |atom, j| {
+        _ = j;
         switch (atom) {
             .text => |txt| {
                 try out[out_key].appendSlice(txt.slice());
@@ -293,11 +248,9 @@ fn expandImpl(
 
                 var variants = expansion_table[expansion_variants.idx..expansion_variants.end];
                 const skip_over_idx = variants[variants.len - 1].end;
-                log("d={d} VARIANTS: {any}\n", .{ depth, variants });
 
                 const starting_len = out[out_key].items.len;
                 for (variants[0..], 0..) |*variant, i| {
-                    log("j={d} variant={any} skip={any}\n", .{ j, variant, variant.depth != depth });
                     if (variant.depth != depth) continue;
                     const new_key = if (i == 0) out_key else brk: {
                         const new_key = out_key_counter.*;
@@ -305,25 +258,17 @@ fn expandImpl(
                         out_key_counter.* += 1;
                         break :brk new_key;
                     };
-                    // try expandImpl(tokens, expansion_table, out, new_key, out_key_counter, depth, variant.start, variant.end);
-                    // try expandImpl(tokens, expansion_table, out, new_key, out_key_counter, depth, skip_over_idx, end);
-                    try expandImpl(tokens, expansion_table, out, @intCast(new_key), out_key_counter, depth, variant.start, variant.end);
-                    const key_end = out_key_counter.*;
-                    for (new_key..key_end) |key| {
-                        // try out[key].appendSlice(out[out_key].items[0..starting_len]);
-                        try expandImpl(tokens, expansion_table, out, @intCast(key), out_key_counter, depth, skip_over_idx, end);
-                    }
-
-                    // try expandImpl(tokens, expansion_table, out, new_key, out_key_counter, depth - 1, skip_over_idx, end);
-                    // try expandImpl(tokens, expansion_table, out, new_key, out_key_counter, depth, skip_over_idx, tokens.len);
+                    try expandFlat(tokens, expansion_table, out, new_key, out_key_counter, depth, variant.start, variant.end);
+                    try expandFlat(tokens, expansion_table, out, new_key, out_key_counter, depth, skip_over_idx, end);
                 }
-                log("str: {s}", .{out[out_key].items[0..]});
                 return;
             },
             else => {},
         }
     }
 }
+
+// pub fn expandNested()
 
 pub fn calculateVariantsAmount(tokens: []const Token) u32 {
     var brace_count: u32 = 0;
@@ -343,6 +288,153 @@ pub fn calculateVariantsAmount(tokens: []const Token) u32 {
     }
     return count;
 }
+
+const ParserError = error{
+    UnexpectedToken,
+};
+
+pub const Parser = struct {
+    current: usize = 0,
+    tokens: []const Token,
+    alloc: Allocator,
+    errors: std.ArrayList(Error),
+
+    // FIXME error location
+    const Error = struct { msg: []const u8 };
+
+    pub fn init(tokens: []const Token, alloc: Allocator) Parser {
+        return .{
+            .tokens = tokens,
+            .alloc = alloc,
+            .errors = std.ArrayList(Error).init(alloc),
+        };
+    }
+
+    pub fn parse(self: *Parser) !AST.Group {
+        var nodes = std.ArrayList(AST.Atom).init(self.alloc);
+        while (!self.match(.eof)) {
+            try nodes.append(try self.parseAtom() orelse break);
+        }
+        return .{ .atoms = nodes.items[0..] };
+    }
+
+    fn parseAtom(self: *Parser) anyerror!?AST.Atom {
+        switch (self.advance()) {
+            .open => {
+                const expansion = try self.parseExpansion();
+                var expansion_ptr = try self.alloc.create(AST.Expansion);
+                expansion_ptr.* = expansion;
+                return .{ .expansion = expansion_ptr };
+            },
+            .text => |txt| return .{ .text = txt },
+            .eof => return null,
+            .close, .comma => return ParserError.UnexpectedToken,
+        }
+    }
+
+    fn parseExpansion(self: *Parser) !AST.Expansion {
+        var variants = std.ArrayList(AST.Group).init(self.alloc);
+        while (!self.match_any(&.{ .close, .eof })) {
+            if (self.match(.eof)) break;
+            var group = std.ArrayList(AST.Atom).init(self.alloc);
+            var close = false;
+            while (!self.match(.eof)) {
+                if (self.match(.close)) {
+                    close = true;
+                    break;
+                }
+                if (self.match(.comma)) break;
+                var group_atom = try self.parseAtom() orelse break;
+                try group.append(group_atom);
+            }
+            try variants.append(.{ .atoms = group.items[0..] });
+            if (close) break;
+        }
+        return .{ .variants = variants.items[0..] };
+    }
+
+    fn has_eq_sign(self: *Parser, str: []const u8) ?u32 {
+        _ = self;
+        // TODO: simd
+        for (str, 0..) |c, i| if (c == '=') return @intCast(i);
+        return null;
+    }
+
+    fn advance(self: *Parser) Token {
+        if (!self.is_at_end()) {
+            self.current += 1;
+        }
+        return self.prev();
+    }
+
+    fn is_at_end(self: *Parser) bool {
+        return self.peek() == .eof;
+    }
+
+    fn expect(self: *Parser, toktag: TokenTag) Token {
+        std.debug.assert(toktag == @as(TokenTag, self.peek()));
+        if (self.check(toktag)) {
+            return self.advance();
+        }
+        unreachable;
+    }
+
+    /// Consumes token if it matches
+    fn match(self: *Parser, toktag: TokenTag) bool {
+        if (@as(TokenTag, self.peek()) == toktag) {
+            _ = self.advance();
+            return true;
+        }
+        return false;
+    }
+
+    fn match_any2(self: *Parser, comptime toktags: []const TokenTag) ?Token {
+        const peeked = self.peek();
+        inline for (toktags) |tag| {
+            if (peeked == tag) {
+                _ = self.advance();
+                return peeked;
+            }
+        }
+        return null;
+    }
+
+    fn match_any(self: *Parser, comptime toktags: []const TokenTag) bool {
+        const peeked = @as(TokenTag, self.peek());
+        inline for (toktags) |tag| {
+            if (peeked == tag) {
+                _ = self.advance();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    fn check(self: *Parser, toktag: TokenTag) bool {
+        return @as(TokenTag, self.peek()) == @as(TokenTag, toktag);
+    }
+
+    fn peek(self: *Parser) Token {
+        return self.tokens[self.current];
+    }
+
+    fn peek_n(self: *Parser, n: u32) Token {
+        if (self.current + n >= self.tokens.len) {
+            return self.tokens[self.tokens.len - 1];
+        }
+
+        return self.tokens[self.current + n];
+    }
+
+    fn prev(self: *Parser) Token {
+        return self.tokens[self.current - 1];
+    }
+
+    fn add_error(self: *Parser, comptime fmt: []const u8, args: anytype) !void {
+        const error_msg = try std.fmt.allocPrint(self.alloc, fmt, args);
+        try self.errors.append(.{ .msg = error_msg });
+    }
+};
 
 pub fn calculateExpandedAmount(tokens: []const Token) !u32 {
     var nested_brace_stack = StackStack(u8, u8, MAX_NESTED_BRACES){};
@@ -382,8 +474,8 @@ pub fn calculateExpandedAmount(tokens: []const Token) !u32 {
     return variant_count;
 }
 
-pub fn buildExpansionTableAlloc(alloc: Allocator, tokens: []Token, variants_count: usize) !std.ArrayList(ExpansionVariant) {
-    var table = try std.ArrayList(ExpansionVariant).initCapacity(alloc, variants_count);
+pub fn buildExpansionTableAlloc(alloc: Allocator, tokens: []Token) !std.ArrayList(ExpansionVariant) {
+    var table = std.ArrayList(ExpansionVariant).init(alloc);
     try buildExpansionTable(tokens, &table);
     return table;
 }
@@ -452,7 +544,7 @@ pub fn buildExpansionTable(
 
     if (bun.Environment.allow_assert) {
         for (table.items[0..], 0..) |variant, kdjsd| {
-            log("I: {d} VARIANT: {any}\n", .{ kdjsd, variant });
+            _ = kdjsd;
             std.debug.assert(variant.start != 0 and variant.end != 0);
         }
     }
@@ -465,20 +557,28 @@ pub const Lexer = struct {
     i: usize = 0,
     state: State = .Normal,
 
-    // pub fn tokenize_from_shell(alloc: Allocator, )
+    pub const Output = struct {
+        tokens: ArrayList(Token),
+        contains_nested: bool,
+    };
 
-    pub fn tokenize(alloc: Allocator, src: []const u8) !Lexer {
+    pub fn tokenize(alloc: Allocator, src: []const u8) !Output {
         var this = Lexer{
             .src = src,
             .tokens = ArrayList(Token).init(alloc),
             .alloc = alloc,
         };
 
-        try this.tokenize_impl();
-        return this;
+        const contains_nested = try this.tokenize_impl();
+
+        return .{
+            .tokens = this.tokens,
+            .contains_nested = contains_nested,
+        };
     }
 
-    fn tokenize_impl(self: *Lexer) !void {
+    // FIXME: implement rollback on invalid brace
+    fn tokenize_impl(self: *Lexer) !bool {
         // Unclosed brace expansion algorithm
         // {hi,hey
         // *xx*xxx
@@ -504,6 +604,8 @@ pub const Lexer = struct {
         // var char_stack = StackStack(u8, u8, 16){};
         // _ = char_stack;
 
+        var nested_count: u32 = 0;
+
         while (true) {
             const input = self.eat() orelse break;
             const char = input.char;
@@ -513,11 +615,13 @@ pub const Lexer = struct {
                 switch (char) {
                     '{' => {
                         try brace_stack.push(@intCast(self.tokens.items.len));
+                        nested_count += 1;
                         try self.tokens.append(.{ .open = .{} });
                         continue;
                     },
                     '}' => {
                         if (brace_stack.len > 0) {
+                            nested_count -= 1;
                             _ = brace_stack.pop();
                             try self.tokens.append(.close);
                             continue;
@@ -543,10 +647,13 @@ pub const Lexer = struct {
         while (brace_stack.len > 0) {
             const top_idx = brace_stack.pop().?;
             try self.rollbackBraces(top_idx);
+            nested_count -= 1;
         }
 
         try self.flattenTokens();
         try self.tokens.append(.eof);
+
+        return nested_count > 0;
     }
 
     fn flattenTokens(self: *Lexer) !void {

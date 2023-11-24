@@ -387,12 +387,51 @@ test("broken symlinks", async () => {
     glob.scan({
       cwd: tempBrokenSymlinksDir,
       followSymlinks: true,
+      absolute: true,
       onlyFiles: false,
     }),
   );
   expect(new Set(results)).toEqual(
     new Set(["broken_link_to_non_existent_dir", "broken_link_to_non_existent_file.txt"]),
   );
+});
+
+test("error broken symlinks", async () => {
+  const glob = new Glob("**/*");
+  let err: Error | undefined = undefined;
+  try {
+    const results = await Array.fromAsync(
+      glob.scan({
+        cwd: tempBrokenSymlinksDir,
+        followSymlinks: true,
+        absolute: true,
+        onlyFiles: false,
+        throwErrorOnBrokenSymlink: true,
+      }),
+    );
+  } catch (e) {
+    err = e as any;
+  }
+  expect(err).toBeDefined();
+});
+
+test("error non-existent cwd", async () => {
+  const glob = new Glob("**/*");
+  let err: Error | undefined = undefined;
+  try {
+    const results = await Array.fromAsync(
+      glob.scan({
+        cwd: "alkfjalskdjfoogaboogaalskjflskdjfl",
+        followSymlinks: true,
+        absolute: true,
+        onlyFiles: false,
+        throwErrorOnBrokenSymlink: true,
+      }),
+    );
+  } catch (e) {
+    err = e as any;
+  }
+  expect(err).toBeDefined();
 });
 
 test("glob.scan(string)", async () => {

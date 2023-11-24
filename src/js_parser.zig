@@ -14392,14 +14392,18 @@ fn NewParser_(
                         // Use Next() instead of NextJSXElementChild() here since the next token is an expression
                         try p.lexer.next();
 
-                        // The "..." here is ignored (it's used to signal an array type in TypeScript)
-                        if (p.lexer.token == .t_dot_dot_dot and is_typescript_enabled) {
+                        const is_spread = p.lexer.token == .t_dot_dot_dot;
+                        if (is_spread) {
                             try p.lexer.next();
                         }
 
                         // The expression is optional, and may be absent
                         if (p.lexer.token != .t_close_brace) {
-                            try children.append(try p.parseExpr(.lowest));
+                            var item = try p.parseExpr(.lowest);
+                            if (is_spread) {
+                                item = p.newExpr(E.Spread{ .value = item }, loc);
+                            }
+                            try children.append(item);
                         }
 
                         // Use ExpectJSXElementChild() so we parse child strings
@@ -15087,28 +15091,23 @@ fn NewParser_(
                                         props = props.items[0].value.?.data.e_object.properties.list();
                                     }
 
-                                    // Babel defines static jsx as children.len > 1
-                                    const is_static_jsx = e_.children.len > 1;
+                                    // Typescript defines static jsx as children.len > 1 or single spread
+                                    // https://github.com/microsoft/TypeScript/blob/d4fbc9b57d9aa7d02faac9b1e9bb7b37c687f6e9/src/compiler/transformers/jsx.ts#L340
+                                    const is_static_jsx = e_.children.len > 1 or (e_.children.len == 1 and e_.children.ptr[0].data == .e_spread);
 
-                                    // if (p.options.jsx.development) {
-
-                                    switch (e_.children.len) {
-                                        0 => {},
-                                        1 => {
-                                            props.append(allocator, G.Property{
-                                                .key = children_key,
-                                                .value = e_.children.ptr[0],
-                                            }) catch unreachable;
-                                        },
-                                        else => {
-                                            props.append(allocator, G.Property{
-                                                .key = children_key,
-                                                .value = p.newExpr(E.Array{
-                                                    .items = e_.children,
-                                                    .is_single_line = e_.children.len < 2,
-                                                }, e_.close_tag_loc),
-                                            }) catch unreachable;
-                                        },
+                                    if (is_static_jsx) {
+                                        props.append(allocator, G.Property{
+                                            .key = children_key,
+                                            .value = p.newExpr(E.Array{
+                                                .items = e_.children,
+                                                .is_single_line = e_.children.len < 2,
+                                            }, e_.close_tag_loc),
+                                        }) catch bun.outOfMemory();
+                                    } else if (e_.children.len == 1) {
+                                        props.append(allocator, G.Property{
+                                            .key = children_key,
+                                            .value = e_.children.ptr[0],
+                                        }) catch bun.outOfMemory();
                                     }
                                     // --- These must be done in all cases --
 

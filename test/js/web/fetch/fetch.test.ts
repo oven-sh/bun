@@ -347,6 +347,28 @@ describe("Headers", () => {
     expect(headers.getAll("set-cookie")).toEqual(["foo=bar; Path=/; HttpOnly"]);
   });
 
+  it("presence of content-encoding header with auto decompress", async () => {
+    startServer({
+      fetch(req) {
+        const content = gzipSync(JSON.stringify({ message: "Hello world" }));
+        return new Response(content, {
+          status: 200,
+          headers: {
+            "content-encoding": "gzip",
+            "content-type": "application/json",
+          },
+        });
+      },
+    });
+    // if decompress: true, the content-encoding header should be removed
+    // by default decompress is true
+    const result = await fetch(`http://${server.hostname}:${server.port}/`);
+    expect(result.headers.has("content-encoding")).toBeFalse();
+    // body should be decompressed already
+    const body = await result.json();
+    expect(body).toBeDefined();
+    expect(body.message).toBe("Hello world");
+  });
   it("presence of content-encoding header(issue #5668)", async () => {
     startServer({
       fetch(req) {
@@ -360,10 +382,14 @@ describe("Headers", () => {
         });
       },
     });
-    const result = await fetch(`http://${server.hostname}:${server.port}/`);
+    // if decompress: true, the content-encoding header should be removed
+    const result = await fetch(`http://${server.hostname}:${server.port}/`, { decompress: false });
     const value = result.headers.get("content-encoding");
-    const body = await result.json();
     expect(value).toBe("gzip");
+    // manually decompress and check the body
+    const decompressed = Bun.gunzipSync(await result.arrayBuffer());
+    const decoder = new TextDecoder();
+    const body = JSON.parse(decoder.decode(decompressed));
     expect(body).toBeDefined();
     expect(body.message).toBe("Hello world");
   });

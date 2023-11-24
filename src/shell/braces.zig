@@ -12,7 +12,9 @@ const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
 pub const ExpansionVariant = packed struct {
     start: u16 = 0,
     end: u16 = 0,
-    depth: u8 = 0,
+    depth: u4 = 0,
+    nested: bool = false,
+    _padding: u3 = 0,
 };
 
 const log = bun.Output.scoped(.BRACES, false);
@@ -176,7 +178,88 @@ pub fn expand(
     out: []std.ArrayList(u8),
 ) !void {
     var out_key_counter: u16 = 1;
-    return try expandImpl(tokens, expansion_table, out, 0, &out_key_counter, 0, 0, tokens.len);
+    // return try expandImpl(tokens, expansion_table, out, 0, &out_key_counter, 0, 0, tokens.len);
+    _ = try expand2(tokens, expansion_table, out, 0, &out_key_counter, false, 0, 0, @intCast(tokens.len));
+    return;
+}
+
+fn expand2(
+    tokens: []const Token,
+    expansion_table: []const ExpansionVariant,
+    out: []std.ArrayList(u8),
+    out_key: u16,
+    out_key_counter: *u16,
+    in_nested: bool,
+    depth_: u32,
+    start: u32,
+    end: u32,
+) !u32 {
+    if (start >= tokens.len or end > tokens.len) return end;
+    var depth = depth_;
+
+    for (tokens[start..end], start..) |atom, j| {
+        switch (atom) {
+            .text => |txt| {
+                try out[out_key].appendSlice(txt.slice());
+            },
+            .close => {
+                depth -= 1;
+                if (in_nested) {
+                    return @intCast(j);
+                }
+            },
+            .open => |expansion| {
+                depth += 1;
+                // if (in_nested) continue;
+
+                if (bun.Environment.allow_assert) {
+                    std.debug.assert(expansion.end - expansion.idx >= 1);
+                }
+
+                var variants = expansion_table[expansion.idx..expansion.end];
+                const skip_over_idx = variants[variants.len - 1].end;
+                const starting_len = out[out_key].items.len;
+                for (variants[0..], 0..) |*variant, i| {
+                    if (variant.depth != depth) continue;
+                    var new_key = if (i == 0) out_key else brk: {
+                        const new_key = out_key_counter.*;
+                        try out[new_key].appendSlice(out[out_key].items[0..starting_len]);
+                        out_key_counter.* += 1;
+                        break :brk new_key;
+                    };
+                    if (variant.nested) {
+                        // Execute a single variant
+                        var sub_variant_end = try expand2(tokens, expansion_table, out, new_key, out_key_counter, true, depth, variant.start + 1, variant.end);
+                        _ = try expand2(tokens, expansion_table, out, new_key, out_key_counter, false, depth, skip_over_idx, end);
+                        // if (in_nested) return sub_variant_end;
+                        log("sub_variant_end={d} variant.end={d}\n", .{ sub_variant_end, variant.end });
+                        while (sub_variant_end + 1 < variant.end) {
+                            new_key = out_key_counter.*;
+                            try out[new_key].appendSlice(out[out_key].items[0..starting_len]);
+                            out_key_counter.* += 1;
+                            sub_variant_end = try expand2(tokens, expansion_table, out, new_key, out_key_counter, true, depth, sub_variant_end + 1, variant.end);
+                            _ = try expand2(tokens, expansion_table, out, new_key, out_key_counter, false, depth, skip_over_idx, end);
+                            // if (in_nested) return sub_variant_end;
+                            log("sub_variant_end={d} variant.end={d}\n", .{ sub_variant_end, variant.end });
+                        }
+                    } else {
+                        _ = try expand2(tokens, expansion_table, out, new_key, out_key_counter, false, depth, variant.start, variant.end);
+                        _ = try expand2(tokens, expansion_table, out, new_key, out_key_counter, false, depth, skip_over_idx, end);
+                    }
+                }
+
+                return end;
+            },
+            .comma => {
+                if (in_nested) {
+                    return @intCast(j);
+                }
+            },
+            else => {},
+        }
+    }
+
+    return end;
 }
 
 /// TODO optimization: allocate into one buffer of chars
@@ -314,9 +397,10 @@ pub fn buildExpansionTable(
         variants: u16,
         prev_tok_end: u16,
     };
-    var brace_stack = StackStack(BraceState, u8, MAX_NESTED_BRACES){};
+    var brace_stack = StackStack(BraceState, u4, MAX_NESTED_BRACES){};
 
     var i: u16 = 0;
+    var prev_close = false;
     while (i < tokens.len) : (i += 1) {
         switch (tokens[i]) {
             .open => {
@@ -336,12 +420,14 @@ pub fn buildExpansionTable(
                     .end = i,
                     .start = top.prev_tok_end + 1,
                     .depth = depth,
+                    .nested = prev_close,
                 });
 
                 top.prev_tok_end = i;
                 top.variants += 1;
 
                 tokens[top.tok_idx].open.end = @intCast(table.items.len);
+                prev_close = true;
             },
             .comma => {
                 var top = brace_stack.topPtr().?;
@@ -350,12 +436,17 @@ pub fn buildExpansionTable(
                     .end = i,
                     .start = top.prev_tok_end + 1,
                     .depth = brace_stack.len,
+                    .nested = prev_close,
                 });
+
+                prev_close = false;
 
                 top.prev_tok_end = i;
                 top.variants += 1;
             },
-            else => {},
+            else => {
+                prev_close = false;
+            },
         }
     }
 

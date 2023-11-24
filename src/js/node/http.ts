@@ -694,7 +694,7 @@ class IncomingMessage extends Readable {
   #bodyStream: ReadableStreamDefaultReader | undefined;
   #fakeSocket: FakeSocket | undefined = undefined;
   #noBody = false;
-  #aborted = false;
+  aborted = false;
   #req;
   url;
   #type;
@@ -720,7 +720,7 @@ class IncomingMessage extends Readable {
   async #consumeStream(reader: ReadableStreamDefaultReader) {
     while (true) {
       var { done, value } = await reader.readMany();
-      if (this.#aborted) return;
+      if (this.aborted) return;
       if (done) {
         this.push(null);
         process.nextTick(destroyBodyStreamNT, this);
@@ -747,13 +747,10 @@ class IncomingMessage extends Readable {
     }
   }
 
-  get aborted() {
-    return this.#aborted;
-  }
-
+  //TODO: call from abort signal handler
   #abort() {
-    if (this.#aborted) return;
-    this.#aborted = true;
+    if (this.aborted) return;
+    this.aborted = true;
     var bodyStream = this.#bodyStream;
     if (!bodyStream) return;
     bodyStream.cancel();
@@ -766,29 +763,43 @@ class IncomingMessage extends Readable {
     return (this.#fakeSocket ??= new FakeSocket());
   }
 
+  set statusCode(val) {}
+
   get statusCode() {
     return this.#req.status;
   }
+
+  set statusMessage(val) {}
 
   get statusMessage() {
     return STATUS_CODES[this.#req.status];
   }
 
+  set httpVersion(val) {}
+
   get httpVersion() {
     return "1.1";
   }
+
+  set rawTrailers(val) {}
 
   get rawTrailers() {
     return [];
   }
 
+  set httpVersionMajor(val) {}
+
   get httpVersionMajor() {
     return 1;
   }
 
+  set httpVersionMinor(val) {}
+
   get httpVersionMinor() {
     return 1;
   }
+
+  set trailers(val) {}
 
   get trailers() {
     return kEmptyObject;
@@ -1365,7 +1376,7 @@ class ClientRequest extends OutgoingMessage {
 
         // Timeouts are handled via this.setTimeout.
         timeout: false,
-        // TODO: check zlib to disable this
+        // should be safe to decompress by default if we remove the headers and will be faster
         decompress: true,
       })
         .then(response => {

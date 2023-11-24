@@ -50,10 +50,13 @@ pub const AST = struct {
     };
 
     const Group = struct {
+        bubble_up: ?*Group = null,
+        bubble_up_next: ?u16 = null,
         atoms: []Atom,
     };
 
     const Expansion = struct {
+        parent_next: ?u16 = null,
         variants: []AST.Group,
     };
 };
@@ -179,37 +182,92 @@ pub fn expand(
     }
 
     var parser = Parser.init(tokens, allocator);
-    const root_node = try parser.parse();
+    var root_node = try parser.parse();
     try expandNested(&root_node, out, 0, &out_key_counter, 0);
 }
 
-fn expandNested(root: *const AST.Group, out: []std.ArrayList(u8), out_key: u16, out_key_counter: *u16, start: usize) !void {
-    if (start >= root.atoms.len) return;
+fn expandNested(
+    root: *AST.Group,
+    out: []std.ArrayList(u8),
+    out_key: u16,
+    out_key_counter: *u16,
+    start: u32,
+) !void {
+    if (start >= root.atoms.len) {
+        if (root.bubble_up) |bubble_up| {
+            return expandNested(bubble_up, out, out_key, out_key_counter, root.bubble_up_next.?);
+        }
+        return;
+    }
 
-    for (root.atoms[start..], 0..) |atom, _i| {
-        var i = start + _i;
+    for (root.atoms[start..], start..) |atom, i_| {
+        var i: u16 = @intCast(i_);
         switch (atom) {
             .text => |txt| {
                 try out[out_key].appendSlice(txt.slice());
             },
             .expansion => |expansion| {
+                const length = out[out_key].items.len;
+                for (expansion.variants, 0..) |*group, j| {
+                    group.bubble_up = root;
+                    group.bubble_up_next = i + 1;
+                    const new_key = if (j == 0) out_key else brk: {
+                        const new_key = out_key_counter.*;
+                        try out[new_key].appendSlice(out[out_key].items[0..length]);
+                        out_key_counter.* += 1;
+                        break :brk new_key;
+                    };
+
+                    try expandNested(group, out, new_key, out_key_counter, 0);
+                }
+                return;
+            },
+        }
+    }
+
+    // After execution we need to go up a level
+    if (root.bubble_up) |bubble_up| {
+        return try expandNested(bubble_up, out, out_key, out_key_counter, root.bubble_up_next.?);
+    }
+}
+
+fn expandNestedOldOld(
+    root: *const AST.Group,
+    out: []std.ArrayList(u8),
+    out_key: u16,
+    out_key_counter: *u16,
+    depth: u8,
+    start: usize,
+) !void {
+    for (root.atoms[start..], 0..) |atom, _i| {
+        var i = start + _i;
+
+        switch (atom) {
+            .text => |txt| {
+                try out[out_key].appendSlice(txt.slice());
+            },
+            .expansion => |expansion| {
+                const is_nested = depth > 1;
                 if (expansion.variants.len <= 1) {
                     // Should not happen
                     @panic("Should not happen");
                 }
 
-                for (expansion.variants[1..]) |*variant| {
-                    const new_key = out_key_counter.*;
-                    out_key_counter.* += 1;
-                    std.debug.print("Branch: {s} {d} {d}\n", .{ out[out_key].items[0..], out_key, new_key });
-                    try out[new_key].appendSlice(out[out_key].items[0..]);
-                    try expandNested(variant, out, new_key, out_key_counter, 0);
-                    try expandNested(root, out, new_key, out_key_counter, i + 1);
-                }
+                // {a,L{b,c}L,d}{1,2,3}
+                if (!is_nested) {
+                    for (expansion.variants[1..]) |*variant| {
+                        const new_key = out_key_counter.*;
+                        out_key_counter.* += 1;
+                        std.debug.print("Branch: {s} {d} {d}\n", .{ out[out_key].items[0..], out_key, new_key });
+                        try out[new_key].appendSlice(out[out_key].items[0..]);
+                        try expandNested(variant, out, new_key, out_key_counter, 0);
+                        try expandNested(root, out, new_key, out_key_counter, i + 1);
+                    }
 
-                const first_variant = &expansion.variants[0];
-                try expandNested(first_variant, out, out_key, out_key_counter, 0);
-                return try expandNested(root, out, out_key, out_key_counter, i + 1);
+                    const first_variant = &expansion.variants[0];
+                    try expandNested(first_variant, out, out_key, out_key_counter, 0);
+                    return try expandNested(root, out, out_key, out_key_counter, i + 1);
+                }
             },
         }
     }
@@ -321,9 +379,7 @@ pub const Parser = struct {
     fn parseAtom(self: *Parser) anyerror!?AST.Atom {
         switch (self.advance()) {
             .open => {
-                const expansion = try self.parseExpansion();
-                var expansion_ptr = try self.alloc.create(AST.Expansion);
-                expansion_ptr.* = expansion;
+                var expansion_ptr = try self.parseExpansion();
                 return .{ .expansion = expansion_ptr };
             },
             .text => |txt| return .{ .text = txt },
@@ -332,7 +388,8 @@ pub const Parser = struct {
         }
     }
 
-    fn parseExpansion(self: *Parser) !AST.Expansion {
+    fn parseExpansion(self: *Parser) !*AST.Expansion {
+        var ptr = try self.alloc.create(AST.Expansion);
         var variants = std.ArrayList(AST.Group).init(self.alloc);
         while (!self.match_any(&.{ .close, .eof })) {
             if (self.match(.eof)) break;
@@ -350,7 +407,9 @@ pub const Parser = struct {
             try variants.append(.{ .atoms = group.items[0..] });
             if (close) break;
         }
-        return .{ .variants = variants.items[0..] };
+
+        ptr.* = .{ .variants = variants.items[0..] };
+        return ptr;
     }
 
     fn has_eq_sign(self: *Parser, str: []const u8) ?u32 {
@@ -556,6 +615,7 @@ pub const Lexer = struct {
     tokens: ArrayList(Token),
     i: usize = 0,
     state: State = .Normal,
+    contains_nested: bool = false,
 
     pub const Output = struct {
         tokens: ArrayList(Token),
@@ -604,8 +664,6 @@ pub const Lexer = struct {
         // var char_stack = StackStack(u8, u8, 16){};
         // _ = char_stack;
 
-        var nested_count: u32 = 0;
-
         while (true) {
             const input = self.eat() orelse break;
             const char = input.char;
@@ -615,13 +673,11 @@ pub const Lexer = struct {
                 switch (char) {
                     '{' => {
                         try brace_stack.push(@intCast(self.tokens.items.len));
-                        nested_count += 1;
                         try self.tokens.append(.{ .open = .{} });
                         continue;
                     },
                     '}' => {
                         if (brace_stack.len > 0) {
-                            nested_count -= 1;
                             _ = brace_stack.pop();
                             try self.tokens.append(.close);
                             continue;
@@ -647,16 +703,16 @@ pub const Lexer = struct {
         while (brace_stack.len > 0) {
             const top_idx = brace_stack.pop().?;
             try self.rollbackBraces(top_idx);
-            nested_count -= 1;
         }
 
         try self.flattenTokens();
         try self.tokens.append(.eof);
 
-        return nested_count > 0;
+        return self.contains_nested;
     }
 
     fn flattenTokens(self: *Lexer) !void {
+        var brace_count: u32 = if (self.tokens.items[0] == .open) 1 else 0;
         var i: u32 = 0;
         var j: u32 = 1;
         while (i < self.tokens.items.len and j < self.tokens.items.len) {
@@ -667,6 +723,14 @@ pub const Lexer = struct {
                 try itok.text.appendSlice(self.alloc, jtok.toText().slice());
                 _ = self.tokens.orderedRemove(j);
             } else {
+                if (jtok.* == .close) {
+                    brace_count -= 1;
+                } else if (jtok.* == .open) {
+                    brace_count += 1;
+                    if (brace_count > 1) {
+                        self.contains_nested = true;
+                    }
+                }
                 i += 1;
                 j += 1;
             }

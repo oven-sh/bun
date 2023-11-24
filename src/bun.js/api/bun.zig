@@ -526,11 +526,16 @@ pub fn braces(
     const brace_str = brace_str_js.getZigString(globalThis);
 
     var tokenize: bool = false;
+    var parse: bool = false;
     if (arguments.nextEat()) |opts_val| {
         if (opts_val.isObject()) {
             if (comptime bun.Environment.allow_assert) {
                 if (opts_val.getTruthy(globalThis, "tokenize")) |tokenize_val| {
                     tokenize = if (tokenize_val.isBoolean()) tokenize_val.asBoolean() else false;
+                }
+
+                if (opts_val.getTruthy(globalThis, "parse")) |tokenize_val| {
+                    parse = if (tokenize_val.isBoolean()) tokenize_val.asBoolean() else false;
                 }
             }
         }
@@ -551,6 +556,20 @@ pub fn braces(
 
     if (tokenize) {
         const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, lexer_output.tokens.items[0..], .{}) catch {
+            globalThis.throwOutOfMemory();
+            return JSValue.undefined;
+        };
+        defer globalThis.bunVM().allocator.free(str);
+        var bun_str = bun.String.fromBytes(str);
+        return bun_str.toJS(globalThis);
+    }
+    if (parse) {
+        var parser = Braces.Parser.init(lexer_output.tokens.items[0..], arena.allocator());
+        const ast_node = parser.parse() catch |err| {
+            globalThis.throwError(err, "failed to parse braces");
+            return .undefined;
+        };
+        const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, ast_node, .{}) catch {
             globalThis.throwOutOfMemory();
             return JSValue.undefined;
         };

@@ -79,7 +79,7 @@ describe("bunshell", () => {
     doTest("{a,{b,{c,d}}}", "a b c d");
     doTest("{a,b,HI{c,e,LMAO{d,f}Q}}", "a b HIc HIe HILMAOdQ HILMAOfQ");
     doTest("{a,{b,c}}{1,2,3}", "a1 a2 a3 b1 b2 b3 c1 c2 c3");
-    doTest("{a,{b,c}HEY,d}{1,2,3}", "a1 a2 a3 b1 b2 b3 c1 c2 c3");
+    doTest("{a,{b,c}HEY,d}{1,2,3}", "a1 a2 a3 bHEY1 bHEY2 bHEY3 cHEY1 cHEY2 cHEY3 d1 d2 d3");
     doTest("{a,{b,c},d}{1,2,3}", "a1 a2 a3 b1 b2 b3 c1 c2 c3 d1 d2 d3");
 
     doTest(

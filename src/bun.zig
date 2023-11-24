@@ -2052,3 +2052,7 @@ pub fn exitThread() noreturn {
         @panic("Unsupported platform");
     }
 }
+
+pub fn outOfMemory() noreturn {
+    @panic("Out of memory");
+}

@@ -1785,12 +1785,35 @@ describe("fs/promises", () => {
       expect(maxFD).toBe(newMaxFD); // assert we do not leak file descriptors
     };
 
+    const fail = async () => {
+      const maxFD = openSync("/dev/null", "r");
+      closeSync(maxFD);
+
+      const pending = new Array(100);
+      for (let i = 0; i < 100; i++) {
+        pending[i] = promises.readdir("/notfound/i/dont/exist/for/sure/" + i, { recursive: true, withFileTypes });
+      }
+
+      const results = await Promise.allSettled(pending);
+      for (let i = 0; i < 100; i++) {
+        expect(results[i].status).toBe("rejected");
+        expect(results[i].reason!.code).toBe("ENOENT");
+        expect(results[i].reason!.path).toBe("/notfound/i/dont/exist/for/sure/" + i);
+      }
+
+      const newMaxFD = openSync("/dev/null", "r");
+      closeSync(newMaxFD);
+      expect(maxFD).toBe(newMaxFD); // assert we do not leak file descriptors
+    };
+
     if (withFileTypes) {
       describe("withFileTypes", () => {
         it("readdir(path, {recursive: true} should work x 100", doIt, 10_000);
+        it("readdir(path, {recursive: true} should fail x 100", fail, 10_000);
       });
     } else {
       it("readdir(path, {recursive: true} should work x 100", doIt, 10_000);
+      it("readdir(path, {recursive: true} should fail x 100", fail, 10_000);
     }
   }
 

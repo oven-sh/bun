@@ -24,14 +24,17 @@ let server: Server | undefined;
 
 async function runTest({ port, ...serverOptions }: Serve<any>, test: (server: Server) => Promise<void> | void) {
   console.trace("runTest");
+  console.log("server:", server);
   if (server) {
     server.reload({ ...serverOptions, port: 0 });
   } else {
     while (!server) {
       try {
         server = serve({ ...serverOptions, port: 0 });
+        console.log("server=", server);
         break;
       } catch (e: any) {
+        console.log("catch:", e);
         if (e?.message !== `Failed to start server `) {
           throw e;
         }
@@ -39,6 +42,7 @@ async function runTest({ port, ...serverOptions }: Serve<any>, test: (server: Se
     }
   }
 
+  console.log("before test(server)");
   await test(server);
 }
 
@@ -265,10 +269,12 @@ describe("streaming", () => {
         await runTest(
           {
             error(e) {
+              console.log("test case error()");
               pass = false;
               return new Response("FAIL", { status: 555 });
             },
             fetch(req) {
+              console.log("test case fetch()");
               const stream = new ReadableStream({
                 async pull(controller) {
                   controller.enqueue("PASS");
@@ -280,21 +286,25 @@ describe("streaming", () => {
             },
           },
           async server => {
+            console.log("async server() => {}");
             const response = await fetch(`http://${server.hostname}:${server.port}`);
             // connection terminated
             expect(await response.text()).toBe("");
             expect(response.status).toBe(options.status ?? 200);
             expect(pass).toBe(true);
+            console.log("done test A");
           },
         );
       }
 
       it("with headers", async () => {
+        console.log("with headers before anything");
         await execute({
           headers: {
             "X-A": "123",
           },
         });
+        console.log("with headers after everything");
       });
 
       it("with headers and status", async () => {

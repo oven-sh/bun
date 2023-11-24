@@ -199,7 +199,6 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                             null,
                             if (self.first) @as(w.BOOLEAN, w.TRUE) else @as(w.BOOLEAN, w.FALSE),
                         );
-                        std.debug.print("NtQueryDirectoryFile({d}) = {d}\n", .{ self.dir.fd, rc });
                         self.first = false;
                         if (io.Information == 0) return .{ .result = null };
                         self.index = 0;

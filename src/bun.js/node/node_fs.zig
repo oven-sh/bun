@@ -3662,9 +3662,9 @@ pub const NodeFS = struct {
         const Ret = Maybe(Return.Exists);
         const path = args.path orelse return Ret{ .result = false };
         const slice = path.sliceWithWinNormalizerCWDZ(&this.sync_error_buf);
-        
+
         // Use libuv access on windows
-        if(Environment.isWindows){
+        if (Environment.isWindows) {
             return .{ .result = Syscall.access(slice, std.os.F_OK) != .err };
         }
 
@@ -3842,19 +3842,19 @@ pub const NodeFS = struct {
     pub fn mkdirRecursive(this: *NodeFS, args: Arguments.Mkdir, comptime flavor: Flavor) Maybe(Return.Mkdir) {
         _ = flavor;
         var buf: bun.OSPathBuffer = undefined;
-        const path: bun.OSPathSlice = if(!Environment.isWindows)
+        const path: bun.OSPathSlice = if (!Environment.isWindows)
             args.path.osPath(&buf)
         else brk: {
             // TODO(@paperdave): clean this up a lot.
             var joined_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            if(std.fs.path.isAbsolute(args.path.slice())) {
+            if (std.fs.path.isAbsolute(args.path.slice())) {
                 const utf8 = PosixToWinNormalizer.resolveCWDWithExternalBufZ(&joined_buf, args.path.slice()) catch
                     return .{ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOMEM), .syscall = .getcwd } };
                 break :brk strings.toWPath(&buf, utf8);
             } else {
                 var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 const cwd = std.os.getcwd(&cwd_buf) catch return .{ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOMEM), .syscall = .getcwd } };
-                break :brk strings.toWPath(&buf, bun.path.joinAbsStringBuf(cwd, &joined_buf, &.{ args.path.slice() }, .windows));
+                break :brk strings.toWPath(&buf, bun.path.joinAbsStringBuf(cwd, &joined_buf, &.{args.path.slice()}, .windows));
             }
         };
         return this.mkdirRecursiveOSPath(path, args.mode, true);
@@ -3889,7 +3889,9 @@ pub const NodeFS = struct {
                 }
             },
             .result => {
-                return .{ .result = if(return_path) .{ .string = bun.String.createFromOSPath(path) } else .{ .none = {} }, };
+                return .{
+                    .result = if (return_path) .{ .string = bun.String.createFromOSPath(path) } else .{ .none = {} },
+                };
             },
         }
 
@@ -3946,7 +3948,7 @@ pub const NodeFS = struct {
                         switch (err.getErrno()) {
                             // handle the race condition
                             .EXIST => {},
-                            
+
                             // NOENT shouldn't happen here
                             else => return .{
                                 .err = err.withPath(this.osPathIntoSyncErrorBuf(path)),
@@ -3980,7 +3982,9 @@ pub const NodeFS = struct {
             .result => {},
         }
 
-        return .{ .result = if(return_path) .{ .string = bun.String.createFromOSPath(working_mem[0..first_match])} else .{ .none = {} }, };
+        return .{
+            .result = if (return_path) .{ .string = bun.String.createFromOSPath(working_mem[0..first_match]) } else .{ .none = {} },
+        };
     }
 
     pub fn mkdtemp(this: *NodeFS, args: Arguments.MkdirTemp, comptime _: Flavor) Maybe(Return.Mkdtemp) {
@@ -3997,15 +4001,15 @@ pub const NodeFS = struct {
         // string  on  success, and NULL on failure, in which case errno is set to
         // indicate the error
 
-        if(Environment.isWindows) {
-               var req: uv.fs_t = uv.fs_t.uninitialized;
-               const rc = uv.uv_fs_mkdtemp(bun.Async.Loop.get(), &req, @ptrCast(prefix_buf.ptr), null);
-               if (rc.errno()) |errno| {
-                    return .{ .err = .{ .errno = errno, .syscall = .mkdtemp, .path = prefix_buf[0..len+6] }};
-               }
-               return .{
-                    .result = JSC.ZigString.dupeForJS(bun.sliceTo(req.path, 0), bun.default_allocator) catch bun.outOfMemory(),
-                };
+        if (Environment.isWindows) {
+            var req: uv.fs_t = uv.fs_t.uninitialized;
+            const rc = uv.uv_fs_mkdtemp(bun.Async.Loop.get(), &req, @ptrCast(prefix_buf.ptr), null);
+            if (rc.errno()) |errno| {
+                return .{ .err = .{ .errno = errno, .syscall = .mkdtemp, .path = prefix_buf[0 .. len + 6] } };
+            }
+            return .{
+                .result = JSC.ZigString.dupeForJS(bun.sliceTo(req.path, 0), bun.default_allocator) catch bun.outOfMemory(),
+            };
         }
 
         const rc = C.mkdtemp(prefix_buf);
@@ -4227,13 +4231,11 @@ pub const NodeFS = struct {
 
         var path = args.path.sliceWithWinNormalizerCWDZ(buf);
         const flags = os.O.DIRECTORY | os.O.RDONLY;
-        const fd = switch (
-            switch(Environment.os) {
-                else => Syscall.open(path, flags, 0),
-                // windows bun.sys.open does not pass iterable=true,
-                .windows => bun.sys.openDirAtWindowsA(bun.toFD(std.fs.cwd().fd), path, true, false),
-            }
-        ) {
+        const fd = switch (switch (Environment.os) {
+            else => Syscall.open(path, flags, 0),
+            // windows bun.sys.open does not pass iterable=true,
+            .windows => bun.sys.openDirAtWindowsA(bun.toFD(std.fs.cwd().fd), path, true, false),
+        }) {
             .err => |err| return .{
                 .err = err.withPath(args.path.slice()),
             },
@@ -4525,7 +4527,7 @@ pub const NodeFS = struct {
 
         if (Environment.isWindows) {
             const native_fd = bun.fdcast(fd);
-            
+
             var data = args.data.slice();
 
             // "WriteFile sets this value to zero before doing any work or error checking."
@@ -4967,14 +4969,12 @@ pub const NodeFS = struct {
         }
     }
     pub fn stat(this: *NodeFS, args: Arguments.Stat, comptime _: Flavor) Maybe(Return.Stat) {
-        const errno_enoent = if(Environment.isWindows) .UV_ENOENT else .NOENT;
+        const errno_enoent = if (Environment.isWindows) .UV_ENOENT else .NOENT;
 
-        return switch (Syscall.stat(
-            args.path.sliceWithWinNormalizerCWDZ(
-                &this.sync_error_buf
-            )
-        )) {
-            .result => |result| .{ .result = .{ .stats = Stats.init(result, args.big_int) }, },
+        return switch (Syscall.stat(args.path.sliceWithWinNormalizerCWDZ(&this.sync_error_buf))) {
+            .result => |result| .{
+                .result = .{ .stats = Stats.init(result, args.big_int) },
+            },
             .err => |err| brk: {
                 if (!args.throw_if_no_entry and err.getErrno() == errno_enoent) {
                     return .{ .result = .{ .not_found = {} } };
@@ -5203,9 +5203,7 @@ pub const NodeFS = struct {
             var tmp: bun.WPathBuffer = undefined;
             @memcpy(tmp[0..slice.len], slice);
             return bun.strings.fromWPath(&this.sync_error_buf, tmp[0..slice.len]);
-        } else {
-            
-        }
+        } else {}
     }
 
     fn _cpSync(
@@ -5321,8 +5319,8 @@ pub const NodeFS = struct {
                     .buf = undefined,
                     .name_data = undefined,
                 };
-            } 
-            break :iterator DirIterator.iterate(dir);    
+            }
+            break :iterator DirIterator.iterate(dir);
         };
         var entry = iterator.next();
         while (switch (entry) {

@@ -1986,15 +1986,10 @@ pub const win32 = struct {
 pub usingnamespace if (@import("builtin").target.os.tag != .windows) posix else win32;
 
 pub fn isRegularFile(mode: Mode) bool {
-    if (comptime Environment.isPosix) {
-        return std.os.S.ISREG(mode);
-    }
-
     if (comptime Environment.isWindows) {
-        @panic("TODO on Windows");
+        return mode & std.os.linux.S.IFMT == std.os.linux.S.IFREG;
     }
-
-    @compileError("Unsupported platform");
+    return std.os.S.ISREG(mode);
 }
 
 pub const sys = @import("./sys.zig");

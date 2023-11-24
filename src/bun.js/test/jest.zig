@@ -535,7 +535,7 @@ pub const Jest = struct {
         var slice = str.slice();
 
         if (!std.fs.path.isAbsolute(slice)) {
-            globalObject.throw("Bun.jest() expects an absolute file path", .{});
+            globalObject.throw("Bun.jest() expects an absolute file path, got '{s}'", .{slice});
             return .zero;
         }
         var vm = globalObject.bunVM();

@@ -1554,48 +1554,30 @@ pub fn StatType(comptime Big: bool) type {
             return @truncate(this.mode);
         }
 
+        const S = if(!Environment.isWindows) os.system.S else bun.windows.libuv.S;
+
         pub fn isBlockDevice(this: *This) JSC.JSValue {
-            if (comptime Environment.isWindows) {
-                JSC.VirtualMachine.get().global.throwTODO(comptime @src().fn_name ++ " is not implemented yet");
-                return .zero;
-            }
-            return JSC.JSValue.jsBoolean(os.S.ISBLK(@as(Mode, @intCast(this.modeInternal()))));
+            return JSC.JSValue.jsBoolean(S.ISBLK(@intCast(this.modeInternal())));
         }
 
         pub fn isCharacterDevice(this: *This) JSC.JSValue {
-            if (comptime Environment.isWindows) {
-                JSC.VirtualMachine.get().global.throwTODO(comptime @src().fn_name ++ " is not implemented yet");
-                return .zero;
-            }
-            return JSC.JSValue.jsBoolean(os.S.ISCHR(@as(Mode, @intCast(this.modeInternal()))));
+            return JSC.JSValue.jsBoolean(S.ISCHR(@intCast(this.modeInternal())));
         }
 
         pub fn isDirectory(this: *This) JSC.JSValue {
-            if (comptime Environment.isWindows) {
-                JSC.VirtualMachine.get().global.throwTODO(comptime @src().fn_name ++ " is not implemented yet");
-                return .zero;
-            }
-            return JSC.JSValue.jsBoolean(os.S.ISDIR(@as(Mode, @intCast(this.modeInternal()))));
+            return JSC.JSValue.jsBoolean(S.ISDIR(@intCast(this.modeInternal())));
         }
 
         pub fn isFIFO(this: *This) JSC.JSValue {
-            if (comptime Environment.isWindows) {
-                JSC.VirtualMachine.get().global.throwTODO(comptime @src().fn_name ++ " is not implemented yet");
-                return .zero;
-            }
-            return JSC.JSValue.jsBoolean(os.S.ISFIFO(@as(Mode, @intCast(this.modeInternal()))));
+            return JSC.JSValue.jsBoolean(S.ISFIFO(@intCast(this.modeInternal())));
         }
 
         pub fn isFile(this: *This) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(bun.isRegularFile(@as(Mode, @intCast(this.modeInternal()))));
+            return JSC.JSValue.jsBoolean(bun.isRegularFile(@intCast(this.modeInternal())));
         }
 
         pub fn isSocket(this: *This) JSC.JSValue {
-            if (comptime Environment.isWindows) {
-                JSC.VirtualMachine.get().global.throwTODO(comptime @src().fn_name ++ " is not implemented yet");
-                return .zero;
-            }
-            return JSC.JSValue.jsBoolean(os.S.ISSOCK(@as(Mode, @intCast(this.modeInternal()))));
+            return JSC.JSValue.jsBoolean(S.ISSOCK(@intCast(this.modeInternal())));
         }
 
         /// Node.js says this method is only valid on the result of lstat()
@@ -1604,11 +1586,7 @@ pub fn StatType(comptime Big: bool) type {
         ///
         /// See https://nodejs.org/api/fs.html#statsissymboliclink
         pub fn isSymbolicLink(this: *This) JSC.JSValue {
-            if (comptime Environment.isWindows) {
-                JSC.VirtualMachine.get().global.throwTODO(comptime @src().fn_name ++ " is not implemented yet");
-                return .zero;
-            }
-            return JSC.JSValue.jsBoolean(os.S.ISLNK(@as(Mode, @intCast(this.modeInternal()))));
+            return JSC.JSValue.jsBoolean(S.ISLNK(@intCast(this.modeInternal())));
         }
 
         // TODO: BigIntStats includes a `_checkModeProperty` but I dont think anyone actually uses it.

@@ -535,6 +535,7 @@ pub const Loop = extern struct {
     }
 
     pub fn init(ptr: *Loop) ?bun.C.E {
+        std.debug.print("uv_loop_init on {d}\n", .{std.Thread.getCurrentId()});
         if (uv_loop_init(ptr).errEnum()) |err| return err;
         return null;
     }
@@ -554,17 +555,26 @@ pub const Loop = extern struct {
         bun.default_allocator.destroy(ptr);
     }
 
-    threadlocal var threadlocal_loop_data: Loop = undefined;
-    threadlocal var threadlocal_loop: ?*Loop = null;
+    // threadlocal var threadlocal_loop_data: Loop = undefined;
+    // threadlocal var threadlocal_loop: ?*Loop = null;
 
     /// UV loop is not thread local.
     pub fn get() *Loop {
-        if (threadlocal_loop) |loop| return loop;
-        if (bun.windows.libuv.Loop.init(&threadlocal_loop_data)) |e| {
-            std.debug.panic("Failed to initialize libuv loop: {s}", .{@tagName(e)});
-        }
-        threadlocal_loop = &threadlocal_loop_data;
-        return &threadlocal_loop_data;
+        // TODO(@paperdave):
+        // This should not work. UV is not threadsafe. Repeat, UV is NOT THREADSAFE.
+        // but... this on average seems to be more stable than having a threadlocal loop ._.
+        // really, the solution is to fix many other places like node_fs to not use
+        // the `bun.sys.sys_uv` wrapper api, as i think there is issue doing these
+        // cross-thread sync calls.
+        return uv_default_loop();
+
+        // the correct code looks more like?:
+        // if (threadlocal_loop) |loop| return loop;
+        // if (bun.windows.libuv.Loop.init(&threadlocal_loop_data)) |e| {
+        //     std.debug.panic("Failed to initialize libuv loop: {s}", .{@tagName(e)});
+        // }
+        // threadlocal_loop = &threadlocal_loop_data;
+        // return &threadlocal_loop_data;
     }
 
     pub fn tick(this: *Loop) void {
@@ -2351,5 +2361,61 @@ pub const ReturnCode = extern struct {
 
     comptime {
         std.debug.assert(@as(c_int, @bitCast(ReturnCode{ .value = 4021 })) == 4021);
+    }
+};
+
+pub const S = struct {
+    pub const IFMT = 0o170000;
+
+    pub const IFDIR = 0o040000;
+    pub const IFCHR = 0o020000;
+    pub const IFBLK = 0o060000;
+    pub const IFREG = 0o100000;
+    pub const IFIFO = 0o010000;
+    pub const IFLNK = 0o120000;
+    pub const IFSOCK = 0o140000;
+
+    pub const ISUID = 0o4000;
+    pub const ISGID = 0o2000;
+    pub const ISVTX = 0o1000;
+    pub const IRUSR = 0o400;
+    pub const IWUSR = 0o200;
+    pub const IXUSR = 0o100;
+    pub const IRWXU = 0o700;
+    pub const IRGRP = 0o040;
+    pub const IWGRP = 0o020;
+    pub const IXGRP = 0o010;
+    pub const IRWXG = 0o070;
+    pub const IROTH = 0o004;
+    pub const IWOTH = 0o002;
+    pub const IXOTH = 0o001;
+    pub const IRWXO = 0o007;
+
+    pub inline fn ISREG(m: i32) bool {
+        return m & IFMT == IFREG;
+    }
+
+    pub inline fn ISDIR(m: i32) bool {
+        return m & IFMT == IFDIR;
+    }
+
+    pub inline fn ISCHR(m: i32) bool {
+        return m & IFMT == IFCHR;
+    }
+
+    pub inline fn ISBLK(m: i32) bool {
+        return m & IFMT == IFBLK;
+    }
+
+    pub inline fn ISFIFO(m: i32) bool {
+        return m & IFMT == IFIFO;
+    }
+
+    pub inline fn ISLNK(m: i32) bool {
+        return m & IFMT == IFLNK;
+    }
+
+    pub inline fn ISSOCK(m: i32) bool {
+        return m & IFMT == IFSOCK;
     }
 };

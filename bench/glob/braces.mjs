@@ -2,7 +2,7 @@ import braces from "braces";
 import { group, bench, run } from "mitata";
 
 // const iterations = 1000;
-const iterations = 1;
+const iterations = 100;
 
 const simplePattern = "foo.{js,jsx,ts,tsx}";
 const complexPattern = "{a,b,HI{c,e,LMAO{d,f}Q}} wow {a,b}";
@@ -27,7 +27,7 @@ function benchPattern(pattern, name) {
 
 benchPattern(simplePattern, "simple");
 benchPattern(complexPattern, "complex");
-// benchPattern(veryComplexPattern, "very complex pattern");
+benchPattern(veryComplexPattern, "very complex pattern");
 
 await run({
   avg: true,

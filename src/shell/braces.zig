@@ -12,9 +12,6 @@ const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
 pub const ExpansionVariant = packed struct {
     start: u16 = 0,
     end: u16 = 0,
-    depth: u4 = 0,
-    nested: bool = false,
-    _padding: u3 = 0,
 };
 
 const log = bun.Output.scoped(.BRACES, false);
@@ -231,48 +228,6 @@ fn expandNested(
     }
 }
 
-fn expandNestedOldOld(
-    root: *const AST.Group,
-    out: []std.ArrayList(u8),
-    out_key: u16,
-    out_key_counter: *u16,
-    depth: u8,
-    start: usize,
-) !void {
-    for (root.atoms[start..], 0..) |atom, _i| {
-        var i = start + _i;
-
-        switch (atom) {
-            .text => |txt| {
-                try out[out_key].appendSlice(txt.slice());
-            },
-            .expansion => |expansion| {
-                const is_nested = depth > 1;
-                if (expansion.variants.len <= 1) {
-                    // Should not happen
-                    @panic("Should not happen");
-                }
-
-                // {a,L{b,c}L,d}{1,2,3}
-                if (!is_nested) {
-                    for (expansion.variants[1..]) |*variant| {
-                        const new_key = out_key_counter.*;
-                        out_key_counter.* += 1;
-                        std.debug.print("Branch: {s} {d} {d}\n", .{ out[out_key].items[0..], out_key, new_key });
-                        try out[new_key].appendSlice(out[out_key].items[0..]);
-                        try expandNested(variant, out, new_key, out_key_counter, 0);
-                        try expandNested(root, out, new_key, out_key_counter, i + 1);
-                    }
-
-                    const first_variant = &expansion.variants[0];
-                    try expandNested(first_variant, out, out_key, out_key_counter, 0);
-                    return try expandNested(root, out, out_key, out_key_counter, i + 1);
-                }
-            },
-        }
-    }
-}
-
 /// This function is fast but does not work for nested brace expansions
 /// TODO optimization: allocate into one buffer of chars
 fn expandFlat(
@@ -309,7 +264,6 @@ fn expandFlat(
 
                 const starting_len = out[out_key].items.len;
                 for (variants[0..], 0..) |*variant, i| {
-                    if (variant.depth != depth) continue;
                     const new_key = if (i == 0) out_key else brk: {
                         const new_key = out_key_counter.*;
                         try out[new_key].appendSlice(out[out_key].items[0..starting_len]);
@@ -564,14 +518,11 @@ pub fn buildExpansionTable(
                 });
             },
             .close => {
-                const depth = brace_stack.len;
                 var top = brace_stack.pop().?;
 
                 try table.append(.{
                     .end = i,
                     .start = top.prev_tok_end + 1,
-                    .depth = depth,
-                    .nested = prev_close,
                 });
 
                 top.prev_tok_end = i;
@@ -586,8 +537,6 @@ pub fn buildExpansionTable(
                 try table.append(.{
                     .end = i,
                     .start = top.prev_tok_end + 1,
-                    .depth = brace_stack.len,
-                    .nested = prev_close,
                 });
 
                 prev_close = false;

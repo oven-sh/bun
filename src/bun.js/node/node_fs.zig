@@ -593,8 +593,17 @@ pub const AsyncReaddirRecursiveTask = struct {
         this.result_list.deinit();
         var batch = this.result_list_queue.popBatch();
         var iter = batch.iterator();
+        var to_destroy: ?*ResultListEntry = null;
+
         while (iter.next()) |val| {
             val.value.deinit();
+            if (to_destroy) |dest| {
+                bun.default_allocator.destroy(dest);
+            }
+            to_destroy = val;
+        }
+        if (to_destroy) |dest| {
+            bun.default_allocator.destroy(dest);
         }
         this.result_list_count.store(0, .Monotonic);
     }

@@ -68,35 +68,24 @@ describe("bunshell", () => {
   });
 
   test("brace expansion nested", () => {
-    {
-      const buffer = new Uint8Array(512);
-      const result = $`echo {a,b,{c,d}} > ${buffer}`;
+    function doTest(pattern: string, expected: string, buffer: Uint8Array = new Uint8Array(512)) {
+      const result = $`echo ${pattern} > ${buffer}`;
       const sentinel = sentinelByte(buffer);
-      expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual("a b c d\n");
+      expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual(`${expected}\n`);
     }
 
-    {
-      const buffer = new Uint8Array(512);
-      const result = $`echo {a,b,{c,d,{e,f}}} > ${buffer}`;
-      const sentinel = sentinelByte(buffer);
-      expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual("a b c d e f\n");
-    }
+    doTest("{a,b,{c,d}}", "a b c d");
+    doTest("{a,b,{c,d,{e,f}}}", "a b c d e f");
+    doTest("{a,{b,{c,d}}}", "a b c d");
+    doTest("{a,b,HI{c,e,LMAO{d,f}Q}}", "a b HIc HIe HILMAOdQ HILMAOfQ");
+    doTest("{a,{b,c}}{1,2,3}", "a1 a2 a3 b1 b2 b3 c1 c2 c3");
+    doTest("{a,{b,c}HEY,d}{1,2,3}", "a1 a2 a3 b1 b2 b3 c1 c2 c3");
+    doTest("{a,{b,c},d}{1,2,3}", "a1 a2 a3 b1 b2 b3 c1 c2 c3 d1 d2 d3");
 
-    {
-      const buffer = new Uint8Array(512);
-      const result = $`echo {a,b,HI{c,e,LMAO{d,f}Q}} > ${buffer}`;
-      const sentinel = sentinelByte(buffer);
-      expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual("a b HIc HIe HILMAOdQ HILMAOfQ\n");
-    }
-
-    {
-      const buffer = new Uint8Array(512);
-      const result = $`echo {a,b,HI{c,e,LMAO{d,f}Q}}{1,2,{3,4},5} > ${buffer}`;
-      const sentinel = sentinelByte(buffer);
-      expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual(
-        "a1 a2 a3 a4 a5 b1 b2 b3 b4 b5 HIc1 HIc2 HIc3 HIc4 HIc5 HIe1 HIe2 HIe3 HIe4 HIe5 HILMAOdQ1 HILMAOdQ2 HILMAOdQ3 HILMAOdQ4 HILMAOdQ5 HILMAOfQ1 HILMAOfQ2 HILMAOfQ3 HILMAOfQ4 HILMAOfQ5\n",
-      );
-    }
+    doTest(
+      "{a,b,HI{c,e,LMAO{d,f}Q}}{1,2,{3,4},5}",
+      "a1 a2 a3 a4 a5 b1 b2 b3 b4 b5 HIc1 HIc2 HIc3 HIc4 HIc5 HIe1 HIe2 HIe3 HIe4 HIe5 HILMAOdQ1 HILMAOdQ2 HILMAOdQ3 HILMAOdQ4 HILMAOdQ5 HILMAOfQ1 HILMAOfQ2 HILMAOfQ3 HILMAOfQ4 HILMAOfQ5",
+    );
   });
 
   test("brace expansion in command", () => {

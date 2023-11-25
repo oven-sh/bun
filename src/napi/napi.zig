@@ -772,15 +772,7 @@ pub export fn napi_is_arraybuffer(_: napi_env, value: napi_value, result: *bool)
     result.* = !value.isNumber() and value.jsTypeLoose() == .ArrayBuffer;
     return .ok;
 }
-pub export fn napi_create_arraybuffer(env: napi_env, byte_length: usize, data: [*]const u8, result: *napi_value) napi_status {
-    log("napi_create_arraybuffer", .{});
-    var typed_array = JSC.C.JSObjectMakeTypedArray(env.ref(), .kJSTypedArrayTypeArrayBuffer, byte_length, TODO_EXCEPTION);
-    var array_buffer = JSValue.c(typed_array).asArrayBuffer(env) orelse return genericFailure();
-    const len = @min(array_buffer.len, @as(u32, @truncate(byte_length)));
-    @memcpy(array_buffer.ptr[0..len], data[0..len]);
-    result.* = JSValue.c(typed_array);
-    return .ok;
-}
+pub extern fn napi_create_arraybuffer(env: napi_env, byte_length: usize, data: [*]const u8, result: *napi_value) napi_status;
 
 pub extern fn napi_create_external_arraybuffer(env: napi_env, external_data: ?*anyopaque, byte_length: usize, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *napi_value) napi_status;
 

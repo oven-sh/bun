@@ -641,7 +641,7 @@ pub fn isReadable(fd: FileDescriptor) PollFlag {
 
     var polls = [_]std.os.pollfd{
         .{
-            .fd = @intCast(fd),
+            .fd = fd,
             .events = std.os.POLL.IN | std.os.POLL.ERR,
             .revents = 0,
         },
@@ -665,7 +665,7 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
 
     var polls = [_]std.os.pollfd{
         .{
-            .fd = @intCast(fd),
+            .fd = fd,
             .events = std.os.POLL.OUT,
             .revents = 0,
         },
@@ -848,10 +848,9 @@ pub fn getenvZ(path_: [:0]const u8) ?[]const u8 {
     return sliceTo(ptr, 0);
 }
 
-//TODO: add windows support
 pub const FDHashMapContext = struct {
     pub fn hash(_: @This(), fd: FileDescriptor) u64 {
-        return @as(u64, @intCast(fd));
+        return fd;
     }
     pub fn eql(_: @This(), a: FileDescriptor, b: FileDescriptor) bool {
         return a == b;
@@ -868,7 +867,7 @@ pub const FDHashMapContext = struct {
         input: FileDescriptor,
         pub fn hash(this: @This(), fd: FileDescriptor) u64 {
             if (fd == this.input) return this.value;
-            return @as(u64, @intCast(fd));
+            return fd;
         }
 
         pub fn eql(_: @This(), a: FileDescriptor, b: FileDescriptor) bool {
@@ -1874,24 +1873,44 @@ pub inline fn toLibUVOwnedFD(fd: anytype) FileDescriptor {
     }
 }
 
-/// Converts a native file descriptor into a `bun.FileDescriptor`
-///
-/// Accepts either a UV descriptor (i32) or a windows handle (*anyopaque)
-///
-/// On windows, this file descriptor will always be backed by libuv, so calling .close() is safe.
+/// Converts FileDescriptor into a UV file descriptor.
+/// 
+/// This explicitly is setup to disallow converting a Windows descriptor into a UV
+/// descriptor. If this was allowed, then it would imply the caller still owns the
+/// windows handle, but Win->UV will always invalidate the handle.
+/// 
+/// In that situation, it is almost impossible to close the handle properly,
+/// you want to use `bun.FDImpl.decode(fd)` or `bun.toLibUVOwnedFD` instead.
+/// 
+/// This way, you can call .close() on the libuv descriptor.
 pub inline fn uvfdcast(fd: anytype) FDImpl.UV {
     const T = @TypeOf(fd);
     if (Environment.isWindows) {
-        return (switch (T) {
+        const decoded = (switch (T) {
+            FDImpl.System => @compileError("This cast (FDImpl.UV -> FDImpl.System) makes the file descriptor very hard to close. Please use toLibUVOwnedFD() instead"),
             FDImpl => fd,
-            FDImpl.System => FDImpl.fromSystem(fd),
             FDImpl.UV => FDImpl.fromUV(fd),
             FileDescriptor => FDImpl.decode(fd),
-            else => @compileError("toLibUVOwnedFD() does not support type \"" ++ @typeName(T) ++ "\""),
-        }).uv();
+            else => @compileError("uvfdcast() does not support type \"" ++ @typeName(T) ++ "\""),
+        });
+        if (Environment.allow_assert) {
+            if(decoded.kind != .uv) {
+                std.debug.panic("uvfdcast({}) called on an windows handle", .{ decoded });
+            }
+        }
+        return decoded.uv();
     } else {
         return @intCast(fd);
     }
+}
+
+pub inline fn socketcast(fd: anytype) std.os.socket_t {
+    if (Environment.isWindows) {
+        return @ptrCast(FDImpl.decode(fd).system());
+    } else {
+        return fd;
+    }
+
 }
 
 pub const HOST_NAME_MAX = if (Environment.isWindows)

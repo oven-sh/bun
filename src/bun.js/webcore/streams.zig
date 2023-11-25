@@ -539,8 +539,17 @@ pub const StreamStart = union(Tag) {
                             },
                         };
                     }
-                    const fd = fd_value.toInt64();
-                    if (fd < 0) {
+
+                    if (bun.FDImpl.fromJS(fd_value)) |fd| {
+                        return .{
+                            .FileSink = .{
+                                .chunk_size = chunk_size,
+                                .input_path = .{
+                                    .fd = fd.encode(),
+                                },
+                            },
+                        };
+                    } else {
                         return .{
                             .err = Syscall.Error{
                                 .errno = @intFromEnum(bun.C.SystemErrno.EBADF),
@@ -548,15 +557,6 @@ pub const StreamStart = union(Tag) {
                             },
                         };
                     }
-
-                    return .{
-                        .FileSink = .{
-                            .chunk_size = chunk_size,
-                            .input_path = .{
-                                .fd = @as(bun.FileDescriptor, @intCast(fd)),
-                            },
-                        },
-                    };
                 }
 
                 return .{
@@ -4244,7 +4244,7 @@ pub const File = struct {
             if (comptime Environment.isWindows) {
                 @panic("TODO on Windows");
             }
-            
+
             // ensure we have non-blocking IO set
             switch (Syscall.fcntl(fd, std.os.F.GETFL, 0)) {
                 .err => return .{ .err = Syscall.Error.fromCode(E.BADF, .fcntl) },

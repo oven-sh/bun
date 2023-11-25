@@ -156,7 +156,7 @@ pub const Websocket = struct {
         var socket = Websocket{
             .read_stream = undefined,
             .reader = undefined,
-            .stream = std.net.Stream{ .handle = @as(std.os.socket_t, @intCast(fd)) },
+            .stream = std.net.Stream{ .handle = bun.socketcast(fd) },
             .flags = flags,
         };
 

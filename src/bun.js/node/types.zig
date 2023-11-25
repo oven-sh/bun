@@ -19,8 +19,11 @@ const Shimmer = @import("../bindings/shimmer.zig").Shimmer;
 const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 const resolve_path = @import("../../resolver/resolve_path.zig");
 const meta = bun.meta;
-/// Time in seconds. Not nanos!
-pub const TimeLike = c_int;
+
+/// On windows, this is what libuv expects
+/// On unix, it is a timespec, as utimens takes that structure.
+pub const TimeLike = if (Environment.isWindows) f64 else std.os.timespec;
+
 const Mode = bun.Mode;
 const heap_allocator = bun.default_allocator;
 pub fn DeclEnum(comptime T: type) type {
@@ -1124,7 +1127,14 @@ pub fn timeLikeFromJS(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue, _: JS
             return null;
         }
 
-        return @as(TimeLike, @truncate(@as(i64, @intFromFloat(milliseconds / @as(f64, std.time.ms_per_s)))));
+        if (Environment.isWindows) {
+            return milliseconds / 1000.0;
+        }
+
+        return TimeLike{
+            .tv_sec = @intFromFloat(@divFloor(milliseconds, std.time.ms_per_s)),
+            .tv_nsec = @mod(milliseconds, std.time.ms_per_s) * std.time.ns_per_ms,
+        };
     }
 
     if (!value.isNumber() and !value.isString()) {
@@ -1136,7 +1146,14 @@ pub fn timeLikeFromJS(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue, _: JS
         return null;
     }
 
-    return @as(TimeLike, @truncate(@as(i64, @intFromFloat(seconds))));
+    if (Environment.isWindows) {
+        return seconds;
+    }
+
+    return TimeLike{
+        .tv_sec = @intFromFloat(seconds),
+        .tv_nsec = @mod(seconds, 1.0) * std.time.ns_per_s,
+    };
 }
 
 pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Mode {

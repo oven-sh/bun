@@ -22,6 +22,8 @@ const FDImpl = bun.FDImpl;
 
 const Syscall = if (Environment.isWindows) bun.sys.sys_uv else bun.sys;
 
+const errno_enoent = if (Environment.isWindows) .UV_ENOENT else .NOENT;
+
 const Constants = @import("./node_fs_constant.zig").Constants;
 const builtin = @import("builtin");
 const os = @import("std").os;
@@ -38,8 +40,8 @@ const TimeLike = JSC.Node.TimeLike;
 const Mode = bun.Mode;
 const uv = bun.windows.libuv;
 const E = C.E;
-const uid_t = if (Environment.isPosix) std.os.uid_t else i32;
-const gid_t = if (Environment.isPosix) std.os.gid_t else i32;
+const uid_t = if (Environment.isPosix) std.os.uid_t else bun.windows.libuv.uv_uid_t;
+const gid_t = if (Environment.isPosix) std.os.gid_t else bun.windows.libuv.uv_gid_t;
 /// u63 to allow one null bit
 const ReadPosition = i64;
 
@@ -3679,7 +3681,7 @@ pub const NodeFS = struct {
     pub fn chown(this: *NodeFS, args: Arguments.Chown, comptime flavor: Flavor) Maybe(Return.Chown) {
         _ = flavor;
         if (comptime Environment.isWindows) {
-            return Maybe(Return.Fchmod).todo();
+            return Syscall.chown(args.path.sliceWithWinNormalizerCWDZ(&this.sync_error_buf), args.uid, args.gid);
         }
 
         const path = args.path.sliceZ(&this.sync_error_buf);
@@ -3691,7 +3693,7 @@ pub const NodeFS = struct {
     pub fn chmod(this: *NodeFS, args: Arguments.Chmod, comptime flavor: Flavor) Maybe(Return.Chmod) {
         _ = flavor;
         if (comptime Environment.isWindows) {
-            return Maybe(Return.Fchmod).todo();
+            return Syscall.chmod(args.path.sliceWithWinNormalizerCWDZ(&this.sync_error_buf), args.mode);
         }
 
         const path = args.path.sliceZ(&this.sync_error_buf);
@@ -3703,16 +3705,12 @@ pub const NodeFS = struct {
     /// This should almost never be async
     pub fn fchmod(_: *NodeFS, args: Arguments.FChmod, comptime flavor: Flavor) Maybe(Return.Fchmod) {
         _ = flavor;
-        if (comptime Environment.isWindows) {
-            return Maybe(Return.Fchmod).todo();
-        }
-
         return Syscall.fchmod(args.fd, args.mode);
     }
     pub fn fchown(_: *NodeFS, args: Arguments.Fchown, comptime flavor: Flavor) Maybe(Return.Fchown) {
         _ = flavor;
         if (comptime Environment.isWindows) {
-            return Maybe(Return.Fchown).todo();
+            return Syscall.fchown(args.fd, args.uid, args.gid);
         }
 
         return Maybe(Return.Fchown).errnoSys(C.fchown(args.fd, args.uid, args.gid), .fchown) orelse
@@ -3748,21 +3746,20 @@ pub const NodeFS = struct {
         _ = flavor;
         return ftruncateSync(args);
     }
-    pub fn futimes(_: *NodeFS, args: Arguments.Futimes, comptime flavor: Flavor) Maybe(Return.Futimes) {
-        _ = flavor;
+    pub fn futimes(_: *NodeFS, args: Arguments.Futimes, comptime _: Flavor) Maybe(Return.Futimes) {
         if (comptime Environment.isWindows) {
-            return Maybe(Return.Futimes).todo();
+            var req: uv.fs_t = uv.fs_t.uninitialized;
+            defer req.deinit();
+            const rc = uv.uv_fs_futime(uv.Loop.get(), &req, bun.uvfdcast(args.fd), args.mtime, args.atime, null);
+            return if (rc.errno()) |e|
+                Maybe(Return.Futimes){ .err = .{ .errno = e, .syscall = .futime } }
+            else
+                Maybe(Return.Futimes).success;
         }
 
         var times = [2]std.os.timespec{
-            .{
-                .tv_sec = args.mtime,
-                .tv_nsec = 0,
-            },
-            .{
-                .tv_sec = args.atime,
-                .tv_nsec = 0,
-            },
+            args.mtime,
+            args.atime,
         };
 
         return if (Maybe(Return.Futimes).errnoSys(system.futimens(args.fd, &times), .futimens)) |err|
@@ -3816,7 +3813,7 @@ pub const NodeFS = struct {
         )) {
             .result => |result| Maybe(Return.Lstat){ .result = .{ .stats = Stats.init(result, args.big_int) } },
             .err => |err| brk: {
-                if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
+                if (!args.throw_if_no_entry and err.getErrno() == errno_enoent) {
                     return Maybe(Return.Lstat){ .result = .{ .not_found = {} } };
                 }
                 break :brk Maybe(Return.Lstat){ .err = err };
@@ -4969,8 +4966,6 @@ pub const NodeFS = struct {
         }
     }
     pub fn stat(this: *NodeFS, args: Arguments.Stat, comptime _: Flavor) Maybe(Return.Stat) {
-        const errno_enoent = if (Environment.isWindows) .UV_ENOENT else .NOENT;
-
         return switch (Syscall.stat(args.path.sliceWithWinNormalizerCWDZ(&this.sync_error_buf))) {
             .result => |result| .{
                 .result = .{ .stats = Stats.init(result, args.big_int) },
@@ -5072,8 +5067,8 @@ pub const NodeFS = struct {
                 bun.Async.Loop.get(),
                 &req,
                 args.path.sliceZ(&this.sync_error_buf).ptr,
-                @floatFromInt(args.atime),
-                @floatFromInt(args.mtime),
+                args.atime,
+                args.mtime,
                 null,
             );
             return if (rc.errno()) |errno|
@@ -5086,16 +5081,8 @@ pub const NodeFS = struct {
         }
 
         var times = [2]std.c.timeval{
-            .{
-                .tv_sec = args.mtime,
-                // TODO: is this correct?
-                .tv_usec = 0,
-            },
-            .{
-                .tv_sec = args.atime,
-                // TODO: is this correct?
-                .tv_usec = 0,
-            },
+            args.mtime,
+            args.atime,
         };
 
         return if (Maybe(Return.Utimes).errnoSysP(std.c.utimes(args.path.sliceZ(&this.sync_error_buf), &times), .utimes, args.path.slice())) |err|
@@ -5112,8 +5099,8 @@ pub const NodeFS = struct {
                 bun.Async.Loop.get(),
                 &req,
                 args.path.sliceZ(&this.sync_error_buf).ptr,
-                @floatFromInt(args.atime),
-                @floatFromInt(args.mtime),
+                args.atime,
+                args.mtime,
                 null,
             );
             return if (rc.errno()) |errno|

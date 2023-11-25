@@ -493,7 +493,7 @@ pub const FilePoll = struct {
 
     pub fn initWithOwner(vm: *JSC.VirtualMachine, fd: bun.FileDescriptor, flags: Flags.Struct, owner: Owner) *FilePoll {
         var poll = vm.rareData().filePolls(vm).get();
-        poll.fd = @intCast(fd);
+        poll.fd = fd;
         poll.flags = Flags.Set.init(flags);
         poll.owner = owner;
         poll.next_to_free = null;

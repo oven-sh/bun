@@ -105,6 +105,7 @@ pub const Tag = enum(u8) {
     rmdir,
     truncate,
     realpath,
+    futime,
 
     kevent,
     kqueue,
@@ -125,6 +126,7 @@ pub const Tag = enum(u8) {
     NtQueryDirectoryFile,
     GetFinalPathNameByHandle,
     CloseHandle,
+    SetFilePointerEx,
 
     pub fn isWindows(this: Tag) bool {
         return @intFromEnum(this) > @intFromEnum(Tag.WriteFile);
@@ -230,9 +232,8 @@ pub fn lstat(path: [:0]const u8) Maybe(bun.Stat) {
 }
 
 pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
-    if (comptime Environment.isWindows) {
-        @panic("fstat does not work");
-    }
+    if (Environment.isWindows) return sys_uv.fstat(fd);
+
     var stat_ = mem.zeroes(bun.Stat);
 
     const rc = fstatSym(fd, &stat_);
@@ -447,13 +448,15 @@ pub fn openatWindows(dirfD: bun.FileDescriptor, path_: []const u16, flags: bun.M
     var access_mask: w.ULONG = w.READ_CONTROL | w.FILE_WRITE_ATTRIBUTES | w.SYNCHRONIZE;
     if (flags & O.RDWR != 0) {
         access_mask |= w.GENERIC_READ | w.GENERIC_WRITE;
+    } else if (flags & O.APPEND != 0) {
+        access_mask |= w.GENERIC_WRITE | w.FILE_APPEND_DATA;
     } else if (flags & O.WRONLY != 0) {
         access_mask |= w.GENERIC_WRITE;
-    } else if (flags & O.APPEND != 0) {
-        access_mask |= w.FILE_APPEND_DATA;
-    } else {
+    } else  {
         access_mask |= w.GENERIC_READ;
     }
+
+    const overwrite = flags & O.WRONLY != 0 and flags & O.APPEND == 0;
 
     var result: windows.HANDLE = undefined;
 
@@ -491,9 +494,9 @@ pub fn openatWindows(dirfD: bun.FileDescriptor, path_: []const u16, flags: bun.M
             if (flags & O.EXCL != 0) {
                 break :blk w.FILE_CREATE;
             }
-            break :blk if (flags & O.WRONLY != 0) w.FILE_OVERWRITE_IF else w.FILE_OPEN_IF;
+            break :blk if (overwrite) w.FILE_OVERWRITE_IF else w.FILE_OPEN_IF;
         }
-        break :blk if (flags & O.WRONLY != 0) w.FILE_OVERWRITE else w.FILE_OPEN;
+        break :blk if (overwrite) w.FILE_OVERWRITE else w.FILE_OPEN;
     };
 
     const wflags: windows.ULONG = if (follow_symlinks) file_or_dir_flag | blocking_flag else file_or_dir_flag | windows.FILE_OPEN_REPARSE_POINT;
@@ -519,6 +522,18 @@ pub fn openatWindows(dirfD: bun.FileDescriptor, path_: []const u16, flags: bun.M
 
         switch (windows.Win32Error.fromNTStatus(rc)) {
             .SUCCESS => {
+                if(flags & O.APPEND != 0) {
+                    // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfilepointerex
+                    const FILE_END = 2;
+                    if(windows.kernel32.SetFilePointerEx(result, 0, null, FILE_END) == 0) {
+                        return .{
+                            .err = .{
+                                .errno = @intFromEnum(bun.C.E.UNKNOWN),
+                                .syscall = .SetFilePointerEx,
+                            },
+                        };
+                    }
+                }
                 return JSC.Maybe(bun.FileDescriptor){
                     .result = bun.toFD(result),
                 };
@@ -1243,7 +1258,7 @@ pub const Error = struct {
         return Error{
             .errno = this.errno,
             .syscall = this.syscall,
-            .fd = @intCast(fd),
+            .fd = bun.toFD(fd),
         };
     }
 
@@ -1477,17 +1492,17 @@ pub fn isExecutableFilePath(path: anytype) bool {
 pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
     if (comptime Environment.isLinux) {
         return Maybe(void).errnoSysFd(
-            linux.lseek(@intCast(fd), @intCast(offset), os.SEEK.SET),
+            linux.lseek(fd, @intCast(offset), os.SEEK.SET),
             .lseek,
-            @as(bun.FileDescriptor, @intCast(fd)),
+            fd,
         ) orelse Maybe(void).success;
     }
 
     if (comptime Environment.isMac) {
         return Maybe(void).errnoSysFd(
-            std.c.lseek(fd, @as(std.c.off_t, @intCast(offset)), os.SEEK.SET),
+            std.c.lseek(fd, @intCast(offset), os.SEEK.SET),
             .lseek,
-            @as(bun.FileDescriptor, @intCast(fd)),
+            fd,
         ) orelse Maybe(void).success;
     }
 

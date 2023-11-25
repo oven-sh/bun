@@ -1871,6 +1871,10 @@ describe("fs/promises", () => {
       expect(await exists(path)).toBe(false);
     });
   });
+
+  it("opendir should have a path property, issue#4995", async () => {
+    expect((await fs.promises.opendir(".")).path).toBe(".");
+  });
 });
 
 it("stat on a large file", () => {

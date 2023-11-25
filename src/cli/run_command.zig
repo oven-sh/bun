@@ -238,7 +238,7 @@ pub const RunCommand = struct {
     ) !bool {
         const shell_bin = findShell(env.map.get("PATH") orelse "", cwd) orelse return error.MissingShell;
 
-        var script = original_script;
+        const script = original_script;
         var copy_script = try std.ArrayList(u8).initCapacity(allocator, script.len);
 
         // We're going to do this slowly.
@@ -259,7 +259,7 @@ pub const RunCommand = struct {
             bun.copy(u8, combined_script_buf, script);
             var remaining_script_buf = combined_script_buf[script.len..];
             for (passthrough) |part| {
-                var p = part;
+                const p = part;
                 remaining_script_buf[0] = ' ';
                 bun.copy(u8, remaining_script_buf[1..], p);
                 remaining_script_buf = remaining_script_buf[p.len + 1 ..];
@@ -403,7 +403,7 @@ pub const RunCommand = struct {
     }
 
     pub fn ls(ctx: Command.Context) !void {
-        var args = ctx.args;
+        const args = ctx.args;
 
         var this_bundler = try bundler.Bundler.init(ctx.allocator, ctx.log, args, null);
         this_bundler.options.env.behavior = Api.DotEnvBehavior.load_all;
@@ -490,7 +490,7 @@ pub const RunCommand = struct {
         log_errors: bool,
         force_using_bun: bool,
     ) !*DirInfo {
-        var args = ctx.args;
+        const args = ctx.args;
         this_bundler.* = try bundler.Bundler.init(ctx.allocator, ctx.log, args, env);
         this_bundler.options.env.behavior = Api.DotEnvBehavior.load_all;
         this_bundler.env.quiet = true;
@@ -552,7 +552,7 @@ pub const RunCommand = struct {
             }
         }
 
-        var bin_dirs = this_bundler.resolver.binDirs();
+        const bin_dirs = this_bundler.resolver.binDirs();
 
         if (root_dir_info.enclosing_package_json) |package_json| {
             if (root_dir_info.package_json == null) {
@@ -681,7 +681,7 @@ pub const RunCommand = struct {
             }
         }
 
-        var args = ctx.args;
+        const args = ctx.args;
 
         var this_bundler = bundler.Bundler.init(ctx.allocator, ctx.log, args, null) catch return shell_out;
         this_bundler.options.env.behavior = Api.DotEnvBehavior.load_all;
@@ -697,7 +697,7 @@ pub const RunCommand = struct {
         }
         this_bundler.configureLinker();
 
-        var root_dir_info = (this_bundler.resolver.readDirInfo(this_bundler.fs.top_level_dir) catch null) orelse return shell_out;
+        const root_dir_info = (this_bundler.resolver.readDirInfo(this_bundler.fs.top_level_dir) catch null) orelse return shell_out;
 
         {
             this_bundler.env.loadProcess();
@@ -749,7 +749,7 @@ pub const RunCommand = struct {
                                 const base = value.base();
                                 bun.copy(u8, path_buf[dir_slice.len..], base);
                                 path_buf[dir_slice.len + base.len] = 0;
-                                var slice = path_buf[0 .. dir_slice.len + base.len :0];
+                                const slice = path_buf[0 .. dir_slice.len + base.len :0];
                                 if (!(bun.sys.isExecutableFilePath(slice))) continue;
                                 // we need to dupe because the string pay point to a pointer that only exists in the current scope
                                 _ = try results.getOrPut(this_bundler.fs.filename_store.append(@TypeOf(base), base) catch continue);
@@ -814,7 +814,7 @@ pub const RunCommand = struct {
                             continue :loop;
                         }
 
-                        var entry_item = results.getOrPutAssumeCapacity(key);
+                        const entry_item = results.getOrPutAssumeCapacity(key);
 
                         if (filter == Filter.script_and_descriptions and max_description_len > 0) {
                             var description = scripts.get(key).?;
@@ -864,7 +864,7 @@ pub const RunCommand = struct {
             }
         }
 
-        var all_keys = results.keys();
+        const all_keys = results.keys();
 
         strings.sortAsc(all_keys);
         shell_out.commands = all_keys;
@@ -1008,7 +1008,7 @@ pub const RunCommand = struct {
                             );
                             if (file_path.len == 0) break :possibly_open_with_bun_js;
                             path_buf2[file_path.len] = 0;
-                            var file_pathZ = path_buf2[0..file_path.len :0];
+                            const file_pathZ = path_buf2[0..file_path.len :0];
                             break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
                         }
                     };
@@ -1051,7 +1051,7 @@ pub const RunCommand = struct {
                     }
 
                     Global.configureAllocator(.{ .long_running = true });
-                    var out_path = ctx.allocator.dupe(u8, file_path) catch unreachable;
+                    const out_path = ctx.allocator.dupe(u8, file_path) catch unreachable;
                     if (must_normalize) {
                         if (comptime Environment.isWindows) {
                             std.mem.replaceScalar(u8, out_path, std.fs.path.sep_windows, std.fs.path.sep_posix);
@@ -1080,7 +1080,7 @@ pub const RunCommand = struct {
 
         var ORIGINAL_PATH: string = "";
         var this_bundler: bundler.Bundler = undefined;
-        var root_dir_info = try configureEnvForRun(ctx, &this_bundler, null, &ORIGINAL_PATH, log_errors, force_using_bun);
+        const root_dir_info = try configureEnvForRun(ctx, &this_bundler, null, &ORIGINAL_PATH, log_errors, force_using_bun);
         this_bundler.env.map.put("npm_lifecycle_event", script_name_to_search) catch unreachable;
         if (root_dir_info.enclosing_package_json) |package_json| {
             if (package_json.scripts) |scripts| {

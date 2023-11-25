@@ -202,7 +202,7 @@ pub const WTFStringImplStruct = extern struct {
 
 pub const StringImplAllocator = struct {
     fn alloc(ptr: *anyopaque, len: usize, _: u8, _: usize) ?[*]u8 {
-        var this = bun.cast(WTFStringImpl, ptr);
+        const this = bun.cast(WTFStringImpl, ptr);
         const len_ = this.byteLength();
 
         if (len_ != len) {
@@ -226,7 +226,7 @@ pub const StringImplAllocator = struct {
         _: u8,
         _: usize,
     ) void {
-        var this = bun.cast(WTFStringImpl, ptr);
+        const this = bun.cast(WTFStringImpl, ptr);
         std.debug.assert(this.byteSlice().ptr == buf.ptr);
         std.debug.assert(this.byteSlice().len == buf.len);
         this.deref();

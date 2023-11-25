@@ -167,7 +167,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     };
 
     var resolved: string = "";
-    var tmpname = try FileSystem.instance.tmpname(basename[0..@min(basename.len, 32)], &tmpname_buf, tgz_bytes.len);
+    const tmpname = try FileSystem.instance.tmpname(basename[0..@min(basename.len, 32)], &tmpname_buf, tgz_bytes.len);
     {
         var extract_destination = tmpdir.makeOpenPathIterable(std.mem.span(tmpname), .{}) catch |err| {
             this.package_manager.log.addErrorFmt(
@@ -305,7 +305,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
 
     defer final_dir.close();
     // and get the fd path
-    var final_path = bun.getFdPath(
+    const final_path = bun.getFdPath(
         final_dir.fd,
         &final_path_buf,
     ) catch |err| {

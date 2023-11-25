@@ -177,7 +177,7 @@ pub const Location = struct {
 
     pub fn init_or_nil(_source: ?*const Source, r: Range) ?Location {
         if (_source) |source| {
-            var data = source.initErrorPosition(r.loc);
+            const data = source.initErrorPosition(r.loc);
             var full_line = source.contents[data.line_start..data.line_end];
             if (full_line.len > 80 + data.column_count) {
                 full_line = full_line[@max(data.column_count, 40) - 40 .. @min(data.column_count + 40, full_line.len - 40) + 40];
@@ -217,7 +217,7 @@ pub const Data = struct {
         if (!should or this.location == null or this.location.?.line_text == null)
             return this;
 
-        var new_line_text = try allocator.dupe(u8, this.location.?.line_text.?);
+        const new_line_text = try allocator.dupe(u8, this.location.?.line_text.?);
         var new_location = this.location.?;
         new_location.line_text = new_line_text;
         return Data{
@@ -331,7 +331,7 @@ pub const Data = struct {
                             break :brk 1;
                         };
 
-                        var middle_segment: []const u8 = rest_of_line[0..end_of_segment];
+                        const middle_segment: []const u8 = rest_of_line[0..end_of_segment];
 
                         if (middle_segment.len > 0) {
                             try to.writeAll(Output.color_map.get("b").?);
@@ -521,7 +521,7 @@ pub const Msg = struct {
             Api.MessageData,
             notes_len,
         );
-        var msg = Api.Message{
+        const msg = Api.Message{
             .level = this.kind.toAPI(),
             .data = this.data.toAPI(),
             .notes = _notes,
@@ -783,7 +783,7 @@ pub const Log = struct {
 
     pub fn toJSArray(this: Log, global: *JSC.JSGlobalObject, allocator: std.mem.Allocator) JSC.JSValue {
         const msgs: []const Msg = this.msgs.items;
-        var errors_stack: [256]*anyopaque = undefined;
+        const errors_stack: [256]*anyopaque = undefined;
 
         const count = @as(u16, @intCast(@min(msgs.len, errors_stack.len)));
         var arr = JSC.JSValue.createEmptyArray(global, count);
@@ -812,7 +812,7 @@ pub const Log = struct {
             var note_i: usize = 0;
             for (self.msgs.items) |*msg| {
                 if (msg.notes) |current_notes| {
-                    var start_note_i: usize = note_i;
+                    const start_note_i: usize = note_i;
                     for (current_notes) |note| {
                         notes[note_i] = note;
                         note_i += 1;
@@ -1403,7 +1403,7 @@ pub const Source = struct {
     }
 
     pub fn initPathString(pathString: string, contents: string) Source {
-        var path = fs.Path.init(pathString);
+        const path = fs.Path.init(pathString);
         return Source{ .key_path = path, .path = path, .contents = contents };
     }
 
@@ -1466,7 +1466,7 @@ pub const Source = struct {
 
     pub fn initErrorPosition(self: *const Source, _offset: Loc) ErrorPosition {
         var prev_code_point: i32 = 0;
-        var offset: usize = @min(if (_offset.start < 0) 0 else @as(usize, @intCast(_offset.start)), @max(self.contents.len, 1) - 1);
+        const offset: usize = @min(if (_offset.start < 0) 0 else @as(usize, @intCast(_offset.start)), @max(self.contents.len, 1) - 1);
 
         const contents = self.contents;
 

@@ -205,7 +205,7 @@ pub const FolderResolution = union(Tag) {
         const abs = paths.abs;
         const rel = paths.rel;
 
-        var entry = manager.folders.getOrPut(manager.allocator, hash(abs)) catch unreachable;
+        const entry = manager.folders.getOrPut(manager.allocator, hash(abs)) catch unreachable;
         if (entry.found_existing) return entry.value_ptr.*;
 
         const package: Lockfile.Package = switch (global_or_relative) {

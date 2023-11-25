@@ -132,7 +132,7 @@ fn jsModuleFromFile(from_path: string, comptime input: string) string {
         };
     }
 
-    var contents = file.readToEndAlloc(bun.default_allocator, std.math.maxInt(usize)) catch @panic("Cannot read file " ++ input);
+    const contents = file.readToEndAlloc(bun.default_allocator, std.math.maxInt(usize)) catch @panic("Cannot read file " ++ input);
     file.close();
     return contents;
 }
@@ -182,7 +182,7 @@ fn setBreakPointOnFirstLine() bool {
     const s = struct {
         var set_break_point: bool = true;
     };
-    var ret = s.set_break_point;
+    const ret = s.set_break_point;
     s.set_break_point = false;
     return ret;
 }
@@ -209,8 +209,8 @@ pub const RuntimeTranspilerStore = struct {
     ) *anyopaque {
         debug("transpile({s})", .{path.text});
         var job: *TranspilerJob = this.store.get();
-        var owned_path = Fs.Path.init(bun.default_allocator.dupe(u8, path.text) catch unreachable);
-        var promise = JSC.JSInternalPromise.create(globalObject);
+        const owned_path = Fs.Path.init(bun.default_allocator.dupe(u8, path.text) catch unreachable);
+        const promise = JSC.JSInternalPromise.create(globalObject);
         job.* = TranspilerJob{
             .path = owned_path,
             .globalThis = globalObject,
@@ -280,11 +280,11 @@ pub const RuntimeTranspilerStore = struct {
 
         pub fn runFromJSThread(this: *TranspilerJob) void {
             var vm = this.vm;
-            var promise = this.promise.swap();
-            var globalThis = this.globalThis;
+            const promise = this.promise.swap();
+            const globalThis = this.globalThis;
             this.poll_ref.unref(vm);
             var specifier = if (this.parse_error == null) this.resolved_source.specifier else bun.String.create(this.path.text);
-            var referrer = bun.String.create(this.referrer);
+            const referrer = bun.String.create(this.referrer);
             var log = this.log;
             this.log = logger.Log.init(bun.default_allocator);
             var resolved_source = this.resolved_source;
@@ -292,9 +292,9 @@ pub const RuntimeTranspilerStore = struct {
 
             resolved_source.tag = brk: {
                 if (resolved_source.commonjs_exports_len > 0) {
-                    var actual_package_json: *PackageJSON = brk2: {
+                    const actual_package_json: *PackageJSON = brk2: {
                         // this should already be cached virtually always so it's fine to do this
-                        var dir_info = (vm.bundler.resolver.readDirInfo(this.path.name.dir) catch null) orelse
+                        const dir_info = (vm.bundler.resolver.readDirInfo(this.path.name.dir) catch null) orelse
                             break :brk .javascript;
 
                         break :brk2 dir_info.package_json orelse dir_info.enclosing_package_json;
@@ -527,7 +527,7 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             if (source_code_printer == null) {
-                var writer = try js_printer.BufferWriter.init(bun.default_allocator);
+                const writer = try js_printer.BufferWriter.init(bun.default_allocator);
                 source_code_printer = bun.default_allocator.create(js_printer.BufferPrinter) catch unreachable;
                 source_code_printer.?.* = js_printer.BufferPrinter.init(writer);
                 source_code_printer.?.ctx.append_null_byte = false;
@@ -692,7 +692,7 @@ pub const ModuleLoader = struct {
             pub fn onWakeHandler(ctx: *anyopaque, _: *PackageManager) void {
                 debug("onWake", .{});
                 var this = bun.cast(*Queue, ctx);
-                var concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch @panic("OOM");
+                const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch @panic("OOM");
                 concurrent_task.* = .{
                     .task = JSC.Task.init(this),
                     .auto_delete = true,
@@ -756,16 +756,16 @@ pub const ModuleLoader = struct {
                 var i: usize = 0;
                 outer: for (modules) |module_| {
                     var module = module_;
-                    var tags = module.parse_result.pending_imports.items(.tag);
+                    const tags = module.parse_result.pending_imports.items(.tag);
                     for (tags, 0..) |tag, tag_i| {
                         if (tag == .resolve) {
-                            var esms = module.parse_result.pending_imports.items(.esm);
+                            const esms = module.parse_result.pending_imports.items(.esm);
                             const esm = esms[tag_i];
-                            var string_bufs = module.parse_result.pending_imports.items(.string_buf);
+                            const string_bufs = module.parse_result.pending_imports.items(.string_buf);
 
                             if (!strings.eql(esm.name.slice(string_bufs[tag_i]), name)) continue;
 
-                            var versions = module.parse_result.pending_imports.items(.dependency);
+                            const versions = module.parse_result.pending_imports.items(.dependency);
 
                             module.resolveError(
                                 this.vm(),
@@ -1033,9 +1033,9 @@ pub const ModuleLoader = struct {
         }
 
         pub fn resolveError(this: *AsyncModule, vm: *JSC.VirtualMachine, import_record_id: u32, result: PackageResolveError) !void {
-            var globalThis = this.globalThis;
+            const globalThis = this.globalThis;
 
-            var msg: []u8 = try switch (result.err) {
+            const msg: []u8 = try switch (result.err) {
                 error.PackageManifestHTTP400 => std.fmt.allocPrint(
                     bun.default_allocator,
                     "HTTP 400 while resolving package '{s}' at '{s}'",
@@ -1125,14 +1125,14 @@ pub const ModuleLoader = struct {
             promise.rejectAsHandled(globalThis, error_instance);
         }
         pub fn downloadError(this: *AsyncModule, vm: *JSC.VirtualMachine, import_record_id: u32, result: PackageDownloadError) !void {
-            var globalThis = this.globalThis;
+            const globalThis = this.globalThis;
 
             const msg_args = .{
                 result.name,
                 result.resolution.fmt(vm.packageManager().lockfile.buffers.string_bytes.items),
             };
 
-            var msg: []u8 = try switch (result.err) {
+            const msg: []u8 = try switch (result.err) {
                 error.TarballHTTP400 => std.fmt.allocPrint(
                     bun.default_allocator,
                     "HTTP 400 downloading package '{s}@{any}'",
@@ -1222,10 +1222,10 @@ pub const ModuleLoader = struct {
         pub fn resumeLoadingModule(this: *AsyncModule, log: *logger.Log) !ResolvedSource {
             debug("resumeLoadingModule: {s}", .{this.specifier});
             var parse_result = this.parse_result;
-            var path = this.path;
+            const path = this.path;
             var jsc_vm = JSC.VirtualMachine.get();
-            var specifier = this.specifier;
-            var old_log = jsc_vm.log;
+            const specifier = this.specifier;
+            const old_log = jsc_vm.log;
 
             jsc_vm.bundler.linker.log = log;
             jsc_vm.bundler.log = log;
@@ -1269,7 +1269,7 @@ pub const ModuleLoader = struct {
                 dumpSource(specifier, &printer);
             }
 
-            var commonjs_exports = try bun.default_allocator.alloc(ZigString, parse_result.ast.commonjs_export_names.len);
+            const commonjs_exports = try bun.default_allocator.alloc(ZigString, parse_result.ast.commonjs_export_names.len);
             for (parse_result.ast.commonjs_export_names, commonjs_exports) |name, *out| {
                 out.* = ZigString.fromUTF8(name);
             }
@@ -1394,7 +1394,7 @@ pub const ModuleLoader = struct {
                     }
 
                     // we must allocate the arena so that the pointer it points to is always valid.
-                    var arena = try jsc_vm.allocator.create(bun.ArenaAllocator);
+                    const arena = try jsc_vm.allocator.create(bun.ArenaAllocator);
                     arena.* = bun.ArenaAllocator.init(bun.default_allocator);
                     break :brk arena;
                 };
@@ -1418,7 +1418,7 @@ pub const ModuleLoader = struct {
                 }
 
                 var arena = arena_.?;
-                var allocator = arena.allocator();
+                const allocator = arena.allocator();
 
                 var fd: ?StoredFileDescriptorType = null;
                 var package_json: ?*PackageJSON = null;
@@ -1429,7 +1429,7 @@ pub const ModuleLoader = struct {
                     package_json = jsc_vm.bun_watcher.watchlist().items(.package_json)[index];
                 }
 
-                var old = jsc_vm.bundler.log;
+                const old = jsc_vm.bundler.log;
                 jsc_vm.bundler.log = log;
                 jsc_vm.bundler.linker.log = log;
                 jsc_vm.bundler.resolver.log = log;
@@ -1675,7 +1675,7 @@ pub const ModuleLoader = struct {
                     dumpSource(specifier, &printer);
                 }
 
-                var commonjs_exports = try bun.default_allocator.alloc(ZigString, parse_result.ast.commonjs_export_names.len);
+                const commonjs_exports = try bun.default_allocator.alloc(ZigString, parse_result.ast.commonjs_export_names.len);
                 for (parse_result.ast.commonjs_export_names, commonjs_exports) |name, *out| {
                     out.* = ZigString.fromUTF8(name);
                 }
@@ -1705,9 +1705,9 @@ pub const ModuleLoader = struct {
                 // Pass along package.json type "module" if set.
                 const tag = brk: {
                     if (parse_result.ast.exports_kind == .cjs and parse_result.source.path.isFile()) {
-                        var actual_package_json: *PackageJSON = package_json orelse brk2: {
+                        const actual_package_json: *PackageJSON = package_json orelse brk2: {
                             // this should already be cached virtually always so it's fine to do this
-                            var dir_info = (jsc_vm.bundler.resolver.readDirInfo(parse_result.source.path.name.dir) catch null) orelse
+                            const dir_info = (jsc_vm.bundler.resolver.readDirInfo(parse_result.source.path.name.dir) catch null) orelse
                                 break :brk .javascript;
 
                             break :brk2 dir_info.package_json orelse dir_info.enclosing_package_json;
@@ -1799,7 +1799,7 @@ pub const ModuleLoader = struct {
                     if (virtual_source) |source| {
                         if (globalObject) |globalThis| {
                             // attempt to avoid reading the WASM file twice.
-                            var encoded = JSC.EncodedJSValue{
+                            const encoded = JSC.EncodedJSValue{
                                 .asPtr = globalThis,
                             };
                             const globalValue = @as(JSC.JSValue, @enumFromInt(encoded.asInt64));
@@ -1839,7 +1839,7 @@ pub const ModuleLoader = struct {
 
             else => {
                 var stack_buf = std.heap.stackFallback(4096, jsc_vm.allocator);
-                var allocator = stack_buf.get();
+                const allocator = stack_buf.get();
                 var buf = MutableString.init2048(allocator) catch unreachable;
                 defer buf.deinit();
                 var writer = buf.writer();
@@ -1957,7 +1957,7 @@ pub const ModuleLoader = struct {
         defer _specifier.deinit();
         defer referrer_slice.deinit();
         var display_specifier: []const u8 = "";
-        var specifier = normalizeSpecifier(
+        const specifier = normalizeSpecifier(
             jsc_vm,
             _specifier.slice(),
             &display_specifier,

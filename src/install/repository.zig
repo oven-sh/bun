@@ -307,7 +307,7 @@ pub const Repository = extern struct {
         };
         defer json_file.close();
         const size = try json_file.getEndPos();
-        var json_buf = try allocator.alloc(u8, size + 64);
+        const json_buf = try allocator.alloc(u8, size + 64);
         const json_len = try json_file.preadAll(json_buf, 0);
 
         const json_path = bun.getFdPath(

@@ -65,7 +65,7 @@ pub const To = struct {
                     globalThis: *JSC.JSGlobalObject,
                 ) callconv(.C) JSC.JSValue {
                     var exception_ref = [_]JSC.C.JSValueRef{null};
-                    var exception: JSC.C.ExceptionRef = &exception_ref;
+                    const exception: JSC.C.ExceptionRef = &exception_ref;
                     const result = toJS(globalThis, @call(.auto, @field(Type, @tagName(decl)), .{this}), exception);
                     if (exception.* != null) {
                         globalThis.throwValue(JSC.JSValue.c(exception.*));
@@ -99,7 +99,7 @@ pub const To = struct {
                     break :brk val.asObjectRef();
                 },
                 []const JSC.ZigString => {
-                    var array = JSC.JSValue.createStringArray(context.ptr(), value.ptr, value.len, clone).asObjectRef();
+                    const array = JSC.JSValue.createStringArray(context.ptr(), value.ptr, value.len, clone).asObjectRef();
                     const values: []const JSC.ZigString = value;
                     defer bun.default_allocator.free(values);
                     if (clone) {
@@ -141,7 +141,7 @@ pub const To = struct {
                     // there is a possible C ABI bug or something here when the ptr is null
                     // it should not be segfaulting but it is
                     // that's why we check at the top of this function
-                    var array = JSC.JSValue.createStringArray(context.ptr(), zig_strings.ptr, zig_strings.len, clone).asObjectRef();
+                    const array = JSC.JSValue.createStringArray(context.ptr(), zig_strings.ptr, zig_strings.len, clone).asObjectRef();
 
                     if (clone and value.len > 0) {
                         for (value) |path_string| {
@@ -207,7 +207,7 @@ pub const To = struct {
                             }
 
                             if (comptime !@hasDecl(Type, "toJS")) {
-                                var val = bun.default_allocator.create(Type) catch unreachable;
+                                const val = bun.default_allocator.create(Type) catch unreachable;
                                 val.* = value;
                                 return Type.Class.make(context, val);
                             }
@@ -311,7 +311,7 @@ pub fn createError(
         var fallback = std.heap.stackFallback(256, default_allocator);
         var allocator = fallback.get();
 
-        var buf = std.fmt.allocPrint(allocator, fmt, args) catch unreachable;
+        const buf = std.fmt.allocPrint(allocator, fmt, args) catch unreachable;
         var zig_str = JSC.ZigString.init(buf);
         zig_str.detectEncoding();
         // it alwayas clones
@@ -343,7 +343,7 @@ pub fn toTypeErrorWithCode(
         zig_str = JSC.ZigString.init(fmt);
         zig_str.detectEncoding();
     } else {
-        var buf = std.fmt.allocPrint(default_allocator, fmt, args) catch unreachable;
+        const buf = std.fmt.allocPrint(default_allocator, fmt, args) catch unreachable;
         zig_str = JSC.ZigString.init(buf);
         zig_str.detectEncoding();
         zig_str.mark();
@@ -633,7 +633,7 @@ pub const MarkedArrayBuffer = struct {
     }
 
     pub fn fromString(str: []const u8, allocator: std.mem.Allocator) !MarkedArrayBuffer {
-        var buf = try allocator.dupe(u8, str);
+        const buf = try allocator.dupe(u8, str);
         return MarkedArrayBuffer.fromBytes(buf, allocator, JSC.JSValue.JSType.Uint8Array);
     }
 
@@ -669,7 +669,7 @@ pub const MarkedArrayBuffer = struct {
 
     pub fn init(allocator: std.mem.Allocator, size: u32, typed_array_type: js.JSTypedArrayType) !*MarkedArrayBuffer {
         const bytes = try allocator.alloc(u8, size);
-        var container = try allocator.create(MarkedArrayBuffer);
+        const container = try allocator.create(MarkedArrayBuffer);
         container.* = MarkedArrayBuffer.fromBytes(bytes, allocator, typed_array_type);
         return container;
     }
@@ -788,7 +788,7 @@ pub export fn BlobArrayBuffer_deallocator(_: *anyopaque, blob: *anyopaque) void 
     // zig's memory allocator interface won't work here
     // mimalloc knows the size of things
     // but we don't
-    var store = bun.cast(*JSC.WebCore.Blob.Store, blob);
+    const store = bun.cast(*JSC.WebCore.Blob.Store, blob);
     store.deref();
 }
 
@@ -1242,7 +1242,7 @@ pub fn wrapInstanceMethod(
                 break :brk false;
             };
             var exception_value = [_]JSC.C.JSValueRef{null};
-            var exception: JSC.C.ExceptionRef = if (comptime has_exception_ref) &exception_value else undefined;
+            const exception: JSC.C.ExceptionRef = if (comptime has_exception_ref) &exception_value else undefined;
 
             comptime var i: usize = 0;
             inline while (i < FunctionTypeInfo.params.len) : (i += 1) {
@@ -1725,7 +1725,7 @@ pub const MemoryReportingAllocator = struct {
     const log = Output.scoped(.MEM, false);
 
     fn alloc(this: *MemoryReportingAllocator, n: usize, log2_ptr_align: u8, return_address: usize) ?[*]u8 {
-        var result = this.child_allocator.rawAlloc(n, log2_ptr_align, return_address) orelse return null;
+        const result = this.child_allocator.rawAlloc(n, log2_ptr_align, return_address) orelse return null;
         _ = this.memory_cost.fetchAdd(n, .Monotonic);
         if (comptime Environment.allow_assert)
             log("malloc({d}) = {d}", .{ n, this.memory_cost.loadUnchecked() });

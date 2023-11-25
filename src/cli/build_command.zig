@@ -40,7 +40,7 @@ pub const BuildCommand = struct {
     ) !void {
         Global.configureAllocator(.{ .long_running = true });
         var ctx = ctx_;
-        var allocator = ctx.allocator;
+        const allocator = ctx.allocator;
         var log = ctx.log;
         estimated_input_lines_of_code_ = 0;
         if (ctx.bundler_options.compile) {
@@ -309,13 +309,13 @@ pub const BuildCommand = struct {
                             unreachable;
                         };
 
-                    var all_paths = try ctx.allocator.alloc([]const u8, output_files.len);
+                    const all_paths = try ctx.allocator.alloc([]const u8, output_files.len);
                     var max_path_len: usize = 0;
                     for (all_paths, output_files) |*dest, src| {
                         dest.* = src.dest_path;
                     }
 
-                    var from_path = resolve_path.longestCommonPath(all_paths);
+                    const from_path = resolve_path.longestCommonPath(all_paths);
 
                     for (output_files) |f| {
                         max_path_len = @max(

@@ -253,7 +253,7 @@ pub const Response = struct {
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) callconv(.C) JSValue {
-        var cloned = this.clone(getAllocator(globalThis), globalThis);
+        const cloned = this.clone(getAllocator(globalThis), globalThis);
         return Response.makeMaybePooled(globalThis, cloned);
     }
 
@@ -277,7 +277,7 @@ pub const Response = struct {
     }
 
     pub fn clone(this: *Response, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) *Response {
-        var new_response = allocator.create(Response) catch unreachable;
+        const new_response = allocator.create(Response) catch unreachable;
         this.cloneInto(new_response, allocator, globalThis);
         return new_response;
     }
@@ -533,7 +533,7 @@ pub const Response = struct {
 
         pub fn clone(this: Init, ctx: *JSGlobalObject) Init {
             var that = this;
-            var headers = this.headers;
+            const headers = this.headers;
             if (headers) |head| {
                 that.headers = head.cloneThis(ctx);
             }
@@ -624,7 +624,7 @@ pub const Response = struct {
 
     inline fn emptyWithStatus(globalThis: *JSC.JSGlobalObject, status: u16) Response {
         var allocator = getAllocator(globalThis);
-        var response = allocator.create(Response) catch unreachable;
+        const response = allocator.create(Response) catch unreachable;
 
         response.* = Response{
             .body = Body{
@@ -863,7 +863,7 @@ pub const Fetch = struct {
                 this.has_schedule_callback.store(false, .Monotonic);
                 this.mutex.unlock();
                 if (is_done) {
-                    var vm = globalThis.bunVM();
+                    const vm = globalThis.bunVM();
                     this.poll_ref.unref(vm);
                     this.clearData();
                     this.deinit();
@@ -901,7 +901,7 @@ pub const Fetch = struct {
                 if (readable.ptr == .Bytes) {
                     readable.ptr.Bytes.size_hint = this.getSizeHint();
                     // body can be marked as used but we still need to pipe the data
-                    var scheduled_response_buffer = this.scheduled_response_buffer.list;
+                    const scheduled_response_buffer = this.scheduled_response_buffer.list;
 
                     const chunk = scheduled_response_buffer.items;
 
@@ -935,7 +935,7 @@ pub const Fetch = struct {
                             if (readable.ptr == .Bytes) {
                                 readable.ptr.Bytes.size_hint = this.getSizeHint();
 
-                                var scheduled_response_buffer = this.scheduled_response_buffer.list;
+                                const scheduled_response_buffer = this.scheduled_response_buffer.list;
 
                                 const chunk = scheduled_response_buffer.items;
 
@@ -970,7 +970,7 @@ pub const Fetch = struct {
 
                             // done resolve body
                             var old = body.value;
-                            var body_value = Body.Value{
+                            const body_value = Body.Value{
                                 .InternalBlob = .{
                                     .bytes = scheduled_response_buffer.toManaged(bun.default_allocator),
                                 },
@@ -1014,7 +1014,7 @@ pub const Fetch = struct {
                 }
                 this.mutex.unlock();
                 var poll_ref = this.poll_ref;
-                var vm = globalThis.bunVM();
+                const vm = globalThis.bunVM();
 
                 poll_ref.unref(vm);
                 this.clearData();
@@ -1026,7 +1026,7 @@ pub const Fetch = struct {
             const promise_value = ref.valueOrEmpty();
 
             var poll_ref = this.poll_ref;
-            var vm = globalThis.bunVM();
+            const vm = globalThis.bunVM();
 
             if (promise_value.isEmptyOrUndefinedOrNull()) {
                 log("onProgressUpdate: promise_value is null", .{});
@@ -1111,7 +1111,7 @@ pub const Fetch = struct {
 
                 pub fn resolve(held: *@This()) void {
                     var prom = held.promise.swap().asAnyPromise().?;
-                    var globalObject = held.globalObject;
+                    const globalObject = held.globalObject;
                     const res = held.held.swap();
                     held.held.deinit();
                     held.promise.deinit();
@@ -1123,7 +1123,7 @@ pub const Fetch = struct {
 
                 pub fn reject(held: *@This()) void {
                     var prom = held.promise.swap().asAnyPromise().?;
-                    var globalObject = held.globalObject;
+                    const globalObject = held.globalObject;
                     const res = held.held.swap();
                     held.held.deinit();
                     held.promise.deinit();
@@ -1154,7 +1154,7 @@ pub const Fetch = struct {
             if (this.check_server_identity.get()) |check_server_identity| {
                 check_server_identity.ensureStillAlive();
                 if (certificate_info.cert.len > 0) {
-                    var cert = certificate_info.cert;
+                    const cert = certificate_info.cert;
                     var cert_ptr = cert.ptr;
                     if (BoringSSL.d2i_X509(null, &cert_ptr, @intCast(cert.len))) |x509| {
                         defer BoringSSL.X509_free(x509);
@@ -1394,7 +1394,7 @@ pub const Fetch = struct {
             log("toResponse", .{});
             std.debug.assert(this.metadata != null);
             // at this point we always should have metadata
-            var metadata = this.metadata.?;
+            const metadata = this.metadata.?;
             const http_response = metadata.response;
             this.is_waiting_body = this.result.has_more;
             return Response{
@@ -1415,7 +1415,7 @@ pub const Fetch = struct {
         pub fn onResolve(this: *FetchTasklet) JSValue {
             log("onResolve", .{});
             const allocator = bun.default_allocator;
-            var response = allocator.create(Response) catch unreachable;
+            const response = allocator.create(Response) catch unreachable;
             response.* = this.toResponse(allocator);
             const response_js = Response.makeMaybePooled(@as(js.JSContextRef, this.global_this), response);
             response_js.ensureStillAlive();
@@ -1674,7 +1674,7 @@ pub const Fetch = struct {
         const arguments = callframe.arguments(2);
 
         var exception_val = [_]JSC.C.JSValueRef{null};
-        var exception: JSC.C.ExceptionRef = &exception_val;
+        const exception: JSC.C.ExceptionRef = &exception_val;
         var memory_reporter = bun.default_allocator.create(JSC.MemoryReportingAllocator) catch @panic("out of memory");
         var free_memory_reporter = false;
         var allocator = memory_reporter.wrap(bun.default_allocator);

@@ -199,7 +199,7 @@ pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_onl
     try bytes.growIfNeeded(estimateLengthForJSON(text, ascii_only));
     try bytes.appendChar('"');
     var i: usize = 0;
-    var n: usize = text.len;
+    const n: usize = text.len;
     while (i < n) {
         const width = strings.wtf8ByteSequenceLengthWithInvalid(text[i]);
         const c = strings.decodeWTF8RuneT(text.ptr[i .. i + 4][0..4], width, i32, 0);
@@ -444,7 +444,7 @@ pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer,
 }
 
 test "quoteForJSON" {
-    var allocator = default_allocator;
+    const allocator = default_allocator;
     try std.testing.expectEqualStrings(
         "\"I don't need any quotes.\"",
         (try quoteForJSON("I don't need any quotes.", MutableString.init(allocator, 0) catch unreachable, false)).list.items,
@@ -1356,7 +1356,7 @@ fn NewPrinter(
                         p.print("10");
                     },
                     11...99 => {
-                        var buf: *[2]u8 = (p.writer.reserve(2) catch unreachable)[0..2];
+                        const buf: *[2]u8 = (p.writer.reserve(2) catch unreachable)[0..2];
                         formatUnsignedIntegerBetween(2, buf, val);
                         p.writer.advance(2);
                     },
@@ -1364,7 +1364,7 @@ fn NewPrinter(
                         p.print("100");
                     },
                     101...999 => {
-                        var buf: *[3]u8 = (p.writer.reserve(3) catch unreachable)[0..3];
+                        const buf: *[3]u8 = (p.writer.reserve(3) catch unreachable)[0..3];
                         formatUnsignedIntegerBetween(3, buf, val);
                         p.writer.advance(3);
                     },
@@ -1373,7 +1373,7 @@ fn NewPrinter(
                         p.print("1000");
                     },
                     1001...9999 => {
-                        var buf: *[4]u8 = (p.writer.reserve(4) catch unreachable)[0..4];
+                        const buf: *[4]u8 = (p.writer.reserve(4) catch unreachable)[0..4];
                         formatUnsignedIntegerBetween(4, buf, val);
                         p.writer.advance(4);
                     },
@@ -1397,32 +1397,32 @@ fn NewPrinter(
                     },
 
                     10001...99999 => {
-                        var buf: *[5]u8 = (p.writer.reserve(5) catch unreachable)[0..5];
+                        const buf: *[5]u8 = (p.writer.reserve(5) catch unreachable)[0..5];
                         formatUnsignedIntegerBetween(5, buf, val);
                         p.writer.advance(5);
                     },
                     100001...999999 => {
-                        var buf: *[6]u8 = (p.writer.reserve(6) catch unreachable)[0..6];
+                        const buf: *[6]u8 = (p.writer.reserve(6) catch unreachable)[0..6];
                         formatUnsignedIntegerBetween(6, buf, val);
                         p.writer.advance(6);
                     },
                     1_000_001...9_999_999 => {
-                        var buf: *[7]u8 = (p.writer.reserve(7) catch unreachable)[0..7];
+                        const buf: *[7]u8 = (p.writer.reserve(7) catch unreachable)[0..7];
                         formatUnsignedIntegerBetween(7, buf, val);
                         p.writer.advance(7);
                     },
                     10_000_001...99_999_999 => {
-                        var buf: *[8]u8 = (p.writer.reserve(8) catch unreachable)[0..8];
+                        const buf: *[8]u8 = (p.writer.reserve(8) catch unreachable)[0..8];
                         formatUnsignedIntegerBetween(8, buf, val);
                         p.writer.advance(8);
                     },
                     100_000_001...999_999_999 => {
-                        var buf: *[9]u8 = (p.writer.reserve(9) catch unreachable)[0..9];
+                        const buf: *[9]u8 = (p.writer.reserve(9) catch unreachable)[0..9];
                         formatUnsignedIntegerBetween(9, buf, val);
                         p.writer.advance(9);
                     },
                     1_000_000_001...9_999_999_999 => {
-                        var buf: *[10]u8 = (p.writer.reserve(10) catch unreachable)[0..10];
+                        const buf: *[10]u8 = (p.writer.reserve(10) catch unreachable)[0..10];
                         formatUnsignedIntegerBetween(10, buf, val);
                         p.writer.advance(10);
                     },
@@ -1575,7 +1575,7 @@ fn NewPrinter(
                                             const len = count_ - 1;
                                             i += len;
                                             var ptr = e.writer.reserve(len) catch unreachable;
-                                            var to_copy = ptr[0..len];
+                                            const to_copy = ptr[0..len];
 
                                             strings.copyU16IntoU8(to_copy, []const u16, remain[0..len]);
                                             e.writer.advance(len);
@@ -1583,7 +1583,7 @@ fn NewPrinter(
                                         } else {
                                             const count = @as(u32, @truncate(remain.len));
                                             var ptr = e.writer.reserve(count) catch unreachable;
-                                            var to_copy = ptr[0..count];
+                                            const to_copy = ptr[0..count];
                                             strings.copyU16IntoU8(to_copy, []const u16, remain);
                                             e.writer.advance(count);
                                             i += count;
@@ -2463,7 +2463,7 @@ fn NewPrinter(
                 },
                 .e_function => |e| {
                     const n = p.writer.written;
-                    var wrap = p.stmt_start == n or p.export_default_start == n;
+                    const wrap = p.stmt_start == n or p.export_default_start == n;
 
                     if (wrap) {
                         p.print("(");
@@ -2493,7 +2493,7 @@ fn NewPrinter(
                 },
                 .e_class => |e| {
                     const n = p.writer.written;
-                    var wrap = p.stmt_start == n or p.export_default_start == n;
+                    const wrap = p.stmt_start == n or p.export_default_start == n;
                     if (wrap) {
                         p.print("(");
                     }
@@ -5445,7 +5445,7 @@ const FileWriterInternal = struct {
         ctx: *FileWriterInternal,
     ) anyerror!void {
         defer buffer.reset();
-        var result_ = buffer.toOwnedSliceLeaky();
+        const result_ = buffer.toOwnedSliceLeaky();
         var result = result_;
 
         while (result.len > 0) {
@@ -5610,7 +5610,7 @@ pub const FileWriter = NewWriter(
     FileWriterInternal.advanceBy,
 );
 pub fn NewFileWriter(file: std.fs.File) FileWriter {
-    var internal = FileWriterInternal.init(file);
+    const internal = FileWriterInternal.init(file);
     return FileWriter.init(internal);
 }
 
@@ -5758,7 +5758,7 @@ pub fn printAst(
         false,
         generate_source_map,
     );
-    var writer = _writer;
+    const writer = _writer;
 
     var printer = PrinterType.init(
         writer,
@@ -5808,16 +5808,16 @@ pub fn printJSON(
     source: *const logger.Source,
 ) !usize {
     const PrinterType = NewPrinter(false, Writer, false, false, true, false);
-    var writer = _writer;
+    const writer = _writer;
     var s_expr = S.SExpr{ .value = expr };
-    var stmt = Stmt{ .loc = logger.Loc.Empty, .data = .{
+    const stmt = Stmt{ .loc = logger.Loc.Empty, .data = .{
         .s_expr = &s_expr,
     } };
     var stmts = [_]js_ast.Stmt{stmt};
     var parts = [_]js_ast.Part{.{ .stmts = &stmts }};
     const ast = Ast.initTest(&parts);
-    var list = js_ast.Symbol.List.init(ast.symbols.slice());
-    var nested_list = js_ast.Symbol.NestedList.init(&[_]js_ast.Symbol.List{list});
+    const list = js_ast.Symbol.List.init(ast.symbols.slice());
+    const nested_list = js_ast.Symbol.NestedList.init(&[_]js_ast.Symbol.List{list});
     var renamer = rename.NoOpRenamer.init(js_ast.Symbol.Map.initList(nested_list), source);
 
     var printer = PrinterType.init(
@@ -5851,7 +5851,7 @@ pub fn print(
     const trace = bun.tracy.traceNamed(@src(), "JSPrinter.print");
     defer trace.end();
 
-    var buffer_writer = BufferWriter.init(allocator) catch |err| return .{ .err = err };
+    const buffer_writer = BufferWriter.init(allocator) catch |err| return .{ .err = err };
     var buffer_printer = BufferPrinter.init(buffer_writer);
 
     return printWithWriter(
@@ -5917,7 +5917,7 @@ pub fn printWithWriterAndPlatform(
         false,
         generate_source_maps,
     );
-    var writer = _writer;
+    const writer = _writer;
     var printer = PrinterType.init(
         writer,
         import_records,
@@ -5973,7 +5973,7 @@ pub fn printCommonJS(
     comptime generate_source_map: bool,
 ) !usize {
     const PrinterType = NewPrinter(ascii_only, Writer, true, false, false, generate_source_map);
-    var writer = _writer;
+    const writer = _writer;
     var renamer = rename.NoOpRenamer.init(symbols, source);
     var printer = PrinterType.init(
         writer,

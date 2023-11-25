@@ -147,7 +147,7 @@ pub fn walk(
         skip_names[skip_name_i] = bun.hashWithSeed(seed, name);
         skip_name_i += 1;
     }
-    var skip_filenames_ = skip_names[0..skip_name_i];
+    const skip_filenames_ = skip_names[0..skip_name_i];
     var skip_dirnames_ = skip_names[skip_name_i..];
 
     for (skip_dirnames, 0..) |name, i| {

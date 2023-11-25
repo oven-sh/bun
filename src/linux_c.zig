@@ -548,14 +548,14 @@ const posix_spawn_file_actions_addchdir_np_type = *const fn (actions: *posix_spa
 
 /// When not available, these functions will return 0.
 pub fn posix_spawn_file_actions_addfchdir_np(actions: *posix_spawn_file_actions_t, filedes: std.os.fd_t) c_int {
-    var function = bun.C.dlsym(posix_spawn_file_actions_addfchdir_np_type, "posix_spawn_file_actions_addfchdir_np") orelse
+    const function = bun.C.dlsym(posix_spawn_file_actions_addfchdir_np_type, "posix_spawn_file_actions_addfchdir_np") orelse
         return 0;
     return function(actions, filedes);
 }
 
 /// When not available, these functions will return 0.
 pub fn posix_spawn_file_actions_addchdir_np(actions: *posix_spawn_file_actions_t, path: [*:0]const u8) c_int {
-    var function = bun.C.dlsym(posix_spawn_file_actions_addchdir_np_type, "posix_spawn_file_actions_addchdir_np") orelse
+    const function = bun.C.dlsym(posix_spawn_file_actions_addchdir_np_type, "posix_spawn_file_actions_addchdir_np") orelse
         return 0;
     return function(actions, path);
 }

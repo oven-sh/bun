@@ -295,7 +295,7 @@ pub const Bunfig = struct {
             if (comptime cmd.isNPMRelated() or cmd == .RunCommand or cmd == .AutoCommand) {
                 if (json.get("install")) |_bun| {
                     var install: *Api.BunInstall = this.ctx.install orelse brk: {
-                        var install_ = try this.allocator.create(Api.BunInstall);
+                        const install_ = try this.allocator.create(Api.BunInstall);
                         install_.* = std.mem.zeroes(Api.BunInstall);
                         this.ctx.install = install_;
                         break :brk install_;
@@ -692,7 +692,7 @@ pub const Bunfig = struct {
                 var loader_values = try this.allocator.alloc(Api.Loader, properties.len);
 
                 for (properties, 0..) |item, i| {
-                    var key = item.key.?.asString(allocator).?;
+                    const key = item.key.?.asString(allocator).?;
                     if (key.len == 0) continue;
                     if (key[0] != '.') {
                         try this.addError(item.key.?.loc, "file extension for loader must start with a '.'");
@@ -731,7 +731,7 @@ pub const Bunfig = struct {
     pub fn parse(allocator: std.mem.Allocator, source: logger.Source, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
         const log_count = ctx.log.errors + ctx.log.warnings;
 
-        var expr = if (strings.eqlComptime(source.path.name.ext[1..], "toml")) TOML.parse(&source, ctx.log, allocator) catch |err| {
+        const expr = if (strings.eqlComptime(source.path.name.ext[1..], "toml")) TOML.parse(&source, ctx.log, allocator) catch |err| {
             if (ctx.log.errors + ctx.log.warnings == log_count) {
                 ctx.log.addErrorFmt(&source, logger.Loc.Empty, allocator, "Failed to parse", .{}) catch unreachable;
             }

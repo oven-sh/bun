@@ -41,7 +41,7 @@ pub const StatWatcherScheduler = struct {
     task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
 
     pub fn init(allocator: std.mem.Allocator, _: *bun.JSC.VirtualMachine) *StatWatcherScheduler {
-        var this = allocator.create(StatWatcherScheduler) catch @panic("out of memory");
+        const this = allocator.create(StatWatcherScheduler) catch @panic("out of memory");
         this.* = .{};
         return this;
     }
@@ -83,7 +83,7 @@ pub const StatWatcherScheduler = struct {
         // Instant.now will not fail on our target platforms.
         const now = std.time.Instant.now() catch unreachable;
 
-        var head: *StatWatcher = this.head.swap(null, .Monotonic).?;
+        const head: *StatWatcher = this.head.swap(null, .Monotonic).?;
 
         var prev = head;
         while (prev.closed) {
@@ -353,7 +353,7 @@ pub const StatWatcher = struct {
         }
 
         fn workPoolCallback(task: *JSC.WorkPoolTask) void {
-            var initial_stat_task: *InitialStatTask = @fieldParentPtr(InitialStatTask, "task", task);
+            const initial_stat_task: *InitialStatTask = @fieldParentPtr(InitialStatTask, "task", task);
             defer bun.default_allocator.destroy(initial_stat_task);
             const this = initial_stat_task.watcher;
 
@@ -464,14 +464,14 @@ pub const StatWatcher = struct {
             slice = slice[6..];
         }
         var parts = [_]string{slice};
-        var file_path = Path.joinAbsStringBuf(
+        const file_path = Path.joinAbsStringBuf(
             Fs.FileSystem.instance.top_level_dir,
             &buf,
             &parts,
             .auto,
         );
 
-        var alloc_file_path = try bun.default_allocator.allocSentinel(u8, file_path.len, 0);
+        const alloc_file_path = try bun.default_allocator.allocSentinel(u8, file_path.len, 0);
         errdefer bun.default_allocator.free(alloc_file_path);
         @memcpy(alloc_file_path, file_path);
 

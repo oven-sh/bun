@@ -87,7 +87,7 @@ test "ExactSizeMatcher 5 letter" {
 
 test "ExactSizeMatcher 4 letter" {
     const Four = ExactSizeMatcher(4);
-    var word = "from".*;
+    const word = "from".*;
     try expect(Four.match(word) == Four.case("from"));
     try expect(Four.match(word) != Four.case("fro"));
 }

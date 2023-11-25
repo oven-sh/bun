@@ -122,7 +122,7 @@ pub const Expect = struct {
         switch (this.flags.promise) {
             inline .resolves, .rejects => |resolution| {
                 if (value.asAnyPromise()) |promise| {
-                    var vm = globalThis.vm();
+                    const vm = globalThis.vm();
                     promise.setHandled(vm);
 
                     const now = std.time.Instant.now() catch unreachable;
@@ -1656,7 +1656,7 @@ pub const Expect = struct {
             vm.global.handleRejectedPromises();
 
             var scope = vm.unhandledRejectionScope();
-            var prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
+            const prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
             vm.unhandled_pending_rejection_to_capture = &return_value;
             vm.onUnhandledRejection = &VirtualMachine.onQuietUnhandledRejectionHandlerCaptureValue;
             const return_value_from_fucntion: JSValue = value.call(globalObject, &.{});
@@ -2039,7 +2039,7 @@ pub const Expect = struct {
         }
 
         if (property_matchers) |_prop_matchers| {
-            var prop_matchers = _prop_matchers;
+            const prop_matchers = _prop_matchers;
 
             if (!value.jestDeepMatch(prop_matchers, globalObject, true)) {
                 // TODO: print diff with properties from propertyMatchers
@@ -2686,8 +2686,8 @@ pub const Expect = struct {
         var pass = value.isString() and expected.isString();
 
         if (pass) {
-            var valueStr = value.toString(globalThis).toSlice(globalThis, default_allocator).slice();
-            var expectedStr = expected.toString(globalThis).toSlice(globalThis, default_allocator).slice();
+            const valueStr = value.toString(globalThis).toSlice(globalThis, default_allocator).slice();
+            const expectedStr = expected.toString(globalThis).toSlice(globalThis, default_allocator).slice();
 
             var left: usize = 0;
             var right: usize = 0;
@@ -2958,8 +2958,8 @@ pub const Expect = struct {
             _subStringAsStr.deinit();
         }
 
-        var expectStringAsStr = _expectStringAsStr.slice();
-        var subStringAsStr = _subStringAsStr.slice();
+        const expectStringAsStr = _expectStringAsStr.slice();
+        const subStringAsStr = _subStringAsStr.slice();
 
         if (subStringAsStr.len == 0) {
             globalThis.throw("toIncludeRepeated() requires the first argument to be a non-empty string", .{});

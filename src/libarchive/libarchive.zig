@@ -400,7 +400,7 @@ pub const Archive = struct {
         stream.init(file_buffer);
         defer stream.deinit();
         _ = stream.openRead();
-        var archive = stream.archive;
+        const archive = stream.archive;
         const dir: std.fs.IterableDir = brk: {
             const cwd = std.fs.cwd();
 
@@ -458,7 +458,7 @@ pub const Archive = struct {
                                 path_to_use = temp_buf[0 .. path_to_use_.len + 1];
                             }
 
-                            var overwrite_entry = try ctx.overwrite_list.getOrPut(path_to_use);
+                            const overwrite_entry = try ctx.overwrite_list.getOrPut(path_to_use);
                             if (!overwrite_entry.found_existing) {
                                 overwrite_entry.key_ptr.* = try appender.append(@TypeOf(path_to_use), path_to_use);
                             }
@@ -485,7 +485,7 @@ pub const Archive = struct {
         stream.init(file_buffer);
         defer stream.deinit();
         _ = stream.openRead();
-        var archive = stream.archive;
+        const archive = stream.archive;
         var count: u32 = 0;
         const dir = dir_.dir;
         const dir_fd = dir.fd;
@@ -513,7 +513,7 @@ pub const Archive = struct {
                         if (tokenizer.next() == null) continue :loop;
                     }
 
-                    var pathname_ = tokenizer.rest();
+                    const pathname_ = tokenizer.rest();
                     pathname = @as([*]const u8, @ptrFromInt(@intFromPtr(pathname_.ptr)))[0..pathname_.len :0];
                     if (pathname.len == 0) continue;
 
@@ -600,7 +600,7 @@ pub const Archive = struct {
                                         @as(u64, 0);
 
                                     if (comptime ContextType != void and @hasDecl(std.meta.Child(ContextType), "appendMutable")) {
-                                        var result = ctx.?.all_files.getOrPutAdapted(hash, Context.U64Context{}) catch unreachable;
+                                        const result = ctx.?.all_files.getOrPutAdapted(hash, Context.U64Context{}) catch unreachable;
                                         if (!result.found_existing) {
                                             result.value_ptr.* = (try appender.appendMutable(@TypeOf(slice), slice)).ptr;
                                         }
@@ -610,7 +610,7 @@ pub const Archive = struct {
                                         if (plucker_.filename_hash == hash) {
                                             try plucker_.contents.inflate(size);
                                             plucker_.contents.list.expandToCapacity();
-                                            var read = lib.archive_read_data(archive, plucker_.contents.list.items.ptr, size);
+                                            const read = lib.archive_read_data(archive, plucker_.contents.list.items.ptr, size);
                                             try plucker_.contents.inflate(@as(usize, @intCast(read)));
                                             plucker_.found = read > 0;
                                             plucker_.fd = bun.toFD(file.handle);

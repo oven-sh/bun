@@ -102,7 +102,7 @@ pub const PathWatcherManager = struct {
             return result;
         } else |err| {
             if (err == error.NotDir) {
-                var file = try std.fs.openFileAbsoluteZ(cloned_path, .{ .mode = .read_only });
+                const file = try std.fs.openFileAbsoluteZ(cloned_path, .{ .mode = .read_only });
                 const result = PathInfo{
                     .fd = file.handle,
                     .is_file = true,
@@ -130,7 +130,7 @@ pub const PathWatcherManager = struct {
             return err;
         };
         errdefer watchers.deinitWithAllocator(bun.default_allocator);
-        var manager = PathWatcherManager{
+        const manager = PathWatcherManager{
             .file_paths = bun.StringHashMap(PathInfo).init(bun.default_allocator),
             .current_fd_task = bun.FDHashMap(*DirectoryRegisterTask).init(bun.default_allocator),
             .watchers = watchers,
@@ -257,7 +257,7 @@ pub const PathWatcherManager = struct {
                         const changed_name: []const u8 = bun.asByteSlice(changed_name_.?);
                         if (changed_name.len == 0 or changed_name[0] == '~' or changed_name[0] == '.') continue;
 
-                        var file_path_without_trailing_slash = std.mem.trimRight(u8, file_path, std.fs.path.sep_str);
+                        const file_path_without_trailing_slash = std.mem.trimRight(u8, file_path, std.fs.path.sep_str);
 
                         @memcpy(_on_file_update_path_buf[0..file_path_without_trailing_slash.len], file_path_without_trailing_slash);
 
@@ -442,7 +442,7 @@ pub const PathWatcherManager = struct {
             // now we iterate over all files and directories
             while (try iter.next()) |entry| {
                 var parts = [2]string{ path.path, entry.name };
-                var entry_path = Path.joinAbsStringBuf(
+                const entry_path = Path.joinAbsStringBuf(
                     Fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(),
                     buf,
                     &parts,
@@ -450,9 +450,9 @@ pub const PathWatcherManager = struct {
                 );
 
                 buf[entry_path.len] = 0;
-                var entry_path_z = buf[0..entry_path.len :0];
+                const entry_path_z = buf[0..entry_path.len :0];
 
-                var child_path = try manager._fdFromAbsolutePathZ(entry_path_z);
+                const child_path = try manager._fdFromAbsolutePathZ(entry_path_z);
                 {
                     watcher.mutex.lock();
                     defer watcher.mutex.unlock();

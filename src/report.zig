@@ -117,7 +117,7 @@ pub fn printMetadata() void {
     else
         "x64";
 
-    var analytics_platform = Platform.forOS();
+    const analytics_platform = Platform.forOS();
 
     crash_report_writer.print(
         \\
@@ -507,7 +507,7 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
         error.NotOpenForReading, error.Unexpected => {
             if (trace_) |trace| {
                 print_stacktrace: {
-                    var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
+                    const debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
                     Output.disableBuffering();
                     std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
                 }
@@ -586,7 +586,7 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
 
             if (trace_) |trace| {
                 print_stacktrace: {
-                    var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
+                    const debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
                     Output.disableBuffering();
                     std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
                 }
@@ -602,7 +602,7 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
 
             if (trace_) |trace| {
                 print_stacktrace: {
-                    var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
+                    const debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
                     Output.disableBuffering();
                     std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
                 }
@@ -616,7 +616,7 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
     Report.fatal(err, null);
     if (trace_) |trace| {
         print_stacktrace: {
-            var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
+            const debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
             Output.disableBuffering();
             std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
         }

@@ -50,7 +50,7 @@ pub const DefineData = struct {
 
     // True if a call to this value is known to not have any side effects. For
     // example, a bare call to "Object()" can be removed because it does not
-    // have any observable side effects.
+    // have any observable side effects.`
     call_can_be_unwrapped_if_unused: bool = false,
 
     pub fn isUndefined(self: *const DefineData) bool {
@@ -113,7 +113,7 @@ pub const DefineData = struct {
                 // );
                 continue;
             }
-            var _log = log;
+            const _log = log;
             var source = logger.Source{
                 .contents = entry.value_ptr.*,
                 .path = defines_path,
@@ -223,7 +223,7 @@ pub const Define = struct {
                 var initial_values: []DotDefine = &([_]DotDefine{});
 
                 // "NODE_ENV"
-                var gpe_entry = try define.dots.getOrPut(tail);
+                const gpe_entry = try define.dots.getOrPut(tail);
 
                 if (gpe_entry.found_existing) {
                     for (gpe_entry.value_ptr.*) |*part| {
@@ -271,7 +271,7 @@ pub const Define = struct {
         // Step 1. Load the globals into the hash tables
         for (GlobalDefinesKey) |global| {
             const key = global[global.len - 1];
-            var gpe = try define.dots.getOrPut(key);
+            const gpe = try define.dots.getOrPut(key);
             if (gpe.found_existing) {
                 var list = try std.ArrayList(DotDefine).initCapacity(allocator, gpe.value_ptr.*.len + 1);
                 list.appendSliceAssumeCapacity(gpe.value_ptr.*);

@@ -28,7 +28,7 @@ pub fn count(this: *StringBuilder, slice: string) void {
 }
 
 pub fn allocate(this: *StringBuilder, allocator: Allocator) !void {
-    var slice = try allocator.alloc(u8, this.cap);
+    const slice = try allocator.alloc(u8, this.cap);
     this.ptr = slice.ptr;
     this.len = 0;
 }
@@ -101,7 +101,7 @@ pub fn fmt(this: *StringBuilder, comptime str: string, args: anytype) string {
         assert(this.ptr != null); // must call allocate first
     }
 
-    var buf = this.ptr.?[this.len..this.cap];
+    const buf = this.ptr.?[this.len..this.cap];
     const out = std.fmt.bufPrint(buf, str, args) catch unreachable;
     this.len += out.len;
 
@@ -116,7 +116,7 @@ pub fn fmtAppendCount(this: *StringBuilder, comptime str: string, args: anytype)
         assert(this.ptr != null); // must call allocate first
     }
 
-    var buf = this.ptr.?[this.len..this.cap];
+    const buf = this.ptr.?[this.len..this.cap];
     const out = std.fmt.bufPrint(buf, str, args) catch unreachable;
     const off = this.len;
     this.len += out.len;

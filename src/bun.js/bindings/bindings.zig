@@ -145,7 +145,7 @@ pub const ZigString = extern struct {
     /// This function is not optimized!
     pub fn eqlCaseInsensitive(this: ZigString, other: ZigString) bool {
         var fallback = std.heap.stackFallback(1024, bun.default_allocator);
-        var fallback_allocator = fallback.get();
+        const fallback_allocator = fallback.get();
 
         var utf16_slice = this.toSliceLowercase(fallback_allocator);
         var latin1_slice = other.toSliceLowercase(fallback_allocator);
@@ -158,11 +158,11 @@ pub const ZigString = extern struct {
         if (this.len == 0)
             return Slice.empty;
         var fallback = std.heap.stackFallback(512, allocator);
-        var fallback_allocator = fallback.get();
+        const fallback_allocator = fallback.get();
 
-        var uppercase_buffer = this.toOwnedSlice(fallback_allocator) catch unreachable;
-        var buffer = allocator.alloc(u8, uppercase_buffer.len) catch unreachable;
-        var out = strings.copyLowercase(uppercase_buffer, buffer);
+        const uppercase_buffer = this.toOwnedSlice(fallback_allocator) catch unreachable;
+        const buffer = allocator.alloc(u8, uppercase_buffer.len) catch unreachable;
+        const out = strings.copyLowercase(uppercase_buffer, buffer);
 
         return Slice{
             .allocator = NullableAllocator.init(allocator),
@@ -451,7 +451,7 @@ pub const ZigString = extern struct {
                 return Slice{ .allocator = this.allocator, .ptr = this.ptr, .len = this.len };
             }
 
-            var duped = try allocator.dupe(u8, this.ptr[0..this.len]);
+            const duped = try allocator.dupe(u8, this.ptr[0..this.len]);
             return Slice{ .allocator = NullableAllocator.init(allocator), .ptr = duped.ptr, .len = this.len };
         }
 
@@ -460,12 +460,12 @@ pub const ZigString = extern struct {
                 return this;
             }
 
-            var duped = try allocator.dupe(u8, this.ptr[0..this.len]);
+            const duped = try allocator.dupe(u8, this.ptr[0..this.len]);
             return Slice{ .allocator = NullableAllocator.init(allocator), .ptr = duped.ptr, .len = this.len };
         }
 
         pub fn cloneWithTrailingSlash(this: Slice, allocator: std.mem.Allocator) !Slice {
-            var buf = try strings.cloneNormalizingSeparators(allocator, this.slice());
+            const buf = try strings.cloneNormalizingSeparators(allocator, this.slice());
             return Slice{ .allocator = NullableAllocator.init(allocator), .ptr = buf.ptr, .len = @as(u32, @truncate(buf.len)) };
         }
 
@@ -474,7 +474,7 @@ pub const ZigString = extern struct {
                 return this;
             }
 
-            var duped = try allocator.dupeZ(u8, this.ptr[0..this.len]);
+            const duped = try allocator.dupeZ(u8, this.ptr[0..this.len]);
             return Slice{ .allocator = NullableAllocator.init(allocator), .ptr = duped.ptr, .len = this.len };
         }
 
@@ -647,7 +647,7 @@ pub const ZigString = extern struct {
         const slice_ = this.slice();
         const size = std.base64.standard.Encoder.calcSize(slice_.len);
         var buf = try allocator.alloc(u8, size + "data:;base64,".len);
-        var encoded = std.base64.url_safe.Encoder.encode(buf["data:;base64,".len..], slice_);
+        const encoded = std.base64.url_safe.Encoder.encode(buf["data:;base64,".len..], slice_);
         buf[0.."data:;base64,".len].* = "data:;base64,".*;
         return buf[0 .. "data:;base64,".len + encoded.len];
     }
@@ -737,7 +737,7 @@ pub const ZigString = extern struct {
         if (this.len == 0)
             return Slice.empty;
         if (is16Bit(&this)) {
-            var buffer = this.toOwnedSlice(allocator) catch unreachable;
+            const buffer = this.toOwnedSlice(allocator) catch unreachable;
             return Slice{
                 .ptr = buffer.ptr,
                 .len = @as(u32, @truncate(buffer.len)),
@@ -796,7 +796,7 @@ pub const ZigString = extern struct {
             return Slice.empty;
 
         if (is16Bit(&this)) {
-            var buffer = this.toOwnedSliceZ(allocator) catch unreachable;
+            const buffer = this.toOwnedSliceZ(allocator) catch unreachable;
             return Slice{
                 .ptr = buffer.ptr,
                 .len = @as(u32, @truncate(buffer.len)),
@@ -1103,7 +1103,7 @@ pub const DOMFormData = opaque {
                 filename: ?*ZigString,
                 is_blob: u8,
             ) callconv(.C) void {
-                var ctx_ = bun.cast(*Context, ctx_ptr.?);
+                const ctx_ = bun.cast(*Context, ctx_ptr.?);
                 const value = if (is_blob == 0)
                     FormDataEntry{ .string = bun.cast(*ZigString, value_ptr).* }
                 else
@@ -1909,7 +1909,7 @@ pub const AbortSignal = extern opaque {
                 ptr: ?*anyopaque,
                 reason: JSValue,
             ) callconv(.C) void {
-                var val = bun.cast(*Context, ptr.?);
+                const val = bun.cast(*Context, ptr.?);
                 call(val, reason);
             }
         };
@@ -2047,7 +2047,7 @@ pub const JSPromise = extern struct {
         }
 
         pub fn swap(this: *Strong) *JSC.JSPromise {
-            var prom = this.strong.swap().asPromise().?;
+            const prom = this.strong.swap().asPromise().?;
             this.strong.deinit();
             return prom;
         }
@@ -2540,7 +2540,7 @@ pub const JSGlobalObject = extern struct {
         comptime fmt: string,
         args: anytype,
     ) void {
-        var err = JSC.toInvalidArguments(fmt, args, this);
+        const err = JSC.toInvalidArguments(fmt, args, this);
         this.vm().throwError(this, err);
     }
 
@@ -2817,7 +2817,7 @@ pub const JSGlobalObject = extern struct {
     ) void {
         var str = ZigString.init(std.fmt.allocPrint(this.bunVM().allocator, "{s} " ++ fmt, .{@errorName(err)}) catch return);
         str.markUTF8();
-        var err_value = str.toErrorInstance(this);
+        const err_value = str.toErrorInstance(this);
         this.vm().throwError(this, err_value);
         this.bunVM().allocator.free(ZigString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
     }
@@ -3665,7 +3665,7 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn jestSnapshotPrettyFormat(this: JSValue, out: *MutableString, globalObject: *JSGlobalObject) !void {
         var buffered_writer = MutableString.BufferedWriter{ .context = out };
-        var writer = buffered_writer.writer();
+        const writer = buffered_writer.writer();
         const Writer = @TypeOf(writer);
 
         const fmt_options = JestPrettyFormat.FormatOptions{
@@ -3725,7 +3725,7 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn jestPrettyFormat(this: JSValue, out: *MutableString, globalObject: *JSGlobalObject) !void {
         var buffered_writer = MutableString.BufferedWriter{ .context = out };
-        var writer = buffered_writer.writer();
+        const writer = buffered_writer.writer();
         const Writer = @TypeOf(writer);
 
         const fmt_options = JSC.ZigConsoleClient.FormatOptions{
@@ -5323,7 +5323,7 @@ pub const CallFrame = opaque {
 
     pub fn arguments(self: *const CallFrame, comptime max: usize) Arguments(max) {
         const len = self.argumentsCount();
-        var ptr = self.argumentsPtr();
+        const ptr = self.argumentsPtr();
         return switch (@as(u4, @min(len, max))) {
             0 => .{ .ptr = undefined, .len = 0 },
             4 => Arguments(max).init(comptime @min(4, max), ptr),

@@ -120,7 +120,7 @@ pub const HotMap = struct {
     }
 
     pub fn insert(this: *HotMap, key: []const u8, ptr: anytype) void {
-        var entry = this._map.getOrPut(key) catch @panic("Out of memory");
+        const entry = this._map.getOrPut(key) catch @panic("Out of memory");
         if (entry.found_existing) {
             @panic("HotMap already contains key");
         }
@@ -130,7 +130,7 @@ pub const HotMap = struct {
     }
 
     pub fn remove(this: *HotMap, key: []const u8) void {
-        var entry = this._map.getEntry(key) orelse return;
+        const entry = this._map.getEntry(key) orelse return;
         bun.default_allocator.free(entry.key_ptr.*);
         _ = this._map.orderedRemove(key);
     }
@@ -238,7 +238,7 @@ pub fn pushCleanupHook(
     ctx: ?*anyopaque,
     func: CleanupHook.Function,
 ) void {
-    var hook = JSC.VirtualMachine.get().allocator.create(CleanupHook) catch unreachable;
+    const hook = JSC.VirtualMachine.get().allocator.create(CleanupHook) catch unreachable;
     hook.* = CleanupHook.from(globalThis, ctx, func);
     if (this.cleanup_hook == null) {
         this.cleanup_hook = hook;
@@ -257,7 +257,7 @@ pub fn boringEngine(rare: *RareData) *BoringSSL.ENGINE {
 
 pub fn stderr(rare: *RareData) *Blob.Store {
     return rare.stderr_store orelse brk: {
-        var store = default_allocator.create(Blob.Store) catch unreachable;
+        const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;
         switch (Syscall.fstat(bun.STDERR_FD)) {
             .result => |stat| {
@@ -287,7 +287,7 @@ pub fn stderr(rare: *RareData) *Blob.Store {
 
 pub fn stdout(rare: *RareData) *Blob.Store {
     return rare.stdout_store orelse brk: {
-        var store = default_allocator.create(Blob.Store) catch unreachable;
+        const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;
         switch (Syscall.fstat(bun.STDOUT_FD)) {
             .result => |stat| {
@@ -315,7 +315,7 @@ pub fn stdout(rare: *RareData) *Blob.Store {
 
 pub fn stdin(rare: *RareData) *Blob.Store {
     return rare.stdin_store orelse brk: {
-        var store = default_allocator.create(Blob.Store) catch unreachable;
+        const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;
         switch (Syscall.fstat(bun.STDIN_FD)) {
             .result => |stat| {
@@ -348,7 +348,7 @@ pub fn spawnIPCContext(rare: *RareData, vm: *JSC.VirtualMachine) *uws.SocketCont
         return ctx;
     }
 
-    var opts: uws.us_socket_context_options_t = .{};
+    const opts: uws.us_socket_context_options_t = .{};
     const ctx = uws.us_create_socket_context(0, vm.event_loop_handle.?, @sizeOf(usize), opts).?;
     IPC.Socket.configure(ctx, true, *Subprocess, Subprocess.IPCHandler);
     rare.spawn_ipc_usockets_context = ctx;

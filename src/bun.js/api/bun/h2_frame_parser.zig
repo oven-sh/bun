@@ -612,7 +612,7 @@ pub const H2FrameParser = struct {
         client: *H2FrameParser,
 
         pub fn init(streamIdentifier: u32, initialWindowSize: u32, client: *H2FrameParser) Stream {
-            var stream = Stream{
+            const stream = Stream{
                 .id = streamIdentifier,
                 .state = .OPEN,
                 .windowSize = initialWindowSize,
@@ -669,7 +669,7 @@ pub const H2FrameParser = struct {
         var xhdr: lshpack.lsxpack_header = .{};
 
         lshpack.lsxpack_header_prepare_decode(&xhdr, header_buffer.ptr, 0, header_buffer.len);
-        var start = @intFromPtr(src_buffer.ptr);
+        const start = @intFromPtr(src_buffer.ptr);
         var src = src_buffer.ptr;
         if (lshpack.lshpack_dec_decode(&this.decoder, &src, @ptrFromInt(start + src_buffer.len), &xhdr) != 0) {
             return error.UnableToDecode;
@@ -699,7 +699,7 @@ pub const H2FrameParser = struct {
             xhdr.indexed_type = 2;
         }
 
-        var start = @intFromPtr(dst_buffer.ptr);
+        const start = @intFromPtr(dst_buffer.ptr);
         log("encode xhdr name {} {} val {} {}", .{ xhdr.name_offset, xhdr.name_len, xhdr.val_offset, xhdr.val_len });
         const ptr = lshpack.lshpack_enc_encode(&this.encoder, dst_buffer.ptr, @ptrFromInt(start + dst_buffer.len), &xhdr);
         const end = @intFromPtr(ptr) - start;
@@ -1011,7 +1011,7 @@ pub const H2FrameParser = struct {
             return data.len;
         };
 
-        var settings = this.remoteSettings orelse this.localSettings;
+        const settings = this.remoteSettings orelse this.localSettings;
 
         if (frame.length > settings.maxFrameSize) {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "Invalid dataframe frame size", this.lastStreamID);
@@ -1075,7 +1075,7 @@ pub const H2FrameParser = struct {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "GoAway frame on stream", this.lastStreamID);
             return data.len;
         }
-        var settings = this.remoteSettings orelse this.localSettings;
+        const settings = this.remoteSettings orelse this.localSettings;
 
         if (frame.length < 8 or frame.length > settings.maxFrameSize) {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid GoAway frame size", this.lastStreamID);
@@ -1215,7 +1215,7 @@ pub const H2FrameParser = struct {
             return data.len;
         };
 
-        var settings = this.remoteSettings orelse this.localSettings;
+        const settings = this.remoteSettings orelse this.localSettings;
         if (frame.length > settings.maxFrameSize) {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid Headers frame size", this.lastStreamID);
             return data.len;
@@ -1327,7 +1327,7 @@ pub const H2FrameParser = struct {
 
         // new stream open
         const settings = this.remoteSettings orelse this.localSettings;
-        var entry = this.streams.getOrPut(streamIdentifier) catch @panic("OOM");
+        const entry = this.streams.getOrPut(streamIdentifier) catch @panic("OOM");
         entry.value_ptr.* = Stream.init(streamIdentifier, settings.initialWindowSize, this);
 
         this.dispatch(.onStreamStart, JSC.JSValue.jsNumber(streamIdentifier));
@@ -1586,7 +1586,7 @@ pub const H2FrameParser = struct {
         result.put(globalObject, JSC.ZigString.static("nextStreamID"), JSC.JSValue.jsNumber(this.getNextStreamID()));
         result.put(globalObject, JSC.ZigString.static("lastProcStreamID"), JSC.JSValue.jsNumber(this.lastStreamID));
 
-        var settings = this.remoteSettings orelse this.localSettings;
+        const settings = this.remoteSettings orelse this.localSettings;
         result.put(globalObject, JSC.ZigString.static("remoteWindowSize"), JSC.JSValue.jsNumber(settings.initialWindowSize));
         result.put(globalObject, JSC.ZigString.static("localWindowSize"), JSC.JSValue.jsNumber(this.localSettings.initialWindowSize));
         result.put(globalObject, JSC.ZigString.static("deflateDynamicTableSize"), JSC.JSValue.jsNumber(settings.headerTableSize));
@@ -1634,7 +1634,7 @@ pub const H2FrameParser = struct {
                 const opaque_data_arg = args_list.ptr[2];
                 if (!opaque_data_arg.isEmptyOrUndefinedOrNull()) {
                     if (opaque_data_arg.asArrayBuffer(globalObject)) |array_buffer| {
-                        var slice = array_buffer.byteSlice();
+                        const slice = array_buffer.byteSlice();
                         this.sendGoAway(0, @enumFromInt(errorCode), slice, lastStreamID);
                         return JSC.JSValue.jsUndefined();
                     }
@@ -1655,7 +1655,7 @@ pub const H2FrameParser = struct {
         }
 
         if (args_list.ptr[0].asArrayBuffer(globalObject)) |array_buffer| {
-            var slice = array_buffer.slice();
+            const slice = array_buffer.slice();
             this.sendPing(false, slice);
             return JSC.JSValue.jsUndefined();
         }
@@ -1684,7 +1684,7 @@ pub const H2FrameParser = struct {
             return .zero;
         }
 
-        var stream = this.streams.getPtr(stream_id) orelse {
+        const stream = this.streams.getPtr(stream_id) orelse {
             globalObject.throw("Invalid stream id", .{});
             return .zero;
         };
@@ -1746,7 +1746,7 @@ pub const H2FrameParser = struct {
             return .zero;
         }
 
-        var stream = this.streams.getPtr(stream_id) orelse {
+        const stream = this.streams.getPtr(stream_id) orelse {
             globalObject.throw("Invalid stream id", .{});
             return .zero;
         };
@@ -1881,7 +1881,7 @@ pub const H2FrameParser = struct {
                 .length = @intCast(StreamPriority.byteSize),
             };
 
-            var writer = this.toWriter();
+            const writer = this.toWriter();
             frame.write(@TypeOf(writer), writer);
             priority.write(@TypeOf(writer), writer);
         }
@@ -2009,7 +2009,7 @@ pub const H2FrameParser = struct {
 
         var encoded_size: usize = 0;
 
-        var headers_obj = headers_arg.asObjectRef();
+        const headers_obj = headers_arg.asObjectRef();
         var iter = JSC.JSPropertyIterator(.{
             .skip_empty_name = false,
             .include_value = true,
@@ -2055,7 +2055,7 @@ pub const H2FrameParser = struct {
                         return .zero;
                     };
 
-                    var never_index = sensitive_arg.getTruthy(globalObject, "neverIndex") != null;
+                    const never_index = sensitive_arg.getTruthy(globalObject, "neverIndex") != null;
 
                     const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
                     defer value_slice.deinit();
@@ -2075,7 +2075,7 @@ pub const H2FrameParser = struct {
                     return .zero;
                 };
 
-                var never_index = sensitive_arg.getTruthy(globalObject, "neverIndex") != null;
+                const never_index = sensitive_arg.getTruthy(globalObject, "neverIndex") != null;
 
                 const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
                 defer value_slice.deinit();
@@ -2089,7 +2089,7 @@ pub const H2FrameParser = struct {
                 };
             }
         }
-        var flags: u8 = @intFromEnum(HeadersFrameFlags.END_HEADERS) | @intFromEnum(HeadersFrameFlags.END_STREAM);
+        const flags: u8 = @intFromEnum(HeadersFrameFlags.END_HEADERS) | @intFromEnum(HeadersFrameFlags.END_STREAM);
 
         log("trailers encoded_size {}", .{encoded_size});
         var frame: FrameHeader = .{
@@ -2098,7 +2098,7 @@ pub const H2FrameParser = struct {
             .streamIdentifier = stream.id,
             .length = @intCast(encoded_size),
         };
-        var writer = this.toWriter();
+        const writer = this.toWriter();
         frame.write(@TypeOf(writer), writer);
         this.write(buffer[0..encoded_size]);
 
@@ -2139,12 +2139,12 @@ pub const H2FrameParser = struct {
         // TODO: check padding strategy here
 
         if (data_arg.asArrayBuffer(globalObject)) |array_buffer| {
-            var payload = array_buffer.slice();
+            const payload = array_buffer.slice();
             this.sendData(stream_id, payload, close and !stream.waitForTrailers);
         } else if (bun.String.tryFromJS(data_arg, globalObject)) |bun_str| {
             var zig_str = bun_str.toUTF8(bun.default_allocator);
             defer zig_str.deinit();
-            var payload = zig_str.slice();
+            const payload = zig_str.slice();
             this.sendData(stream_id, payload, close and !stream.waitForTrailers);
         } else {
             globalObject.throw("Expected data to be an ArrayBuffer or a string", .{});
@@ -2204,12 +2204,12 @@ pub const H2FrameParser = struct {
 
         var encoded_size: usize = 0;
 
-        var stream_id: u32 = this.getNextStreamID();
+        const stream_id: u32 = this.getNextStreamID();
         if (stream_id > MAX_STREAM_ID) {
             return JSC.JSValue.jsNumber(-1);
         }
 
-        var headers_obj = headers_arg.asObjectRef();
+        const headers_obj = headers_arg.asObjectRef();
 
         // we iterate twice, because pseudo headers must be sent first, but can appear anywhere in the headers object
         var iter = JSC.JSPropertyIterator(.{
@@ -2265,7 +2265,7 @@ pub const H2FrameParser = struct {
                             return .zero;
                         };
 
-                        var never_index = sensitive_arg.getTruthy(globalObject, "neverIndex") != null;
+                        const never_index = sensitive_arg.getTruthy(globalObject, "neverIndex") != null;
 
                         const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
                         defer value_slice.deinit();
@@ -2289,7 +2289,7 @@ pub const H2FrameParser = struct {
                         return .zero;
                     };
 
-                    var never_index = sensitive_arg.getTruthy(globalObject, "neverIndex") != null;
+                    const never_index = sensitive_arg.getTruthy(globalObject, "neverIndex") != null;
 
                     const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
                     defer value_slice.deinit();
@@ -2418,7 +2418,7 @@ pub const H2FrameParser = struct {
             .streamIdentifier = stream.id,
             .length = @intCast(encoded_size),
         };
-        var writer = this.toWriter();
+        const writer = this.toWriter();
         frame.write(@TypeOf(writer), writer);
         //https://datatracker.ietf.org/doc/html/rfc7540#section-6.2
         if (has_priority) {
@@ -2486,7 +2486,7 @@ pub const H2FrameParser = struct {
         }
 
         var exception: JSC.C.JSValueRef = null;
-        var context_obj = options.get(globalObject, "context") orelse {
+        const context_obj = options.get(globalObject, "context") orelse {
             globalObject.throw("Expected \"context\" option", .{});
             return null;
         };

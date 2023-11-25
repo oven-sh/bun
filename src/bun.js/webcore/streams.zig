@@ -392,7 +392,7 @@ pub const ReadableStream = struct {
             if (bytes[0] != 1) {
                 return bun.invalid_fd;
             }
-            var out: u64 = 0;
+            const out: u64 = 0;
             @as([8]u8, @bitCast(out))[0..7].* = bytes[1..8].*;
             return @as(bun.FileDescriptor, @intCast(out));
         }
@@ -663,7 +663,7 @@ pub const StreamResult = union(Tag) {
             };
 
             pub fn promise(this: *Writable.Pending, globalThis: *JSC.JSGlobalObject) *JSPromise {
-                var prom = JSPromise.create(globalThis);
+                const prom = JSPromise.create(globalThis);
                 this.future = .{
                     .promise = .{ .promise = prom, .globalThis = globalThis },
                 };
@@ -768,7 +768,7 @@ pub const StreamResult = union(Tag) {
         }
 
         pub fn promise(this: *Pending, globalObject: *JSC.JSGlobalObject) *JSC.JSPromise {
-            var prom = JSC.JSPromise.create(globalObject);
+            const prom = JSC.JSPromise.create(globalObject);
             this.future = .{
                 .promise = .{
                     .promise = prom,
@@ -1050,7 +1050,7 @@ pub const Sink = struct {
     pub const UTF8Fallback = struct {
         const stack_size = 1024;
         pub fn writeLatin1(comptime Ctx: type, ctx: *Ctx, input: StreamResult, comptime writeFn: anytype) StreamResult.Writable {
-            var str = input.slice();
+            const str = input.slice();
             if (strings.isAllASCII(str)) {
                 return writeFn(
                     ctx,
@@ -1086,7 +1086,7 @@ pub const Sink = struct {
         }
 
         pub fn writeUTF16(comptime Ctx: type, ctx: *Ctx, input: StreamResult, comptime writeFn: anytype) StreamResult.Writable {
-            var str: []const u16 = std.mem.bytesAsSlice(u16, input.slice());
+            const str: []const u16 = std.mem.bytesAsSlice(u16, input.slice());
 
             if (stack_size >= str.len * 2) {
                 var buf: [stack_size]u8 = undefined;
@@ -1103,7 +1103,7 @@ pub const Sink = struct {
             }
 
             {
-                var allocated = strings.toUTF8Alloc(bun.default_allocator, str) catch return .{ .err = Syscall.Error.oom };
+                const allocated = strings.toUTF8Alloc(bun.default_allocator, str) catch return .{ .err = Syscall.Error.oom };
                 if (input.isDone()) {
                     return writeFn(ctx, .{ .owned_and_done = bun.ByteList.init(allocated) });
                 } else {
@@ -1607,7 +1607,7 @@ pub const FileSink = struct {
     }
 
     pub fn init(allocator: std.mem.Allocator, next: ?Sink) !*FileSink {
-        var this = try allocator.create(FileSink);
+        const this = try allocator.create(FileSink);
         this.* = FileSink{
             .buffer = bun.ByteList{},
             .allocator = allocator,
@@ -1885,7 +1885,7 @@ pub const ArrayBufferSink = struct {
     }
 
     pub fn init(allocator: std.mem.Allocator, next: ?Sink) !*ArrayBufferSink {
-        var this = try allocator.create(ArrayBufferSink);
+        const this = try allocator.create(ArrayBufferSink);
         this.* = ArrayBufferSink{
             .bytes = bun.ByteList.init(&.{}),
             .allocator = allocator,
@@ -2120,7 +2120,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             if (comptime !@hasField(SinkType, "signal"))
                 return;
 
-            var ptr = this.sink.signal.ptr;
+            const ptr = this.sink.signal.ptr;
             if (this.sink.signal.isDead())
                 return;
             this.sink.signal.clear();
@@ -2390,7 +2390,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 
         pub fn updateRef(ptr: *anyopaque, value: bool) callconv(.C) void {
             JSC.markBinding(@src());
-            var this = bun.cast(*ThisSink, ptr);
+            const this = bun.cast(*ThisSink, ptr);
             if (comptime @hasDecl(SinkType, "updateRef"))
                 this.sink.updateRef(value);
         }
@@ -2491,7 +2491,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
         fn handleFirstWriteIfNecessary(this: *@This()) void {
             if (this.onFirstWrite) |onFirstWrite| {
-                var ctx = this.ctx;
+                const ctx = this.ctx;
                 this.ctx = null;
                 this.onFirstWrite = null;
                 onFirstWrite(ctx);
@@ -3255,7 +3255,7 @@ pub fn ReadableStreamSource(
 
             fn onClose(ptr: *anyopaque) void {
                 JSC.markBinding(@src());
-                var this = bun.cast(*ReadableStreamSourceType, ptr);
+                const this = bun.cast(*ReadableStreamSourceType, ptr);
                 _ = this.close_jsvalue.call(this.globalThis, &.{});
                 //    this.closer
             }
@@ -3390,7 +3390,7 @@ pub const ByteBlobLoader = struct {
         temporary = temporary[this.offset..];
         temporary = temporary[0..@min(16384, @min(temporary.len, this.remain))];
 
-        var cloned = bun.ByteList.init(temporary).listManaged(bun.default_allocator).clone() catch @panic("Out of memory");
+        const cloned = bun.ByteList.init(temporary).listManaged(bun.default_allocator).clone() catch @panic("Out of memory");
         this.offset +|= @as(Blob.SizeType, @truncate(cloned.items.len));
         this.remain -|= @as(Blob.SizeType, @truncate(cloned.items.len));
 
@@ -3528,7 +3528,7 @@ pub const ByteStream = struct {
 
         if (this.pending.state == .pending) {
             std.debug.assert(this.buffer.items.len == 0);
-            var to_copy = this.pending_buffer[0..@min(chunk.len, this.pending_buffer.len)];
+            const to_copy = this.pending_buffer[0..@min(chunk.len, this.pending_buffer.len)];
             const pending_buffer_len = this.pending_buffer.len;
             std.debug.assert(to_copy.ptr != chunk.ptr);
             @memcpy(to_copy, chunk[0..to_copy.len]);
@@ -3642,7 +3642,7 @@ pub const ByteStream = struct {
                 this.buffer.items.len - this.offset,
                 buffer.len,
             );
-            var remaining_in_buffer = this.buffer.items[this.offset..][0..to_write];
+            const remaining_in_buffer = this.buffer.items[this.offset..][0..to_write];
 
             @memcpy(buffer[0..to_write], this.buffer.items[this.offset..][0..to_write]);
 
@@ -4335,7 +4335,7 @@ pub const File = struct {
         concurrent_task: JSC.ConcurrentTask = .{},
 
         pub fn taskCallback(task: *NetworkThread.Task) void {
-            var this = @fieldParentPtr(File, "concurrent", @fieldParentPtr(Concurrent, "task", task));
+            const this = @fieldParentPtr(File, "concurrent", @fieldParentPtr(Concurrent, "task", task));
             runAsync(this);
         }
 

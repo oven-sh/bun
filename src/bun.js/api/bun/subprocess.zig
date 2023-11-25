@@ -131,7 +131,7 @@ pub const Subprocess = struct {
     }
 
     pub fn ref(this: *Subprocess) void {
-        var vm = this.globalThis.bunVM();
+        const vm = this.globalThis.bunVM();
 
         switch (this.poll) {
             .poll_ref => if (this.poll.poll_ref) |poll| {
@@ -157,7 +157,7 @@ pub const Subprocess = struct {
 
     /// This disables the keeping process alive flag on the poll and also in the stdin, stdout, and stderr
     pub fn unref(this: *Subprocess, comptime deactivate_poll_ref: bool) void {
-        var vm = this.globalThis.bunVM();
+        const vm = this.globalThis.bunVM();
 
         switch (this.poll) {
             .poll_ref => if (this.poll.poll_ref) |poll| {
@@ -340,7 +340,7 @@ pub const Subprocess = struct {
                     this.pipe.buffer.fifo.close_on_empty_read = true;
                     this.pipe.buffer.readAll();
 
-                    var bytes = this.pipe.buffer.internal_buffer.slice();
+                    const bytes = this.pipe.buffer.internal_buffer.slice();
                     this.pipe.buffer.internal_buffer = .{};
 
                     if (bytes.len > 0) {
@@ -750,9 +750,9 @@ pub const Subprocess = struct {
             if (this.auto_sizer) |auto_sizer| {
                 while (@as(usize, this.internal_buffer.len) < auto_sizer.max and this.status == .pending) {
                     var stack_buffer: [8096]u8 = undefined;
-                    var stack_buf: []u8 = stack_buffer[0..];
+                    const stack_buf: []u8 = stack_buffer[0..];
                     var buf_to_use = stack_buf;
-                    var available = this.internal_buffer.available();
+                    const available = this.internal_buffer.available();
                     if (available.len >= stack_buf.len) {
                         buf_to_use = available;
                     }
@@ -791,7 +791,7 @@ pub const Subprocess = struct {
                 }
             } else {
                 while (this.internal_buffer.len < this.internal_buffer.cap and this.status == .pending) {
-                    var buf_to_use = this.internal_buffer.available();
+                    const buf_to_use = this.internal_buffer.available();
 
                     const result = this.fifo.read(buf_to_use, this.fifo.to_read);
 
@@ -1227,7 +1227,7 @@ pub const Subprocess = struct {
                     var arg0 = first_cmd.toSlice(globalThis, allocator);
                     defer arg0.deinit();
                     var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                    var resolved = Which.which(&path_buf, PATH, cwd, arg0.slice()) orelse {
+                    const resolved = Which.which(&path_buf, PATH, cwd, arg0.slice()) orelse {
                         globalThis.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{arg0.slice()});
                         return .zero;
                     };
@@ -1609,7 +1609,7 @@ pub const Subprocess = struct {
             },
         };
         if (ipc_mode != .none) {
-            var ptr = socket.ext(*Subprocess);
+            const ptr = socket.ext(*Subprocess);
             ptr.?.* = subprocess;
             subprocess.ipc.writeVersionPacket();
         }
@@ -1629,7 +1629,7 @@ pub const Subprocess = struct {
 
         if (comptime !is_sync) {
             if (!WaiterThread.shouldUseWaiterThread()) {
-                var poll = Async.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
+                const poll = Async.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
                 subprocess.poll = .{ .poll_ref = poll };
                 switch (subprocess.poll.poll_ref.?.register(
                     jsc_vm.event_loop_handle.?,
@@ -1697,7 +1697,7 @@ pub const Subprocess = struct {
         subprocess.closeIO(.stdin);
 
         if (!WaiterThread.shouldUseWaiterThread()) {
-            var poll = Async.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
+            const poll = Async.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
             subprocess.poll = .{ .poll_ref = poll };
             switch (subprocess.poll.poll_ref.?.register(
                 jsc_vm.event_loop_handle.?,
@@ -1851,7 +1851,7 @@ pub const Subprocess = struct {
         }
 
         if (!sync and this.hasExited()) {
-            var vm = this.globalThis.bunVM();
+            const vm = this.globalThis.bunVM();
 
             // prevent duplicate notifications
             switch (this.poll) {
@@ -2252,7 +2252,7 @@ pub const Subprocess = struct {
             subprocess: *Subprocess,
 
             pub fn runFromJSThread(self: *@This()) void {
-                var result = self.result;
+                const result = self.result;
                 var subprocess = self.subprocess;
                 _ = subprocess.poll.wait_thread.ref_count.fetchSub(1, .Monotonic);
                 bun.default_allocator.destroy(self);
@@ -2274,7 +2274,7 @@ pub const Subprocess = struct {
                 process.poll.wait_thread.poll_ref.activate(process.globalThis.bunVM().event_loop_handle.?);
             }
 
-            var task = bun.default_allocator.create(WaitTask) catch unreachable;
+            const task = bun.default_allocator.create(WaitTask) catch unreachable;
             task.* = WaitTask{
                 .subprocess = process,
             };
@@ -2323,7 +2323,7 @@ pub const Subprocess = struct {
                         _ = this.queue.orderedRemove(i);
                         queue = this.queue.items;
 
-                        var task = bun.default_allocator.create(WaitPidResultTask) catch unreachable;
+                        const task = bun.default_allocator.create(WaitPidResultTask) catch unreachable;
                         task.* = WaitPidResultTask{
                             .result = result,
                             .subprocess = process,
@@ -2361,7 +2361,7 @@ pub const Subprocess = struct {
                 } else {
                     var mask = std.os.empty_sigset;
                     var signal: c_int = std.os.SIG.CHLD;
-                    var rc = std.c.sigwait(&mask, &signal);
+                    const rc = std.c.sigwait(&mask, &signal);
                     _ = rc;
                 }
             }

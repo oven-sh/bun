@@ -508,7 +508,7 @@ pub fn cloneWithType(comptime T: type, item: T, allocator: std.mem.Allocator) !T
         assertDefined(item);
 
         if (comptime hasCloneFn(Child)) {
-            var slice = try allocator.alloc(Child, item.len);
+            const slice = try allocator.alloc(Child, item.len);
             for (slice, 0..) |*val, i| {
                 val.* = try item[i].clone(allocator);
             }
@@ -549,7 +549,7 @@ pub fn assertDefined(val: anytype) void {
         std.debug.assert(val.len < std.math.maxInt(u32) + 1);
         std.debug.assert(val.len < std.math.maxInt(u32) + 1);
         std.debug.assert(val.len < std.math.maxInt(u32) + 1);
-        var slice: []Type = undefined;
+        const slice: []Type = undefined;
         if (val.len > 0) {
             std.debug.assert(@intFromPtr(val.ptr) != @intFromPtr(slice.ptr));
         }
@@ -557,7 +557,7 @@ pub fn assertDefined(val: anytype) void {
     }
 
     if (comptime @typeInfo(Type) == .Pointer) {
-        var slice: *Type = undefined;
+        const slice: *Type = undefined;
         std.debug.assert(@intFromPtr(val) != @intFromPtr(slice));
         return;
     }
@@ -943,7 +943,7 @@ pub const StringHashMapContext = struct {
         value: u64,
         input: []const u8,
         pub fn init(allocator: std.mem.Allocator, input: []const u8) PrehashedCaseInsensitive {
-            var out = allocator.alloc(u8, input.len) catch unreachable;
+            const out = allocator.alloc(u8, input.len) catch unreachable;
             _ = strings.copyLowercase(input, out);
             return PrehashedCaseInsensitive{
                 .value = StringHashMapContext.hash(.{}, out),
@@ -1157,13 +1157,13 @@ pub fn getcwd(buf_: []u8) ![]u8 {
     }
 
     var temp: [MAX_PATH_BYTES]u8 = undefined;
-    var temp_slice = try std.os.getcwd(&temp);
+    const temp_slice = try std.os.getcwd(&temp);
     return path.normalizeBuf(temp_slice, buf_, .loose);
 }
 
 pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
     var temp: [MAX_PATH_BYTES]u8 = undefined;
-    var temp_slice = try getcwd(&temp);
+    const temp_slice = try getcwd(&temp);
     return allocator.dupe(u8, temp_slice);
 }
 
@@ -1174,7 +1174,7 @@ pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
 
     if (comptime Environment.isWindows) {
         var temp: [MAX_PATH_BYTES]u8 = undefined;
-        var temp_slice = try std.os.getFdPath(fd, &temp);
+        const temp_slice = try std.os.getFdPath(fd, &temp);
         return path.normalizeBuf(temp_slice, buf, .loose);
     }
 
@@ -1437,13 +1437,13 @@ pub fn reloadProcess(
 ) void {
     const PosixSpawn = @import("./bun.js/api/bun/spawn.zig").PosixSpawn;
     const bun = @This();
-    var dupe_argv = allocator.allocSentinel(?[*:0]const u8, bun.argv().len, null) catch unreachable;
+    const dupe_argv = allocator.allocSentinel(?[*:0]const u8, bun.argv().len, null) catch unreachable;
     for (bun.argv(), dupe_argv) |src, *dest| {
         dest.* = (allocator.dupeZ(u8, sliceTo(src, 0)) catch unreachable).ptr;
     }
 
-    var environ_slice = std.mem.span(std.c.environ);
-    var environ = allocator.allocSentinel(?[*:0]const u8, environ_slice.len, null) catch unreachable;
+    const environ_slice = std.mem.span(std.c.environ);
+    const environ = allocator.allocSentinel(?[*:0]const u8, environ_slice.len, null) catch unreachable;
     for (environ_slice, environ) |src, *dest| {
         if (src == null) {
             dest.* = null;
@@ -1518,7 +1518,7 @@ pub const StringSet = struct {
     }
 
     pub fn insert(self: *StringSet, key: []const u8) !void {
-        var entry = try self.map.getOrPut(key);
+        const entry = try self.map.getOrPut(key);
         if (!entry.found_existing) {
             entry.key_ptr.* = try self.map.allocator.dupe(u8, key);
         }
@@ -1568,7 +1568,7 @@ pub const StringMap = struct {
     }
 
     pub fn insert(self: *StringMap, key: []const u8, value: []const u8) !void {
-        var entry = try self.map.getOrPut(key);
+        const entry = try self.map.getOrPut(key);
         if (!entry.found_existing) {
             if (self.dupe_keys)
                 entry.key_ptr.* = try self.map.allocator.dupe(u8, key);
@@ -2003,7 +2003,7 @@ pub fn makePath(dir: std.fs.Dir, sub_path: []const u8) !void {
                 copy(u8, &path_buf2, component.path);
 
                 path_buf2[component.path.len] = 0;
-                var path_to_use = path_buf2[0..component.path.len :0];
+                const path_to_use = path_buf2[0..component.path.len :0];
                 const result = try sys.lstat(path_to_use).unwrap();
                 const is_dir = std.os.S.ISDIR(result.mode);
                 // dangling symlink

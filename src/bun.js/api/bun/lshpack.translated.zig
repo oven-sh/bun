@@ -213,11 +213,11 @@ pub fn lsxpack_header_get_value(hdr: *lsxpack_header_t) []const u8 {
     return "";
 }
 pub fn lsxpack_header_get_dec_size(arg_hdr: ?*const lsxpack_header_t) callconv(.C) usize {
-    var hdr = arg_hdr;
+    const hdr = arg_hdr;
     return @as(usize, @bitCast(@as(c_long, (@as(c_int, @bitCast(@as(c_uint, hdr.*.name_len))) + @as(c_int, @bitCast(@as(c_uint, hdr.*.val_len)))) + @as(c_int, @bitCast(@as(c_uint, hdr.*.dec_overhead))))));
 }
 pub fn lsxpack_header_mark_val_changed(arg_hdr: ?*lsxpack_header_t) callconv(.C) void {
-    var hdr = arg_hdr;
+    const hdr = arg_hdr;
     hdr.*.flags = @as(c_uint, @bitCast(@as(c_int, @bitCast(hdr.*.flags)) & ~((LSXPACK_HPACK_VAL_MATCHED | LSXPACK_VAL_MATCHED) | LSXPACK_NAMEVAL_HASH)));
 }
 pub const struct_lshpack_enc_table_entry = opaque {};

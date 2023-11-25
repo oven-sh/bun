@@ -80,7 +80,7 @@ pub const BunxCommand = struct {
                 if (bin_prop.expr.asString(bundler.allocator)) |dir_name| {
                     const bin_dir = try std.os.openat(dir_fd, dir_name, std.os.O.RDONLY, 0);
                     defer std.os.close(bin_dir);
-                    var dir = std.fs.Dir{ .fd = bin_dir };
+                    const dir = std.fs.Dir{ .fd = bin_dir };
                     var iterator = @import("../bun.js/node/dir_iterator.zig").iterate(dir);
                     var entry = iterator.next();
                     while (true) : (entry = iterator.next()) {
@@ -109,13 +109,13 @@ pub const BunxCommand = struct {
         subpath["node_modules/".len + package_name.len + 1 ..][0.."package.json".len].* = "package.json".*;
         subpath["node_modules/".len + package_name.len + 1 + "package.json".len] = 0;
 
-        var subpath_z: [:0]const u8 = subpath[0 .. "node_modules/".len + package_name.len + 1 + "package.json".len :0];
+        const subpath_z: [:0]const u8 = subpath[0 .. "node_modules/".len + package_name.len + 1 + "package.json".len :0];
         return try getBinNameFromSubpath(bundler, dir_fd, subpath_z);
     }
 
     fn getBinNameFromTempDirectory(bundler: *bun.Bundler, tempdir_name: []const u8, package_name: []const u8) ![]const u8 {
         var subpath: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var subpath_z = std.fmt.bufPrintZ(
+        const subpath_z = std.fmt.bufPrintZ(
             &subpath,
             "{s}/node_modules/{s}/package.json",
             .{ tempdir_name, package_name },
@@ -190,7 +190,7 @@ pub const BunxCommand = struct {
             exit_with_usage();
         }
 
-        var update_requests = bun.PackageManager.UpdateRequest.parse(
+        const update_requests = bun.PackageManager.UpdateRequest.parse(
             ctx.allocator,
             ctx.log,
             &package_name_for_update_request,
@@ -363,14 +363,14 @@ pub const BunxCommand = struct {
             }
         }
 
-        var bunx_install_dir_path = try std.fmt.allocPrint(
+        const bunx_install_dir_path = try std.fmt.allocPrint(
             ctx.allocator,
             bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR ++ "/{s}--bunx",
             .{package_fmt},
         );
 
         // TODO: fix this after zig upgrade
-        var bunx_install_iterable_dir = try std.fs.cwd().makeOpenPathIterable(bunx_install_dir_path, .{});
+        const bunx_install_iterable_dir = try std.fs.cwd().makeOpenPathIterable(bunx_install_dir_path, .{});
         var bunx_install_dir = bunx_install_iterable_dir.dir;
 
         create_package_json: {

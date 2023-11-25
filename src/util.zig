@@ -235,7 +235,7 @@ pub fn fromSlice(
         }
 
         if (comptime std.meta.trait.isIndexable(DefaultType) and (std.meta.trait.isSlice(DefaultType) or std.meta.trait.is(.Array)(DefaultType))) {
-            var in = std.mem.sliceAsBytes(default);
+            const in = std.mem.sliceAsBytes(default);
             var out = std.mem.sliceAsBytes(slice);
             @memcpy(out[0..in.len], in);
         } else {
@@ -260,7 +260,7 @@ pub fn Batcher(comptime Type: type) type {
         head: []Type,
 
         pub fn init(allocator: std.mem.Allocator, count: usize) !@This() {
-            var all = try allocator.alloc(Type, count);
+            const all = try allocator.alloc(Type, count);
             return @This(){ .head = all };
         }
 
@@ -281,7 +281,7 @@ pub fn Batcher(comptime Type: type) type {
 
         pub inline fn next(this: *@This(), values: anytype) []Type {
             this.head[0..values.len].* = values;
-            var prev = this.head[0..values.len];
+            const prev = this.head[0..values.len];
             this.head = this.head[values.len..];
             return prev;
         }

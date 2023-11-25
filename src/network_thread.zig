@@ -123,7 +123,7 @@ fn processEvents_(this: *@This()) !void {
         var count: usize = 0;
 
         while (this.processing_tasks.pop()) |task| {
-            var callback = task.callback;
+            const callback = task.callback;
             callback(task);
             if (comptime Environment.allow_assert) {
                 count += 1;
@@ -142,7 +142,7 @@ fn processEvents_(this: *@This()) !void {
         Output.flush();
         this.io.wait(this, queueEvents);
         if (comptime Environment.isDebug) {
-            var end = std.time.nanoTimestamp();
+            const end = std.time.nanoTimestamp();
             log("Waited {any}\n", .{std.fmt.fmtDurationSigned(@as(i64, @truncate(end - start)))});
             Output.flush();
         }

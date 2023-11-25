@@ -67,11 +67,13 @@ describe("bunshell", () => {
     expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual("ad ae af bd be bf cd ce cf\n");
   });
 
-  test("brace expansion nested", () => {
+  describe("brace expansion nested", () => {
     function doTest(pattern: string, expected: string, buffer: Uint8Array = new Uint8Array(512)) {
-      const result = $`echo ${pattern} > ${buffer}`;
-      const sentinel = sentinelByte(buffer);
-      expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual(`${expected}\n`);
+      test(pattern, () => {
+        const result = $`echo ${pattern} > ${buffer}`;
+        const sentinel = sentinelByte(buffer);
+        expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual(`${expected}\n`);
+      });
     }
 
     doTest("{a,b,{c,d}}", "a b c d");

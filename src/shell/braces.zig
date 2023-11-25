@@ -43,7 +43,7 @@ const Token = union(TokenTag) {
 pub const AST = struct {
     pub const Atom = union(enum) {
         text: SmolStr,
-        expansion: *Expansion,
+        expansion: Expansion,
     };
 
     const Group = struct {
@@ -53,7 +53,6 @@ pub const AST = struct {
     };
 
     const Expansion = struct {
-        parent_next: ?u16 = null,
         variants: []AST.Group,
     };
 };
@@ -197,8 +196,32 @@ fn expandNested(
             }
             return;
         }
-        try out[out_key].appendSlice(root.atoms.single.text.slice());
-        return;
+
+        return switch (root.atoms.single) {
+            .text => |txt| try {
+                try out[out_key].appendSlice(txt.slice());
+                if (root.bubble_up) |bubble_up| {
+                    return expandNested(bubble_up, out, out_key, out_key_counter, root.bubble_up_next.?);
+                }
+                return;
+            },
+            .expansion => |expansion| {
+                const length = out[out_key].items.len;
+                for (expansion.variants, 0..) |*group, j| {
+                    group.bubble_up = root;
+                    group.bubble_up_next = 1;
+                    const new_key = if (j == 0) out_key else brk: {
+                        const new_key = out_key_counter.*;
+                        try out[new_key].appendSlice(out[out_key].items[0..length]);
+                        out_key_counter.* += 1;
+                        break :brk new_key;
+                    };
+
+                    try expandNested(group, out, new_key, out_key_counter, 0);
+                }
+                return;
+            },
+        };
     }
 
     if (start >= root.atoms.many.len) {
@@ -360,8 +383,7 @@ pub const Parser = struct {
         }
     }
 
-    fn parseExpansion(self: *Parser) !*AST.Expansion {
-        var ptr = try self.alloc.create(AST.Expansion);
+    fn parseExpansion(self: *Parser) !AST.Expansion {
         var variants = std.ArrayList(AST.Group).init(self.alloc);
         while (!self.match_any(&.{ .close, .eof })) {
             if (self.match(.eof)) break;
@@ -386,8 +408,7 @@ pub const Parser = struct {
             if (close) break;
         }
 
-        ptr.* = .{ .variants = variants.items[0..] };
-        return ptr;
+        return .{ .variants = variants.items[0..] };
     }
 
     fn has_eq_sign(self: *Parser, str: []const u8) ?u32 {

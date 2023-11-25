@@ -28,6 +28,7 @@ void Bun__internal_dispatch_ready_poll(void* loop, void* poll);
 /* Cannot include this one on Windows */
 #include <unistd.h>
 #include <stdint.h>
+#include <errno.h>
 #endif
 
 void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs, void*);
@@ -601,5 +602,14 @@ void us_internal_async_wakeup(struct us_internal_async *a) {
     }
 }
 #endif
+
+int us_socket_get_error(int ssl, struct us_socket_t *s) {
+    int error = 0;
+    socklen_t len = sizeof(error);
+    if (getsockopt(us_poll_fd((struct us_poll_t *) s), SOL_SOCKET, SO_ERROR, (char *) &error, &len) == -1) {
+        return errno;
+    }
+    return error;
+}
 
 #endif

@@ -260,12 +260,12 @@ pub const ZigString = extern struct {
         return this.slice()[0] == char;
     }
 
-    pub fn substringWithLen(this: ZigString, offset: usize, len: usize) ZigString {
+    pub fn substringWithLen(this: ZigString, start_index: usize, end_index: usize) ZigString {
         if (this.is16Bit()) {
-            return ZigString.from16Slice(this.utf16SliceAligned()[@min(this.len, offset)..len]);
+            return ZigString.from16Slice(this.utf16SliceAligned()[start_index..end_index]);
         }
 
-        var out = ZigString.init(this.slice()[@min(this.len, offset)..len]);
+        var out = ZigString.init(this.slice()[start_index..end_index]);
         if (this.isUTF8()) {
             out.markUTF8();
         }
@@ -277,8 +277,8 @@ pub const ZigString = extern struct {
         return out;
     }
 
-    pub fn substring(this: ZigString, offset: usize) ZigString {
-        return this.substringWithLen(offset, this.len);
+    pub fn substring(this: ZigString, start_index: usize) ZigString {
+        return this.substringWithLen(@min(this.len, start_index), this.len);
     }
 
     pub fn maxUTF8ByteLength(this: ZigString) usize {

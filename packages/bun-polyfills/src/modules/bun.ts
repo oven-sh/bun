@@ -158,6 +158,8 @@ export const openInEditor = ((file: string, opts?: EditorOptions) => {
     else openEditor(target, { editor: process.env.TERM_PROGRAM ?? process.env.VISUAL ?? process.env.EDITOR ?? 'vscode' });
 }) satisfies typeof Bun.openInEditor;
 
+export const parseArgs = util.parseArgs;
+
 export const serve = (() => { throw new NotImplementedError('Bun.serve', serve); }) satisfies typeof Bun.serve;
 
 export const file = ((path: string | URL | Uint8Array | ArrayBufferLike | number, options?: BlobPropertyBag): BunFileBlob => {

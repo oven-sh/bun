@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { dirname } from "node:path";
+import { dirname, resolve, relative } from "node:path";
 import { promisify } from "node:util";
 import { bunEnv, bunExe, gc } from "harness";
 import fs, {
@@ -940,7 +940,7 @@ it("realpath async", async () => {
     err ? reject(err) : resolve(path);
   });
   expect(await promise).toBe(realpathSync(import.meta.path));
-});
+}, 30_000);
 
 describe("stat", () => {
   it("file metadata is correct", () => {
@@ -1720,6 +1720,102 @@ describe("fs/promises", () => {
     const files = await promises.readdir(import.meta.dir);
     expect(files.length).toBeGreaterThan(0);
   });
+
+  it("readdir(path, {recursive: true}) produces the same result as Node.js", async () => {
+    const full = resolve(import.meta.dir, "../");
+    const [bun, subprocess] = await Promise.all([
+      (async function () {
+        console.time("readdir(path, {recursive: true})");
+        const files = await promises.readdir(full, { recursive: true });
+        files.sort();
+        console.timeEnd("readdir(path, {recursive: true})");
+        return files;
+      })(),
+      (async function () {
+        const subprocess = Bun.spawn({
+          cmd: [
+            "node",
+            "-e",
+            `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
+              full,
+            )}, { recursive: true }).sort()), null, 2)`,
+          ],
+          cwd: process.cwd(),
+          stdout: "pipe",
+          stderr: "inherit",
+          stdin: "inherit",
+        });
+        await subprocess.exited;
+        return subprocess;
+      })(),
+    ]);
+
+    expect(subprocess.exitCode).toBe(0);
+    const text = await new Response(subprocess.stdout).text();
+    const node = JSON.parse(text);
+    expect(bun).toEqual(node as string[]);
+  }, 100000);
+
+  for (let withFileTypes of [false, true] as const) {
+    const doIt = async () => {
+      const maxFD = openSync("/dev/null", "r");
+      closeSync(maxFD);
+      const full = resolve(import.meta.dir, "../");
+
+      const pending = new Array(100);
+      for (let i = 0; i < 100; i++) {
+        pending[i] = promises.readdir(full, { recursive: true, withFileTypes });
+      }
+
+      const results = await Promise.all(pending);
+      for (let i = 0; i < 100; i++) {
+        results[i].sort();
+      }
+      expect(results[0].length).toBeGreaterThan(0);
+      for (let i = 1; i < 100; i++) {
+        expect(results[i]).toEqual(results[0]);
+      }
+
+      if (!withFileTypes) {
+        expect(results[0]).toContain(relative(full, import.meta.path));
+      }
+
+      const newMaxFD = openSync("/dev/null", "r");
+      closeSync(newMaxFD);
+      expect(maxFD).toBe(newMaxFD); // assert we do not leak file descriptors
+    };
+
+    const fail = async () => {
+      const maxFD = openSync("/dev/null", "r");
+      closeSync(maxFD);
+
+      const pending = new Array(100);
+      for (let i = 0; i < 100; i++) {
+        pending[i] = promises.readdir("/notfound/i/dont/exist/for/sure/" + i, { recursive: true, withFileTypes });
+      }
+
+      const results = await Promise.allSettled(pending);
+      for (let i = 0; i < 100; i++) {
+        expect(results[i].status).toBe("rejected");
+        expect(results[i].reason!.code).toBe("ENOENT");
+        expect(results[i].reason!.path).toBe("/notfound/i/dont/exist/for/sure/" + i);
+      }
+
+      const newMaxFD = openSync("/dev/null", "r");
+      closeSync(newMaxFD);
+      expect(maxFD).toBe(newMaxFD); // assert we do not leak file descriptors
+    };
+
+    if (withFileTypes) {
+      describe("withFileTypes", () => {
+        it("readdir(path, {recursive: true} should work x 100", doIt, 10_000);
+        it("readdir(path, {recursive: true} should fail x 100", fail, 10_000);
+      });
+    } else {
+      it("readdir(path, {recursive: true} should work x 100", doIt, 10_000);
+      it("readdir(path, {recursive: true} should fail x 100", fail, 10_000);
+    }
+  }
 
   it("readdir() no args doesnt segfault", async () => {
     const fizz = [

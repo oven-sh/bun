@@ -3008,9 +3008,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             };
 
             var has_content_disposition = false;
+            var has_content_range = false;
             if (response.init.headers) |headers_| {
                 has_content_disposition = headers_.fastHas(.ContentDisposition);
-                needs_content_range = needs_content_range and headers_.fastHas(.ContentRange);
+                has_content_range = headers_.fastHas(.ContentRange);
+                needs_content_range = needs_content_range and has_content_range;
                 if (needs_content_range) {
                     status = 206;
                 }
@@ -3057,7 +3059,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.flags.needs_content_length = false;
             }
 
-            if (needs_content_range) {
+            if (needs_content_range and !has_content_range) {
                 var content_range_buf: [1024]u8 = undefined;
 
                 resp.writeHeader(

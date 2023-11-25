@@ -49,7 +49,7 @@ pub const AST = struct {
     const Group = struct {
         bubble_up: ?*Group = null,
         bubble_up_next: ?u16 = null,
-        atoms: []Atom,
+        atoms: union(enum) { single: Atom, many: []Atom },
     };
 
     const Expansion = struct {
@@ -190,14 +190,25 @@ fn expandNested(
     out_key_counter: *u16,
     start: u32,
 ) !void {
-    if (start >= root.atoms.len) {
+    if (root.atoms == .single) {
+        if (start > 0) {
+            if (root.bubble_up) |bubble_up| {
+                return expandNested(bubble_up, out, out_key, out_key_counter, root.bubble_up_next.?);
+            }
+            return;
+        }
+        try out[out_key].appendSlice(root.atoms.single.text.slice());
+        return;
+    }
+
+    if (start >= root.atoms.many.len) {
         if (root.bubble_up) |bubble_up| {
             return expandNested(bubble_up, out, out_key, out_key_counter, root.bubble_up_next.?);
         }
         return;
     }
 
-    for (root.atoms[start..], start..) |atom, i_| {
+    for (root.atoms.many[start..], start..) |atom, i_| {
         var i: u16 = @intCast(i_);
         switch (atom) {
             .text => |txt| {
@@ -323,11 +334,18 @@ pub const Parser = struct {
     }
 
     pub fn parse(self: *Parser) !AST.Group {
-        var nodes = std.ArrayList(AST.Atom).init(self.alloc);
+        var group_alloc_ = std.heap.stackFallback(@sizeOf(AST.Atom), self.alloc);
+        var group_alloc = group_alloc_.get();
+        var nodes = std.ArrayList(AST.Atom).init(group_alloc);
         while (!self.match(.eof)) {
             try nodes.append(try self.parseAtom() orelse break);
         }
-        return .{ .atoms = nodes.items[0..] };
+
+        if (nodes.items.len == 1) {
+            return .{ .atoms = .{ .single = nodes.items[0] } };
+        } else {
+            return .{ .atoms = .{ .many = nodes.items[0..] } };
+        }
     }
 
     fn parseAtom(self: *Parser) anyerror!?AST.Atom {
@@ -347,7 +365,9 @@ pub const Parser = struct {
         var variants = std.ArrayList(AST.Group).init(self.alloc);
         while (!self.match_any(&.{ .close, .eof })) {
             if (self.match(.eof)) break;
-            var group = std.ArrayList(AST.Atom).init(self.alloc);
+            var group_alloc_ = std.heap.stackFallback(@sizeOf(AST.Atom), self.alloc);
+            var group_alloc = group_alloc_.get();
+            var group = std.ArrayList(AST.Atom).init(group_alloc);
             var close = false;
             while (!self.match(.eof)) {
                 if (self.match(.close)) {
@@ -358,7 +378,11 @@ pub const Parser = struct {
                 var group_atom = try self.parseAtom() orelse break;
                 try group.append(group_atom);
             }
-            try variants.append(.{ .atoms = group.items[0..] });
+            if (group.items.len == 1) {
+                try variants.append(.{ .atoms = .{ .single = group.items[0] } });
+            } else {
+                try variants.append(.{ .atoms = .{ .many = group.items[0..] } });
+            }
             if (close) break;
         }
 

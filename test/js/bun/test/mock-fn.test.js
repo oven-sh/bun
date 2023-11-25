@@ -35,6 +35,28 @@ describe("mock()", () => {
       expect(jest.fn).toBe(mock);
       expect(jest.fn).toBe(vi.fn);
     });
+
+    test("mock", () => {
+      const binaryType = "arraybuffer";
+      const data = new ArrayBuffer(10);
+      const port = 1234;
+      const address = "1";
+      const type = ArrayBuffer;
+      const onData = mock((socket, data, port, address) => {
+        expect(socket).toBeInstanceOf(Object);
+        expect(socket.binaryType).toBe(binaryType || "nodebuffer");
+        expect(data).toBeInstanceOf(type);
+        expect(port).toBeInteger();
+        expect(port).toBeWithin(1, 65535 + 1);
+        expect(port).not.toBe(socket.port);
+        expect(address).toBeString();
+        expect(address).not.toBeEmpty();
+      });
+
+      onData({ binaryType }, data, port, address);
+
+      expect(onData).toHaveBeenCalled();
+    });
   }
   test("are callable", () => {
     const fn = jest.fn(() => 42);

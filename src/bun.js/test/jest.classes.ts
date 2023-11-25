@@ -146,11 +146,9 @@ export default [
       },
       toHaveBeenCalledWith: {
         fn: "toHaveBeenCalledWith",
-        length: 1,
       },
       toHaveBeenLastCalledWith: {
         fn: "toHaveBeenLastCalledWith",
-        length: 1,
       },
       toHaveBeenNthCalledWith: {
         fn: "toHaveBeenNthCalledWith",

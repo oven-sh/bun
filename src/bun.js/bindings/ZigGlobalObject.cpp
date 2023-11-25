@@ -1949,6 +1949,8 @@ JSC_DEFINE_CUSTOM_GETTER(getterSubtleCrypto, (JSGlobalObject * lexicalGlobalObje
     return JSValue::encode(reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject)->subtleCrypto());
 }
 
+extern "C" JSC::EncodedJSValue ExpectMatcherUtils_createSigleton(JSC::JSGlobalObject* lexicalGlobalObject);
+
 // Do nothing.
 // This is consistent with Node.js
 // This makes libraries polyfilling `globalThis.crypto.subtle` not throw.
@@ -2853,6 +2855,21 @@ void GlobalObject::finishCreation(VM& vm)
 
             JSValue result = JSValue::decode(Bun__Jest__createTestPreloadObject(globalObject));
             init.set(result.toObject(globalObject));
+        });
+
+    m_lazyTestCustomMatchersRegistryObject.initLater(
+        [](const Initializer<JSObject>& init) {
+            JSC::VM& vm = init.vm;
+            JSC::JSGlobalObject* globalObject = init.owner;
+
+            JSC::JSObject* object = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+            init.set(object);
+        });
+
+    m_lazyTestMatcherUtilsObject.initLater(
+        [](const Initializer<JSObject>& init) {
+            JSValue result = JSValue::decode(ExpectMatcherUtils_createSigleton(init.owner));
+            init.set(result.toObject(init.owner));
         });
 
     m_commonJSModuleObjectStructure.initLater(
@@ -3934,6 +3951,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_bunSleepThenCallback.visit(visitor);
     thisObject->m_lazyTestModuleObject.visit(visitor);
     thisObject->m_lazyPreloadTestModuleObject.visit(visitor);
+    thisObject->m_lazyTestCustomMatchersRegistryObject.visit(visitor);
+    thisObject->m_lazyTestModuleObject.visit(visitor);
     thisObject->m_commonJSModuleObjectStructure.visit(visitor);
     thisObject->m_memoryFootprintStructure.visit(visitor);
     thisObject->m_commonJSFunctionArgumentsStructure.visit(visitor);

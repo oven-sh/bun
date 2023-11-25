@@ -8,6 +8,7 @@ export default [
     call: true,
     finalize: true,
     JSType: "0b11101110",
+    values: ["flags"],
     configurable: false,
     klass: {},
     proto: {},
@@ -19,7 +20,31 @@ export default [
     call: true,
     finalize: true,
     JSType: "0b11101110",
-    values: ["constructorValue"],
+    values: ["flags", "constructorValue"],
+    configurable: false,
+    klass: {},
+    proto: {},
+  }),
+  define({
+    name: "ExpectCloseTo",
+    construct: false,
+    noConstructor: true,
+    call: true,
+    finalize: true,
+    JSType: "0b11101110",
+    values: ["flags", "numberValue", "digitsValue"],
+    configurable: false,
+    klass: {},
+    proto: {},
+  }),
+  define({
+    name: "ExpectObjectContaining",
+    construct: false,
+    noConstructor: true,
+    call: true,
+    finalize: true,
+    JSType: "0b11101110",
+    values: ["flags", "objectValue"],
     configurable: false,
     klass: {},
     proto: {},
@@ -31,7 +56,7 @@ export default [
     call: true,
     finalize: true,
     JSType: "0b11101110",
-    values: ["stringValue"],
+    values: ["flags", "stringValue"],
     configurable: false,
     klass: {},
     proto: {},
@@ -43,7 +68,7 @@ export default [
     call: true,
     finalize: true,
     JSType: "0b11101110",
-    values: ["testValue"],
+    values: ["flags", "testValue"],
     configurable: false,
     klass: {},
     proto: {},
@@ -55,18 +80,161 @@ export default [
     call: true,
     finalize: true,
     JSType: "0b11101110",
-    values: ["arrayValue"],
+    values: ["flags", "arrayValue"],
     configurable: false,
     klass: {},
     proto: {},
   }),
   define({
+    name: "ExpectCustomMatcher",
+    construct: false,
+    noConstructor: true,
+    call: false,
+    apply: true,
+    finalize: true,
+    JSType: "0b11101110",
+    values: ["matcherFn", "capturedValue"],
+    configurable: false,
+    klass: {},
+    proto: {},
+  }),
+  define({
+    name: "ExpectCustomAsymmetricMatcher",
+    construct: false,
+    noConstructor: true,
+    call: false,
+    apply: true,
+    finalize: true,
+    JSType: "0b11101110",
+    values: ["flags", "matcherFn", "capturedArgs"],
+    configurable: false,
+    klass: {},
+    proto: {
+      asymmetricMatch: {
+        fn: "asymmetricMatch",
+        length: 1,
+      },
+    },
+  }),
+  define({
+    name: "ExpectMatcherContext",
+    construct: false,
+    noConstructor: true,
+    call: false,
+    finalize: true,
+    JSType: "0b11101110",
+    configurable: false,
+    klass: {},
+    proto: {
+      utils: {
+        getter: "getUtils",
+      },
+      isNot: {
+        getter: "getIsNot",
+      },
+      promise: {
+        getter: "getPromise",
+      },
+      expand: {
+        getter: "getExpand",
+      },
+      equals: {
+        fn: "equals",
+        length: 3,
+      },
+    },
+  }),
+  define({
+    name: "ExpectMatcherUtils",
+    construct: false,
+    noConstructor: true,
+    call: false,
+    finalize: true,
+    JSType: "0b11101110",
+    configurable: false,
+    klass: {},
+    proto: {
+      stringify: {
+        fn: "stringify",
+        length: 1,
+      },
+      printExpected: {
+        fn: "printExpected",
+        length: 1,
+      },
+      printReceived: {
+        fn: "printReceived",
+        length: 1,
+      },
+      matcherHint: {
+        fn: "matcherHint",
+        length: 1,
+      },
+    },
+  }),
+  define({
+    name: "ExpectStatic",
+    construct: false,
+    noConstructor: true,
+    call: false,
+    getOwnPropertySlot: "first",
+    finalize: true,
+    JSType: "0b11101110",
+    configurable: false,
+    klass: {},
+    proto: {
+      anything: {
+        fn: "anything",
+        length: 1,
+      },
+      any: {
+        fn: "any",
+        length: 1,
+      },
+      arrayContaining: {
+        fn: "arrayContaining",
+        length: 1,
+      },
+      closeTo: {
+        fn: "closeTo",
+        length: 1,
+      },
+      objectContaining: {
+        fn: "objectContaining",
+        length: 1,
+      },
+      stringContaining: {
+        fn: "stringContaining",
+        length: 1,
+      },
+      stringMatching: {
+        fn: "stringMatching",
+        length: 1,
+      },
+      not: {
+        getter: "getNot",
+        this: true,
+      },
+      resolvedTo: {
+        getter: "getResolvedTo",
+        this: true,
+      },
+      rejectedTo: {
+        getter: "getRejectedTo",
+        this: true,
+      },
+    },
+  }),
+  define({
     name: "Expect",
     construct: true,
     call: true,
+    getOwnPropertySlot: "first",
+    getOwnPropertySlotStatic: "first",
     finalize: true,
     JSType: "0b11101110",
     values: ["capturedValue", "resultValue"],
+    valuesAccessorsFromJsObject: true,
     configurable: false,
     klass: {
       extend: {
@@ -93,6 +261,10 @@ export default [
         fn: "hasAssertions",
         length: 1,
       },
+      closeTo: {
+        fn: "closeTo",
+        length: 1,
+      },
       objectContaining: {
         fn: "objectContaining",
         length: 1,
@@ -112,11 +284,11 @@ export default [
       not: {
         getter: "getStaticNot",
       },
-      resolves: {
-        getter: "getStaticResolves",
+      resolvedTo: {
+        getter: "getStaticResolvedTo",
       },
-      rejects: {
-        getter: "getStaticRejects",
+      rejectedTo: {
+        getter: "getStaticRejectedTo",
       },
       unreachable: {
         fn: "doUnreachable",

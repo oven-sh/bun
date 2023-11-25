@@ -30,6 +30,7 @@ const JSPrinter = bun.js_printer;
 const JSLexer = bun.js_lexer;
 const typeBaseName = @import("../../meta.zig").typeBaseName;
 const String = bun.String;
+const JestPrettyFormat = @import("../test/pretty_format.zig").JestPrettyFormat;
 
 pub const ZigGlobalObject = extern struct {
     pub const shim = Shimmer("Zig", "GlobalObject", @This());
@@ -2366,42 +2367,7 @@ pub const ZigConsoleClient = struct {
                     } else if (value.as(JSC.ResolveMessage)) |resolve_log| {
                         resolve_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
                         return;
-                    } else if (value.as(JSC.Expect.ExpectAnything) != null) {
-                        writer.writeAll("Anything");
-                        return;
-                    } else if (value.as(JSC.Expect.ExpectAny) != null) {
-                        const constructor_value = JSC.Expect.ExpectAny.constructorValueGetCached(value) orelse return;
-
-                        this.addForNewLine("Any<".len);
-                        writer.writeAll("Any<");
-                        var class_name = ZigString.init(&name_buf);
-
-                        constructor_value.getClassName(this.globalThis, &class_name);
-                        this.addForNewLine(class_name.len);
-                        writer.print(comptime Output.prettyFmt("<cyan>{}<r>", enable_ansi_colors), .{class_name});
-                        this.addForNewLine(1);
-                        writer.writeAll(">");
-
-                        return;
-                    } else if (value.as(JSC.Expect.ExpectStringContaining) != null) {
-                        const substring_value = JSC.Expect.ExpectStringContaining.stringValueGetCached(value) orelse return;
-
-                        this.addForNewLine("StringContaining ".len);
-                        writer.writeAll("StringContaining ");
-                        this.printAs(.String, Writer, writer_, substring_value, .String, enable_ansi_colors);
-
-                        return;
-                    } else if (value.as(JSC.Expect.ExpectStringMatching) != null) {
-                        const test_value = JSC.Expect.ExpectStringMatching.testValueGetCached(value) orelse return;
-
-                        this.addForNewLine("StringMatching ".len);
-                        writer.writeAll("StringMatching ");
-
-                        const original_quote_strings = this.quote_strings;
-                        if (test_value.isRegExp()) this.quote_strings = false;
-                        this.printAs(.String, Writer, writer_, test_value, .String, enable_ansi_colors);
-                        this.quote_strings = original_quote_strings;
-
+                    } else if (JestPrettyFormat.printAsymmetricMatcher(this, Format, &writer, writer_, name_buf, value, enable_ansi_colors)) {
                         return;
                     } else if (jsType != .DOMWrapper) {
                         if (value.isCallable(this.globalThis.vm())) {

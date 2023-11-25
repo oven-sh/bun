@@ -41,6 +41,18 @@ const JSTypeOfMap = bun.ComptimeStringMap([]const u8, .{
 
 pub var active_test_expectation_counter: Counter = .{};
 
+const log = bun.Output.scoped(.expect, false);
+
+/// Helper to retrieve matcher flags from a jsvalue of a class like ExpectAny, ExpectStringMatching, etc.
+pub fn getMatcherFlags(comptime T: type, value: JSValue) Expect.Flags {
+    if (T.flagsGetCached(value)) |flagsValue| {
+        if (!flagsValue.isEmpty()) {
+            return Expect.Flags.fromBitset(flagsValue.toInt32());
+        }
+    }
+    return .{};
+}
+
 /// https://jestjs.io/docs/expect
 // To support async tests, we need to track the test ID
 pub const Expect = struct {
@@ -57,7 +69,29 @@ pub const Expect = struct {
             none,
         } = .none,
         not: bool = false,
+
+        const BitsetType = i32;
+        const FLAG_NOT: BitsetType = (1 << 0);
+        const FLAG_RESOLVES: BitsetType = (1 << 1);
+        const FLAG_REJECTS: BitsetType = (1 << 2);
+
+        /// Used to pass the flags to C++ asymmetric matchers execution
+        /// Note: keep in sync with the corresponding C++ bitset flags
+        pub fn toBitset(this: Flags) BitsetType {
+            return (if (this.not) FLAG_NOT else 0) | (if (this.promise == .resolves) FLAG_RESOLVES else 0) | (if (this.promise == .rejects) FLAG_REJECTS else 0);
+        }
+
+        pub fn fromBitset(bitset: BitsetType) Flags {
+            return Flags{
+                .not = (bitset & FLAG_NOT) != 0,
+                .promise = if ((bitset & FLAG_RESOLVES) != 0) .resolves else if ((bitset & FLAG_REJECTS) != 0) .rejects else .none,
+            };
+        }
     };
+
+    pub inline fn getCustomMatchersRegistry(globalObject: *JSGlobalObject) JSValue {
+        return Expect_getCustomMatchersRegistry(globalObject);
+    }
 
     pub fn getSignature(comptime matcher_name: string, comptime args: string, comptime not: bool) string {
         const received = "<d>expect(<r><red>received<r><d>).<r>";
@@ -118,8 +152,14 @@ pub const Expect = struct {
             return null;
         };
         value.ensureStillAlive();
+        return processPromise(this.flags, globalThis, value, matcher_name, matcher_args, false);
+    }
 
-        switch (this.flags.promise) {
+    /// Processes the async flags (resolves/rejects), waiting for the async value if needed.
+    /// If no flags, returns the original value
+    /// If either flag is set, waits for the result, and returns either it as a JSValue, or null if the expectation failed (in which case if silent is false, also throws a js exception)
+    pub fn processPromise(flags: Expect.Flags, globalThis: *JSGlobalObject, value: JSValue, comptime matcher_name: string, comptime matcher_args: string, comptime silent: bool) ?JSValue {
+        switch (flags.promise) {
             inline .resolves, .rejects => |resolution| {
                 if (value.asAnyPromise()) |promise| {
                     var vm = globalThis.vm();
@@ -140,17 +180,19 @@ pub const Expect = struct {
                         .Fulfilled => switch (comptime resolution) {
                             .resolves => {},
                             .rejects => {
-                                if (this.flags.not) {
-                                    const signature = comptime getFullSignature(matcher_name, matcher_args, .{ .not = true, .promise = .rejects });
-                                    const fmt = signature ++ "\n\nExpected promise that rejects<r>\nReceived promise that resolved: <red>{any}<r>\n";
-                                    var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
-                                    globalThis.throwPretty(fmt, .{newValue.toFmt(globalThis, &formatter)});
-                                    return null;
+                                if (!silent) {
+                                    if (flags.not) {
+                                        const signature = comptime getFullSignature(matcher_name, matcher_args, .{ .not = true, .promise = .rejects });
+                                        const fmt = signature ++ "\n\nExpected promise that rejects<r>\nReceived promise that resolved: <red>{any}<r>\n";
+                                        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                                        globalThis.throwPretty(fmt, .{newValue.toFmt(globalThis, &formatter)});
+                                    } else {
+                                        const signature = comptime getFullSignature(matcher_name, matcher_args, .{ .not = false, .promise = .rejects });
+                                        const fmt = signature ++ "\n\nExpected promise that rejects<r>\nReceived promise that resolved: <red>{any}<r>\n";
+                                        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                                        globalThis.throwPretty(fmt, .{newValue.toFmt(globalThis, &formatter)});
+                                    }
                                 }
-                                const signature = comptime getFullSignature(matcher_name, matcher_args, .{ .not = false, .promise = .rejects });
-                                const fmt = signature ++ "\n\nExpected promise that rejects<r>\nReceived promise that resolved: <red>{any}<r>\n";
-                                var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
-                                globalThis.throwPretty(fmt, .{newValue.toFmt(globalThis, &formatter)});
                                 return null;
                             },
                             .none => unreachable,
@@ -158,17 +200,19 @@ pub const Expect = struct {
                         .Rejected => switch (comptime resolution) {
                             .rejects => {},
                             .resolves => {
-                                if (this.flags.not) {
-                                    const signature = comptime getFullSignature(matcher_name, matcher_args, .{ .not = true, .promise = .resolves });
-                                    const fmt = signature ++ "\n\nExpected promise that resolves<r>\nReceived promise that rejected: <red>{any}<r>\n";
-                                    var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
-                                    globalThis.throwPretty(fmt, .{newValue.toFmt(globalThis, &formatter)});
-                                    return null;
+                                if (!silent) {
+                                    if (flags.not) {
+                                        const signature = comptime getFullSignature(matcher_name, matcher_args, .{ .not = true, .promise = .resolves });
+                                        const fmt = signature ++ "\n\nExpected promise that resolves<r>\nReceived promise that rejected: <red>{any}<r>\n";
+                                        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                                        globalThis.throwPretty(fmt, .{newValue.toFmt(globalThis, &formatter)});
+                                    } else {
+                                        const signature = comptime getFullSignature(matcher_name, matcher_args, .{ .not = false, .promise = .resolves });
+                                        const fmt = signature ++ "\n\nExpected promise that resolves<r>\nReceived promise that rejected: <red>{any}<r>\n";
+                                        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                                        globalThis.throwPretty(fmt, .{newValue.toFmt(globalThis, &formatter)});
+                                    }
                                 }
-                                const signature = comptime getFullSignature(matcher_name, matcher_args, .{ .not = false, .promise = .resolves });
-                                const fmt = signature ++ "\n\nExpected promise that resolves<r>\nReceived promise that rejected: <red>{any}<r>\n";
-                                var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
-                                globalThis.throwPretty(fmt, .{newValue.toFmt(globalThis, &formatter)});
                                 return null;
                             },
                             .none => unreachable,
@@ -179,33 +223,37 @@ pub const Expect = struct {
                     newValue.ensureStillAlive();
                     return newValue;
                 } else {
-                    switch (this.flags.promise) {
+                    switch (flags.promise) {
                         .resolves => {
-                            if (this.flags.not) {
-                                const signature = comptime getFullSignature(matcher_name, matcher_args, .{ .not = true, .promise = .resolves });
-                                const fmt = signature ++ "\n\nExpected promise<r>\nReceived: <red>{any}<r>\n";
-                                var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
-                                globalThis.throwPretty(fmt, .{value.toFmt(globalThis, &formatter)});
-                                return null;
+                            if (!silent) {
+                                if (flags.not) {
+                                    const signature = comptime getFullSignature(matcher_name, matcher_args, .{ .not = true, .promise = .resolves });
+                                    const fmt = signature ++ "\n\nExpected promise<r>\nReceived: <red>{any}<r>\n";
+                                    var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                                    globalThis.throwPretty(fmt, .{value.toFmt(globalThis, &formatter)});
+                                } else {
+                                    const signature = comptime getFullSignature(matcher_name, matcher_args, .{ .not = false, .promise = .resolves });
+                                    const fmt = signature ++ "\n\nExpected promise<r>\nReceived: <red>{any}<r>\n";
+                                    var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                                    globalThis.throwPretty(fmt, .{value.toFmt(globalThis, &formatter)});
+                                }
                             }
-                            const signature = comptime getFullSignature(matcher_name, matcher_args, .{ .not = false, .promise = .resolves });
-                            const fmt = signature ++ "\n\nExpected promise<r>\nReceived: <red>{any}<r>\n";
-                            var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
-                            globalThis.throwPretty(fmt, .{value.toFmt(globalThis, &formatter)});
                             return null;
                         },
                         .rejects => {
-                            if (this.flags.not) {
-                                const signature = comptime getFullSignature(matcher_name, matcher_args, .{ .not = true, .promise = .rejects });
-                                const fmt = signature ++ "\n\nExpected promise<r>\nReceived: <red>{any}<r>\n";
-                                var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
-                                globalThis.throwPretty(fmt, .{value.toFmt(globalThis, &formatter)});
-                                return null;
+                            if (!silent) {
+                                if (flags.not) {
+                                    const signature = comptime getFullSignature(matcher_name, matcher_args, .{ .not = true, .promise = .rejects });
+                                    const fmt = signature ++ "\n\nExpected promise<r>\nReceived: <red>{any}<r>\n";
+                                    var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                                    globalThis.throwPretty(fmt, .{value.toFmt(globalThis, &formatter)});
+                                } else {
+                                    const signature = comptime getFullSignature(matcher_name, matcher_args, .{ .not = false, .promise = .rejects });
+                                    const fmt = signature ++ "\n\nExpected promise<r>\nReceived: <red>{any}<r>\n";
+                                    var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                                    globalThis.throwPretty(fmt, .{value.toFmt(globalThis, &formatter)});
+                                }
                             }
-                            const signature = comptime getFullSignature(matcher_name, matcher_args, .{ .not = false, .promise = .rejects });
-                            const fmt = signature ++ "\n\nExpected promise<r>\nReceived: <red>{any}<r>\n";
-                            var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
-                            globalThis.throwPretty(fmt, .{value.toFmt(globalThis, &formatter)});
                             return null;
                         },
                         .none => unreachable,
@@ -216,6 +264,15 @@ pub const Expect = struct {
         }
 
         return value;
+    }
+
+    // called by c++ when matching with asymmetric matchers
+    fn processPromiseInterop(globalThis: *JSGlobalObject, flags: Expect.Flags.BitsetType, value: *JSValue) callconv(.C) bool {
+        if (processPromise(Expect.Flags.fromBitset(flags), globalThis, value.*, "", "", true)) |result| {
+            value.* = result;
+            return true;
+        }
+        return false;
     }
 
     pub fn getSnapshotName(this: *Expect, allocator: std.mem.Allocator, hint: string) ![]const u8 {
@@ -268,10 +325,13 @@ pub const Expect = struct {
     }
 
     pub fn call(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        const arguments = callframe.arguments(1);
-        const value = if (arguments.len < 1) JSC.JSValue.jsUndefined() else arguments.ptr[0];
+        const arguments = callframe.arguments(1).slice();
+        const value = if (arguments.len < 1) JSC.JSValue.jsUndefined() else arguments[0];
 
-        var expect = globalObject.bunVM().allocator.create(Expect) catch unreachable;
+        var expect = globalObject.bunVM().allocator.create(Expect) catch {
+            globalObject.throwOutOfMemory();
+            return .zero;
+        };
 
         if (Jest.runner.?.pending_test == null) {
             const err = globalObject.createErrorInstance("expect() must be called in a test", .{});
@@ -3634,9 +3694,17 @@ pub const Expect = struct {
     pub const toThrowErrorMatchingSnapshot = notImplementedJSCFn;
     pub const toThrowErrorMatchingInlineSnapshot = notImplementedJSCFn;
 
-    pub const getStaticNot = notImplementedStaticProp;
-    pub const getStaticResolves = notImplementedStaticProp;
-    pub const getStaticRejects = notImplementedStaticProp;
+    pub fn getStaticNot(globalObject: *JSGlobalObject, _: JSValue, _: JSValue) callconv(.C) JSValue {
+        return ExpectStatic.create(globalObject, .{ .not = true });
+    }
+
+    pub fn getStaticResolvedTo(globalObject: *JSGlobalObject, _: JSValue, _: JSValue) callconv(.C) JSValue {
+        return ExpectStatic.create(globalObject, .{ .promise = .resolves });
+    }
+
+    pub fn getStaticRejectedTo(globalObject: *JSGlobalObject, _: JSValue, _: JSValue) callconv(.C) JSValue {
+        return ExpectStatic.create(globalObject, .{ .promise = .rejects });
+    }
 
     pub fn any(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
         return ExpectAny.call(globalObject, callFrame);
@@ -3644,6 +3712,14 @@ pub const Expect = struct {
 
     pub fn anything(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
         return ExpectAnything.call(globalObject, callFrame);
+    }
+
+    pub fn closeTo(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        return ExpectCloseTo.call(globalObject, callFrame);
+    }
+
+    pub fn objectContaining(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        return ExpectObjectContaining.call(globalObject, callFrame);
     }
 
     pub fn stringContaining(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
@@ -3658,10 +3734,145 @@ pub const Expect = struct {
         return ExpectArrayContaining.call(globalObject, callFrame);
     }
 
-    pub const extend = notImplementedStaticFn;
+    /// Implements `expect.extend({ ... })`
+    pub fn extend(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        const thisValue = callFrame.this();
+        const args = callFrame.arguments(1).slice();
+
+        if (args.len == 0 or !args[0].isObject()) {
+            globalThis.throwPretty("<d>expect.<r>extend<d>(<r>matchers<d>)<r>\n\nExpected an object containing matchers\n", .{});
+            return .zero;
+        }
+
+        var matchers_registry: JSValue = getCustomMatchersRegistry(globalThis);
+
+        const matchers_to_register = args[0];
+        {
+            var iter = JSC.JSPropertyIterator(.{
+                .skip_empty_name = true,
+                .include_value = true,
+            }).init(globalThis, matchers_to_register.asObjectRef());
+            defer iter.deinit();
+
+            while (iter.next()) |matcher_name| {
+                const matcher_fn: JSValue = iter.value;
+
+                if (!matcher_fn.jsType().isFunction()) {
+                    var type_str: *JSC.JSString = matcher_fn.jsTypeString(globalThis);
+                    var type_name = bun.String.init(type_str.getZigString(globalThis));
+                    globalThis.throwInvalidArguments("expect.extend: `{s}` is not a valid matcher. Must be a function, is \"{s}\"", .{ matcher_name, type_name });
+                    return .zero;
+                }
+
+                matchers_registry.put(globalThis, &matcher_name, matcher_fn);
+            }
+        }
+
+        return thisValue;
+    }
+
+    /// Attempts to create a *symmetric* ExpectCustomMatcher instance for a custom matcher (one registered with `expect.extend({ ... })`).
+    /// Returns false if no custom matcher with that name exists.
+    fn maybeInstantiateCustomMatcher(
+        this: *Expect,
+        thisObject: *JSObject,
+        globalObject: *JSGlobalObject,
+        propertyName: *bun.String,
+        propertySlot: *JSC.PropertySlot,
+    ) bool {
+        const matchers_registry = getCustomMatchersRegistry(globalObject);
+        if (matchers_registry.getOwn(globalObject, propertyName.*)) |matcher_fn| {
+            const instance = globalObject.bunVM().allocator.create(ExpectCustomMatcher) catch {
+                globalObject.throwOutOfMemory();
+                return true;
+            };
+            instance.custom_matcher_name = propertyName.*;
+
+            // copy the Expect as a plain struct, to store the flags etc.
+            instance.expect = this.*;
+
+            const instance_jsvalue = instance.toJS(globalObject);
+            instance_jsvalue.ensureStillAlive();
+
+            // retrieve the received value from the expect(<value>) call
+            var received_value = Expect.capturedValueGetCachedJSObject(thisObject) orelse {
+                globalObject.throw("Internal consistency error: failed to retrieve the captured value", .{});
+                return false;
+            };
+            received_value.ensureStillAlive();
+            ExpectCustomMatcher.capturedValueSetCached(instance_jsvalue, globalObject, received_value);
+
+            // store the function
+            ExpectCustomMatcher.matcherFnSetCached(instance_jsvalue, globalObject, matcher_fn);
+
+            globalObject.bunVM().autoGarbageCollect();
+
+            propertySlot.setValueReadOnly(thisObject, instance_jsvalue);
+            return true;
+        }
+        return false;
+    }
+
+    /// Attempts to create an *asymmetric* ExpectCustomAsymmetricMatcher instance for a custom matcher (one registered with `expect.extend({ ... })`).
+    /// Returns false if no custom matcher with that name exists.
+    fn maybeInstantiateCustomAsymmetricMatcher(
+        thisObject: *JSObject,
+        globalObject: *JSGlobalObject,
+        propertyName: *bun.String,
+        propertySlot: *JSC.PropertySlot,
+        flags: Expect.Flags,
+    ) bool {
+        const matchers_registry = getCustomMatchersRegistry(globalObject);
+        if (matchers_registry.getOwn(globalObject, propertyName.*)) |matcher_fn| {
+            const instance = globalObject.bunVM().allocator.create(ExpectCustomAsymmetricMatcher) catch {
+                globalObject.throwOutOfMemory();
+                return true;
+            };
+            instance.custom_matcher_name = propertyName.*;
+            instance.flags = flags;
+
+            const instance_jsvalue = instance.toJS(globalObject);
+            instance_jsvalue.ensureStillAlive();
+            ExpectCustomAsymmetricMatcher.flagsSetCached(instance_jsvalue, globalObject, JSValue.jsNumberFromInt32(flags.toBitset()));
+            ExpectCustomAsymmetricMatcher.matcherFnSetCached(instance_jsvalue, globalObject, matcher_fn);
+
+            globalObject.bunVM().autoGarbageCollect();
+
+            propertySlot.setValueReadOnly(thisObject, instance_jsvalue);
+            return true;
+        }
+        return false;
+    }
+
+    /// This function gets called for any access to an expect instance (i.e. `expect(...).<whatever>`).
+    /// It attempts to dynamically resolve any custom matchers registered with `expect.extend({ ... })`,
+    /// and if found it will create a callable `ExpectCustomMatcher` instance for it.
+    /// Otherwise falls back to resolving the built-in matchers.
+    pub fn getOwnPropertySlot(
+        this: *Expect,
+        thisObject: *JSObject,
+        globalObject: *JSGlobalObject,
+        propertyName: *bun.String,
+        propertySlot: *JSC.PropertySlot,
+    ) callconv(.C) bool {
+        return maybeInstantiateCustomMatcher(this, thisObject, globalObject, propertyName, propertySlot);
+    }
+
+    /// This function gets called for any static accesses to expect (i.e. `expect.<whatever>`).
+    /// It attempts to dynamically resolve a custom matcher registered with `expect.extend({ ... })`,
+    /// and if found it will create a `ExpectCustomAsymmetricMatcher` matcher instance for it.
+    /// Otherwise falls back to resolving the built-in asymmetric matchers.
+    pub fn getOwnPropertySlotStatic(
+        thisObject: *JSObject,
+        globalObject: *JSGlobalObject,
+        propertyName: *bun.String,
+        propertySlot: *JSC.PropertySlot,
+    ) callconv(.C) bool {
+        return maybeInstantiateCustomAsymmetricMatcher(thisObject, globalObject, propertyName, propertySlot, .{});
+    }
+
     pub const assertions = notImplementedStaticFn;
     pub const hasAssertions = notImplementedStaticFn;
-    pub const objectContaining = notImplementedStaticFn;
     pub const addSnapshotSerializer = notImplementedStaticFn;
 
     pub fn notImplementedJSCFn(_: *Expect, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -3711,6 +3922,114 @@ pub const Expect = struct {
     }
 };
 
+/// Static instance of expect, holding a set of flags.
+/// Returned for example when executing `expect.not`
+pub const ExpectStatic = struct {
+    pub usingnamespace JSC.Codegen.JSExpectStatic;
+
+    flags: Expect.Flags = .{},
+
+    pub fn finalize(
+        this: *ExpectStatic,
+    ) callconv(.C) void {
+        VirtualMachine.get().allocator.destroy(this);
+    }
+
+    pub fn create(globalObject: *JSC.JSGlobalObject, flags: Expect.Flags) JSValue {
+        var expect = globalObject.bunVM().allocator.create(ExpectStatic) catch {
+            globalObject.throwOutOfMemory();
+            return .zero;
+        };
+        expect.flags = flags;
+
+        const value = expect.toJS(globalObject);
+        value.ensureStillAlive();
+        return value;
+    }
+
+    pub fn getNot(this: *ExpectStatic, _: JSValue, globalObject: *JSGlobalObject) callconv(.C) JSValue {
+        var flags = this.flags;
+        flags.not = !this.flags.not;
+        return create(globalObject, flags);
+    }
+
+    pub fn getResolvedTo(this: *ExpectStatic, _: JSValue, globalObject: *JSGlobalObject) callconv(.C) JSValue {
+        var flags = this.flags;
+        if (flags.promise != .none) return asyncChainingError(globalObject, flags, "resolvedTo");
+        flags.promise = .resolves;
+        return create(globalObject, flags);
+    }
+
+    pub fn getRejectedTo(this: *ExpectStatic, _: JSValue, globalObject: *JSGlobalObject) callconv(.C) JSValue {
+        var flags = this.flags;
+        if (flags.promise != .none) return asyncChainingError(globalObject, flags, "rejectedTo");
+        flags.promise = .rejects;
+        return create(globalObject, flags);
+    }
+
+    fn asyncChainingError(globalObject: *JSGlobalObject, flags: Expect.Flags, name: string) JSValue {
+        @setCold(true);
+        var str = switch (flags.promise) {
+            .resolves => "resolvedTo",
+            .rejects => "rejectedTo",
+            else => unreachable,
+        };
+        globalObject.throw("expect.{s}: already called expect.{s} on this chain", .{ name, str });
+        return .zero;
+    }
+
+    /// This function gets called for any access to an expect instance (i.e. `expect(...).<whatever>`).
+    /// It attempts to dynamically resolve any custom matchers registered with `expect.extend({ ... })`,
+    /// and if found it will create a callable `ExpectCustomMatcher` instance for it.
+    /// Otherwise falls back to resolving the built-in matchers.
+    pub fn getOwnPropertySlot(
+        this: *ExpectStatic,
+        thisObject: *JSObject,
+        globalObject: *JSGlobalObject,
+        propertyName: *bun.String,
+        propertySlot: *JSC.PropertySlot,
+    ) callconv(.C) bool {
+        return Expect.maybeInstantiateCustomAsymmetricMatcher(thisObject, globalObject, propertyName, propertySlot, this.flags);
+    }
+
+    fn creatAsymmetricMatcherWithFlags(T: anytype, this: *ExpectStatic, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) JSValue {
+        //const this: *ExpectStatic = ExpectStatic.fromJS(callFrame.this());
+        const instance_jsvalue = T.call(globalObject, callFrame);
+        if (!instance_jsvalue.isEmpty() and !instance_jsvalue.isAnyError()) {
+            T.flagsSetCached(instance_jsvalue, globalObject, JSValue.jsNumberFromInt32(this.flags.toBitset()));
+        }
+        return instance_jsvalue;
+    }
+
+    pub fn anything(this: *ExpectStatic, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        return creatAsymmetricMatcherWithFlags(ExpectAnything, this, globalObject, callFrame);
+    }
+
+    pub fn any(this: *ExpectStatic, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        return creatAsymmetricMatcherWithFlags(ExpectAny, this, globalObject, callFrame);
+    }
+
+    pub fn arrayContaining(this: *ExpectStatic, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        return creatAsymmetricMatcherWithFlags(ExpectArrayContaining, this, globalObject, callFrame);
+    }
+
+    pub fn closeTo(this: *ExpectStatic, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        return creatAsymmetricMatcherWithFlags(ExpectCloseTo, this, globalObject, callFrame);
+    }
+
+    pub fn objectContaining(this: *ExpectStatic, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        return creatAsymmetricMatcherWithFlags(ExpectObjectContaining, this, globalObject, callFrame);
+    }
+
+    pub fn stringContaining(this: *ExpectStatic, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        return creatAsymmetricMatcherWithFlags(ExpectStringContaining, this, globalObject, callFrame);
+    }
+
+    pub fn stringMatching(this: *ExpectStatic, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        return creatAsymmetricMatcherWithFlags(ExpectStringMatching, this, globalObject, callFrame);
+    }
+};
+
 pub const ExpectAnything = struct {
     pub usingnamespace JSC.Codegen.JSExpectAnything;
 
@@ -3721,7 +4040,6 @@ pub const ExpectAnything = struct {
     }
 
     pub fn call(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
-        const anything = globalObject.bunVM().allocator.create(ExpectAnything) catch unreachable;
         if (Jest.runner.?.pending_test == null) {
             const err = globalObject.createErrorInstance("expect.anything() must be called in a test", .{});
             err.put(globalObject, ZigString.static("name"), ZigString.init("TestNotRunningError").toValueGC(globalObject));
@@ -3729,6 +4047,10 @@ pub const ExpectAnything = struct {
             return .zero;
         }
 
+        const anything = globalObject.bunVM().allocator.create(ExpectAnything) catch {
+            globalObject.throwOutOfMemory();
+            return .zero;
+        };
         const anything_js_value = anything.toJS(globalObject);
         anything_js_value.ensureStillAlive();
 
@@ -3758,7 +4080,6 @@ pub const ExpectStringMatching = struct {
         }
 
         const test_value = args[0];
-        const string_matching = globalObject.bunVM().allocator.create(ExpectStringMatching) catch unreachable;
 
         if (Jest.runner.?.pending_test == null) {
             const err = globalObject.createErrorInstance("expect.stringContaining() must be called in a test", .{});
@@ -3767,12 +4088,108 @@ pub const ExpectStringMatching = struct {
             return .zero;
         }
 
+        const string_matching = globalObject.bunVM().allocator.create(ExpectStringMatching) catch {
+            globalObject.throwOutOfMemory();
+            return .zero;
+        };
         const string_matching_js_value = string_matching.toJS(globalObject);
         ExpectStringMatching.testValueSetCached(string_matching_js_value, globalObject, test_value);
 
         var vm = globalObject.bunVM();
         vm.autoGarbageCollect();
         return string_matching_js_value;
+    }
+};
+
+pub const ExpectCloseTo = struct {
+    pub usingnamespace JSC.Codegen.JSExpectCloseTo;
+
+    pub fn finalize(
+        this: *ExpectCloseTo,
+    ) callconv(.C) void {
+        VirtualMachine.get().allocator.destroy(this);
+    }
+
+    pub fn call(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        const args = callFrame.arguments(2).slice();
+
+        if (args.len == 0 or !args[0].isNumber()) {
+            globalObject.throwPretty("<d>expect.<r>closeTo<d>(<r>number<d>, precision?)<r>\n\nExpected a number value", .{});
+            return .zero;
+        }
+        const number_value = args[0];
+
+        var precision_value = if (args.len > 1) args[1] else JSValue.undefined;
+        if (precision_value.isUndefined()) {
+            precision_value = JSValue.jsNumberFromInt32(2); // default value from jest
+        }
+        if (!precision_value.isNumber()) {
+            globalObject.throwPretty("<d>expect.<r>closeTo<d>(number, <r>precision?<d>)<r>\n\nPrecision must be a number or undefined", .{});
+            return .zero;
+        }
+
+        if (Jest.runner.?.pending_test == null) {
+            const err = globalObject.createErrorInstance("expect.closeTo() must be called in a test", .{});
+            err.put(globalObject, ZigString.static("name"), ZigString.init("TestNotRunningError").toValueGC(globalObject));
+            globalObject.throwValue(err);
+            return .zero;
+        }
+
+        const instance = globalObject.bunVM().allocator.create(ExpectCloseTo) catch {
+            globalObject.throwOutOfMemory();
+            return .zero;
+        };
+
+        const instance_jsvalue = instance.toJS(globalObject);
+        number_value.ensureStillAlive();
+        precision_value.ensureStillAlive();
+        ExpectCloseTo.numberValueSetCached(instance_jsvalue, globalObject, number_value);
+        ExpectCloseTo.digitsValueSetCached(instance_jsvalue, globalObject, precision_value);
+
+        var vm = globalObject.bunVM();
+        vm.autoGarbageCollect();
+        return instance_jsvalue;
+    }
+};
+
+pub const ExpectObjectContaining = struct {
+    pub usingnamespace JSC.Codegen.JSExpectObjectContaining;
+
+    pub fn finalize(
+        this: *ExpectObjectContaining,
+    ) callconv(.C) void {
+        VirtualMachine.get().allocator.destroy(this);
+    }
+
+    pub fn call(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        const args = callFrame.arguments(1).slice();
+
+        if (args.len == 0 or !args[0].isObject()) {
+            const fmt = "<d>expect.<r>objectContaining<d>(<r>object<d>)<r>\n\nExpected an object\n";
+            globalObject.throwPretty(fmt, .{});
+            return .zero;
+        }
+
+        const object_value = args[0];
+
+        if (Jest.runner.?.pending_test == null) {
+            const err = globalObject.createErrorInstance("expect.objectContaining() must be called in a test", .{});
+            err.put(globalObject, ZigString.static("name"), ZigString.init("TestNotRunningError").toValueGC(globalObject));
+            globalObject.throwValue(err);
+            return .zero;
+        }
+
+        const instance = globalObject.bunVM().allocator.create(ExpectObjectContaining) catch {
+            globalObject.throwOutOfMemory();
+            return .zero;
+        };
+
+        const instance_jsvalue = instance.toJS(globalObject);
+        ExpectObjectContaining.objectValueSetCached(instance_jsvalue, globalObject, object_value);
+
+        var vm = globalObject.bunVM();
+        vm.autoGarbageCollect();
+        return instance_jsvalue;
     }
 };
 
@@ -3796,8 +4213,6 @@ pub const ExpectStringContaining = struct {
 
         const string_value = args[0];
 
-        const string_containing = globalObject.bunVM().allocator.create(ExpectStringContaining) catch unreachable;
-
         if (Jest.runner.?.pending_test == null) {
             const err = globalObject.createErrorInstance("expect.stringContaining() must be called in a test", .{});
             err.put(globalObject, ZigString.static("name"), ZigString.init("TestNotRunningError").toValueGC(globalObject));
@@ -3805,6 +4220,10 @@ pub const ExpectStringContaining = struct {
             return .zero;
         }
 
+        const string_containing = globalObject.bunVM().allocator.create(ExpectStringContaining) catch {
+            globalObject.throwOutOfMemory();
+            return .zero;
+        };
         const string_containing_js_value = string_containing.toJS(globalObject);
         ExpectStringContaining.stringValueSetCached(string_containing_js_value, globalObject, string_value);
 
@@ -3828,7 +4247,7 @@ pub const ExpectAny = struct {
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
         if (arguments.len == 0) {
-            globalObject.throw("any() expects to be passed a constructor function.", .{});
+            globalObject.throw("any() expects to be passed a constructor function. Please pass one or use anything() to match any object.", .{});
             return .zero;
         }
 
@@ -3840,8 +4259,6 @@ pub const ExpectAny = struct {
             return .zero;
         }
 
-        var any = globalObject.bunVM().allocator.create(ExpectAny) catch unreachable;
-
         if (Jest.runner.?.pending_test == null) {
             const err = globalObject.createErrorInstance("expect.any() must be called in a test", .{});
             err.put(globalObject, ZigString.static("name"), ZigString.init("TestNotRunningError").toValueGC(globalObject));
@@ -3849,6 +4266,10 @@ pub const ExpectAny = struct {
             return .zero;
         }
 
+        var any = globalObject.bunVM().allocator.create(ExpectAny) catch {
+            globalObject.throwOutOfMemory();
+            return .zero;
+        };
         any.* = .{};
         const any_js_value = any.toJS(globalObject);
         any_js_value.ensureStillAlive();
@@ -3881,7 +4302,6 @@ pub const ExpectArrayContaining = struct {
         }
 
         const array_value = args[0];
-        const array_containing = globalObject.bunVM().allocator.create(ExpectArrayContaining) catch unreachable;
 
         if (Jest.runner.?.pending_test == null) {
             const err = globalObject.createErrorInstance("expect.arrayContaining() must be called in a test", .{});
@@ -3890,12 +4310,515 @@ pub const ExpectArrayContaining = struct {
             return .zero;
         }
 
+        const array_containing = globalObject.bunVM().allocator.create(ExpectArrayContaining) catch {
+            globalObject.throwOutOfMemory();
+            return .zero;
+        };
         const array_containing_js_value = array_containing.toJS(globalObject);
         ExpectArrayContaining.arrayValueSetCached(array_containing_js_value, globalObject, array_value);
 
         var vm = globalObject.bunVM();
         vm.autoGarbageCollect();
         return array_containing_js_value;
+    }
+};
+
+/// An instantiated symmetric custom matcher, returned from calls to `expect(...).toCustomMatch(...)`
+pub const ExpectCustomMatcher = struct {
+    pub usingnamespace JSC.Codegen.JSExpectCustomMatcher;
+
+    custom_matcher_name: bun.String = bun.String.empty,
+
+    /// A plain struct copy of the Expect that created this instance
+    expect: Expect,
+
+    pub fn finalize(
+        this: *ExpectCustomMatcher,
+    ) callconv(.C) void {
+        VirtualMachine.get().allocator.destroy(this);
+    }
+
+    /// Execute the custom matcher for the given args (the left value + the args passed to the matcher call).
+    /// If silent=false, throws an exception in JS if the matcher result didn't result in a pass (or if the matcher result is invalid).
+    pub fn executeCustomMatcher(globalObject: *JSC.JSGlobalObject, matcher_name: string, matcher_fn: JSValue, args: []const JSValue, flags: Expect.Flags, silent: bool) bool {
+        // prepare the this object
+        const matcher_context = globalObject.bunVM().allocator.create(ExpectMatcherContext) catch {
+            globalObject.throwOutOfMemory();
+            return false;
+        };
+        matcher_context.flags = flags;
+        const matcher_context_jsvalue = matcher_context.toJS(globalObject);
+        matcher_context_jsvalue.ensureStillAlive();
+
+        // call the custom matcher implementation
+        var matcher_result = matcher_fn.callWithThis(globalObject, matcher_context_jsvalue, args);
+        if (matcher_result.isAnyError()) {
+            globalObject.bunVM().onUnhandledError(globalObject, matcher_result);
+            return false;
+        }
+
+        // parse and validate the matcher result (which should be: { pass: boolean, message: () => string })
+        if (!matcher_result.isObject()) {
+            const err = globalObject.createErrorInstance("expect.{s}(): matcher did not return an object", .{matcher_name});
+            err.put(globalObject, ZigString.static("name"), ZigString.init("InvalidMatcherError").toValueGC(globalObject));
+            globalObject.throwValue(err);
+            return false;
+        }
+
+        var pass = if (matcher_result.get(globalObject, "pass")) |val| val.toBoolean() else {
+            const err = globalObject.createErrorInstance("expect.{s}() did not return an object containing a \"pass\" property", .{matcher_name});
+            err.put(globalObject, ZigString.static("name"), ZigString.init("InvalidMatcherError").toValueGC(globalObject));
+            globalObject.throwValue(err);
+            return false;
+        };
+        if (flags.not) pass = !pass;
+        if (pass or silent) return pass;
+        // handle failure
+        const message_fn = matcher_result.get(globalObject, "message") orelse JSValue.undefined;
+        if (message_fn.isCallable(globalObject.vm())) {
+            var message_result = message_fn.callWithGlobalThis(globalObject, &[_]JSValue{});
+            if (message_result.isAnyError()) {
+                globalObject.bunVM().onUnhandledError(globalObject, message_result);
+                return false;
+            }
+            if (message_result.asAnyPromise()) |promise| {
+                var vm = globalObject.vm();
+                promise.setHandled(vm);
+
+                const now = std.time.Instant.now() catch unreachable;
+                const pending_test = Jest.runner.?.pending_test.?;
+                const elapsed = @divFloor(now.since(pending_test.started_at), std.time.ns_per_ms);
+                const remaining = @as(u32, @truncate(Jest.runner.?.last_test_timeout_timer_duration -| elapsed));
+
+                if (!globalObject.bunVM().waitForPromiseWithTimeout(promise, remaining)) {
+                    pending_test.timeout();
+                    globalObject.throw("Timed out while awaiting the promise of the message returned by matcher \"{s}\"", .{matcher_name});
+                    return false;
+                }
+
+                message_result = promise.result(vm);
+                message_result.ensureStillAlive();
+            }
+            if (message_result.isAnyError()) {
+                globalObject.throwValue(message_result);
+                return false;
+            }
+
+            const message = bun.String.init(message_result.toString(globalObject).getZigString(globalObject));
+            const fmt = comptime Expect.getSignature("{s}", "<green>expected<r>", false) ++ "\n\n{s}\n";
+            globalObject.throwPretty(Output.prettyFmt(fmt, true), .{ matcher_name, message });
+            return false;
+        } else {
+            const err = globalObject.createErrorInstance("expect.{s}() did not return an object containing a \"message\" method", .{matcher_name});
+            err.put(globalObject, ZigString.static("name"), ZigString.init("InvalidMatcherError").toValueGC(globalObject));
+            globalObject.throwValue(err);
+            return false;
+        }
+    }
+
+    pub fn apply(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        defer globalObject.bunVM().autoGarbageCollect();
+
+        const thisValue = callFrame.callee();
+        const this: *ExpectCustomMatcher = ExpectCustomMatcher.fromJS(thisValue) orelse {
+            globalObject.throw("Internal consistency error: target of a custom matcher call is not an ExpectCustomMatcher instance! (type: {any})", .{thisValue.jsType()});
+            return .zero;
+        };
+
+        // retrieve the matcher name
+        if (this.custom_matcher_name.length() == 0) {
+            globalObject.throw("Internal consistency error: the ExpectCustomMatcher(matcherName) is not a string!", .{});
+            return .zero;
+        }
+        const matcher_name_slice = this.custom_matcher_name.toSlice(globalObject.allocator());
+        defer matcher_name_slice.deinit();
+        const matcher_name = matcher_name_slice.slice();
+
+        if (this.expect.scope.tests.items.len <= this.expect.test_id) {
+            globalObject.throw("expect.{s}() must be called in a test", .{matcher_name});
+            return .zero;
+        }
+
+        // retrieve the matcher implementation function (the function passed to expect.extend({ ... }))
+        const matcher_fn: JSValue = ExpectCustomMatcher.matcherFnGetCached(thisValue) orelse {
+            globalObject.throw("Internal consistency error: the ExpectCustomMatcher(matcherFn) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        matcher_fn.ensureStillAlive();
+        if (!matcher_fn.jsType().isFunction()) {
+            globalObject.throw("Internal consistency error: the ExpectCustomMatcher(matcherName) is not a function!", .{});
+            return .zero;
+        }
+
+        // retrieve the captured left value:
+        //  - if null, it was obtained in a static way (expect.myMatcher)
+        //  - if non-null, it is the value passed to expect(<value>).myMatcher...
+        //
+        var value = ExpectCustomMatcher.capturedValueGetCached(thisValue) orelse {
+            globalObject.throw("Internal consistency error: the ExpectCustomMatcher(capturedValue) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value = Expect.processPromise(this.expect.flags, globalObject, value, "[[custom matcher]]", "<green>expected<r>", false) orelse return .zero;
+        value.ensureStillAlive();
+
+        active_test_expectation_counter.actual += 1;
+
+        // prepare the args array
+        const args_ptr = callFrame.argumentsPtr();
+        const args_count = callFrame.argumentsCount();
+        var allocator = std.heap.stackFallback(8 * @sizeOf(JSValue), globalObject.allocator());
+        var matcher_args = std.ArrayList(JSValue).initCapacity(allocator.get(), args_count + 1) catch {
+            globalObject.throwOutOfMemory();
+            return .zero;
+        };
+        matcher_args.appendAssumeCapacity(value);
+        for (0..args_count) |i| {
+            matcher_args.appendAssumeCapacity(args_ptr[i]);
+        }
+
+        _ = executeCustomMatcher(globalObject, matcher_name, matcher_fn, matcher_args.items, this.expect.flags, false);
+        return thisValue;
+    }
+};
+
+/// An instantiated asymmetric custom matcher, returned from calls to `expect.toCustomMatch(...)`
+///
+/// Reference: `AsymmetricMatcher` in https://github.com/jestjs/jest/blob/main/packages/expect/src/types.ts
+/// (but only created for *custom* matchers, as built-ins have their own classes)
+pub const ExpectCustomAsymmetricMatcher = struct {
+    pub usingnamespace JSC.Codegen.JSExpectCustomAsymmetricMatcher;
+
+    flags: Expect.Flags = .{},
+
+    custom_matcher_name: bun.String = bun.String.empty,
+
+    pub fn finalize(
+        this: *ExpectCustomAsymmetricMatcher,
+    ) callconv(.C) void {
+        VirtualMachine.get().allocator.destroy(this);
+    }
+
+    /// Implements the static call of the custom matcher (`expect.myCustomMatcher(<args>)`),
+    /// which creates an asymmetric matcher instance (`ExpectCustomAsymmetricMatcher`).
+    /// This will not run the matcher, but just capture the args.
+    pub fn apply(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        defer globalObject.bunVM().autoGarbageCollect();
+
+        // resolve the ExpectCustomAsymmetricMatcher instance
+        const thisValue = callFrame.callee();
+        const this: *ExpectCustomAsymmetricMatcher = ExpectCustomAsymmetricMatcher.fromJS(thisValue) orelse {
+            globalObject.throw("Internal consistency error: target of a custom matcher call is not an ExpectCustomAsymmetricMatcher instance! (type: {any})", .{thisValue.jsType()});
+            return .zero;
+        };
+        _ = this;
+
+        // capture the args as a JS array saved in the instance, so the matcher can be executed later on with them
+        const args_ptr = callFrame.argumentsPtr();
+        const args_count: usize = callFrame.argumentsCount();
+        var args = JSValue.createEmptyArray(globalObject, args_count);
+        for (0..args_count) |i| {
+            args.putIndex(globalObject, @truncate(i), args_ptr[i]);
+        }
+        args.ensureStillAlive();
+        ExpectCustomAsymmetricMatcher.capturedArgsSetCached(thisValue, globalObject, args);
+
+        // return the same instance, now fully initialized including the captured args (previously it was incomplete)
+        return thisValue;
+    }
+
+    /// Function called by c++ function "matchAsymmetricMatcher" to execute the custom matcher against the provided leftValue
+    pub fn execute(this: *ExpectCustomAsymmetricMatcher, thisValue: JSValue, globalObject: *JSC.JSGlobalObject, received: JSValue) callconv(.C) bool {
+        // retrieve the matcher name
+        if (this.custom_matcher_name.length() == 0) {
+            globalObject.throw("Internal consistency error: the ExpectCustomAsymmetricMatcher(matcherName) is not a string!", .{});
+            return false;
+        }
+        const matcher_name_slice = this.custom_matcher_name.toSlice(globalObject.allocator());
+        defer matcher_name_slice.deinit();
+        const matcher_name = matcher_name_slice.slice();
+
+        // retrieve the user-provided matcher implementation function (the function passed to expect.extend({ ... }))
+        const matcher_fn: JSValue = ExpectCustomAsymmetricMatcher.matcherFnGetCached(thisValue) orelse {
+            globalObject.throw("Internal consistency error: the ExpectCustomAsymmetricMatcher(matcherFn) was garbage collected but it should not have been!", .{});
+            return false;
+        };
+        matcher_fn.ensureStillAlive();
+        if (!matcher_fn.jsType().isFunction()) {
+            globalObject.throw("Internal consistency error: the ExpectCustomMatcher(matcherFn) is not a function!", .{});
+            return false;
+        }
+
+        // retrieve the asymmetric matcher args
+        // if null, it means the function has not yet been called to capture the args, which is a misuse of the matcher
+        const captured_args: JSValue = ExpectCustomAsymmetricMatcher.capturedArgsGetCached(thisValue) orelse {
+            globalObject.throw("expect.{s} misused, it needs to be instantiated by calling it with 0 or more arguments", .{matcher_name});
+            return false;
+        };
+        captured_args.ensureStillAlive();
+
+        // prepare the args array as `[received, ...captured_args]`
+        const args_count = captured_args.getLength(globalObject);
+        var allocator = std.heap.stackFallback(8 * @sizeOf(JSValue), globalObject.allocator());
+        var matcher_args = std.ArrayList(JSValue).initCapacity(allocator.get(), args_count + 1) catch {
+            globalObject.throwOutOfMemory();
+            return false;
+        };
+        matcher_args.appendAssumeCapacity(received);
+        for (0..args_count) |i| {
+            matcher_args.appendAssumeCapacity(captured_args.getIndex(globalObject, @truncate(i)));
+        }
+
+        return ExpectCustomMatcher.executeCustomMatcher(globalObject, matcher_name, matcher_fn, matcher_args.items, this.flags, true);
+    }
+
+    pub fn asymmetricMatch(this: *ExpectCustomAsymmetricMatcher, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const arguments = callframe.arguments(1).slice();
+        const received_value = if (arguments.len < 1) JSC.JSValue.jsUndefined() else arguments[0];
+        const matched = execute(this, callframe.this(), globalObject, received_value);
+        return JSValue.jsBoolean(matched);
+    }
+
+    /// Calls a custom implementation (if provided) to stringify this asymmetric matcher, and returns true if it was provided and it succeed
+    pub fn customPrint(_: *ExpectCustomAsymmetricMatcher, thisValue: JSValue, globalObject: *JSC.JSGlobalObject, writer: anytype, comptime dontThrow: bool) !bool {
+        const matcher_fn: JSValue = ExpectCustomAsymmetricMatcher.matcherFnGetCached(thisValue) orelse return false;
+        if (matcher_fn.get(globalObject, "toAsymmetricMatcher")) |fn_value| {
+            if (fn_value.jsType().isFunction()) {
+                const captured_args: JSValue = ExpectCustomAsymmetricMatcher.capturedArgsGetCached(thisValue) orelse return false;
+                var stack_fallback = std.heap.stackFallback(256, globalObject.allocator());
+                var args_len = captured_args.getLength(globalObject);
+                var args = try std.ArrayList(JSValue).initCapacity(stack_fallback.get(), args_len);
+                var iter = captured_args.arrayIterator(globalObject);
+                while (iter.next()) |arg| {
+                    args.appendAssumeCapacity(arg);
+                }
+
+                var result = matcher_fn.callWithThis(globalObject, thisValue, args.items);
+                if (result.isAnyError()) {
+                    if (dontThrow) {
+                        return false;
+                    } else {
+                        globalObject.throwValue(globalObject, result);
+                        return error.JSError;
+                    }
+                }
+                try writer.print("{}", .{result.toBunString(globalObject)});
+            }
+        }
+        return false;
+    }
+
+    pub fn toAsymmetricMatcher(this: *ExpectCustomAsymmetricMatcher, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        var stack_fallback = std.heap.stackFallback(512, globalObject.allocator());
+        var mutable_string = bun.MutableString.init2048(stack_fallback.get()) catch {
+            globalObject.throwOutOfMemory();
+            return .zero;
+        };
+        defer mutable_string.deinit();
+
+        var printed = customPrint(this, callframe.this(), globalObject, mutable_string.writer()) catch {
+            globalObject.throwOutOfMemory();
+            return .zero;
+        };
+        if (printed) {
+            return bun.String.init(mutable_string.toOwnedSliceLeaky()).toJSConst();
+        }
+        return ExpectMatcherUtils.printValue(globalObject, this, null);
+    }
+};
+
+/// Reference: `MatcherContext` in https://github.com/jestjs/jest/blob/main/packages/expect/src/types.ts
+pub const ExpectMatcherContext = struct {
+    pub usingnamespace JSC.Codegen.JSExpectMatcherContext;
+
+    flags: Expect.Flags = .{},
+
+    pub fn finalize(
+        this: *ExpectMatcherContext,
+    ) callconv(.C) void {
+        VirtualMachine.get().allocator.destroy(this);
+    }
+
+    pub fn getUtils(_: *ExpectMatcherContext, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        return ExpectMatcherUtils__getSingleton(globalObject);
+    }
+
+    pub fn getIsNot(this: *ExpectMatcherContext, _: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        return JSValue.jsBoolean(this.flags.not);
+    }
+
+    pub fn getPromise(this: *ExpectMatcherContext, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        return switch (this.flags.promise) {
+            .rejects => bun.String.static("rejects").toJSConst(globalObject),
+            .resolves => bun.String.static("resolves").toJSConst(globalObject),
+            else => bun.String.empty.toJSConst(globalObject),
+        };
+    }
+
+    pub fn getExpand(_: *ExpectMatcherContext, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        _ = globalObject;
+        // TODO: this should return whether running tests in verbose mode or not (jest flag --expand), but bun currently doesn't have this switch
+        return JSValue.false;
+    }
+
+    pub fn equals(_: *ExpectMatcherContext, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        var arguments = callframe.arguments(3);
+        if (arguments.len < 2) {
+            globalObject.throw("expect.extends matcher: this.util.equals expects at least 2 arguments", .{});
+            return .zero;
+        }
+        const args = arguments.slice();
+        return JSValue.jsBoolean(args[0].deepEquals(args[1], globalObject));
+    }
+};
+
+/// Reference: `MatcherUtils` in https://github.com/jestjs/jest/blob/main/packages/expect/src/types.ts
+pub const ExpectMatcherUtils = struct {
+    pub usingnamespace JSC.Codegen.JSExpectMatcherUtils;
+
+    fn createSingleton(globalObject: *JSC.JSGlobalObject) callconv(.C) JSValue {
+        var instance = globalObject.bunVM().allocator.create(ExpectMatcherUtils) catch {
+            globalObject.throwOutOfMemory();
+            return .zero;
+        };
+        return instance.toJS(globalObject);
+    }
+
+    pub fn finalize(
+        this: *ExpectMatcherUtils,
+    ) callconv(.C) void {
+        VirtualMachine.get().allocator.destroy(this);
+    }
+
+    fn printValue(globalObject: *JSC.JSGlobalObject, value: JSValue, comptime color_or_null: ?[]const u8) !JSValue {
+        var stack_fallback = std.heap.stackFallback(512, globalObject.allocator());
+        var mutable_string = try bun.MutableString.init2048(stack_fallback.get());
+        defer mutable_string.deinit();
+
+        var buffered_writer = bun.MutableString.BufferedWriter{ .context = &mutable_string };
+        var writer = buffered_writer.writer();
+
+        if (comptime color_or_null) |color| {
+            if (Output.enable_ansi_colors) {
+                try writer.writeAll(Output.prettyFmt(color, true));
+            }
+        }
+
+        JSC.ZigConsoleClient.format(
+            .Debug,
+            globalObject,
+            @as([*]const JSValue, @ptrCast(&value)),
+            1,
+            @TypeOf(writer),
+            @TypeOf(writer),
+            writer,
+            JSC.ZigConsoleClient.FormatOptions{
+                .enable_colors = false,
+                .add_newline = false,
+                .flush = false,
+                .ordered_properties = true,
+                .quote_strings = true,
+            },
+        );
+
+        if (comptime color_or_null) |_| {
+            if (Output.enable_ansi_colors) {
+                try writer.writeAll(Output.prettyFmt("<r>", true));
+            }
+        }
+
+        try buffered_writer.flush();
+
+        return bun.String.create(mutable_string.toOwnedSlice()).toJSConst(globalObject);
+    }
+
+    inline fn printValueCatched(globalObject: *JSC.JSGlobalObject, value: JSValue, comptime color_or_null: ?[]const u8) JSValue {
+        return printValue(globalObject, value, color_or_null) catch {
+            globalObject.throwOutOfMemory();
+            return .zero;
+        };
+    }
+
+    pub fn stringify(_: *ExpectMatcherUtils, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        const arguments = callframe.arguments(1).slice();
+        const value = if (arguments.len < 1) JSC.JSValue.jsUndefined() else arguments[0];
+        return printValueCatched(globalObject, value, null);
+    }
+
+    pub fn printExpected(_: *ExpectMatcherUtils, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        const arguments = callframe.arguments(1).slice();
+        const value = if (arguments.len < 1) JSC.JSValue.jsUndefined() else arguments[0];
+        return printValueCatched(globalObject, value, "<green>");
+    }
+
+    pub fn printReceived(_: *ExpectMatcherUtils, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        const arguments = callframe.arguments(1).slice();
+        const value = if (arguments.len < 1) JSC.JSValue.jsUndefined() else arguments[0];
+        return printValueCatched(globalObject, value, "<red>");
+    }
+
+    pub fn matcherHint(_: *ExpectMatcherUtils, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        const arguments = callframe.arguments(4).slice();
+
+        if (arguments.len == 0 or !arguments[0].isString()) {
+            globalObject.throw("matcherHint: the first argument (matcher name) must be a string", .{});
+            return .zero;
+        }
+        var matcher_name = bun.String.init(arguments[0].toString(globalObject).getZigString(globalObject));
+
+        const received = if (arguments.len > 1) arguments[1] else bun.String.static("received").toJSConst(globalObject);
+        const expected = if (arguments.len > 2) arguments[2] else bun.String.static("expected").toJSConst(globalObject);
+        const options = if (arguments.len > 3) arguments[3] else JSValue.jsUndefined();
+
+        var is_not = false;
+        var comment: ?*JSC.JSString = null; // TODO support
+        var promise: ?*JSC.JSString = null; // TODO support
+        var second_argument: ?*JSC.JSString = null; // TODO support
+        // TODO support "chalk" colors (they are actually functions like: (value: string) => string;)
+        //var second_argument_color: ?string = null;
+        //var expected_color: ?string = null;
+        //var received_color: ?string = null;
+
+        if (!options.isUndefinedOrNull()) {
+            if (!options.isObject()) {
+                globalObject.throw("matcherHint: options must be an object (or undefined)", .{});
+                return .zero;
+            }
+            if (options.get(globalObject, "isNot")) |val| {
+                is_not = val.toBoolean();
+            }
+            if (options.get(globalObject, "comment")) |val| {
+                comment = val.toStringOrNull(globalObject);
+            }
+            if (options.get(globalObject, "promise")) |val| {
+                promise = val.toStringOrNull(globalObject);
+            }
+            if (options.get(globalObject, "secondArgument")) |val| {
+                second_argument = val.toStringOrNull(globalObject);
+            }
+        }
+
+        const diff_formatter = DiffFormatter{
+            .received = received,
+            .expected = expected,
+            .globalObject = globalObject,
+            .not = is_not,
+        };
+
+        if (is_not) {
+            const signature = comptime Expect.getSignature("{s}", "<green>expected<r>", true);
+            const fmt = signature ++ "\n\n{any}\n";
+            return JSValue.printStringPretty(globalObject, 2048, fmt, .{ matcher_name, diff_formatter }) catch {
+                globalObject.throwOutOfMemory();
+                return .zero;
+            };
+        } else {
+            const signature = comptime Expect.getSignature("{s}", "<green>expected<r>", false);
+            const fmt = signature ++ "\n\n{any}\n";
+            return JSValue.printStringPretty(globalObject, 2048, fmt, .{ matcher_name, diff_formatter }) catch {
+                globalObject.throwOutOfMemory();
+                return .zero;
+            };
+        }
     }
 };
 
@@ -3906,3 +4829,12 @@ extern fn JSMockFunction__getCalls(JSValue) JSValue;
 /// JSValue.zero is used to indicate it was not a JSMockFunction
 /// If there were no calls, it returns an empty JSArray*
 extern fn JSMockFunction__getReturns(JSValue) JSValue;
+
+extern fn Expect_getCustomMatchersRegistry(globalObject: *JSC.JSGlobalObject) JSC.JSValue;
+extern fn ExpectMatcherUtils__getSingleton(globalObject: *JSC.JSGlobalObject) JSC.JSValue;
+
+comptime {
+    @export(ExpectMatcherUtils.createSingleton, .{ .name = "ExpectMatcherUtils_createSigleton" });
+    @export(Expect.processPromiseInterop, .{ .name = "Expect_processPromiseInterop" });
+    @export(ExpectCustomAsymmetricMatcher.execute, .{ .name = "ExpectCustomAsymmetricMatcher__execute" });
+}

@@ -3542,6 +3542,18 @@ pub const JSValue = enum(JSValueReprInt) {
         return this.jsType();
     }
 
+    extern fn JSC__jsTypeStringForValue(globalObject: *JSGlobalObject, value: JSValue) *JSC.JSString;
+
+    pub fn jsTypeString(this: JSValue, globalObject: *JSGlobalObject) *JSC.JSString {
+        return JSC__jsTypeStringForValue(globalObject, this);
+    }
+
+    extern fn JSC__JSValue__constructEmptyObject(globalObject: *JSGlobalObject, prototype: [*c]JSC.JSObject, len: usize) JSValue;
+
+    pub fn constructEmptyObject(global: *JSGlobalObject, prototype: ?*JSC.JSObject, len: usize) JSValue {
+        return JSC__JSValue__constructEmptyObject(global, prototype, len);
+    }
+
     pub fn createEmptyObject(global: *JSGlobalObject, len: usize) JSValue {
         return cppFn("createEmptyObject", .{ global, len });
     }
@@ -3872,6 +3884,32 @@ pub const JSValue = enum(JSValueReprInt) {
             strings_count,
             clone,
         });
+    }
+
+    /// Create a JSValue string from a zig format-print (fmt + args)
+    pub fn printString(globalThis: *JSGlobalObject, comptime stack_buffer_size: usize, comptime fmt: []const u8, args: anytype) !JSValue {
+        var stack_fallback = std.heap.stackFallback(stack_buffer_size, globalThis.allocator());
+
+        var buf = try bun.MutableString.init(stack_fallback.get(), stack_buffer_size);
+        defer buf.deinit();
+
+        var writer = buf.writer();
+        try writer.print(fmt, args);
+        return String.init(buf.toOwnedSliceLeaky()).toJSConst(globalThis);
+    }
+
+    /// Create a JSValue string from a zig format-print (fmt + args), with pretty format
+    pub fn printStringPretty(globalThis: *JSGlobalObject, comptime stack_buffer_size: usize, comptime fmt: []const u8, args: anytype) !JSValue {
+        var stack_fallback = std.heap.stackFallback(stack_buffer_size, globalThis.allocator());
+
+        var buf = try bun.MutableString.init(stack_fallback.get(), stack_buffer_size);
+        defer buf.deinit();
+
+        var writer = buf.writer();
+        switch (Output.enable_ansi_colors) {
+            inline else => |enabled| try writer.print(Output.prettyFmt(fmt, enabled), args),
+        }
+        return String.init(buf.toOwnedSliceLeaky()).toJSConst(globalThis);
     }
 
     pub fn fromEntries(globalThis: *JSGlobalObject, keys: [*c]ZigString, values: [*c]ZigString, strings_count: usize, clone: bool) JSValue {
@@ -4353,6 +4391,23 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn get(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
         const value = getIfPropertyExistsImpl(this, global, property.ptr, @as(u32, @intCast(property.len)));
+        return if (@intFromEnum(value) != 0) value else return null;
+    }
+
+    extern fn JSC__JSValue__getIfPropertyExistsImplString(value: JSValue, globalObject: *JSGlobalObject, propertyName: [*c]const bun.String) JSValue;
+
+    pub fn getWithString(this: JSValue, global: *JSGlobalObject, property_name: anytype) ?JSValue {
+        var property_name_str = bun.String.init(property_name);
+        const value = JSC__JSValue__getIfPropertyExistsImplString(this, global, &property_name_str);
+        return if (@intFromEnum(value) != 0) value else return null;
+    }
+
+    extern fn JSC__JSValue__getOwn(value: JSValue, globalObject: *JSGlobalObject, propertyName: [*c]const bun.String) JSValue;
+
+    /// Get *own* property value (i.e. does not resolve property in the prototype chain)
+    pub fn getOwn(this: JSValue, global: *JSGlobalObject, property_name: anytype) ?JSValue {
+        var property_name_str = bun.String.init(property_name);
+        const value = JSC__JSValue__getOwn(this, global, &property_name_str);
         return if (@intFromEnum(value) != 0) value else return null;
     }
 
@@ -5871,4 +5926,31 @@ pub const ScriptExecutionStatus = enum(i32) {
     running = 0,
     suspended = 1,
     stopped = 2,
+};
+
+pub const PropertyAttributes = c_uint;
+
+// ECMA 262-3 8.6.1
+// Property attributes
+pub const PropertyAttribute = struct {
+    pub const ReadOnly: PropertyAttributes = 1 << 1; // property can be only read, not written
+    pub const DontEnum: PropertyAttributes = 1 << 2; // property doesn't appear in (for .. in ..)
+    pub const DontDelete: PropertyAttributes = 1 << 3; // property can't be deleted
+    pub const Accessor: PropertyAttributes = 1 << 4; // property is a getter/setter
+    pub const CustomAccessor: PropertyAttributes = 1 << 5;
+    pub const CustomValue: PropertyAttributes = 1 << 6;
+};
+
+pub const PropertySlot = opaque {
+    extern fn JSC__PropertySlot__setValue(this: *PropertySlot, thisObject: *JSObject, attributes: PropertyAttributes, value: JSValue) void;
+
+    pub fn setValue(this: *PropertySlot, thisObject: *JSObject, attributes: PropertyAttributes, value: JSValue) void {
+        JSC.markBinding(@src());
+        return JSC__PropertySlot__setValue(this, thisObject, attributes, value);
+    }
+
+    pub fn setValueReadOnly(this: *PropertySlot, thisObject: *JSObject, value: JSValue) void {
+        JSC.markBinding(@src());
+        return JSC__PropertySlot__setValue(this, thisObject, PropertyAttribute.ReadOnly | PropertyAttribute.DontEnum, value);
+    }
 };

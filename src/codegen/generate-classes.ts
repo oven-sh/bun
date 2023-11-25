@@ -271,7 +271,14 @@ function propRow(
   throw "Unsupported property";
 }
 
-export function generateHashTable(nameToUse, symbolName, typeName, obj, props = {}, wrapped) {
+export function generateHashTable(
+  nameToUse: string,
+  symbolName: string,
+  typeName: string,
+  obj: ClassDefinition,
+  props = {},
+  wrapped,
+) {
   const rows = [];
   let defaultPropertyAttributes = undefined;
 
@@ -310,7 +317,48 @@ export function generateHashTable(nameToUse, symbolName, typeName, obj, props = 
 `;
 }
 
-function generatePrototype(typeName, obj) {
+/**
+ * Generates a callback to intercept accesses to properties and resolve them dynamically.
+ */
+function generateGetOwnPropertySlotImpl(typeName: string, obj: ClassDefinition, forConstructor?: boolean) {
+  // current limitations:
+  //  - no support for symbols as property keys
+
+  const name = forConstructor ? constructorName(typeName) : className(typeName);
+  const mode = forConstructor ? obj.getOwnPropertySlotStatic : obj.getOwnPropertySlot;
+  const zigFunctionName = symbolName(typeName, forConstructor ? `getOwnPropertySlotStatic` : `getOwnPropertySlot`);
+
+  return `
+    extern "C" bool ${zigFunctionName}(${
+    forConstructor ? "" : `void* thisInstance, `
+  }JSC::JSObject* thisObject, JSC::JSGlobalObject* globalObject, BunString* propertyName, JSC::PropertySlot* propertySlot);
+
+    bool ${name}::getOwnPropertySlot(JSC::JSObject* thisObject, JSC::JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& propertySlot)
+    {
+      bool resolved = ${
+        mode === "last" ? `JSObject::getOwnPropertySlot(thisObject, globalObject, propertyName, propertySlot)` : "false"
+      };
+      if (!resolved) {
+        WTF::StringImpl* propertyNameWtfStr = propertyName.publicName();
+        if (propertyNameWtfStr != nullptr) {
+          BunString propertyNameBunStr = Bun::toString(propertyNameWtfStr);
+          auto* instance = jsCast<${name}*>(thisObject);
+          resolved = ${zigFunctionName}(${
+    forConstructor ? "" : "instance->wrapped(), "
+  }instance, globalObject, &propertyNameBunStr, &propertySlot);
+        }
+      }
+      ${
+        mode === "first"
+          ? `resolved = resolved || JSObject::getOwnPropertySlot(thisObject, globalObject, propertyName, propertySlot)`
+          : ""
+      };
+      return resolved;
+    }
+  `;
+}
+
+function generatePrototype(typeName: string, obj: ClassDefinition) {
   const proto = prototypeName(typeName);
   const { proto: protoFields } = obj;
   var specialSymbols = "";
@@ -454,8 +502,14 @@ function generatePrototypeHeader(typename) {
     };`;
 }
 
-function generateConstructorHeader(typeName) {
+function generateConstructorHeader(typeName: string, obj: ClassDefinition) {
   const name = constructorName(typeName);
+
+  const extraStructureFlags = [];
+  if (obj.getOwnPropertySlotStatic) {
+    extraStructureFlags.push("OverridesGetOwnPropertySlot");
+  }
+  const extraStructureFlagsStr = extraStructureFlags.map(it => ` | ${it}`).join("");
 
   return `
   class ${name} final : public JSC::InternalFunction {
@@ -470,7 +524,7 @@ function generateConstructorHeader(typeName) {
 
         static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
         {
-            return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+            return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags${extraStructureFlagsStr}), info());
         }
 
         template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -494,6 +548,12 @@ function generateConstructorHeader(typeName) {
           typeName,
         )}* prototype);
 
+        ${
+          !obj.getOwnPropertySlotStatic
+            ? ""
+            : `static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);`
+        }
+    
         // Must be defined for each specialization class.
         static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
 
@@ -583,6 +643,8 @@ void ${name}::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, ${
 {
 
 }
+
+${obj.getOwnPropertySlotStatic ? generateGetOwnPropertySlotImpl(typeName, obj, true) : ""}
 
 const ClassInfo ${name}::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(${name}) };
 
@@ -840,7 +902,13 @@ function renderStaticDecls(symbolName, typeName, fields, supportsObjectCreate = 
 
   return rows.join("\n");
 }
-function writeBarrier(symbolName, typeName, name, cacheName) {
+function writeBarrier(
+  symbolName: string,
+  typeName: string,
+  name: string,
+  cacheName: string,
+  createAccessorsFromJsObject,
+) {
   return `
 
   extern "C" void ${symbolName(
@@ -858,6 +926,29 @@ function writeBarrier(symbolName, typeName, name, cacheName) {
     auto* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(thisValue));
     return JSValue::encode(thisObject->${cacheName}.get());
   }
+
+    ${
+      !createAccessorsFromJsObject
+        ? ""
+        : `
+
+  extern "C" void ${symbolName(
+    typeName,
+    name,
+  )}SetCachedValueJSObject(JSC::JSObject *thisJsObject, JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value)
+  {
+      auto& vm = globalObject->vm();
+      auto* thisObject = jsCast<${className(typeName)}*>(thisJsObject);
+      thisObject->${cacheName}.set(vm, thisObject, JSValue::decode(value));
+  }
+  
+  extern "C" EncodedJSValue ${symbolName(typeName, name)}GetCachedValueJSObject(JSC::JSObject *thisJsObject)
+  {
+    auto* thisObject = jsCast<${className(typeName)}*>(thisJsObject);
+    return JSValue::encode(thisObject->${cacheName}.get());
+  }
+  `
+    }
 
   `;
 }
@@ -1080,7 +1171,7 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(
 
   if (cachedValues?.length) {
     for (const cacheName of cachedValues) {
-      rows.push(writeBarrier(symbolName, typeName, cacheName, "m_" + cacheName));
+      rows.push(writeBarrier(symbolName, typeName, cacheName, "m_" + cacheName, obj.valuesAccessorsFromJsObject));
     }
   }
 
@@ -1101,6 +1192,15 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
       ? "DECLARE_VISIT_CHILDREN;\ntemplate<typename Visitor> void visitAdditionalChildren(Visitor&);\nDECLARE_VISIT_OUTPUT_CONSTRAINTS;\n"
       : "";
   const sizeEstimator = obj.estimatedSize ? "static size_t estimatedSize(JSCell* cell, VM& vm);" : "";
+
+  const extraStructureFlags = [];
+  if (obj.apply) {
+    extraStructureFlags.push("OverridesGetCallData");
+  }
+  if (obj.getOwnPropertySlot) {
+    extraStructureFlags.push("OverridesGetOwnPropertySlot");
+  }
+  const extraStructureFlagsStr = extraStructureFlags.map(it => ` | ${it}`).join("");
 
   var weakOwner = "";
   var weakInit = ``;
@@ -1167,7 +1267,7 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
         static void destroy(JSC::JSCell*);
         static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
         {
-            return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(${JSType}), StructureFlags), info());
+            return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(${JSType}), StructureFlags${extraStructureFlagsStr}), info());
         }
 
         static JSObject* createPrototype(VM& vm, JSDOMGlobalObject* globalObject);
@@ -1200,6 +1300,14 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
         }
 
         void finishCreation(JSC::VM&);
+
+        ${
+          !obj.getOwnPropertySlot
+            ? ""
+            : `static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&)`
+        };
+
+        ${!obj.apply ? "" : `static CallData getCallData(JSCell* cell)`};
 
         ${Object.entries(obj.custom ?? {})
           .map(([fieldName, field]) => {
@@ -1237,6 +1345,8 @@ function generateClassImpl(typeName, obj: ClassDefinition) {
     hasPendingActivity = false,
     getInternalProperties = false,
     callbacks = {},
+    getOwnPropertySlot = false,
+    apply = false,
   } = obj;
   const name = className(typeName);
 
@@ -1336,6 +1446,25 @@ ${renderCallbacksCppImpl(typeName, callbacks)}
       )}(castedThis->impl(), globalObject, JSValue::encode(castedThis)));
     }
 
+    `;
+  }
+
+  if (getOwnPropertySlot) {
+    output += generateGetOwnPropertySlotImpl(typeName, obj);
+  }
+
+  if (apply) {
+    output += `
+    extern "C" JSC_DECLARE_HOST_FUNCTION(${symbolName(typeName, "apply")});
+
+    CallData ${name}::getCallData(JSCell* cell)
+    {
+        CallData callData;
+        callData.type = CallData::Type::Native;
+        callData.native.function = ${symbolName(typeName, "apply")};
+        callData.native.isBoundFunction = false;
+        return callData;
+    }
     `;
   }
 
@@ -1461,11 +1590,11 @@ function generateHeader(typeName, obj) {
   return generateClassHeader(typeName, obj).trim() + "\n\n";
 }
 
-function generateImpl(typeName, obj) {
+function generateImpl(typeName, obj: ClassDefinition) {
   const proto = obj.proto;
   return [
     generatePrototypeHeader(typeName),
-    !obj.noConstructor ? generateConstructorHeader(typeName).trim() + "\n" : null,
+    !obj.noConstructor ? generateConstructorHeader(typeName, obj).trim() + "\n" : null,
     generatePrototype(typeName, obj).trim(),
     !obj.noConstructor ? generateConstructorImpl(typeName, obj).trim() : null,
     generateClassImpl(typeName, obj).trim(),
@@ -1485,10 +1614,14 @@ function generateZig(
     estimatedSize,
     call = false,
     values = [],
+    valuesAccessorsFromJsObject = false,
     hasPendingActivity = false,
     structuredClone = false,
     getInternalProperties = false,
     callbacks = {},
+    getOwnPropertySlot = false,
+    getOwnPropertySlotStatic = false,
+    apply = false,
   } = {} as ClassDefinition,
 ) {
   const exports = new Map<string, string>();
@@ -1517,6 +1650,18 @@ function generateZig(
 
   if (getInternalProperties) {
     exports.set("getInternalProperties", symbolName(typeName, "getInternalProperties"));
+  }
+
+  if (getOwnPropertySlot) {
+    exports.set("getOwnPropertySlot", symbolName(typeName, "getOwnPropertySlot"));
+  }
+
+  if (getOwnPropertySlotStatic) {
+    exports.set("getOwnPropertySlotStatic", symbolName(typeName, "getOwnPropertySlotStatic"));
+  }
+
+  if (apply) {
+    exports.set("apply", symbolName(typeName, "apply"));
   }
 
   if (structuredClone) {
@@ -1556,6 +1701,38 @@ function generateZig(
             return null;
 
           return result;
+        }
+
+        ${
+          !valuesAccessorsFromJsObject
+            ? ""
+            : `
+          extern fn ${protoSymbolName(
+            typeName,
+            name,
+          )}SetCachedValueJSObject(*JSC.JSObject, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+          extern fn ${protoSymbolName(typeName, name)}GetCachedValueJSObject(*JSC.JSObject) JSC.JSValue;
+          
+          /// \`${typeName}.${name}\` setter
+          /// This value will be visited by the garbage collector.
+          pub fn ${name}SetCachedJSObject(thisValue: *JSC.JSObject, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+            JSC.markBinding(@src());
+            ${protoSymbolName(typeName, name)}SetCachedValueJSObject(thisValue, globalObject, value); 
+          }
+
+          /// \`${typeName}.${name}\` getter
+          /// This value will be visited by the garbage collector.
+          pub fn ${name}GetCachedJSObject(thisValue: *JSC.JSObject) ?JSC.JSValue {
+            JSC.markBinding(@src());
+            const result = ${protoSymbolName(typeName, name)}GetCachedValueJSObject(thisValue);
+            if (result == .zero)
+              return null;
+            
+            return result;
+          }
+
+        `
         }
 `.trim() + "\n",
     )
@@ -1620,6 +1797,30 @@ function generateZig(
       output += `
         if (@TypeOf(${typeName}.finalize) != (fn(*${typeName}) callconv(.C) void)) {
            @compileLog("${typeName}.finalize is not a finalizer");
+        }
+      `;
+    }
+
+    if (getOwnPropertySlot) {
+      output += `
+        if (@TypeOf(${typeName}.getOwnPropertySlot) != (fn(*${typeName}, *JSC.JSObject, *JSC.JSGlobalObject, *bun.String, *JSC.PropertySlot) callconv(.C) bool)) {
+           @compileLog("${typeName}.getOwnPropertySlot is not a getOwnPropertySlot function");
+        }
+      `;
+    }
+
+    if (getOwnPropertySlotStatic) {
+      output += `
+        if (@TypeOf(${typeName}.getOwnPropertySlotStatic) != (fn(*JSC.JSObject, *JSC.JSGlobalObject, *bun.String, *JSC.PropertySlot) callconv(.C) bool)) {
+           @compileLog("${typeName}.getOwnPropertySlotStatic is not a getOwnPropertySlotStatic function");
+        }
+      `;
+    }
+
+    if (apply) {
+      output += `
+        if (@TypeOf(${typeName}.apply) != StaticCallbackType) {
+           @compileLog("${typeName}.apply is not an apply (callback) function");
         }
       `;
     }

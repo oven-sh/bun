@@ -394,7 +394,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
             std.debug.assert(hostname.len > 0);
             std.debug.assert(port > 0);
 
-            if (hostname.len <= MAX_KEEPALIVE_HOSTNAME and !socket.isClosed() and !socket.isShutdown() and socket.isEstablished()) {
+            if (hostname.len <= MAX_KEEPALIVE_HOSTNAME and !socket.isClosedOrHasError() and socket.isEstablished()) {
                 if (this.pending_sockets.get()) |pending| {
                     socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(pending).ptr());
                     socket.flush();
@@ -620,7 +620,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                         continue;
                     }
 
-                    if (http_socket.isShutdown()) {
+                    if (http_socket.isShutdown() or http_socket.getError() != 0) {
                         http_socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(&dead_socket).ptr());
                         http_socket.close(0, null);
                         continue;
@@ -2885,7 +2885,7 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
         if (is_done) {
             socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr());
 
-            if (this.isKeepAlivePossible() and !socket.isClosed()) {
+            if (this.isKeepAlivePossible() and !socket.isClosedOrHasError()) {
                 ctx.releaseSocket(
                     socket,
                     this.connected_url.hostname,
@@ -3140,6 +3140,11 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
         buffer.list.items.ptr + (buffer.list.items.len -| incoming_data.len),
         &bytes_decoded,
     );
+    if (comptime Environment.allow_assert) {
+        if (pret == -1) {
+            @breakpoint();
+        }
+    }
     buffer.list.items.len -|= incoming_data.len - bytes_decoded;
     this.state.total_body_received += bytes_decoded;
 
@@ -3147,9 +3152,7 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
 
     switch (pret) {
         // Invalid HTTP response body
-        -1 => {
-            return error.InvalidHTTPResponse;
-        },
+        -1 => return error.InvalidHTTPResponse,
         // Needs more data
         -2 => {
             if (this.progress_node) |progress| {

@@ -1,8 +1,8 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
-const MimeType = @import("../../bun_dev_http_server.zig").MimeType;
+const MimeType = bun.http.MimeType;
 const ZigURL = @import("../../url.zig").URL;
-const HTTPClient = @import("root").bun.HTTP;
+const HTTPClient = @import("root").bun.http;
 const NetworkThread = HTTPClient.NetworkThread;
 
 const JSC = @import("root").bun.JSC;

@@ -306,6 +306,14 @@ interface ImportMeta {
    */
   readonly file: string;
   /**
+   * The environment variables of the process
+   * 
+   * ```
+   * import.meta.env === process.env 
+   * ```
+   */
+  readonly env: import("bun").Env;
+  /**
    * Resolve a module ID the same as if you imported it
    *
    * On failure, throws a `ResolveMessage`

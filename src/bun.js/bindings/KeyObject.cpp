@@ -49,7 +49,7 @@
 #include "CryptoAlgorithmECDSA.h"
 #include "CryptoAlgorithmEcdsaParams.h"
 #include "CryptoAlgorithmRsaPssParams.h"
-#include "CryptoAlgorithmRegistry.h";
+#include "CryptoAlgorithmRegistry.h"
 using namespace JSC;
 using namespace Bun;
 using JSGlobalObject

@@ -308,7 +308,7 @@ interface ImportMeta {
   /**
    * The environment variables of the process
    * 
-   * ```
+   * ```ts
    * import.meta.env === process.env 
    * ```
    */

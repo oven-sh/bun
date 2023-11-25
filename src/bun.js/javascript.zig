@@ -2798,7 +2798,7 @@ pub const VirtualMachine = struct {
                     while (first_non_whitespace < text.len and text[first_non_whitespace] == ' ') {
                         first_non_whitespace += 1;
                     }
-                    const indent = @min(@as(usize, @intCast(pad)) + " | ".len + first_non_whitespace, text.len -| 2 );
+                    const indent = @min(@as(usize, @intCast(pad)) + " | ".len + first_non_whitespace, text.len -| 2);
 
                     try writer.writeByteNTimes(' ', indent);
                     try writer.print(comptime Output.prettyFmt(

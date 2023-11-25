@@ -25,6 +25,16 @@ Or programmatically by assigning a property to `process.env`.
 process.env.FOO = "hello";
 ```
 
+### Manually specifying `.env` files
+
+Bun supports `--env-file` to override which specific `.env` file to load. You can also use `--env-file` when running scripts in bun's runtime, or when running package.json scripts.
+
+```sh
+bun --env-file=.env.1 src/index.ts
+
+bun --env-file=.env.abc --env-file=.env.def run build
+```
+
 ### Quotation marks
 
 Bun supports double quotes, single quotes, and
@@ -75,10 +85,11 @@ The current environment variables can be accessed via `process.env`.
 process.env.API_TOKEN; // => "secret"
 ```
 
-Bun also exposes these variables via `Bun.env`, which is a simple alias of `process.env`.
+Bun also exposes these variables via `Bun.env` and `import.meta.env`, which is a simple alias of `process.env`.
 
 ```ts
 Bun.env.API_TOKEN; // => "secret"
+import.meta.env.API_TOKEN; // => "secret"
 ```
 
 To print all currently-set environment variables to the command line, run `bun run env`. This is useful for debugging.

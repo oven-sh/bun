@@ -6,7 +6,6 @@ const Arena = std.heap.ArenaAllocator;
 const Allocator = std.mem.Allocator;
 const SmolStr = @import("../string_types.zig").SmolStr;
 const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
-const BabyList = @import("../baby_list.zig").BabyList;
 
 /// Using u16 because anymore tokens than that results in an unreasonably high
 /// amount of brace expansion (like around 32k variants to expand)
@@ -15,268 +14,29 @@ pub const ExpansionVariant = packed struct {
     end: u16 = 0,
 };
 
-const ExpansionVariants = packed struct {
-    idx: u16 = 0,
-    end: u16 = 0,
-};
-
 const log = bun.Output.scoped(.BRACES, false);
 
 const TokenTag = enum { open, comma, text, close, eof };
+const Token = union(TokenTag) {
+    open: ExpansionVariants,
+    comma,
+    text: SmolStr,
+    close,
+    eof,
 
-const Token = extern union {
-    const AddressableSize = u56;
-    as: extern struct {
-        data: [15]u8 = undefined,
-        tag: PackedTag,
-    },
-    txt_inlined: extern struct {
-        data: [15]u8 = undefined,
-        tag: InlinedTag = .{},
-    },
-    txt_heap: packed struct {
-        len: u32 = 0,
-        cap: u32 = 0,
-        __ptr: u56 = undefined,
-        tag: HeapTag,
-
-        pub fn ptr(this: *@This()) [*]u8 {
-            return @ptrFromInt(@as(u64, this.__ptr));
-        }
-
-        pub fn ptrConst(this: *const @This()) [*]const u8 {
-            return @ptrFromInt(@as(u64, this.__ptr));
-        }
-    },
-    open: packed struct(u128) {
-        variants: ExpansionVariants = .{},
-        _pad: u88 = 0,
-        tag: PackedTag = .{ .open = true },
-    },
-
-    pub const close: Token = .{
-        .as = .{
-            .tag = .{ .close = true },
-        },
-    };
-    pub const eof: Token = .{
-        .as = .{
-            .tag = .{ .eof = true },
-        },
+    const ExpansionVariants = struct {
+        idx: u16 = 0,
+        end: u16 = 0,
     };
 
-    pub const comma: Token = .{
-        .as = .{
-            .tag = .{ .comma = true },
-        },
-    };
-
-    const PackedTag = packed struct(u8) {
-        _pad: u2 = 0,
-        open: bool = false,
-        comma: bool = false,
-        close: bool = false,
-        eof: bool = false,
-        text: bool = false,
-        inlined: bool = false,
-    };
-    const open_tag: u8 = @bitCast(PackedTag{ .open = true });
-    const comma_tag: u8 = @bitCast(PackedTag{ .comma = true });
-    const close_tag: u8 = @bitCast(PackedTag{ .close = true });
-    const eof_tag: u8 = @bitCast(PackedTag{ .eof = true });
-
-    const HeapTag = packed struct(u8) {
-        __pad: u6 = 0,
-        text: bool = true,
-        inlined: bool = false,
-    };
-
-    const InlinedTag = packed struct(u8) {
-        len: u6 = 0,
-        text: bool = true,
-        inlined: bool = true,
-    };
-
-    pub fn len(this: *const Token) u32 {
-        std.debug.assert(this.as.tag.text);
-        if (this.as.tag.inlined) {
-            return this.as.txt_inlined.tag.len;
-        } else {
-            return this.as.txt_heap.len;
-        }
-    }
-
-    pub fn fromChar(char: u8) Token {
-        var txt: Token = .{
-            .txt_inlined = .{},
+    pub fn toText(self: *Token) SmolStr {
+        return switch (self.*) {
+            .open => SmolStr.fromChar('{'),
+            .comma => SmolStr.fromChar(','),
+            .text => |txt| txt,
+            .close => SmolStr.fromChar('}'),
+            .eof => SmolStr.empty(),
         };
-        txt.txt_inlined.data[0] = char;
-        txt.txt_inlined.tag.len = 1;
-        return txt;
-    }
-
-    pub fn fromSlice(alloc: Allocator, values: []const u8) !Token {
-        if (values.len <= 15) {
-            var txt: Token = .{
-                .txt_inlined = .{},
-            };
-            txt.txt_inlined.tag.len = values.len;
-            @memcpy(txt.txt_inlined.data[0..values.len], values);
-            return txt;
-        }
-
-        var baby_list = try BabyList(u8).initCapacity(alloc, values.len);
-        try baby_list.append(alloc, values);
-        var this: Token = .{
-            .txt_heap = .{
-                .len = baby_list.len,
-                .cap = baby_list.cap,
-                .__ptr = @intCast(@intFromPtr(baby_list.ptr)),
-                .tag = .{},
-            },
-        };
-
-        return this;
-    }
-
-    pub fn toSmolStr(this: *const Token, allocator: Allocator) !SmolStr {
-        std.debug.assert(this.as.tag.text);
-        if (this.as.tag.inlined) {
-            return try SmolStr.fromSlice(allocator, this.slice());
-        } else {
-            return try SmolStr.fromSlice(allocator, this.txt_heap.ptrConst()[0..this.txt_heap.len]);
-        }
-    }
-
-    pub fn emptyStr() Token {
-        return .{
-            .txt_inlined = .{},
-        };
-    }
-
-    pub fn istag(this: *const Token, comptime the_tag: TokenTag) bool {
-        if (this.as.tag.text and the_tag == .text) return true;
-
-        return switch (the_tag) {
-            .open => this.as.tag.open,
-            .comma => this.as.tag.comma,
-            .close => this.as.tag.close,
-            .eof => this.as.tag.eof,
-            else => return false,
-        };
-    }
-
-    pub fn slice(this: *const Token) []const u8 {
-        std.debug.assert(this.as.tag.text);
-        if (this.as.tag.inlined) {
-            return this.txt_inlined.data[0..this.txt_inlined.tag.len];
-        } else {
-            return this.txt_heap.ptrConst()[0..this.txt_heap.len];
-        }
-    }
-
-    pub fn appendSlice(this: *Token, alloc: Allocator, values: []const u8) !void {
-        std.debug.assert(this.as.tag.text);
-        if (this.as.tag.inlined) {
-            if (this.txt_inlined.tag.len + values.len < 15) {
-                @memcpy(this.txt_inlined.data[this.txt_inlined.tag.len .. this.txt_inlined.tag.len + values.len], values);
-                this.txt_inlined.tag.len += @intCast(values.len);
-                return;
-            }
-            var baby_list = try BabyList(u8).initCapacity(alloc, this.txt_inlined.tag.len + values.len);
-            try baby_list.append(alloc, this.slice());
-            try baby_list.append(alloc, values);
-            this.* = .{
-                .txt_heap = .{
-                    .len = baby_list.len,
-                    .cap = baby_list.cap,
-                    .__ptr = @intCast(@intFromPtr(baby_list.ptr)),
-                    .tag = .{},
-                },
-            };
-            return;
-        }
-
-        var baby_list = BabyList(u8){
-            .ptr = this.txt_heap.ptr(),
-            .len = this.txt_heap.len,
-            .cap = this.txt_heap.cap,
-        };
-
-        try baby_list.append(alloc, this.slice());
-        try baby_list.append(alloc, values);
-        this.txt_heap.__ptr = @intCast(@intFromPtr(baby_list.ptr));
-        this.txt_heap.len = baby_list.len;
-        this.txt_heap.cap = baby_list.cap;
-    }
-
-    pub fn appendChar(this: *Token, alloc: Allocator, char: u8) !void {
-        std.debug.assert(this.as.tag.text);
-        if (this.as.tag.inlined) {
-            if (this.txt_inlined.tag.len < 15) {
-                this.txt_inlined.data[this.txt_inlined.tag.len] = char;
-                this.txt_inlined.tag.len += 1;
-                return;
-            }
-            var baby_list = try BabyList(u8).initCapacity(alloc, 16);
-            try baby_list.append(alloc, this.slice());
-            try baby_list.push(alloc, char);
-            this.* = .{
-                .txt_heap = .{
-                    .len = baby_list.len,
-                    .cap = baby_list.cap,
-                    .__ptr = @intCast(@intFromPtr(baby_list.ptr)),
-                    .tag = .{},
-                },
-            };
-            return;
-        }
-
-        var baby_list = BabyList(u8){
-            .ptr = this.txt_heap.ptr(),
-            .len = this.txt_heap.len,
-            .cap = this.txt_heap.cap,
-        };
-
-        try baby_list.append(alloc, this.slice());
-        try baby_list.push(alloc, char);
-        this.txt_heap.__ptr = @intCast(@intFromPtr(baby_list.ptr));
-        this.txt_heap.len = baby_list.len;
-        this.txt_heap.cap = baby_list.cap;
-    }
-
-    pub fn toText(this: *const Token) Token {
-        return switch (this.tag()) {
-            .open => Token.fromChar('{'),
-            .comma => Token.fromChar(','),
-            .close => Token.fromChar('}'),
-            .eof => Token.emptyStr(),
-            else => this.*,
-        };
-    }
-
-    pub fn tag(this: *const Token) TokenTag {
-        if (this.as.tag.text) return .text;
-
-        switch (@as(u8, @bitCast(this.as.tag))) {
-            Token.open_tag => return .open,
-            Token.comma_tag => return .comma,
-            Token.close_tag => return .close,
-            Token.eof_tag => return .eof,
-            else => {
-                unreachable;
-            },
-        }
-    }
-
-    pub fn jsonStringify(self: *const Token, writer: anytype) !void {
-        switch (self.tag()) {
-            .open => try writer.write("{"),
-            .close => try writer.write("}"),
-            .comma => try writer.write(","),
-            .eof => try writer.write("EOF"),
-            .text => try writer.write(self.slice()),
-        }
     }
 };
 
@@ -484,17 +244,16 @@ fn expandFlat(
     if (start >= tokens.len or end > tokens.len) return;
 
     var depth = depth_;
-    for (tokens[start..end], start..) |*atom, j| {
+    for (tokens[start..end], start..) |atom, j| {
         _ = j;
-        switch (atom.tag()) {
-            .text => {
-                try out[out_key].appendSlice(atom.slice());
+        switch (atom) {
+            .text => |txt| {
+                try out[out_key].appendSlice(txt.slice());
             },
             .close => {
                 depth -= 1;
             },
-            .open => {
-                const expansion_variants = atom.open.variants;
+            .open => |expansion_variants| {
                 depth += 1;
                 if (bun.Environment.allow_assert) {
                     std.debug.assert(expansion_variants.end - expansion_variants.idx >= 1);
@@ -527,7 +286,7 @@ pub fn calculateVariantsAmount(tokens: []const Token) u32 {
     var brace_count: u32 = 0;
     var count: u32 = 0;
     for (tokens) |tok| {
-        switch (tok.tag()) {
+        switch (tok) {
             .comma => count += 1,
             .open => brace_count += 1,
             .close => {
@@ -572,19 +331,19 @@ pub const Parser = struct {
     }
 
     fn parseAtom(self: *Parser) anyerror!?AST.Atom {
-        const advanced = self.advance();
-        switch (advanced.tag()) {
+        switch (self.advance()) {
             .open => {
                 var expansion_ptr = try self.parseExpansion();
                 return .{ .expansion = expansion_ptr };
             },
-            .text => return .{ .text = try advanced.toSmolStr(self.alloc) },
+            .text => |txt| return .{ .text = txt },
             .eof => return null,
             .close, .comma => return ParserError.UnexpectedToken,
         }
     }
 
     fn parseExpansion(self: *Parser) !*AST.Expansion {
+        var ptr = try self.alloc.create(AST.Expansion);
         var variants = std.ArrayList(AST.Group).init(self.alloc);
         while (!self.match_any(&.{ .close, .eof })) {
             if (self.match(.eof)) break;
@@ -603,7 +362,6 @@ pub const Parser = struct {
             if (close) break;
         }
 
-        var ptr = try self.alloc.create(AST.Expansion);
         ptr.* = .{ .variants = variants.items[0..] };
         return ptr;
     }
@@ -623,11 +381,11 @@ pub const Parser = struct {
     }
 
     fn is_at_end(self: *Parser) bool {
-        return self.peek().istag(.eof);
+        return self.peek() == .eof;
     }
 
-    fn expect(self: *Parser, comptime toktag: TokenTag) Token {
-        std.debug.assert(toktag == self.peek().tag());
+    fn expect(self: *Parser, toktag: TokenTag) Token {
+        std.debug.assert(toktag == @as(TokenTag, self.peek()));
         if (self.check(toktag)) {
             return self.advance();
         }
@@ -635,8 +393,8 @@ pub const Parser = struct {
     }
 
     /// Consumes token if it matches
-    fn match(self: *Parser, comptime toktag: TokenTag) bool {
-        if (self.peek().istag(toktag)) {
+    fn match(self: *Parser, toktag: TokenTag) bool {
+        if (@as(TokenTag, self.peek()) == toktag) {
             _ = self.advance();
             return true;
         }
@@ -646,7 +404,7 @@ pub const Parser = struct {
     fn match_any2(self: *Parser, comptime toktags: []const TokenTag) ?Token {
         const peeked = self.peek();
         inline for (toktags) |tag| {
-            if (peeked.istag(tag)) {
+            if (peeked == tag) {
                 _ = self.advance();
                 return peeked;
             }
@@ -655,9 +413,9 @@ pub const Parser = struct {
     }
 
     fn match_any(self: *Parser, comptime toktags: []const TokenTag) bool {
-        const peeked = self.peek();
+        const peeked = @as(TokenTag, self.peek());
         inline for (toktags) |tag| {
-            if (peeked.istag(tag)) {
+            if (peeked == tag) {
                 _ = self.advance();
                 return true;
             }
@@ -665,8 +423,8 @@ pub const Parser = struct {
         return false;
     }
 
-    fn check(self: *Parser, comptime toktag: TokenTag) bool {
-        return self.peek().istag(toktag);
+    fn check(self: *Parser, toktag: TokenTag) bool {
+        return @as(TokenTag, self.peek()) == @as(TokenTag, toktag);
     }
 
     fn peek(self: *Parser) Token {
@@ -699,7 +457,7 @@ pub fn calculateExpandedAmount(tokens: []const Token) !u32 {
     var prev_comma: bool = false;
     while (i < tokens.len) : (i += 1) {
         prev_comma = false;
-        switch (tokens[i].tag()) {
+        switch (tokens[i]) {
             .open => {
                 try nested_brace_stack.push(0);
             },
@@ -749,10 +507,10 @@ pub fn buildExpansionTable(
     var i: u16 = 0;
     var prev_close = false;
     while (i < tokens.len) : (i += 1) {
-        switch (tokens[i].tag()) {
+        switch (tokens[i]) {
             .open => {
                 const table_idx: u16 = @intCast(table.items.len);
-                tokens[i].open.variants.idx = table_idx;
+                tokens[i].open.idx = table_idx;
                 try brace_stack.push(.{
                     .tok_idx = i,
                     .variants = 0,
@@ -770,7 +528,7 @@ pub fn buildExpansionTable(
                 top.prev_tok_end = i;
                 top.variants += 1;
 
-                tokens[top.tok_idx].open.variants.end = @intCast(table.items.len);
+                tokens[top.tok_idx].open.end = @intCast(table.items.len);
                 prev_close = true;
             },
             .comma => {
@@ -870,13 +628,13 @@ pub const Lexer = struct {
                     '}' => {
                         if (brace_stack.len > 0) {
                             _ = brace_stack.pop();
-                            try self.tokens.append(Token.close);
+                            try self.tokens.append(.close);
                             continue;
                         }
                     },
                     ',' => {
                         if (brace_stack.len > 0) {
-                            try self.tokens.append(Token.comma);
+                            try self.tokens.append(.comma);
                             continue;
                         }
                     },
@@ -897,29 +655,26 @@ pub const Lexer = struct {
         }
 
         try self.flattenTokens();
-        try self.tokens.append(Token.eof);
+        try self.tokens.append(.eof);
 
         return self.contains_nested;
     }
 
     fn flattenTokens(self: *Lexer) !void {
-        // var json = try std.json.stringifyAlloc(self.alloc, self.tokens.items[0..], .{});
-        // std.debug.print("JSON: {s}\n", .{json});
-
-        var brace_count: u32 = if (self.tokens.items[0].istag(.open)) 1 else 0;
+        var brace_count: u32 = if (self.tokens.items[0] == .open) 1 else 0;
         var i: u32 = 0;
         var j: u32 = 1;
         while (i < self.tokens.items.len and j < self.tokens.items.len) {
             var itok = &self.tokens.items[i];
             var jtok = &self.tokens.items[j];
 
-            if (itok.istag(.text) and jtok.istag(.text)) {
-                try itok.appendSlice(self.alloc, jtok.slice());
+            if (itok.* == .text and jtok.* == .text) {
+                try itok.text.appendSlice(self.alloc, jtok.toText().slice());
                 _ = self.tokens.orderedRemove(j);
             } else {
-                if (jtok.istag(.close)) {
+                if (jtok.* == .close) {
                     brace_count -= 1;
-                } else if (jtok.istag(.open)) {
+                } else if (jtok.* == .open) {
                     brace_count += 1;
                     if (brace_count > 1) {
                         self.contains_nested = true;
@@ -934,7 +689,7 @@ pub const Lexer = struct {
     fn rollbackBraces(self: *Lexer, starting_idx: u32) !void {
         if (bun.Environment.allow_assert) {
             var first = &self.tokens.items[starting_idx];
-            std.debug.assert(first.istag(.open));
+            std.debug.assert(first.* == .open);
         }
 
         var braces: u8 = 0;
@@ -943,7 +698,7 @@ pub const Lexer = struct {
         var i: u32 = starting_idx + 1;
         while (i < self.tokens.items.len) : (i += 1) {
             if (braces > 0) {
-                switch (self.tokens.items[i].tag()) {
+                switch (self.tokens.items[i]) {
                     .open => {
                         braces += 1;
                     },
@@ -955,7 +710,7 @@ pub const Lexer = struct {
                 continue;
             }
 
-            switch (self.tokens.items[i].tag()) {
+            switch (self.tokens.items[i]) {
                 .open => {
                     braces += 1;
                     continue;
@@ -971,19 +726,21 @@ pub const Lexer = struct {
     fn replaceTokenWithString(self: *Lexer, token_idx: u32) !void {
         var tok = &self.tokens.items[token_idx];
         var tok_text = tok.toText();
-        tok.* = tok_text;
+        tok.* = .{ .text = tok_text };
     }
 
     fn appendChar(self: *Lexer, char: u8) !void {
         if (self.tokens.items.len > 0) {
             var last = &self.tokens.items[self.tokens.items.len - 1];
-            if (last.istag(.text)) {
-                try last.appendChar(self.alloc, char);
+            if (last.* == .text) {
+                try last.text.appendChar(self.alloc, char);
                 return;
             }
         }
 
-        try self.tokens.append(Token.fromChar(char));
+        try self.tokens.append(.{
+            .text = try SmolStr.fromSlice(self.alloc, &[_]u8{char}),
+        });
     }
 
     fn eat(self: *Lexer) ?InputChar {

@@ -452,7 +452,7 @@ pub fn openatWindows(dirfD: bun.FileDescriptor, path_: []const u16, flags: bun.M
         access_mask |= w.GENERIC_WRITE | w.FILE_APPEND_DATA;
     } else if (flags & O.WRONLY != 0) {
         access_mask |= w.GENERIC_WRITE;
-    } else  {
+    } else {
         access_mask |= w.GENERIC_READ;
     }
 
@@ -522,10 +522,10 @@ pub fn openatWindows(dirfD: bun.FileDescriptor, path_: []const u16, flags: bun.M
 
         switch (windows.Win32Error.fromNTStatus(rc)) {
             .SUCCESS => {
-                if(flags & O.APPEND != 0) {
+                if (flags & O.APPEND != 0) {
                     // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfilepointerex
                     const FILE_END = 2;
-                    if(windows.kernel32.SetFilePointerEx(result, 0, null, FILE_END) == 0) {
+                    if (windows.kernel32.SetFilePointerEx(result, 0, null, FILE_END) == 0) {
                         return .{
                             .err = .{
                                 .errno = @intFromEnum(bun.C.E.UNKNOWN),

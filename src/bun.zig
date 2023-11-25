@@ -1874,14 +1874,14 @@ pub inline fn toLibUVOwnedFD(fd: anytype) FileDescriptor {
 }
 
 /// Converts FileDescriptor into a UV file descriptor.
-/// 
+///
 /// This explicitly is setup to disallow converting a Windows descriptor into a UV
 /// descriptor. If this was allowed, then it would imply the caller still owns the
 /// windows handle, but Win->UV will always invalidate the handle.
-/// 
+///
 /// In that situation, it is almost impossible to close the handle properly,
 /// you want to use `bun.FDImpl.decode(fd)` or `bun.toLibUVOwnedFD` instead.
-/// 
+///
 /// This way, you can call .close() on the libuv descriptor.
 pub inline fn uvfdcast(fd: anytype) FDImpl.UV {
     const T = @TypeOf(fd);
@@ -1894,8 +1894,8 @@ pub inline fn uvfdcast(fd: anytype) FDImpl.UV {
             else => @compileError("uvfdcast() does not support type \"" ++ @typeName(T) ++ "\""),
         });
         if (Environment.allow_assert) {
-            if(decoded.kind != .uv) {
-                std.debug.panic("uvfdcast({}) called on an windows handle", .{ decoded });
+            if (decoded.kind != .uv) {
+                std.debug.panic("uvfdcast({}) called on an windows handle", .{decoded});
             }
         }
         return decoded.uv();
@@ -1910,7 +1910,6 @@ pub inline fn socketcast(fd: anytype) std.os.socket_t {
     } else {
         return fd;
     }
-
 }
 
 pub const HOST_NAME_MAX = if (Environment.isWindows)

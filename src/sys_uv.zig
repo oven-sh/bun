@@ -72,7 +72,6 @@ pub fn fchmod(fd: FileDescriptor, flags: bun.Mode) Maybe(void) {
         .{ .result = {} };
 }
 
-
 pub fn chown(file_path: [:0]const u8, uid: uv.uv_uid_t, gid: uv.uv_uid_t) Maybe(void) {
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
@@ -84,7 +83,6 @@ pub fn chown(file_path: [:0]const u8, uid: uv.uv_uid_t, gid: uv.uv_uid_t) Maybe(
     else
         .{ .result = {} };
 }
-
 
 pub fn fchown(fd: FileDescriptor, uid: uv.uv_uid_t, gid: uv.uv_uid_t) Maybe(void) {
     const uv_fd = FDImpl.decode(fd).uv();

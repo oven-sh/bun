@@ -479,10 +479,10 @@ pub const Archive = struct {
         comptime close_handles: bool,
         comptime log: bool,
     ) !u32 {
-        if(Environment.isWindows) {
+        if (Environment.isWindows) {
             @panic("TODO: sort out the file descriptor issues here.");
         }
-        
+
         var entry: *lib.archive_entry = undefined;
 
         var stream: BufferReadStream = undefined;

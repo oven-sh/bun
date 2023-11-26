@@ -1435,18 +1435,12 @@ pub const Bundler = struct {
                                     }, prop.key.?.loc),
                                     .value = prop.value.?,
                                 };
-                                var maybe_quoted = name;
-                                if (strings.containsChar(name, '-')) {
-                                    var quote_buf = MutableString.init(allocator, name.len + 2) catch return null;
-                                    quote_buf = js_printer.quoteForJSON(name, quote_buf, false) catch return null;
-                                    maybe_quoted = quote_buf.list.items;
-                                }
                                 export_clauses[i] = js_ast.ClauseItem{
                                     .name = .{
                                         .ref = ref,
                                         .loc = prop.key.?.loc,
                                     },
-                                    .alias = maybe_quoted,
+                                    .alias = name,
                                     .alias_loc = prop.key.?.loc,
                                 };
                                 prop.value = js_ast.Expr.initIdentifier(ref, prop.value.?.loc);

@@ -339,21 +339,18 @@ WTF::String Bun::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject
 
     bool hasSet = false;
 
-    ZigStackFrame remappedFrames[64];
-    framesCount = framesCount > 64 ? 64 : framesCount;
     size_t offset = 0;
 
     bool needsNewline = !name.isEmpty() || !message.isEmpty();
 
     if (JSC::ErrorInstance* err = jsDynamicCast<JSC::ErrorInstance*>(errorInstance)) {
         if (err->errorType() == ErrorType::SyntaxError && (stackTrace.isEmpty() || stackTrace.at(0).sourceURL(vm) != err->sourceURL())) {
-            auto originalLine = err->line();
+            auto originalLine = WTF::OrdinalNumber::fromZeroBasedInt(static_cast<int32_t>(err->line()));
 
-            memset(remappedFrames, 0, sizeof(ZigStackFrame));
-            auto& remappedFrame = remappedFrames[0];
+            ZigStackFrame remappedFrame;
 
-            remappedFrame.position.line = originalLine;
-            remappedFrame.position.column_start = 0;
+            remappedFrame.position.line = originalLine.zeroBasedInt();
+            remappedFrame.position.column_start = 1;
 
             String sourceURLForFrame = err->sourceURL();
             offset = 1;
@@ -368,7 +365,7 @@ WTF::String Bun::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject
                 }
 
                 // This ensures the lifetime of the sourceURL is accounted for correctly
-                Bun__remapStackFramePositions(globalObject, remappedFrames, 1);
+                Bun__remapStackFramePositions(globalObject, &remappedFrame, 1);
             }
 
             if (needsNewline) {
@@ -382,14 +379,17 @@ WTF::String Bun::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject
             sb.append(sourceURLForFrame);
 
             if (remappedFrame.remapped) {
-                errorInstance->putDirect(vm, Identifier::fromString(vm, "originalLine"_s), jsNumber(originalLine), 0);
+                errorInstance->putDirect(vm, Identifier::fromString(vm, "originalLine"_s), jsNumber(originalLine.oneBasedInt()), 0);
                 hasSet = true;
+                line = remappedFrame.position.line;
             }
 
-            if (originalLine) {
+            if (remappedFrame.remapped) {
                 sb.append(":"_s);
                 sb.append(remappedFrame.position.line);
-                line = remappedFrame.position.line - 1;
+            } else {
+                sb.append(":"_s);
+                sb.append(originalLine.oneBasedInt());
             }
 
             sb.append(")"_s);
@@ -432,8 +432,7 @@ WTF::String Bun::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject
             unsigned int thisLine = 0;
             unsigned int thisColumn = 0;
             frame.computeLineAndColumn(thisLine, thisColumn);
-            memset(remappedFrames + i + offset, 0, sizeof(ZigStackFrame));
-            ZigStackFrame& remappedFrame = remappedFrames[i + offset];
+            ZigStackFrame remappedFrame;
             remappedFrame.position.line = thisLine;
             remappedFrame.position.column_start = thisColumn;
 
@@ -525,11 +524,10 @@ static String computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObje
         size_t framesCount = stackTrace.size();
         ZigStackFrame remappedFrames[framesCount];
         for (int i = 0; i < framesCount; i++) {
-            memset(remappedFrames + i, 0, sizeof(ZigStackFrame));
             remappedFrames[i].source_url = Bun::toString(lexicalGlobalObject, stackTrace.at(i).sourceURL());
             if (JSCStackFrame::SourcePositions* sourcePositions = stackTrace.at(i).getSourcePositions()) {
-                remappedFrames[i].position.line = sourcePositions->line.zeroBasedInt();
-                remappedFrames[i].position.column_start = sourcePositions->startColumn.zeroBasedInt() + 1;
+                remappedFrames[i].position.line = sourcePositions->line.oneBasedInt();
+                remappedFrames[i].position.column_start = sourcePositions->startColumn.oneBasedInt() + 1;
             } else {
                 remappedFrames[i].position.line = -1;
                 remappedFrames[i].position.column_start = -1;
@@ -2808,8 +2806,8 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
         memset(remappedFrames + i, 0, sizeof(ZigStackFrame));
         remappedFrames[i].source_url = Bun::toString(lexicalGlobalObject, stackTrace.at(i).sourceURL());
         if (JSCStackFrame::SourcePositions* sourcePositions = stackTrace.at(i).getSourcePositions()) {
-            remappedFrames[i].position.line = sourcePositions->line.zeroBasedInt();
-            remappedFrames[i].position.column_start = sourcePositions->startColumn.zeroBasedInt() + 1;
+            remappedFrames[i].position.line = sourcePositions->line.oneBasedInt();
+            remappedFrames[i].position.column_start = sourcePositions->startColumn.oneBasedInt() + 1;
         } else {
             remappedFrames[i].position.line = -1;
             remappedFrames[i].position.column_start = -1;

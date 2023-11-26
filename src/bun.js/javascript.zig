@@ -2601,6 +2601,12 @@ pub const VirtualMachine = struct {
                     start_index = i;
                     break;
                 }
+
+                // Workaround for being unable to hide that specific frame without also hiding the frame before it
+                if (frame.source_url.isEmpty() and frame.function_name.eqlComptime("moduleEvaluation")) {
+                    start_index = 0;
+                    break;
+                }
             }
 
             if (start_index) |k| {
@@ -2613,12 +2619,17 @@ pub const VirtualMachine = struct {
                     {
                         continue;
                     }
+
+                    // Workaround for being unable to hide that specific frame without also hiding the frame before it
+                    if (frame.source_url.isEmpty() and frame.function_name.eqlComptime("moduleEvaluation"))
+                        continue;
+
                     frames[j] = frame;
                     j += 1;
                 }
                 exception.stack.frames_len = @as(u8, @truncate(j));
                 frames.len = j;
-            }
+            } else {}
         }
 
         if (frames.len == 0) return;
@@ -2660,20 +2671,20 @@ pub const VirtualMachine = struct {
             top.position.expression_start = mapping.original.columns;
             top.position.expression_stop = mapping.original.columns + 1;
 
+            const last_line = @max(top.position.line, 0);
             if (strings.getLinesInText(
                 code.slice(),
-                @as(u32, @intCast(top.position.line)),
+                @intCast(last_line),
                 JSC.ZigException.Holder.source_lines_count,
             )) |lines| {
                 var source_lines = exception.stack.source_lines_ptr[0..JSC.ZigException.Holder.source_lines_count];
                 var source_line_numbers = exception.stack.source_lines_numbers[0..JSC.ZigException.Holder.source_lines_count];
                 @memset(source_lines, String.empty);
                 @memset(source_line_numbers, 0);
-
                 var lines_ = lines[0..@min(lines.len, source_lines.len)];
                 for (lines_, 0..) |line, j| {
                     source_lines[(lines_.len - 1) - j] = String.init(line);
-                    source_line_numbers[j] = top.position.line - @as(i32, @intCast(j)) + 1;
+                    source_line_numbers[j] = @as(i32, @intCast(last_line)) - @as(i32, @intCast(j)) + 1;
                 }
 
                 exception.stack.source_lines_len = @as(u8, @intCast(lines_.len));
@@ -2729,17 +2740,18 @@ pub const VirtualMachine = struct {
         var last_pad: u64 = 0;
         while (source_lines.untilLast()) |source| {
             defer source.text.deinit();
+            const display_line = source.line;
 
-            const int_size = std.fmt.count("{d}", .{source.line});
+            const int_size = std.fmt.count("{d}", .{display_line});
             const pad = max_line_number_pad - int_size;
             last_pad = pad;
             try writer.writeByteNTimes(' ', pad);
 
             try writer.print(
-                comptime Output.prettyFmt("<r><d>{d} | <r>{s}\n", allow_ansi_color),
+                comptime Output.prettyFmt("<r><d>{d} | <r>{any}\n", allow_ansi_color),
                 .{
-                    source.line,
-                    std.mem.trim(u8, source.text.slice(), "\n"),
+                    display_line,
+                    bun.fmt.fmtJavaScript(std.mem.trimRight(u8, std.mem.trim(u8, source.text.slice(), "\n"), "\t "), allow_ansi_color),
                 },
             );
         }
@@ -2756,38 +2768,39 @@ pub const VirtualMachine = struct {
             if (top_frame == null or top_frame.?.position.isInvalid()) {
                 defer did_print_name = true;
                 defer source.text.deinit();
-                var text = std.mem.trim(u8, source.text.slice(), "\n");
+                const text = std.mem.trimRight(u8, std.mem.trim(u8, source.text.slice(), "\n"), "\t ");
 
                 try writer.print(
                     comptime Output.prettyFmt(
-                        "<r><d>- |<r> {s}\n",
+                        "<r><d>- |<r> {any}\n",
                         allow_ansi_color,
                     ),
                     .{
-                        text,
+                        bun.fmt.fmtJavaScript(text, allow_ansi_color),
                     },
                 );
 
                 try this.printErrorNameAndMessage(name, message, Writer, writer, allow_ansi_color);
             } else if (top_frame) |top| {
                 defer did_print_name = true;
-                const int_size = std.fmt.count("{d}", .{source.line});
+                const display_line = source.line;
+                const int_size = std.fmt.count("{d}", .{display_line});
                 const pad = max_line_number_pad - int_size;
                 try writer.writeByteNTimes(' ', pad);
                 defer source.text.deinit();
                 const text = source.text.slice();
-                var remainder = std.mem.trim(u8, text, "\n");
+                const remainder = std.mem.trimRight(u8, std.mem.trim(u8, source.text.slice(), "\n"), "\t ");
 
                 try writer.print(
                     comptime Output.prettyFmt(
-                        "<r><d>{d} |<r> {s}\n",
+                        "<r><b>{d} |<r> {any}\n",
                         allow_ansi_color,
                     ),
-                    .{ source.line, remainder },
+                    .{ display_line, bun.fmt.fmtJavaScript(remainder, allow_ansi_color) },
                 );
 
                 if (!top.position.isInvalid()) {
-                    var first_non_whitespace = @as(u32, @intCast(top.position.column_start));
+                    var first_non_whitespace = @max(@as(u32, @intCast(top.position.column_start)), 1);
                     while (first_non_whitespace < text.len and text[first_non_whitespace] == ' ') {
                         first_non_whitespace += 1;
                     }

@@ -3614,7 +3614,6 @@ static void populateStackFrame(JSC::VM& vm, ZigStackTrace* trace, const JSC::Sta
         is_top ? trace->source_lines_numbers : nullptr,
         is_top ? trace->source_lines_to_collect : 0, &frame->position);
 }
-static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& frames, ZigStackTrace* trace)
 
 class V8StackTraceIterator {
 public:
@@ -3622,8 +3621,8 @@ public:
     public:
         StringView functionName {};
         StringView sourceURL {};
-        unsigned lineNumber = 0;
-        unsigned columnNumber = 0;
+        WTF::OrdinalNumber lineNumber = WTF::OrdinalNumber::fromZeroBasedInt(0);
+        WTF::OrdinalNumber columnNumber = WTF::OrdinalNumber::fromZeroBasedInt(0);
 
         bool isConstructor = false;
         bool isGlobalCode = false;
@@ -3694,17 +3693,17 @@ public:
             // at foo (/path/to/file.js:1)
             if (secondColon == WTF::notFound) {
                 if (auto lineNumber = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(line.substring(firstColon + 1, closingParenthese - firstColon - 1))) {
-                    frame.lineNumber = lineNumber.value();
+                    frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(lineNumber.value());
                 }
             } else {
                 // at foo (/path/to/file.js:1:)
                 if (auto lineNumber = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(line.substring(firstColon + 1, secondColon - firstColon - 1))) {
-                    frame.lineNumber = lineNumber.value();
+                    frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(lineNumber.value());
                 }
 
                 // at foo (/path/to/file.js:1:2)
                 if (auto columnNumber = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(line.substring(secondColon + 1, closingParenthese - secondColon - 1))) {
-                    frame.columnNumber = columnNumber.value();
+                    frame.columnNumber = WTF::OrdinalNumber::fromOneBasedInt(columnNumber.value());
                 }
             }
         }
@@ -3742,6 +3741,7 @@ public:
     }
 };
 
+static void populateStackTrace(JSC::VM& vm, JSC::ErrorInstance* errorInstance, const WTF::Vector<JSC::StackFrame>& frames, ZigStackTrace* trace)
 {
     uint8_t frame_i = 0;
     size_t stack_frame_i = 0;
@@ -3775,9 +3775,9 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
 
     bool getFromSourceURL = false;
     if (stackTrace != nullptr && stackTrace->size() > 0) {
-        populateStackTrace(vm, *stackTrace, &except->stack);
+        populateStackTrace(vm, err, *stackTrace, &except->stack);
     } else if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
-        populateStackTrace(vm, *err->stackTrace(), &except->stack);
+        populateStackTrace(vm, err, *err->stackTrace(), &except->stack);
     } else {
         getFromSourceURL = true;
     }
@@ -3843,23 +3843,22 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
 
                 iterator.forEachFrame([&](const V8StackTraceIterator::StackFrame& frame, bool& stop) -> void {
                     ASSERT(except->stack.frames_len < frame_count);
+                    auto& current = except->stack.frames_ptr[except->stack.frames_len];
 
                     String functionName = frame.functionName.toString();
                     String sourceURL = frame.sourceURL.toString();
-                    except->stack.frames_ptr[except->stack.frames_len].function_name = Bun::toStringRef(functionName);
-                    except->stack.frames_ptr[except->stack.frames_len].source_url = Bun::toStringRef(sourceURL);
-                    except->stack.frames_ptr[except->stack.frames_len].position.line = frame.lineNumber;
-                    if (frame.lineNumber > 0) {
-                        except->stack.frames_ptr[except->stack.frames_len].position.line--;
-                    }
+                    current.function_name = Bun::toStringRef(functionName);
+                    current.source_url = Bun::toStringRef(sourceURL);
+                    current.position.line = frame.lineNumber.zeroBasedInt();
+                    current.position.column_start = frame.columnNumber.zeroBasedInt();
+                    current.position.column_stop = frame.columnNumber.zeroBasedInt();
 
-                    except->stack.frames_ptr[except->stack.frames_len].position.column_start = frame.columnNumber;
-                    except->stack.frames_ptr[except->stack.frames_len].remapped = true;
+                    current.remapped = true;
 
                     if (frame.isConstructor) {
-                        except->stack.frames_ptr[except->stack.frames_len].code_type = ZigStackFrameCodeConstructor;
+                        current.code_type = ZigStackFrameCodeConstructor;
                     } else if (frame.isGlobalCode) {
-                        except->stack.frames_ptr[except->stack.frames_len].code_type = ZigStackFrameCodeGlobal;
+                        current.code_type = ZigStackFrameCodeGlobal;
                     }
 
                     except->stack.frames_len += 1;
@@ -4131,7 +4130,7 @@ void JSC__JSValue__toZigException(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
 
 void JSC__Exception__getStackTrace(JSC__Exception* arg0, ZigStackTrace* trace)
 {
-    populateStackTrace(arg0->vm(), arg0->stack(), trace);
+    populateStackTrace(arg0->vm(), nullptr, arg0->stack(), trace);
 }
 
 #pragma mark - JSC::VM

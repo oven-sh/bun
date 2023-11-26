@@ -34,6 +34,280 @@ pub const path = @import("./resolver/resolve_path.zig");
 pub const fmt = struct {
     pub usingnamespace std.fmt;
 
+    pub fn fmtJavaScript(text: []const u8, enable_ansi_colors: bool) QuickAndDirtyJavaScriptSyntaxHighlighter {
+        return QuickAndDirtyJavaScriptSyntaxHighlighter{
+            .text = text,
+            .enable_colors = enable_ansi_colors,
+        };
+    }
+
+    pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
+        text: []const u8,
+        enable_colors: bool = false,
+
+        const ColorCode = enum {
+            magenta,
+            blue,
+            orange,
+            red,
+            pink,
+
+            pub fn color(this: ColorCode) []const u8 {
+                return switch (this) {
+                    .magenta => "\x1b[35m",
+                    .blue => "\x1b[34m",
+                    .orange => "\x1b[33m",
+                    .red => "\x1b[31m",
+                    // light pink
+                    .pink => "\x1b[38;5;206m",
+                };
+            }
+        };
+
+        pub const Keywords = ComptimeStringMap(ColorCode, .{
+            .{ "abstract", ColorCode.blue },
+            .{ "as", ColorCode.blue },
+            .{ "async", ColorCode.magenta },
+            .{ "await", ColorCode.magenta },
+            .{ "case", ColorCode.magenta },
+            .{ "catch", ColorCode.magenta },
+            .{ "class", ColorCode.magenta },
+            .{ "const", ColorCode.magenta },
+            .{ "continue", ColorCode.magenta },
+            .{ "debugger", ColorCode.magenta },
+            .{ "default", ColorCode.magenta },
+            .{ "delete", ColorCode.red },
+            .{ "do", ColorCode.magenta },
+            .{ "else", ColorCode.magenta },
+            .{ "enum", ColorCode.blue },
+            .{ "export", ColorCode.magenta },
+            .{ "extends", ColorCode.magenta },
+            .{ "false", ColorCode.orange },
+            .{ "finally", ColorCode.magenta },
+            .{ "for", ColorCode.magenta },
+            .{ "function", ColorCode.magenta },
+            .{ "if", ColorCode.magenta },
+            .{ "implements", ColorCode.blue },
+            .{ "import", ColorCode.magenta },
+            .{ "in", ColorCode.magenta },
+            .{ "instanceof", ColorCode.magenta },
+            .{ "interface", ColorCode.blue },
+            .{ "let", ColorCode.magenta },
+            .{ "new", ColorCode.magenta },
+            .{ "null", ColorCode.orange },
+            .{ "package", ColorCode.magenta },
+            .{ "private", ColorCode.blue },
+            .{ "protected", ColorCode.blue },
+            .{ "public", ColorCode.blue },
+            .{ "return", ColorCode.blue },
+            .{ "static", ColorCode.magenta },
+            .{ "super", ColorCode.magenta },
+            .{ "switch", ColorCode.magenta },
+            .{ "this", ColorCode.orange },
+            .{ "throw", ColorCode.blue },
+            .{ "true", ColorCode.orange },
+            .{ "try", ColorCode.magenta },
+            .{ "type", ColorCode.blue },
+            .{ "typeof", ColorCode.magenta },
+            .{ "var", ColorCode.magenta },
+            .{ "void", ColorCode.magenta },
+            .{ "while", ColorCode.magenta },
+            .{ "with", ColorCode.magenta },
+            .{ "yield", ColorCode.magenta },
+        });
+
+        pub fn format(this: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+            const text = this.text;
+
+            if (!this.enable_colors or text.len > 2048 or text.len == 0 or !strings.isAllASCII(text)) {
+                try writer.writeAll(text);
+                return;
+            }
+
+            var remain = text;
+            while (remain.len > 0) {
+                if (js_lexer.isIdentifierStart(remain[0])) {
+                    var i: usize = 1;
+
+                    while (i < remain.len and js_lexer.isIdentifierContinue(remain[i])) {
+                        i += 1;
+                    }
+
+                    if (Keywords.get(remain[0..i])) |code| {
+                        try writer.print(Output.prettyFmt("<r>{s}{s}<r>", true), .{ code.color(), remain[0..i] });
+                    } else {
+                        try writer.writeAll(remain[0..i]);
+                    }
+                    remain = remain[i..];
+                } else {
+                    switch (remain[0]) {
+                        '0'...'9' => {
+                            var i: usize = 1;
+                            if (remain.len > 1 and remain[0] == '0' and remain[1] == 'x') {
+                                i += 1;
+                                while (i < remain.len and switch (remain[i]) {
+                                    '0'...'9', 'a'...'f', 'A'...'F' => true,
+                                    else => false,
+                                }) {
+                                    i += 1;
+                                }
+                            } else {
+                                while (i < remain.len and switch (remain[i]) {
+                                    '0'...'9', '.', 'e', 'E', 'x', 'X', 'b', 'B', 'o', 'O' => true,
+                                    else => false,
+                                }) {
+                                    i += 1;
+                                }
+                            }
+
+                            try writer.print(Output.prettyFmt("<r><yellow>{s}<r>", true), .{remain[0..i]});
+                            remain = remain[i..];
+                        },
+                        inline '`', '"', '\'' => |char| {
+                            var i: usize = 1;
+                            for (remain[i..]) |c| {
+                                if (c == char) {
+                                    i += 1;
+                                    break;
+                                } else if (c == '\\') {
+                                    i += 1;
+                                    if (i < remain.len) {
+                                        i += 1;
+                                    }
+                                } else {
+                                    i += 1;
+                                }
+                            }
+
+                            try writer.print(Output.prettyFmt("<r><green>{s}<r>", true), .{remain[0..i]});
+                            remain = remain[i..];
+                        },
+                        '/' => {
+                            var i: usize = 1;
+
+                            // the start of a line comment
+                            if (i < remain.len and remain[i] == '/') {
+                                while (i < remain.len and remain[i] != '\n') {
+                                    i += 1;
+                                }
+
+                                const remain_to_print = remain[0..i];
+                                if (i < remain.len and remain[i] == '\n') {
+                                    i += 1;
+                                }
+
+                                if (i < remain.len and remain[i] == '\r') {
+                                    i += 1;
+                                }
+
+                                try writer.print(Output.prettyFmt("<r><d>{s}<r>", true), .{remain_to_print});
+                                remain = remain[i..];
+                                continue;
+                            }
+
+                            as_multiline_comment: {
+                                if (i < remain.len and remain[i] == '*') {
+                                    i += 1;
+
+                                    if (!(i < remain.len and remain[i] == '\\')) {
+                                        break :as_multiline_comment;
+                                    }
+
+                                    i += 1;
+
+                                    while (i < remain.len and remain[i] != '*') {
+                                        i += 1;
+                                    }
+
+                                    if (i < remain.len and remain[i] == '*') {
+                                        i += 1;
+                                    } else {
+                                        break :as_multiline_comment;
+                                    }
+
+                                    if (i < remain.len and remain[i] == '/') {
+                                        i += 1;
+                                    } else {
+                                        break :as_multiline_comment;
+                                    }
+
+                                    try writer.print(Output.prettyFmt("<r><d>{s}<r>", true), .{remain[0..i]});
+                                    remain = remain[i..];
+                                    continue;
+                                }
+                            }
+
+                            try writer.writeAll(remain[0..i]);
+                            remain = remain[i..];
+                        },
+                        '}', '[', ']', '{' => {
+                            try writer.print(Output.prettyFmt("<r><b>{s}<r>", true), .{remain[0..1]});
+                            remain = remain[1..];
+                        },
+                        '.' => {
+                            var i: usize = 1;
+                            if (remain.len > 1 and js_lexer.isIdentifierStart(remain[1])) {
+                                i = 2;
+
+                                while (i < remain.len and js_lexer.isIdentifierContinue(remain[i])) {
+                                    i += 1;
+                                }
+
+                                try writer.print(Output.prettyFmt("<r>{s}<r>", true), .{remain[0..i]});
+                                remain = remain[i..];
+                                continue;
+                            }
+
+                            try writer.writeAll(remain[0..1]);
+                            remain = remain[1..];
+                        },
+
+                        '<' => {
+                            var i: usize = 1;
+
+                            // JSX
+                            jsx: {
+                                if (remain.len > 1 and remain[0] == '/') {
+                                    i = 2;
+                                }
+
+                                while (i < remain.len and js_lexer.isIdentifierContinue(remain[i])) {
+                                    i += 1;
+                                }
+
+                                while (i < remain.len and remain[i] != '>') {
+                                    i += 1;
+
+                                    if (i < remain.len and remain[i] == '<') {
+                                        i = 1;
+                                        break :jsx;
+                                    }
+                                }
+
+                                if (i < remain.len and remain[i] == '>') {
+                                    i += 1;
+                                    try writer.print(Output.prettyFmt("<r><cyan>{s}<r>", true), .{remain[0..i]});
+                                    remain = remain[i..];
+                                    continue;
+                                }
+
+                                i = 1;
+                            }
+
+                            try writer.print(Output.prettyFmt("<r>{s}<r>", true), .{remain[0..i]});
+                            remain = remain[i..];
+                        },
+
+                        else => {
+                            try writer.writeAll(remain[0..1]);
+                            remain = remain[1..];
+                        },
+                    }
+                }
+            }
+        }
+    };
+
     pub fn quote(self: string) strings.QuotedFormatter {
         return strings.QuotedFormatter{
             .text = self,

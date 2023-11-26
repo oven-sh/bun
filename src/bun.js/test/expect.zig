@@ -89,10 +89,6 @@ pub const Expect = struct {
         }
     };
 
-    pub inline fn getCustomMatchersRegistry(globalObject: *JSGlobalObject) JSValue {
-        return Expect_getCustomMatchersRegistry(globalObject);
-    }
-
     pub fn getSignature(comptime matcher_name: string, comptime args: string, comptime not: bool) string {
         const received = "<d>expect(<r><red>received<r><d>).<r>";
         comptime if (not) {
@@ -3770,8 +3766,6 @@ pub const Expect = struct {
             return .zero;
         }
 
-        var matchers_registry: JSValue = getCustomMatchersRegistry(globalObject);
-
         var expect_proto = Expect__getPrototype(globalObject);
         var expect_constructor = Expect.getConstructor(globalObject);
         var expect_static_proto = ExpectStatic__getPrototype(globalObject);
@@ -3793,8 +3787,6 @@ pub const Expect = struct {
                     globalObject.throwInvalidArguments("expect.extend: `{s}` is not a valid matcher. Must be a function, is \"{s}\"", .{ matcher_name, type_name });
                     return .zero;
                 }
-
-                matchers_registry.put(globalObject, &matcher_name, matcher_fn);
 
                 // Mutate the Expect/ExpectStatic prototypes/constructor with new instances of JSFunction.
                 // Even though they point to the same native functions for all matchers,
@@ -4787,7 +4779,6 @@ extern fn JSMockFunction__getCalls(JSValue) JSValue;
 /// If there were no calls, it returns an empty JSArray*
 extern fn JSMockFunction__getReturns(JSValue) JSValue;
 
-extern fn Expect_getCustomMatchersRegistry(globalObject: *JSC.JSGlobalObject) JSC.JSValue;
 extern fn ExpectMatcherUtils__getSingleton(globalObject: *JSC.JSGlobalObject) JSC.JSValue;
 
 extern fn Expect__getPrototype(globalObject: *JSC.JSGlobalObject) JSC.JSValue;

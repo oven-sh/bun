@@ -2857,15 +2857,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(result.toObject(globalObject));
         });
 
-    m_testCustomMatchersRegistryObject.initLater(
-        [](const Initializer<JSObject>& init) {
-            JSC::VM& vm = init.vm;
-            JSC::JSGlobalObject* globalObject = init.owner;
-
-            JSC::JSObject* object = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
-            init.set(object);
-        });
-
     m_testMatcherUtilsObject.initLater(
         [](const Initializer<JSObject>& init) {
             JSValue result = JSValue::decode(ExpectMatcherUtils_createSigleton(init.owner));
@@ -3951,7 +3942,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_bunSleepThenCallback.visit(visitor);
     thisObject->m_lazyTestModuleObject.visit(visitor);
     thisObject->m_lazyPreloadTestModuleObject.visit(visitor);
-    thisObject->m_testCustomMatchersRegistryObject.visit(visitor);
     thisObject->m_testMatcherUtilsObject.visit(visitor);
     thisObject->m_commonJSModuleObjectStructure.visit(visitor);
     thisObject->m_memoryFootprintStructure.visit(visitor);

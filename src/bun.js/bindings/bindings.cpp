@@ -4948,12 +4948,6 @@ extern "C" EncodedJSValue JSC__createError(JSC::JSGlobalObject* globalObject, Bu
         JSC::createError(globalObject, str->toWTFString()));
 }
 
-extern "C" EncodedJSValue Expect_getCustomMatchersRegistry(JSC::JSGlobalObject* globalObject_, bool createIfMissing)
-{
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject_);
-    return JSValue::encode(globalObject->m_testCustomMatchersRegistryObject.getInitializedOnMainThread(globalObject));
-}
-
 extern "C" EncodedJSValue ExpectMatcherUtils__getSingleton(JSC::JSGlobalObject* globalObject_)
 {
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject_);

@@ -1983,21 +1983,19 @@ pub const JestPrettyFormat = struct {
     ) bool {
         _ = Format;
 
-        if (value.as(expect.ExpectAnything) != null) {
-            const flags = expect.getMatcherFlags(expect.ExpectAnything, value);
-            if (flags.not) {
+        if (value.as(expect.ExpectAnything)) |matcher| {
+            if (matcher.flags.not) {
                 this.addForNewLine("NotAnything".len);
                 writer.writeAll("NotAnything");
             } else {
                 this.addForNewLine("Anything".len);
                 writer.writeAll("Anything");
             }
-        } else if (value.as(expect.ExpectAny) != null) {
-            const flags = expect.getMatcherFlags(expect.ExpectAny, value);
+        } else if (value.as(expect.ExpectAny)) |matcher| {
             const constructor_value = expect.ExpectAny.constructorValueGetCached(value) orelse return true;
 
-            printAsymmetricMatcherPromisePrefix(flags, this, writer);
-            if (flags.not) {
+            printAsymmetricMatcherPromisePrefix(matcher.flags, this, writer);
+            if (matcher.flags.not) {
                 this.addForNewLine("Any<".len);
                 writer.writeAll("Any<");
             } else {
@@ -2011,15 +2009,15 @@ pub const JestPrettyFormat = struct {
             writer.print(comptime Output.prettyFmt("<cyan>{}<r>", enable_ansi_colors), .{class_name});
             this.addForNewLine(1);
             writer.writeAll(">");
-        } else if (value.as(expect.ExpectCloseTo) != null) {
-            const flags = expect.getMatcherFlags(expect.ExpectCloseTo, value);
+        } else if (value.as(expect.ExpectCloseTo)) |matcher| {
             const number_value = expect.ExpectCloseTo.numberValueGetCached(value) orelse return true;
             const digits_value = expect.ExpectCloseTo.digitsValueGetCached(value) orelse return true;
 
             const number = number_value.toInt32();
             const digits = digits_value.toInt32();
 
-            if (flags.not) {
+            printAsymmetricMatcherPromisePrefix(matcher.flags, this, writer);
+            if (matcher.flags.not) {
                 this.addForNewLine("NumberNotCloseTo".len);
                 writer.writeAll("NumberNotCloseTo");
             } else {
@@ -2027,12 +2025,11 @@ pub const JestPrettyFormat = struct {
                 writer.writeAll("NumberCloseTo ");
             }
             writer.print("{d} ({d} digit{s})", .{ number, digits, if (digits == 1) "" else "s" });
-        } else if (value.as(expect.ExpectObjectContaining) != null) {
-            const flags = expect.getMatcherFlags(expect.ExpectObjectContaining, value);
+        } else if (value.as(expect.ExpectObjectContaining)) |matcher| {
             const object_value = expect.ExpectObjectContaining.objectValueGetCached(value) orelse return true;
 
-            printAsymmetricMatcherPromisePrefix(flags, this, writer);
-            if (flags.not) {
+            printAsymmetricMatcherPromisePrefix(matcher.flags, this, writer);
+            if (matcher.flags.not) {
                 this.addForNewLine("ObjectNotContaining ".len);
                 writer.writeAll("ObjectNotContaining ");
             } else {
@@ -2040,12 +2037,11 @@ pub const JestPrettyFormat = struct {
                 writer.writeAll("ObjectContaining ");
             }
             this.printAs(.Object, @TypeOf(writer_), writer_, object_value, .Object, enable_ansi_colors);
-        } else if (value.as(expect.ExpectStringContaining) != null) {
-            const flags = expect.getMatcherFlags(expect.ExpectStringContaining, value);
+        } else if (value.as(expect.ExpectStringContaining)) |matcher| {
             const substring_value = expect.ExpectStringContaining.stringValueGetCached(value) orelse return true;
 
-            printAsymmetricMatcherPromisePrefix(flags, this, writer);
-            if (flags.not) {
+            printAsymmetricMatcherPromisePrefix(matcher.flags, this, writer);
+            if (matcher.flags.not) {
                 this.addForNewLine("StringNotContaining ".len);
                 writer.writeAll("StringNotContaining ");
             } else {
@@ -2053,12 +2049,11 @@ pub const JestPrettyFormat = struct {
                 writer.writeAll("StringContaining ");
             }
             this.printAs(.String, @TypeOf(writer_), writer_, substring_value, .String, enable_ansi_colors);
-        } else if (value.as(expect.ExpectStringMatching) != null) {
-            const flags = expect.getMatcherFlags(expect.ExpectStringMatching, value);
+        } else if (value.as(expect.ExpectStringMatching)) |matcher| {
             const test_value = expect.ExpectStringMatching.testValueGetCached(value) orelse return true;
 
-            printAsymmetricMatcherPromisePrefix(flags, this, writer);
-            if (flags.not) {
+            printAsymmetricMatcherPromisePrefix(matcher.flags, this, writer);
+            if (matcher.flags.not) {
                 this.addForNewLine("StringNotMatching ".len);
                 writer.writeAll("StringNotMatching ");
             } else {
@@ -2072,18 +2067,19 @@ pub const JestPrettyFormat = struct {
             this.quote_strings = original_quote_strings;
         } else if (value.as(expect.ExpectCustomAsymmetricMatcher)) |instance| {
             var printed = instance.customPrint(value, this.globalThis, writer_, true) catch unreachable;
-            if (!printed) {
+            if (!printed) { // default print (non-overriden by user)
                 const flags = instance.flags;
-                const matcher_name = instance.custom_matcher_name.toSlice(bun.default_allocator);
                 const args_value = expect.ExpectCustomAsymmetricMatcher.capturedArgsGetCached(value) orelse return true;
+                const matcher_fn = expect.ExpectCustomAsymmetricMatcher.matcherFnGetCached(value) orelse return true;
+                const matcher_name = matcher_fn.getName(this.globalThis);
 
                 printAsymmetricMatcherPromisePrefix(flags, this, writer);
                 if (flags.not) {
                     this.addForNewLine("not ".len);
                     writer.writeAll("not ");
                 }
-                this.addForNewLine(instance.custom_matcher_name.length() + 1);
-                writer.writeAll(matcher_name.slice());
+                this.addForNewLine(matcher_name.length() + 1);
+                writer.print("{s}", .{matcher_name});
                 writer.writeAll(" ");
                 this.printAs(.String, @TypeOf(writer_), writer_, args_value, .Array, enable_ansi_colors);
             }

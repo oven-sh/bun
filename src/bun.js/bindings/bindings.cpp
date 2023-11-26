@@ -129,14 +129,14 @@ using namespace JSC;
 
 using namespace WebCore;
 
-typedef uint32_t ExpectFlags;
+typedef uint8_t ExpectFlags;
 
-// Note: keep in sync with Expect.Flags.toBitset implementation in zig
-static const int FLAG_NOT = (1 << 0);
-static const int FLAG_RESOLVES = (1 << 1);
-static const int FLAG_REJECTS = (1 << 2);
+// Note: keep this in sync with Expect.Flags implementation in zig (at expect.zig)
+static const int FLAG_PROMISE_RESOLVES = (1 << 0);
+static const int FLAG_PROMISE_REJECTS = (1 << 1);
+static const int FLAG_NOT = (1 << 2);
 
-extern "C" bool Expect_processPromiseInterop(JSC__JSGlobalObject* globalObject, ExpectFlags flags, JSC__JSValue* value);
+extern "C" bool Expect_readFlagsAndProcessPromise(JSC__JSValue instanceValue, JSC__JSGlobalObject* globalObject, ExpectFlags* flags, JSC__JSValue* value);
 extern "C" bool ExpectCustomAsymmetricMatcher__execute(void* self, JSC__JSValue thisValue, JSC__JSGlobalObject* globalObject, JSC__JSValue leftValue);
 
 enum class AsymmetricMatcherResult : uint8_t {
@@ -146,13 +146,10 @@ enum class AsymmetricMatcherResult : uint8_t {
 };
 
 template<class T>
-bool readFlagsAndProcessPromise(T* instance, ExpectFlags& flags, JSGlobalObject* globalObject, JSValue& value)
+bool readFlagsAndProcessPromise(JSValue& instanceValue, T* instance, ExpectFlags& flags, JSGlobalObject* globalObject, JSValue& value)
 {
-    JSValue flagsValue = instance->m_flags.get();
-    flags = static_cast<ExpectFlags>(flagsValue.isEmpty() ? 0 : flagsValue.toUInt32(globalObject));
-
     JSC::EncodedJSValue valueEncoded = JSValue::encode(value);
-    if (Expect_processPromiseInterop(globalObject, flags, &valueEncoded)) {
+    if (Expect_readFlagsAndProcessPromise(JSValue::encode(instanceValue), globalObject, &flags, &valueEncoded)) {
         value = JSValue::decode(valueEncoded);
         return true;
     }
@@ -165,7 +162,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
     JSCell* matcherPropCell = matcherProp.asCell();
 
     if (auto* expectAnything = jsDynamicCast<JSExpectAnything*>(matcherPropCell)) {
-        if (!readFlagsAndProcessPromise(expectAnything, flags, globalObject, otherProp))
+        if (!readFlagsAndProcessPromise(matcherProp, expectAnything, flags, globalObject, otherProp))
             return AsymmetricMatcherResult::FAIL;
 
         if (otherProp.isUndefinedOrNull()) {
@@ -174,7 +171,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
 
         return AsymmetricMatcherResult::PASS;
     } else if (auto* expectAny = jsDynamicCast<JSExpectAny*>(matcherPropCell)) {
-        if (!readFlagsAndProcessPromise(expectAny, flags, globalObject, otherProp))
+        if (!readFlagsAndProcessPromise(matcherProp, expectAny, flags, globalObject, otherProp))
             return AsymmetricMatcherResult::FAIL;
 
         JSValue constructorValue = expectAny->m_constructorValue.get();
@@ -222,7 +219,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
 
         return AsymmetricMatcherResult::FAIL;
     } else if (auto* expectStringContaining = jsDynamicCast<JSExpectStringContaining*>(matcherPropCell)) {
-        if (!readFlagsAndProcessPromise(expectStringContaining, flags, globalObject, otherProp))
+        if (!readFlagsAndProcessPromise(matcherProp, expectStringContaining, flags, globalObject, otherProp))
             return AsymmetricMatcherResult::FAIL;
 
         JSValue expectedSubstring = expectStringContaining->m_stringValue.get();
@@ -241,7 +238,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
 
         return AsymmetricMatcherResult::FAIL;
     } else if (auto* expectStringMatching = jsDynamicCast<JSExpectStringMatching*>(matcherPropCell)) {
-        if (!readFlagsAndProcessPromise(expectStringMatching, flags, globalObject, otherProp))
+        if (!readFlagsAndProcessPromise(matcherProp, expectStringMatching, flags, globalObject, otherProp))
             return AsymmetricMatcherResult::FAIL;
 
         JSValue expectedTestValue = expectStringMatching->m_testValue.get();
@@ -269,7 +266,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
 
         return AsymmetricMatcherResult::FAIL;
     } else if (auto* expectArrayContaining = jsDynamicCast<JSExpectArrayContaining*>(matcherPropCell)) {
-        if (!readFlagsAndProcessPromise(expectArrayContaining, flags, globalObject, otherProp))
+        if (!readFlagsAndProcessPromise(matcherProp, expectArrayContaining, flags, globalObject, otherProp))
             return AsymmetricMatcherResult::FAIL;
 
         JSValue expectedArrayValue = expectArrayContaining->m_arrayValue.get();
@@ -314,7 +311,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
 
         return AsymmetricMatcherResult::FAIL;
     } else if (auto* expectObjectContaining = jsDynamicCast<JSExpectObjectContaining*>(matcherPropCell)) {
-        if (!readFlagsAndProcessPromise(expectObjectContaining, flags, globalObject, otherProp))
+        if (!readFlagsAndProcessPromise(matcherProp, expectObjectContaining, flags, globalObject, otherProp))
             return AsymmetricMatcherResult::FAIL;
 
         JSValue patternObject = expectObjectContaining->m_objectValue.get();
@@ -340,7 +337,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
 
         return AsymmetricMatcherResult::FAIL;
     } else if (auto* expectCloseTo = jsDynamicCast<JSExpectCloseTo*>(matcherPropCell)) {
-        if (!readFlagsAndProcessPromise(expectCloseTo, flags, globalObject, otherProp))
+        if (!readFlagsAndProcessPromise(matcherProp, expectCloseTo, flags, globalObject, otherProp))
             return AsymmetricMatcherResult::FAIL;
 
         if (!otherProp.isNumber()) {
@@ -368,7 +365,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
             return isClose ? AsymmetricMatcherResult::PASS : AsymmetricMatcherResult::FAIL;
         }
     } else if (auto* customMatcher = jsDynamicCast<JSExpectCustomAsymmetricMatcher*>(matcherPropCell)) {
-        if (!readFlagsAndProcessPromise(customMatcher, flags, globalObject, otherProp))
+        if (!readFlagsAndProcessPromise(matcherProp, customMatcher, flags, globalObject, otherProp))
             return AsymmetricMatcherResult::FAIL;
 
         // ignore the "not" flag here, because the custom matchers handle it themselves (accessing this.isNot)
@@ -4951,23 +4948,24 @@ extern "C" EncodedJSValue JSC__createError(JSC::JSGlobalObject* globalObject, Bu
         JSC::createError(globalObject, str->toWTFString()));
 }
 
-using JSC__PropertySlot = JSC::PropertySlot;
-using PropertyAttributesZig = unsigned;
-
-CPP_DECL void JSC__PropertySlot__setValue(JSC__PropertySlot* propertySlot, JSC__JSObject* thisObject, PropertyAttributesZig attributes, JSC__JSValue encodedValue)
-{
-    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
-    propertySlot->setValue(thisObject, attributes, value);
-}
-
 extern "C" EncodedJSValue Expect_getCustomMatchersRegistry(JSC::JSGlobalObject* globalObject_, bool createIfMissing)
 {
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject_);
-    return JSValue::encode(globalObject->m_lazyTestCustomMatchersRegistryObject.getInitializedOnMainThread(globalObject));
+    return JSValue::encode(globalObject->m_testCustomMatchersRegistryObject.getInitializedOnMainThread(globalObject));
 }
 
 extern "C" EncodedJSValue ExpectMatcherUtils__getSingleton(JSC::JSGlobalObject* globalObject_)
 {
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject_);
-    return JSValue::encode(globalObject->m_lazyTestMatcherUtilsObject.getInitializedOnMainThread(globalObject));
+    return JSValue::encode(globalObject->m_testMatcherUtilsObject.getInitializedOnMainThread(globalObject));
+}
+
+extern "C" EncodedJSValue Expect__getPrototype(JSC::JSGlobalObject* globalObject)
+{
+    return JSValue::encode(reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSExpectPrototype());
+}
+
+extern "C" EncodedJSValue ExpectStatic__getPrototype(JSC::JSGlobalObject* globalObject)
+{
+    return JSValue::encode(reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSExpectStaticPrototype());
 }

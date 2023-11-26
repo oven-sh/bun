@@ -5927,30 +5927,3 @@ pub const ScriptExecutionStatus = enum(i32) {
     suspended = 1,
     stopped = 2,
 };
-
-pub const PropertyAttributes = c_uint;
-
-// ECMA 262-3 8.6.1
-// Property attributes
-pub const PropertyAttribute = struct {
-    pub const ReadOnly: PropertyAttributes = 1 << 1; // property can be only read, not written
-    pub const DontEnum: PropertyAttributes = 1 << 2; // property doesn't appear in (for .. in ..)
-    pub const DontDelete: PropertyAttributes = 1 << 3; // property can't be deleted
-    pub const Accessor: PropertyAttributes = 1 << 4; // property is a getter/setter
-    pub const CustomAccessor: PropertyAttributes = 1 << 5;
-    pub const CustomValue: PropertyAttributes = 1 << 6;
-};
-
-pub const PropertySlot = opaque {
-    extern fn JSC__PropertySlot__setValue(this: *PropertySlot, thisObject: *JSObject, attributes: PropertyAttributes, value: JSValue) void;
-
-    pub fn setValue(this: *PropertySlot, thisObject: *JSObject, attributes: PropertyAttributes, value: JSValue) void {
-        JSC.markBinding(@src());
-        return JSC__PropertySlot__setValue(this, thisObject, attributes, value);
-    }
-
-    pub fn setValueReadOnly(this: *PropertySlot, thisObject: *JSObject, value: JSValue) void {
-        JSC.markBinding(@src());
-        return JSC__PropertySlot__setValue(this, thisObject, PropertyAttribute.ReadOnly | PropertyAttribute.DontEnum, value);
-    }
-};

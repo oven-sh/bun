@@ -15,7 +15,6 @@ pub const Classes = struct {
     pub const Expect = JSC.Expect.Expect;
     pub const ExpectAny = JSC.Expect.ExpectAny;
     pub const ExpectAnything = JSC.Expect.ExpectAnything;
-    pub const ExpectCustomMatcher = JSC.Expect.ExpectCustomMatcher;
     pub const ExpectCustomAsymmetricMatcher = JSC.Expect.ExpectCustomAsymmetricMatcher;
     pub const ExpectMatcherContext = JSC.Expect.ExpectMatcherContext;
     pub const ExpectMatcherUtils = JSC.Expect.ExpectMatcherUtils;

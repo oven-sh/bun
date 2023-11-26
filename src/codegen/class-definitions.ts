@@ -46,9 +46,6 @@ export interface ClassDefinition {
   klass: Record<string, Field>;
   proto: Record<string, Field>;
   values?: string[];
-  /** This creates additional accessors to the "values", but from JSObject instead of from JSValues
-   * (this is need for example to access the values from the getOwnPropertySlot callback) */
-  valuesAccessorsFromJsObject?: boolean;
   JSType?: string;
   noConstructor?: boolean;
   estimatedSize?: boolean;
@@ -57,19 +54,6 @@ export interface ClassDefinition {
   supportsObjectCreate?: boolean;
 
   getInternalProperties?: boolean;
-
-  /**
-   * Callback for dynamic resolution of properties of the object. Depending on the mode:
-   *  - If "first": call "getOwnPropertySlot" first, and only try to resolve the object properties if it returned false.
-   *  - If "last": try to resolve the object properties, and only call "getOwnPropertySlot" if that failed.
-   *  - If "only": just call "getOwnPropertySlot" and don't resolve object properties
-   */
-  getOwnPropertySlot?: "first" | "last" | "only";
-  /** Same as getOwnPropertySlot, but generated on the class constructor instead of on the class itself */
-  getOwnPropertySlotStatic?: "first" | "last" | "only";
-
-  /** Override the apply method (call the instance as function) on the class instances */
-  apply?: boolean;
 
   custom?: Record<string, CustomField>;
 

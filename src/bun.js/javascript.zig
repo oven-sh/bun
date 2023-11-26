@@ -2626,11 +2626,24 @@ pub const VirtualMachine = struct {
         var top = &frames[0];
         var top_source_url = top.source_url.toUTF8(bun.default_allocator);
         defer top_source_url.deinit();
-        if (this.source_mappings.resolveMapping(
-            top_source_url.slice(),
-            @max(top.position.line, 0),
-            @max(top.position.column_start, 0),
-        )) |mapping| {
+        var mapping_: ?SourceMap.Mapping = null;
+        if (top.remapped) {
+            mapping_ = SourceMap.Mapping{
+                .generated = .{},
+                .original = .{
+                    .lines = @max(top.position.line, 0),
+                    .columns = @max(top.position.column_start, 0),
+                },
+                .source_index = 0,
+            };
+        } else {
+            mapping_ = this.source_mappings.resolveMapping(
+                top_source_url.slice(),
+                @max(top.position.line, 0),
+                @max(top.position.column_start, 0),
+            );
+        }
+        if (mapping_) |mapping| {
             var log = logger.Log.init(default_allocator);
             var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return;
             const code = original_source.source_code.toUTF8(bun.default_allocator);

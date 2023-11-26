@@ -337,19 +337,74 @@ WTF::String Bun::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject
     // https://discord.com/channels/876711213126520882/1174901590457585765/1174907969419350036
     size_t framesCount = stackTrace.size();
 
+    bool hasSet = false;
+
+    ZigStackFrame remappedFrames[64];
+    framesCount = framesCount > 64 ? 64 : framesCount;
+    size_t offset = 0;
+
+    bool needsNewline = !name.isEmpty() || !message.isEmpty();
+
+    if (JSC::ErrorInstance* err = jsDynamicCast<JSC::ErrorInstance*>(errorInstance)) {
+        if (err->errorType() == ErrorType::SyntaxError && (stackTrace.isEmpty() || stackTrace.at(0).sourceURL(vm) != err->sourceURL())) {
+            auto originalLine = err->line();
+
+            memset(remappedFrames, 0, sizeof(ZigStackFrame));
+            auto& remappedFrame = remappedFrames[0];
+
+            remappedFrame.position.line = originalLine;
+            remappedFrame.position.column_start = 0;
+
+            String sourceURLForFrame = err->sourceURL();
+            offset = 1;
+
+            // If it's not a Zig::GlobalObject, don't bother source-mapping it.
+            if (globalObject && !sourceURLForFrame.isEmpty()) {
+                if (!sourceURLForFrame.isEmpty()) {
+                    remappedFrame.source_url = Bun::toString(sourceURLForFrame);
+                } else {
+                    // https://github.com/oven-sh/bun/issues/3595
+                    remappedFrame.source_url = BunStringEmpty;
+                }
+
+                // This ensures the lifetime of the sourceURL is accounted for correctly
+                Bun__remapStackFramePositions(globalObject, remappedFrames, 1);
+            }
+
+            if (needsNewline) {
+                sb.append("\n"_s);
+            }
+
+            needsNewline = true;
+
+            sb.append("    at <parse> ("_s);
+
+            sb.append(sourceURLForFrame);
+
+            if (remappedFrame.remapped) {
+                errorInstance->putDirect(vm, Identifier::fromString(vm, "originalLine"_s), jsNumber(originalLine), 0);
+                hasSet = true;
+            }
+
+            if (originalLine) {
+                sb.append(":"_s);
+                sb.append(remappedFrame.position.line);
+                line = remappedFrame.position.line - 1;
+            }
+
+            sb.append(")"_s);
+        }
+    }
+
     if (framesCount == 0) {
         ASSERT(stackTrace.isEmpty());
         return sb.toString();
     }
 
-    if ((!message.isEmpty() || !name.isEmpty())) {
+    if (needsNewline) {
         sb.append("\n"_s);
     }
 
-    ZigStackFrame remappedFrames[64];
-    framesCount = framesCount > 64 ? 64 : framesCount;
-
-    bool hasSet = false;
     for (size_t i = 0; i < framesCount; i++) {
         StackFrame& frame = stackTrace.at(i);
 
@@ -377,23 +432,24 @@ WTF::String Bun::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject
             unsigned int thisLine = 0;
             unsigned int thisColumn = 0;
             frame.computeLineAndColumn(thisLine, thisColumn);
-            memset(remappedFrames + i, 0, sizeof(ZigStackFrame));
-            remappedFrames[i].position.line = thisLine;
-            remappedFrames[i].position.column_start = thisColumn;
+            memset(remappedFrames + i + offset, 0, sizeof(ZigStackFrame));
+            ZigStackFrame& remappedFrame = remappedFrames[i + offset];
+            remappedFrame.position.line = thisLine;
+            remappedFrame.position.column_start = thisColumn;
 
             String sourceURLForFrame = frame.sourceURL(vm);
 
             // If it's not a Zig::GlobalObject, don't bother source-mapping it.
             if (globalObject) {
                 if (!sourceURLForFrame.isEmpty()) {
-                    remappedFrames[i].source_url = Bun::toString(sourceURLForFrame);
+                    remappedFrame.source_url = Bun::toString(sourceURLForFrame);
                 } else {
                     // https://github.com/oven-sh/bun/issues/3595
-                    remappedFrames[i].source_url = BunStringEmpty;
+                    remappedFrame.source_url = BunStringEmpty;
                 }
 
                 // This ensures the lifetime of the sourceURL is accounted for correctly
-                Bun__remapStackFramePositions(globalObject, remappedFrames + i, 1);
+                Bun__remapStackFramePositions(globalObject, &remappedFrame, 1);
             }
 
             if (!hasSet) {
@@ -402,7 +458,7 @@ WTF::String Bun::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject
                 column = thisColumn;
                 sourceURL = frame.sourceURL(vm);
 
-                if (remappedFrames[i].remapped) {
+                if (remappedFrame.remapped) {
                     if (errorInstance) {
                         errorInstance->putDirect(vm, Identifier::fromString(vm, "originalLine"_s), jsNumber(thisLine), 0);
                         errorInstance->putDirect(vm, Identifier::fromString(vm, "originalColumn"_s), jsNumber(thisColumn), 0);
@@ -412,9 +468,9 @@ WTF::String Bun::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject
 
             sb.append(sourceURLForFrame);
             sb.append(":"_s);
-            sb.append(remappedFrames[i].position.line);
+            sb.append(remappedFrame.position.line);
             sb.append(":"_s);
-            sb.append(remappedFrames[i].position.column_start);
+            sb.append(remappedFrame.position.column_start);
         } else {
             sb.append("native"_s);
         }
@@ -874,7 +930,7 @@ GlobalObject::~GlobalObject()
         finalizer(toNapi(this), napiInstanceData, napiInstanceDataFinalizerHint);
     }
 
-    if (auto *ctx = scriptExecutionContext()) {
+    if (auto* ctx = scriptExecutionContext()) {
         ctx->removeFromContextsMap();
     }
 }
@@ -1761,7 +1817,7 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
             return JSValue::encode(obj);
         }
 
-        if(string == "internal/http2"_s) {
+        if (string == "internal/http2"_s) {
             auto* obj = constructEmptyObject(globalObject);
 
             obj->putDirect(
@@ -1769,11 +1825,11 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
 
             obj->putDirect(
                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "getPackedSettings"_s)), JSC::JSFunction::create(vm, globalObject, 1, "getPackedSettings"_s, BUN__HTTP2_getPackedSettings, ImplementationVisibility::Public, NoIntrinsic), 0);
-          
+
             obj->putDirect(
                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "getUnpackedSettings"_s)), JSC::JSFunction::create(vm, globalObject, 1, "getUnpackedSettings"_s, BUN__HTTP2__getUnpackedSettings, ImplementationVisibility::Public, NoIntrinsic), 0);
-            return JSValue::encode(obj);            
-        } 
+            return JSValue::encode(obj);
+        }
         if (string == "internal/tls"_s) {
             auto* obj = constructEmptyObject(globalObject);
 

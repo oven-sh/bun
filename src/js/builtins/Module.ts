@@ -8,6 +8,7 @@ export function require(this: CommonJSModuleRecord, id: string) {
 }
 
 // overridableRequire can be overridden by setting `Module.prototype.require`
+$overriddenName = "require";
 export function overridableRequire(this: CommonJSModuleRecord, id: string) {
   const existing = $requireMap.$get(id) || $requireMap.$get((id = $resolveSync(id, this.path, false)));
   if (existing) {

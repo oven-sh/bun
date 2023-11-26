@@ -1,5 +1,6 @@
 type ImportMetaObject = Partial<ImportMeta>;
 
+$visibility = "Private";
 export function loadCJS2ESM(this: ImportMetaObject, resolvedSpecifier: string) {
   var loader = Loader;
   var queue = $createFIFO();
@@ -92,6 +93,7 @@ export function loadCJS2ESM(this: ImportMetaObject, resolvedSpecifier: string) {
   return loader.registry.$get(resolvedSpecifier);
 }
 
+$visibility = "Private";
 export function requireESM(this: ImportMetaObject, resolved) {
   var entry = Loader.registry.$get(resolved);
 
@@ -107,6 +109,7 @@ export function requireESM(this: ImportMetaObject, resolved) {
   return exports;
 }
 
+$visibility = "Private";
 export function internalRequire(this: ImportMetaObject, id) {
   var cached = $requireMap.$get(id);
   const last5 = id.substring(id.length - 5);

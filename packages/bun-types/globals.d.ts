@@ -307,9 +307,9 @@ interface ImportMeta {
   readonly file: string;
   /**
    * The environment variables of the process
-   * 
+   *
    * ```ts
-   * import.meta.env === process.env 
+   * import.meta.env === process.env
    * ```
    */
   readonly env: import("bun").Env;

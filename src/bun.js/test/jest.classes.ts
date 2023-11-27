@@ -305,7 +305,6 @@ export default [
       },
       toHaveBeenNthCalledWith: {
         fn: "toHaveBeenNthCalledWith",
-        length: 1,
       },
       toHaveReturnedTimes: {
         fn: "toHaveReturnedTimes",

@@ -3428,29 +3428,19 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
         if (not) {
             const signature = comptime getSignature("toHaveBeenCalled", "", true);
-            const fmt = signature ++ "\n\nExpected: not <green>{any}<r>\n";
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{calls.toFmt(globalObject, &formatter)});
-                return .zero;
-            }
-            globalObject.throw(Output.prettyFmt(fmt, false), .{calls.toFmt(globalObject, &formatter)});
-            return .zero;
-        } else {
-            const signature = comptime getSignature("toHaveBeenCalled", "", false);
-            const fmt = signature ++ "\n\nExpected <green>{any}<r>\n";
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{calls.toFmt(globalObject, &formatter)});
-                return .zero;
-            }
-            globalObject.throw(Output.prettyFmt(fmt, false), .{calls.toFmt(globalObject, &formatter)});
+            const fmt = signature ++ "\n\n" ++ "Expected number of calls: <green>0<r>\n" ++ "Received number of calls: <red>{any}<r>\n";
+            globalObject.throwPretty(fmt, .{calls.getLength(globalObject)});
             return .zero;
         }
 
-        unreachable;
+        const signature = comptime getSignature("toHaveBeenCalled", "", false);
+        const fmt = signature ++ "\n\n" ++ "Expected number of calls: \\>= <green>1<r>\n" ++ "Received number of calls: <red>{any}<r>\n";
+        globalObject.throwPretty(fmt, .{calls.getLength(globalObject)});
+        return .zero;
     }
+
     pub fn toHaveBeenCalledTimes(this: *Expect, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
 
@@ -3469,8 +3459,8 @@ pub const Expect = struct {
             return .zero;
         }
 
-        if (arguments.len < 1 or !arguments[0].isAnyInt()) {
-            globalObject.throwInvalidArguments("toHaveBeenCalledTimes() requires 1 integer argument", .{});
+        if (arguments.len < 1 or !arguments[0].isUInt32AsAnyInt()) {
+            globalObject.throwInvalidArguments("toHaveBeenCalledTimes() requires 1 non-negative integer argument", .{});
             return .zero;
         }
 
@@ -3483,28 +3473,17 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
         if (not) {
             const signature = comptime getSignature("toHaveBeenCalledTimes", "<green>expected<r>", true);
-            const fmt = signature ++ "\n\nExpected: not <green>{any}<r>\n";
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{calls.toFmt(globalObject, &formatter)});
-                return .zero;
-            }
-            globalObject.throw(Output.prettyFmt(fmt, false), .{calls.toFmt(globalObject, &formatter)});
-            return .zero;
-        } else {
-            const signature = comptime getSignature("toHaveBeenCalledTimes", "<green>expected<r>", false);
-            const fmt = signature ++ "\n\nExpected <green>{any}<r>\n";
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{calls.toFmt(globalObject, &formatter)});
-                return .zero;
-            }
-            globalObject.throw(Output.prettyFmt(fmt, false), .{calls.toFmt(globalObject, &formatter)});
+            const fmt = signature ++ "\n\n" ++ "Expected number of calls: not <green>{any}<r>\n" ++ "Received number of calls: <red>{any}<r>\n";
+            globalObject.throwPretty(fmt, .{ times, calls.getLength(globalObject) });
             return .zero;
         }
 
-        unreachable;
+        const signature = comptime getSignature("toHaveBeenCalledTimes", "<green>expected<r>", false);
+        const fmt = signature ++ "\n\n" ++ "Expected number of calls: <green>{any}<r>\n" ++ "Received number of calls: <red>{any}<r>\n";
+        globalObject.throwPretty(fmt, .{ times, calls.getLength(globalObject) });
+        return .zero;
     }
 
     pub fn toMatchObject(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
@@ -3704,7 +3683,77 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub const toHaveBeenNthCalledWith = notImplementedJSCFn;
+    pub fn toHaveBeenNthCalledWith(this: *Expect, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        JSC.markBinding(@src());
+
+        const thisValue = callframe.this();
+        const arguments_ = callframe.argumentsPtr()[0..callframe.argumentsCount()];
+        const arguments: []const JSValue = arguments_.ptr[0..arguments_.len];
+        defer this.postMatch(globalObject);
+        const value: JSValue = this.getValue(globalObject, thisValue, "toHaveBeenNthCalledWith", "<green>expected<r>") orelse return .zero;
+
+        active_test_expectation_counter.actual += 1;
+
+        const calls = JSMockFunction__getCalls(value);
+
+        if (calls == .zero or !calls.jsType().isArray()) {
+            globalObject.throw("Expected value must be a mock function: {}", .{value});
+            return .zero;
+        }
+
+        const nthCallNum = if (arguments.len > 0 and arguments[0].isUInt32AsAnyInt()) arguments[0].coerce(i32, globalObject) else 0;
+        if (nthCallNum < 1) {
+            globalObject.throwInvalidArguments("toHaveBeenNthCalledWith() requires a positive integer argument", .{});
+            return .zero;
+        }
+
+        const totalCalls = calls.getLength(globalObject);
+        var nthCallValue: JSValue = .zero;
+
+        var pass = totalCalls >= nthCallNum;
+
+        if (pass) {
+            nthCallValue = calls.getIndex(globalObject, @as(u32, @intCast(nthCallNum)) - 1);
+
+            if (nthCallValue == .zero or !nthCallValue.jsType().isArray()) {
+                globalObject.throw("Expected value must be a mock function with calls: {}", .{value});
+                return .zero;
+            }
+
+            if (nthCallValue.getLength(globalObject) != (arguments.len - 1)) {
+                pass = false;
+            } else {
+                var itr = nthCallValue.arrayIterator(globalObject);
+                while (itr.next()) |callArg| {
+                    if (!callArg.jestDeepEquals(arguments[itr.i], globalObject)) {
+                        pass = false;
+                        break;
+                    }
+                }
+            }
+        }
+
+        const not = this.flags.not;
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        const received_fmt = nthCallValue.toFmt(globalObject, &formatter);
+
+        if (not) {
+            const signature = comptime getSignature("toHaveBeenNthCalledWith", "<green>expected<r>", true);
+            const fmt = signature ++ "\n\n" ++ "n: {any}\n" ++ "Received: <red>{any}<r>" ++ "\n\n" ++ "Number of calls: <red>{any}<r>\n";
+            globalObject.throwPretty(fmt, .{ nthCallNum, received_fmt, totalCalls });
+            return .zero;
+        }
+
+        const signature = comptime getSignature("toHaveBeenNthCalledWith", "<green>expected<r>", false);
+        const fmt = signature ++ "\n\n" ++ "n: {any}\n" ++ "Received: <red>{any}<r>" ++ "\n\n" ++ "Number of calls: <red>{any}<r>\n";
+        globalObject.throwPretty(fmt, .{ nthCallNum, received_fmt, totalCalls });
+        return .zero;
+    }
+
     pub const toHaveReturnedTimes = notImplementedJSCFn;
     pub const toHaveReturnedWith = notImplementedJSCFn;
     pub const toHaveLastReturnedWith = notImplementedJSCFn;

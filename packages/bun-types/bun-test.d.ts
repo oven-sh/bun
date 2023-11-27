@@ -1398,6 +1398,10 @@ declare module "bun:test" {
      * Ensure that a mock function is called with specific arguments for the last call.
      */
     toHaveBeenLastCalledWith(...expected: Array<unknown>): void;
+    /**
+     * Ensure that a mock function is called with specific arguments for the nth call.
+     */
+    toHaveBeenNthCalledWith(n: number, ...expected: Array<unknown>): void;
   }
 
   /**

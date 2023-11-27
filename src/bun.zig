@@ -44,6 +44,7 @@ pub const fmt = struct {
     pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
         text: []const u8,
         enable_colors: bool = false,
+        limited: bool = true,
 
         const ColorCode = enum {
             magenta,
@@ -105,6 +106,7 @@ pub const fmt = struct {
             @"switch",
             this,
             throw,
+            @"break",
             true,
             @"try",
             type,
@@ -124,6 +126,8 @@ pub const fmt = struct {
             never,
             namespace,
             declare,
+            readonly,
+            undefined,
 
             pub fn colorCode(this: Keyword) ColorCode {
                 return switch (this) {
@@ -141,6 +145,8 @@ pub const fmt = struct {
                     Keyword.delete => ColorCode.red,
                     Keyword.do => ColorCode.magenta,
                     Keyword.@"else" => ColorCode.magenta,
+                    Keyword.@"break" => ColorCode.magenta,
+                    Keyword.undefined => ColorCode.orange,
                     Keyword.@"enum" => ColorCode.blue,
                     Keyword.@"export" => ColorCode.magenta,
                     Keyword.extends => ColorCode.magenta,
@@ -186,21 +192,26 @@ pub const fmt = struct {
                     Keyword.never => ColorCode.blue,
                     Keyword.namespace => ColorCode.blue,
                     Keyword.declare => ColorCode.blue,
+                    Keyword.readonly => ColorCode.blue,
                 };
             }
         };
 
         pub const Keywords = ComptimeStringMap(Keyword, .{
             .{ "abstract", Keyword.abstract },
+            .{ "any", Keyword.any },
             .{ "as", Keyword.as },
             .{ "async", Keyword.@"async" },
             .{ "await", Keyword.@"await" },
+            .{ "boolean", Keyword.boolean },
+            .{ "break", Keyword.@"break" },
             .{ "case", Keyword.case },
             .{ "catch", Keyword.@"catch" },
             .{ "class", Keyword.class },
             .{ "const", Keyword.@"const" },
             .{ "continue", Keyword.@"continue" },
             .{ "debugger", Keyword.debugger },
+            .{ "declare", Keyword.declare },
             .{ "default", Keyword.default },
             .{ "delete", Keyword.delete },
             .{ "do", Keyword.do },
@@ -219,46 +230,46 @@ pub const fmt = struct {
             .{ "instanceof", Keyword.instanceof },
             .{ "interface", Keyword.interface },
             .{ "let", Keyword.let },
+            .{ "namespace", Keyword.namespace },
+            .{ "never", Keyword.never },
             .{ "new", Keyword.new },
             .{ "null", Keyword.null },
+            .{ "number", Keyword.number },
+            .{ "object", Keyword.object },
             .{ "package", Keyword.package },
             .{ "private", Keyword.private },
             .{ "protected", Keyword.protected },
             .{ "public", Keyword.public },
+            .{ "readonly", Keyword.readonly },
             .{ "return", Keyword.@"return" },
             .{ "static", Keyword.static },
+            .{ "string", Keyword.string },
             .{ "super", Keyword.super },
             .{ "switch", Keyword.@"switch" },
+            .{ "symbol", Keyword.symbol },
             .{ "this", Keyword.this },
             .{ "throw", Keyword.throw },
             .{ "true", Keyword.true },
             .{ "try", Keyword.@"try" },
             .{ "type", Keyword.type },
             .{ "typeof", Keyword.typeof },
+            .{ "undefined", Keyword.undefined },
+            .{ "unknown", Keyword.unknown },
             .{ "var", Keyword.@"var" },
             .{ "void", Keyword.void },
             .{ "while", Keyword.@"while" },
             .{ "with", Keyword.with },
             .{ "yield", Keyword.yield },
-            // typescript primitive types
-            .{ "string", Keyword.string },
-            .{ "number", Keyword.number },
-            .{ "boolean", Keyword.boolean },
-            .{ "symbol", Keyword.symbol },
-            .{ "any", Keyword.any },
-            .{ "object", Keyword.object },
-            .{ "unknown", Keyword.unknown },
-            .{ "never", Keyword.never },
-            .{ "namespace", Keyword.namespace },
-            .{ "declare", Keyword.declare },
         });
 
         pub fn format(this: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
             const text = this.text;
 
-            if (!this.enable_colors or text.len > 2048 or text.len == 0 or !strings.isAllASCII(text)) {
-                try writer.writeAll(text);
-                return;
+            if (this.limited) {
+                if (!this.enable_colors or text.len > 2048 or text.len == 0 or !strings.isAllASCII(text)) {
+                    try writer.writeAll(text);
+                    return;
+                }
             }
 
             var remain = text;
@@ -380,25 +391,14 @@ pub const fmt = struct {
                                 if (i < remain.len and remain[i] == '*') {
                                     i += 1;
 
-                                    if (!(i < remain.len and remain[i] == '\\')) {
-                                        break :as_multiline_comment;
-                                    }
-
-                                    i += 1;
-
-                                    while (i < remain.len and remain[i] != '*') {
+                                    while (i + 2 < remain.len and !strings.eqlComptime(remain[i..][0..2], "*/")) {
                                         i += 1;
                                     }
 
-                                    if (i < remain.len and remain[i] == '*') {
-                                        i += 1;
+                                    if (i + 2 < remain.len and strings.eqlComptime(remain[i..][0..2], "*/")) {
+                                        i += 2;
                                     } else {
-                                        break :as_multiline_comment;
-                                    }
-
-                                    if (i < remain.len and remain[i] == '/') {
-                                        i += 1;
-                                    } else {
+                                        i = 1;
                                         break :as_multiline_comment;
                                     }
 
@@ -414,6 +414,11 @@ pub const fmt = struct {
                         '}', '[', ']', '{' => {
                             prev_keyword = null;
                             try writer.print(Output.prettyFmt("<r><b>{s}<r>", true), .{remain[0..1]});
+                            remain = remain[1..];
+                        },
+                        ';' => {
+                            prev_keyword = null;
+                            try writer.print(Output.prettyFmt("<r><d>;<r>", true), .{});
                             remain = remain[1..];
                         },
                         '.' => {
@@ -450,6 +455,9 @@ pub const fmt = struct {
 
                                 while (i < remain.len and js_lexer.isIdentifierContinue(remain[i])) {
                                     i += 1;
+                                } else {
+                                    i = 1;
+                                    break :jsx;
                                 }
 
                                 while (i < remain.len and remain[i] != '>') {

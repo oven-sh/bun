@@ -2572,7 +2572,8 @@ pub const VirtualMachine = struct {
                 frame.position.column_start = mapping.original.columns;
                 frame.remapped = true;
             } else {
-                frame.remapped = false;
+                // we don't want it to be remapped again
+                frame.remapped = true;
             }
         }
     }

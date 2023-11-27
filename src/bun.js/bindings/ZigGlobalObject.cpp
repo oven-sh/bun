@@ -1651,6 +1651,8 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
     return JSC::JSValue::encode(jsUndefined());
 }
 
+extern "C" EncodedJSValue BunInternalFunction__syntaxHighlighter(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame);
+
 // we're trying out a new way to do this lazy loading
 // this is $lazy() in js code
 JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
@@ -1903,6 +1905,12 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
             obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "getWindowSize"_s)), JSFunction::create(vm, globalObject, 0, "getWindowSize"_s, Bun::Process_functionInternalGetWindowSize, ImplementationVisibility::Public), 2);
 
             return JSValue::encode(obj);
+        }
+
+        if (string == "unstable_syntaxHighlight"_s) {
+            JSFunction* syntaxHighlight = JSFunction::create(vm, globalObject, 1, "syntaxHighlight"_s, BunInternalFunction__syntaxHighlighter, ImplementationVisibility::Public);
+
+            return JSValue::encode(syntaxHighlight);
         }
 
         if (UNLIKELY(string == "noop"_s)) {

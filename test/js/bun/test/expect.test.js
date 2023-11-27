@@ -3392,15 +3392,19 @@ describe("expect()", () => {
     //});
 
     test("ArrayContaining matches", () => {
-      expect(expect.arrayContaining([])).toEqual(42);
-      expect(expect.arrayContaining([])).toEqual("jest");
+      expect(expect.arrayContaining([])).toEqual(["foo", "bar"]);
       expect(expect.arrayContaining(["foo"])).toEqual(["foo"]);
       expect(expect.arrayContaining(["foo"])).toEqual(["foo", "bar"]);
-      expect(expect.arrayContaining([])).toEqual({});
     });
 
     test("ArrayContaining does not match", () => {
-      expect(expect.arrayContaining(["foo"])).not.toEqual(42);
+      // we differ in jest on these cases: bun will fail matching non-array expected values, while jest doesn't
+      if (isBun) {
+        expect(expect.arrayContaining([])).not.toEqual(42);
+        expect(expect.arrayContaining([])).not.toEqual("jest");
+        expect(expect.arrayContaining([])).not.toEqual({});
+        expect(expect.arrayContaining(["foo"])).not.toEqual(42);
+      }
       expect(expect.arrayContaining(["foo"])).not.toEqual("foo");
       expect(expect.arrayContaining(["foo"])).not.toEqual(["bar"]);
     });
@@ -3413,17 +3417,20 @@ describe("expect()", () => {
     });
 
     test("ArrayNotContaining matches", () => {
-      expect(expect.not.arrayContaining(["foo"])).toEqual(42);
+      if (isBun) {
+        expect(expect.not.arrayContaining([])).toEqual(42);
+        expect(expect.not.arrayContaining([])).toEqual("jest");
+        expect(expect.not.arrayContaining([])).toEqual({});
+        expect(expect.not.arrayContaining(["foo"])).toEqual(42);
+      }
       expect(expect.not.arrayContaining(["foo"])).toEqual("foo");
       expect(expect.not.arrayContaining(["foo"])).toEqual(["bar"]);
     });
 
     test("ArrayNotContaining does not match", () => {
-      expect(expect.not.arrayContaining([])).not.toEqual(42);
-      expect(expect.not.arrayContaining([])).not.toEqual("jest");
+      expect(expect.not.arrayContaining([])).not.toEqual(["foo"]);
       expect(expect.not.arrayContaining(["foo"])).not.toEqual(["foo"]);
       expect(expect.not.arrayContaining(["foo"])).not.toEqual(["foo", "bar"]);
-      expect(expect.not.arrayContaining([])).not.toEqual({});
     });
 
     test("ArrayNotContaining throws for non-arrays", () => {
@@ -3434,11 +3441,8 @@ describe("expect()", () => {
     });
 
     test("ObjectContaining matches", () => {
+      // we differ in jest on these cases: bun will fail matching non-object expected values, while jest doesn't
       const foo = Symbol("foo");
-      expect(expect.objectContaining({})).toEqual(null);
-      expect(expect.objectContaining({})).toEqual(undefined);
-      expect(expect.objectContaining({})).toEqual(42);
-      expect(expect.objectContaining({})).toEqual("jest");
       expect(expect.objectContaining({ foo: "foo" })).toEqual({ foo: "foo", jest: "jest" });
       expect(expect.objectContaining({ foo: undefined })).toEqual({ foo: undefined });
       expect(expect.objectContaining({ first: expect.objectContaining({ second: {} }) })).toEqual({
@@ -3454,6 +3458,12 @@ describe("expect()", () => {
     test("ObjectContaining does not match", () => {
       const foo = Symbol("foo");
       const bar = Symbol("bar");
+      if (isBun) { // bun behaves differently to jest on these cases on purpose
+        expect(expect.objectContaining({})).not.toEqual(null);
+        expect(expect.objectContaining({})).not.toEqual(undefined);
+        expect(expect.objectContaining({})).not.toEqual(42);
+        expect(expect.objectContaining({})).not.toEqual("jest");
+      }
       expect(expect.objectContaining({ foo: "foo" })).not.toEqual(42);
       expect(expect.objectContaining({ foo: "foo" })).not.toEqual("jest");
       expect(expect.objectContaining({ foo: "foo" })).not.toEqual({ bar: "bar" });
@@ -3513,6 +3523,11 @@ describe("expect()", () => {
       const foo = Symbol("foo");
       const bar = Symbol("bar");
 
+      if (isBun) { // bun behaves differently to jest on these cases on purpose
+        expect(expect.not.objectContaining({})).toEqual("jest");
+        expect(expect.not.objectContaining({})).toEqual(null);
+        expect(expect.not.objectContaining({})).toEqual(undefined);
+      }
       expect(expect.not.objectContaining({ [foo]: "foo" })).toEqual({ [bar]: "bar" });
       expect(expect.not.objectContaining({ foo: "foo" })).toEqual({ bar: "bar" });
       expect(expect.not.objectContaining({ foo: "foo" })).toEqual({ foo: "foox" });
@@ -3534,7 +3549,7 @@ describe("expect()", () => {
     });
 
     test("ObjectNotContaining does not match", () => {
-      expect(expect.not.objectContaining({})).not.toEqual("jest");
+      expect(expect.not.objectContaining({})).not.toEqual({});
       expect(expect.not.objectContaining({ foo: "foo" })).not.toEqual({
         foo: "foo",
         jest: "jest",
@@ -3548,9 +3563,6 @@ describe("expect()", () => {
           first: expect.objectContaining({ second: {} }),
         }),
       ).not.toEqual({ first: { second: {} } });
-      expect(expect.not.objectContaining({})).not.toEqual(null);
-      expect(expect.not.objectContaining({})).not.toEqual(undefined);
-      expect(expect.not.objectContaining({})).not.toEqual({});
     });
 
     test("ObjectNotContaining inverts ObjectContaining", () => {

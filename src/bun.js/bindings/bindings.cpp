@@ -271,19 +271,18 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
 
         JSValue expectedArrayValue = expectArrayContaining->m_arrayValue.get();
 
-        if (JSC::isArray(globalObject, expectedArrayValue)) {
-            JSArray* expectedArray = jsDynamicCast<JSArray*>(expectedArrayValue);
-            unsigned expectedLength = expectedArray->length();
-
-            if (expectedLength == 0) {
-                // jest makes it so an empty array matches anything,
-                // even a primitive like a string or a number
-                return AsymmetricMatcherResult::PASS;
-            }
-
-            if (JSC::isArray(globalObject, otherProp)) {
+        if (JSC::isArray(globalObject, otherProp)) {
+            if (JSC::isArray(globalObject, expectedArrayValue)) {
+                JSArray* expectedArray = jsDynamicCast<JSArray*>(expectedArrayValue);
                 JSArray* otherArray = jsDynamicCast<JSArray*>(otherProp);
+
+                unsigned expectedLength = expectedArray->length();
                 unsigned otherLength = otherArray->length();
+
+                // A empty array is all array's subset
+                if (expectedLength == 0) {
+                    return AsymmetricMatcherResult::PASS;
+                }
 
                 // O(m*n) but works for now
                 for (unsigned m = 0; m < expectedLength; m++) {
@@ -316,17 +315,6 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
 
         JSValue patternObject = expectObjectContaining->m_objectValue.get();
         if (patternObject.isObject()) {
-            bool isEmptyObject = true;
-            patternObject.getObject()->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
-                isEmptyObject = false;
-                return false;
-            });
-            if (isEmptyObject) {
-                // jest makes it so an empty pattern object matches anything,
-                // even a primitive like a string or a number
-                return AsymmetricMatcherResult::PASS;
-            }
-
             if (otherProp.isObject()) {
                 ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
                 if (Bun__deepMatch<true>(otherProp, patternObject, globalObject, &scope, false, true)) {

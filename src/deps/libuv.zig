@@ -535,7 +535,6 @@ pub const Loop = extern struct {
     }
 
     pub fn init(ptr: *Loop) ?bun.C.E {
-        std.debug.print("uv_loop_init on {d}\n", .{std.Thread.getCurrentId()});
         if (uv_loop_init(ptr).errEnum()) |err| return err;
         return null;
     }

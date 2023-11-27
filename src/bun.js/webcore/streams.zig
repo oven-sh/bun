@@ -4101,7 +4101,6 @@ pub const FIFO = struct {
         this: *FIFO,
         buf: []u8,
     ) ReadResult {
-        std.debug.print("DO READ\n", .{});
         switch (Syscall.sys_uv.read(this.fd, buf)) {
             .err => |err| {
                 const retry = E.AGAIN;

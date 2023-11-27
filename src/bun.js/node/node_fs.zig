@@ -5735,12 +5735,12 @@ pub const NodeFS = struct {
         std.debug.assert(args.atime.tv_nsec <= 1e9);
         var times = [2]std.c.timeval{
             .{
-                .tv_sec = args.mtime.tv_sec,
-                .tv_usec = @intCast(@divTrunc(args.mtime.tv_nsec, std.time.ns_per_us)),
-            },
-            .{
                 .tv_sec = args.atime.tv_sec,
                 .tv_usec = @intCast(@divTrunc(args.atime.tv_nsec, std.time.ns_per_us)),
+            },
+            .{
+                .tv_sec = args.mtime.tv_sec,
+                .tv_usec = @intCast(@divTrunc(args.mtime.tv_nsec, std.time.ns_per_us)),
             },
         };
 
@@ -5775,12 +5775,12 @@ pub const NodeFS = struct {
         std.debug.assert(args.atime.tv_nsec <= 1e9);
         var times = [2]std.c.timeval{
             .{
-                .tv_sec = args.mtime.tv_sec,
-                .tv_usec = @intCast(@divTrunc(args.mtime.tv_nsec, std.time.ns_per_us)),
-            },
-            .{
                 .tv_sec = args.atime.tv_sec,
                 .tv_usec = @intCast(@divTrunc(args.atime.tv_nsec, std.time.ns_per_us)),
+            },
+            .{
+                .tv_sec = args.mtime.tv_sec,
+                .tv_usec = @intCast(@divTrunc(args.mtime.tv_nsec, std.time.ns_per_us)),
             },
         };
 

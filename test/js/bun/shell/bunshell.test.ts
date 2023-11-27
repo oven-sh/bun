@@ -6,8 +6,14 @@ import { tmpdir } from "os";
 import { describe, test, afterAll, beforeAll, expect } from "bun:test";
 
 let temp_dir: string;
+const temp_files = ["foo.txt", "lmao.ts"];
 beforeAll(async () => {
   temp_dir = await mkdtemp(join(await realpath(tmpdir()), "bun-add.test"));
+  for (const file of temp_files) {
+    const writer = Bun.file(join(temp_dir, file)).writer();
+    writer.write("foo");
+    writer.end();
+  }
 });
 
 afterAll(async () => {
@@ -99,42 +105,62 @@ describe("bunshell", () => {
     });
   });
 
-  test("cmd_local_var", () => {
-    const buffer = new Uint8Array(8192);
-    $`FOO=bar BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log(JSON.stringify(process.env))" > ${buffer}`;
-    const sentinel = sentinelByte(buffer);
-    const str = new TextDecoder().decode(buffer.slice(0, sentinel));
-    expect(JSON.parse(str)).toEqual({
-      ...process.env,
-      FOO: "bar",
-      BUN_DEBUG_QUIET_LOGS: "1",
+  describe("variables", () => {
+    test("cmd_local_var", () => {
+      const buffer = new Uint8Array(8192);
+      $`FOO=bar BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log(JSON.stringify(process.env))" > ${buffer}`;
+      const sentinel = sentinelByte(buffer);
+      const str = new TextDecoder().decode(buffer.slice(0, sentinel));
+      expect(JSON.parse(str)).toEqual({
+        ...process.env,
+        FOO: "bar",
+        BUN_DEBUG_QUIET_LOGS: "1",
+      });
+    });
+
+    test("shell var", () => {
+      const buffer = new Uint8Array(8192);
+      $`FOO=bar BAR=baz && BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log(JSON.stringify(process.env))" > ${buffer}`;
+      const sentinel = sentinelByte(buffer);
+      const str = new TextDecoder().decode(buffer.slice(0, sentinel));
+
+      const procEnv = JSON.parse(str);
+      expect(procEnv.FOO).toBeUndefined();
+      expect(procEnv.BAR).toBeUndefined();
+      expect(procEnv).toEqual({ ...process.env, BUN_DEBUG_QUIET_LOGS: "1" });
+    });
+
+    test("export var", () => {
+      const buffer = new Uint8Array(8192);
+      const buffer2 = new Uint8Array(8192);
+      $`export FOO=bar && BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log(JSON.stringify(process.env))" > ${buffer} && BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log(JSON.stringify(process.env))" > ${buffer2}`;
+
+      const str1 = stringifyBuffer(buffer);
+      const str2 = stringifyBuffer(buffer2);
+
+      let procEnv = JSON.parse(str1);
+      expect(procEnv).toEqual({ ...process.env, BUN_DEBUG_QUIET_LOGS: "1", FOO: "bar" });
+      procEnv = JSON.parse(str2);
+      expect(procEnv).toEqual({ ...process.env, BUN_DEBUG_QUIET_LOGS: "1", FOO: "bar" });
     });
   });
 
-  test("shell var", () => {
-    const buffer = new Uint8Array(8192);
-    $`FOO=bar BAR=baz && BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log(JSON.stringify(process.env))" > ${buffer}`;
-    const sentinel = sentinelByte(buffer);
-    const str = new TextDecoder().decode(buffer.slice(0, sentinel));
+  describe("cd & pwd", () => {
+    test("cd", async () => {
+      const buffer = new Uint8Array(8192);
+      const result = $`cd ${temp_dir} && ls > ${buffer}`;
+      const sentinel = sentinelByte(buffer);
+      const str = new TextDecoder().decode(buffer.slice(0, sentinel));
+      expect(str).toEqual(`${temp_files.join("\n")}\n`);
+    });
 
-    const procEnv = JSON.parse(str);
-    expect(procEnv.FOO).toBeUndefined();
-    expect(procEnv.BAR).toBeUndefined();
-    expect(procEnv).toEqual({ ...process.env, BUN_DEBUG_QUIET_LOGS: "1" });
-  });
-
-  test("export var", () => {
-    const buffer = new Uint8Array(8192);
-    const buffer2 = new Uint8Array(8192);
-    $`export FOO=bar && BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log(JSON.stringify(process.env))" > ${buffer} && BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log(JSON.stringify(process.env))" > ${buffer2}`;
-
-    const str1 = stringifyBuffer(buffer);
-    const str2 = stringifyBuffer(buffer2);
-
-    let procEnv = JSON.parse(str1);
-    expect(procEnv).toEqual({ ...process.env, BUN_DEBUG_QUIET_LOGS: "1", FOO: "bar" });
-    procEnv = JSON.parse(str2);
-    expect(procEnv).toEqual({ ...process.env, BUN_DEBUG_QUIET_LOGS: "1", FOO: "bar" });
+    test("cd -", async () => {
+      const buffer = new Uint8Array(8192);
+      const result = $`cd ${temp_dir} && cd - && pwd > ${buffer}`;
+      const sentinel = sentinelByte(buffer);
+      const str = new TextDecoder().decode(buffer.slice(0, sentinel));
+      expect(str).toEqual(`${process.cwd()}\n`);
+    });
   });
 });
 

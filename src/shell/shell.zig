@@ -11,8 +11,10 @@ const JSValue = bun.JSC.JSValue;
 const Which = @import("../which.zig");
 const Braces = @import("./braces.zig");
 const Syscall = @import("../sys.zig");
+const Glob = @import("../glob.zig");
+const ResolvePath = @import("../resolver/resolve_path.zig");
 
-pub const ShellError = error{ Process, GlobalThisThrown };
+pub const ShellError = error{ Process, GlobalThisThrown, Init };
 pub const ParseError = error{
     Expected,
     Unknown,
@@ -48,6 +50,13 @@ pub const Interpreter = struct {
     /// Exported environment variables available to all subprocesses. This excludes system ones,
     /// just contains ones set by this shell script.
     export_env: std.StringArrayHashMap([:0]const u8),
+
+    /// The current working directory of the shell
+    __prevcwd_pathbuf: ?*[bun.MAX_PATH_BYTES]u8 = null,
+    prev_cwd: [:0]const u8,
+    __cwd_pathbuf: *[bun.MAX_PATH_BYTES]u8,
+    cwd: [:0]const u8,
+    cwd_fd: bun.FileDescriptor,
 
     /// There are three types of contexts that anvironment variables can be in:
     /// - cmd local (only available to a single subprocess)
@@ -207,12 +216,14 @@ pub const Interpreter = struct {
             @"export",
             cd,
             echo,
+            pwd,
 
             pub fn asString(this: Kind) []const u8 {
                 return switch (this) {
                     .@"export" => "export",
                     .cd => "cd",
                     .echo => "echo",
+                    .pwd => "pwd",
                 };
             }
 
@@ -297,7 +308,7 @@ pub const Interpreter = struct {
             }
         }
 
-        pub fn write(this: *Builtin, io: *BuiltinIO, buf: []u8) !void {
+        pub fn write(this: *Builtin, io: *BuiltinIO, buf: []const u8) !void {
             switch (io.*) {
                 .fd => |fd| {
                     log("{s} write to fd {d}\n", .{ this.kind.asString(), fd });
@@ -339,7 +350,27 @@ pub const Interpreter = struct {
             }
             break :brk export_env;
         };
-        return .{
+
+        var pathbuf = try allocator.alloc(u8, bun.MAX_PATH_BYTES);
+
+        const cwd = switch (Syscall.getcwd(@as(*[1024]u8, @ptrCast(pathbuf.ptr)))) {
+            .result => |cwd| cwd.ptr[0..cwd.len :0],
+            .err => |err| {
+                const errJs = err.toJSC(globalThis);
+                globalThis.throwValue(errJs);
+                return ShellError.Init;
+            },
+        };
+        const cwd_fd = switch (Syscall.open(cwd, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+            .result => |fd| fd,
+            .err => |err| {
+                const errJs = err.toJSC(globalThis);
+                globalThis.throwValue(errJs);
+                return ShellError.Init;
+            },
+        };
+
+        var interpreter: Interpreter = .{
             .arena = arena,
             .allocator = allocator,
             .shell_env = std.StringArrayHashMap([:0]const u8).init(allocator),
@@ -347,7 +378,13 @@ pub const Interpreter = struct {
             .export_env = export_env,
             .globalThis = globalThis,
             .jsobjs = jsobjs,
+            .__cwd_pathbuf = @ptrCast(pathbuf.ptr),
+            .cwd = pathbuf[0..cwd.len :0],
+            .prev_cwd = pathbuf[0..cwd.len :0],
+            .cwd_fd = cwd_fd,
         };
+
+        return interpreter;
     }
 
     pub fn interpret(self: *Interpreter, script: ast.Script) anyerror!void {
@@ -577,6 +614,7 @@ pub const Interpreter = struct {
                 return ShellError.GlobalThisThrown;
             }
         }
+        spawn_args.cwd = self.cwd[0..self.cwd.len];
 
         const args = args: {
             // TODO optimization: allocate into one buffer of chars and create argv from slicing into that
@@ -812,19 +850,58 @@ pub const Interpreter = struct {
         self: *Interpreter,
         bltn: *Builtin,
     ) !bool {
-        // errdefer bltn.closeio(126);
 
-        const exit_code = switch (bltn.kind) {
-            .@"export" => try self.interpret_builtin_export(bltn),
-            .echo => try self.interpret_builtin_echo(bltn),
-            .cd => {
-                @panic("TODO");
-            },
-        };
+        // FIXME TODO handle error
+        const exit_code = self.interpret_builtin_impl(bltn) catch 1;
 
-        // bltn.closeio(exit_code);
         bltn.exit_code = exit_code;
         return exit_code == 0;
+    }
+
+    fn interpret_builtin_impl(self: *Interpreter, bltn: *Builtin) !u8 {
+        return switch (bltn.kind) {
+            .@"export" => try self.interpret_builtin_export(bltn),
+            .echo => try self.interpret_builtin_echo(bltn),
+            .cd => try self.interpret_builtin_cd(bltn),
+            .pwd => try self.interpret_builtin_pwd(bltn),
+        };
+    }
+
+    fn interpret_builtin_pwd(self: *Interpreter, bltn: *Builtin) !u8 {
+        const args = bltn.argsSlice();
+        if (args.len > 0) {
+            try bltn.write_err(&bltn.stderr, .pwd, "too many arguments", .{});
+            return 1;
+        }
+
+        try bltn.write_fmt(&bltn.stdout, "{s}\n", .{self.cwd[0..self.cwd.len]});
+        return 0;
+    }
+
+    /// Some additional behaviour beyond basic `cd <dir>`:
+    /// - `cd` by itself or `cd ~` will always put the user in their home directory.
+    /// - `cd ~username` will put the user in the home directory of the specified user
+    /// - `cd -` will put the user in the previous directory
+    fn interpret_builtin_cd(self: *Interpreter, bltn: *Builtin) !u8 {
+        const args = bltn.argsSlice();
+        if (args.len > 1) {
+            try bltn.write_err(&bltn.stderr, .cd, "too many arguments", .{});
+            return 1;
+        }
+
+        const first_arg = args[0][0..std.mem.len(args[0]) :0];
+        switch (first_arg[0]) {
+            '-' => {
+                return self.change_cwd(self.prev_cwd, bltn, .cd);
+            },
+            '~' => {
+                const homedir = self.get_homedir();
+                return self.change_cwd(homedir, bltn, .cd);
+            },
+            else => {
+                return self.change_cwd(first_arg, bltn, .cd);
+            },
+        }
     }
 
     fn interpret_builtin_echo(self: *Interpreter, bltn: *Builtin) !u8 {
@@ -924,7 +1001,72 @@ pub const Interpreter = struct {
         return 0;
     }
 
-    // fn write_to
+    fn get_homedir(self: *Interpreter) [:0]const u8 {
+        if (comptime bun.Environment.isWindows) {
+            if (self.export_env.get("USERPROFILE")) |env|
+                return env;
+        } else {
+            if (self.export_env.get("HOME")) |env|
+                return env;
+        }
+        return "unknown";
+    }
+
+    fn change_cwd(self: *Interpreter, new_cwd_: [:0]const u8, bltn: *Builtin, comptime kind: Builtin.Kind) !u8 {
+        const new_cwd: [:0]const u8 = brk: {
+            if (ResolvePath.Platform.auto.isAbsolute(new_cwd_)) break :brk new_cwd_;
+
+            const existing_cwd = self.cwd;
+            const cwd_str = ResolvePath.joinZ(&[_][]const u8{
+                existing_cwd,
+                new_cwd_,
+            }, .auto);
+
+            break :brk cwd_str;
+        };
+
+        const new_cwd_fd = switch (Syscall.openat(
+            self.cwd_fd,
+            new_cwd,
+            std.os.O.DIRECTORY | std.os.O.RDONLY,
+            0,
+        )) {
+            .result => |fd| fd,
+            .err => |err| {
+                const errno: usize = @intCast(err.errno);
+                switch (errno) {
+                    @as(usize, @intFromEnum(bun.C.E.NOTDIR)) => {
+                        try bltn.write_err(&bltn.stderr, kind, "not a directory: {s}", .{new_cwd_});
+                        return 1;
+                    },
+                    @as(usize, @intFromEnum(bun.C.E.NOENT)) => {
+                        try bltn.write_err(&bltn.stderr, kind, "not such file or directory: {s}", .{new_cwd_});
+                        return 1;
+                    },
+                    else => {},
+                }
+                // FIXME: probably need to throw this sys error on globalThis
+                return @intCast(err.errno);
+            },
+        };
+
+        var prev_cwd_buf = brk: {
+            if (self.__prevcwd_pathbuf) |prev| break :brk prev;
+            break :brk try self.allocator.alloc(u8, bun.MAX_PATH_BYTES);
+        };
+
+        std.mem.copyForwards(u8, prev_cwd_buf[0..self.cwd.len], self.cwd[0..self.cwd.len]);
+        prev_cwd_buf[self.cwd.len] = 0;
+        self.prev_cwd = prev_cwd_buf[0..self.cwd.len :0];
+
+        std.mem.copyForwards(u8, self.__cwd_pathbuf[0..new_cwd.len], new_cwd[0..new_cwd.len]);
+        self.__cwd_pathbuf[new_cwd.len] = 0;
+        self.cwd = new_cwd;
+
+        self.cwd_fd = new_cwd_fd;
+
+        return 0;
+    }
 
     fn eval_atom(
         self: *Interpreter,
@@ -953,6 +1095,29 @@ pub const Interpreter = struct {
 
         const brace_str = try self.eval_atom_no_brace_expansion(atom);
         try out.append(brace_str);
+    }
+
+    fn eval_atom_with_glob_expansions(
+        self: *Interpreter,
+        comptime for_spawn: bool,
+        atom: *const ast.Atom,
+        out: if (!for_spawn) *std.ArrayList([:0]const u8) else *std.ArrayList(?[*:0]const u8),
+    ) void {
+        _ = out;
+        _ = atom;
+        _ = self;
+    }
+
+    fn expand_glob_pattern(
+        self: *Interpreter,
+        comptime for_spawn: bool,
+        pattern: []const u8,
+        out: if (!for_spawn) *std.ArrayList([:0]const u8) else *std.ArrayList(?[*:0]const u8),
+    ) void {
+        _ = out;
+        _ = pattern;
+        _ = self;
+        // Glob.BunGlobWalker.initWithCwd(this: *GlobWalker, arena: *Arena, pattern: []const u8, cwd: []const u8, dot: bool, absolute: bool, follow_symlinks: bool, error_on_broken_symlinks: bool, only_files: bool)
     }
 
     fn eval_atom_with_brace_expansion(
@@ -1075,6 +1240,20 @@ pub const Interpreter = struct {
                     try str_list.appendSlice(self.eval_var(label));
                 }
             },
+            .asterisk => {
+                if (comptime known_size) {
+                    str_list.appendAssumeCapacity('*');
+                } else {
+                    try str_list.append('*');
+                }
+            },
+            .double_asterisk => {
+                if (comptime known_size) {
+                    str_list.appendSliceAssumeCapacity("**");
+                } else {
+                    try str_list.appendSlice("**");
+                }
+            },
             .brace_begin => {
                 if (comptime known_size) {
                     str_list.appendAssumeCapacity('{');
@@ -1154,7 +1333,8 @@ pub const Interpreter = struct {
         return switch (simple.*) {
             .Text => |txt| txt.len,
             .Var => |label| self.eval_var(label).len,
-            .brace_begin, .brace_end, .comma => 1,
+            .brace_begin, .brace_end, .comma, .asterisk => 1,
+            .double_asterisk => 2,
             .cmd_subst => |subst| {
                 if (@as(ast.CmdOrAssigns.Tag, subst.*) == .assigns) {
                     return 0;
@@ -1312,15 +1492,22 @@ pub const AST = struct {
             return .{ .simple = atom };
         }
 
-        pub fn new_compound(atom: CompoundAtom) Atom {
-            return .{ .compound = atom };
-        }
-
         pub fn is_compound(self: *const Atom) bool {
             switch (self.*) {
                 .compound => return true,
                 else => return false,
             }
+        }
+
+        pub fn has_expansions(self: *const Atom) bool {
+            return self.has_glob_expansion() or self.has_brace_expansion();
+        }
+
+        pub fn has_glob_expansion(self: *const Atom) bool {
+            return switch (self.*) {
+                .simple => self.simple.glob_hint(),
+                .compound => self.compound.glob_hint,
+            };
         }
 
         pub fn has_brace_expansion(self: *const Atom) bool {
@@ -1334,15 +1521,25 @@ pub const AST = struct {
     pub const SimpleAtom = union(enum) {
         Var: []const u8,
         Text: []const u8,
+        asterisk,
+        double_asterisk,
         brace_begin,
         brace_end,
         comma,
         cmd_subst: *CmdOrAssigns,
+
+        pub fn glob_hint(this: SimpleAtom) bool {
+            return switch (this) {
+                .asterisk, .double_asterisk => true,
+                else => false,
+            };
+        }
     };
 
     pub const CompoundAtom = struct {
         atoms: []SimpleAtom,
         brace_expansion_hint: bool = false,
+        glob_hint: bool = false,
     };
 };
 
@@ -1548,6 +1745,7 @@ pub const Parser = struct {
         var has_brace_open = false;
         var has_brace_close = false;
         var has_comma = false;
+        var has_glob_syntax = false;
         {
             while (!self.match_any(&.{ .Delimit, .Eof })) {
                 const next = self.peek_n(1);
@@ -1555,6 +1753,24 @@ pub const Parser = struct {
                 const peeked = self.peek();
                 const should_break = next_delimits;
                 switch (peeked) {
+                    .Asterisk => {
+                        has_glob_syntax = true;
+                        _ = self.expect(.Asterisk);
+                        try exprs.append(.asterisk);
+                        if (next_delimits) {
+                            _ = self.expect_delimit();
+                            break;
+                        }
+                    },
+                    .DoubleAsterisk => {
+                        has_glob_syntax = true;
+                        _ = self.expect(.DoubleAsterisk);
+                        try exprs.append(.double_asterisk);
+                        if (next_delimits) {
+                            _ = self.expect_delimit();
+                            break;
+                        }
+                    },
                     .BraceBegin => {
                         has_brace_open = true;
                         _ = self.expect(.BraceBegin);
@@ -1624,6 +1840,7 @@ pub const Parser = struct {
             else => .{ .compound = .{
                 .atoms = exprs.items[0..exprs.items.len],
                 .brace_expansion_hint = has_brace_open and has_brace_close and has_comma,
+                .glob_hint = has_glob_syntax,
             } },
         };
     }
@@ -1732,6 +1949,7 @@ pub const TokenTag = enum {
     Redirect,
     Dollar,
     Asterisk,
+    DoubleAsterisk,
     Eq,
     Semicolon,
     BraceBegin,
@@ -1762,6 +1980,8 @@ pub const Token = union(TokenTag) {
     Dollar,
     // *
     Asterisk,
+    DoubleAsterisk,
+
     // =
     Eq,
     // ;
@@ -1915,10 +2135,10 @@ pub const Lexer = struct {
             const char = input.char;
             const escaped = input.escaped;
 
-            // Handle non-escaped chars that may:
-            // 1. produce operators
-            // 2. switch lexing state
-            // 3. break words
+            // Handle non-escaped chars:
+            // 1. special syntax (operators, etc.)
+            // 2. lexing state switchers (quotes)
+            // 3. word breakers (spaces, etc.)
             if (!escaped) escaped: {
                 switch (char) {
                     ';' => {
@@ -1927,6 +2147,23 @@ pub const Lexer = struct {
                         try self.tokens.append(.Semicolon);
                         continue;
                     },
+
+                    // glob asterisks
+                    '*' => {
+                        if (self.state == .Single or self.state == .Double) break :escaped;
+                        if (self.peek()) |next| {
+                            if (!next.escaped and next.char == '*') {
+                                _ = self.eat();
+                                try self.break_word(false);
+                                try self.tokens.append(.DoubleAsterisk);
+                                continue;
+                            }
+                        }
+                        try self.break_word(false);
+                        try self.tokens.append(.BraceBegin);
+                        continue;
+                    },
+
                     // brace expansion syntax
                     '{' => {
                         if (self.state == .Single or self.state == .Double) break :escaped;
@@ -1946,6 +2183,7 @@ pub const Lexer = struct {
                         try self.tokens.append(.BraceEnd);
                         continue;
                     },
+
                     // Command substitution
                     '`' => {
                         if (self.in_cmd_subst == .backtick) {
@@ -1959,6 +2197,7 @@ pub const Lexer = struct {
                             try self.eat_cmd_subst(.backtick);
                         }
                     },
+                    // Command substitution/vars
                     '$' => {
                         if (self.state == .Single) break :escaped;
 
@@ -2164,8 +2403,10 @@ pub const Lexer = struct {
                     }
                 }
 
-                var num = std.fmt.parseInt(u8, buf[0..count], 10) catch {
-                    @panic("Invalid redirection");
+                var num = std.fmt.parseInt(usize, buf[0..count], 10) catch {
+                    // This means the number was really large, meaning it
+                    // probably was supposed to be a string
+                    return null;
                 };
 
                 switch (num) {
@@ -2389,6 +2630,7 @@ pub const Test = struct {
         Dollar,
         // *
         Asterisk,
+        DoubleAsterisk,
         // =
         Eq,
         Semicolon,
@@ -2418,6 +2660,7 @@ pub const Test = struct {
                 .Redirect => |r| return .{ .Redirect = r },
                 .Dollar => return .Dollar,
                 .Asterisk => return .Asterisk,
+                .DoubleAsterisk => return .DoubleAsterisk,
                 .Eq => return .Eq,
                 .Semicolon => return .Semicolon,
                 .BraceBegin => return .BraceBegin,
@@ -2431,6 +2674,10 @@ pub const Test = struct {
         }
     };
 };
+
+// fn isValidGlobPattern(potential_pattern: []const u8) bool {
+
+// }
 
 /// Only these charaters allowed:
 /// - a-ZA-Z

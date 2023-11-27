@@ -345,7 +345,7 @@ WTF::String Bun::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject
 
     if (JSC::ErrorInstance* err = jsDynamicCast<JSC::ErrorInstance*>(errorInstance)) {
         if (err->errorType() == ErrorType::SyntaxError && (stackTrace.isEmpty() || stackTrace.at(0).sourceURL(vm) != err->sourceURL())) {
-            auto originalLine = WTF::OrdinalNumber::fromZeroBasedInt(static_cast<int32_t>(err->line()));
+            auto originalLine = WTF::OrdinalNumber::fromOneBasedInt(static_cast<int32_t>(err->line()));
 
             ZigStackFrame remappedFrame;
 

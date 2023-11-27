@@ -692,13 +692,13 @@ pub const Loader = enum(u8) {
         };
     }
 
-    pub fn toMimeType(this: Loader) bun.HTTP.MimeType {
+    pub fn toMimeType(this: Loader) bun.http.MimeType {
         return switch (this) {
-            .jsx, .js, .ts, .tsx => bun.HTTP.MimeType.javascript,
-            .css => bun.HTTP.MimeType.css,
-            .toml, .json => bun.HTTP.MimeType.json,
-            .wasm => bun.HTTP.MimeType.wasm,
-            else => bun.HTTP.MimeType.other,
+            .jsx, .js, .ts, .tsx => bun.http.MimeType.javascript,
+            .css => bun.http.MimeType.css,
+            .toml, .json => bun.http.MimeType.json,
+            .wasm => bun.http.MimeType.wasm,
+            else => bun.http.MimeType.other,
         };
     }
 
@@ -1701,29 +1701,6 @@ pub const BundleOptions = struct {
 
         opts.conditions = try ESMConditions.init(allocator, Target.DefaultConditions.get(opts.target));
 
-        if (transform.serve orelse false) {
-            // When we're serving, we need some kind of URL.
-            if (!opts.origin.isAbsolute()) {
-                const protocol: string = if (opts.origin.hasHTTPLikeProtocol()) opts.origin.protocol else "http";
-
-                const had_valid_port = opts.origin.hasValidPort();
-                const port: string = if (had_valid_port) opts.origin.port else "3000";
-
-                opts.origin = URL.parse(
-                    try std.fmt.allocPrint(
-                        allocator,
-                        "{s}://localhost:{s}{s}",
-                        .{
-                            protocol,
-                            port,
-                            opts.origin.path,
-                        },
-                    ),
-                );
-                opts.origin.port_was_automatically_set = !had_valid_port;
-            }
-        }
-
         switch (opts.target) {
             .node => {
                 opts.import_path_format = .relative;
@@ -1758,162 +1735,9 @@ pub const BundleOptions = struct {
         opts.external = ExternalModules.init(allocator, &fs.fs, fs.top_level_dir, transform.external, log, opts.target);
         opts.out_extensions = opts.target.outExtensions(allocator);
 
-        if (comptime !bun.Environment.isWindows) {
-            if (transform.serve orelse false) {
-                opts.preserve_extensions = true;
-                opts.append_package_version_in_query_string = true;
-                if (opts.framework == null)
-                    opts.env.behavior = .load_all;
+        opts.source_map = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode._none);
 
-                opts.source_map = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode.external);
-
-                opts.resolve_mode = .lazy;
-
-                var dir_to_use: string = opts.routes.static_dir;
-                const static_dir_set = opts.routes.static_dir_enabled or dir_to_use.len == 0;
-                var disabled_static = false;
-
-                var chosen_dir = dir_to_use;
-
-                if (!static_dir_set) {
-                    chosen_dir = choice: {
-                        if (fs.fs.readDirectory(fs.top_level_dir, null, 0, false)) |dir_| {
-                            const dir: *const Fs.FileSystem.RealFS.EntriesOption = dir_;
-                            switch (dir.*) {
-                                .entries => {
-                                    if (dir.entries.getComptimeQuery("public")) |q| {
-                                        if (q.entry.kind(&fs.fs, true) == .dir) {
-                                            break :choice "public";
-                                        }
-                                    }
-
-                                    if (dir.entries.getComptimeQuery("static")) |q| {
-                                        if (q.entry.kind(&fs.fs, true) == .dir) {
-                                            break :choice "static";
-                                        }
-                                    }
-
-                                    break :choice ".";
-                                },
-                                else => {
-                                    break :choice "";
-                                },
-                            }
-                        } else |_| {
-                            break :choice "";
-                        }
-                    };
-
-                    if (chosen_dir.len == 0) {
-                        disabled_static = true;
-                        opts.routes.static_dir_enabled = false;
-                    }
-                }
-
-                if (!disabled_static) {
-                    var _dirs = [_]string{chosen_dir};
-                    opts.routes.static_dir = try fs.absAlloc(allocator, &_dirs);
-                    const static_dir = std.fs.openIterableDirAbsolute(opts.routes.static_dir, .{}) catch |err| brk: {
-                        switch (err) {
-                            error.FileNotFound => {
-                                opts.routes.static_dir_enabled = false;
-                            },
-                            error.AccessDenied => {
-                                Output.prettyErrorln(
-                                    "error: access denied when trying to open directory for static files: \"{s}\".\nPlease re-open bun with access to this folder or pass a different folder via \"--public-dir\". Note: --public-dir is relative to --cwd (or the process' current working directory).\n\nThe public folder is where static assets such as images, fonts, and .html files go.",
-                                    .{opts.routes.static_dir},
-                                );
-                                std.process.exit(1);
-                            },
-                            else => {
-                                Output.prettyErrorln(
-                                    "error: \"{s}\" when accessing public folder: \"{s}\"",
-                                    .{ @errorName(err), opts.routes.static_dir },
-                                );
-                                std.process.exit(1);
-                            },
-                        }
-
-                        break :brk null;
-                    };
-                    if (static_dir) |handle| {
-                        opts.routes.static_dir_handle = handle.dir;
-                    }
-                    opts.routes.static_dir_enabled = opts.routes.static_dir_handle != null;
-                }
-
-                const should_try_to_find_a_index_html_file = (opts.framework == null or !opts.framework.?.server.isEnabled()) and
-                    !opts.routes.routes_enabled;
-
-                if (opts.routes.static_dir_enabled and should_try_to_find_a_index_html_file) {
-                    const dir = opts.routes.static_dir_handle.?;
-                    var index_html_file = dir.openFile("index.html", .{ .mode = .read_only }) catch |err| brk: {
-                        switch (err) {
-                            error.FileNotFound => {},
-                            else => {
-                                Output.prettyErrorln(
-                                    "{s} when trying to open {s}/index.html. single page app routing is disabled.",
-                                    .{ @errorName(err), opts.routes.static_dir },
-                                );
-                            },
-                        }
-
-                        opts.routes.single_page_app_routing = false;
-                        break :brk null;
-                    };
-
-                    if (index_html_file) |index_dot_html| {
-                        opts.routes.single_page_app_routing = true;
-                        opts.routes.single_page_app_fd = index_dot_html.handle;
-                    }
-                }
-
-                if (!opts.routes.single_page_app_routing and should_try_to_find_a_index_html_file) {
-                    attempt: {
-                        var abs_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                        // If it's not in static-dir/index.html, check if it's in top level dir/index.html
-                        var parts = [_]string{"index.html"};
-                        var full_path = resolve_path.joinAbsStringBuf(fs.top_level_dir, &abs_buf, &parts, .auto);
-                        abs_buf[full_path.len] = 0;
-                        var abs_buf_z: [:0]u8 = abs_buf[0..full_path.len :0];
-
-                        const file = std.fs.openFileAbsoluteZ(abs_buf_z, .{ .mode = .read_only }) catch |err| {
-                            switch (err) {
-                                error.FileNotFound => {},
-                                else => {
-                                    Output.prettyErrorln(
-                                        "{s} when trying to open {s}/index.html. single page app routing is disabled.",
-                                        .{ @errorName(err), fs.top_level_dir },
-                                    );
-                                },
-                            }
-                            break :attempt;
-                        };
-
-                        opts.routes.single_page_app_routing = true;
-                        opts.routes.single_page_app_fd = file.handle;
-                    }
-                }
-
-                // Windows has weird locking rules for file access.
-                // so it's a bad idea to keep a file handle open for a long time on Windows.
-                if (Environment.isWindows and opts.routes.static_dir_handle != null) {
-                    opts.routes.static_dir_handle.?.close();
-                }
-                opts.hot_module_reloading = opts.target.isWebLike();
-
-                if (transform.disable_hmr orelse false)
-                    opts.hot_module_reloading = false;
-
-                opts.serve = true;
-            } else {
-                opts.source_map = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode._none);
-            }
-        } else {
-            opts.source_map = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode._none);
-        }
-
-        opts.tree_shaking = opts.serve or opts.target.isBun() or opts.production;
+        opts.tree_shaking = opts.target.isBun() or opts.production;
         opts.inlining = opts.tree_shaking;
         if (opts.inlining)
             opts.minify_syntax = true;

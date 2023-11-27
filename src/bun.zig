@@ -693,7 +693,8 @@ pub fn StringEnum(comptime Type: type, comptime Map: anytype, value: []const u8)
 
 pub const Bunfig = @import("./bunfig.zig").Bunfig;
 
-pub const HTTPThread = @import("./http_client_async.zig").HTTPThread;
+pub const HTTPThread = @import("./http.zig").HTTPThread;
+pub const http = @import("./http.zig");
 
 pub const Analytics = @import("./analytics/analytics_thread.zig");
 
@@ -753,7 +754,6 @@ pub const JSC = @import("root").JavaScriptCore;
 pub const AsyncIO = @import("async_io");
 
 pub const logger = @import("./logger.zig");
-pub const HTTP = @import("./http_client_async.zig");
 pub const ThreadPool = @import("./thread_pool.zig");
 pub const picohttp = @import("./deps/picohttp.zig");
 pub const uws = @import("./deps/uws.zig");
@@ -2210,4 +2210,8 @@ pub fn exitThread() noreturn {
     } else {
         @compileError("Unsupported platform");
     }
+}
+
+pub fn outOfMemory() noreturn {
+    @panic("Out of memory");
 }

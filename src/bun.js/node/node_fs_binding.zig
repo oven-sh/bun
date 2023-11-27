@@ -139,6 +139,12 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
             if (comptime FunctionEnum == .cp) {
                 return Task.create(globalObject, args, globalObject.bunVM(), slice.arena);
             } else {
+                if (comptime FunctionEnum == .readdir) {
+                    if (args.recursive) {
+                        return JSC.Node.Async.readdir_recursive.create(globalObject, args, globalObject.bunVM());
+                    }
+                }
+
                 return Task.create(globalObject, args, globalObject.bunVM());
             }
         }

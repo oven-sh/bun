@@ -1259,10 +1259,11 @@ export function readableStreamError(stream, error) {
 }
 
 export function readableStreamDefaultControllerShouldCallPull(controller) {
-  const stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
-
   if (!$readableStreamDefaultControllerCanCloseOrEnqueue(controller)) return false;
   if (!($getByIdDirectPrivate(controller, "started") === 1)) return false;
+
+  const stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
+
   if (
     (!$isReadableStreamLocked(stream) ||
       !$getByIdDirectPrivate($getByIdDirectPrivate(stream, "reader"), "readRequests")?.isNotEmpty()) &&
@@ -1482,10 +1483,17 @@ export function readableStreamReaderGenericRelease(reader) {
 }
 
 export function readableStreamDefaultControllerCanCloseOrEnqueue(controller) {
-  return (
-    !$getByIdDirectPrivate(controller, "closeRequested") &&
-    $getByIdDirectPrivate($getByIdDirectPrivate(controller, "controlledReadableStream"), "state") === $streamReadable
-  );
+  if ($getByIdDirectPrivate(controller, "closeRequested")) {
+    return false;
+  }
+
+  const controlledReadableStream = $getByIdDirectPrivate(controller, "controlledReadableStream");
+
+  if (!$isObject(controlledReadableStream)) {
+    return false;
+  }
+
+  return $getByIdDirectPrivate(controlledReadableStream, "state") === $streamReadable;
 }
 
 export function lazyLoadStream(stream, autoAllocateChunkSize) {

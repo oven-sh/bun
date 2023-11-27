@@ -439,6 +439,9 @@ pub fn shellParse(
     };
 
     const script_ast = parser.parse() catch |err| {
+        for (parser.errors.items[0..]) |parse_err| {
+            std.debug.print("Errors: {s}\n", .{parse_err.msg});
+        }
         globalThis.throwError(err, "failed to parse shell");
         return JSValue.undefined;
     };

@@ -33,8 +33,8 @@ describe("parse shell", () => {
       ],
     };
 
-    const result = JSON.parse($.parse`echo foo`);
-    expect(result).toEqual(expected);
+    const result = $.parse`echo foo`;
+    expect(JSON.parse(result)).toEqual(expected);
   });
 
   test("basic redirect", () => {
@@ -180,7 +180,7 @@ describe("parse shell", () => {
                   "cond": {
                     "op": "And",
                     "left": {
-                      "assign": [{ "label": "FOO", "value": { "simple": { "Text": "bar" } }, "exported": false }],
+                      "assign": [{ "label": "FOO", "value": { "simple": { "Text": "bar" } } }],
                     },
                     "right": {
                       "cmd": {
@@ -240,19 +240,29 @@ describe("parse shell", () => {
         {
           "exprs": [
             {
-              "assign": [
-                { "label": "FOO", "value": { "simple": { "Text": "bar" } }, "exported": false },
-                { "label": "BAR", "value": { "simple": { "Text": "baz" } }, "exported": true },
-                { "label": "LMAO", "value": { "simple": { "Text": "nice" } }, "exported": true },
-              ],
+              "cmd": {
+                "assigns": [
+                  { "label": "FOO", "value": { "simple": { "Text": "bar" } } },
+                  { "label": "BAR", "value": { "simple": { "Text": "baz" } } },
+                ],
+                "name_and_args": [{ "simple": { "Text": "export" } }, { "simple": { "Text": "LMAO=nice" } }],
+                "redirect": {
+                  "stdin": false,
+                  "stdout": false,
+                  "stderr": false,
+                  "append": false,
+                  "__unused": 0,
+                },
+                "redirect_file": null,
+              },
             },
           ],
         },
       ],
     };
 
-    const result = JSON.parse($.parse`FOO=bar export BAR=baz export LMAO=nice`);
-    // console.log("Result", JSON.stringify(result));
+    const result = JSON.parse($.parse`FOO=bar BAR=baz export LMAO=nice`);
+    console.log("Result", JSON.stringify(result));
     expect(result).toEqual(expected);
   });
 
@@ -310,9 +320,7 @@ describe("parse shell", () => {
                       "simple": {
                         "cmd_subst": {
                           "cmd": {
-                            "assigns": [
-                              { "label": "FOO", "value": { "simple": { "Text": "bar" } }, "exported": false },
-                            ],
+                            "assigns": [{ "label": "FOO", "value": { "simple": { "Text": "bar" } } }],
                             "name_and_args": [{ "simple": { "Var": "FOO" } }],
                             "redirect": {
                               "stdin": false,
@@ -338,11 +346,6 @@ describe("parse shell", () => {
 
       const result = JSON.parse($.parse`echo $(FOO=bar $FOO)`);
       expect(result).toEqual(expected);
-    });
-
-    test("edgecase2", () => {
-      const buffer = new Uint8Array(1);
-      const result = $.parse`FOO=bar ${BUN} -e "console.log(process.env) > ${buffer}"`;
     });
 
     test("cmd edgecase", () => {

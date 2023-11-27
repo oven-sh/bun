@@ -1,6 +1,8 @@
 import { $ } from "bun";
 import { redirect } from "./util";
 
+const BUN = process.argv0;
+
 describe("lex shell", () => {
   test("basic", () => {
     const expected = [{ "Text": "next" }, { "Delimit": {} }, { "Text": "dev" }, { "Delimit": {} }, { "Eof": {} }];
@@ -152,7 +154,10 @@ describe("lex shell", () => {
   test("env_vars exported", () => {
     const expected = [
       {
-        Export: {},
+        Text: "export",
+      },
+      {
+        Delimit: {},
       },
       {
         Text: "NAME=zack",
@@ -167,7 +172,10 @@ describe("lex shell", () => {
         Delimit: {},
       },
       {
-        Export: {},
+        Text: "export",
+      },
+      {
+        Delimit: {},
       },
       {
         Text: "NICE=lmao",
@@ -623,5 +631,16 @@ describe("lex shell", () => {
     const result = $.lex`echo foo \`ls\``;
 
     expect(JSON.parse(result)).toEqual(expected);
+  });
+
+  test("edgecase2", () => {
+    const buffer = new Uint8Array(1);
+    let error: Error | undefined = undefined;
+    try {
+      const result = $.parse`FOO=bar ${BUN} -e "console.log(process.env) > ${buffer}"`;
+    } catch (err) {
+      error = err as Error;
+    }
+    expect(error).toBeDefined();
   });
 });

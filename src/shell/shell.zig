@@ -1817,8 +1817,14 @@ pub const Lexer = struct {
     state: State = .Normal,
     delimit_quote: bool = false,
     in_cmd_subst: ?CmdSubstKind = null,
+    errors: std.ArrayList(Error),
 
     const CmdSubstKind = enum { backtick, dollar };
+
+    const LexerError = error{ Unexpected, OutOfMemory };
+    const Error = struct {
+        msg: []const u8,
+    };
 
     pub const js_objref_prefix = "$__bun_";
 
@@ -1846,6 +1852,7 @@ pub const Lexer = struct {
             .src = src,
             .tokens = ArrayList(Token).init(alloc),
             .strpool = ArrayList(u8).init(alloc),
+            .errors = ArrayList(Error).init(alloc),
         };
     }
 
@@ -1854,6 +1861,7 @@ pub const Lexer = struct {
             .src = self.src,
             .strpool = self.strpool,
             .tokens = self.tokens,
+            .errors = self.errors,
             .in_cmd_subst = kind,
 
             .i = self.i,
@@ -1866,6 +1874,7 @@ pub const Lexer = struct {
     fn continue_from_sublexer(self: *Lexer, sublexer: *Lexer) void {
         self.strpool = sublexer.strpool;
         self.tokens = sublexer.tokens;
+        self.errors = sublexer.errors;
 
         self.i = sublexer.i;
         self.word_start = sublexer.word_start;
@@ -1897,7 +1906,7 @@ pub const Lexer = struct {
         return @as(TokenTag, self.tokens.items[self.tokens.items.len - 1]);
     }
 
-    pub fn lex(self: *Lexer) Allocator.Error!void {
+    pub fn lex(self: *Lexer) LexerError!void {
         while (true) {
             const input = self.eat() orelse {
                 try self.break_word(true);
@@ -1962,6 +1971,10 @@ pub const Lexer = struct {
                         // Handle variable
                         try self.break_word(false);
                         if (self.eat_js_obj_ref()) |ref| {
+                            if (self.state == .Double) {
+                                try self.errors.append(.{ .msg = "JS object reference not allowed in double quotes" });
+                                return LexerError.Unexpected;
+                            }
                             try self.tokens.append(ref);
                         } else {
                             const var_tok = try self.eat_var();

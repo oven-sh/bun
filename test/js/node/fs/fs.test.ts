@@ -343,8 +343,9 @@ it("promises.readFile", async () => {
 });
 
 it("promises.readFile - UTF16 file path", async () => {
-  const dest = `/tmp/superduperduperdupduperdupersuperduperduperduperduperduperdupersuperduperduperduperduperduperdupersuperduperduperdupe-Bun-👍-${Date.now()}-${(Math.random() * 1024000) | 0
-    }.txt`;
+  const dest = `/tmp/superduperduperdupduperdupersuperduperduperduperduperduperdupersuperduperduperduperduperduperdupersuperduperduperdupe-Bun-👍-${Date.now()}-${
+    (Math.random() * 1024000) | 0
+  }.txt`;
   await fs.promises.copyFile(import.meta.path, dest);
   const expected = readFileSync(import.meta.path, "utf-8");
   Bun.gc(true);
@@ -355,8 +356,9 @@ it("promises.readFile - UTF16 file path", async () => {
 });
 
 it("promises.readFile - atomized file path", async () => {
-  const destInput = `/tmp/superduperduperdupduperdupersuperduperduperduperduperduperdupersuperduperduperduperduperduperdupersuperduperduperdupe-Bun-👍-${Date.now()}-${(Math.random() * 1024000) | 0
-    }.txt`;
+  const destInput = `/tmp/superduperduperdupduperdupersuperduperduperduperduperduperdupersuperduperduperduperduperduperdupersuperduperduperdupe-Bun-👍-${Date.now()}-${
+    (Math.random() * 1024000) | 0
+  }.txt`;
   // Force it to become an atomized string by making it a property access
   const dest: string = (
     {
@@ -898,7 +900,7 @@ it("symlink", () => {
   const actual = join(tmpdir(), Math.random().toString(32) + "-fs-symlink.txt");
   try {
     unlinkSync(actual);
-  } catch (e) { }
+  } catch (e) {}
 
   symlinkSync(import.meta.path, actual);
 
@@ -909,7 +911,7 @@ it("readlink", () => {
   const actual = join(tmpdir(), Math.random().toString(32) + "-fs-readlink.txt");
   try {
     unlinkSync(actual);
-  } catch (e) { }
+  } catch (e) {}
 
   symlinkSync(import.meta.path, actual);
 
@@ -920,7 +922,7 @@ it("realpath async", async () => {
   const actual = join(tmpdir(), Math.random().toString(32) + "-fs-realpath.txt");
   try {
     unlinkSync(actual);
-  } catch (e) { }
+  } catch (e) {}
 
   symlinkSync(import.meta.path, actual);
 
@@ -1068,7 +1070,7 @@ describe("rm", () => {
     const path = `${tmpdir()}/${Date.now()}.rm.dir`;
     try {
       mkdirSync(path);
-    } catch (e) { }
+    } catch (e) {}
     expect(existsSync(path)).toBe(true);
     rmSync(path, { recursive: true });
     expect(existsSync(path)).toBe(false);
@@ -1078,7 +1080,7 @@ describe("rm", () => {
     const path = `${tmpdir()}/${Date.now()}.rm.dir/foo/bar`;
     try {
       mkdirSync(path, { recursive: true });
-    } catch (e) { }
+    } catch (e) {}
     expect(existsSync(path)).toBe(true);
     rmSync(join(path, "../../"), { recursive: true });
     expect(existsSync(path)).toBe(false);
@@ -1107,7 +1109,7 @@ describe("rmdir", () => {
     const path = `${tmpdir()}/${Date.now()}.rm.dir`;
     try {
       mkdirSync(path);
-    } catch (e) { }
+    } catch (e) {}
     expect(existsSync(path)).toBe(true);
     rmdir(path, err => {
       if (err) return done(err);
@@ -1123,7 +1125,7 @@ describe("rmdir", () => {
       const path = `${tmpdir()}/${Date.now()}.rm.dir${i}`;
       try {
         mkdirSync(path);
-      } catch (e) { }
+      } catch (e) {}
       paths[i] = path;
       queue[i] = promises.rmdir(path);
     }
@@ -1139,7 +1141,7 @@ describe("rmdir", () => {
     try {
       mkdirSync(path);
       writeFileSync(`${path}/file.txt`, "File written successfully", "utf8");
-    } catch (e) { }
+    } catch (e) {}
     expect(existsSync(path + "/file.txt")).toBe(true);
     try {
       await promises.rmdir(path);
@@ -1156,7 +1158,7 @@ describe("rmdir", () => {
     const path = `${tmpdir()}/${Date.now()}.rm.dir/foo/bar`;
     try {
       mkdirSync(path, { recursive: true });
-    } catch (e) { }
+    } catch (e) {}
     expect(existsSync(path)).toBe(true);
     rmdir(join(path, "../../"), { recursive: true }, err => {
       try {
@@ -1185,7 +1187,7 @@ describe("rmdirSync", () => {
     const path = `${tmpdir()}/${Date.now()}.rm.dir`;
     try {
       mkdirSync(path);
-    } catch (e) { }
+    } catch (e) {}
     expect(existsSync(path)).toBe(true);
     rmdirSync(path);
     expect(existsSync(path)).toBe(false);
@@ -1194,7 +1196,7 @@ describe("rmdirSync", () => {
     const path = `${tmpdir()}/${Date.now()}.rm.dir/foo/bar`;
     try {
       mkdirSync(path, { recursive: true });
-    } catch (e) { }
+    } catch (e) {}
     expect(existsSync(path)).toBe(true);
     rmdirSync(join(path, "../../"), { recursive: true });
     expect(existsSync(path)).toBe(false);
@@ -1578,7 +1580,7 @@ describe.skipIf(isWindows)("createWriteStream", () => {
     const stream = createWriteStream(path);
     try {
       stream.write(null);
-      expect(() => { }).toThrow(Error);
+      expect(() => {}).toThrow(Error);
     } catch (exception: any) {
       expect(exception.code).toBe("ERR_STREAM_NULL_VALUES");
     }
@@ -1592,7 +1594,7 @@ describe.skipIf(isWindows)("createWriteStream", () => {
     });
     try {
       stream.write(null);
-      expect(() => { }).toThrow(Error);
+      expect(() => {}).toThrow(Error);
     } catch (exception: any) {
       expect(exception.code).toBe("ERR_STREAM_NULL_VALUES");
     }
@@ -1603,7 +1605,7 @@ describe.skipIf(isWindows)("createWriteStream", () => {
     const stream = createWriteStream(path);
     try {
       stream.write(false);
-      expect(() => { }).toThrow(Error);
+      expect(() => {}).toThrow(Error);
     } catch (exception: any) {
       expect(exception.code).toBe("ERR_INVALID_ARG_TYPE");
     }
@@ -1617,7 +1619,7 @@ describe.skipIf(isWindows)("createWriteStream", () => {
     });
     try {
       stream.write(false);
-      expect(() => { }).toThrow(Error);
+      expect(() => {}).toThrow(Error);
     } catch (exception: any) {
       expect(exception.code).toBe("ERR_INVALID_ARG_TYPE");
     }
@@ -1706,7 +1708,7 @@ describe("fs/promises", () => {
   it("should not segfault on exception", async () => {
     try {
       await stat("foo/bar");
-    } catch (e) { }
+    } catch (e) {}
   });
 
   it("readFile", async () => {
@@ -1849,7 +1851,7 @@ describe("fs/promises", () => {
       expect(await exists(path)).toBe(true);
       try {
         await rmdir(path);
-        expect(() => { }).toThrow();
+        expect(() => {}).toThrow();
       } catch (err: any) {
         expect("ENOTDIR EPERM ENOENT").toContain(err.code);
         expect(await exists(path)).toBe(true);
@@ -1860,7 +1862,7 @@ describe("fs/promises", () => {
       const path = `${tmpdir()}/${Date.now()}.rm.dir`;
       try {
         await mkdir(path);
-      } catch (e) { }
+      } catch (e) {}
       expect(await exists(path)).toBe(true);
       await rmdir(path);
       expect(await exists(path)).toBe(false);
@@ -1869,7 +1871,7 @@ describe("fs/promises", () => {
       const path = `${tmpdir()}/${Date.now()}.rm.dir/foo/bar`;
       try {
         await mkdir(path, { recursive: true });
-      } catch (e) { }
+      } catch (e) {}
       expect(await exists(path)).toBe(true);
       await rmdir(join(path, "../../"), { recursive: true });
       expect(await exists(path)).toBe(false);
@@ -2083,7 +2085,7 @@ describe("utimesSync", () => {
     expect(finalStats.atime).toEqual(prevAccessTime);
   });
 
-  it.only('works after 2038', () => {
+  it.only("works after 2038", () => {
     const tmp = join(tmpdir(), "utimesSync-test-file-" + Math.random().toString(36).slice(2));
     writeFileSync(tmp, "test");
     const prevStats = fs.statSync(tmp);
@@ -2097,8 +2099,8 @@ describe("utimesSync", () => {
     prevAccessTime.setFullYear(1996);
 
     // Get the current time to change the timestamps
-    const newModifiedTime = new Date('2045-04-30 19:32:12.333');
-    const newAccessTime = new Date('2098-01-01 00:00:00');
+    const newModifiedTime = new Date("2045-04-30 19:32:12.333");
+    const newAccessTime = new Date("2098-01-01 00:00:00");
 
     fs.utimesSync(tmp, newAccessTime, newModifiedTime);
 
@@ -2114,7 +2116,7 @@ describe("utimesSync", () => {
 
     expect(finalStats.mtime).toEqual(prevModifiedTime);
     expect(finalStats.atime).toEqual(prevAccessTime);
-  })
+  });
 });
 
 it("createReadStream on a large file emits readable event correctly", () => {

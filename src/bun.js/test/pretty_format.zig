@@ -2081,7 +2081,7 @@ pub const JestPrettyFormat = struct {
                 this.addForNewLine(matcher_name.length() + 1);
                 writer.print("{s}", .{matcher_name});
                 writer.writeAll(" ");
-                this.printAs(.String, @TypeOf(writer_), writer_, args_value, .Array, enable_ansi_colors);
+                this.printAs(.Array, @TypeOf(writer_), writer_, args_value, .Array, enable_ansi_colors);
             }
         } else {
             return false;

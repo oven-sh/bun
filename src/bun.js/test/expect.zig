@@ -3803,8 +3803,6 @@ pub const Expect = struct {
         return ExpectArrayContaining.call(globalObject, callFrame);
     }
 
-    pub const custom_matcher_fn_property = "fn";
-
     /// Implements `expect.extend({ ... })`
     pub fn extend(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
         const thisValue = callFrame.this();
@@ -3837,16 +3835,12 @@ pub const Expect = struct {
                     return .zero;
                 }
 
-                // Mutate the Expect/ExpectStatic prototypes/constructor with new instances of JSFunction.
+                // Mutate the Expect/ExpectStatic prototypes/constructor with new instances of JSCustomExpectMatcherFunction.
                 // Even though they point to the same native functions for all matchers,
-                // new instances are created because each instance will hold a js property ("fn")
-                // that contains the user-provided matcher function
+                // multiple instances are created because each instance will hold the matcher_fn as a property
 
-                var symmetric_fn_jsvalue = JSC.NewFunction(globalObject, &matcher_name, 0, Expect.applyCustomSymmetricMatcher, true);
-                symmetric_fn_jsvalue.put(globalObject, ZigString.static(custom_matcher_fn_property), matcher_fn);
-
-                var asymmetric_fn_jsvalue = JSC.NewFunction(globalObject, &matcher_name, 0, ExpectCustomAsymmetricMatcher.create, true);
-                asymmetric_fn_jsvalue.put(globalObject, ZigString.static(custom_matcher_fn_property), matcher_fn);
+                var symmetric_fn_jsvalue = Bun__JSWrappingFunction__create(globalObject, &matcher_name, &Expect.applyCustomSymmetricMatcher, matcher_fn, true);
+                var asymmetric_fn_jsvalue = Bun__JSWrappingFunction__create(globalObject, &matcher_name, &ExpectCustomAsymmetricMatcher.create, matcher_fn, true);
 
                 expect_proto.put(globalObject, &matcher_name, symmetric_fn_jsvalue);
                 expect_constructor.put(globalObject, &matcher_name, asymmetric_fn_jsvalue);
@@ -3893,14 +3887,16 @@ pub const Expect = struct {
             globalObject.throwValue(err);
             return false;
         };
+
         if (flags.not) pass = !pass;
         if (pass or silent) return pass;
+
         // handle failure
         const message_fn = matcher_result.get(globalObject, "message") orelse JSValue.undefined;
         if (message_fn.isCallable(globalObject.vm())) {
             var message_result = message_fn.callWithGlobalThis(globalObject, &[_]JSValue{});
-            if (message_result.isAnyError()) {
-                globalObject.bunVM().onUnhandledError(globalObject, message_result);
+            if (message_result.toError()) |err| {
+                globalObject.bunVM().onUnhandledError(globalObject, err);
                 return false;
             }
             if (message_result.asAnyPromise()) |promise| {
@@ -3950,7 +3946,7 @@ pub const Expect = struct {
 
         // retrieve the user-provided matcher function
         var func: JSValue = callFrame.callee();
-        var matcher_fn = func.get(globalObject, custom_matcher_fn_property) orelse unreachable;
+        var matcher_fn = getCustomMatcherFn(func, globalObject) orelse unreachable;
         if (!matcher_fn.jsType().isFunction()) {
             globalObject.throw("Internal consistency error: the ExpectCustomMatcher(matcherName) is not a function!", .{});
             return .zero;
@@ -4493,7 +4489,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
 
         // retrieve the user-provided matcher function
         var func: JSValue = callFrame.callee();
-        var matcher_fn = func.get(globalObject, Expect.custom_matcher_fn_property) orelse unreachable;
+        var matcher_fn = getCustomMatcherFn(func, globalObject) orelse unreachable;
         if (!matcher_fn.jsType().isFunction()) {
             globalObject.throw("Internal consistency error: the ExpectCustomMatcher(matcherName) is not a function!", .{});
             return .zero;
@@ -4701,22 +4697,11 @@ pub const ExpectMatcherUtils = struct {
             }
         }
 
-        JSC.ZigConsoleClient.format(
-            .Debug,
-            globalObject,
-            @as([*]const JSValue, @ptrCast(&value)),
-            1,
-            @TypeOf(writer),
-            @TypeOf(writer),
-            writer,
-            JSC.ZigConsoleClient.FormatOptions{
-                .enable_colors = false,
-                .add_newline = false,
-                .flush = false,
-                .ordered_properties = true,
-                .quote_strings = true,
-            },
-        );
+        var formatter = JSC.ZigConsoleClient.Formatter{
+            .globalThis = globalObject,
+            .quote_strings = true,
+        };
+        try writer.print("{}", .{value.toFmt(globalObject, &formatter)});
 
         if (comptime color_or_null) |_| {
             if (Output.enable_ansi_colors) {
@@ -4820,6 +4805,12 @@ pub const ExpectMatcherUtils = struct {
     }
 };
 
+// Extract the matcher_fn from a JSCustomExpectMatcherFunction instance
+inline fn getCustomMatcherFn(thisValue: JSValue, globalObject: *JSGlobalObject) ?JSValue {
+    var matcher_fn = Bun__JSWrappingFunction__getWrappedFunction(thisValue, globalObject);
+    return if (matcher_fn.isEmpty()) null else matcher_fn;
+}
+
 /// JSValue.zero is used to indicate it was not a JSMockFunction
 /// If there were no calls, it returns an empty JSArray*
 extern fn JSMockFunction__getCalls(JSValue) JSValue;
@@ -4827,6 +4818,9 @@ extern fn JSMockFunction__getCalls(JSValue) JSValue;
 /// JSValue.zero is used to indicate it was not a JSMockFunction
 /// If there were no calls, it returns an empty JSArray*
 extern fn JSMockFunction__getReturns(JSValue) JSValue;
+
+extern fn Bun__JSWrappingFunction__create(globalObject: *JSC.JSGlobalObject, symbolName: *const ZigString, functionPointer: JSC.JSHostFunctionPtr, wrappedFn: JSValue, strong: bool) JSValue;
+extern fn Bun__JSWrappingFunction__getWrappedFunction(this: JSC.JSValue, globalObject: *JSC.JSGlobalObject) JSValue;
 
 extern fn ExpectMatcherUtils__getSingleton(globalObject: *JSC.JSGlobalObject) JSC.JSValue;
 

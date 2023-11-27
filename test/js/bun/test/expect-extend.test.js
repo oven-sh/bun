@@ -204,3 +204,10 @@ it("throws descriptive errors for invalid matchers", () => {
     }),
   ).toThrow(/*'expect.extend: `default` is not a valid matcher. Must be a function, is "string"'*/);
 });
+
+it("should not crash under intensive usage", () => {
+  for (let i = 0; i < 10000; ++i) {
+    expect(i)._toBeDivisibleBy(1);
+    expect(i).toEqual(expect._toBeDivisibleBy(1));
+  }
+});

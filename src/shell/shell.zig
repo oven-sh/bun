@@ -217,6 +217,7 @@ pub const Interpreter = struct {
             cd,
             echo,
             pwd,
+            which,
 
             pub fn asString(this: Kind) []const u8 {
                 return switch (this) {
@@ -224,6 +225,7 @@ pub const Interpreter = struct {
                     .cd => "cd",
                     .echo => "echo",
                     .pwd => "pwd",
+                    .which => "which",
                 };
             }
 
@@ -864,7 +866,28 @@ pub const Interpreter = struct {
             .echo => try self.interpret_builtin_echo(bltn),
             .cd => try self.interpret_builtin_cd(bltn),
             .pwd => try self.interpret_builtin_pwd(bltn),
+            .which => try self.interpret_builtin_which(bltn),
         };
+    }
+
+    fn interpret_builtin_which(self: *Interpreter, bltn: *Builtin) !u8 {
+        var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        const args = bltn.argsSlice();
+        if (args.len == 0) {
+            try bltn.write(&bltn.stdout, "\n");
+            return 0;
+        }
+
+        for (args) |arg_raw| {
+            const arg = arg_raw[0..std.mem.len(arg_raw)];
+            const PATH = self.globalThis.bunVM().bundler.env.get("PATH") orelse "";
+            var resolved = Which.which(&path_buf, PATH, self.cwd, arg) orelse {
+                try bltn.write_fmt(&bltn.stdout, "{s} not found\n", .{arg});
+                continue;
+            };
+            try bltn.write_fmt(&bltn.stdout, "{s}\n", .{resolved});
+        }
+        return 0;
     }
 
     fn interpret_builtin_pwd(self: *Interpreter, bltn: *Builtin) !u8 {

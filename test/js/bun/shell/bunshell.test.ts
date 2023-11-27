@@ -162,6 +162,16 @@ describe("bunshell", () => {
       expect(str).toEqual(`${process.cwd()}\n`);
     });
   });
+
+  test("which", () => {
+    const buffer = new Uint8Array(8192);
+    const bogus = "akdfjlsdjflks";
+    const result = $`which ${BUN} ${bogus}> ${buffer}`;
+    const sentinel = sentinelByte(buffer);
+    const str = new TextDecoder().decode(buffer.slice(0, sentinel));
+    const bunWhich = Bun.which(BUN);
+    expect(str).toEqual(`${bunWhich}\n${bogus} not found\n`);
+  });
 });
 
 function stringifyBuffer(buffer: Uint8Array): string {

@@ -744,9 +744,9 @@ pub fn rangeOfSliceInBuffer(slice: []const u8, buffer: []const u8) ?[2]u32 {
     return r;
 }
 
+/// on unix, this == std.math.maxInt(i32)
+/// on windows, this is encode(.{ .system, std.math.maxInt(u63) })
 pub const invalid_fd: FileDescriptor = FDImpl.invalid.encode();
-
-pub const UFileDescriptor = if (Environment.isWindows) usize else u32;
 
 pub const simdutf = @import("./bun.js/bindings/bun-simdutf.zig");
 
@@ -850,7 +850,10 @@ pub fn getenvZ(path_: [:0]const u8) ?[]const u8 {
 
 pub const FDHashMapContext = struct {
     pub fn hash(_: @This(), fd: FileDescriptor) u64 {
-        return fd;
+        // a file descriptor is i32 on linux, u64 on windows
+        // the goal here is to do zero work and widen the 32 bit type to 64
+        // this should compile error if FileDescriptor somehow is larger than 64 bits.
+        return @as(std.meta.Int(.unsigned, @bitSizeOf(FileDescriptor)), @bitCast(fd));
     }
     pub fn eql(_: @This(), a: FileDescriptor, b: FileDescriptor) bool {
         return a == b;
@@ -2177,6 +2180,7 @@ pub inline fn pathLiteral(comptime literal: anytype) *const [literal.len:0]u8 {
 
 pub noinline fn outOfMemory() noreturn {
     @setCold(true);
+
     // In the future, we should print jsc + mimalloc heap statistics
     @panic("Bun ran out of memory!");
 }
@@ -2210,8 +2214,4 @@ pub fn exitThread() noreturn {
     } else {
         @compileError("Unsupported platform");
     }
-}
-
-pub fn outOfMemory() noreturn {
-    @panic("Out of memory");
 }

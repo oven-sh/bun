@@ -4571,7 +4571,7 @@ pub const NodeFS = struct {
         fd: bun.FileDescriptor,
         comptime ExpectedType: type,
         entries: *std.ArrayList(ExpectedType),
-    ) Maybe(Return.Readdir) {
+    ) Maybe(void) {
         var dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
         var iterator = DirIterator.iterate(dir);
         var entry = iterator.next();
@@ -5731,9 +5731,17 @@ pub const NodeFS = struct {
                 Maybe(Return.Utimes).success;
         }
 
+        std.debug.assert(args.mtime.tv_nsec <= 1e9);
+        std.debug.assert(args.atime.tv_nsec <= 1e9);
         var times = [2]std.c.timeval{
-            args.mtime,
-            args.atime,
+            .{
+                .tv_sec = args.mtime.tv_sec,
+                .tv_usec = @intCast(@divTrunc(args.mtime.tv_nsec, std.time.ns_per_us)),
+            },
+            .{
+                .tv_sec = args.atime.tv_sec,
+                .tv_usec = @intCast(@divTrunc(args.atime.tv_nsec, std.time.ns_per_us)),
+            },
         };
 
         return if (Maybe(Return.Utimes).errnoSysP(std.c.utimes(args.path.sliceZ(&this.sync_error_buf), &times), .utimes, args.path.slice())) |err|
@@ -5763,16 +5771,16 @@ pub const NodeFS = struct {
                 Maybe(Return.Utimes).success;
         }
 
+        std.debug.assert(args.mtime.tv_nsec <= 1e9);
+        std.debug.assert(args.atime.tv_nsec <= 1e9);
         var times = [2]std.c.timeval{
             .{
-                .tv_sec = args.mtime,
-                // TODO: is this correct?
-                .tv_usec = 0,
+                .tv_sec = args.mtime.tv_sec,
+                .tv_usec = @intCast(@divTrunc(args.mtime.tv_nsec, std.time.ns_per_us)),
             },
             .{
-                .tv_sec = args.atime,
-                // TODO: is this correct?
-                .tv_usec = 0,
+                .tv_sec = args.atime.tv_sec,
+                .tv_usec = @intCast(@divTrunc(args.atime.tv_nsec, std.time.ns_per_us)),
             },
         };
 

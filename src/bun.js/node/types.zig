@@ -21,7 +21,7 @@ const resolve_path = @import("../../resolver/resolve_path.zig");
 const meta = bun.meta;
 
 /// On windows, this is what libuv expects
-/// On unix, it is a timespec, as utimens takes that structure.
+/// On unix it is what the utimens api expects
 pub const TimeLike = if (Environment.isWindows) f64 else std.os.timespec;
 
 const Mode = bun.Mode;
@@ -1133,7 +1133,7 @@ pub fn timeLikeFromJS(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue, _: JS
 
         return TimeLike{
             .tv_sec = @intFromFloat(@divFloor(milliseconds, std.time.ms_per_s)),
-            .tv_nsec = @mod(milliseconds, std.time.ms_per_s) * std.time.ns_per_ms,
+            .tv_nsec = @intFromFloat(@mod(milliseconds, std.time.ms_per_s) * std.time.ns_per_ms),
         };
     }
 
@@ -1152,7 +1152,7 @@ pub fn timeLikeFromJS(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue, _: JS
 
     return TimeLike{
         .tv_sec = @intFromFloat(seconds),
-        .tv_nsec = @mod(seconds, 1.0) * std.time.ns_per_s,
+        .tv_nsec = @intFromFloat(@mod(seconds, 1.0) * std.time.ns_per_s),
     };
 }
 
@@ -1571,7 +1571,7 @@ pub fn StatType(comptime Big: bool) type {
             return @truncate(this.mode);
         }
 
-        const S = if(!Environment.isWindows) os.system.S else bun.windows.libuv.S;
+        const S = if (!Environment.isWindows) os.system.S else bun.windows.libuv.S;
 
         pub fn isBlockDevice(this: *This) JSC.JSValue {
             return JSC.JSValue.jsBoolean(S.ISBLK(@intCast(this.modeInternal())));

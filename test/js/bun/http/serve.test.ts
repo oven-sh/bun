@@ -7,6 +7,7 @@ import { bunExe, bunEnv } from "harness";
 // import app_jsx from "./app.jsx";
 import { spawn } from "child_process";
 import { tmpdir } from "os";
+import { constants } from "bun:sqlite";
 
 let renderToReadableStream: any = null;
 let app_jsx: any = null;
@@ -242,7 +243,7 @@ describe("streaming", () => {
                 pull(controller) {
                   throw new Error("TestPassed");
                 },
-                cancel(reason) {},
+                cancel(reason) { },
               }),
               {
                 status: 402,
@@ -282,7 +283,10 @@ describe("streaming", () => {
                   throw new Error("FAIL");
                 },
               });
-              return new Response(stream, options);
+              console.log('after constructing ReadableStream');
+              const r = new Response(stream, options);
+              console.log('after constructing Response');
+              return r;
             },
           },
           async server => {
@@ -771,7 +775,7 @@ describe("parallel", () => {
         },
       },
       async server => {
-        for (let i = 0; i < count; ) {
+        for (let i = 0; i < count;) {
           let responses = await Promise.all([
             fetch(`http://${server.hostname}:${server.port}`),
             fetch(`http://${server.hostname}:${server.port}`),
@@ -797,7 +801,7 @@ describe("parallel", () => {
         },
       },
       async server => {
-        for (let i = 0; i < count; ) {
+        for (let i = 0; i < count;) {
           let responses = await Promise.all([
             fetch(`http://${server.hostname}:${server.port}`),
             fetch(`http://${server.hostname}:${server.port}`),

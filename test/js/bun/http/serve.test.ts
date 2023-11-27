@@ -243,7 +243,7 @@ describe("streaming", () => {
                 pull(controller) {
                   throw new Error("TestPassed");
                 },
-                cancel(reason) { },
+                cancel(reason) {},
               }),
               {
                 status: 402,
@@ -283,9 +283,9 @@ describe("streaming", () => {
                   throw new Error("FAIL");
                 },
               });
-              console.log('after constructing ReadableStream');
+              console.log("after constructing ReadableStream");
               const r = new Response(stream, options);
-              console.log('after constructing Response');
+              console.log("after constructing Response");
               return r;
             },
           },
@@ -775,7 +775,7 @@ describe("parallel", () => {
         },
       },
       async server => {
-        for (let i = 0; i < count;) {
+        for (let i = 0; i < count; ) {
           let responses = await Promise.all([
             fetch(`http://${server.hostname}:${server.port}`),
             fetch(`http://${server.hostname}:${server.port}`),
@@ -801,7 +801,7 @@ describe("parallel", () => {
         },
       },
       async server => {
-        for (let i = 0; i < count;) {
+        for (let i = 0; i < count; ) {
           let responses = await Promise.all([
             fetch(`http://${server.hostname}:${server.port}`),
             fetch(`http://${server.hostname}:${server.port}`),

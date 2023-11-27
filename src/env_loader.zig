@@ -1013,7 +1013,7 @@ pub const Map = struct {
         value: string,
         conditional: bool,
     };
-    const HashTable = bun.StringArrayHashMap(HashTableValue);
+    pub const HashTable = bun.StringArrayHashMap(HashTableValue);
 
     map: HashTable,
 

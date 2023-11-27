@@ -1198,6 +1198,90 @@ pub const Subprocess = struct {
         ipc_mode: IPCMode,
         ipc_callback: JSValue,
 
+        const EnvMapIter = struct {
+            map: *bun.DotEnv.Map,
+            iter: bun.DotEnv.Map.HashTable.Iterator,
+            alloc: Allocator,
+
+            const Entry = struct {
+                key: Key,
+                value: Value,
+            };
+
+            pub const Key = struct {
+                val: []const u8,
+
+                pub fn format(self: Key, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                    try writer.writeAll(self.val);
+                }
+
+                pub fn eqlComptime(this: Key, comptime str: []const u8) bool {
+                    return bun.strings.eqlComptime(this.val, str);
+                }
+            };
+
+            pub const Value = struct {
+                val: [:0]const u8,
+
+                pub fn format(self: Value, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                    try writer.writeAll(self.val);
+                }
+            };
+
+            pub fn init(map: *bun.DotEnv.Map, alloc: Allocator) EnvMapIter {
+                return EnvMapIter{
+                    .map = map,
+                    .iter = map.iter(),
+                    .alloc = alloc,
+                };
+            }
+
+            pub fn len(this: *const @This()) usize {
+                return this.map.map.unmanaged.entries.len;
+            }
+
+            pub fn next(this: *@This()) !?@This().Entry {
+                const entry = this.iter.next() orelse return null;
+                var value = try this.alloc.allocSentinel(u8, entry.value_ptr.value.len, 0);
+                @memcpy(value[0..entry.value_ptr.value.len], entry.value_ptr.value);
+                value[entry.value_ptr.value.len] = 0;
+                return .{
+                    .key = .{ .val = entry.key_ptr.* },
+                    .value = .{ .val = value },
+                };
+            }
+        };
+
+        pub fn JSObjectEnvIter(comptime JSPropertyIterator: type) type {
+            return struct {
+                iter: JSPropertyIterator,
+                globalThis: *JSGlobalObject,
+
+                const Entry = struct {
+                    key: bun.JSC.ZigString,
+                    value: bun.JSC.ZigString,
+                };
+
+                pub fn deinit(this: *@This()) void {
+                    this.iter.deinit();
+                }
+
+                pub fn len(this: *const @This()) usize {
+                    return this.iter.len;
+                }
+
+                pub fn next(this: *@This()) !?@This().Entry {
+                    const key = this.iter.next() orelse return null;
+                    var value = this.iter.value;
+                    if (value == .undefined) return this.next();
+                    return .{
+                        .key = key,
+                        .value = value.getZigString(this.globalThis),
+                    };
+                }
+            };
+        }
+
         pub fn default(arena: *bun.ArenaAllocator, jsc_vm: *JSC.VirtualMachine, comptime is_sync: bool) SpawnArgs {
             var out: SpawnArgs = .{
                 .arena = arena,
@@ -1228,6 +1312,55 @@ pub const Subprocess = struct {
                 out.stdio[2] = .{ .pipe = null };
             }
             return out;
+        }
+
+        pub fn fillEnvFromProcess(this: *SpawnArgs, globalThis: *JSGlobalObject) bool {
+            var env_iter = EnvMapIter.init(globalThis.bunVM().bundler.env.map, this.arena.allocator());
+            return this.fillEnv(globalThis, &env_iter, false);
+        }
+
+        /// `object_iter` should be a some type with the following fields:
+        /// - `next() bool`
+        pub fn fillEnv(
+            this: *SpawnArgs,
+            globalThis: *JSGlobalObject,
+            object_iter: anytype,
+            comptime disable_path_lookup_for_arv0: bool,
+        ) bool {
+            var allocator = this.arena.allocator();
+            this.override_env = true;
+            this.env_array.ensureTotalCapacityPrecise(allocator, object_iter.len()) catch {
+                globalThis.throw("out of memory", .{});
+                return false;
+            };
+
+            if (disable_path_lookup_for_arv0) {
+                // If the env object does not include a $PATH, it must disable path lookup for argv[0]
+                this.PATH = "";
+            }
+
+            while (object_iter.next() catch {
+                globalThis.throwOutOfMemory();
+                return false;
+            }) |entry| {
+                var value = entry.value;
+
+                var line = std.fmt.allocPrintZ(allocator, "{}={}", .{ entry.key, value }) catch {
+                    globalThis.throw("out of memory", .{});
+                    return false;
+                };
+
+                if (entry.key.eqlComptime("PATH")) {
+                    this.PATH = bun.asByteSlice(line["PATH=".len..]);
+                }
+
+                this.env_array.append(allocator, line) catch {
+                    globalThis.throw("out of memory", .{});
+                    return false;
+                };
+            }
+
+            return true;
         }
 
         pub fn fromJS(
@@ -1354,32 +1487,15 @@ pub const Subprocess = struct {
                             .skip_empty_name = false,
                             .include_value = true,
                         }).init(globalThis, object.asObjectRef());
-                        defer object_iter.deinit();
-                        out.env_array.ensureTotalCapacityPrecise(allocator, object_iter.len) catch {
-                            globalThis.throw("out of memory", .{});
-                            return .zero;
+
+                        var object_env_iter = SpawnArgs.JSObjectEnvIter(@TypeOf(object_iter)){
+                            .iter = object_iter,
+                            .globalThis = globalThis,
                         };
+                        defer object_env_iter.deinit();
 
-                        // If the env object does not include a $PATH, it must disable path lookup for argv[0]
-                        out.PATH = "";
-
-                        while (object_iter.next()) |key| {
-                            var value = object_iter.value;
-                            if (value == .undefined) continue;
-
-                            var line = std.fmt.allocPrintZ(allocator, "{}={}", .{ key, value.getZigString(globalThis) }) catch {
-                                globalThis.throw("out of memory", .{});
-                                return .zero;
-                            };
-
-                            if (key.eqlComptime("PATH")) {
-                                out.PATH = bun.asByteSlice(line["PATH=".len..]);
-                            }
-
-                            out.env_array.append(allocator, line) catch {
-                                globalThis.throw("out of memory", .{});
-                                return .zero;
-                            };
+                        if (!out.fillEnv(globalThis, &object_env_iter, true)) {
+                            return .zero;
                         }
                     }
                 }

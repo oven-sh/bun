@@ -609,6 +609,15 @@ pub fn close(fd: bun.FileDescriptor) ?Syscall.Error {
     return closeAllowingStdoutAndStderr(fd);
 }
 
+pub fn close2(fd: bun.FileDescriptor) ?Syscall.Error {
+    if (fd == bun.STDOUT_FD or fd == bun.STDERR_FD or fd == bun.STDIN_FD) {
+        log("close({d}) SKIPPED", .{fd});
+        return null;
+    }
+
+    return closeAllowingStdoutAndStderr(fd);
+}
+
 pub fn closeAllowingStdoutAndStderr(fd: bun.FileDescriptor) ?Syscall.Error {
     log("close({d})", .{fd});
     std.debug.assert(fd != bun.invalid_fd);

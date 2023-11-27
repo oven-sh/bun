@@ -10,8 +10,9 @@ const JSC = bun.JSC;
 const JSValue = bun.JSC.JSValue;
 const Which = @import("../which.zig");
 const Braces = @import("./braces.zig");
+const Syscall = @import("../sys.zig");
 
-pub const ShellError = error{Process};
+pub const ShellError = error{ Process, GlobalThisThrown };
 pub const ParseError = error{
     Expected,
     Unknown,
@@ -31,30 +32,32 @@ const Pipe = [2]bun.FileDescriptor;
 const log = bun.Output.scoped(.SHELL, false);
 const logsys = bun.Output.scoped(.SYS, false);
 
-fn closefd(fd: bun.FileDescriptor) void {
-    if (fd == bun.STDOUT_FD or fd == bun.STDERR_FD or fd == bun.STDIN_FD) {
-        logsys("close({d}) SKIPPED", .{fd});
-        return;
-    }
-    logsys("close({d})", .{fd});
-    std.os.close(fd);
-}
-
-const MaybeManyStrings = union {
-    one: [:0]const u8,
-    many: std.ArrayList([:0]const u8),
-};
-
 // FIXME avoid std.os if possible
 // FIXME error when command not found needs to be handled gracefully
 pub const Interpreter = struct {
     pub const ast = AST;
     arena: *bun.ArenaAllocator,
     allocator: Allocator,
-    env: std.StringArrayHashMap([:0]const u8),
-    cmd_local_env: std.StringArrayHashMap([:0]const u8),
     globalThis: *JSC.JSGlobalObject,
     jsobjs: []JSValue,
+
+    /// Shell env for expansion by the shell
+    shell_env: std.StringArrayHashMap([:0]const u8),
+    /// Local environment variables to be given to a subprocess
+    cmd_local_env: std.StringArrayHashMap([:0]const u8),
+    /// Exported environment variables available to all subprocesses. This excludes system ones,
+    /// just contains ones set by this shell script.
+    export_env: std.StringArrayHashMap([:0]const u8),
+
+    /// There are three types of contexts that anvironment variables can be in:
+    /// - cmd local (only available to a single subprocess)
+    /// - shell (only available to shell for expansion)
+    /// - exported (available to subprocesses and shell)
+    const AssignCtx = enum {
+        cmd,
+        shell,
+        exported,
+    };
 
     const IO = struct {
         stdin: Kind = .std,
@@ -62,8 +65,10 @@ pub const Interpreter = struct {
         stderr: Kind = .std,
 
         const Kind = union(enum) {
+            /// Use stdin/stdout/stderr of this process
             std,
             fd: bun.FileDescriptor,
+            /// NOTE This is only valid to give to a Cmd.subproc, not a builtin
             pipe,
             ignore,
 
@@ -93,19 +98,253 @@ pub const Interpreter = struct {
         }
     };
 
-    const Exec = union(enum) {
-        subproc: std.ChildProcess,
-        echo,
-        cd,
+    const Cmd = union(Kind) {
+        subproc: *Subprocess,
+        builtin: Builtin,
+
+        const Kind = enum {
+            subproc,
+            builtin,
+        };
+
+        pub fn kill(this: *Cmd, sig: u8) !void {
+            switch (this.*) {
+                .subproc => {
+                    this.subproc.unref(true);
+                    switch (this.subproc.tryKill(@intCast(9))) {
+                        .err => |err| {
+                            _ = err;
+                            @panic("HANDLE THIS ERRROR");
+                        },
+                        else => {},
+                    }
+                },
+                .builtin => {
+                    // This means process has already exited, so we don't need to close the fds
+                    if (this.builtin.exit_code == null) {
+                        return;
+                    }
+                    this.builtin.closeio(sig);
+                },
+            }
+        }
+
+        pub fn deinit(this: *Cmd, comptime deactivate_poll_ref: bool) void {
+            switch (this.*) {
+                .subproc => this.subproc.unref(deactivate_poll_ref),
+                .builtin => {
+                    if (!this.builtin.fds_closed) {
+                        this.builtin.closeio(126);
+                    }
+                },
+            }
+        }
+
+        pub fn expectStdoutSlice(this: *Cmd) []const u8 {
+            return switch (this.*) {
+                .subproc => this.subproc.stdout.toSlice() orelse @panic("Expected slice"),
+                .builtin => this.builtin.stdout.buf.items[0..this.builtin.stdout.buf.items.len],
+            };
+        }
+
+        pub fn waitSubproc(subprocess: *Subprocess, jsc_vm: *JSC.VirtualMachine) !bool {
+            log("Done waiting {any}", .{subprocess.hasExited()});
+            // this seems hacky and bad
+            while (!subprocess.hasExited()) {
+                if (subprocess.stderr == .pipe and subprocess.stderr.pipe == .buffer) {
+                    subprocess.stderr.pipe.buffer.readAll();
+                }
+
+                if (subprocess.stdout == .pipe and subprocess.stdout.pipe == .buffer) {
+                    subprocess.stdout.pipe.buffer.readAll();
+                }
+
+                jsc_vm.tick();
+                jsc_vm.eventLoop().autoTick();
+            }
+            subprocess.wait(true);
+            return (subprocess.exit_code orelse 1) == 0;
+        }
     };
 
-    pub fn new(arena: *bun.ArenaAllocator, globalThis: *JSC.JSGlobalObject, jsobjs: []JSValue) Interpreter {
+    const Builtin = struct {
+        kind: Builtin.Kind,
+        stdin: BuiltinIO,
+        stdout: BuiltinIO,
+        stderr: BuiltinIO,
+        args: std.ArrayList(?[*:0]const u8),
+        exit_code: ?u8 = null,
+        fds_closed: bool = false,
+
+        /// in the case of array buffer we simply need to write to the pointer
+        /// in the case of blob, we write to the file descriptor
+        const BuiltinIO = union(enum) {
+            fd: bun.FileDescriptor,
+            buf: std.ArrayListUnmanaged(u8),
+            arraybuf: ArrayBuf,
+            blob: JSC,
+            ignore,
+
+            const ArrayBuf = struct {
+                buf: JSC.ArrayBuffer.Strong,
+                i: u32 = 0,
+            };
+
+            pub fn close(this: *BuiltinIO) void {
+                switch (this.*) {
+                    .fd => {
+                        closefd(this.fd);
+                    },
+                    .buf => {
+                        // try this.buf.deinit(allocator);
+                    },
+                    else => {},
+                }
+            }
+        };
+
+        const Kind = enum {
+            @"export",
+            cd,
+            echo,
+
+            pub fn asString(this: Kind) []const u8 {
+                return switch (this) {
+                    .@"export" => "export",
+                    .cd => "cd",
+                    .echo => "echo",
+                };
+            }
+
+            pub fn fromStr(str: []const u8) ?Builtin.Kind {
+                const tyinfo = @typeInfo(Builtin.Kind);
+                inline for (tyinfo.Enum.fields) |field| {
+                    if (bun.strings.eqlComptime(str, field.name)) {
+                        return comptime std.meta.stringToEnum(Builtin.Kind, field.name).?;
+                    }
+                }
+                return null;
+            }
+        };
+
+        pub fn closeio(this: *Builtin, exit_code: u8) void {
+            this.fds_closed = true;
+            this.stdin.close();
+            this.stdout.close();
+            this.stderr.close();
+            this.exit_code = exit_code;
+        }
+
+        pub fn argsSlice(this: *Builtin) []const [*:0]const u8 {
+            const args_raw = this.args.items[1..];
+            const args_len = std.mem.indexOfScalar(?[*:0]const u8, args_raw, null) orelse @panic("bad");
+            if (args_len == 0)
+                return &[_][*:0]const u8{};
+
+            const args_ptr = args_raw.ptr;
+            return @as([*][*:0]const u8, @ptrCast(args_ptr))[0..args_len];
+        }
+
+        pub fn write_err(
+            this: *Builtin,
+            io: *BuiltinIO,
+            comptime kind: Builtin.Kind,
+            comptime fmt: []const u8,
+            args: anytype,
+        ) !void {
+            const kind_str = comptime kind.asString();
+            const new_fmt = comptime kind_str ++ ": " ++ fmt;
+            return try this.write_fmt(io, new_fmt, args);
+        }
+
+        pub fn write_fmt(
+            this: *Builtin,
+            io: *BuiltinIO,
+            comptime fmt: []const u8,
+            args: anytype,
+        ) !void {
+            switch (io.*) {
+                .fd => |fd| {
+                    var stack_alloc = std.heap.stackFallback(256, this.args.allocator);
+                    const len = std.fmt.count(fmt, args);
+                    var buf = try stack_alloc.get().alloc(u8, len);
+                    _ = try std.fmt.bufPrint(buf, fmt, args);
+                    _ = try std.os.write(fd, buf);
+                },
+                .buf => {
+                    const len = std.fmt.count(fmt, args);
+                    try io.buf.ensureUnusedCapacity(this.args.allocator, len);
+                    _ = try std.fmt.bufPrint(io.buf.items[io.buf.items.len..], fmt, args);
+                    io.buf.items.len +|= @truncate(len);
+                },
+                .arraybuf => {
+                    if (io.arraybuf.i >= io.arraybuf.buf.array_buffer.byte_len) {
+                        return;
+                    }
+                    const len = std.fmt.count(fmt, args);
+                    const slice = io.arraybuf.buf.slice()[io.arraybuf.i..@min(io.arraybuf.i + len, io.arraybuf.buf.array_buffer.byte_len)];
+                    _ = std.fmt.bufPrint(slice, fmt, args) catch |err| {
+                        if (err == std.fmt.BufPrintError.NoSpaceLeft) {
+                            io.arraybuf.i = io.arraybuf.buf.array_buffer.byte_len;
+                            return;
+                        }
+                        return err;
+                    };
+                    io.arraybuf.i +|= @truncate(len);
+                },
+                .blob => @panic("FIXME TODO"),
+                .ignore => {},
+            }
+        }
+
+        pub fn write(this: *Builtin, io: *BuiltinIO, buf: []u8) !void {
+            switch (io.*) {
+                .fd => |fd| {
+                    log("{s} write to fd {d}\n", .{ this.kind.asString(), fd });
+                    _ = try std.os.write(fd, buf);
+                },
+                .buf => {
+                    log("{s} write to buf {d}\n", .{ this.kind.asString(), buf.len });
+                    try io.buf.appendSlice(this.args.allocator, buf);
+                },
+                .arraybuf => {
+                    if (io.arraybuf.i >= io.arraybuf.buf.array_buffer.byte_len) {
+                        return;
+                    }
+                    const len = buf.len;
+                    const write_len = if (io.arraybuf.i + len > io.arraybuf.buf.array_buffer.byte_len)
+                        io.arraybuf.buf.array_buffer.byte_len - io.arraybuf.i
+                    else
+                        len;
+
+                    var slice = io.arraybuf.buf.slice()[io.arraybuf.i .. io.arraybuf.i + write_len];
+                    @memcpy(slice, buf[0..write_len]);
+                    io.arraybuf.i +|= @truncate(write_len);
+                    log("{s} write to arraybuf {d}\n", .{ this.kind.asString(), write_len });
+                },
+                .blob => @panic("FIXME TODO"),
+                .ignore => {},
+            }
+        }
+    };
+
+    pub fn new(arena: *bun.ArenaAllocator, globalThis: *JSC.JSGlobalObject, jsobjs: []JSValue) !Interpreter {
         const allocator = arena.allocator();
+        var export_env = brk: {
+            var export_env = std.StringArrayHashMap([:0]const u8).init(allocator);
+            var iter = globalThis.bunVM().bundler.env.map.iter();
+            while (iter.next()) |entry| {
+                var dupedz = try allocator.dupeZ(u8, entry.value_ptr.value);
+                try export_env.put(entry.key_ptr.*, dupedz);
+            }
+            break :brk export_env;
+        };
         return .{
             .arena = arena,
             .allocator = allocator,
-            .env = std.StringArrayHashMap([:0]const u8).init(allocator),
+            .shell_env = std.StringArrayHashMap([:0]const u8).init(allocator),
             .cmd_local_env = std.StringArrayHashMap([:0]const u8).init(allocator),
+            .export_env = export_env,
             .globalThis = globalThis,
             .jsobjs = jsobjs,
         };
@@ -132,7 +371,7 @@ pub const Interpreter = struct {
         switch (expr.*) {
             .assign => |assigns| {
                 for (assigns) |*assign| {
-                    try self.interpret_assign(assign);
+                    try self.interpret_assign(assign, .shell);
                 }
                 return true;
             },
@@ -142,24 +381,20 @@ pub const Interpreter = struct {
         }
     }
 
-    fn interpret_assign(self: *Interpreter, assign: *const ast.Assign) anyerror!void {
+    fn interpret_assign(self: *Interpreter, assign: *const ast.Assign, assign_ctx: AssignCtx) anyerror!void {
         const brace_expansion = assign.value.has_brace_expansion();
-        const value = try self.eval_atom(&assign.value);
-        if (brace_expansion) {
-            // For some reason bash only sets the last value
-            const last_value = value.many.items[value.many.items.len - 1];
-            if (assign.exported) {
-                try self.env.put(assign.label, last_value);
-            } else {
-                try self.cmd_local_env.put(assign.label, last_value);
+        const value = brk: {
+            const value = try self.eval_atom(&assign.value);
+            if (brace_expansion) {
+                // For some reason bash only sets the last value
+                break :brk value.many.items[value.many.items.len - 1];
             }
-            return;
-        }
-
-        if (assign.exported) {
-            try self.env.put(assign.label, value.one);
-        } else {
-            try self.cmd_local_env.put(assign.label, value.one);
+            break :brk value.one;
+        };
+        switch (assign_ctx) {
+            .cmd => try self.cmd_local_env.put(assign.label, value),
+            .shell => try self.shell_env.put(assign.label, value),
+            .exported => try self.export_env.put(assign.label, value),
         }
     }
 
@@ -210,10 +445,10 @@ pub const Interpreter = struct {
         }
 
         var cmd_procs_set_amount: usize = 0;
-        var cmd_procs = try self.allocator.alloc(*Subprocess, cmd_count);
+        var cmd_procs = try self.allocator.alloc(Cmd, cmd_count);
         errdefer {
             for (0..cmd_procs_set_amount) |i| {
-                cmd_procs[i].unref(true);
+                cmd_procs[i].deinit(false);
             }
         }
 
@@ -251,9 +486,14 @@ pub const Interpreter = struct {
                     io,
                 );
                 var file_to_read_from = Interpreter.pipeline_file_to_read(pipes, i, io);
+
+                var kind: ?Cmd.Kind = null;
                 defer {
-                    file_to_read_from.close();
-                    file_to_write_to.close();
+                    // if its a subproc it needs to close fds immediately
+                    if (kind == null or kind == .subproc) {
+                        file_to_read_from.close();
+                        file_to_write_to.close();
+                    }
                 }
 
                 var cmd_io = IO{
@@ -264,6 +504,7 @@ pub const Interpreter = struct {
                 log("Spawn: proc_idx={d} stdin={any} stdout={any} stderr={any}\n", .{ i, file_to_read_from, file_to_write_to, io.stderr });
 
                 var cmd_proc = try self.init_cmd(cmd, &cmd_io, false);
+                kind = @as(Cmd.Kind, cmd_proc);
 
                 cmd_procs[i] = cmd_proc;
                 i += 1;
@@ -274,41 +515,19 @@ pub const Interpreter = struct {
         var jsc_vm = self.globalThis.bunVM();
 
         var fail_idx: ?u32 = null;
-        for (cmd_procs, 0..) |subprocess, i| {
+        for (cmd_procs, 0..) |*subcmd, i| {
             log("Wait {d}", .{i});
-            defer subprocess.unref(true);
 
-            // this seems hacky and bad
-            while (!subprocess.hasExited()) {
-                if (subprocess.stderr == .pipe and subprocess.stderr.pipe == .buffer) {
-                    subprocess.stderr.pipe.buffer.readAll();
-                }
-
-                if (subprocess.stdout == .pipe and subprocess.stdout.pipe == .buffer) {
-                    subprocess.stdout.pipe.buffer.readAll();
-                }
-
-                jsc_vm.tick();
-                jsc_vm.eventLoop().autoTick();
-            }
-            subprocess.wait(true);
-            const result = subprocess.exit_code orelse 1;
-            if (result != 0 and i < cmd_count - 1) {
+            if (!(try self.wait(jsc_vm, subcmd))) {
                 fail_idx = @intCast(i);
                 break;
             }
+            subcmd.deinit(true);
         }
 
         if (fail_idx) |idx| {
-            for (cmd_procs[idx..]) |proc| {
-                proc.unref(true);
-                switch (proc.tryKill(9)) {
-                    .err => |err| {
-                        _ = err;
-                        @panic("HANDLE THIS ERRROR");
-                    },
-                    else => {},
-                }
+            for (cmd_procs[idx..]) |*proc| {
+                try proc.kill(9);
             }
             return false;
         }
@@ -317,30 +536,62 @@ pub const Interpreter = struct {
 
     // cmd1 -> cmd2 -> cmd3
     fn pipeline_file_to_write(pipes: []Pipe, proc_idx: usize, cmd_count: usize, io: *IO) IO.Kind {
+        // Last command in the pipeline should write to stdout
         if (proc_idx == cmd_count - 1) return io.stdout;
         return .{ .fd = pipes[proc_idx][1] };
     }
 
     fn pipeline_file_to_read(pipes: []Pipe, proc_idx: usize, io: *IO) IO.Kind {
+        // Last command in the pipeline should write to stdin
         if (proc_idx == 0) return io.stdin;
         return .{ .fd = pipes[proc_idx - 1][0] };
     }
 
-    fn init_cmd(self: *Interpreter, cmd: *const ast.Cmd, io: *IO, comptime in_cmd_subst: bool) !*Subprocess {
+    pub fn wait(this: *Interpreter, jsc_vm: *JSC.VirtualMachine, cmd: *Cmd) !bool {
+        return switch (cmd.*) {
+            .subproc => {
+                return try Cmd.waitSubproc(cmd.subproc, jsc_vm);
+            },
+            .builtin => {
+                if (cmd.builtin.exit_code) |code| return code == 0;
+                return try this.interpret_builtin(&cmd.builtin);
+            },
+        };
+    }
+
+    fn init_cmd(self: *Interpreter, cmd: *const ast.Cmd, io: *IO, comptime in_cmd_subst: bool) !Cmd {
         self.cmd_local_env.clearRetainingCapacity();
         for (cmd.assigns) |*assign| {
-            try self.interpret_assign(assign);
+            try self.interpret_assign(assign, .cmd);
         }
 
-        // TODO env vars
         var spawn_args = Subprocess.SpawnArgs.default(self.arena, self.globalThis.bunVM(), false);
+        // Fill the env from the export end and cmd local env
+        {
+            var env_iter = CmdEnvIter.fromEnv(&self.export_env);
+            if (!spawn_args.fillEnv(self.globalThis, &env_iter, false)) {
+                return ShellError.GlobalThisThrown;
+            }
+            env_iter = CmdEnvIter.fromEnv(&self.cmd_local_env);
+            if (!spawn_args.fillEnv(self.globalThis, &env_iter, false)) {
+                return ShellError.GlobalThisThrown;
+            }
+        }
 
         const args = args: {
             // TODO optimization: allocate into one buffer of chars and create argv from slicing into that
+            // TODO optimization: have args list on the stack and fallback to array
             var args = try std.ArrayList(?[*:0]const u8).initCapacity(self.allocator, cmd.name_and_args.len);
             for (cmd.name_and_args, 0..) |*arg_atom, i| {
                 _ = i;
                 try self.eval_atom_with_out(true, arg_atom, &args);
+            }
+            try args.append(null);
+
+            for (args.items) |maybe_arg| {
+                if (maybe_arg) |arg| {
+                    log("ARG: {s}\n", .{arg});
+                }
             }
 
             const first_arg = args.items[0] orelse {
@@ -348,6 +599,9 @@ pub const Interpreter = struct {
                 return ShellError.Process;
             };
             const first_arg_len = std.mem.len(first_arg);
+            if (Builtin.Kind.fromStr(first_arg[0..first_arg_len])) |b| {
+                return .{ .builtin = self.init_builtin(b, args, io, cmd, in_cmd_subst) };
+            }
 
             var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
             var resolved = Which.which(&path_buf, spawn_args.PATH, spawn_args.cwd, first_arg[0..first_arg_len]) orelse {
@@ -362,12 +616,9 @@ pub const Interpreter = struct {
 
             break :args args;
         };
-
         spawn_args.argv = std.ArrayListUnmanaged(?[*:0]const u8){ .items = args.items, .capacity = args.capacity };
+
         io.to_subproc_stdio(&spawn_args.stdio);
-        // spawn_args.stdio[bun.STDIN_FD] = if (io.stdin == bun.STDIN_FD) .inherit else .{ .fd = io.stdin };
-        // spawn_args.stdio[bun.STDOUT_FD] = if (io.stdout == bun.STDOUT_FD) .inherit else .{ .fd = io.stdout };
-        // spawn_args.stdio[bun.STDERR_FD] = if (io.stderr == bun.STDERR_FD) .inherit else .{ .fd = io.stderr };
 
         if (cmd.redirect_file) |redirect| {
             if (comptime in_cmd_subst) {
@@ -404,26 +655,26 @@ pub const Interpreter = struct {
                     } else if (self.jsobjs[val.idx].as(JSC.WebCore.Blob)) |blob| {
                         if (cmd.redirect.stdout) {
                             if (!Subprocess.extractStdioBlob(self.globalThis, .{ .Blob = blob.dupe() }, bun.STDOUT_FD, &spawn_args.stdio)) {
-                                @panic("OOPS");
+                                @panic("FIXME OOPS");
                             }
                         }
 
                         if (cmd.redirect.stdin) {
                             if (!Subprocess.extractStdioBlob(self.globalThis, .{ .Blob = blob.dupe() }, bun.STDIN_FD, &spawn_args.stdio)) {
-                                @panic("OOPS");
+                                @panic("FIXME OOPS");
                             }
                         }
 
                         if (cmd.redirect.stderr) {
                             if (!Subprocess.extractStdioBlob(self.globalThis, .{ .Blob = blob.dupe() }, bun.STDERR_FD, &spawn_args.stdio)) {
-                                @panic("OOPS");
+                                @panic("FIXME OOPS");
                             }
                         }
                     } else {
-                        @panic("Unhandled");
+                        @panic("FIXME Unhandled");
                     }
                 },
-                else => @panic("TODO"),
+                else => @panic("FIXME TODO"),
             }
         }
 
@@ -446,35 +697,234 @@ pub const Interpreter = struct {
         };
         subprocess.ref();
 
-        return subprocess;
+        return .{ .subproc = subprocess };
+    }
+
+    fn init_builtin(
+        self: *Interpreter,
+        kind: Builtin.Kind,
+        args: std.ArrayList(?[*:0]const u8),
+        io_: *IO,
+        cmd: *const AST.Cmd,
+        comptime in_cmd_subst: bool,
+    ) Builtin {
+        var io = io_.*;
+
+        var stdin: Builtin.BuiltinIO = switch (io.stdin) {
+            .std => .{ .fd = bun.STDIN_FD },
+            .fd => |fd| .{ .fd = fd },
+            .pipe => .{ .buf = std.ArrayListUnmanaged(u8){} },
+            .ignore => .ignore,
+        };
+        var stdout: Builtin.BuiltinIO = switch (io.stdout) {
+            .std => .{ .fd = bun.STDOUT_FD },
+            .fd => |fd| .{ .fd = fd },
+            .pipe => .{ .buf = std.ArrayListUnmanaged(u8){} },
+            .ignore => .ignore,
+        };
+        var stderr: Builtin.BuiltinIO = switch (io.stderr) {
+            .std => .{ .fd = bun.STDERR_FD },
+            .fd => |fd| .{ .fd = fd },
+            .pipe => .{ .buf = std.ArrayListUnmanaged(u8){} },
+            .ignore => .ignore,
+        };
+
+        if (cmd.redirect_file) |file| brk: {
+            if (comptime in_cmd_subst) {
+                if (cmd.redirect.stdin) {
+                    io.stdin = .ignore;
+                }
+
+                if (cmd.redirect.stdout) {
+                    io.stdout = .ignore;
+                }
+
+                if (cmd.redirect.stderr) {
+                    io.stdout = .ignore;
+                }
+
+                break :brk;
+            }
+
+            switch (file) {
+                .atom => {
+                    // FIXME TODO expand atom
+                    // if expands to multiple atoms, throw "ambiguous redirect" error
+                    @panic("FIXME TODO redirect builtin");
+                },
+                .jsbuf => {
+                    if (self.jsobjs[file.jsbuf.idx].asArrayBuffer(self.globalThis)) |buf| {
+                        const builtinio: Builtin.BuiltinIO = .{ .arraybuf = .{ .buf = JSC.ArrayBuffer.Strong{
+                            .array_buffer = buf,
+                            .held = JSC.Strong.create(buf.value, self.globalThis),
+                        }, .i = 0 } };
+
+                        if (cmd.redirect.stdin) {
+                            stdin = builtinio;
+                        }
+
+                        if (cmd.redirect.stdout) {
+                            stdout = builtinio;
+                        }
+
+                        if (cmd.redirect.stderr) {
+                            stdout = builtinio;
+                        }
+                    } else if (self.jsobjs[file.jsbuf.idx].as(JSC.WebCore.Blob)) |blob| {
+                        _ = blob;
+                        @panic("FIXME TODO HANDLE BLOB");
+                    } else {
+                        @panic("FIXME TODO Unhandled");
+                    }
+                },
+            }
+        }
+
+        return .{
+            .kind = kind,
+            .args = args,
+            .stdin = stdin,
+            .stdout = stdout,
+            .stderr = stderr,
+        };
     }
 
     fn interpret_cmd(self: *Interpreter, cmd: *const ast.Cmd, io: *IO) !bool {
-        var subprocess = try self.init_cmd(cmd, io, false);
-        defer subprocess.unref(false);
-        return try self.interpret_cmd_impl(subprocess);
+        var subcmd = try self.init_cmd(cmd, io, false);
+        defer subcmd.deinit(false);
+        return try self.interpret_cmd_impl(&subcmd);
     }
 
-    fn interpret_cmd_impl(self: *Interpreter, subprocess: *Subprocess) !bool {
+    fn interpret_cmd_impl(self: *Interpreter, cmd: *Cmd) !bool {
+        return switch (cmd.*) {
+            .subproc => try self.interpret_subproc(cmd.subproc),
+            .builtin => try self.interpret_builtin(&cmd.builtin),
+        };
+    }
+
+    fn interpret_subproc(self: *Interpreter, subprocess: *Subprocess) !bool {
         log("Interpret cmd", .{});
         var jsc_vm = self.globalThis.bunVM();
-        log("Done waiting {any}", .{subprocess.hasExited()});
-        // this seems hacky and bad
-        while (!subprocess.hasExited()) {
-            if (subprocess.stderr == .pipe and subprocess.stderr.pipe == .buffer) {
-                subprocess.stderr.pipe.buffer.readAll();
-            }
-
-            if (subprocess.stdout == .pipe and subprocess.stdout.pipe == .buffer) {
-                subprocess.stdout.pipe.buffer.readAll();
-            }
-
-            jsc_vm.tick();
-            jsc_vm.eventLoop().autoTick();
-        }
-        subprocess.wait(true);
-        return (subprocess.exit_code orelse 1) == 0;
+        return Cmd.waitSubproc(subprocess, jsc_vm);
     }
+
+    fn interpret_builtin(
+        self: *Interpreter,
+        bltn: *Builtin,
+    ) !bool {
+        // errdefer bltn.closeio(126);
+
+        const exit_code = switch (bltn.kind) {
+            .@"export" => try self.interpret_builtin_export(bltn),
+            .echo => try self.interpret_builtin_echo(bltn),
+            .cd => {
+                @panic("TODO");
+            },
+        };
+
+        // bltn.closeio(exit_code);
+        bltn.exit_code = exit_code;
+        return exit_code == 0;
+    }
+
+    fn interpret_builtin_echo(self: *Interpreter, bltn: *Builtin) !u8 {
+        const args = bltn.argsSlice();
+        var output = std.ArrayList(u8).init(self.allocator);
+        const args_len = args.len;
+        for (args, 0..) |arg, i| {
+            const len = std.mem.len(arg);
+            try output.appendSlice(arg[0..len]);
+            if (i < args_len - 1) {
+                try output.append(' ');
+            }
+        }
+        try output.append('\n');
+        try bltn.write(&bltn.stdout, output.items[0..]);
+        return 0;
+    }
+
+    fn interpret_builtin_export(
+        self: *Interpreter,
+        bltn: *Builtin,
+    ) !u8 {
+        const args = bltn.argsSlice();
+        // Calling `export` with no arguments prints all exported variables lexigraphically ordered
+        if (args.len == 0) {
+            const Entry = struct {
+                key: []const u8,
+                value: [:0]const u8,
+
+                pub fn compare(context: void, this: @This(), other: @This()) bool {
+                    return bun.strings.cmpStringsAsc(context, this.key, other.key);
+                }
+            };
+
+            var keys = std.ArrayList(Entry).init(self.allocator);
+            var iter = self.export_env.iterator();
+            while (iter.next()) |entry| {
+                try keys.append(.{
+                    .key = entry.key_ptr.*,
+                    .value = entry.value_ptr.*,
+                });
+            }
+
+            std.mem.sort(Entry, keys.items[0..], {}, Entry.compare);
+
+            const len = brk: {
+                var len: usize = 0;
+                for (keys.items) |entry| {
+                    len += std.fmt.count("{s}={s}\n", .{ entry.key, entry.value });
+                }
+                break :brk len;
+            };
+            var buf = try self.allocator.alloc(u8, len);
+            {
+                var i: usize = 0;
+                for (keys.items) |entry| {
+                    i += (try std.fmt.bufPrint(buf[i..], "{s}={s}\n", .{ entry.key, entry.value })).len;
+                }
+            }
+
+            bltn.write(&bltn.stdout, buf) catch |err| {
+                log("export: {any}", .{err});
+                return 1;
+            };
+
+            return 0;
+        }
+
+        for (args[0..]) |arg_cstr_| {
+            var arg_cstr: [*:0]const u8 = arg_cstr_;
+            const arg_len = std.mem.len(arg_cstr);
+            // `export` allows arguments to be empty, which just skips it.
+            // For example `export $FOO` will do nothing
+            if (arg_len == 0) {
+                continue;
+            }
+            const arg: [:0]const u8 = arg_cstr[0..arg_len :0];
+            const idx = std.mem.indexOfScalar(u8, arg[0..arg.len], '=') orelse {
+                if (!isValidVarName(arg)) {
+                    try bltn.write_err(&bltn.stderr, .@"export", "`{s}`: not a valid identifier", .{arg});
+                    self.globalThis.throwInvalidArguments("Invalid variable name: \"{s}\"", .{arg});
+                    return 1;
+                }
+                try self.export_env.put(arg[0..arg.len], "");
+                continue;
+            };
+
+            const label = arg[0..idx];
+            if (!isValidVarName(label)) {
+                try bltn.write_err(&bltn.stderr, .@"export", "`{s}`: not a valid identifier", .{arg});
+                return 1;
+            }
+
+            const value = arg[idx + 1 ..];
+            try self.export_env.put(label, value);
+        }
+        return 0;
+    }
+
+    // fn write_to
 
     fn eval_atom(
         self: *Interpreter,
@@ -570,7 +1020,8 @@ pub const Interpreter = struct {
                     try self.eval_atom_compound_no_brace_expansion(cmp, &str_list, true);
                 },
             }
-            return str;
+            try str_list.append(0);
+            return str_list.items[0 .. str_list.items.len - 1 :0];
         }
 
         // + 1 for sentinel
@@ -664,17 +1115,19 @@ pub const Interpreter = struct {
     fn eval_atom_cmd_subst(self: *Interpreter, cmd: *const ast.Cmd, array_list: *std.ArrayList(u8)) !void {
         var io = Interpreter.default_io();
         io.stdout = .pipe;
-        var subprocess = try self.init_cmd(cmd, &io, true);
-        defer subprocess.unref(false);
-        _ = try self.interpret_cmd_impl(subprocess);
+        var subcmd = try self.init_cmd(cmd, &io, true);
+        defer subcmd.deinit(false);
+        _ = try self.interpret_cmd_impl(&subcmd);
 
         // We set stdout to .pipe so it /should/ create a Pipe with buffered output
-        const output = subprocess.stdout.toSlice() orelse @panic("This should not happen");
+        const output = subcmd.expectStdoutSlice();
         try array_list.appendSlice(output);
     }
 
     fn eval_var(self: *const Interpreter, label: []const u8) []const u8 {
-        const value = self.env.get(label) orelse return "";
+        const value = self.shell_env.get(label) orelse brk: {
+            break :brk self.globalThis.bunVM().bundler.env.map.get(label) orelse return "";
+        };
         return value;
     }
 
@@ -711,6 +1164,13 @@ pub const Interpreter = struct {
             },
         };
     }
+
+    // pub fn write_error_to_fd(self: *Interpreter, io: *IO, comptime fmt: []const u8, args: anytype) !void {
+    //     var stack_alloc = std.heap.stackFallback(256, self.allocator);
+    //     const len = std.fmt.count("bunsh: " ++ fmt, args);
+    //     var buf = try stack_alloc.get().alloc(u8, len);
+    //     try std.fmt.bufPrint(buf, "bunsh: " ++ fmt, args);
+    // }
 };
 
 pub const AST = struct {
@@ -780,13 +1240,11 @@ pub const AST = struct {
     pub const Assign = struct {
         label: []const u8,
         value: Atom,
-        exported: bool,
 
-        pub fn new(label: []const u8, value: Atom, exported: bool) Assign {
+        pub fn new(label: []const u8, value: Atom) Assign {
             return .{
                 .label = label,
                 .value = value,
-                .exported = exported,
             };
         }
     };
@@ -1034,10 +1492,9 @@ pub const Parser = struct {
 
     /// Try to parse an assignment. If no assignment could be parsed then return
     /// null and backtrack the parser state
-    /// TODO `export FOO=bar`
     fn parse_assign(self: *Parser) !?AST.Assign {
         const old = self.current;
-        const exported = self.match(.Export);
+        _ = old;
         switch (self.peek()) {
             .Text => |txtrng| {
                 const start_idx = self.current;
@@ -1048,6 +1505,9 @@ pub const Parser = struct {
                         // If it starts with = then it's not valid assignment (e.g. `=FOO`)
                         if (eq_idx == 0) break :var_decl null;
                         const label = txt[0..eq_idx];
+                        if (!isValidVarName(label)) {
+                            break :var_decl null;
+                        }
 
                         if (eq_idx == txt.len - 1) {
                             const atom = try self.parse_atom() orelse {
@@ -1057,7 +1517,6 @@ pub const Parser = struct {
                             break :var_decl .{
                                 .label = label,
                                 .value = atom,
-                                .exported = exported,
                             };
                         }
 
@@ -1066,7 +1525,6 @@ pub const Parser = struct {
                         break :var_decl .{
                             .label = label,
                             .value = .{ .simple = .{ .Text = txt_value } },
-                            .exported = exported,
                         };
                     }
                     break :var_decl null;
@@ -1076,11 +1534,8 @@ pub const Parser = struct {
                     return vd;
                 }
 
-                if (exported) {
-                    self.current = old;
-                } else {
-                    self.current = start_idx;
-                }
+                // Rollback
+                self.current = start_idx;
                 return null;
             },
             else => return null,
@@ -1284,7 +1739,6 @@ pub const TokenTag = enum {
     BraceEnd,
     CmdSubstBegin,
     CmdSubstEnd,
-    Export,
     Var,
     Text,
     JSObjRef,
@@ -1318,8 +1772,6 @@ pub const Token = union(TokenTag) {
     BraceEnd,
     CmdSubstBegin,
     CmdSubstEnd,
-
-    Export,
 
     Var: TextRange,
     Text: TextRange,
@@ -1460,16 +1912,6 @@ pub const Lexer = struct {
             // 3. break words
             if (!escaped) escaped: {
                 switch (char) {
-                    // export
-                    'e' => {
-                        if (self.state == .Single or self.state == .Double) break :escaped;
-                        if (self.eat_export()) {
-                            try self.break_word(true);
-                            try self.tokens.append(.Export);
-                            continue;
-                        }
-                        break :escaped;
-                    },
                     ';' => {
                         if (self.state == .Single or self.state == .Double) break :escaped;
                         try self.break_word(true);
@@ -1666,10 +2108,6 @@ pub const Lexer = struct {
             self.delimit_quote = false;
         }
         self.word_start = self.j;
-    }
-
-    fn eat_export(self: *Lexer) bool {
-        return self.eat_literal("export");
     }
 
     fn eat_simple_redirect(self: *Lexer) AST.Cmd.RedirectFlags {
@@ -1948,8 +2386,6 @@ pub const Test = struct {
         CmdSubstBegin,
         CmdSubstEnd,
 
-        Export,
-
         Var: []const u8,
         Text: []const u8,
         JSObjRef: u32,
@@ -1959,7 +2395,6 @@ pub const Test = struct {
 
         pub fn from_real(the_token: Token, buf: []const u8) TestToken {
             switch (the_token) {
-                .Export => return .Export,
                 .Var => |txt| return .{ .Var = buf[txt.start..txt.end] },
                 .Text => |txt| return .{ .Text = buf[txt.start..txt.end] },
                 .JSObjRef => |val| return .{ .JSObjRef = val },
@@ -1982,4 +2417,124 @@ pub const Test = struct {
             }
         }
     };
+};
+
+/// Only these charaters allowed:
+/// - a-ZA-Z
+/// - _
+/// - 0-9 (but can't be first char)
+fn isValidVarName(var_name: []const u8) bool {
+    if (var_name.len == 0) return false;
+    switch (var_name[0]) {
+        '=', '0'...'9' => {
+            return false;
+        },
+        'a'...'z', 'A'...'Z', '_' => {},
+        else => return false,
+    }
+
+    if (var_name.len - 1 < 16)
+        return isValidVarNameSlowAscii(var_name);
+
+    const upper_a: @Vector(16, u8) = @splat('A');
+    const upper_z: @Vector(16, u8) = @splat('Z');
+    const lower_a: @Vector(16, u8) = @splat('a');
+    const lower_z: @Vector(16, u8) = @splat('z');
+    const zero: @Vector(16, u8) = @splat(0);
+    const nine: @Vector(16, u8) = @splat(9);
+    const underscore: @Vector(16, u8) = @splat('_');
+
+    const BoolVec = @Vector(16, u1);
+
+    var i: usize = 0;
+    while (i + 16 <= var_name.len) : (i += 16) {
+        const chars: @Vector(16, u8) = var_name[i..][0..16].*;
+
+        const in_upper = @as(BoolVec, @bitCast(chars > upper_a)) & @as(BoolVec, @bitCast(chars < upper_z));
+        const in_lower = @as(BoolVec, @bitCast(chars > lower_a)) & @as(BoolVec, @bitCast(chars < lower_z));
+        const in_digit = @as(BoolVec, @bitCast(chars > zero)) & @as(BoolVec, @bitCast(chars < nine));
+        const is_underscore = @as(BoolVec, @bitCast(chars == underscore));
+
+        const merged = @as(@Vector(16, bool), @bitCast(in_upper | in_lower | in_digit | is_underscore));
+        if (std.simd.countTrues(merged) != 16) return false;
+    }
+
+    return isValidVarNameSlowAscii(var_name[i..]);
+}
+
+fn isValidVarNameSlowAscii(var_name: []const u8) bool {
+    for (var_name) |c| {
+        switch (c) {
+            '0'...'9', 'a'...'z', 'A'...'Z', '_' => {},
+            else => return false,
+        }
+    }
+    return true;
+}
+
+var stderr_mutex = std.Thread.Mutex{};
+fn closefd(fd: bun.FileDescriptor) void {
+    if (Syscall.close2(fd)) |err| {
+        _ = err;
+        log("ERR closefd: {d}\n", .{fd});
+        // stderr_mutex.lock();
+        // defer stderr_mutex.unlock();
+        // const stderr = std.io.getStdErr().writer();
+        // err.toSystemError().format("error", .{}, stderr) catch @panic("damn");
+    }
+}
+
+const MaybeManyStrings = union {
+    one: [:0]const u8,
+    many: std.ArrayList([:0]const u8),
+};
+
+const CmdEnvIter = struct {
+    env: *const std.StringArrayHashMap([:0]const u8),
+    iter: std.StringArrayHashMap([:0]const u8).Iterator,
+
+    const Entry = struct {
+        key: Key,
+        value: Value,
+    };
+
+    const Value = struct {
+        val: [:0]const u8,
+
+        pub fn format(self: Value, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            try writer.writeAll(self.val);
+        }
+    };
+
+    const Key = struct {
+        val: []const u8,
+
+        pub fn format(self: Key, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            try writer.writeAll(self.val);
+        }
+
+        pub fn eqlComptime(this: Key, comptime str: []const u8) bool {
+            return bun.strings.eqlComptime(this.val, str);
+        }
+    };
+
+    pub fn fromEnv(env: *const std.StringArrayHashMap([:0]const u8)) CmdEnvIter {
+        var iter = env.iterator();
+        return .{
+            .env = env,
+            .iter = iter,
+        };
+    }
+
+    pub fn len(self: *const CmdEnvIter) usize {
+        return self.env.unmanaged.entries.len;
+    }
+
+    pub fn next(self: *CmdEnvIter) !?Entry {
+        const entry = self.iter.next() orelse return null;
+        return .{
+            .key = .{ .val = entry.key_ptr.* },
+            .value = .{ .val = entry.value_ptr.* },
+        };
+    }
 };

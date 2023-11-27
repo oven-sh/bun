@@ -1,6 +1,8 @@
 import { $ } from "bun";
 import { redirect } from "./util";
 
+const BUN = process.argv0;
+
 describe("parse shell", () => {
   test("basic", () => {
     const expected = {
@@ -293,46 +295,59 @@ describe("parse shell", () => {
     expect(result).toEqual(expected);
   });
 
-  test("cmd subst edgecase", () => {
-    const expected = {
-      "stmts": [
-        {
-          "exprs": [
-            {
-              "cmd": {
-                "assigns": [],
-                "name_and_args": [
-                  { "simple": { "Text": "echo" } },
-                  {
-                    "simple": {
-                      "cmd_subst": {
-                        "cmd": {
-                          "assigns": [{ "label": "FOO", "value": { "simple": { "Text": "bar" } }, "exported": false }],
-                          "name_and_args": [{ "simple": { "Var": "FOO" } }],
-                          "redirect": {
-                            "stdin": false,
-                            "stdout": false,
-                            "stderr": false,
-                            "append": false,
-                            "__unused": 0,
+  describe("bad syntax", () => {
+    test("cmd subst edgecase", () => {
+      const expected = {
+        "stmts": [
+          {
+            "exprs": [
+              {
+                "cmd": {
+                  "assigns": [],
+                  "name_and_args": [
+                    { "simple": { "Text": "echo" } },
+                    {
+                      "simple": {
+                        "cmd_subst": {
+                          "cmd": {
+                            "assigns": [
+                              { "label": "FOO", "value": { "simple": { "Text": "bar" } }, "exported": false },
+                            ],
+                            "name_and_args": [{ "simple": { "Var": "FOO" } }],
+                            "redirect": {
+                              "stdin": false,
+                              "stdout": false,
+                              "stderr": false,
+                              "append": false,
+                              "__unused": 0,
+                            },
+                            "redirect_file": null,
                           },
-                          "redirect_file": null,
                         },
                       },
                     },
-                  },
-                ],
-                "redirect": { "stdin": false, "stdout": false, "stderr": false, "append": false, "__unused": 0 },
-                "redirect_file": null,
+                  ],
+                  "redirect": { "stdin": false, "stdout": false, "stderr": false, "append": false, "__unused": 0 },
+                  "redirect_file": null,
+                },
               },
-            },
-          ],
-        },
-      ],
-    };
+            ],
+          },
+        ],
+      };
 
-    const result = JSON.parse($.parse`echo $(FOO=bar $FOO)`);
-    expect(result).toEqual(expected);
+      const result = JSON.parse($.parse`echo $(FOO=bar $FOO)`);
+      expect(result).toEqual(expected);
+    });
+
+    test("edgecase2", () => {
+      const buffer = new Uint8Array(1);
+      const result = $.parse`FOO=bar ${BUN} -e "console.log(process.env) > ${buffer}"`;
+    });
+
+    test("cmd edgecase", () => {
+      const result = $.parse`FOO=bar BAR=baz; BUN_DEBUG_QUIET_LOGS=1 echo`;
+    });
   });
 });
 

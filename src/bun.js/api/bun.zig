@@ -502,7 +502,11 @@ pub fn shell(
         return JSValue.undefined;
     };
 
-    var interpreter = Shell.Interpreter.new(&arena, globalThis, jsobjs.items[0..]);
+    var interpreter = Shell.Interpreter.new(&arena, globalThis, jsobjs.items[0..]) catch {
+        globalThis.throwOutOfMemory();
+        return JSValue.undefined;
+    };
+
     interpreter.interpret(script_ast) catch {
         // globalThis.throwError(err, "shell:");
         return JSValue.undefined;

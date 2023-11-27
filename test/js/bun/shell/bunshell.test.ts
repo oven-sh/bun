@@ -60,43 +60,89 @@ describe("bunshell", () => {
     expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual("LMAO\n");
   });
 
-  test("brace expansion", () => {
-    const buffer = new Uint8Array(512);
-    const result = $`echo {a,b,c}{d,e,f} > ${buffer}`;
-    const sentinel = sentinelByte(buffer);
-    expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual("ad ae af bd be bf cd ce cf\n");
+  describe("brace expansion", () => {
+    test("basic", () => {
+      const buffer = new Uint8Array(512);
+      const result = $`echo {a,b,c}{d,e,f} > ${buffer}`;
+      const sentinel = sentinelByte(buffer);
+      expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual("ad ae af bd be bf cd ce cf\n");
+    });
+
+    describe("nested", () => {
+      function doTest(pattern: string, expected: string, buffer: Uint8Array = new Uint8Array(512)) {
+        test(pattern, () => {
+          const result = $`echo ${pattern} > ${buffer}`;
+          const sentinel = sentinelByte(buffer);
+          expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual(`${expected}\n`);
+        });
+      }
+
+      doTest("{a,b,{c,d}}", "a b c d");
+      doTest("{a,b,{c,d,{e,f}}}", "a b c d e f");
+      doTest("{a,{b,{c,d}}}", "a b c d");
+      doTest("{a,b,HI{c,e,LMAO{d,f}Q}}", "a b HIc HIe HILMAOdQ HILMAOfQ");
+      doTest("{a,{b,c}}{1,2,3}", "a1 a2 a3 b1 b2 b3 c1 c2 c3");
+      doTest("{a,{b,c}HEY,d}{1,2,3}", "a1 a2 a3 bHEY1 bHEY2 bHEY3 cHEY1 cHEY2 cHEY3 d1 d2 d3");
+      doTest("{a,{b,c},d}{1,2,3}", "a1 a2 a3 b1 b2 b3 c1 c2 c3 d1 d2 d3");
+
+      doTest(
+        "{a,b,HI{c,e,LMAO{d,f}Q}}{1,2,{3,4},5}",
+        "a1 a2 a3 a4 a5 b1 b2 b3 b4 b5 HIc1 HIc2 HIc3 HIc4 HIc5 HIe1 HIe2 HIe3 HIe4 HIe5 HILMAOdQ1 HILMAOdQ2 HILMAOdQ3 HILMAOdQ4 HILMAOdQ5 HILMAOfQ1 HILMAOfQ2 HILMAOfQ3 HILMAOfQ4 HILMAOfQ5",
+      );
+    });
+
+    test("command", () => {
+      const buffer = new Uint8Array(512);
+      const result = $`{echo,a,b,c} {d,e,f} > ${buffer}`;
+      const sentinel = sentinelByte(buffer);
+      expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual("a b c d e f\n");
+    });
   });
 
-  describe("brace expansion nested", () => {
-    function doTest(pattern: string, expected: string, buffer: Uint8Array = new Uint8Array(512)) {
-      test(pattern, () => {
-        const result = $`echo ${pattern} > ${buffer}`;
-        const sentinel = sentinelByte(buffer);
-        expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual(`${expected}\n`);
-      });
-    }
-
-    doTest("{a,b,{c,d}}", "a b c d");
-    doTest("{a,b,{c,d,{e,f}}}", "a b c d e f");
-    doTest("{a,{b,{c,d}}}", "a b c d");
-    doTest("{a,b,HI{c,e,LMAO{d,f}Q}}", "a b HIc HIe HILMAOdQ HILMAOfQ");
-    doTest("{a,{b,c}}{1,2,3}", "a1 a2 a3 b1 b2 b3 c1 c2 c3");
-    doTest("{a,{b,c}HEY,d}{1,2,3}", "a1 a2 a3 bHEY1 bHEY2 bHEY3 cHEY1 cHEY2 cHEY3 d1 d2 d3");
-    doTest("{a,{b,c},d}{1,2,3}", "a1 a2 a3 b1 b2 b3 c1 c2 c3 d1 d2 d3");
-
-    doTest(
-      "{a,b,HI{c,e,LMAO{d,f}Q}}{1,2,{3,4},5}",
-      "a1 a2 a3 a4 a5 b1 b2 b3 b4 b5 HIc1 HIc2 HIc3 HIc4 HIc5 HIe1 HIe2 HIe3 HIe4 HIe5 HILMAOdQ1 HILMAOdQ2 HILMAOdQ3 HILMAOdQ4 HILMAOdQ5 HILMAOfQ1 HILMAOfQ2 HILMAOfQ3 HILMAOfQ4 HILMAOfQ5",
-    );
+  test("cmd_local_var", () => {
+    const buffer = new Uint8Array(8192);
+    $`FOO=bar BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log(JSON.stringify(process.env))" > ${buffer}`;
+    const sentinel = sentinelByte(buffer);
+    const str = new TextDecoder().decode(buffer.slice(0, sentinel));
+    expect(JSON.parse(str)).toEqual({
+      ...process.env,
+      FOO: "bar",
+      BUN_DEBUG_QUIET_LOGS: "1",
+    });
   });
 
-  test("brace expansion in command", () => {
-    const buffer = new Uint8Array(512);
-    const result = $`{echo,a,b,c} {d,e,f} > ${buffer}`;
+  test("shell var", () => {
+    const buffer = new Uint8Array(8192);
+    $`FOO=bar BAR=baz && BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log(JSON.stringify(process.env))" > ${buffer}`;
     const sentinel = sentinelByte(buffer);
-    expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual("a b c d e f\n");
+    const str = new TextDecoder().decode(buffer.slice(0, sentinel));
+
+    const procEnv = JSON.parse(str);
+    expect(procEnv.FOO).toBeUndefined();
+    expect(procEnv.BAR).toBeUndefined();
+    expect(procEnv).toEqual({ ...process.env, BUN_DEBUG_QUIET_LOGS: "1" });
+  });
+
+  test("export var", () => {
+    const buffer = new Uint8Array(8192);
+    const buffer2 = new Uint8Array(8192);
+    $`export FOO=bar && BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log(JSON.stringify(process.env))" > ${buffer} && BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log(JSON.stringify(process.env))" > ${buffer2}`;
+
+    const str1 = stringifyBuffer(buffer);
+    const str2 = stringifyBuffer(buffer2);
+
+    let procEnv = JSON.parse(str1);
+    expect(procEnv).toEqual({ ...process.env, BUN_DEBUG_QUIET_LOGS: "1", FOO: "bar" });
+    procEnv = JSON.parse(str2);
+    expect(procEnv).toEqual({ ...process.env, BUN_DEBUG_QUIET_LOGS: "1", FOO: "bar" });
   });
 });
+
+function stringifyBuffer(buffer: Uint8Array): string {
+  const sentinel = sentinelByte(buffer);
+  const str = new TextDecoder().decode(buffer.slice(0, sentinel));
+  return str;
+}
 
 function sentinelByte(buf: Uint8Array): number {
   for (let i = 0; i < buf.byteLength; i++) {

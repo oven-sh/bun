@@ -898,7 +898,7 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
 
             log("read({d}, {d}) = {d} ({any})", .{ fd, adjusted_len, rc, debug_timer });
 
-            if (Maybe(usize).errnoSys(rc, .read)) |err| {
+            if (Maybe(usize).errnoSysFd(rc, .read, fd)) |err| {
                 return err;
             }
 

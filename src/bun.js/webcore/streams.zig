@@ -4101,7 +4101,7 @@ pub const FIFO = struct {
         this: *FIFO,
         buf: []u8,
     ) ReadResult {
-        switch (Syscall.sys_uv.read(this.fd, buf)) {
+        switch (Syscall.read(this.fd, buf)) {
             .err => |err| {
                 const retry = E.AGAIN;
                 const errno: E = brk: {

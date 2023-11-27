@@ -64,56 +64,193 @@ pub const fmt = struct {
             }
         };
 
-        pub const Keywords = ComptimeStringMap(ColorCode, .{
-            .{ "abstract", ColorCode.blue },
-            .{ "as", ColorCode.blue },
-            .{ "async", ColorCode.magenta },
-            .{ "await", ColorCode.magenta },
-            .{ "case", ColorCode.magenta },
-            .{ "catch", ColorCode.magenta },
-            .{ "class", ColorCode.magenta },
-            .{ "const", ColorCode.magenta },
-            .{ "continue", ColorCode.magenta },
-            .{ "debugger", ColorCode.magenta },
-            .{ "default", ColorCode.magenta },
-            .{ "delete", ColorCode.red },
-            .{ "do", ColorCode.magenta },
-            .{ "else", ColorCode.magenta },
-            .{ "enum", ColorCode.blue },
-            .{ "export", ColorCode.magenta },
-            .{ "extends", ColorCode.magenta },
-            .{ "false", ColorCode.orange },
-            .{ "finally", ColorCode.magenta },
-            .{ "for", ColorCode.magenta },
-            .{ "function", ColorCode.magenta },
-            .{ "if", ColorCode.magenta },
-            .{ "implements", ColorCode.blue },
-            .{ "import", ColorCode.magenta },
-            .{ "in", ColorCode.magenta },
-            .{ "instanceof", ColorCode.magenta },
-            .{ "interface", ColorCode.blue },
-            .{ "let", ColorCode.magenta },
-            .{ "new", ColorCode.magenta },
-            .{ "null", ColorCode.orange },
-            .{ "package", ColorCode.magenta },
-            .{ "private", ColorCode.blue },
-            .{ "protected", ColorCode.blue },
-            .{ "public", ColorCode.blue },
-            .{ "return", ColorCode.blue },
-            .{ "static", ColorCode.magenta },
-            .{ "super", ColorCode.magenta },
-            .{ "switch", ColorCode.magenta },
-            .{ "this", ColorCode.orange },
-            .{ "throw", ColorCode.blue },
-            .{ "true", ColorCode.orange },
-            .{ "try", ColorCode.magenta },
-            .{ "type", ColorCode.blue },
-            .{ "typeof", ColorCode.magenta },
-            .{ "var", ColorCode.magenta },
-            .{ "void", ColorCode.magenta },
-            .{ "while", ColorCode.magenta },
-            .{ "with", ColorCode.magenta },
-            .{ "yield", ColorCode.magenta },
+        pub const Keyword = enum {
+            abstract,
+            as,
+            @"async",
+            @"await",
+            case,
+            @"catch",
+            class,
+            @"const",
+            @"continue",
+            debugger,
+            default,
+            delete,
+            do,
+            @"else",
+            @"enum",
+            @"export",
+            extends,
+            false,
+            finally,
+            @"for",
+            function,
+            @"if",
+            implements,
+            import,
+            in,
+            instanceof,
+            interface,
+            let,
+            new,
+            null,
+            package,
+            private,
+            protected,
+            public,
+            @"return",
+            static,
+            super,
+            @"switch",
+            this,
+            throw,
+            true,
+            @"try",
+            type,
+            typeof,
+            @"var",
+            void,
+            @"while",
+            with,
+            yield,
+            string,
+            number,
+            boolean,
+            symbol,
+            any,
+            object,
+            unknown,
+            never,
+            namespace,
+            declare,
+
+            pub fn colorCode(this: Keyword) ColorCode {
+                return switch (this) {
+                    Keyword.abstract => ColorCode.blue,
+                    Keyword.as => ColorCode.blue,
+                    Keyword.@"async" => ColorCode.magenta,
+                    Keyword.@"await" => ColorCode.magenta,
+                    Keyword.case => ColorCode.magenta,
+                    Keyword.@"catch" => ColorCode.magenta,
+                    Keyword.class => ColorCode.magenta,
+                    Keyword.@"const" => ColorCode.magenta,
+                    Keyword.@"continue" => ColorCode.magenta,
+                    Keyword.debugger => ColorCode.magenta,
+                    Keyword.default => ColorCode.magenta,
+                    Keyword.delete => ColorCode.red,
+                    Keyword.do => ColorCode.magenta,
+                    Keyword.@"else" => ColorCode.magenta,
+                    Keyword.@"enum" => ColorCode.blue,
+                    Keyword.@"export" => ColorCode.magenta,
+                    Keyword.extends => ColorCode.magenta,
+                    Keyword.false => ColorCode.orange,
+                    Keyword.finally => ColorCode.magenta,
+                    Keyword.@"for" => ColorCode.magenta,
+                    Keyword.function => ColorCode.magenta,
+                    Keyword.@"if" => ColorCode.magenta,
+                    Keyword.implements => ColorCode.blue,
+                    Keyword.import => ColorCode.magenta,
+                    Keyword.in => ColorCode.magenta,
+                    Keyword.instanceof => ColorCode.magenta,
+                    Keyword.interface => ColorCode.blue,
+                    Keyword.let => ColorCode.magenta,
+                    Keyword.new => ColorCode.magenta,
+                    Keyword.null => ColorCode.orange,
+                    Keyword.package => ColorCode.magenta,
+                    Keyword.private => ColorCode.blue,
+                    Keyword.protected => ColorCode.blue,
+                    Keyword.public => ColorCode.blue,
+                    Keyword.@"return" => ColorCode.magenta,
+                    Keyword.static => ColorCode.magenta,
+                    Keyword.super => ColorCode.magenta,
+                    Keyword.@"switch" => ColorCode.magenta,
+                    Keyword.this => ColorCode.orange,
+                    Keyword.throw => ColorCode.magenta,
+                    Keyword.true => ColorCode.orange,
+                    Keyword.@"try" => ColorCode.magenta,
+                    Keyword.type => ColorCode.blue,
+                    Keyword.typeof => ColorCode.magenta,
+                    Keyword.@"var" => ColorCode.magenta,
+                    Keyword.void => ColorCode.magenta,
+                    Keyword.@"while" => ColorCode.magenta,
+                    Keyword.with => ColorCode.magenta,
+                    Keyword.yield => ColorCode.magenta,
+                    Keyword.string => ColorCode.blue,
+                    Keyword.number => ColorCode.blue,
+                    Keyword.boolean => ColorCode.blue,
+                    Keyword.symbol => ColorCode.blue,
+                    Keyword.any => ColorCode.blue,
+                    Keyword.object => ColorCode.blue,
+                    Keyword.unknown => ColorCode.blue,
+                    Keyword.never => ColorCode.blue,
+                    Keyword.namespace => ColorCode.blue,
+                    Keyword.declare => ColorCode.blue,
+                };
+            }
+        };
+
+        pub const Keywords = ComptimeStringMap(Keyword, .{
+            .{ "abstract", Keyword.abstract },
+            .{ "as", Keyword.as },
+            .{ "async", Keyword.@"async" },
+            .{ "await", Keyword.@"await" },
+            .{ "case", Keyword.case },
+            .{ "catch", Keyword.@"catch" },
+            .{ "class", Keyword.class },
+            .{ "const", Keyword.@"const" },
+            .{ "continue", Keyword.@"continue" },
+            .{ "debugger", Keyword.debugger },
+            .{ "default", Keyword.default },
+            .{ "delete", Keyword.delete },
+            .{ "do", Keyword.do },
+            .{ "else", Keyword.@"else" },
+            .{ "enum", Keyword.@"enum" },
+            .{ "export", Keyword.@"export" },
+            .{ "extends", Keyword.extends },
+            .{ "false", Keyword.false },
+            .{ "finally", Keyword.finally },
+            .{ "for", Keyword.@"for" },
+            .{ "function", Keyword.function },
+            .{ "if", Keyword.@"if" },
+            .{ "implements", Keyword.implements },
+            .{ "import", Keyword.import },
+            .{ "in", Keyword.in },
+            .{ "instanceof", Keyword.instanceof },
+            .{ "interface", Keyword.interface },
+            .{ "let", Keyword.let },
+            .{ "new", Keyword.new },
+            .{ "null", Keyword.null },
+            .{ "package", Keyword.package },
+            .{ "private", Keyword.private },
+            .{ "protected", Keyword.protected },
+            .{ "public", Keyword.public },
+            .{ "return", Keyword.@"return" },
+            .{ "static", Keyword.static },
+            .{ "super", Keyword.super },
+            .{ "switch", Keyword.@"switch" },
+            .{ "this", Keyword.this },
+            .{ "throw", Keyword.throw },
+            .{ "true", Keyword.true },
+            .{ "try", Keyword.@"try" },
+            .{ "type", Keyword.type },
+            .{ "typeof", Keyword.typeof },
+            .{ "var", Keyword.@"var" },
+            .{ "void", Keyword.void },
+            .{ "while", Keyword.@"while" },
+            .{ "with", Keyword.with },
+            .{ "yield", Keyword.yield },
+            // typescript primitive types
+            .{ "string", Keyword.string },
+            .{ "number", Keyword.number },
+            .{ "boolean", Keyword.boolean },
+            .{ "symbol", Keyword.symbol },
+            .{ "any", Keyword.any },
+            .{ "object", Keyword.object },
+            .{ "unknown", Keyword.unknown },
+            .{ "never", Keyword.never },
+            .{ "namespace", Keyword.namespace },
+            .{ "declare", Keyword.declare },
         });
 
         pub fn format(this: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
@@ -125,6 +262,8 @@ pub const fmt = struct {
             }
 
             var remain = text;
+            var prev_keyword: ?Keyword = null;
+
             while (remain.len > 0) {
                 if (js_lexer.isIdentifierStart(remain[0])) {
                     var i: usize = 1;
@@ -133,15 +272,44 @@ pub const fmt = struct {
                         i += 1;
                     }
 
-                    if (Keywords.get(remain[0..i])) |code| {
+                    if (Keywords.get(remain[0..i])) |keyword| {
+                        prev_keyword = keyword;
+                        const code = keyword.colorCode();
                         try writer.print(Output.prettyFmt("<r>{s}{s}<r>", true), .{ code.color(), remain[0..i] });
                     } else {
-                        try writer.writeAll(remain[0..i]);
+                        write: {
+                            if (prev_keyword) |prev| {
+                                switch (prev) {
+                                    .@"const", .let, .@"var", .function, .class => {
+                                        try writer.print(Output.prettyFmt("<r><b>{s}<r>", true), .{remain[0..i]});
+                                        prev_keyword = null;
+                                        break :write;
+                                    },
+                                    .new => {
+                                        prev_keyword = null;
+
+                                        if (i < remain.len and remain[i] == '(') {
+                                            try writer.print(Output.prettyFmt("<r><b>{s}<r>", true), .{remain[0..i]});
+                                            break :write;
+                                        }
+                                    },
+                                    .abstract, .namespace, .declare, .type, .interface => {
+                                        try writer.print(Output.prettyFmt("<r><b><blue>{s}<r>", true), .{remain[0..i]});
+                                        prev_keyword = null;
+                                        break :write;
+                                    },
+                                    else => {},
+                                }
+                            }
+
+                            try writer.writeAll(remain[0..i]);
+                        }
                     }
                     remain = remain[i..];
                 } else {
                     switch (remain[0]) {
                         '0'...'9' => {
+                            prev_keyword = null;
                             var i: usize = 1;
                             if (remain.len > 1 and remain[0] == '0' and remain[1] == 'x') {
                                 i += 1;
@@ -164,6 +332,8 @@ pub const fmt = struct {
                             remain = remain[i..];
                         },
                         inline '`', '"', '\'' => |char| {
+                            prev_keyword = null;
+
                             var i: usize = 1;
                             for (remain[i..]) |c| {
                                 if (c == char) {
@@ -183,6 +353,7 @@ pub const fmt = struct {
                             remain = remain[i..];
                         },
                         '/' => {
+                            prev_keyword = null;
                             var i: usize = 1;
 
                             // the start of a line comment
@@ -241,21 +412,26 @@ pub const fmt = struct {
                             remain = remain[i..];
                         },
                         '}', '[', ']', '{' => {
+                            prev_keyword = null;
                             try writer.print(Output.prettyFmt("<r><b>{s}<r>", true), .{remain[0..1]});
                             remain = remain[1..];
                         },
                         '.' => {
+                            prev_keyword = null;
                             var i: usize = 1;
-                            if (remain.len > 1 and js_lexer.isIdentifierStart(remain[1])) {
+                            if (remain.len > 1 and (js_lexer.isIdentifierStart(remain[1]) or remain[1] == '#')) {
                                 i = 2;
 
                                 while (i < remain.len and js_lexer.isIdentifierContinue(remain[i])) {
                                     i += 1;
                                 }
 
-                                try writer.print(Output.prettyFmt("<r>{s}<r>", true), .{remain[0..i]});
-                                remain = remain[i..];
-                                continue;
+                                if (i < remain.len and (remain[i] == '(')) {
+                                    try writer.print(Output.prettyFmt("<r><i><b>{s}<r>", true), .{remain[0..i]});
+                                    remain = remain[i..];
+                                    continue;
+                                }
+                                i = 1;
                             }
 
                             try writer.writeAll(remain[0..1]);
@@ -270,6 +446,7 @@ pub const fmt = struct {
                                 if (remain.len > 1 and remain[0] == '/') {
                                     i = 2;
                                 }
+                                prev_keyword = null;
 
                                 while (i < remain.len and js_lexer.isIdentifierContinue(remain[i])) {
                                     i += 1;

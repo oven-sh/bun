@@ -3987,59 +3987,138 @@ pub fn firstNonASCII16(comptime Slice: type, slice: Slice) ?u32 {
 
 /// Get the line number and the byte offsets of `line_range_count` above the desired line number
 /// The final element is the end index of the desired line
-pub fn indexOfLineNumber(text: []const u8, line: u32, comptime line_range_count: usize) ?[line_range_count + 1]u32 {
-    var ranges = std.mem.zeroes([line_range_count + 1]u32);
+const LineRange = struct {
+    start: u32,
+    end: u32,
+};
+pub fn indexOfLineRanges(text: []const u8, target_line: u32, comptime line_range_count: usize) std.BoundedArray(LineRange, line_range_count) {
     var remaining = text;
-    if (remaining.len == 0 or line == 0) return null;
+    if (remaining.len == 0) return .{};
 
-    var iter = CodepointIterator.init(text);
-    var cursor = CodepointIterator.Cursor{};
-    var count: u32 = 0;
+    var ranges = std.BoundedArray(LineRange, line_range_count){};
 
-    while (iter.next(&cursor)) {
-        switch (cursor.c) {
-            '\n', '\r' => {
-                if (cursor.c == '\r' and text[cursor.i..].len > 0 and text[cursor.i + 1] == '\n') {
-                    cursor.i += 1;
-                }
-
-                if (comptime line_range_count > 1) {
-                    comptime var i: usize = 0;
-                    inline while (i < line_range_count) : (i += 1) {
-                        std.mem.swap(u32, &ranges[i], &ranges[i + 1]);
-                    }
-                } else {
-                    ranges[0] = ranges[1];
-                }
-
-                ranges[line_range_count] = cursor.i;
-
-                if (count == line) {
-                    return ranges;
-                }
-
-                count += 1;
-            },
-            else => {},
+    var current_line: u32 = 0;
+    const first_newline_or_nonascii_i = strings.indexOfNewlineOrNonASCIICheckStart(text, 0, true) orelse {
+        if (target_line == 0) {
+            ranges.appendAssumeCapacity(.{
+                .start = 0,
+                .end = @truncate(text.len),
+            });
         }
+
+        return ranges;
+    };
+
+    var iter = CodepointIterator.initOffset(text, 0);
+    var cursor = CodepointIterator.Cursor{
+        .i = first_newline_or_nonascii_i,
+    };
+    const first_newline_range: LineRange = brk: {
+        while (iter.next(&cursor)) {
+            const codepoint = cursor.c;
+            switch (codepoint) {
+                '\n' => {
+                    current_line += 1;
+                    break :brk .{
+                        .start = 0,
+                        .end = cursor.i,
+                    };
+                },
+                '\r' => {
+                    if (iter.next(&cursor)) {
+                        const codepoint2 = cursor.c;
+                        if (codepoint2 == '\n') {
+                            current_line += 1;
+                            break :brk .{
+                                .start = 0,
+                                .end = cursor.i,
+                            };
+                        }
+                    }
+                },
+                else => {},
+            }
+        }
+
+        ranges.appendAssumeCapacity(.{
+            .start = 0,
+            .end = @truncate(text.len),
+        });
+        return ranges;
+    };
+
+    ranges.appendAssumeCapacity(first_newline_range);
+
+    var prev_end = first_newline_range.end;
+    while (strings.indexOfNewlineOrNonASCIICheckStart(text, cursor.i + @as(u32, cursor.width), true)) |current_i| {
+        cursor.i = current_i;
+        cursor.width = 0;
+        const current_line_range: LineRange = brk: {
+            if (iter.next(&cursor)) {
+                const codepoint = cursor.c;
+                switch (codepoint) {
+                    '\n' => {
+                        const start = prev_end;
+                        prev_end = cursor.i;
+                        break :brk .{
+                            .start = start,
+                            .end = cursor.i + 1,
+                        };
+                    },
+                    '\r' => {
+                        const current_end = cursor.i;
+                        if (iter.next(&cursor)) {
+                            const codepoint2 = cursor.c;
+                            if (codepoint2 == '\n') {
+                                defer prev_end = cursor.i;
+                                break :brk .{
+                                    .start = prev_end,
+                                    .end = current_end,
+                                };
+                            }
+                        }
+                    },
+                    else => continue,
+                }
+            }
+        };
+
+        if (ranges.len == line_range_count and current_line <= target_line) {
+            var new_ranges = std.BoundedArray(LineRange, line_range_count){};
+            new_ranges.appendSliceAssumeCapacity(ranges.slice()[1..]);
+            ranges = new_ranges;
+        }
+        ranges.appendAssumeCapacity(current_line_range);
+
+        if (current_line >= target_line) {
+            return ranges;
+        }
+
+        current_line += 1;
     }
 
-    return null;
+    if (ranges.len == line_range_count and current_line <= target_line) {
+        var new_ranges = std.BoundedArray(LineRange, line_range_count){};
+        new_ranges.appendSliceAssumeCapacity(ranges.slice()[1..]);
+        ranges = new_ranges;
+    }
+
+    return ranges;
 }
 
 /// Get N lines from the start of the text
-pub fn getLinesInText(text: []const u8, line: u32, comptime line_range_count: usize) ?[line_range_count][]const u8 {
-    const ranges = indexOfLineNumber(text, line, line_range_count) orelse return null;
-    var results = std.mem.zeroes([line_range_count][]const u8);
-    var i: usize = 0;
-    var any_exist = false;
-    while (i < line_range_count) : (i += 1) {
-        results[i] = text[ranges[i]..ranges[i + 1]];
-        any_exist = any_exist or results[i].len > 0;
+pub fn getLinesInText(text: []const u8, line: u32, comptime line_range_count: usize) ?std.BoundedArray([]const u8, line_range_count) {
+    const ranges = indexOfLineRanges(text, line, line_range_count);
+    if (ranges.len == 0) return null;
+    var results = std.BoundedArray([]const u8, line_range_count){};
+    results.len = ranges.len;
+
+    for (results.slice()[0..ranges.len], ranges.slice()) |*chunk, range| {
+        chunk.* = text[range.start..range.end];
     }
 
-    if (!any_exist)
-        return null;
+    std.mem.reverse([]const u8, results.slice());
+
     return results;
 }
 

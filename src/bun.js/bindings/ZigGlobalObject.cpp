@@ -339,21 +339,23 @@ WTF::String Bun::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject
 
     bool hasSet = false;
 
-    size_t offset = 0;
-
     bool needsNewline = !name.isEmpty() || !message.isEmpty();
 
     if (JSC::ErrorInstance* err = jsDynamicCast<JSC::ErrorInstance*>(errorInstance)) {
         if (err->errorType() == ErrorType::SyntaxError && (stackTrace.isEmpty() || stackTrace.at(0).sourceURL(vm) != err->sourceURL())) {
-            auto originalLine = WTF::OrdinalNumber::fromOneBasedInt(static_cast<int32_t>(err->line()));
+            // There appears to be an off-by-one error.
+            // The following reproduces the issue:
+            // /* empty comment */
+            // "".test(/[a-0]/);
+            auto originalLine = WTF::OrdinalNumber::fromOneBasedInt(err->line());
 
             ZigStackFrame remappedFrame;
+            memset(&remappedFrame, 0, sizeof(ZigStackFrame));
 
-            remappedFrame.position.line = originalLine.zeroBasedInt();
-            remappedFrame.position.column_start = 1;
+            remappedFrame.position.line = originalLine.zeroBasedInt() + 1;
+            remappedFrame.position.column_start = 0;
 
             String sourceURLForFrame = err->sourceURL();
-            offset = 1;
 
             // If it's not a Zig::GlobalObject, don't bother source-mapping it.
             if (globalObject && !sourceURLForFrame.isEmpty()) {

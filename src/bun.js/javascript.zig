@@ -2572,7 +2572,7 @@ pub const VirtualMachine = struct {
                 frame.position.column_start = mapping.original.columns;
                 frame.remapped = true;
             } else {
-                frame.remapped = true;
+                frame.remapped = false;
             }
         }
     }
@@ -2676,20 +2676,23 @@ pub const VirtualMachine = struct {
                 code.slice(),
                 @intCast(last_line),
                 JSC.ZigException.Holder.source_lines_count,
-            )) |lines| {
+            )) |lines_buf| {
+                var lines = lines_buf.slice();
                 var source_lines = exception.stack.source_lines_ptr[0..JSC.ZigException.Holder.source_lines_count];
                 var source_line_numbers = exception.stack.source_lines_numbers[0..JSC.ZigException.Holder.source_lines_count];
                 @memset(source_lines, String.empty);
                 @memset(source_line_numbers, 0);
-                var lines_ = lines[0..@min(lines.len, source_lines.len)];
-                for (lines_, 0..) |line, j| {
-                    source_lines[(lines_.len - 1) - j] = String.init(line);
-                    source_line_numbers[j] = @as(i32, @intCast(last_line)) - @as(i32, @intCast(j)) + 1;
+                lines = lines[0..@min(@as(usize, lines.len), source_lines.len)];
+                var current_line_number: i32 = @intCast(last_line);
+                for (lines, source_lines[0..lines.len], source_line_numbers[0..lines.len]) |line, *line_dest, *line_number| {
+                    line_dest.* = String.init(line);
+                    line_number.* = current_line_number;
+                    current_line_number -= 1;
                 }
 
-                exception.stack.source_lines_len = @as(u8, @intCast(lines_.len));
+                exception.stack.source_lines_len = @as(u8, @truncate(lines.len));
 
-                top.position.column_stop = @as(i32, @intCast(source_lines[lines_.len - 1].length()));
+                top.position.column_stop = @as(i32, @intCast(source_lines[lines.len - 1].length()));
                 top.position.line_stop = top.position.column_stop;
 
                 // This expression range is no longer accurate
@@ -2740,7 +2743,7 @@ pub const VirtualMachine = struct {
         var last_pad: u64 = 0;
         while (source_lines.untilLast()) |source| {
             defer source.text.deinit();
-            const display_line = source.line;
+            const display_line = source.line + 1;
 
             const int_size = std.fmt.count("{d}", .{display_line});
             const pad = max_line_number_pad - int_size;
@@ -2783,7 +2786,7 @@ pub const VirtualMachine = struct {
                 try this.printErrorNameAndMessage(name, message, Writer, writer, allow_ansi_color);
             } else if (top_frame) |top| {
                 defer did_print_name = true;
-                const display_line = source.line;
+                const display_line = source.line + 1;
                 const int_size = std.fmt.count("{d}", .{display_line});
                 const pad = max_line_number_pad - int_size;
                 try writer.writeByteNTimes(' ', pad);

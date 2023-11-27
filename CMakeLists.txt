@@ -320,7 +320,7 @@ function(validate_zig validator_result_var item)
     endif()
 endfunction()
 
-if (WIN32 OR ZIG_COMPILER)
+if (WIN32 OR ZIG_COMPILER OR ENV{CI})
     if(ZIG_COMPILER STREQUAL "system")
         unset(ZIG_COMPILER)
     endif()

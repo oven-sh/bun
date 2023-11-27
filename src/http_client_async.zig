@@ -2622,7 +2622,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                 // if it compressed with this header, it is no longer because we will decompress it
                 var mutable_headers = std.ArrayListUnmanaged(picohttp.Header){ .items = response.headers, .capacity = response.headers.len };
                 // we remove the content encoding header
-                _ = mutable_headers.swapRemove(this.state.content_encoding_i);
+                _ = mutable_headers.orderedRemove(this.state.content_encoding_i);
                 this.state.did_set_content_encoding = true;
                 response.headers = mutable_headers.items;
                 this.state.content_encoding_i = std.math.maxInt(@TypeOf(this.state.content_encoding_i));

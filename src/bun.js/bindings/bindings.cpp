@@ -3741,7 +3741,7 @@ public:
     }
 };
 
-static void populateStackTrace(JSC::VM& vm, JSC::ErrorInstance* errorInstance, const WTF::Vector<JSC::StackFrame>& frames, ZigStackTrace* trace)
+static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& frames, ZigStackTrace* trace)
 {
     uint8_t frame_i = 0;
     size_t stack_frame_i = 0;
@@ -3775,9 +3775,9 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
 
     bool getFromSourceURL = false;
     if (stackTrace != nullptr && stackTrace->size() > 0) {
-        populateStackTrace(vm, err, *stackTrace, &except->stack);
+        populateStackTrace(vm, *stackTrace, &except->stack);
     } else if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
-        populateStackTrace(vm, err, *err->stackTrace(), &except->stack);
+        populateStackTrace(vm, *err->stackTrace(), &except->stack);
     } else {
         getFromSourceURL = true;
     }
@@ -4130,7 +4130,7 @@ void JSC__JSValue__toZigException(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
 
 void JSC__Exception__getStackTrace(JSC__Exception* arg0, ZigStackTrace* trace)
 {
-    populateStackTrace(arg0->vm(), nullptr, arg0->stack(), trace);
+    populateStackTrace(arg0->vm(), arg0->stack(), trace);
 }
 
 #pragma mark - JSC::VM

@@ -1217,7 +1217,7 @@ fn NewPrinter(
         pub fn printClauseAlias(p: *Printer, alias: string) void {
             std.debug.assert(alias.len > 0);
 
-            if (!strings.containsNonBmpCodePoint(alias)) {
+            if (!strings.containsNonBmpCodePointOrIsInvalidIdentifier(alias)) {
                 p.printSpaceBeforeIdentifier();
                 p.printIdentifier(alias);
             } else {

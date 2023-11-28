@@ -105,19 +105,6 @@ $ export PATH="$PATH:/usr/lib/llvm16/bin"
 
 {% /codetabs %}
 
-## Install Zig
-
-Zig can be installed either with our npm package [`@oven/zig`](https://www.npmjs.com/package/@oven/zig), or by using [zigup](https://github.com/marler8997/zigup).
-
-```bash
-$ bun install -g @oven/zig
-$ zigup 0.12.0-dev.1604+caae40c21
-```
-
-{% callout %}
-We last updated Zig on **October 26th, 2023**
-{% /callout %}
-
 ## Building Bun
 
 After cloning the repository, run the following command to run the first build. This may take a while as it will clone submodules and build dependencies.

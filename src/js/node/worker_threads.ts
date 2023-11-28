@@ -125,7 +125,9 @@ function fakeParentPort() {
     get() {
       return self.onmessageerror;
     },
-    set(value) {},
+    set(value) {
+      self.onmessageerror = value;
+    },
   });
 
   Object.defineProperty(fake, "postMessage", {

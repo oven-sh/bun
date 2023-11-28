@@ -874,8 +874,9 @@ GlobalObject::~GlobalObject()
         finalizer(toNapi(this), napiInstanceData, napiInstanceDataFinalizerHint);
     }
 
-    delete m_subtleCrypto;
-    scriptExecutionContext()->removeFromContextsMap();
+    if (auto *ctx = scriptExecutionContext()) {
+        ctx->removeFromContextsMap();
+    }
 }
 
 void GlobalObject::destroy(JSCell* cell)

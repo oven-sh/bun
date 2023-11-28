@@ -265,6 +265,11 @@ jobs:
           ulimit -c
 
           node packages/bun-internal-test/src/runner.node.mjs || true
+      - uses: actions/upload-artifact@v3
+        if: steps.test.outputs.failing_tests != ''
+        with:
+          name: cores
+          path: /cores
       - uses: sarisia/actions-status-discord@v1
         if: always() && steps.test.outputs.failing_tests != '' && github.event_name == 'pull_request'
         with:
@@ -306,11 +311,6 @@ jobs:
             ✅ test failures on ${{ matrix.tag }} have been resolved.
 
             <sup>[#${{github.sha}}](https://github.com/oven-sh/bun/commits/${{github.sha}})</sup>
-      - uses: actions/upload-artifact@v3
-        if: steps.test.outputs.failing_tests != ''
-        with:
-          name: cores
-          path: /cores
       - id: fail
         name: Fail the build
         if: steps.test.outputs.failing_tests != ''

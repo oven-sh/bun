@@ -21,7 +21,7 @@ const JSValue = JSC.JSValue;
 const js = JSC.C;
 pub const WorkPool = @import("../work_pool.zig").WorkPool;
 pub const WorkPoolTask = @import("../work_pool.zig").Task;
-const NetworkThread = @import("root").bun.HTTP.NetworkThread;
+const NetworkThread = @import("root").bun.http.NetworkThread;
 const uws = @import("root").bun.uws;
 const Async = bun.Async;
 
@@ -317,6 +317,7 @@ const Write = JSC.Node.Async.write;
 const Truncate = JSC.Node.Async.truncate;
 const FTruncate = JSC.Node.Async.ftruncate;
 const Readdir = JSC.Node.Async.readdir;
+const ReaddirRecursive = JSC.Node.Async.readdir_recursive;
 const Readv = JSC.Node.Async.readv;
 const Writev = JSC.Node.Async.writev;
 const Close = JSC.Node.Async.close;
@@ -375,6 +376,7 @@ pub const Task = TaggedPointerUnion(.{
     Truncate,
     FTruncate,
     Readdir,
+    ReaddirRecursive,
     Close,
     Rm,
     Rmdir,
@@ -819,6 +821,10 @@ pub const EventLoop = struct {
                 },
                 @field(Task.Tag, typeBaseName(@typeName(Readdir))) => {
                     var any: *Readdir = task.get(Readdir).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(ReaddirRecursive))) => {
+                    var any: *ReaddirRecursive = task.get(ReaddirRecursive).?;
                     any.runFromJSThread();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(Close))) => {

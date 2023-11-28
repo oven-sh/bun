@@ -49,7 +49,7 @@ napi_value test_napi_get_value_string_utf8_with_buffer(const Napi::CallbackInfo 
     std::cout << "Chars to copy: " << len << std::endl;
     std::cout << "Copied chars: " << copied << std::endl;
     std::cout << "Buffer: ";
-    for (int i = 0; i < BUF_SIZE; i++) {
+    for (size_t i = 0; i < BUF_SIZE; i++) {
         std::cout << (int)buf[i] << ", ";
     }
     std::cout << std::endl;

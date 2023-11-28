@@ -42,7 +42,14 @@
 #include <openssl/pem.h>
 #include <openssl/curve25519.h>
 #include "JSBuffer.h"
-
+#include "CryptoAlgorithmHMAC.h"
+#include "CryptoAlgorithmEd25519.h"
+#include "CryptoAlgorithmRSA_PSS.h"
+#include "CryptoAlgorithmRSASSA_PKCS1_v1_5.h"
+#include "CryptoAlgorithmECDSA.h"
+#include "CryptoAlgorithmEcdsaParams.h"
+#include "CryptoAlgorithmRsaPssParams.h"
+#include "CryptoAlgorithmRegistry.h"
 using namespace JSC;
 using namespace Bun;
 using JSGlobalObject
@@ -1239,6 +1246,492 @@ JSC::EncodedJSValue KeyObject__createSecretKey(JSC::JSGlobalObject* lexicalGloba
     return JSValue::encode(JSC::jsUndefined());
 }
 
+static ExceptionOr<Vector<uint8_t>> KeyObject__GetBuffer(JSValue bufferArg)
+{
+    if (!bufferArg.isCell()) {
+        return Exception { OperationError };
+    }
+
+    auto bufferArgCell = bufferArg.asCell();
+    auto type = bufferArgCell->type();
+
+    switch (type) {
+    case DataViewType:
+    case Uint8ArrayType:
+    case Uint8ClampedArrayType:
+    case Uint16ArrayType:
+    case Uint32ArrayType:
+    case Int8ArrayType:
+    case Int16ArrayType:
+    case Int32ArrayType:
+    case Float32ArrayType:
+    case Float64ArrayType:
+    case BigInt64ArrayType:
+    case BigUint64ArrayType: {
+        JSC::JSArrayBufferView* view = jsCast<JSC::JSArrayBufferView*>(bufferArgCell);
+
+        void* data = view->vector();
+        size_t byteLength = view->length();
+        if (UNLIKELY(!data)) {
+            break;
+        }
+        return Vector<uint8_t>((uint8_t*)data, byteLength);
+    }
+    case ArrayBufferType: {
+        auto* jsBuffer = jsDynamicCast<JSC::JSArrayBuffer*>(bufferArgCell);
+        if (UNLIKELY(!jsBuffer)) {
+            break;
+        }
+        auto* buffer = jsBuffer->impl();
+        void* data = buffer->data();
+        size_t byteLength = buffer->byteLength();
+        if (UNLIKELY(!data)) {
+            break;
+        }
+        return Vector<uint8_t>((uint8_t*)data, byteLength);
+    }
+    default: {
+        break;
+    }
+    }
+    return Exception { OperationError };
+}
+JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+{
+    auto count = callFrame->argumentCount();
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (count < 3) {
+        JSC::throwTypeError(globalObject, scope, "sign requires 3 arguments"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    auto* key = jsDynamicCast<JSCryptoKey*>(callFrame->argument(0));
+    if (!key) {
+        // No JSCryptoKey instance
+        JSC::throwTypeError(globalObject, scope, "expected CryptoKey as first argument"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    JSValue bufferArg = callFrame->uncheckedArgument(1);
+
+    auto buffer = KeyObject__GetBuffer(bufferArg);
+    if (buffer.hasException()) {
+        JSC::throwTypeError(globalObject, scope, "expected Buffer or array-like object as second argument"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    auto vectorData = buffer.releaseReturnValue();
+    auto& wrapped = key->wrapped();
+    auto key_type = wrapped.type();
+    auto id = wrapped.keyClass();
+
+    auto hash = WebCore::CryptoAlgorithmIdentifier::SHA_256;
+    auto algorithm = callFrame->argument(2);
+    auto customHash = false;
+    if (!algorithm.isUndefinedOrNull() && !algorithm.isEmpty()) {
+        customHash = true;
+        if (!algorithm.isString()) {
+            JSC::throwTypeError(globalObject, scope, "algorithm is expected to be a string"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        auto algorithm_str = algorithm.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, encodedJSValue());
+
+        auto identifier = CryptoAlgorithmRegistry::singleton().identifier(algorithm_str);
+        if (UNLIKELY(!identifier)) {
+            JSC::throwTypeError(globalObject, scope, "digest not allowed"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+
+        switch (*identifier) {
+        case WebCore::CryptoAlgorithmIdentifier::SHA_1:
+        case WebCore::CryptoAlgorithmIdentifier::SHA_224:
+        case WebCore::CryptoAlgorithmIdentifier::SHA_256:
+        case WebCore::CryptoAlgorithmIdentifier::SHA_384:
+        case WebCore::CryptoAlgorithmIdentifier::SHA_512: {
+
+            hash = *identifier;
+            break;
+        }
+        default: {
+            JSC::throwTypeError(globalObject, scope, "digest not allowed"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        }
+    }
+
+    switch (id) {
+    case CryptoKeyClass::HMAC: {
+        const auto& hmac = downcast<WebCore::CryptoKeyHMAC>(wrapped);
+        auto result = (customHash) ? WebCore::CryptoAlgorithmHMAC::platformSignWithAlgorithm(hmac, hash, vectorData) : WebCore::CryptoAlgorithmHMAC::platformSign(hmac, vectorData);
+        if (result.hasException()) {
+            WebCore::propagateException(*globalObject, scope, result.releaseException());
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        auto resultData = result.releaseReturnValue();
+        auto size = resultData.size();
+        auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
+        if (size > 0)
+            memcpy(buffer->vector(), resultData.data(), size);
+
+        return JSC::JSValue::encode(buffer);
+    }
+    case CryptoKeyClass::OKP: {
+        const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(wrapped);
+        auto result = WebCore::CryptoAlgorithmEd25519::platformSign(okpKey, vectorData);
+        if (result.hasException()) {
+            WebCore::propagateException(*globalObject, scope, result.releaseException());
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        auto resultData = result.releaseReturnValue();
+        auto size = resultData.size();
+        auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
+        if (size > 0)
+            memcpy(buffer->vector(), resultData.data(), size);
+
+        return JSC::JSValue::encode(buffer);
+    }
+    case CryptoKeyClass::EC: {
+        const auto& ec = downcast<WebCore::CryptoKeyEC>(wrapped);
+        CryptoAlgorithmEcdsaParams params;
+        params.identifier = CryptoAlgorithmIdentifier::ECDSA;
+        params.hashIdentifier = hash;
+        params.encoding = CryptoAlgorithmECDSAEncoding::DER;
+
+        if (count > 3) {
+            auto encoding = callFrame->argument(3);
+            if (!encoding.isUndefinedOrNull() && !encoding.isEmpty()) {
+                if (!encoding.isString()) {
+                    JSC::throwTypeError(globalObject, scope, "dsaEncoding is expected to be a string"_s);
+                    return JSC::JSValue::encode(JSC::JSValue {});
+                }
+                auto encoding_str = encoding.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(scope, encodedJSValue());
+
+                if (encoding_str == "ieee-p1363"_s) {
+                    params.encoding = CryptoAlgorithmECDSAEncoding::IeeeP1363;
+                } else if (encoding_str == "der"_s) {
+                    params.encoding = CryptoAlgorithmECDSAEncoding::DER;
+                } else {
+                    JSC::throwTypeError(globalObject, scope, "invalid dsaEncoding"_s);
+                    return JSC::JSValue::encode(JSC::JSValue {});
+                }
+            }
+        }
+        auto result = WebCore::CryptoAlgorithmECDSA::platformSign(params, ec, vectorData);
+        if (result.hasException()) {
+            WebCore::propagateException(*globalObject, scope, result.releaseException());
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        auto resultData = result.releaseReturnValue();
+        auto size = resultData.size();
+        auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
+        if (size > 0)
+            memcpy(buffer->vector(), resultData.data(), size);
+
+        return JSC::JSValue::encode(buffer);
+    }
+    case CryptoKeyClass::RSA: {
+        const auto& rsa = downcast<WebCore::CryptoKeyRSA>(wrapped);
+        CryptoAlgorithmIdentifier restrict_hash;
+        bool isRestrictedToHash = rsa.isRestrictedToHash(restrict_hash);
+        if (isRestrictedToHash && hash != restrict_hash) {
+            JSC::throwTypeError(globalObject, scope, "digest not allowed"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        switch (rsa.algorithmIdentifier()) {
+        case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5: {
+            auto result = (customHash) ? WebCore::CryptoAlgorithmRSASSA_PKCS1_v1_5::platformSignWithAlgorithm(rsa, hash, vectorData) : CryptoAlgorithmRSASSA_PKCS1_v1_5::platformSign(rsa, vectorData);
+            if (result.hasException()) {
+                WebCore::propagateException(*globalObject, scope, result.releaseException());
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+            auto resultData = result.releaseReturnValue();
+            auto size = resultData.size();
+            auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
+            if (size > 0)
+                memcpy(buffer->vector(), resultData.data(), size);
+
+            return JSC::JSValue::encode(buffer);
+        }
+        case CryptoAlgorithmIdentifier::RSA_PSS: {
+            CryptoAlgorithmRsaPssParams params;
+            params.padding = RSA_PKCS1_PADDING;
+            if (count > 4) {
+                auto padding = callFrame->argument(4);
+                if (!padding.isUndefinedOrNull() && !padding.isEmpty()) {
+                    if (!padding.isNumber()) {
+                        JSC::throwTypeError(globalObject, scope, "padding is expected to be a number"_s);
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
+                    params.padding = padding.toUInt32(globalObject);
+                }
+                // requires saltLength
+                if (params.padding == RSA_PKCS1_PSS_PADDING) {
+                    if (count <= 5) {
+                        JSC::throwTypeError(globalObject, scope, "saltLength is expected to be a number"_s);
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
+
+                    auto saltLength = callFrame->argument(5);
+                    if (saltLength.isUndefinedOrNull() || saltLength.isEmpty() || !saltLength.isNumber()) {
+                        JSC::throwTypeError(globalObject, scope, "saltLength is expected to be a number"_s);
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
+                    params.saltLength = saltLength.toUInt32(globalObject);
+                } else if (count > 5) {
+                    auto saltLength = callFrame->argument(5);
+                    if (!saltLength.isUndefinedOrNull() && !saltLength.isEmpty() && !saltLength.isNumber()) {
+                        JSC::throwTypeError(globalObject, scope, "saltLength is expected to be a number"_s);
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
+                    params.saltLength = saltLength.toUInt32(globalObject);
+                    params.padding = RSA_PKCS1_PSS_PADDING; // if saltLength is provided, padding must be RSA_PKCS1_PSS_PADDING
+                }
+            }
+            params.identifier = CryptoAlgorithmIdentifier::RSA_PSS;
+            auto result = (customHash) ? WebCore::CryptoAlgorithmRSA_PSS::platformSignWithAlgorithm(params, hash, rsa, vectorData) : CryptoAlgorithmRSA_PSS::platformSign(params, rsa, vectorData);
+            if (result.hasException()) {
+                WebCore::propagateException(*globalObject, scope, result.releaseException());
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+            auto resultData = result.releaseReturnValue();
+            auto size = resultData.size();
+            auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
+            if (size > 0)
+                memcpy(buffer->vector(), resultData.data(), size);
+
+            return JSC::JSValue::encode(buffer);
+        }
+        default: {
+            JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Sign not supported for this key type"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        }
+    }
+    case CryptoKeyClass::AES: {
+        JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Sign not supported for AES key type"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    case CryptoKeyClass::Raw: {
+        JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Sign not supported for Raw key type"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    default: {
+        JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Sign not supported for this key type"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    }
+}
+
+JSC::EncodedJSValue KeyObject__Verify(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+{
+    auto count = callFrame->argumentCount();
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (count < 4) {
+        JSC::throwTypeError(globalObject, scope, "verify requires 4 arguments"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    auto* key = jsDynamicCast<JSCryptoKey*>(callFrame->argument(0));
+    if (!key) {
+        // No JSCryptoKey instance
+        JSC::throwTypeError(globalObject, scope, "expected CryptoKey as first argument"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    JSValue bufferArg = callFrame->uncheckedArgument(1);
+    auto buffer = KeyObject__GetBuffer(bufferArg);
+    if (buffer.hasException()) {
+        JSC::throwTypeError(globalObject, scope, "expected data to be Buffer or array-like object as second argument"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    auto vectorData = buffer.releaseReturnValue();
+
+    JSValue signatureBufferArg = callFrame->uncheckedArgument(2);
+    auto signatureBuffer = KeyObject__GetBuffer(signatureBufferArg);
+    if (signatureBuffer.hasException()) {
+        JSC::throwTypeError(globalObject, scope, "expected signature to be Buffer or array-like object as second argument"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    auto signatureData = signatureBuffer.releaseReturnValue();
+
+    auto& wrapped = key->wrapped();
+    auto key_type = wrapped.type();
+    auto id = wrapped.keyClass();
+
+    auto hash = WebCore::CryptoAlgorithmIdentifier::SHA_256;
+    auto customHash = false;
+
+    auto algorithm = callFrame->argument(3);
+    if (!algorithm.isUndefinedOrNull() && !algorithm.isEmpty()) {
+        customHash = true;
+        if (!algorithm.isString()) {
+            JSC::throwTypeError(globalObject, scope, "algorithm is expected to be a string"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        auto algorithm_str = algorithm.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, encodedJSValue());
+
+        auto identifier = CryptoAlgorithmRegistry::singleton().identifier(algorithm_str);
+        if (UNLIKELY(!identifier)) {
+            JSC::throwTypeError(globalObject, scope, "digest not allowed"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+
+        switch (*identifier) {
+        case WebCore::CryptoAlgorithmIdentifier::SHA_1:
+        case WebCore::CryptoAlgorithmIdentifier::SHA_224:
+        case WebCore::CryptoAlgorithmIdentifier::SHA_256:
+        case WebCore::CryptoAlgorithmIdentifier::SHA_384:
+        case WebCore::CryptoAlgorithmIdentifier::SHA_512: {
+
+            hash = *identifier;
+            break;
+        }
+        default: {
+            JSC::throwTypeError(globalObject, scope, "digest not allowed"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        }
+    }
+
+    switch (id) {
+    case CryptoKeyClass::HMAC: {
+        const auto& hmac = downcast<WebCore::CryptoKeyHMAC>(wrapped);
+        auto result = (customHash) ? WebCore::CryptoAlgorithmHMAC::platformVerifyWithAlgorithm(hmac, hash, signatureData, vectorData) : WebCore::CryptoAlgorithmHMAC::platformVerify(hmac, signatureData, vectorData);
+        if (result.hasException()) {
+            WebCore::propagateException(*globalObject, scope, result.releaseException());
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        return JSC::JSValue::encode(jsBoolean(result.releaseReturnValue()));
+    }
+    case CryptoKeyClass::OKP: {
+        const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(wrapped);
+        auto result = WebCore::CryptoAlgorithmEd25519::platformVerify(okpKey, signatureData, vectorData);
+        if (result.hasException()) {
+            WebCore::propagateException(*globalObject, scope, result.releaseException());
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        return JSC::JSValue::encode(jsBoolean(result.releaseReturnValue()));
+    }
+    case CryptoKeyClass::EC: {
+        const auto& ec = downcast<WebCore::CryptoKeyEC>(wrapped);
+        CryptoAlgorithmEcdsaParams params;
+        params.identifier = CryptoAlgorithmIdentifier::ECDSA;
+        params.hashIdentifier = hash;
+        params.encoding = CryptoAlgorithmECDSAEncoding::DER;
+
+        if (count > 4) {
+            auto encoding = callFrame->argument(4);
+            if (!encoding.isUndefinedOrNull() && !encoding.isEmpty()) {
+                if (!encoding.isString()) {
+                    JSC::throwTypeError(globalObject, scope, "dsaEncoding is expected to be a string"_s);
+                    return JSC::JSValue::encode(JSC::JSValue {});
+                }
+                auto encoding_str = encoding.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(scope, encodedJSValue());
+
+                if (encoding_str == "ieee-p1363"_s) {
+                    params.encoding = CryptoAlgorithmECDSAEncoding::IeeeP1363;
+                } else if (encoding_str == "der"_s) {
+                    params.encoding = CryptoAlgorithmECDSAEncoding::DER;
+                } else {
+                    JSC::throwTypeError(globalObject, scope, "invalid dsaEncoding"_s);
+                    return JSC::JSValue::encode(JSC::JSValue {});
+                }
+            }
+        }
+        auto result = WebCore::CryptoAlgorithmECDSA::platformVerify(params, ec, signatureData, vectorData);
+        if (result.hasException()) {
+            WebCore::propagateException(*globalObject, scope, result.releaseException());
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        return JSC::JSValue::encode(jsBoolean(result.releaseReturnValue()));
+    }
+    case CryptoKeyClass::RSA: {
+        const auto& rsa = downcast<WebCore::CryptoKeyRSA>(wrapped);
+        CryptoAlgorithmIdentifier restrict_hash;
+        bool isRestrictedToHash = rsa.isRestrictedToHash(restrict_hash);
+        if (isRestrictedToHash && hash != restrict_hash) {
+            JSC::throwTypeError(globalObject, scope, "digest not allowed"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        switch (rsa.algorithmIdentifier()) {
+        case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5: {
+            auto result = (customHash) ? WebCore::CryptoAlgorithmRSASSA_PKCS1_v1_5::platformVerifyWithAlgorithm(rsa, hash, signatureData, vectorData) : CryptoAlgorithmRSASSA_PKCS1_v1_5::platformVerify(rsa, signatureData, vectorData);
+            if (result.hasException()) {
+                WebCore::propagateException(*globalObject, scope, result.releaseException());
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+            return JSC::JSValue::encode(jsBoolean(result.releaseReturnValue()));
+        }
+        case CryptoAlgorithmIdentifier::RSA_PSS: {
+            CryptoAlgorithmRsaPssParams params;
+            params.padding = RSA_PKCS1_PADDING;
+            if (count > 5) {
+
+                auto padding = callFrame->argument(5);
+                if (!padding.isUndefinedOrNull() && !padding.isEmpty()) {
+                    if (!padding.isNumber()) {
+                        JSC::throwTypeError(globalObject, scope, "padding is expected to be a number"_s);
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
+                    params.padding = padding.toUInt32(globalObject);
+                }
+                // requires saltLength
+                if (params.padding == RSA_PKCS1_PSS_PADDING) {
+                    if (count <= 6) {
+                        JSC::throwTypeError(globalObject, scope, "saltLength is expected to be a number"_s);
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
+
+                    auto saltLength = callFrame->argument(6);
+                    if (saltLength.isUndefinedOrNull() || saltLength.isEmpty() || !saltLength.isNumber()) {
+                        JSC::throwTypeError(globalObject, scope, "saltLength is expected to be a number"_s);
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
+                    params.saltLength = saltLength.toUInt32(globalObject);
+                } else if (count > 6) {
+                    auto saltLength = callFrame->argument(6);
+                    if (!saltLength.isUndefinedOrNull() && !saltLength.isEmpty() && !saltLength.isNumber()) {
+                        JSC::throwTypeError(globalObject, scope, "saltLength is expected to be a number"_s);
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
+                    params.saltLength = saltLength.toUInt32(globalObject);
+                    params.padding = RSA_PKCS1_PSS_PADDING; // if saltLength is provided, padding must be RSA_PKCS1_PSS_PADDING
+                }
+            }
+            params.identifier = CryptoAlgorithmIdentifier::RSA_PSS;
+            auto result = (customHash) ? WebCore::CryptoAlgorithmRSA_PSS::platformVerifyWithAlgorithm(params, hash, rsa, signatureData, vectorData) : CryptoAlgorithmRSA_PSS::platformVerify(params, rsa, signatureData, vectorData);
+            if (result.hasException()) {
+                WebCore::propagateException(*globalObject, scope, result.releaseException());
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+            return JSC::JSValue::encode(jsBoolean(result.releaseReturnValue()));
+        }
+        default: {
+            JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Verify not supported for RSA key type"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        }
+    }
+    case CryptoKeyClass::AES: {
+        JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Verify not supported for AES key type"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    case CryptoKeyClass::Raw: {
+        JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Verify not supported for Raw key type"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    default: {
+        JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Verify not supported for this key type"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    }
+}
+
 JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
 
@@ -1316,11 +1809,16 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
         case CryptoKeyClass::RSA: {
             const auto& rsa = downcast<WebCore::CryptoKeyRSA>(wrapped);
             if (string == "jwk"_s) {
+                if (rsa.algorithmIdentifier() == CryptoAlgorithmIdentifier::RSA_PSS) {
+                    JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE: encryption is not supported for jwk format"_s);
+                    return JSC::JSValue::encode(JSC::JSValue {});
+                }
                 const JsonWebKey& jwkValue = rsa.exportJwk();
                 Zig::GlobalObject* domGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
                 return JSC::JSValue::encode(WebCore::convertDictionaryToJS(*globalObject, *domGlobalObject, jwkValue, true));
             } else {
                 WTF::String type = "pkcs1"_s;
+
                 if (!typeJSValue.isUndefinedOrNull() && !typeJSValue.isEmpty()) {
                     if (!typeJSValue.isString()) {
                         JSC::throwTypeError(globalObject, scope, "type must be a string"_s);
@@ -1328,6 +1826,12 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                     }
                     type = typeJSValue.toWTFString(globalObject);
                     RETURN_IF_EXCEPTION(scope, encodedJSValue());
+                }
+                if (type == "pkcs1"_s) {
+                    if (rsa.algorithmIdentifier() == CryptoAlgorithmIdentifier::RSA_PSS) {
+                        JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE: encryption is not supported for jwk format"_s);
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
                 }
 
                 auto* bio = BIO_new(BIO_s_mem());
@@ -2044,8 +2548,55 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
 
     Zig::GlobalObject* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto* structure = zigGlobalObject->JSCryptoKeyStructure();
-    // TODO: rsa-pss
     if (type_str == "rsa"_s) {
+        if (count == 1) {
+            JSC::throwTypeError(lexicalGlobalObject, scope, "options.modulusLength are required for rsa"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        auto* options = jsDynamicCast<JSC::JSObject*>(callFrame->argument(1));
+        if (options == nullptr) {
+            JSC::throwTypeError(lexicalGlobalObject, scope, "options is expected to be a object"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        auto modulusLengthJS = options->getIfPropertyExists(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "modulusLength"_s)));
+        if (!modulusLengthJS.isNumber()) {
+            JSC::throwTypeError(lexicalGlobalObject, scope, "options.modulusLength is expected to be a number"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        auto publicExponentJS = options->getIfPropertyExists(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "publicExponent"_s)));
+        uint32_t publicExponent = 0x10001;
+        if (publicExponentJS.isNumber()) {
+            publicExponent = publicExponentJS.toUInt32(lexicalGlobalObject);
+        } else if (!publicExponentJS.isUndefinedOrNull() && !publicExponentJS.isEmpty()) {
+            JSC::throwTypeError(lexicalGlobalObject, scope, "options.publicExponent is expected to be a number"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+
+        uint8_t publicExponentArray[4];
+        publicExponentArray[0] = (uint8_t)(publicExponent >> 24);
+        publicExponentArray[1] = (uint8_t)(publicExponent >> 16);
+        publicExponentArray[2] = (uint8_t)(publicExponent >> 8);
+        publicExponentArray[3] = (uint8_t)publicExponent;
+
+        int modulusLength = modulusLengthJS.toUInt32(lexicalGlobalObject);
+        auto returnValue = JSC::JSValue {};
+        auto keyPairCallback = [&](CryptoKeyPair&& pair) {
+            pair.publicKey->setUsagesBitmap(pair.publicKey->usagesBitmap() & CryptoKeyUsageVerify);
+            pair.privateKey->setUsagesBitmap(pair.privateKey->usagesBitmap() & CryptoKeyUsageSign);
+
+            auto obj = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), 2);
+            obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "publicKey"_s)), JSCryptoKey::create(structure, zigGlobalObject, pair.publicKey.releaseNonNull()), 0);
+            obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "privateKey"_s)), JSCryptoKey::create(structure, zigGlobalObject, pair.privateKey.releaseNonNull()), 0);
+            returnValue = obj;
+        };
+        auto failureCallback = [&]() {
+            throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Failed to generate key pair"_s));
+        };
+        // this is actually sync
+        CryptoKeyRSA::generatePair(CryptoAlgorithmIdentifier::RSA_OAEP, CryptoAlgorithmIdentifier::SHA_1, false, modulusLength, Vector<uint8_t>((uint8_t*)&publicExponentArray, 4), true, CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt, WTFMove(keyPairCallback), WTFMove(failureCallback), zigGlobalObject->scriptExecutionContext());
+        return JSValue::encode(returnValue);
+    }
+    if (type_str == "rsa-pss"_s) {
         if (count == 1) {
             JSC::throwTypeError(lexicalGlobalObject, scope, "options.modulusLength are required for rsa"_s);
             return JSC::JSValue::encode(JSC::JSValue {});
@@ -2085,11 +2636,49 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
             obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "privateKey"_s)), JSCryptoKey::create(structure, zigGlobalObject, pair.privateKey.releaseNonNull()), 0);
             returnValue = obj;
         };
+
+        auto hashAlgoJS = options->getIfPropertyExists(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "hashAlgorithm"_s)));
+        auto hasHash = false;
+        auto hash = CryptoAlgorithmIdentifier::SHA_1;
+        if (!hashAlgoJS.isUndefinedOrNull() && !hashAlgoJS.isEmpty()) {
+            if (!hashAlgoJS.isString()) {
+                JSC::throwTypeError(lexicalGlobalObject, scope, "options.hashAlgorithm is expected to be a string"_s);
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+            hasHash = true;
+            auto hashAlgo = hashAlgoJS.toWTFString(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, encodedJSValue());
+
+            auto identifier = CryptoAlgorithmRegistry::singleton().identifier(hashAlgo);
+            if (UNLIKELY(!identifier)) {
+                JSC::throwTypeError(lexicalGlobalObject, scope, "options.hashAlgorithm is invalid"_s);
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+
+            switch (*identifier) {
+            case WebCore::CryptoAlgorithmIdentifier::SHA_1:
+            case WebCore::CryptoAlgorithmIdentifier::SHA_224:
+            case WebCore::CryptoAlgorithmIdentifier::SHA_256:
+            case WebCore::CryptoAlgorithmIdentifier::SHA_384:
+            case WebCore::CryptoAlgorithmIdentifier::SHA_512: {
+
+                hash = *identifier;
+                break;
+            }
+            default: {
+                JSC::throwTypeError(lexicalGlobalObject, scope, "options.hashAlgorithm is invalid"_s);
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+            }
+        }
+
+        auto saltLengthJS = options->getIfPropertyExists(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "hashAlgorithm"_s)));
+
         auto failureCallback = [&]() {
             throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Failed to generate key pair"_s));
         };
         // this is actually sync
-        CryptoKeyRSA::generatePair(CryptoAlgorithmIdentifier::RSA_OAEP, CryptoAlgorithmIdentifier::SHA_1, false, modulusLength, Vector<uint8_t>((uint8_t*)&publicExponentArray, 4), true, CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt, WTFMove(keyPairCallback), WTFMove(failureCallback), zigGlobalObject->scriptExecutionContext());
+        CryptoKeyRSA::generatePair(CryptoAlgorithmIdentifier::RSA_PSS, hash, hasHash, modulusLength, Vector<uint8_t>((uint8_t*)&publicExponentArray, 4), true, CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt, WTFMove(keyPairCallback), WTFMove(failureCallback), zigGlobalObject->scriptExecutionContext());
         return JSValue::encode(returnValue);
     } else if (type_str == "ec"_s) {
         if (count == 1) {
@@ -2152,7 +2741,7 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
         obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "privateKey"_s)), JSCryptoKey::create(structure, zigGlobalObject, pair.privateKey.releaseNonNull()), 0);
         return JSValue::encode(obj);
     } else {
-        throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "algorithm should be 'rsa', 'ec', 'x25519' or 'ed25519'"_s));
+        throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "algorithm should be 'rsa', 'rsa-pss', 'ec', 'x25519' or 'ed25519'"_s));
         return JSValue::encode(JSC::jsUndefined());
     }
     return JSValue::encode(JSC::jsUndefined());

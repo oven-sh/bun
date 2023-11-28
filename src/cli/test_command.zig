@@ -35,14 +35,14 @@ var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
 const PathString = bun.PathString;
 const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
-const HTTPThread = @import("root").bun.HTTP.HTTPThread;
+const HTTPThread = @import("root").bun.http.HTTPThread;
 
 const JSC = @import("root").bun.JSC;
 const jest = JSC.Jest;
 const TestRunner = JSC.Jest.TestRunner;
 const Snapshots = JSC.Snapshot.Snapshots;
 const Test = TestRunner.Test;
-const NetworkThread = @import("root").bun.HTTP.NetworkThread;
+const NetworkThread = @import("root").bun.http.NetworkThread;
 const uws = @import("root").bun.uws;
 
 fn fmtStatusTextLine(comptime status: @Type(.EnumLiteral), comptime emoji: bool) []const u8 {

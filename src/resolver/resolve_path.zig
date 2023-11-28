@@ -73,18 +73,7 @@ pub fn getIfExistsLongestCommonPathGeneric(input: []const []const u8, comptime p
         1 => {
             return input[0];
         },
-        2 => {
-            while (index < min_length) : (index += 1) {
-                if (input[0][index] != input[1][index]) {
-                    if (last_common_separator == null) return null;
-                    break;
-                }
-                if (@call(.always_inline, isPathSeparator, .{input[0][index]})) {
-                    last_common_separator = index;
-                }
-            }
-        },
-        inline 3, 4, 5, 6, 7, 8 => |N| {
+        inline 2, 3, 4, 5, 6, 7, 8 => |N| {
             while (index < min_length) : (index += 1) {
                 if (nqlAtIndexFn(comptime N, index, input)) {
                     if (last_common_separator == null) return null;
@@ -95,7 +84,6 @@ pub fn getIfExistsLongestCommonPathGeneric(input: []const []const u8, comptime p
                 }
             }
         },
-
         else => {
             var string_index: usize = 1;
             while (string_index < input.len) : (string_index += 1) {

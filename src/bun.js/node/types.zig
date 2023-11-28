@@ -783,14 +783,6 @@ pub const PathLike = union(Tag) {
         };
     }
 
-    pub inline fn sliceWithWinNormalizerCWDZ(this: PathLike, buf: *[bun.MAX_PATH_BYTES]u8) [:0]const u8 {
-        const data = this.slice();
-        if (!Environment.isWindows or !std.fs.path.isAbsolute(data)) {
-            return sliceZWithForceCopy(this, buf, false);
-        }
-        return resolve_path.PosixToWinNormalizer.resolveCWDWithExternalBufZ(buf, data) catch @panic("Error while resolving path.");
-    }
-
     pub fn sliceZWithForceCopy(this: PathLike, buf: *[bun.MAX_PATH_BYTES]u8, comptime force: bool) [:0]const u8 {
         var sliced = this.slice();
 
@@ -809,6 +801,13 @@ pub const PathLike = union(Tag) {
     }
 
     pub inline fn sliceZ(this: PathLike, buf: *[bun.MAX_PATH_BYTES]u8) [:0]const u8 {
+        if(Environment.isWindows) {
+            const data = this.slice();
+            if (!std.fs.path.isAbsolute(data)) {
+                return sliceZWithForceCopy(this, buf, false);
+            }
+            return resolve_path.PosixToWinNormalizer.resolveCWDWithExternalBufZ(buf, data) catch @panic("Error while resolving path.");
+        }
         return sliceZWithForceCopy(this, buf, false);
     }
 
@@ -2309,14 +2308,13 @@ pub const Path = struct {
         defer path_slice.deinit();
         var path = path_slice.slice();
 
-        const is_absolute =
-            switch (win32) {
-            true => path.len > 0 and std.fs.path.isAbsoluteWindows(path),
-            false => path.len > 0 and std.fs.path.isAbsolutePosix(path),
+        const is_absolute = switch (win32) {
+            true => std.fs.path.isAbsoluteWindows(path),
+            false =>  std.fs.path.isAbsolutePosix(path),
         };
 
-        // if its not absolute root must be empty
-        var root = JSC.ZigString.Empty;
+    // if its not absolute root must be empty
+    var root = JSC.ZigString.Empty;
         if (is_absolute) {
             std.debug.assert(path.len > 0);
             root = JSC.ZigString.init(

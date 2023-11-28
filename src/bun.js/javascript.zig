@@ -2881,23 +2881,12 @@ pub const VirtualMachine = struct {
             }
         }
 
-        if (show.path) {
+        if (show.errno) {
             if (show.syscall) {
                 try writer.writeAll("  ");
-            } else if (show.errno) {
-                try writer.writeAll(" ");
             }
-            try writer.print(comptime Output.prettyFmt(" path<d>: <r><cyan>\"{}\"<r>\n", allow_ansi_color), .{exception.path});
-        }
-
-        if (show.fd) {
-            if (show.syscall) {
-                try writer.writeAll("     ");
-            } else if (show.errno) {
-                try writer.writeAll("  ");
-            }
-
-            try writer.print(comptime Output.prettyFmt(" fd<d>: <r><cyan>\"{d}\"<r>\n", allow_ansi_color), .{exception.fd});
+            try writer.print(comptime Output.prettyFmt(" errno<d>: <r><yellow>{d}<r>\n", allow_ansi_color), .{exception.errno});
+            add_extra_line = true;
         }
 
         if (show.system_code) {
@@ -2915,12 +2904,22 @@ pub const VirtualMachine = struct {
             add_extra_line = true;
         }
 
-        if (show.errno) {
+        if (show.path) {
             if (show.syscall) {
                 try writer.writeAll("  ");
+            } else if (show.errno) {
+                try writer.writeAll(" ");
             }
-            try writer.print(comptime Output.prettyFmt(" errno<d>: <r><yellow>{d}<r>\n", allow_ansi_color), .{exception.errno});
-            add_extra_line = true;
+            try writer.print(comptime Output.prettyFmt(" path<d>: <r><cyan>\"{}\"<r>\n", allow_ansi_color), .{exception.path});
+        }
+
+        if (show.fd) {
+            if (show.syscall) {
+                try writer.writeAll("     ");
+            } else if (show.errno) {
+                try writer.writeAll("  ");
+            }
+            try writer.print(comptime Output.prettyFmt(" fd<d>: <r><yellow>{d}<r>\n", allow_ansi_color), .{exception.fd});
         }
 
         if (add_extra_line) try writer.writeAll("\n");

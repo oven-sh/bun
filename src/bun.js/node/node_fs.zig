@@ -4010,8 +4010,8 @@ pub const NodeFS = struct {
 
             var src_buf: bun.WPathBuffer = undefined;
             var dest_buf: bun.WPathBuffer = undefined;
-            var src = strings.toWPathNormalizeAutoExtend(&src_buf, args.src.sliceWithWinNormalizerCWDZ(&this.sync_error_buf));
-            var dest = strings.toWPathNormalizeAutoExtend(&dest_buf, args.dest.sliceWithWinNormalizerCWDZ(&this.sync_error_buf));
+            var src = strings.toWPathNormalizeAutoExtend(&src_buf, args.src.sliceZ(&this.sync_error_buf));
+            var dest = strings.toWPathNormalizeAutoExtend(&dest_buf, args.dest.sliceZ(&this.sync_error_buf));
             if (windows.CopyFileW(src.ptr, dest.ptr, if (args.mode.shouldntOverwrite()) 1 else 0) == windows.FALSE) {
                 if (ret.errnoSysP(0, .copyfile, args.src.slice())) |rest| {
                     return rest;
@@ -4028,7 +4028,7 @@ pub const NodeFS = struct {
         _ = flavor;
         const Ret = Maybe(Return.Exists);
         const path = args.path orelse return Ret{ .result = false };
-        const slice = path.sliceWithWinNormalizerCWDZ(&this.sync_error_buf);
+        const slice = path.sliceZ(&this.sync_error_buf);
 
         // Use libuv access on windows
         if (Environment.isWindows) {
@@ -4046,7 +4046,7 @@ pub const NodeFS = struct {
     pub fn chown(this: *NodeFS, args: Arguments.Chown, comptime flavor: Flavor) Maybe(Return.Chown) {
         _ = flavor;
         if (comptime Environment.isWindows) {
-            return Syscall.chown(args.path.sliceWithWinNormalizerCWDZ(&this.sync_error_buf), args.uid, args.gid);
+            return Syscall.chown(args.path.sliceZ(&this.sync_error_buf), args.uid, args.gid);
         }
 
         const path = args.path.sliceZ(&this.sync_error_buf);
@@ -4058,7 +4058,7 @@ pub const NodeFS = struct {
     pub fn chmod(this: *NodeFS, args: Arguments.Chmod, comptime flavor: Flavor) Maybe(Return.Chmod) {
         _ = flavor;
         if (comptime Environment.isWindows) {
-            return Syscall.chmod(args.path.sliceWithWinNormalizerCWDZ(&this.sync_error_buf), args.mode);
+            return Syscall.chmod(args.path.sliceZ(&this.sync_error_buf), args.mode);
         }
 
         const path = args.path.sliceZ(&this.sync_error_buf);
@@ -4388,7 +4388,7 @@ pub const NodeFS = struct {
         } };
     }
     pub fn open(this: *NodeFS, args: Arguments.Open, comptime _: Flavor) Maybe(Return.Open) {
-        const path = args.path.sliceWithWinNormalizerCWDZ(&this.sync_error_buf);
+        const path = args.path.sliceZ(&this.sync_error_buf);
         return switch (Syscall.open(path, @intFromEnum(args.flags), args.mode)) {
             .err => |err| .{
                 .err = err.withPath(args.path.slice()),
@@ -4885,7 +4885,7 @@ pub const NodeFS = struct {
             else => unreachable,
         };
 
-        var path = args.path.sliceWithWinNormalizerCWDZ(buf);
+        var path = args.path.sliceZ(buf);
 
         if (comptime recursive and flavor == .sync) {
             var buf_to_pass: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -4972,7 +4972,7 @@ pub const NodeFS = struct {
         var path: [:0]const u8 = undefined;
         const fd: FileDescriptor = bun.toLibUVOwnedFD(switch (args.path) {
             .path => brk: {
-                path = args.path.path.sliceWithWinNormalizerCWDZ(&this.sync_error_buf);
+                path = args.path.path.sliceZ(&this.sync_error_buf);
                 if (this.vm) |vm| {
                     if (vm.standalone_module_graph) |graph| {
                         if (graph.find(path)) |file| {
@@ -5149,7 +5149,7 @@ pub const NodeFS = struct {
 
         const fd = switch (args.file) {
             .path => brk: {
-                path = args.file.path.sliceWithWinNormalizerCWDZ(pathbuf);
+                path = args.file.path.sliceZ(pathbuf);
 
                 const open_result = Syscall.openat(
                     args.dirfd,
@@ -5617,7 +5617,7 @@ pub const NodeFS = struct {
         }
     }
     pub fn stat(this: *NodeFS, args: Arguments.Stat, comptime _: Flavor) Maybe(Return.Stat) {
-        return switch (Syscall.stat(args.path.sliceWithWinNormalizerCWDZ(&this.sync_error_buf))) {
+        return switch (Syscall.stat(args.path.sliceZ(&this.sync_error_buf))) {
             .result => |result| .{
                 .result = .{ .stats = Stats.init(result, args.big_int) },
             },

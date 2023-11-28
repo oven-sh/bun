@@ -26,7 +26,7 @@ pub const Subprocess = struct {
     pub usingnamespace JSC.Codegen.JSSubprocess;
     const default_max_buffer_size = 1024 * 1024 * 4;
 
-    pid: if(Environment.isWindows) c_int else std.os.pid_t,
+    pid: if (Environment.isWindows) uv.pid_t else std.os.pid_t,
     // on macOS, this is nothing
     // on linux, it's a pidfd
     pidfd: if (Environment.isLinux) bun.FileDescriptor else u0 = std.math.maxInt(if (Environment.isLinux) bun.FileDescriptor else u0),

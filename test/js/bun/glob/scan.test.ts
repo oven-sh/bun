@@ -392,7 +392,10 @@ test("broken symlinks", async () => {
     }),
   );
   expect(new Set(results)).toEqual(
-    new Set(["broken_link_to_non_existent_dir", "broken_link_to_non_existent_file.txt"]),
+    new Set([
+      path.join(tempBrokenSymlinksDir, "broken_link_to_non_existent_dir"),
+      path.join(tempBrokenSymlinksDir, "broken_link_to_non_existent_file.txt"),
+    ]),
   );
 });
 

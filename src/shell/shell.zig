@@ -15,6 +15,7 @@ const Glob = @import("../glob.zig");
 const ResolvePath = @import("../resolver/resolve_path.zig");
 const DirIterator = @import("../bun.js/node/dir_iterator.zig");
 const CodepointIterator = @import("../string_immutable.zig").PackedCodepointIterator;
+const isAllAscii = @import("../string_immutable.zig").isAllASCII;
 
 const GlobWalker = Glob.GlobWalker_(null, true);
 // const GlobWalker = Glob.BunGlobWalker;
@@ -1838,7 +1839,7 @@ pub const Parser = struct {
                 _ = self.expect(.Text);
                 const txt = self.text(txtrng);
                 const var_decl: ?AST.Assign = var_decl: {
-                    if (self.has_eq_sign(txt)) |eq_idx| {
+                    if (hasEqSign(txt)) |eq_idx| {
                         // If it starts with = then it's not valid assignment (e.g. `=FOO`)
                         if (eq_idx == 0) break :var_decl null;
                         const label = txt[0..eq_idx];
@@ -1999,13 +2000,6 @@ pub const Parser = struct {
 
     fn text(self: *const Parser, range: Token.TextRange) []const u8 {
         return self.strpool[range.start..range.end];
-    }
-
-    fn has_eq_sign(self: *Parser, str: []const u8) ?u32 {
-        _ = self;
-        // TODO: simd
-        for (str, 0..) |c, i| if (c == '=') return @intCast(i);
-        return null;
     }
 
     fn advance(self: *Parser) Token {
@@ -2724,7 +2718,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
     };
 }
 
-const StringEncoding = enum { ascii, wtf8, utf16 };
+pub const StringEncoding = enum { ascii, wtf8, utf16 };
 
 const SrcAscii = struct {
     bytes: []const u8,
@@ -2805,25 +2799,45 @@ pub fn ShellCharIter(comptime encoding: StringEncoding) type {
         src: Src,
         state: State = .Normal,
 
-        const Src = switch (encoding) {
+        pub const Src = switch (encoding) {
             .ascii => SrcAscii,
             .wtf8, .utf16 => SrcUnicode,
         };
 
-        const CodepointType = if (encoding == .ascii) u7 else u32;
+        pub const CodepointType = if (encoding == .ascii) u7 else u32;
 
-        const InputChar = if (encoding == .ascii) SrcAscii.IndexValue else struct {
+        pub const InputChar = if (encoding == .ascii) SrcAscii.IndexValue else struct {
             char: u32,
             escaped: bool = false,
         };
 
-        const State = enum {
+        pub const State = enum {
             Normal,
             Single,
             Double,
         };
 
-        fn init(bytes: []const u8) @This() {
+        pub fn codepointByteLength(cp: CodepointType) u3 {
+            if (comptime encoding == .ascii) return 1;
+            return std.unicode.utf8ByteSequenceLength(cp);
+        }
+
+        pub fn encodeCodepoint(cp: CodepointType, buf: []u8) void {
+            if (comptime encoding == .ascii) {
+                buf[0] = cp;
+                return;
+            }
+            return std.unicode.utf8Encode(@truncate(cp), buf);
+        }
+
+        pub fn encodeCodepointStack(cp: CodepointType, buf: *[4]u8) []u8 {
+            const this = comptime @This();
+            const len = this.codepointByteLength(cp);
+            this.encodeCodepoint(cp, buf[0..len]);
+            return buf[0..len];
+        }
+
+        pub fn init(bytes: []const u8) @This() {
             const src = if (comptime encoding == .ascii)
                 SrcAscii.init(bytes)
             else
@@ -2834,7 +2848,7 @@ pub fn ShellCharIter(comptime encoding: StringEncoding) type {
             };
         }
 
-        fn eat(self: *@This()) ?InputChar {
+        pub fn eat(self: *@This()) ?InputChar {
             if (self.read_char()) |result| {
                 self.src.eat(result.escaped);
                 return result;
@@ -2842,7 +2856,7 @@ pub fn ShellCharIter(comptime encoding: StringEncoding) type {
             return null;
         }
 
-        fn peek(self: *@This()) ?InputChar {
+        pub fn peek(self: *@This()) ?InputChar {
             if (self.read_char()) |result| {
                 return result;
             }
@@ -2850,7 +2864,7 @@ pub fn ShellCharIter(comptime encoding: StringEncoding) type {
             return null;
         }
 
-        fn read_char(self: *@This()) ?InputChar {
+        pub fn read_char(self: *@This()) ?InputChar {
             const indexed_value = self.src.index() orelse return null;
             var char = indexed_value.char;
             if (char != '\\' or self.state == .Single) return .{ .char = char };
@@ -2879,213 +2893,29 @@ pub fn ShellCharIter(comptime encoding: StringEncoding) type {
     };
 }
 
-// pub fn ShellCharIter(comptime encoding: StringEncoding) type {
-//     const CodepointType = switch (encoding) {
-//         .ascii => u8,
-//         .wtf8, .utf16 => CodepointIterator.CodePointType,
-//     };
-//     const unicode_zerovalue: u32 = CodepointIterator.zeroValue;
-//     _ = unicode_zerovalue;
-//     return struct {
-//         src: Src,
-//         index: Cursor = .{},
-//         state: State = .Normal,
-
-//         /// Quote state
-//         const State = enum {
-//             Normal,
-//             Single,
-//             Double,
-//         };
-
-//         const Src = switch (encoding) {
-//             .ascii => SrcAscii,
-//             .wtf8, .utf16 => SrcUnicode,
-//         };
-
-//         const SrcAscii = struct {
-//             val: []const u8,
-
-//             fn next(this: *const SrcAscii, cursor: *const CursorAscii) ?InputCharAscii {
-//                 if (cursor.i >= this.val.len) return null;
-//                 const ret = this.val[cursor.i];
-//                 return ret;
-//             }
-
-//             fn peek(this: *const SrcAscii, cursor: *const CursorAscii) ?InputCharAscii {
-//                 if (cursor.i >= this.val.len) return null;
-//                 return .{ .char = this.val[cursor.i] };
-//             }
-//         };
-
-//         const SrcUnicode = struct {
-//             iter: *const CodepointIterator,
-
-//             fn peek(this: *const SrcUnicode, cursor: *const CodepointIterator.Cursor) ?InputCharUnicode {
-//                 const peeked = this.iter.peekCursor(cursor) orelse return null;
-//                 return .{ .char = peeked.c, .width = peeked.width };
-//             }
-//         };
-
-//         const Cursor = switch (encoding) {
-//             .ascii => CursorAscii,
-//             .wtf8, .utf16 => CursorUnicode,
-//         };
-
-//         const InputChar = switch (encoding) {
-//             .ascii => InputCharAscii,
-//             .wtf8, .utf16 => InputCharUnicode,
-//         };
-
-//         const CursorAscii = struct {
-//             value: usize = 0,
-
-//             fn offset(this: CursorAscii) usize {
-//                 return this.value;
-//             }
-
-//             fn width(this: CursorAscii) u3 {
-//                 _ = this;
-//                 return 1;
-//             }
-
-//             fn read(this: *CursorAscii, src: *const SrcAscii) ?CodepointType {
-//                 return src.next(this);
-//             }
-
-//             inline fn fromPeek(this: *const CursorAscii, peeked: InputCharAscii) CursorAscii {
-//                 _ = peeked;
-//                 return .{ .value = this.value + 1 };
-//             }
-//         };
-
-//         const CursorUnicode = packed struct {
-//             cursor: CodepointIterator.Cursor = .{},
-
-//             fn offset(this: *CursorUnicode) u32 {
-//                 return this.cursor.i;
-//             }
-
-//             fn width(this: *CursorUnicode) u3 {
-//                 return this.cursor.width;
-//             }
-
-//             fn read(this: *CursorUnicode, src: *const SrcUnicode) ?CodepointType {
-//                 return src.next(this.cursor);
-//             }
-
-//             fn fromPeek(this: *const CursorUnicode, peeked: InputCharUnicode) CursorUnicode {
-//                 return .{
-//                     .cursor = .{
-//                         .i = this.cursor.i + this.cursor.width,
-//                         .c = peeked.char,
-//                         .width = peeked.width,
-//                     },
-//                 };
-//             }
-//         };
-
-//         const InputCharAscii = packed struct {
-//             char: u7,
-//             escaped: bool = false,
-
-//             fn width(this: *const InputCharAscii) u3 {
-//                 _ = this;
-//                 return 1;
-//             }
-
-//             fn fromEscapedPeek(peeked: SrcAscii.Peek) InputCharAscii {
-//                 return .{ .char = peeked.c, .escaped = true };
-//             }
-//         };
-
-//         const InputCharUnicode = packed struct {
-//             char: u24,
-
-//             width: u3 = 0,
-//             escaped: bool = false,
-//             escaped_width: u3 = 0,
-//             _pad: u1 = 0,
-
-//             fn fromEscapedPeek(peeked: SrcUnicode.Peek) InputCharUnicode {
-//                 return .{
-//                     .char = peeked.c,
-//                     .width = peeked.width(),
-//                     .escaped = true,
-//                 };
-//             }
-
-//             fn isEscaped(this: InputCharUnicode) bool {
-//                 return @as(u4, @bitCast(this.escaped.escaped)) != 0;
-//             }
-
-//             fn toCursor(this: InputCharUnicode) CodepointIterator.Cursor {
-//                 if (this.isEscaped()) {}
-//                 return .{ .c = this.char, .width = this.width };
-//             }
-//         };
-
-//         pub fn init(str: []const u8) ShellCharIter {
-//             return .{
-//                 .src = str,
-//             };
-//         }
-
-//         fn peek(self: *@This()) ?InputChar {
-//             if (self.read_char()) |result| {
-//                 return result;
-//             }
-
-//             return null;
-//         }
-
-//         fn eat(self: *@This()) ?InputChar {
-//             if (self.read_char()) |result| {
-//                 if (comptime encoding == StringEncoding.ascii) {
-//                     self.index.value += 1 + @as(u32, @intFromBool(result.escaped));
-//                     return result;
-//                 }
-//                 self.index = self.index.fromPeek(result);
-//                 return result;
-//             }
-//             return null;
-//         }
-
-//         fn read_char(self: *@This()) ?InputChar {
-//             const peeked = self.src.next(&self.index) orelse return null;
-//             if (peeked.char != '\\' or self.state == .Single) return peeked;
-
-//             var temp_cursor = self.index.fromPeek(peeked);
-//             // Handle backslash
-//             switch (self.state) {
-//                 .Normal => {
-//                     const peeked2 = self.src.peek(&temp_cursor) orelse return null;
-//                     return InputChar.fromEscapedPeek(peeked2);
-//                 },
-//                 .Double => {
-//                     const peeked2 = self.src.peek(&self.index) orelse return null;
-//                     switch (peeked2.char) {
-//                         // Backslash only applies to these characters
-//                         '$', '`', '"', '\\', '\n' => {
-//                             return InputChar.fromEscapedPeek(peeked2);
-//                         },
-//                         else => return .{ .char = char, .escaped = false },
-//                     }
-//                 },
-//                 else => unreachable,
-//             }
-
-//             return .{ .char = char, .escaped = true };
-//         }
-//     };
-// }
-
 pub fn escape(string: []const u8, out: *std.ArrayList(u8)) !void {
     try out.append("\"");
 
     try escapeAsciiSlow(string, out);
 
     try out.append("\"");
+}
+
+fn escapeUnicodeSlow(string: []const u8, out: *std.ArrayList(u8)) !void {
+    var iter = CodepointIterator.init(string);
+    var cursor = CodepointIterator.Cursor{};
+    while (iter.next(&cursor)) {
+        const char = cursor.c;
+        switch (char) {
+            // if slash, slash the slash to escape it
+            '\\' => try out.appendSlice("\\\\"),
+            // escape the double quote
+            '"' => try out.appendSlice("\\\""),
+            '$' => try out.appendSlice("\\$"),
+            '`' => try out.appendSlice("\\`"),
+            else => try out.append(char),
+        }
+    }
 }
 
 fn escapeAsciiSlow(string: []const u8, out: *std.ArrayList(u8)) !void {
@@ -3111,6 +2941,32 @@ fn escapeAsciiSlow(string: []const u8, out: *std.ArrayList(u8)) !void {
 /// - _
 /// - 0-9 (but can't be first char)
 fn isValidVarName(var_name: []const u8) bool {
+    if (isAllAscii(var_name)) return isValidVarNameAscii(var_name);
+
+    if (var_name.len == 0) return false;
+    var iter = CodepointIterator.init(var_name);
+    var cursor = CodepointIterator.Cursor{};
+
+    if (!iter.next(&cursor)) return false;
+
+    switch (cursor.c) {
+        '=', '0'...'9' => {
+            return false;
+        },
+        'a'...'z', 'A'...'Z', '_' => {},
+        else => return false,
+    }
+
+    while (iter.next(&cursor)) {
+        switch (cursor.c) {
+            '0'...'9', 'a'...'z', 'A'...'Z', '_' => {},
+            else => return false,
+        }
+    }
+
+    return true;
+}
+fn isValidVarNameAscii(var_name: []const u8) bool {
     if (var_name.len == 0) return false;
     switch (var_name[0]) {
         '=', '0'...'9' => {
@@ -3169,6 +3025,44 @@ fn closefd(fd: bun.FileDescriptor) void {
         // const stderr = std.io.getStdErr().writer();
         // err.toSystemError().format("error", .{}, stderr) catch @panic("damn");
     }
+}
+
+pub fn hasEqSign(str: []const u8) ?u32 {
+    if (isAllAscii(str)) {
+        if (str.len < 16)
+            return hasEqSignAsciiSlow(str);
+
+        const needles: @Vector(16, u8) = @splat('=');
+
+        var i: u32 = 0;
+        while (i + 16 <= str.len) : (i += 16) {
+            const haystack = str[i..][0..16].*;
+            const result = haystack == needles;
+
+            if (std.simd.firstTrue(result)) |idx| {
+                return @intCast(i + idx);
+            }
+        }
+
+        return i + (hasEqSignAsciiSlow(str[i..]) orelse return null);
+    }
+
+    // TODO actually i think that this can also use the simd stuff
+
+    var iter = CodepointIterator.init(str);
+    var cursor = CodepointIterator.Cursor{};
+    while (iter.next(&cursor)) {
+        if (cursor.c == '=') {
+            return @intCast(cursor.i);
+        }
+    }
+
+    return null;
+}
+
+pub fn hasEqSignAsciiSlow(str: []const u8) ?u32 {
+    for (str, 0..) |c, i| if (c == '=') return @intCast(i);
+    return null;
 }
 
 const MaybeManyStrings = union {

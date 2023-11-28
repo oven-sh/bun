@@ -180,3 +180,38 @@ export function ignoreMimallocWarning({
     Response.prototype.text = origResponseText;
   });
 }
+
+export function randomLoneSurrogate() {
+  const n = randomRange(0, 2);
+  if (n === 0) return randomLoneHighSurrogate();
+  return randomLoneLowSurrogate();
+}
+
+export function randomInvalidSurrogatePair() {
+  const low = randomLoneLowSurrogate();
+  const high = randomLoneHighSurrogate();
+  return `${low}${high}`;
+}
+
+// Generates a random lone high surrogate (from the range D800-DBFF)
+export function randomLoneHighSurrogate() {
+  return String.fromCharCode(randomRange(0xd800, 0xdbff));
+}
+
+// Generates a random lone high surrogate (from the range DC00-DFFF)
+export function randomLoneLowSurrogate() {
+  return String.fromCharCode(randomRange(0xdc00, 0xdfff));
+}
+
+function randomRange(low: number, high: number): number {
+  return low + Math.floor(Math.random() * (high - low));
+}
+
+export function runWithError(cb: () => unknown): Error | undefined {
+  try {
+    cb();
+  } catch (e) {
+    return e as Error;
+  }
+  return undefined;
+}

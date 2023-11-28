@@ -68,7 +68,13 @@ describe("parse shell", () => {
               "cmd": {
                 "assigns": [],
                 "name_and_args": [
-                  { "compound": { "atoms": [{ "Text": "FOO " }, { "Var": "NICE!" }], brace_expansion_hint: false } },
+                  {
+                    "compound": {
+                      "atoms": [{ "Text": "FOO " }, { "Var": "NICE!" }],
+                      brace_expansion_hint: false,
+                      glob_hint: false,
+                    },
+                  },
                 ],
                 "redirect": redirect({}),
                 "redirect_file": null,
@@ -80,7 +86,7 @@ describe("parse shell", () => {
     };
 
     const result = JSON.parse($.parse`"FOO $NICE!"`);
-    // console.log("Result", result);
+    console.log("Result", JSON.stringify(result));
     expect(result).toEqual(expected);
   });
 

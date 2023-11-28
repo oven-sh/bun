@@ -299,23 +299,52 @@ pub fn getCSSImports() []ZigString {
     return css_imports_list_strings[0..tail];
 }
 
+/// This will disallow invalid surrogate pairs
+fn appendJSValueStr(
+    allocator: Allocator,
+    globalThis: *JSC.JSGlobalObject,
+    jsval: JSValue,
+    outbuf: *std.ArrayList(u8),
+) !bool {
+    const bunstr = jsval.toBunString(globalThis);
+    defer bunstr.deref();
+    if (bunstr.isUTF8()) {
+        try outbuf.appendSlice(bunstr.byteSlice());
+        return true;
+    }
+    const slice: [*]const u16 = @ptrCast(@alignCast(bunstr.byteSlice().ptr));
+    const len = bunstr.byteSlice().len / 2;
+    const result = bun.simdutf.simdutf__validate_utf16le_with_errors(slice, len);
+    if (result.status != .success) {
+        return false;
+    }
+    const utf8 = bunstr.toUTF8(allocator);
+    utf8.deinit();
+    try outbuf.appendSlice(utf8.slice());
+    return true;
+}
+
 pub fn shellCmdFromJS(
     allocator: Allocator,
     globalThis: *JSC.JSGlobalObject,
     string_args: JSValue,
     template_args: []const JSValue,
     out_jsobjs: *std.ArrayList(JSValue),
-) !std.ArrayList(u8) {
+    out_script: *std.ArrayList(u8),
+) !bool {
     var jsobjref_buf: [128]u8 = [_]u8{0} ** 128;
 
-    var script = std.ArrayList(u8).init(allocator);
     var string_iter = string_args.arrayIterator(globalThis);
     var i: u32 = 0;
     const last = string_iter.len -| 1;
     while (string_iter.next()) |js_value| {
         defer i += 1;
-        const str = js_value.getZigString(globalThis);
-        try script.appendSlice(str.full());
+        if (!try appendJSValueStr(allocator, globalThis, js_value, out_script)) {
+            globalThis.throw("bunshell: invalid string", .{});
+            return false;
+        }
+        // const str = js_value.getZigString(globalThis);
+        // try script.appendSlice(str.full());
         if (i < last) {
             const template_value = template_args[i];
             if (!template_value.isEmpty()) {
@@ -325,7 +354,7 @@ pub fn shellCmdFromJS(
                     template_value.protect();
                     try out_jsobjs.append(template_value);
                     const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ Shell.Lexer.js_objref_prefix, idx });
-                    try script.appendSlice(slice);
+                    try out_script.appendSlice(slice);
                     continue;
                 } else if (template_value.as(JSC.WebCore.Blob)) |blob| {
                     _ = blob;
@@ -333,18 +362,20 @@ pub fn shellCmdFromJS(
                     template_value.protect();
                     try out_jsobjs.append(template_value);
                     const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ Shell.Lexer.js_objref_prefix, idx });
-                    try script.appendSlice(slice);
+                    try out_script.appendSlice(slice);
                     continue;
                 } else if (template_value.isString()) {
-                    const template_value_str = template_value.getZigString(globalThis);
-                    try script.appendSlice(template_value_str.full());
+                    if (!try appendJSValueStr(allocator, globalThis, template_value, out_script)) {
+                        globalThis.throw("bunshell: invalid string", .{});
+                        return false;
+                    }
                     continue;
                 }
                 @panic("Unsupported");
             }
         }
     }
-    return script;
+    return true;
 }
 
 pub fn shellLex(
@@ -368,10 +399,14 @@ pub fn shellLex(
             jsval.unprotect();
         }
     }
-    var script = shellCmdFromJS(arena.allocator(), globalThis, string_args, template_args, &jsobjs) catch {
+
+    var script = std.ArrayList(u8).init(arena.allocator());
+    if (!(shellCmdFromJS(arena.allocator(), globalThis, string_args, template_args, &jsobjs, &script) catch {
         globalThis.throwOutOfMemory();
         return JSValue.undefined;
-    };
+    })) {
+        return .undefined;
+    }
 
     var lexer = Shell.Lexer.new(arena.allocator(), script.items[0..]);
     lexer.lex() catch |err| {
@@ -422,10 +457,13 @@ pub fn shellParse(
             jsval.unprotect();
         }
     }
-    var script = shellCmdFromJS(arena.allocator(), globalThis, string_args, template_args, &jsobjs) catch {
+    var script = std.ArrayList(u8).init(arena.allocator());
+    if (!(shellCmdFromJS(arena.allocator(), globalThis, string_args, template_args, &jsobjs, &script) catch {
         globalThis.throwOutOfMemory();
         return JSValue.undefined;
-    };
+    })) {
+        return .undefined;
+    }
 
     var lexer = Shell.Lexer.new(arena.allocator(), script.items[0..]);
     lexer.lex() catch |err| {
@@ -484,10 +522,13 @@ pub fn shell(
             jsval.unprotect();
         }
     }
-    var script = shellCmdFromJS(arena.allocator(), globalThis, string_args, template_args, &jsobjs) catch {
+    var script = std.ArrayList(u8).init(arena.allocator());
+    if (!(shellCmdFromJS(arena.allocator(), globalThis, string_args, template_args, &jsobjs, &script) catch {
         globalThis.throwOutOfMemory();
         return JSValue.undefined;
-    };
+    })) {
+        return .undefined;
+    }
 
     var lexer = Shell.Lexer.new(arena.allocator(), script.items[0..]);
     lexer.lex() catch |err| {

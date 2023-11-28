@@ -4,7 +4,7 @@ import { join, relative } from "path";
 import { redirect } from "./util";
 import { tmpdir } from "os";
 import { describe, test, afterAll, beforeAll, expect } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { randomInvalidSurrogatePair, randomLoneSurrogate, runWithError, tempDirWithFiles } from "harness";
 
 let temp_dir: string;
 const temp_files = ["foo.txt", "lmao.ts"];
@@ -24,6 +24,27 @@ afterAll(async () => {
 const BUN = process.argv0;
 
 describe("bunshell", () => {
+  describe("invalid surrogates", () => {
+    test("invalid lone surrogate", () => {
+      const err = runWithError(() => {
+        const loneSurrogate = randomLoneSurrogate();
+        console.log("Lone surrogate", loneSurrogate);
+        const buffer = new Uint8Array(8192);
+        const result = $`echo ${loneSurrogate} > ${buffer}`;
+      });
+      expect(err?.message).toEqual("bunshell: invalid string");
+    });
+
+    test("invalid surrogate pair", () => {
+      const err = runWithError(() => {
+        const loneSurrogate = randomInvalidSurrogatePair();
+        const buffer = new Uint8Array(8192);
+        const result = $`echo ${loneSurrogate} > ${buffer}`;
+      });
+      expect(err?.message).toEqual("bunshell: invalid string");
+    });
+  });
+
   test("redirect Uint8Array", async () => {
     const buffer = new Uint8Array(1 << 20);
     const result = $`cat ${import.meta.path} > ${buffer}`;

@@ -57,17 +57,6 @@ pub const AST = struct {
     };
 };
 
-const InputChar = packed struct {
-    char: u7,
-    escaped: bool = false,
-};
-
-const State = enum {
-    Normal,
-    Single,
-    Double,
-};
-
 const MAX_NESTED_BRACES = 10;
 
 /// A stack on the stack
@@ -413,9 +402,7 @@ pub const Parser = struct {
 
     fn has_eq_sign(self: *Parser, str: []const u8) ?u32 {
         _ = self;
-        // TODO: simd
-        for (str, 0..) |c, i| if (c == '=') return @intCast(i);
-        return null;
+        return @import("./shell.zig").hasEqSign(str);
     }
 
     fn advance(self: *Parser) Token {
@@ -603,232 +590,216 @@ pub fn buildExpansionTable(
     }
 }
 
-pub const Lexer = struct {
-    src: []const u8,
-    alloc: Allocator,
-    tokens: ArrayList(Token),
-    i: usize = 0,
-    state: State = .Normal,
-    contains_nested: bool = false,
+const Encoding = @import("./shell.zig").StringEncoding;
+const NewChars = @import("./shell.zig").ShellCharIter;
 
-    pub const Output = struct {
+pub const Lexer = NewLexer(.ascii);
+
+pub fn NewLexer(comptime encoding: Encoding) type {
+    const Chars = NewChars(encoding);
+    return struct {
+        chars: Chars,
+        alloc: Allocator,
         tokens: ArrayList(Token),
-        contains_nested: bool,
-    };
+        contains_nested: bool = false,
 
-    pub fn tokenize(alloc: Allocator, src: []const u8) !Output {
-        var this = Lexer{
-            .src = src,
-            .tokens = ArrayList(Token).init(alloc),
-            .alloc = alloc,
+        pub const Output = struct {
+            tokens: ArrayList(Token),
+            contains_nested: bool,
         };
 
-        const contains_nested = try this.tokenize_impl();
+        pub fn tokenize(alloc: Allocator, src: []const u8) !Output {
+            var this = @This(){
+                .chars = Chars.init(src),
+                .tokens = ArrayList(Token).init(alloc),
+                .alloc = alloc,
+            };
 
-        return .{
-            .tokens = this.tokens,
-            .contains_nested = contains_nested,
-        };
-    }
+            const contains_nested = try this.tokenize_impl();
 
-    // FIXME: implement rollback on invalid brace
-    fn tokenize_impl(self: *Lexer) !bool {
-        // Unclosed brace expansion algorithm
-        // {hi,hey
-        // *xx*xxx
-
-        // {hi, hey
-        // *xxx$
-
-        // {hi,{a,b} sdkjfs}
-        // *xx**x*x*$
-
-        // 00000100000000000010000000000000
-        // echo {foo,bar,baz,{hi,hey},oh,no
-        // xxxxx*xxx*xxx*xxx**xx*xxx**xx*xx
-        //
-        // {hi,h{ey }
-        // *xx*x*xx$
-        //
-        // - Replace chars with special tokens
-        // - If unclosed or encounter bad token:
-        //   - Start at beginning of brace, replacing special tokens back with
-        //     chars, skipping over actual closed braces
-        var brace_stack = StackStack(u32, u8, MAX_NESTED_BRACES){};
-        // var char_stack = StackStack(u8, u8, 16){};
-        // _ = char_stack;
-
-        while (true) {
-            const input = self.eat() orelse break;
-            const char = input.char;
-            const escaped = input.escaped;
-
-            if (!escaped) {
-                switch (char) {
-                    '{' => {
-                        try brace_stack.push(@intCast(self.tokens.items.len));
-                        try self.tokens.append(.{ .open = .{} });
-                        continue;
-                    },
-                    '}' => {
-                        if (brace_stack.len > 0) {
-                            _ = brace_stack.pop();
-                            try self.tokens.append(.close);
-                            continue;
-                        }
-                    },
-                    ',' => {
-                        if (brace_stack.len > 0) {
-                            try self.tokens.append(.comma);
-                            continue;
-                        }
-                    },
-                    else => {},
-                }
-            }
-
-            // if (char_stack.push(char) == char_stack.Error.StackFull) {
-            //     try self.app
-            // }
-            try self.appendChar(char);
+            return .{
+                .tokens = this.tokens,
+                .contains_nested = contains_nested,
+            };
         }
 
-        // Unclosed braces
-        while (brace_stack.len > 0) {
-            const top_idx = brace_stack.pop().?;
-            try self.rollbackBraces(top_idx);
-        }
+        // FIXME: implement rollback on invalid brace
+        fn tokenize_impl(self: *@This()) !bool {
+            // Unclosed brace expansion algorithm
+            // {hi,hey
+            // *xx*xxx
 
-        try self.flattenTokens();
-        try self.tokens.append(.eof);
+            // {hi, hey
+            // *xxx$
 
-        return self.contains_nested;
-    }
+            // {hi,{a,b} sdkjfs}
+            // *xx**x*x*$
 
-    fn flattenTokens(self: *Lexer) !void {
-        var brace_count: u32 = if (self.tokens.items[0] == .open) 1 else 0;
-        var i: u32 = 0;
-        var j: u32 = 1;
-        while (i < self.tokens.items.len and j < self.tokens.items.len) {
-            var itok = &self.tokens.items[i];
-            var jtok = &self.tokens.items[j];
+            // 00000100000000000010000000000000
+            // echo {foo,bar,baz,{hi,hey},oh,no
+            // xxxxx*xxx*xxx*xxx**xx*xxx**xx*xx
+            //
+            // {hi,h{ey }
+            // *xx*x*xx$
+            //
+            // - Replace chars with special tokens
+            // - If unclosed or encounter bad token:
+            //   - Start at beginning of brace, replacing special tokens back with
+            //     chars, skipping over actual closed braces
+            var brace_stack = StackStack(u32, u8, MAX_NESTED_BRACES){};
+            // var char_stack = StackStack(u8, u8, 16){};
+            // _ = char_stack;
 
-            if (itok.* == .text and jtok.* == .text) {
-                try itok.text.appendSlice(self.alloc, jtok.toText().slice());
-                _ = self.tokens.orderedRemove(j);
-            } else {
-                if (jtok.* == .close) {
-                    brace_count -= 1;
-                } else if (jtok.* == .open) {
-                    brace_count += 1;
-                    if (brace_count > 1) {
-                        self.contains_nested = true;
+            while (true) {
+                const input = self.eat() orelse break;
+                const char = input.char;
+                const escaped = input.escaped;
+
+                if (!escaped) {
+                    switch (char) {
+                        '{' => {
+                            try brace_stack.push(@intCast(self.tokens.items.len));
+                            try self.tokens.append(.{ .open = .{} });
+                            continue;
+                        },
+                        '}' => {
+                            if (brace_stack.len > 0) {
+                                _ = brace_stack.pop();
+                                try self.tokens.append(.close);
+                                continue;
+                            }
+                        },
+                        ',' => {
+                            if (brace_stack.len > 0) {
+                                try self.tokens.append(.comma);
+                                continue;
+                            }
+                        },
+                        else => {},
                     }
                 }
-                i += 1;
-                j += 1;
+
+                // if (char_stack.push(char) == char_stack.Error.StackFull) {
+                //     try self.app
+                // }
+                try self.appendChar(char);
+            }
+
+            // Unclosed braces
+            while (brace_stack.len > 0) {
+                const top_idx = brace_stack.pop().?;
+                try self.rollbackBraces(top_idx);
+            }
+
+            try self.flattenTokens();
+            try self.tokens.append(.eof);
+
+            return self.contains_nested;
+        }
+
+        fn flattenTokens(self: *@This()) !void {
+            var brace_count: u32 = if (self.tokens.items[0] == .open) 1 else 0;
+            var i: u32 = 0;
+            var j: u32 = 1;
+            while (i < self.tokens.items.len and j < self.tokens.items.len) {
+                var itok = &self.tokens.items[i];
+                var jtok = &self.tokens.items[j];
+
+                if (itok.* == .text and jtok.* == .text) {
+                    try itok.text.appendSlice(self.alloc, jtok.toText().slice());
+                    _ = self.tokens.orderedRemove(j);
+                } else {
+                    if (jtok.* == .close) {
+                        brace_count -= 1;
+                    } else if (jtok.* == .open) {
+                        brace_count += 1;
+                        if (brace_count > 1) {
+                            self.contains_nested = true;
+                        }
+                    }
+                    i += 1;
+                    j += 1;
+                }
             }
         }
-    }
 
-    fn rollbackBraces(self: *Lexer, starting_idx: u32) !void {
-        if (bun.Environment.allow_assert) {
-            var first = &self.tokens.items[starting_idx];
-            std.debug.assert(first.* == .open);
-        }
+        fn rollbackBraces(self: *@This(), starting_idx: u32) !void {
+            if (bun.Environment.allow_assert) {
+                var first = &self.tokens.items[starting_idx];
+                std.debug.assert(first.* == .open);
+            }
 
-        var braces: u8 = 0;
+            var braces: u8 = 0;
 
-        try self.replaceTokenWithString(starting_idx);
-        var i: u32 = starting_idx + 1;
-        while (i < self.tokens.items.len) : (i += 1) {
-            if (braces > 0) {
+            try self.replaceTokenWithString(starting_idx);
+            var i: u32 = starting_idx + 1;
+            while (i < self.tokens.items.len) : (i += 1) {
+                if (braces > 0) {
+                    switch (self.tokens.items[i]) {
+                        .open => {
+                            braces += 1;
+                        },
+                        .close => {
+                            braces -= 1;
+                        },
+                        else => {},
+                    }
+                    continue;
+                }
+
                 switch (self.tokens.items[i]) {
                     .open => {
                         braces += 1;
+                        continue;
                     },
-                    .close => {
-                        braces -= 1;
+                    .close, .comma, .text => {
+                        try self.replaceTokenWithString(i);
                     },
-                    else => {},
+                    .eof => {},
                 }
-                continue;
-            }
-
-            switch (self.tokens.items[i]) {
-                .open => {
-                    braces += 1;
-                    continue;
-                },
-                .close, .comma, .text => {
-                    try self.replaceTokenWithString(i);
-                },
-                .eof => {},
-            }
-        }
-    }
-
-    fn replaceTokenWithString(self: *Lexer, token_idx: u32) !void {
-        var tok = &self.tokens.items[token_idx];
-        var tok_text = tok.toText();
-        tok.* = .{ .text = tok_text };
-    }
-
-    fn appendChar(self: *Lexer, char: u8) !void {
-        if (self.tokens.items.len > 0) {
-            var last = &self.tokens.items[self.tokens.items.len - 1];
-            if (last.* == .text) {
-                try last.text.appendChar(self.alloc, char);
-                return;
             }
         }
 
-        try self.tokens.append(.{
-            .text = try SmolStr.fromSlice(self.alloc, &[_]u8{char}),
-        });
-    }
-
-    fn eat(self: *Lexer) ?InputChar {
-        if (self.read_char()) |result| {
-            self.i += 1 + @as(u32, @intFromBool(result.escaped));
-            return result;
+        fn replaceTokenWithString(self: *@This(), token_idx: u32) !void {
+            var tok = &self.tokens.items[token_idx];
+            var tok_text = tok.toText();
+            tok.* = .{ .text = tok_text };
         }
-        return null;
-    }
 
-    fn read_char(self: *Lexer) ?InputChar {
-        if (self.i >= self.src.len) return null;
-        var char: u7 = brk: {
-            @setRuntimeSafety(false);
-            break :brk @intCast(self.src[self.i]);
-        };
-        if (char != '\\' or self.state == .Single) return .{ .char = char };
-
-        // Handle backslash
-        switch (self.state) {
-            .Normal => {
-                if (self.i + 1 >= self.src.len) return null;
-                char = brk: {
-                    @setRuntimeSafety(false);
-                    break :brk @intCast(self.src[self.i + 1]);
-                };
-            },
-            .Double => {
-                if (self.i + 1 >= self.src.len) return null;
-                const next_char: u7 = brk: {
-                    break :brk @intCast(self.src[self.i + 1]);
-                };
-                switch (next_char) {
-                    // Backslash only applies to these characters
-                    '$', '`', '"', '\\', '\n' => {
-                        char = next_char;
-                    },
-                    else => return .{ .char = char, .escaped = false },
+        fn appendChar(self: *@This(), char: Chars.CodepointType) !void {
+            if (self.tokens.items.len > 0) {
+                var last = &self.tokens.items[self.tokens.items.len - 1];
+                if (last.* == .text) {
+                    if (comptime encoding == .ascii) {
+                        try last.text.appendChar(self.alloc, char);
+                        return;
+                    }
+                    var buf = [4]u8{ 0, 0, 0, 0 };
+                    const slice = Chars.encodeCodepointStack(char, &buf);
+                    try last.text.appendSlice(self.alloc, slice);
+                    return;
                 }
-            },
-            else => unreachable,
+            }
+
+            if (comptime encoding == .ascii) {
+                try self.tokens.append(.{
+                    .text = try SmolStr.fromSlice(self.alloc, &[_]u8{char}),
+                });
+            } else {
+                var buf = [4]u8{ 0, 0, 0, 0 };
+                const slice = Chars.encodeCodepointStack(char, &buf);
+                try self.tokens.append(.{
+                    .text = try SmolStr.fromSlice(self.alloc, slice),
+                });
+            }
         }
 
-        return .{ .char = char, .escaped = true };
-    }
-};
+        fn eat(self: *@This()) ?Chars.InputChar {
+            return self.chars.eat();
+        }
+
+        fn read_char(self: *@This()) ?Chars.InputChar {
+            return self.chars.read_char();
+        }
+    };
+}

@@ -307,6 +307,7 @@ fn appendJSValueStr(
     outbuf: *std.ArrayList(u8),
 ) !bool {
     const bunstr = jsval.toBunString(globalThis);
+    bunstr.ref();
     defer bunstr.deref();
     if (bunstr.isUTF8()) {
         try outbuf.appendSlice(bunstr.byteSlice());
@@ -353,7 +354,7 @@ pub fn shellCmdFromJS(
                     const idx = out_jsobjs.items.len;
                     template_value.protect();
                     try out_jsobjs.append(template_value);
-                    const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ Shell.Lexer.js_objref_prefix, idx });
+                    const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ Shell.LEX_JS_OBJREF_PREFIX, idx });
                     try out_script.appendSlice(slice);
                     continue;
                 } else if (template_value.as(JSC.WebCore.Blob)) |blob| {
@@ -361,7 +362,7 @@ pub fn shellCmdFromJS(
                     const idx = out_jsobjs.items.len;
                     template_value.protect();
                     try out_jsobjs.append(template_value);
-                    const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ Shell.Lexer.js_objref_prefix, idx });
+                    const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ Shell.LEX_JS_OBJREF_PREFIX, idx });
                     try out_script.appendSlice(slice);
                     continue;
                 } else if (template_value.isString()) {
@@ -408,18 +409,29 @@ pub fn shellLex(
         return .undefined;
     }
 
-    var lexer = Shell.Lexer.new(arena.allocator(), script.items[0..]);
-    lexer.lex() catch |err| {
-        globalThis.throwError(err, "failed to lex shell");
-        return JSValue.undefined;
+    var lex_result = brk: {
+        if (bun.strings.isAllASCII(script.items[0..])) {
+            var lexer = Shell.LexerAscii.new(arena.allocator(), script.items[0..]);
+            lexer.lex() catch |err| {
+                globalThis.throwError(err, "failed to lex shell");
+                return JSValue.undefined;
+            };
+            break :brk lexer.get_result();
+        }
+        var lexer = Shell.LexerAscii.new(arena.allocator(), script.items[0..]);
+        lexer.lex() catch |err| {
+            globalThis.throwError(err, "failed to lex shell");
+            return JSValue.undefined;
+        };
+        break :brk lexer.get_result();
     };
 
-    var test_tokens = std.ArrayList(Shell.Test.TestToken).initCapacity(arena.allocator(), lexer.tokens.items.len) catch {
+    var test_tokens = std.ArrayList(Shell.Test.TestToken).initCapacity(arena.allocator(), lex_result.tokens.len) catch {
         globalThis.throwOutOfMemory();
         return JSValue.undefined;
     };
-    for (lexer.tokens.items) |tok| {
-        const test_tok = Shell.Test.TestToken.from_real(tok, lexer.strpool.items[0..lexer.strpool.items.len]);
+    for (lex_result.tokens) |tok| {
+        const test_tok = Shell.Test.TestToken.from_real(tok, lex_result.strpool);
         test_tokens.append(test_tok) catch {
             globalThis.throwOutOfMemory();
             return JSValue.undefined;
@@ -465,12 +477,24 @@ pub fn shellParse(
         return .undefined;
     }
 
-    var lexer = Shell.Lexer.new(arena.allocator(), script.items[0..]);
-    lexer.lex() catch |err| {
-        globalThis.throwError(err, "failed to lex shell");
-        return JSValue.undefined;
+    var lex_result = brk: {
+        if (bun.strings.isAllASCII(script.items[0..])) {
+            var lexer = Shell.LexerAscii.new(arena.allocator(), script.items[0..]);
+            lexer.lex() catch |err| {
+                globalThis.throwError(err, "failed to lex shell");
+                return JSValue.undefined;
+            };
+            break :brk lexer.get_result();
+        }
+        var lexer = Shell.LexerAscii.new(arena.allocator(), script.items[0..]);
+        lexer.lex() catch |err| {
+            globalThis.throwError(err, "failed to lex shell");
+            return JSValue.undefined;
+        };
+        break :brk lexer.get_result();
     };
-    var parser = Shell.Parser.new(arena.allocator(), &lexer, jsobjs.items[0..]) catch |err| {
+
+    var parser = Shell.Parser.new(arena.allocator(), lex_result, jsobjs.items[0..]) catch |err| {
         globalThis.throwError(err, "failed to create shell parser");
         return JSValue.undefined;
     };
@@ -530,12 +554,24 @@ pub fn shell(
         return .undefined;
     }
 
-    var lexer = Shell.Lexer.new(arena.allocator(), script.items[0..]);
-    lexer.lex() catch |err| {
-        globalThis.throwError(err, "failed to lex shell");
-        return JSValue.undefined;
+    var lex_result = brk: {
+        if (bun.strings.isAllASCII(script.items[0..])) {
+            var lexer = Shell.LexerAscii.new(arena.allocator(), script.items[0..]);
+            lexer.lex() catch |err| {
+                globalThis.throwError(err, "failed to lex shell");
+                return JSValue.undefined;
+            };
+            break :brk lexer.get_result();
+        }
+        var lexer = Shell.LexerAscii.new(arena.allocator(), script.items[0..]);
+        lexer.lex() catch |err| {
+            globalThis.throwError(err, "failed to lex shell");
+            return JSValue.undefined;
+        };
+        break :brk lexer.get_result();
     };
-    var parser = Shell.Parser.new(arena.allocator(), &lexer, jsobjs.items[0..]) catch |err| {
+
+    var parser = Shell.Parser.new(arena.allocator(), lex_result, jsobjs.items[0..]) catch |err| {
         globalThis.throwError(err, "failed to create shell parser");
         return JSValue.undefined;
     };

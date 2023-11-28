@@ -73,7 +73,7 @@ if [ -e "${extract_at}/.version" ]; then
 fi
 
 if ! [ -e "${dest}" ]; then
-  printf "-- Downloading Zig v%s\n" "${zig_version}"
+  printf -- "-- Downloading Zig v%s\n" "${zig_version}"
   curl -o "$dest" -L "$url"
 fi
 

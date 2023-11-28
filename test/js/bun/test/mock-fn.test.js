@@ -65,10 +65,13 @@ describe("mock()", () => {
     expect(fn).toHaveBeenCalledTimes(1);
     expect(fn.mock.calls).toHaveLength(1);
     expect(fn.mock.calls[0]).toBeEmpty();
+    expect(fn).toHaveBeenLastCalledWith();
     expect(fn()).toBe(42);
     expect(fn).toHaveBeenCalledTimes(2);
     expect(fn.mock.calls).toHaveLength(2);
     expect(fn.mock.calls[1]).toBeEmpty();
+    expect(fn).toHaveBeenLastCalledWith();
+    expect(fn).toHaveBeenCalledWith();
   });
   test("passes this value", () => {
     const fn = jest.fn(function hey() {
@@ -107,10 +110,13 @@ describe("mock()", () => {
     expect(fn).toHaveBeenCalledTimes(1);
     expect(fn.mock.calls).toHaveLength(1);
     expect(fn.mock.calls[0]).toBeEmpty();
+    expect(fn).toHaveBeenLastCalledWith();
     expect(Number(fn.call(234))).toBe(234);
     expect(fn).toHaveBeenCalledTimes(2);
     expect(fn.mock.calls).toHaveLength(2);
     expect(fn.mock.calls[1]).toBeEmpty();
+    expect(fn).toHaveBeenLastCalledWith();
+    expect(fn).toHaveBeenCalledWith();
   });
   test(".apply works", function () {
     const fn = jest.fn(function hey() {
@@ -121,10 +127,13 @@ describe("mock()", () => {
     expect(fn).toHaveBeenCalledTimes(1);
     expect(fn.mock.calls).toHaveLength(1);
     expect(fn.mock.calls[0]).toBeEmpty();
+    expect(fn).toHaveBeenLastCalledWith();
     expect(Number(fn.apply(234))).toBe(234);
     expect(fn).toHaveBeenCalledTimes(2);
     expect(fn.mock.calls).toHaveLength(2);
     expect(fn.mock.calls[1]).toBeEmpty();
+    expect(fn).toHaveBeenLastCalledWith();
+    expect(fn).toHaveBeenCalledWith();
   });
   test(".bind works", () => {
     const fn = jest.fn(function hey() {
@@ -135,10 +144,13 @@ describe("mock()", () => {
     expect(fn).toHaveBeenCalledTimes(1);
     expect(fn.mock.calls).toHaveLength(1);
     expect(fn.mock.calls[0]).toBeEmpty();
+    expect(fn).toHaveBeenLastCalledWith();
     expect(Number(fn.bind(234)())).toBe(234);
     expect(fn).toHaveBeenCalledTimes(2);
     expect(fn.mock.calls).toHaveLength(2);
     expect(fn.mock.calls[1]).toBeEmpty();
+    expect(fn).toHaveBeenLastCalledWith();
+    expect(fn).toHaveBeenCalledWith();
   });
   test(".name works", () => {
     const fn = jest.fn(function hey() {
@@ -181,6 +193,10 @@ describe("mock()", () => {
       value: 43,
     });
     expect(fn.mock.calls[0]).toEqual([43]);
+    expect(fn).toHaveBeenCalled();
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(fn).toHaveBeenLastCalledWith(43);
+    expect(fn).toHaveBeenCalledWith(43);
   });
   test("works when throwing", () => {
     const instance = new Error("foo");
@@ -193,6 +209,8 @@ describe("mock()", () => {
       value: instance,
     });
     expect(fn.mock.calls[0]).toEqual([43]);
+    expect(fn).toHaveBeenLastCalledWith(43);
+    expect(fn).toHaveBeenCalledWith(43);
   });
   test("mockReset works", () => {
     const instance = new Error("foo");
@@ -205,11 +223,15 @@ describe("mock()", () => {
       value: instance,
     });
     expect(fn.mock.calls[0]).toEqual([43]);
+    expect(fn).toHaveBeenLastCalledWith(43);
+    expect(fn).toHaveBeenCalledWith(43);
     fn.mockReset();
     expect(fn.mock.calls).toBeEmpty();
     expect(fn.mock.results).toBeEmpty();
     expect(fn.mock.instances).toBeEmpty();
     expect(fn).not.toHaveBeenCalled();
+    expect(fn).not.toHaveBeenLastCalledWith(43);
+    expect(fn).not.toHaveBeenCalledWith(43);
     expect(() => expect(fn).toHaveBeenCalled()).toThrow();
     expect(fn(43)).toBe(undefined);
     expect(fn.mock.results).toEqual([
@@ -219,6 +241,8 @@ describe("mock()", () => {
       },
     ]);
     expect(fn.mock.calls).toEqual([[43]]);
+    expect(fn).toHaveBeenLastCalledWith(43);
+    expect(fn).toHaveBeenCalledWith(43);
   });
   test("mockClear works", () => {
     const instance = new Error("foo");
@@ -231,17 +255,23 @@ describe("mock()", () => {
       value: instance,
     });
     expect(fn.mock.calls[0]).toEqual([43]);
+    expect(fn).toHaveBeenLastCalledWith(43);
+    expect(fn).toHaveBeenCalledWith(43);
     fn.mockClear();
     expect(fn.mock.calls).toBeEmpty();
     expect(fn.mock.results).toBeEmpty();
     expect(fn.mock.instances).toBeEmpty();
     expect(fn).not.toHaveBeenCalled();
+    expect(fn).not.toHaveBeenLastCalledWith(43);
+    expect(fn).not.toHaveBeenCalledWith(43);
     expect(() => fn(43)).toThrow("foo");
     expect(fn.mock.results[0]).toEqual({
       type: "throw",
       value: instance,
     });
     expect(fn.mock.calls[0]).toEqual([43]);
+    expect(fn).toHaveBeenLastCalledWith(43);
+    expect(fn).toHaveBeenCalledWith(43);
   });
   // this is an implementation detail i don't think we *need* to support
   test("mockClear doesnt update existing object", () => {
@@ -255,10 +285,14 @@ describe("mock()", () => {
       value: instance,
     });
     expect(fn.mock.calls[0]).toEqual([43]);
+    expect(fn).toHaveBeenLastCalledWith(43);
+    expect(fn).toHaveBeenCalledWith(43);
     const stolen = fn.mock;
     fn.mockClear();
     expect(stolen).not.toBe(fn.mock);
     expect(fn.mock.calls).toBeEmpty();
+    expect(fn).not.toHaveBeenLastCalledWith(43);
+    expect(fn).not.toHaveBeenCalledWith(43);
     expect(stolen.calls).not.toBeEmpty();
     expect(fn.mock.results).toBeEmpty();
     expect(stolen.results).not.toBeEmpty();
@@ -271,22 +305,29 @@ describe("mock()", () => {
       value: instance,
     });
     expect(fn.mock.calls[0]).toEqual([43]);
+    expect(fn).toHaveBeenLastCalledWith(43);
+    expect(fn).toHaveBeenCalledWith(43);
   });
   test("multiple calls work", () => {
     const fn = jest.fn(f => f);
     expect(fn(43)).toBe(43);
+    expect(fn).toHaveBeenLastCalledWith(43);
     expect(fn(44)).toBe(44);
+    expect(fn).toHaveBeenLastCalledWith(44);
     expect(fn.mock.calls[0]).toEqual([43]);
     expect(fn.mock.results[0]).toEqual({
       type: "return",
       value: 43,
     });
     expect(fn.mock.calls[1]).toEqual([44]);
+    expect(fn).toHaveBeenLastCalledWith(44);
     expect(fn.mock.results[1]).toEqual({
       type: "return",
       value: 44,
     });
     expect(fn.mock.contexts).toEqual([undefined, undefined]);
+    expect(fn).toHaveBeenCalledWith(43);
+    expect(fn).toHaveBeenCalledWith(44);
   });
   test("this arg", () => {
     const fn = jest.fn(function (add) {
@@ -295,6 +336,8 @@ describe("mock()", () => {
     const obj = { foo: 42, fn };
     expect(obj.fn(2)).toBe(44);
     expect(fn.mock.calls[0]).toEqual([2]);
+    expect(fn).toHaveBeenLastCalledWith(2);
+    expect(fn).toHaveBeenCalledWith(2);
     expect(fn.mock.results[0]).toEqual({
       type: "return",
       value: 44,
@@ -320,19 +363,26 @@ describe("mock()", () => {
     });
     const obj = { foo: 42, fn };
     expect(obj.fn(2)).toBe(44);
+    expect(fn).toHaveBeenLastCalledWith(2);
     const this2 = { foo: 43 };
     expect(fn.call(this2, 2)).toBe(45);
+    expect(fn).toHaveBeenLastCalledWith(2);
     const this3 = { foo: 44 };
     expect(fn.apply(this3, [2])).toBe(46);
+    expect(fn).toHaveBeenLastCalledWith(2);
     const this4 = { foo: 45 };
     expect(fn.bind(this4)(3)).toBe(48);
+    expect(fn).toHaveBeenLastCalledWith(3);
     const this5 = { foo: 45 };
     expect(fn.bind(this5, 2)()).toBe(47);
+    expect(fn).toHaveBeenLastCalledWith(2);
     expect(fn.mock.calls[0]).toEqual([2]);
     expect(fn.mock.calls[1]).toEqual([2]);
     expect(fn.mock.calls[2]).toEqual([2]);
     expect(fn.mock.calls[3]).toEqual([3]);
     expect(fn.mock.calls[4]).toEqual([2]);
+    expect(fn).toHaveBeenCalledWith(2);
+    expect(fn).toHaveBeenCalledWith(3);
     expect(fn.mock.results[0]).toEqual({
       type: "return",
       value: 44,
@@ -508,6 +558,64 @@ describe("mock()", () => {
     expect(first).toBeGreaterThan(0);
     expect(fn1.mock.invocationCallOrder).toEqual([first, first + 3]);
     expect(fn2.mock.invocationCallOrder).toEqual([first + 1, first + 2]);
+  });
+
+  test("toHaveBeenCalledWith, toHaveBeenLastCalledWith works", () => {
+    const fn = jest.fn();
+    expect(() => expect(() => {}).not.toHaveBeenLastCalledWith()).toThrow();
+    expect(() => expect(() => {}).not.toHaveBeenNthCalledWith()).toThrow();
+    expect(() => expect(() => {}).not.toHaveBeenCalledWith()).toThrow();
+    expect(fn).not.toHaveBeenCalled();
+    expect(() => expect(fn).toHaveBeenCalledTimes(-1)).toThrow();
+    expect(fn).toHaveBeenCalledTimes(0);
+    expect(fn).not.toHaveBeenCalledWith();
+    expect(fn).not.toHaveBeenLastCalledWith();
+    expect(() => expect(fn).toHaveBeenNthCalledWith(0)).toThrow();
+    expect(() => expect(fn).toHaveBeenNthCalledWith(-1)).toThrow();
+    expect(() => expect(fn).toHaveBeenNthCalledWith(1.1)).toThrow();
+    expect(fn).not.toHaveBeenNthCalledWith(1);
+    fn();
+    expect(fn).toHaveBeenCalled();
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(fn).toHaveBeenCalledWith();
+    expect(fn).toHaveBeenLastCalledWith();
+    expect(fn).toHaveBeenNthCalledWith(1);
+    expect(fn).not.toHaveBeenNthCalledWith(1, 1);
+    expect(fn).not.toHaveBeenCalledWith(1);
+    fn(1);
+    expect(fn).toHaveBeenCalledWith(1);
+    expect(fn).toHaveBeenLastCalledWith(1);
+    expect(fn).toHaveBeenNthCalledWith(1);
+    expect(fn).toHaveBeenNthCalledWith(2, 1);
+    fn(1, 2, 3);
+    expect(fn).not.toHaveBeenCalledWith("123");
+    expect(fn).not.toHaveBeenLastCalledWith(1);
+    expect(fn).not.toHaveBeenLastCalledWith(1, 2);
+    expect(fn).not.toHaveBeenLastCalledWith("123");
+    expect(fn).toHaveBeenLastCalledWith(1, 2, 3);
+    expect(fn).not.toHaveBeenLastCalledWith(3, 2, 1);
+    expect(fn).toHaveBeenNthCalledWith(3, 1, 2, 3);
+    expect(fn).not.toHaveBeenNthCalledWith(4, 3, 2, 1);
+    fn("random string");
+    expect(fn).toHaveBeenCalledWith();
+    expect(fn).toHaveBeenNthCalledWith(1);
+    expect(fn).toHaveBeenCalledWith(1);
+    expect(fn).toHaveBeenNthCalledWith(2, 1);
+    expect(fn).toHaveBeenCalledWith(1, 2, 3);
+    expect(fn).toHaveBeenNthCalledWith(3, 1, 2, 3);
+    expect(fn).toHaveBeenCalledWith("random string");
+    expect(fn).toHaveBeenLastCalledWith("random string");
+    expect(fn).toHaveBeenNthCalledWith(4, "random string");
+    expect(fn).toHaveBeenCalledWith(expect.stringMatching(/^random \w+$/));
+    expect(fn).toHaveBeenLastCalledWith(expect.stringMatching(/^random \w+$/));
+    expect(fn).toHaveBeenNthCalledWith(4, expect.stringMatching(/^random \w+$/));
+    fn(1, undefined);
+    expect(fn).toHaveBeenLastCalledWith(1, undefined);
+    expect(fn).not.toHaveBeenLastCalledWith(1);
+    expect(fn).toHaveBeenCalledWith(1, undefined);
+    expect(fn).not.toHaveBeenCalledWith(undefined);
+    expect(fn).toHaveBeenNthCalledWith(5, 1, undefined);
+    expect(fn).not.toHaveBeenNthCalledWith(5, 1);
   });
 });
 

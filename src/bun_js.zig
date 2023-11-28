@@ -28,7 +28,7 @@ const bundler = bun.bundler;
 const DotEnv = @import("env_loader.zig");
 const which = @import("which.zig").which;
 const JSC = @import("root").bun.JSC;
-const AsyncHTTP = @import("root").bun.HTTP.AsyncHTTP;
+const AsyncHTTP = @import("root").bun.http.AsyncHTTP;
 const Arena = @import("./mimalloc_arena.zig").Arena;
 
 const OpaqueWrap = JSC.OpaqueWrap;

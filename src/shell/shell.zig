@@ -2458,8 +2458,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                     continue;
                 }
 
-                try self.strpool.append(char);
-                self.j += 1;
+                try self.appendCharToStrPool(char);
             }
 
             if (self.in_cmd_subst != null) {
@@ -2467,6 +2466,21 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             }
 
             try self.tokens.append(.Eof);
+        }
+
+        fn appendCharToStrPool(self: *@This(), char: Chars.CodepointType) !void {
+            if (comptime encoding == .ascii) {
+                try self.strpool.append(char);
+                self.j += 1;
+            } else {
+                const char_len = try std.unicode.utf8ByteSequenceLength(@intCast(char >> 24));
+                const start = self.strpool.items.len;
+                const end = start + char_len;
+                try self.strpool.appendNTimes(0, char_len);
+                var slice = self.strpool.items[start..end];
+                try std.unicode.utf8Encode(@truncate(char), slice);
+                self.j += char_len;
+            }
         }
 
         fn break_word(self: *@This(), add_delimiter: bool) !void {
@@ -2666,8 +2680,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             return .{ .start = start, .end = self.j };
                         }
                         _ = self.eat() orelse unreachable;
-                        try self.strpool.append(char);
-                        self.j += 1;
+                        try self.appendCharToStrPool(char);
                     },
                 }
             }

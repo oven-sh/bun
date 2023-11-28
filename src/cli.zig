@@ -182,11 +182,6 @@ pub const Arguments = struct {
     };
     pub const run_params = run_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
-    const bunx_commands = [_]ParamType{
-        clap.parseParam("--silent                          Don't print the script command") catch unreachable,
-        clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
-    };
-
     const build_only_params = [_]ParamType{
         clap.parseParam("--compile                        Generate a standalone Bun executable containing your bundled code") catch unreachable,
         clap.parseParam("--watch                          Automatically restart the process on file change") catch unreachable,
@@ -1343,12 +1338,14 @@ pub const Command = struct {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunxCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .BunxCommand);
 
+                // TODO: This probably isn't right anymore
                 try BunxCommand.exec(ctx, bun.argv()[1..]);
                 return;
             },
             .ReplCommand => {
                 // TODO: Put this in native code.
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunxCommand) unreachable;
+                // Why does .ReplCommand use .BunxCommand?
                 var ctx = try Command.Context.create(allocator, log, .BunxCommand);
                 ctx.debug.run_in_bun = true; // force the same version of bun used. fixes bun-debug for example
                 var args = bun.argv()[1..];
@@ -1894,12 +1891,14 @@ pub const Command = struct {
                         \\Execute an npm package executable (CLI), automatically installing into a global shared cache if not installed in node_modules.
                         \\
                         \\Flags:
-                        \\  <cyan>--bun<r>      Force the command to run with Bun instead of Node.js
+                        \\  <cyan>--bun<r>          Force the command to run with Bun instead of Node.js
+                        \\  <cyan>--package<r>      Specify package to install
                         \\
                         \\Examples<d>:<r>
                         \\  <b>bunx prisma migrate<r>
                         \\  <b>bunx prettier foo.js<r>
                         \\  <b>bunx<r> <cyan>--bun<r> <b>vite dev foo.js<r>
+                        \\  <b>bunx<r> <cyan>--package<r> <b>prettier prettier foo.js<r>
                         \\
                     , .{});
                 },

@@ -2,6 +2,7 @@ const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
+const clap = bun.clap;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
@@ -148,41 +149,107 @@ pub const BunxCommand = struct {
 
     pub fn exec(ctx_: bun.CLI.Command.Context, argv: [][*:0]const u8) !void {
         var ctx = ctx_;
+
+        const cli = try CommandLineArguments.parse(ctx.allocator);
+
         var requests_buf = bun.PackageManager.UpdateRequest.Array.init(0) catch unreachable;
         var run_in_bun = ctx.debug.run_in_bun;
 
         var passthrough_list = try std.ArrayList(string).initCapacity(ctx.allocator, argv.len);
+
+        var bin_name = [1]string{""};
+
         var package_name_for_update_request = [1]string{""};
-        {
-            var found_subcommand_name = false;
+
+        // Current behavior:
+        // bunx cowsay "hi"
+        if (cli.package.len == 0) {
+            {
+                var found_subcommand_name = false;
+
+                for (argv) |positional_| {
+                    const positional = bun.span(positional_);
+
+                    if (positional.len == 0) continue;
+
+                    if (positional[0] != '-') {
+                        if (!found_subcommand_name) {
+                            found_subcommand_name = true;
+                            if (positional.len == 1 and positional[0] == 'x')
+                                continue;
+                        }
+                    }
+
+                    if (!run_in_bun and !found_subcommand_name) {
+                        // Hm, should we grab this from the parsed args now?
+                        if (strings.eqlComptime(positional, "--bun")) {
+                            run_in_bun = true;
+                            continue;
+                        }
+                    }
+
+                    if (package_name_for_update_request[0].len == 0 and positional.len > 0 and positional[0] != '-') {
+                        package_name_for_update_request[0] = positional;
+                        bin_name[0] = positional;
+                        continue;
+                    }
+
+                    try passthrough_list.append(positional);
+                }
+            }
+        } else {
+            // New behavior
+            // bun x cowsay hello // this is existing shortcut behavior
+            // bun x -- cowsay hello
+            // bun x --package=cowsay -- cowthink hello
+            // bunx -- cowsay hello
+            // bunx --package=cowsay -- cowthink hello
+            // bunx --package=cowsay -- cowthink --version
+
+            // current bug:
+            // when package is specified, the command that gets run is implicit
+            // but really the "what package should I run" logic should look like this:
+            // to_run = first item in passthrough
+            package_name_for_update_request[0] = cli.package;
+            var parsing_passthroughs = false;
+            var captured_bin_name = false;
 
             for (argv) |positional_| {
                 const positional = bun.span(positional_);
 
                 if (positional.len == 0) continue;
 
-                if (positional[0] != '-') {
-                    if (!found_subcommand_name) {
-                        found_subcommand_name = true;
-                        if (positional.len == 1 and positional[0] == 'x')
-                            continue;
-                    }
-                }
-
-                if (!run_in_bun and !found_subcommand_name) {
-                    if (strings.eqlComptime(positional, "--bun")) {
-                        run_in_bun = true;
-                        continue;
-                    }
-                }
-
-                if (package_name_for_update_request[0].len == 0 and positional.len > 0 and positional[0] != '-') {
-                    package_name_for_update_request[0] = positional;
+                if (positional.len == 2 and positional[0] == '-' and positional[1] == '-') {
+                    parsing_passthroughs = true;
                     continue;
                 }
 
-                try passthrough_list.append(positional);
+                if (!parsing_passthroughs) {
+                    continue;
+                }
+
+                if (captured_bin_name == false) {
+                    bin_name[0] = positional;
+                    captured_bin_name = true;
+                    continue;
+                }
+
+                if (captured_bin_name and parsing_passthroughs) {
+                    try passthrough_list.append(positional);
+                }
             }
+        }
+
+        if (cli.package.len != 0 and bin_name[0].len == 0) {
+            const text =
+                \\ <r><red>error<r><d>:<r> --package specified without indicating command<r>
+                \\ Perhaps you meant the following?:
+                \\ bunx --package {s} <b>-- {s}<r>
+                \\
+            ;
+
+            Output.pretty(text, .{ package_name_for_update_request[0], package_name_for_update_request[0] });
+            Global.exit(1);
         }
 
         // check if package_name_for_update_request is empty string or " "
@@ -213,21 +280,13 @@ pub const BunxCommand = struct {
 
         var update_request = update_requests[0];
 
+        // TODO: test "tsc"
         // if you type "tsc" and TypeScript is not installed:
         // 1. Install TypeScript
         // 2. Run tsc
         if (strings.eqlComptime(update_request.name, "tsc")) {
             update_request.name = "typescript";
         }
-
-        const initial_bin_name = if (strings.eqlComptime(update_request.name, "typescript"))
-            "tsc"
-        else if (update_request.version.tag == .github)
-            update_request.version.value.github.repo.slice(update_request.version_buf)
-        else if (strings.lastIndexOfChar(update_request.name, '/')) |index|
-            update_request.name[index + 1 ..]
-        else
-            update_request.name;
 
         // fast path: they're actually using this interchangably with `bun run`
         // so we use Bun.which to check
@@ -283,7 +342,7 @@ pub const BunxCommand = struct {
         const bunx_cache_dir = PATH[0 .. bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR.len + "/--bunx".len + package_fmt.len];
 
         var absolute_in_cache_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "/{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, initial_bin_name }) catch unreachable;
+        var absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "/{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, bin_name[0] }) catch unreachable;
 
         const passthrough = passthrough_list.items;
 
@@ -296,7 +355,7 @@ pub const BunxCommand = struct {
                     &path_buf,
                     PATH_FOR_BIN_DIRS,
                     this_bundler.fs.top_level_dir,
-                    initial_bin_name,
+                    bin_name[0],
                 );
             }
 
@@ -322,9 +381,9 @@ pub const BunxCommand = struct {
             }
 
             // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
-            if (getBinName(&this_bundler, bun.fdcast(root_dir_info.getFileDescriptor()), bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
+            if (getBinName(&this_bundler, bun.fdcast(root_dir_info.getFileDescriptor()), bunx_cache_dir, bin_name[0])) |package_name_for_bin| {
                 // if we check the bin name and its actually the same, we don't need to check $PATH here again
-                if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
+                if (!strings.eqlLong(package_name_for_bin, bin_name[0], true)) {
                     absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, package_name_for_bin }) catch unreachable;
 
                     // Only use the system-installed version if there is no version specified
@@ -418,8 +477,9 @@ pub const BunxCommand = struct {
             },
         }
 
-        absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, initial_bin_name }) catch unreachable;
+        absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, bin_name[0] }) catch unreachable;
 
+        // TODO: This section is duplicated. Make sure it matches above.
         // Similar to "npx":
         //
         //  1. Try the bin in the global cache
@@ -444,7 +504,7 @@ pub const BunxCommand = struct {
 
         // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
         if (getBinNameFromTempDirectory(&this_bundler, bunx_cache_dir, update_request.name)) |package_name_for_bin| {
-            if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
+            if (!strings.eqlLong(package_name_for_bin, bin_name[0], true)) {
                 absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, package_name_for_bin }) catch unreachable;
 
                 if (bun.which(
@@ -470,4 +530,72 @@ pub const BunxCommand = struct {
         Output.prettyErrorln("<r><red>error<r><d>:<r> could not determine executable to run for package <r><b>{s}<r>", .{update_request.name});
         Global.exit(1);
     }
+
+    pub fn printHelp() void {
+
+        // TODO: Finish text
+        const intro_text =
+            \\<b>bunx<r>
+            \\<b>Usage<r>: <b><green>bun install<r> <cyan>[flags]<r> [...\<pkg\>]
+            \\<b>Alias: <b>bun i<r>
+            \\  Install the dependencies listed in package.json
+        ;
+
+        const outro_text =
+            \\<b>Examples:<r>
+            \\  <d>Install the dependencies for the current project<r>
+            \\  <b><green>bun install<r>
+            \\
+            \\  <d>Skip devDependencies<r>
+            \\  <b><green>bun install --production<r>
+            \\
+            \\Full documentation is available at <magenta>https://bun.sh/docs/cli/install<r>
+        ;
+        Output.pretty("\n" ++ intro_text, .{});
+        Output.flush();
+        Output.pretty("\n\n<b>Flags:<r>", .{});
+        Output.flush();
+        clap.simpleHelp(&bunx_params);
+        Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
+        Output.flush();
+    }
+
+    const ParamType = clap.Param(clap.Help);
+    pub const bunx_params = [_]ParamType{
+        clap.parseParam("--silent                          Don't print the script command") catch unreachable,
+        clap.parseParam("-p, --package <STR>               Specify package to install") catch unreachable,
+        clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
+        clap.parseParam("--help                            Print this help menu") catch unreachable,
+        clap.parseParam("<POS> ...                         Arguments passed to script") catch unreachable,
+    };
+
+    pub const CommandLineArguments = struct {
+        package: string = "",
+        pub fn parse(allocator: std.mem.Allocator) !CommandLineArguments {
+            var cli = CommandLineArguments{};
+
+            var diag = clap.Diagnostic{};
+
+            var args = clap.parse(clap.Help, &bunx_params, .{
+                .diagnostic = &diag,
+                .allocator = allocator,
+            }) catch |err| {
+                clap.help(Output.errorWriter(), &bunx_params) catch {};
+                Output.errorWriter().writeAll("\n") catch {};
+                diag.report(Output.errorWriter(), err) catch {};
+                return err;
+            };
+
+            if (args.flag("--help")) {
+                printHelp();
+                Global.exit(0);
+            }
+
+            if (args.option("--package")) |package| {
+                cli.package = package;
+            }
+
+            return cli;
+        }
+    };
 };

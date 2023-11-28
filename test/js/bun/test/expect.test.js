@@ -3458,7 +3458,8 @@ describe("expect()", () => {
     test("ObjectContaining does not match", () => {
       const foo = Symbol("foo");
       const bar = Symbol("bar");
-      if (isBun) { // bun behaves differently to jest on these cases on purpose
+      if (isBun) {
+        // bun behaves differently to jest on these cases on purpose
         expect(expect.objectContaining({})).not.toEqual(null);
         expect(expect.objectContaining({})).not.toEqual(undefined);
         expect(expect.objectContaining({})).not.toEqual(42);
@@ -3523,7 +3524,8 @@ describe("expect()", () => {
       const foo = Symbol("foo");
       const bar = Symbol("bar");
 
-      if (isBun) { // bun behaves differently to jest on these cases on purpose
+      if (isBun) {
+        // bun behaves differently to jest on these cases on purpose
         expect(expect.not.objectContaining({})).toEqual("jest");
         expect(expect.not.objectContaining({})).toEqual(null);
         expect(expect.not.objectContaining({})).toEqual(undefined);

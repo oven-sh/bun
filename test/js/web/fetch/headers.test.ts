@@ -422,7 +422,7 @@ describe("Headers", () => {
         "cache-control": "public, immutable",
       });
       expect(Bun.inspect(headers)).toStrictEqual(
-        "Headers {" + "\n  " + `"cache-control": "public, immutable"` + "\n" + "}",
+        "Headers {" + "\n  " + `"cache-control": "public, immutable",` + "\n" + "}",
       );
     });
     it("can convert to json normalized", () => {
@@ -441,7 +441,7 @@ describe("Headers", () => {
             },
             null,
             2,
-          ),
+          ).replace(/(\s+})$/, ',$1'), // add trailing comma
       );
     });
   });

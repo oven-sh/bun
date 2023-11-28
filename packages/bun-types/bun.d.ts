@@ -4032,7 +4032,7 @@ declare module "bun" {
       /**
        * If true, the subprocess will have a hidden window.
        */
-      windowsHide?: boolean;
+      // windowsHide?: boolean;
     }
 
     type OptionsToSubprocess<Opts extends OptionsObject> =

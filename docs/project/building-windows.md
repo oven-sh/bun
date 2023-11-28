@@ -1,3 +1,5 @@
+The following document is not yet complete, please join the [#windows channel on our Discord](http://bun.sh/discord) for help.
+
 ## Prerequisites
 
 ### System Dependencies

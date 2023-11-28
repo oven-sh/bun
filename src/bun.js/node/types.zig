@@ -86,10 +86,9 @@ pub fn Maybe(comptime ResultType: type) type {
         };
 
         pub inline fn todo() @This() {
-            // if (Environment.isDebug) {
-            //     @panic("Maybe(" ++ @typeName(ResultType) ++ ").todo() Called");
-            // }
-            //
+            if (Environment.isDebug) {
+                @panic("Maybe(" ++ @typeName(ResultType) ++ ").todo() Called");
+            }
             return .{ .err = Syscall.Error.todo() };
         }
 
@@ -1445,6 +1444,7 @@ pub fn StatType(comptime Big: bool) type {
         pub usingnamespace if (Big) JSC.Codegen.JSBigIntStats else JSC.Codegen.JSStats;
 
         // Stats stores these as i32, but BigIntStats stores all of these as i64
+        // On windows, these two need to be u64 as the numbers are often very large.
         dev: if (Environment.isWindows) u64 else Int,
         ino: if (Environment.isWindows) u64 else Int,
         mode: Int,

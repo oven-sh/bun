@@ -51,9 +51,8 @@
 #define PLATFORM_SEP '/'
 #endif
 
-inline bool isAbsolutePath(WTF::String input)
+ALWAYS_INLINE bool isAbsolutePath(WTF::String input)
 {
-    //
 #if OS(WINDOWS)
     if (input.is8Bit()) {
         auto len = input.length();

@@ -64,7 +64,7 @@ pub const NUMBER__MIN_SAFE_INTEGER: i64 = -9007199254740991;
 /// (2^53 – 1)
 pub const NUMBER__MAX_SAFE_INTEGER: i64 = 9007199254740991;
 
-pub fn validateInteger(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, min_value: ?i64, max_value: ?i64) !void {
+pub fn validateInteger(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, min_value: ?i64, max_value: ?i64) !i64 {
     const min = min_value orelse NUMBER__MIN_SAFE_INTEGER;
     const max = max_value orelse NUMBER__MAX_SAFE_INTEGER;
 
@@ -78,9 +78,10 @@ pub fn validateInteger(globalThis: *JSGlobalObject, value: JSValue, comptime nam
     if (num < min or num > max) {
         try throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} and <= {d}. Received {s}", name_args ++ .{ min, max, value });
     }
+    return num;
 }
 
-pub fn validateInt32(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, min_value: ?i32, max_value: ?i32) !void {
+pub fn validateInt32(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, min_value: ?i32, max_value: ?i32) !i32 {
     const min = min_value orelse std.math.minInt(i32);
     const max = max_value orelse std.math.maxInt(i32);
     // The defaults for min and max correspond to the limits of 32-bit integers.
@@ -94,9 +95,10 @@ pub fn validateInt32(globalThis: *JSGlobalObject, value: JSValue, comptime name_
     if (num < min or num > max) {
         try throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} and <= {d}. Received {s}", name_args ++ .{ min, max, value });
     }
+    return num;
 }
 
-pub fn validateUint32(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, greater_than_zero: bool) !void {
+pub fn validateUint32(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, greater_than_zero: bool) !u32 {
     if (!value.isNumber()) {
         try throwErrInvalidArgType(globalThis, name_fmt, name_args, "number", value);
     }
@@ -109,6 +111,7 @@ pub fn validateUint32(globalThis: *JSGlobalObject, value: JSValue, comptime name
     if (num < min or num > max) {
         try throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} and <= {d}. Received {s}", name_args ++ .{ min, max, value });
     }
+    return @truncate(num);
 }
 
 pub fn validateString(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) !void {
@@ -116,13 +119,22 @@ pub fn validateString(globalThis: *JSGlobalObject, value: JSValue, comptime name
         try throwErrInvalidArgType(globalThis, name_fmt, name_args, "string", value);
 }
 
-pub fn validateNumber(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, min: ?i32, max: ?i32) !void {
+pub fn validateNumber(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, min: ?f64, max: ?f64) !f64 {
     if (!value.isNumber())
         try throwErrInvalidArgType(globalThis, name_fmt, name_args, "number", value);
 
-    if ((min != null and value < min) or (max != null and value > max) or
-        ((min != null or max != null) and std.math.isNan(value)))
-    {
+    const num: f64 = value.asNumber();
+    var valid = true;
+    if (min) |min_val| {
+        if (num < min_val) valid = false;
+    }
+    if (max) |max_val| {
+        if (num > max_val) valid = false;
+    }
+    if ((min != null or max != null) and std.math.isNan(num)) {
+        valid = false;
+    }
+    if (!valid) {
         if (min != null and max != null) {
             try throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} and <= {d}. Received {s}", name_args ++ .{ min, max, value });
         } else if (min != null) {
@@ -131,11 +143,13 @@ pub fn validateNumber(globalThis: *JSGlobalObject, value: JSValue, comptime name
             try throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must and <= {d}. Received {s}", name_args ++ .{ max, value });
         }
     }
+    return num;
 }
 
-pub fn validateBoolean(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) !void {
+pub fn validateBoolean(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) !bool {
     if (!value.isBoolean())
         try throwErrInvalidArgType(globalThis, name_fmt, name_args, "boolean", value);
+    return value.asBoolean();
 }
 
 pub const ValidateObjectOptions = packed struct {
@@ -174,13 +188,13 @@ pub fn validateArray(globalThis: *JSGlobalObject, value: JSValue, comptime name_
         try throwErrInvalidArgTypeWithMessage(globalThis, "\"" ++ name_fmt ++ "\" property must be an instance of Array, got {s}", name_args ++ .{actual_type});
     }
     if (comptime min_length != null) {
-        if (value.length < min_length) {
+        if (value.getLength(globalThis) < min_length) {
             try throwErrInvalidArgValue(globalThis, name_fmt ++ " must be longer than {d}", name_args ++ .{min_length});
         }
     }
 }
 
-pub fn validateStringArray(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) !void {
+pub fn validateStringArray(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) !usize {
     try validateArray(globalThis, value, name_fmt, name_args, null);
     var i: usize = 0;
     var iter = value.arrayIterator(globalThis);
@@ -190,9 +204,10 @@ pub fn validateStringArray(globalThis: *JSGlobalObject, value: JSValue, comptime
         }
         i += 1;
     }
+    return i;
 }
 
-pub fn validateBooleanArray(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) !void {
+pub fn validateBooleanArray(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) !usize {
     try validateArray(globalThis, value, name_fmt, name_args, null);
     var i: usize = 0;
     var iter = value.arrayIterator(globalThis);
@@ -202,10 +217,11 @@ pub fn validateBooleanArray(globalThis: *JSGlobalObject, value: JSValue, comptim
         }
         i += 1;
     }
+    return i;
 }
 
 pub fn validateFunction(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) !void {
-    if (!value.isFunction())
+    if (!value.jsType().isFunction())
         try throwErrInvalidArgType(globalThis, name_fmt, name_args, "function", value);
 }
 

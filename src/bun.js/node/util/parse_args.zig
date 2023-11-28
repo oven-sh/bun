@@ -285,8 +285,7 @@ fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, opt
 
         if (obj.getOwn(globalThis, "multiple")) |multiple_value| {
             if (!multiple_value.isUndefined()) {
-                try validateBoolean(globalThis, multiple_value, "options.{s}.multiple", .{option.long_name});
-                option.multiple = multiple_value.toBoolean();
+                option.multiple = try validateBoolean(globalThis, multiple_value, "options.{s}.multiple", .{option.long_name});
             }
         }
 
@@ -295,16 +294,16 @@ fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, opt
                 switch (option.type) {
                     .string => {
                         if (option.multiple) {
-                            try validateStringArray(globalThis, default_value, "options.{s}.default", .{option.long_name});
+                            _ = try validateStringArray(globalThis, default_value, "options.{s}.default", .{option.long_name});
                         } else {
                             try validateString(globalThis, default_value, "options.{s}.default", .{option.long_name});
                         }
                     },
                     .boolean => {
                         if (option.multiple) {
-                            try validateBooleanArray(globalThis, default_value, "options.{s}.default", .{option.long_name});
+                            _ = try validateBooleanArray(globalThis, default_value, "options.{s}.default", .{option.long_name});
                         } else {
-                            try validateBoolean(globalThis, default_value, "options.{s}.default", .{option.long_name});
+                            _ = try validateBoolean(globalThis, default_value, "options.{s}.default", .{option.long_name});
                         }
                     },
                 }
@@ -587,17 +586,14 @@ pub fn parseArgs(globalThis: *JSGlobalObject, config_obj: JSValue) !JSValue {
     const config_return_tokens: JSValue = (if (config) |c| c.getOwn(globalThis, "tokens") else null) orelse JSValue.jsBoolean(false);
     const config_options_obj: ?JSValue = if (config) |c| c.getOwn(globalThis, "options") else null;
 
-    try validateBoolean(globalThis, config_strict, "strict", .{});
-    const strict = config_strict.toBoolean();
+    const strict = try validateBoolean(globalThis, config_strict, "strict", .{});
 
     var allow_positionals = !strict;
     if (config_allow_positionals) |config_allow_positionals_value| {
-        try validateBoolean(globalThis, config_allow_positionals_value, "allowPositionals", .{});
-        allow_positionals = config_allow_positionals_value.toBoolean();
+        allow_positionals = try validateBoolean(globalThis, config_allow_positionals_value, "allowPositionals", .{});
     }
 
-    try validateBoolean(globalThis, config_return_tokens, "tokens", .{});
-    const return_tokens = config_return_tokens.toBoolean();
+    const return_tokens = try validateBoolean(globalThis, config_return_tokens, "tokens", .{});
 
     // Phase 0.C: Parse the options definitions
 
@@ -625,6 +621,7 @@ pub fn parseArgs(globalThis: *JSGlobalObject, config_obj: JSValue) !JSValue {
     //
     log("Phase 2: parse options from tokens (tokens.len={d})", .{tokens.items.len});
 
+    // note that "values" needs to have a null prototype instead of Object, to avoid issues such as "values.toString"` being defined
     var result_values = JSValue.constructEmptyObject(globalThis, null, 0);
     var result_positionals = JSC.JSValue.createEmptyArray(globalThis, 0);
     var result_positionals_len: u32 = 0;

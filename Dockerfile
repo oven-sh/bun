@@ -428,6 +428,7 @@ RUN mkdir -p build \
   -DNO_CODEGEN=1 \
   -DBUN_ZIG_OBJ="/tmp/bun-zig.o" \
   -DCANARY="${CANARY}" \
+  -DZIG_COMPILER=system \
   && ONLY_ZIG=1 ninja "/tmp/bun-zig.o" -v
 
 FROM scratch as build_release_obj
@@ -483,6 +484,7 @@ RUN cmake .. \
   -DCPU_TARGET="${CPU_TARGET}" \
   -DNO_CONFIGURE_DEPENDS=1 \
   -DCANARY="${CANARY}" \
+  -DZIG_COMPILER=system \
   && ninja -v \
   && ./bun --revision \
   && mkdir -p /build/out \
@@ -538,6 +540,7 @@ RUN cmake .. \
   -DCPU_TARGET="${CPU_TARGET}" \
   -DNO_CONFIGURE_DEPENDS=1 \
   -DCANARY="${CANARY}" \
+  -DZIG_COMPILER=system \
   && ninja -v \
   && ./bun --revision \
   && mkdir -p /build/out \

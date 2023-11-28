@@ -472,6 +472,9 @@ pub fn relative(from: []const u8, to: []const u8) []const u8 {
 }
 
 pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
+    if (from.len == 0) return to; // if to is empty as well, this will return the empty slice as expected in the both empty case
+    if (to.len == 0) return from;
+
     const normalized_from = if (platform.isAbsolute(from)) brk: {
         var path = normalizeStringBuf(from, relative_from_buf[1..], true, platform, true);
         if (platform == .windows) break :brk path;

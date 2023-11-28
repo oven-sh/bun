@@ -328,8 +328,26 @@ function(validate_zig validator_result_var item)
     endif()
 endfunction()
 
-find_program(ZIG_COMPILER zig ${REQUIRED_IF_NOT_ONLY_CPP_OR_LINK} DOC "Path to the Zig compiler" VALIDATOR validate_zig)
-message(STATUS "Found Zig Compiler: ${ZIG_COMPILER}")
+if (WIN32 OR ZIG_COMPILER)
+    if(ZIG_COMPILER STREQUAL "system")
+        message(STATUS "Using system Zig compiler")
+        unset(ZIG_COMPILER_)
+    endif()
+    find_program(ZIG_COMPILER_ zig ${REQUIRED_IF_NOT_ONLY_CPP_OR_LINK} DOC "Path to the Zig compiler" VALIDATOR validate_zig)
+    set(ZIG_COMPILER "${ZIG_COMPILER_}")
+    message(STATUS "Found Zig Compiler: ${ZIG_COMPILER}")
+elseif(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY)
+    execute_process(
+        COMMAND "${SHELL}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/download-zig.${SCRIPT_EXTENSION}"
+    )
+    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.cache/zig/zig")
+        message(FATAL_ERROR "Auto-installation of Zig failed. Please pass -DZIG_COMPILER=system or a path to the Zig")
+    endif()
+    set(ZIG_COMPILER "${CMAKE_CURRENT_SOURCE_DIR}/.cache/zig/zig")
+    message(STATUS "Installed Zig Compiler: ${ZIG_COMPILER}")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
+endif()
 
 # Bun
 if(NOT WIN32)

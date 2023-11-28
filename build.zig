@@ -1,39 +1,22 @@
-const recommended_zig_version = "0.12.0-dev.1604+caae40c21";
-const zig_version = @import("builtin").zig_version;
 const std = @import("std");
-
 const pathRel = std.fs.path.relative;
+const builtin = @import("builtin");
 const Wyhash = @import("./src/wyhash.zig").Wyhash;
+
+const zig_version = builtin.zig_version;
+
+/// Do not rename this constant. It is scanned by some scripts to determine which zig version to install.
+const recommended_zig_version = "0.12.0-dev.1604+caae40c21";
+
 var is_debug_build = false;
-fn moduleSource(comptime out: []const u8) FileSource {
-    if (comptime std.fs.path.dirname(@src().file)) |base| {
-        const outpath = comptime base ++ std.fs.path.sep_str ++ out;
-        return FileSource.relative(outpath);
-    } else {
-        return FileSource.relative(out);
-    }
-}
 
 fn exists(path: []const u8) bool {
     _ = std.fs.openFileAbsolute(path, .{ .mode = .read_only }) catch return false;
     return true;
 }
 
-const color_map = std.ComptimeStringMap([]const u8, .{
-    &.{ "black", "30m" },
-    &.{ "blue", "34m" },
-    &.{ "b", "1m" },
-    &.{ "d", "2m" },
-    &.{ "cyan", "36m" },
-    &.{ "green", "32m" },
-    &.{ "magenta", "35m" },
-    &.{ "red", "31m" },
-    &.{ "white", "37m" },
-    &.{ "yellow", "33m" },
-});
-
 fn addInternalPackages(b: *Build, step: *CompileStep, _: std.mem.Allocator, _: []const u8, target: anytype) !void {
-    var io: *Module = brk: {
+    const io: *Module = brk: {
         if (target.isDarwin()) {
             break :brk b.createModule(.{
                 .source_file = FileSource.relative("src/io/io_darwin.zig"),
@@ -63,7 +46,7 @@ fn addInternalPackages(b: *Build, step: *CompileStep, _: std.mem.Allocator, _: [
         break :brk b.createModule(.{ .source_file = FileSource.relative("src/deps/zlib.posix.zig") });
     });
 
-    var async_: *Module = brk: {
+    const async_: *Module = brk: {
         if (target.isDarwin() or target.isLinux() or target.isFreeBSD()) {
             break :brk b.createModule(.{
                 .source_file = FileSource.relative("src/async/posix_event_loop.zig"),
@@ -147,28 +130,7 @@ const BunBuildOptions = struct {
 
 // relative to the prefix
 var output_dir: []const u8 = "";
-fn panicIfNotFound(comptime filepath: []const u8) []const u8 {
-    var file = std.fs.cwd().openFile(filepath, .{ .optimize = .read_only }) catch |err| {
-        std.debug.panic("error: {s} opening {s}. Please ensure you've downloaded git submodules, and ran `make vendor`, `make jsc`.", .{ filepath, @errorName(err) });
-    };
-    file.close();
 
-    return filepath;
-}
-
-const fmt = struct {
-    pub usingnamespace @import("std").fmt;
-
-    pub fn hexInt(value: anytype) @TypeOf(std.fmt.fmtSliceHexLower("")) {
-        return std.fmt.fmtSliceHexLower(std.mem.asBytes(&value));
-    }
-
-    pub fn hexIntUp(value: anytype) @TypeOf(std.fmt.fmtSliceHexUpper("")) {
-        return std.fmt.fmtSliceHexUpper(std.mem.asBytes(&value));
-    }
-};
-
-var x64 = "x64";
 var optimize: std.builtin.OptimizeMode = .Debug;
 
 const Build = std.Build;
@@ -202,7 +164,7 @@ pub fn build_(b: *Build) !void {
                 .{
                     if (colors) "\x1b[1;33m" else "",
                     recommended_zig_version,
-                    @import("builtin").zig_version_string,
+                    builtin.zig_version_string,
                     if (colors) "\x1b[0m" else "",
                     recommended_zig_version,
                 },
@@ -226,7 +188,7 @@ pub fn build_(b: *Build) !void {
     }
 
     var output_dir_buf = std.mem.zeroes([4096]u8);
-    var bin_label = if (optimize == std.builtin.OptimizeMode.Debug) "packages/debug-bun-" else "packages/bun-";
+    const bin_label = if (optimize == std.builtin.OptimizeMode.Debug) "packages/debug-bun-" else "packages/bun-";
 
     var triplet_buf: [64]u8 = undefined;
     var os_tagname = @tagName(target.getOs().tag);
@@ -244,7 +206,7 @@ pub fn build_(b: *Build) !void {
         &triplet_buf,
         os_tagname,
     );
-    var osname = triplet_buf[0..os_tagname.len];
+    const osname = triplet_buf[0..os_tagname.len];
     triplet_buf[osname.len] = '-';
 
     std.mem.copy(u8, triplet_buf[osname.len + 1 ..], @tagName(target.getCpuArch()));
@@ -255,7 +217,7 @@ pub fn build_(b: *Build) !void {
         cpuArchName = cpuArchName[0..3];
     }
 
-    var triplet = triplet_buf[0 .. osname.len + cpuArchName.len + 1];
+    const triplet = triplet_buf[0 .. osname.len + cpuArchName.len + 1];
 
     const outfile_maybe = b.option([]const u8, "output-file", "target to install to");
 
@@ -385,8 +347,7 @@ pub fn build_(b: *Build) !void {
             max_version,
             obj.target.getCpuModel().name,
         }) catch {};
-        std.io.getStdErr().writer().print("Zig {s}\n", .{@import("builtin").zig_version_string}) catch {};
-        // std.io.getStdErr().writer().print("Output: {s}/{s}\n\n", .{ output_dir, bun_executable_name }) catch unreachable;
+        std.io.getStdErr().writer().print("Zig v{s}\n", .{builtin.zig_version_string}) catch {};
 
         defer obj_step.dependOn(&obj.step);
 
@@ -573,9 +534,9 @@ pub fn build_(b: *Build) !void {
     {
         const headers_step = b.step("test", "Build test");
 
-        var test_file = b.option([]const u8, "test-file", "Input file for test");
-        var test_bin_ = b.option([]const u8, "test-bin", "Emit bin to");
-        var test_filter = b.option([]const u8, "test-filter", "Filter for test");
+        const test_file = b.option([]const u8, "test-file", "Input file for test");
+        const test_bin_ = b.option([]const u8, "test-bin", "Emit bin to");
+        const test_filter = b.option([]const u8, "test-filter", "Filter for test");
 
         var headers_obj: *CompileStep = b.addTest(.{
             .root_source_file = FileSource.relative(test_file orelse "src/main.zig"),
@@ -602,7 +563,19 @@ pub fn build_(b: *Build) !void {
         headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
-    b.default_step.dependOn(obj_step);
+    // Running `zig build` with no arguments is almost always a mistake.
+    const mistake_message = b.addSystemCommand(&.{
+        "echo",
+        \\
+        \\error: To build Bun from source, please use `bun run setup` instead of `zig build`"
+        \\
+        \\If you want to build the zig code only, run:
+        \\  'zig build obj -Dgenerated-code=./build/codegen [...opts]'
+        \\
+        \\For more info, see https://bun.sh/docs/project/contributing
+        \\
+    });
+    b.default_step.dependOn(&mistake_message.step);
 }
 
 pub var original_make_fn: ?*const fn (step: *std.build.Step) anyerror!void = null;

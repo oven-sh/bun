@@ -15,6 +15,9 @@ const Glob = @import("../glob.zig");
 const ResolvePath = @import("../resolver/resolve_path.zig");
 const DirIterator = @import("../bun.js/node/dir_iterator.zig");
 
+const GlobWalker = Glob.GlobWalker_(null, true);
+// const GlobWalker = Glob.BunGlobWalker;
+
 pub const ShellError = error{ Process, GlobalThisThrown, Init };
 pub const ParseError = error{
     Expected,
@@ -1146,6 +1149,15 @@ pub const Interpreter = struct {
         return 0;
     }
 
+    /// The order of expansions:
+    /// 1. Expand shell/environment variables (e.g. $FOO)
+    /// 2. Expand braces (e.g. {a,b})
+    /// 3. Expand globs (e.g. *)
+    ///
+    /// For example: `FOO="*" echo {$FOO,hi}`
+    /// 1. echo {*,hi}
+    /// 2. echo * hi
+    /// 3. echo <expanded glob output> hi
     fn eval_atom(
         self: *Interpreter,
         atom: *const ast.Atom,
@@ -1168,6 +1180,11 @@ pub const Interpreter = struct {
     ) !void {
         if (atom.has_brace_expansion()) {
             try self.eval_atom_with_brace_expansion(for_spawn, atom, out);
+            if (atom.has_glob_expansion()) {
+                const brace_expansion_len = out.items.len;
+                _ = brace_expansion_len;
+                try self.eval_atom_with_glob_expansions(for_spawn, atom, out);
+            }
             return;
         }
 
@@ -1192,10 +1209,51 @@ pub const Interpreter = struct {
         pattern: []const u8,
         out: if (!for_spawn) *std.ArrayList([:0]const u8) else *std.ArrayList(?[*:0]const u8),
     ) void {
-        _ = out;
-        _ = pattern;
-        _ = self;
-        // Glob.BunGlobWalker.initWithCwd(this: *GlobWalker, arena: *Arena, pattern: []const u8, cwd: []const u8, dot: bool, absolute: bool, follow_symlinks: bool, error_on_broken_symlinks: bool, only_files: bool)
+        // FIXME TODO handle GLOBIGNORE env variable
+        var glob_walker: Glob.BunGlobWalker = .{};
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+
+        var dot = false;
+        var absolute = false;
+        var follow_symlinks = false;
+        var error_on_broken_symlinks = false;
+        var only_files = false;
+
+        switch (GlobWalker.initWithCwd(
+            &glob_walker,
+            &arena,
+            pattern,
+            self.cwd[0..self.cwd.len],
+            dot,
+            absolute,
+            follow_symlinks,
+            error_on_broken_symlinks,
+            only_files,
+        )) {
+            .result => {},
+            .err => {
+                @panic("FIXME TODO handle error properly");
+            },
+        }
+        defer glob_walker.deinit(true);
+
+        var iter = GlobWalker.Iterator{ .walker = &glob_walker };
+        defer iter.deinit();
+        switch (try iter.init()) {
+            .err => |err| return .{ .err = err },
+            else => {},
+        }
+
+        while (switch (try iter.next()) {
+            .err => |err| return .{ .err = err },
+            .result => |matched_path| matched_path,
+        }) |path| {
+            if (comptime for_spawn) {
+                try out.append(path.ptr);
+            } else {
+                try out.append(path);
+            }
+        }
     }
 
     fn eval_atom_with_brace_expansion(
@@ -2238,7 +2296,7 @@ pub const Lexer = struct {
                             }
                         }
                         try self.break_word(false);
-                        try self.tokens.append(.BraceBegin);
+                        try self.tokens.append(.Asterisk);
                         continue;
                     },
 
@@ -3225,3 +3283,19 @@ pub const Rm = struct {
         @panic("FIXME TODO");
     }
 };
+
+const ExpansionStr = union(enum) {};
+
+/// In bash vars can further be expanded if they contain glob syntax
+///
+/// glob syntax:
+/// -     `?` matches any single character
+/// -     `*` matches any sequence of characters
+/// -    `**` matches any sequence of characters, including slashes
+/// -  `[ab]` matches a or b
+/// - `[a-z]` matches any character between a and z
+/// -     `!` negates the pattern
+///
+/// So the special tokens:
+/// `?, *, **, [, ], !`
+const VarExpansionStr = struct {};

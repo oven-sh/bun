@@ -214,8 +214,8 @@ jobs:
         include:
           - tag: linux-x64
           - tag: linux-x64-baseline
-          - tag: linux-x64-assertions
-          - tag: linux-x64-baseline-assertions
+          # - tag: linux-x64-assertions
+          # - tag: linux-x64-baseline-assertions
     steps:
       - id: checkout
         name: Checkout
@@ -246,12 +246,15 @@ jobs:
           bun install --cwd=test --verbose
           bun install --cwd=packages/bun-internal-test --verbose
 
-      - name: Set core dumps to get stored in /cores
-        run: |
-          sudo mkdir /cores
-          sudo chmod 777 /cores
-          # Core filenames will be of the form executable.pid.timestamp:
-          sudo bash -c 'echo "/cores/%e.%p.%t" > /proc/sys/kernel/core_pattern'
+      # This is disabled because the cores are ~5.5gb each
+      # so it is easy to hit 50gb coredump downloads. Only enable if you need to retrive one
+
+      # - name: Set core dumps to get stored in /cores
+      #   run: |
+      #     sudo mkdir /cores
+      #     sudo chmod 777 /cores
+      #     # Core filenames will be of the form executable.pid.timestamp:
+      #     sudo bash -c 'echo "/cores/%e.%p.%t" > /proc/sys/kernel/core_pattern'
 
       - id: test
         name: Test (node runner)

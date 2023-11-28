@@ -4778,7 +4778,7 @@ pub const NodeFS = struct {
             }
 
             const flags = os.O.DIRECTORY | os.O.RDONLY;
-            const fd = switch (Syscall.openat(if (root_fd == bun.invalid_fd) std.fs.cwd().fd else root_fd, basename, flags, 0)) {
+            const fd = switch (Syscall.openat(if (root_fd == bun.invalid_fd) bun.toFD(std.fs.cwd().fd) else root_fd, basename, flags, 0)) {
                 .err => |err| {
                     if (root_fd == bun.invalid_fd) {
                         return .{

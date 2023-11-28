@@ -227,7 +227,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 endif()
 
 if(WIN32)
-    set(DEFAULT_USE_DEBUG_JSC ON)
+    set(DEFAULT_USE_DEBUG_JSC OFF)
 endif()
 
 if(UNIX AND NOT APPLE)

@@ -322,9 +322,11 @@ endfunction()
 
 if (WIN32 OR ZIG_COMPILER)
     if(ZIG_COMPILER STREQUAL "system")
-        unset(ZIG_COMPILER)
+        message(STATUS "Using system Zig compiler")
+        unset(ZIG_COMPILER_)
     endif()
-    find_program(ZIG_COMPILER zig ${REQUIRED_IF_NOT_ONLY_CPP_OR_LINK} DOC "Path to the Zig compiler" VALIDATOR validate_zig)
+    find_program(ZIG_COMPILER_ zig ${REQUIRED_IF_NOT_ONLY_CPP_OR_LINK} DOC "Path to the Zig compiler" VALIDATOR validate_zig)
+    set(ZIG_COMPILER "${ZIG_COMPILER_}")
     message(STATUS "Found Zig Compiler: ${ZIG_COMPILER}")
 elseif(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY)
     execute_process(

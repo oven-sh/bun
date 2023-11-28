@@ -2,7 +2,7 @@ const Bun = @This();
 const default_allocator = @import("root").bun.default_allocator;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
-const NetworkThread = @import("root").bun.HTTP.NetworkThread;
+const NetworkThread = @import("root").bun.http.NetworkThread;
 const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
@@ -14,6 +14,7 @@ const IdentityContext = @import("../../identity_context.zig").IdentityContext;
 const Fs = @import("../../fs.zig");
 const Resolver = @import("../../resolver/resolver.zig");
 const ast = @import("../../import_record.zig");
+const Sys = @import("../../sys.zig");
 
 const MacroEntryPoint = bun.bundler.MacroEntryPoint;
 const logger = @import("root").bun.logger;
@@ -24,7 +25,6 @@ const ServerEntryPoint = bun.bundler.ServerEntryPoint;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
-const http = @import("../../bun_dev_http_server.zig");
 const NodeFallbackModules = @import("../../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
 const Analytics = @import("../../analytics/analytics_thread.zig");
@@ -40,7 +40,7 @@ const Request = WebCore.Request;
 const Response = WebCore.Response;
 const Headers = WebCore.Headers;
 const Fetch = WebCore.Fetch;
-const HTTP = @import("root").bun.HTTP;
+const HTTP = @import("root").bun.http;
 const FetchEvent = WebCore.FetchEvent;
 const js = @import("root").bun.JSC.C;
 const JSC = @import("root").bun.JSC;
@@ -3008,9 +3008,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             };
 
             var has_content_disposition = false;
+            var has_content_range = false;
             if (response.init.headers) |headers_| {
                 has_content_disposition = headers_.fastHas(.ContentDisposition);
-                needs_content_range = needs_content_range and headers_.fastHas(.ContentRange);
+                has_content_range = headers_.fastHas(.ContentRange);
+                needs_content_range = needs_content_range and has_content_range;
                 if (needs_content_range) {
                     status = 206;
                 }
@@ -3057,7 +3059,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.flags.needs_content_length = false;
             }
 
-            if (needs_content_range) {
+            if (needs_content_range and !has_content_range) {
                 var content_range_buf: [1024]u8 = undefined;
 
                 resp.writeHeader(
@@ -5601,11 +5603,25 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             if (error_instance == .zero) {
                 switch (this.config.address) {
                     .tcp => |tcp| {
-                        error_instance = (JSC.SystemError{
-                            .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to start server. Is port {d} in use?", .{tcp.port}) catch "Failed to start server"),
-                            .code = bun.String.static("EADDRINUSE"),
-                            .syscall = bun.String.static("listen"),
-                        }).toErrorInstance(this.globalThis);
+                        error_set: {
+                            if (comptime Environment.isLinux) {
+                                var rc: i32 = -1;
+                                const code = Sys.getErrno(rc);
+                                if (code == bun.C.E.ACCES) {
+                                    error_instance = (JSC.SystemError{
+                                        .message = bun.String.init(std.fmt.bufPrint(&output_buf, "permission denied {s}:{d}", .{ tcp.hostname orelse "0.0.0.0", tcp.port }) catch "Failed to start server"),
+                                        .code = bun.String.static("EACCES"),
+                                        .syscall = bun.String.static("listen"),
+                                    }).toErrorInstance(this.globalThis);
+                                    break :error_set;
+                                }
+                            }
+                            error_instance = (JSC.SystemError{
+                                .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to start server. Is port {d} in use?", .{tcp.port}) catch "Failed to start server"),
+                                .code = bun.String.static("EADDRINUSE"),
+                                .syscall = bun.String.static("listen"),
+                            }).toErrorInstance(this.globalThis);
+                        }
                     },
                     .unix => |unix| {
                         error_instance = (JSC.SystemError{

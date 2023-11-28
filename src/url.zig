@@ -1077,13 +1077,13 @@ pub const FormData = struct {
                         if (filename_str.len > 0) {
                             const extension = std.fs.path.extension(filename_str);
                             if (extension.len > 0) {
-                                if (bun.HTTP.MimeType.byExtensionNoDefault(extension[1..extension.len])) |mime| {
+                                if (bun.http.MimeType.byExtensionNoDefault(extension[1..extension.len])) |mime| {
                                     break :brk mime.value;
                                 }
                             }
                         }
 
-                        if (bun.HTTP.MimeType.sniff(value_str)) |mime| {
+                        if (bun.http.MimeType.sniff(value_str)) |mime| {
                             break :brk mime.value;
                         }
 

@@ -19,7 +19,6 @@ const ObjectPool = @import("./pool.zig").ObjectPool;
 const ImportRecord = @import("import_record.zig").ImportRecord;
 const allocators = @import("allocators.zig");
 const JSC = @import("root").bun.JSC;
-const HTTP = @import("root").bun.HTTP;
 const RefCtx = @import("./ast/base.zig").RefCtx;
 const JSONParser = bun.JSON;
 const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
@@ -28,6 +27,7 @@ const JSPrinter = @import("./js_printer.zig");
 const js_lexer = @import("./js_lexer.zig");
 const TypeScript = @import("./js_parser.zig").TypeScript;
 const ThreadlocalArena = @import("./mimalloc_arena.zig").Arena;
+const MimeType = bun.http.MimeType;
 
 /// This is the index to the automatically-generated part containing code that
 /// calls "__export(exports, { ... getters ... })". This is used to generate
@@ -3084,13 +3084,13 @@ pub const Expr = struct {
     pub fn fromBlob(
         blob: *const JSC.WebCore.Blob,
         allocator: std.mem.Allocator,
-        mime_type_: ?HTTP.MimeType,
+        mime_type_: ?MimeType,
         log: *logger.Log,
         loc: logger.Loc,
     ) !Expr {
         var bytes = blob.sharedView();
 
-        const mime_type = mime_type_ orelse HTTP.MimeType.init(blob.content_type, null, null);
+        const mime_type = mime_type_ orelse MimeType.init(blob.content_type, null, null);
 
         if (mime_type.category == .json) {
             var source = logger.Source.initPathString("fetch.json", bytes);
@@ -5547,6 +5547,7 @@ pub const S = struct {
     pub const With = struct {
         value: ExprNodeIndex,
         body: StmtNodeIndex,
+        body_loc: logger.Loc = logger.Loc.Empty,
     };
 
     pub const Try = struct {
@@ -7020,7 +7021,7 @@ pub const Macro = struct {
                     .Boolean => this.coerce(value, .Boolean),
                     .Array => this.coerce(value, .Array),
                     .Object => this.coerce(value, .Object),
-                    .JSON => this.coerce(value, .JSON),
+                    .toJSON, .JSON => this.coerce(value, .JSON),
                     .Integer => this.coerce(value, .Integer),
                     .Double => this.coerce(value, .Double),
                     .String => this.coerce(value, .String),
@@ -7030,7 +7031,7 @@ pub const Macro = struct {
                             this.source,
                             this.caller.loc,
                             this.allocator,
-                            "cannot coerce {s} to Bun's AST. Please return a valid macro using the JSX syntax",
+                            "cannot coerce {s} to Bun's AST. Please return a simpler type",
                             .{@tagName(value.jsType())},
                         ) catch unreachable;
                         break :brk error.MacroFailed;
@@ -7061,7 +7062,7 @@ pub const Macro = struct {
                         }
 
                         var blob_: ?JSC.WebCore.Blob = null;
-                        var mime_type: ?HTTP.MimeType = null;
+                        var mime_type: ?MimeType = null;
 
                         if (value.jsType() == .DOMWrapper) {
                             if (value.as(JSC.WebCore.Response)) |resp| {
@@ -7264,7 +7265,7 @@ pub const Macro = struct {
                     this.source,
                     this.caller.loc,
                     this.allocator,
-                    "cannot coerce {s} to Bun's AST. Please return a valid macro using the JSX syntax",
+                    "cannot coerce {s} to Bun's AST. Please return a simpler type",
                     .{@tagName(value.jsType())},
                 ) catch unreachable;
                 return error.MacroFailed;

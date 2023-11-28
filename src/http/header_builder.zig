@@ -2,7 +2,7 @@ const HeaderBuilder = @This();
 const StringBuilder = @import("../string_builder.zig");
 const Headers = @import("./headers.zig");
 const string = @import("root").bun.string;
-const HTTPClient = @import("../http_client_async.zig");
+const HTTPClient = @import("../http.zig");
 const Api = @import("../api/schema.zig").Api;
 const std = @import("std");
 

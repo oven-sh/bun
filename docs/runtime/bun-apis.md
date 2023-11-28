@@ -54,7 +54,7 @@ Click the link in the right column to jump to the associated documentation.
 
 ---
 
-- HTML Rewriting
+- Streaming HTML Transformations
 - [`HTMLRewriter`](/docs/api/html-rewriter)
 
 ---
@@ -91,6 +91,11 @@ Click the link in the right column to jump to the associated documentation.
 
 - Node-API
 - [`Node-API`](/docs/api/node-api)
+
+---
+
+- Glob
+- [`Bun.Glob`](/docs/api/glob)
 
 ---
 

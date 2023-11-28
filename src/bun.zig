@@ -664,7 +664,8 @@ pub fn StringEnum(comptime Type: type, comptime Map: anytype, value: []const u8)
 
 pub const Bunfig = @import("./bunfig.zig").Bunfig;
 
-pub const HTTPThread = @import("./http_client_async.zig").HTTPThread;
+pub const HTTPThread = @import("./http.zig").HTTPThread;
+pub const http = @import("./http.zig");
 
 pub const Analytics = @import("./analytics/analytics_thread.zig");
 
@@ -728,7 +729,6 @@ pub const JSC = @import("root").JavaScriptCore;
 pub const AsyncIO = @import("async_io");
 
 pub const logger = @import("./logger.zig");
-pub const HTTP = @import("./http_client_async.zig");
 pub const ThreadPool = @import("./thread_pool.zig");
 pub const picohttp = @import("./deps/picohttp.zig");
 pub const uws = @import("./deps/uws.zig");
@@ -851,6 +851,34 @@ pub const FDHashMapContext = struct {
         }
     };
 };
+
+pub const U32HashMapContext = struct {
+    pub fn hash(_: @This(), value: u32) u64 {
+        return @intCast(value);
+    }
+    pub fn eql(_: @This(), a: u32, b: u32) bool {
+        return a == b;
+    }
+    pub fn pre(input: u32) Prehashed {
+        return Prehashed{
+            .value = @This().hash(.{}, input),
+            .input = input,
+        };
+    }
+
+    pub const Prehashed = struct {
+        value: u64,
+        input: u32,
+        pub fn hash(this: @This(), value: u32) u64 {
+            if (value == this.input) return this.value;
+            return @intCast(value);
+        }
+
+        pub fn eql(_: @This(), a: u32, b: u32) bool {
+            return a == b;
+        }
+    };
+};
 // These wrappers exist to use our strings.eqlLong function
 pub const StringArrayHashMapContext = struct {
     pub fn hash(_: @This(), s: []const u8) u32 {
@@ -955,6 +983,10 @@ pub fn StringHashMapUnmanaged(comptime Type: type) type {
 
 pub fn FDHashMap(comptime Type: type) type {
     return std.HashMap(StoredFileDescriptorType, Type, FDHashMapContext, std.hash_map.default_max_load_percentage);
+}
+
+pub fn U32HashMap(comptime Type: type) type {
+    return std.HashMap(u32, Type, U32HashMapContext, std.hash_map.default_max_load_percentage);
 }
 
 const CopyFile = @import("./copy_file.zig");
@@ -2019,4 +2051,8 @@ pub fn exitThread() noreturn {
     } else {
         @panic("Unsupported platform");
     }
+}
+
+pub fn outOfMemory() noreturn {
+    @panic("Out of memory");
 }

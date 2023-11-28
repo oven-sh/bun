@@ -34,11 +34,17 @@
 
 namespace WebCore {
 
+enum CryptoAlgorithmECDSAEncoding {
+    IeeeP1363,
+    DER,
+};
 class CryptoAlgorithmEcdsaParams final : public CryptoAlgorithmParameters {
 public:
     // FIXME: Consider merging hash and hashIdentifier.
     std::variant<JSC::Strong<JSC::JSObject>, String> hash;
     CryptoAlgorithmIdentifier hashIdentifier;
+    // WebCrypto default is IeeeP1363.
+    CryptoAlgorithmECDSAEncoding encoding { CryptoAlgorithmECDSAEncoding::IeeeP1363 };
 
     Class parametersClass() const final { return Class::EcdsaParams; }
 
@@ -47,7 +53,7 @@ public:
         CryptoAlgorithmEcdsaParams result;
         result.identifier = identifier;
         result.hashIdentifier = hashIdentifier;
-
+        result.encoding = encoding;
         return result;
     }
 };

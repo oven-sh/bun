@@ -14,6 +14,7 @@ const Syscall = @import("../sys.zig");
 const Glob = @import("../glob.zig");
 const ResolvePath = @import("../resolver/resolve_path.zig");
 const DirIterator = @import("../bun.js/node/dir_iterator.zig");
+const CodepointIterator = @import("../string_immutable.zig").PackedCodepointIterator;
 
 const GlobWalker = Glob.GlobWalker_(null, true);
 // const GlobWalker = Glob.BunGlobWalker;
@@ -2159,660 +2160,934 @@ pub const Token = union(TokenTag) {
     }
 };
 
-pub const Lexer = struct {
-    src: []const u8,
-    /// `i` is the index into the tokens list, tells us at the next token to
-    /// look at
-    i: u32 = 0,
-    /// Tell us the beginning of a "word", indexes into the string pool (`buf`)
-    /// Anytime a word is added, this needs to be updated
-    word_start: u32 = 0,
-    /// Keeps track of the end of a "word", indexes into the string pool (`buf`),
-    /// anytime characters are added to the string pool this needs to be updated
-    j: u32 = 0,
+pub const Lexer = NewLexer(.ascii);
 
-    strpool: ArrayList(u8),
-    tokens: ArrayList(Token),
-    state: State = .Normal,
-    delimit_quote: bool = false,
-    in_cmd_subst: ?CmdSubstKind = null,
-    errors: std.ArrayList(Error),
+pub fn NewLexer(comptime encoding: StringEncoding) type {
+    const Chars = ShellCharIter(encoding);
+    return struct {
+        chars: Chars,
 
-    const CmdSubstKind = enum { backtick, dollar };
+        /// Tell us the beginning of a "word", indexes into the string pool (`buf`)
+        /// Anytime a word is added, this needs to be updated
+        word_start: u32 = 0,
 
-    const LexerError = error{ Unexpected, OutOfMemory };
-    const Error = struct {
-        msg: []const u8,
-    };
+        /// Keeps track of the end of a "word", indexes into the string pool (`buf`),
+        /// anytime characters are added to the string pool this needs to be updated
+        j: u32 = 0,
 
-    pub const js_objref_prefix = "$__bun_";
+        strpool: ArrayList(u8),
+        tokens: ArrayList(Token),
+        delimit_quote: bool = false,
+        in_cmd_subst: ?CmdSubstKind = null,
+        errors: std.ArrayList(Error),
 
-    const State = enum {
-        Normal,
-        Single,
-        Double,
-    };
+        const CmdSubstKind = enum { backtick, dollar };
 
-    const InputChar = struct {
-        char: u8,
-        escaped: bool = false,
-    };
-
-    const BacktrackSnapshot = struct {
-        i: u32,
-        j: u32,
-        word_start: u32,
-        state: State,
-        delimit_quote: bool,
-    };
-
-    pub fn new(alloc: Allocator, src: []const u8) Lexer {
-        return .{
-            .src = src,
-            .tokens = ArrayList(Token).init(alloc),
-            .strpool = ArrayList(u8).init(alloc),
-            .errors = ArrayList(Error).init(alloc),
+        const LexerError = error{ Unexpected, OutOfMemory };
+        const Error = struct {
+            msg: []const u8,
         };
-    }
 
-    fn make_sublexer(self: *Lexer, kind: CmdSubstKind) Lexer {
-        var sublexer = .{
-            .src = self.src,
-            .strpool = self.strpool,
-            .tokens = self.tokens,
-            .errors = self.errors,
-            .in_cmd_subst = kind,
+        pub const js_objref_prefix = "$__bun_";
 
-            .i = self.i,
-            .word_start = self.word_start,
-            .j = self.j,
+        const State = Chars.State;
+
+        const InputChar = Chars.InputChar;
+
+        const BacktrackSnapshot = struct {
+            chars: Chars,
+            j: u32,
+            word_start: u32,
+            delimit_quote: bool,
         };
-        return sublexer;
-    }
 
-    fn continue_from_sublexer(self: *Lexer, sublexer: *Lexer) void {
-        self.strpool = sublexer.strpool;
-        self.tokens = sublexer.tokens;
-        self.errors = sublexer.errors;
-
-        self.i = sublexer.i;
-        self.word_start = sublexer.word_start;
-        self.j = sublexer.j;
-        self.state = sublexer.state;
-        self.delimit_quote = sublexer.delimit_quote;
-    }
-
-    fn make_snapshot(self: *Lexer) BacktrackSnapshot {
-        return .{
-            .i = self.i,
-            .j = self.j,
-            .word_start = self.word_start,
-            .delimit_quote = self.delimit_quote,
-            .state = self.state,
-        };
-    }
-
-    fn backtrack(self: *Lexer, snap: BacktrackSnapshot) void {
-        self.i = snap.i;
-        self.j = snap.j;
-        self.word_start = snap.word_start;
-        self.state = snap.state;
-        self.delimit_quote = snap.delimit_quote;
-    }
-
-    fn last_tok_tag(self: *Lexer) ?TokenTag {
-        if (self.tokens.items.len == 0) return null;
-        return @as(TokenTag, self.tokens.items[self.tokens.items.len - 1]);
-    }
-
-    pub fn lex(self: *Lexer) LexerError!void {
-        while (true) {
-            const input = self.eat() orelse {
-                try self.break_word(true);
-                break;
+        pub fn new(alloc: Allocator, src: []const u8) @This() {
+            return .{
+                .chars = Chars.init(src),
+                .tokens = ArrayList(Token).init(alloc),
+                .strpool = ArrayList(u8).init(alloc),
+                .errors = ArrayList(Error).init(alloc),
             };
-            const char = input.char;
-            const escaped = input.escaped;
+        }
 
-            // Handle non-escaped chars:
-            // 1. special syntax (operators, etc.)
-            // 2. lexing state switchers (quotes)
-            // 3. word breakers (spaces, etc.)
-            if (!escaped) escaped: {
-                switch (char) {
-                    ';' => {
-                        if (self.state == .Single or self.state == .Double) break :escaped;
-                        try self.break_word(true);
-                        try self.tokens.append(.Semicolon);
-                        continue;
-                    },
+        fn make_sublexer(self: *@This(), kind: CmdSubstKind) @This() {
+            var sublexer = .{
+                .chars = self.chars,
+                .strpool = self.strpool,
+                .tokens = self.tokens,
+                .errors = self.errors,
+                .in_cmd_subst = kind,
 
-                    // glob asterisks
-                    '*' => {
-                        if (self.state == .Single or self.state == .Double) break :escaped;
-                        if (self.peek()) |next| {
-                            if (!next.escaped and next.char == '*') {
-                                _ = self.eat();
-                                try self.break_word(false);
-                                try self.tokens.append(.DoubleAsterisk);
+                .word_start = self.word_start,
+                .j = self.j,
+            };
+            return sublexer;
+        }
+
+        fn continue_from_sublexer(self: *@This(), sublexer: *@This()) void {
+            self.strpool = sublexer.strpool;
+            self.tokens = sublexer.tokens;
+            self.errors = sublexer.errors;
+
+            self.chars = sublexer.chars;
+            self.word_start = sublexer.word_start;
+            self.j = sublexer.j;
+            self.delimit_quote = sublexer.delimit_quote;
+        }
+
+        fn make_snapshot(self: *@This()) BacktrackSnapshot {
+            return .{
+                .chars = self.chars,
+                .j = self.j,
+                .word_start = self.word_start,
+                .delimit_quote = self.delimit_quote,
+            };
+        }
+
+        fn backtrack(self: *@This(), snap: BacktrackSnapshot) void {
+            self.chars = snap.chars;
+            self.j = snap.j;
+            self.word_start = snap.word_start;
+            self.delimit_quote = snap.delimit_quote;
+        }
+
+        fn last_tok_tag(self: *@This()) ?TokenTag {
+            if (self.tokens.items.len == 0) return null;
+            return @as(TokenTag, self.tokens.items[self.tokens.items.len - 1]);
+        }
+
+        pub fn lex(self: *@This()) LexerError!void {
+            while (true) {
+                const input = self.eat() orelse {
+                    try self.break_word(true);
+                    break;
+                };
+                const char = input.char;
+                const escaped = input.escaped;
+
+                // Handle non-escaped chars:
+                // 1. special syntax (operators, etc.)
+                // 2. lexing state switchers (quotes)
+                // 3. word breakers (spaces, etc.)
+                if (!escaped) escaped: {
+                    switch (char) {
+                        ';' => {
+                            if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
+                            try self.break_word(true);
+                            try self.tokens.append(.Semicolon);
+                            continue;
+                        },
+
+                        // glob asterisks
+                        '*' => {
+                            if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
+                            if (self.peek()) |next| {
+                                if (!next.escaped and next.char == '*') {
+                                    _ = self.eat();
+                                    try self.break_word(false);
+                                    try self.tokens.append(.DoubleAsterisk);
+                                    continue;
+                                }
+                            }
+                            try self.break_word(false);
+                            try self.tokens.append(.Asterisk);
+                            continue;
+                        },
+
+                        // brace expansion syntax
+                        '{' => {
+                            if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
+                            try self.break_word(false);
+                            try self.tokens.append(.BraceBegin);
+                            continue;
+                        },
+                        ',' => {
+                            if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
+                            try self.break_word(false);
+                            try self.tokens.append(.Comma);
+                            continue;
+                        },
+                        '}' => {
+                            if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
+                            try self.break_word(false);
+                            try self.tokens.append(.BraceEnd);
+                            continue;
+                        },
+
+                        // Command substitution
+                        '`' => {
+                            if (self.in_cmd_subst == .backtick) {
+                                try self.break_word(true);
+                                if (self.last_tok_tag()) |toktag| {
+                                    if (toktag != .Delimit) try self.tokens.append(.Delimit);
+                                }
+                                try self.tokens.append(.CmdSubstEnd);
+                                return;
+                            } else {
+                                try self.eat_cmd_subst(.backtick);
+                            }
+                        },
+                        // Command substitution/vars
+                        '$' => {
+                            if (self.chars.state == .Single) break :escaped;
+
+                            const peeked = self.peek() orelse InputChar{ .char = 0 };
+                            if (!peeked.escaped and peeked.char == '(') {
+                                try self.eat_cmd_subst(.dollar);
                                 continue;
                             }
-                        }
-                        try self.break_word(false);
-                        try self.tokens.append(.Asterisk);
-                        continue;
-                    },
 
-                    // brace expansion syntax
-                    '{' => {
-                        if (self.state == .Single or self.state == .Double) break :escaped;
-                        try self.break_word(false);
-                        try self.tokens.append(.BraceBegin);
-                        continue;
-                    },
-                    ',' => {
-                        if (self.state == .Single or self.state == .Double) break :escaped;
-                        try self.break_word(false);
-                        try self.tokens.append(.Comma);
-                        continue;
-                    },
-                    '}' => {
-                        if (self.state == .Single or self.state == .Double) break :escaped;
-                        try self.break_word(false);
-                        try self.tokens.append(.BraceEnd);
-                        continue;
-                    },
+                            // Handle variable
+                            try self.break_word(false);
+                            if (self.eat_js_obj_ref()) |ref| {
+                                if (self.chars.state == .Double) {
+                                    try self.errors.append(.{ .msg = "JS object reference not allowed in double quotes" });
+                                    return LexerError.Unexpected;
+                                }
+                                try self.tokens.append(ref);
+                            } else {
+                                const var_tok = try self.eat_var();
+                                try self.tokens.append(.{ .Var = var_tok });
+                            }
+                            self.word_start = self.j;
+                            continue;
+                        },
+                        ')' => {
+                            if (self.in_cmd_subst != .dollar) {
+                                if (self.chars.state != .Normal) break :escaped;
+                                @panic("Unexpected ')'");
+                            }
 
-                    // Command substitution
-                    '`' => {
-                        if (self.in_cmd_subst == .backtick) {
                             try self.break_word(true);
                             if (self.last_tok_tag()) |toktag| {
                                 if (toktag != .Delimit) try self.tokens.append(.Delimit);
                             }
                             try self.tokens.append(.CmdSubstEnd);
                             return;
-                        } else {
-                            try self.eat_cmd_subst(.backtick);
-                        }
-                    },
-                    // Command substitution/vars
-                    '$' => {
-                        if (self.state == .Single) break :escaped;
+                        },
 
-                        const peeked = self.peek() orelse InputChar{ .char = 0 };
-                        if (!peeked.escaped and peeked.char == '(') {
-                            try self.eat_cmd_subst(.dollar);
-                            continue;
-                        }
-
-                        // Handle variable
-                        try self.break_word(false);
-                        if (self.eat_js_obj_ref()) |ref| {
-                            if (self.state == .Double) {
-                                try self.errors.append(.{ .msg = "JS object reference not allowed in double quotes" });
-                                return LexerError.Unexpected;
-                            }
-                            try self.tokens.append(ref);
-                        } else {
-                            const var_tok = try self.eat_var();
-                            try self.tokens.append(.{ .Var = var_tok });
-                        }
-                        self.word_start = self.j;
-                        continue;
-                    },
-                    ')' => {
-                        if (self.in_cmd_subst != .dollar) {
-                            if (self.state != .Normal) break :escaped;
-                            @panic("Unexpected ')'");
-                        }
-
-                        try self.break_word(true);
-                        if (self.last_tok_tag()) |toktag| {
-                            if (toktag != .Delimit) try self.tokens.append(.Delimit);
-                        }
-                        try self.tokens.append(.CmdSubstEnd);
-                        return;
-                    },
-
-                    '0'...'9' => {
-                        if (self.state != .Normal) break :escaped;
-                        const snapshot = self.make_snapshot();
-                        if (self.eat_redirect(input)) |redirect| {
-                            try self.break_word(true);
-                            try self.tokens.append(.{ .Redirect = redirect });
-                            continue;
-                        }
-                        self.backtrack(snapshot);
-                        break :escaped;
-                    },
-
-                    // Operators
-                    '|' => {
-                        if (self.state == .Single or self.state == .Double) break :escaped;
-                        try self.break_word(true);
-
-                        const next = self.peek() orelse @panic("Unexpected EOF");
-                        if (next.escaped or next.char != '|') {
-                            try self.tokens.append(.Pipe);
-                        } else if (next.char == '|') {
-                            _ = self.eat() orelse unreachable;
-                            try self.tokens.append(.DoublePipe);
-                        }
-                        continue;
-                    },
-                    '>' => {
-                        if (self.state == .Single or self.state == .Double) break :escaped;
-                        try self.break_word(true);
-                        const redirect = self.eat_simple_redirect();
-                        try self.tokens.append(.{ .Redirect = redirect });
-                        continue;
-                    },
-                    '&' => {
-                        if (self.state == .Single or self.state == .Double) break :escaped;
-                        try self.break_word(true);
-
-                        const next = self.peek() orelse @panic("Unexpected EOF");
-                        if (next.char == '>' and !next.escaped) {
-                            _ = self.eat();
-                            const inner = if (self.eat_simple_redirect_operator())
-                                AST.Cmd.RedirectFlags.@"&>>"()
-                            else
-                                AST.Cmd.RedirectFlags.@"&>"();
-                            try self.tokens.append(.{ .Redirect = inner });
-                        } else if (next.escaped or next.char != '&') {
-                            try self.tokens.append(.Ampersand);
-                        } else if (next.char == '&') {
-                            _ = self.eat() orelse unreachable;
-                            try self.tokens.append(.DoubleAmpersand);
-                        } else continue;
-                    },
-
-                    // 2. State switchers
-                    '\'' => {
-                        if (self.state == .Single) {
-                            self.state = .Normal;
-                            continue;
-                        }
-                        if (self.state == .Normal) {
-                            self.state = .Single;
-                            continue;
-                        }
-                        break :escaped;
-                    },
-                    '"' => {
-                        if (self.state == .Single) break :escaped;
-                        if (self.state == .Normal) {
-                            try self.break_word(false);
-                            self.state = .Double;
-                        } else if (self.state == .Double) {
-                            try self.break_word(false);
-                            // self.delimit_quote = true;
-                            self.state = .Normal;
-                        }
-                        continue;
-                    },
-
-                    // 3. Word breakers
-                    ' ' => {
-                        if (self.state == .Normal) {
-                            try self.break_word_impl(true, true);
-                            continue;
-                        }
-                        break :escaped;
-                    },
-
-                    else => break :escaped,
-                }
-                continue;
-            }
-
-            try self.strpool.append(char);
-            self.j += 1;
-        }
-
-        if (self.in_cmd_subst != null) {
-            @panic("Unclosed command substitution");
-        }
-
-        try self.tokens.append(.Eof);
-    }
-
-    fn break_word(self: *Lexer, add_delimiter: bool) !void {
-        return try self.break_word_impl(add_delimiter, false);
-    }
-
-    fn break_word_impl(self: *Lexer, add_delimiter: bool, in_normal_space: bool) !void {
-        const start: u32 = self.word_start;
-        const end: u32 = self.j;
-        if (start != end) {
-            try self.tokens.append(.{ .Text = .{ .start = start, .end = end } });
-            if (add_delimiter) {
-                try self.tokens.append(.Delimit);
-            }
-        } else if (in_normal_space and self.tokens.items.len > 0 and
-            switch (self.tokens.items[self.tokens.items.len - 1]) {
-            .Var, .Text, .BraceBegin, .Comma, .BraceEnd => true,
-            else => false,
-        }) {
-            try self.tokens.append(.Delimit);
-            self.delimit_quote = false;
-        }
-        self.word_start = self.j;
-    }
-
-    fn eat_simple_redirect(self: *Lexer) AST.Cmd.RedirectFlags {
-        return if (self.eat_simple_redirect_operator())
-            AST.Cmd.RedirectFlags.@">>"()
-        else
-            AST.Cmd.RedirectFlags.@">"();
-    }
-
-    fn eat_simple_redirect_operator(self: *Lexer) bool {
-        if (self.peek()) |peeked| {
-            if (peeked.escaped) return false;
-            switch (peeked.char) {
-                '>' => {
-                    _ = self.eat();
-                    return true;
-                },
-                else => return false,
-            }
-        }
-        return false;
-    }
-
-    fn eat_redirect(self: *Lexer, first: InputChar) ?AST.Cmd.RedirectFlags {
-        var flags: AST.Cmd.RedirectFlags = .{};
-        switch (first.char) {
-            '0'...'9' => {
-                var count: usize = 1;
-                var buf: [32]u8 = [_]u8{first.char} ** 32;
-
-                while (self.peek()) |peeked| {
-                    const char = peeked.char;
-                    switch (char) {
                         '0'...'9' => {
-                            _ = self.eat();
-                            buf[count] = char;
-                            count += 1;
+                            if (self.chars.state != .Normal) break :escaped;
+                            const snapshot = self.make_snapshot();
+                            if (self.eat_redirect(input)) |redirect| {
+                                try self.break_word(true);
+                                try self.tokens.append(.{ .Redirect = redirect });
+                                continue;
+                            }
+                            self.backtrack(snapshot);
+                            break :escaped;
+                        },
+
+                        // Operators
+                        '|' => {
+                            if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
+                            try self.break_word(true);
+
+                            const next = self.peek() orelse @panic("Unexpected EOF");
+                            if (next.escaped or next.char != '|') {
+                                try self.tokens.append(.Pipe);
+                            } else if (next.char == '|') {
+                                _ = self.eat() orelse unreachable;
+                                try self.tokens.append(.DoublePipe);
+                            }
                             continue;
                         },
-                        else => break,
+                        '>' => {
+                            if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
+                            try self.break_word(true);
+                            const redirect = self.eat_simple_redirect();
+                            try self.tokens.append(.{ .Redirect = redirect });
+                            continue;
+                        },
+                        '&' => {
+                            if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
+                            try self.break_word(true);
+
+                            const next = self.peek() orelse @panic("Unexpected EOF");
+                            if (next.char == '>' and !next.escaped) {
+                                _ = self.eat();
+                                const inner = if (self.eat_simple_redirect_operator())
+                                    AST.Cmd.RedirectFlags.@"&>>"()
+                                else
+                                    AST.Cmd.RedirectFlags.@"&>"();
+                                try self.tokens.append(.{ .Redirect = inner });
+                            } else if (next.escaped or next.char != '&') {
+                                try self.tokens.append(.Ampersand);
+                            } else if (next.char == '&') {
+                                _ = self.eat() orelse unreachable;
+                                try self.tokens.append(.DoubleAmpersand);
+                            } else continue;
+                        },
+
+                        // 2. State switchers
+                        '\'' => {
+                            if (self.chars.state == .Single) {
+                                self.chars.state = .Normal;
+                                continue;
+                            }
+                            if (self.chars.state == .Normal) {
+                                self.chars.state = .Single;
+                                continue;
+                            }
+                            break :escaped;
+                        },
+                        '"' => {
+                            if (self.chars.state == .Single) break :escaped;
+                            if (self.chars.state == .Normal) {
+                                try self.break_word(false);
+                                self.chars.state = .Double;
+                            } else if (self.chars.state == .Double) {
+                                try self.break_word(false);
+                                // self.delimit_quote = true;
+                                self.chars.state = .Normal;
+                            }
+                            continue;
+                        },
+
+                        // 3. Word breakers
+                        ' ' => {
+                            if (self.chars.state == .Normal) {
+                                try self.break_word_impl(true, true);
+                                continue;
+                            }
+                            break :escaped;
+                        },
+
+                        else => break :escaped,
                     }
+                    continue;
                 }
 
-                var num = std.fmt.parseInt(usize, buf[0..count], 10) catch {
-                    // This means the number was really large, meaning it
-                    // probably was supposed to be a string
-                    return null;
-                };
+                try self.strpool.append(char);
+                self.j += 1;
+            }
 
-                switch (num) {
-                    0 => {
-                        flags.stdin = true;
+            if (self.in_cmd_subst != null) {
+                @panic("Unclosed command substitution");
+            }
+
+            try self.tokens.append(.Eof);
+        }
+
+        fn break_word(self: *@This(), add_delimiter: bool) !void {
+            return try self.break_word_impl(add_delimiter, false);
+        }
+
+        fn break_word_impl(self: *@This(), add_delimiter: bool, in_normal_space: bool) !void {
+            const start: u32 = self.word_start;
+            const end: u32 = self.j;
+            if (start != end) {
+                try self.tokens.append(.{ .Text = .{ .start = start, .end = end } });
+                if (add_delimiter) {
+                    try self.tokens.append(.Delimit);
+                }
+            } else if (in_normal_space and self.tokens.items.len > 0 and
+                switch (self.tokens.items[self.tokens.items.len - 1]) {
+                .Var, .Text, .BraceBegin, .Comma, .BraceEnd => true,
+                else => false,
+            }) {
+                try self.tokens.append(.Delimit);
+                self.delimit_quote = false;
+            }
+            self.word_start = self.j;
+        }
+
+        fn eat_simple_redirect(self: *@This()) AST.Cmd.RedirectFlags {
+            return if (self.eat_simple_redirect_operator())
+                AST.Cmd.RedirectFlags.@">>"()
+            else
+                AST.Cmd.RedirectFlags.@">"();
+        }
+
+        fn eat_simple_redirect_operator(self: *@This()) bool {
+            if (self.peek()) |peeked| {
+                if (peeked.escaped) return false;
+                switch (peeked.char) {
+                    '>' => {
+                        _ = self.eat();
+                        return true;
                     },
-                    1 => {
-                        flags.stdout = true;
-                    },
-                    2 => {
-                        flags.stderr = true;
-                    },
-                    else => {
-                        // FIXME support redirection to any arbitrary fd
-                        log("redirection to fd {d} is invalid\n", .{num});
+                    else => return false,
+                }
+            }
+            return false;
+        }
+
+        fn eat_redirect(self: *@This(), first: InputChar) ?AST.Cmd.RedirectFlags {
+            var flags: AST.Cmd.RedirectFlags = .{};
+            switch (first.char) {
+                '0'...'9' => {
+                    var count: usize = 1;
+                    var buf: [32]u8 = [_]u8{first.char} ** 32;
+
+                    while (self.peek()) |peeked| {
+                        const char = peeked.char;
+                        switch (char) {
+                            '0'...'9' => {
+                                _ = self.eat();
+                                buf[count] = char;
+                                count += 1;
+                                continue;
+                            },
+                            else => break,
+                        }
+                    }
+
+                    var num = std.fmt.parseInt(usize, buf[0..count], 10) catch {
+                        // This means the number was really large, meaning it
+                        // probably was supposed to be a string
                         return null;
-                    },
-                }
-            },
-            '&' => {
-                if (first.escaped) return null;
-                flags.stdout = true;
-                flags.stderr = true;
+                    };
+
+                    switch (num) {
+                        0 => {
+                            flags.stdin = true;
+                        },
+                        1 => {
+                            flags.stdout = true;
+                        },
+                        2 => {
+                            flags.stderr = true;
+                        },
+                        else => {
+                            // FIXME support redirection to any arbitrary fd
+                            log("redirection to fd {d} is invalid\n", .{num});
+                            return null;
+                        },
+                    }
+                },
+                '&' => {
+                    if (first.escaped) return null;
+                    flags.stdout = true;
+                    flags.stderr = true;
+                    _ = self.eat();
+                },
+                else => return null,
+            }
+
+            if (self.peek()) |input| {
+                if (input.escaped or input.char != '>') return null;
                 _ = self.eat();
-            },
-            else => return null,
+            }
+
+            if (self.eat_simple_redirect_operator()) {
+                flags.append = true;
+            }
+            return flags;
         }
 
-        if (self.peek()) |input| {
-            if (input.escaped or input.char != '>') return null;
-            _ = self.eat();
-        }
+        /// Assumes the first character of the literal has been eaten
+        /// Backtracks and returns false if unsuccessful
+        fn eat_literal(self: *@This(), comptime literal: []const u8) bool {
+            const literal_skip_first = literal[1..];
+            const snapshot = self.make_snapshot();
+            const slice = self.eat_slice(literal_skip_first.len) orelse {
+                self.backtrack(snapshot);
+                return false;
+            };
 
-        if (self.eat_simple_redirect_operator()) {
-            flags.append = true;
-        }
-        return flags;
-    }
+            if (std.mem.eql(u8, &slice, literal_skip_first))
+                return true;
 
-    /// Assumes the first character of the literal has been eaten
-    /// Backtracks and returns false if unsuccessful
-    fn eat_literal(self: *Lexer, comptime literal: []const u8) bool {
-        const literal_skip_first = literal[1..];
-        const snapshot = self.make_snapshot();
-        const slice = self.eat_slice(literal_skip_first.len) orelse {
             self.backtrack(snapshot);
             return false;
-        };
-
-        if (std.mem.eql(u8, &slice, literal_skip_first))
-            return true;
-
-        self.backtrack(snapshot);
-        return false;
-    }
-
-    fn eat_number_word(self: *Lexer) ?usize {
-        const snap = self.make_snapshot();
-        var count: usize = 0;
-        var buf: [32]u8 = [_]u8{0} ** 32;
-
-        while (self.eat()) |result| {
-            const char = result.char;
-            switch (char) {
-                '0'...'9' => {
-                    buf[count] = char;
-                    count += 1;
-                    continue;
-                },
-                else => {
-                    break;
-                },
-            }
         }
 
-        if (count == 0) {
-            self.backtrack(snap);
-            return null;
-        }
+        fn eat_number_word(self: *@This()) ?usize {
+            const snap = self.make_snapshot();
+            var count: usize = 0;
+            var buf: [32]u8 = [_]u8{0} ** 32;
 
-        var num = std.fmt.parseInt(usize, buf[0..count], 10) catch {
-            self.backtrack(snap);
-            return null;
-        };
-
-        return num;
-    }
-
-    fn eat_cmd_subst(self: *Lexer, kind: CmdSubstKind) !void {
-        if (kind == .dollar) {
-            _ = self.eat();
-        }
-        try self.tokens.append(.CmdSubstBegin);
-        var sublexer = self.make_sublexer(kind);
-        try sublexer.lex();
-        self.continue_from_sublexer(&sublexer);
-    }
-
-    fn eat_js_obj_ref(self: *Lexer) ?Token {
-        const snap = self.make_snapshot();
-        if (self.eat_literal(Lexer.js_objref_prefix)) {
-            if (self.eat_number_word()) |num| {
-                if (num <= std.math.maxInt(u32)) {
-                    return .{ .JSObjRef = @truncate(num) };
-                }
-            }
-        }
-        self.backtrack(snap);
-        return null;
-    }
-
-    fn eat_var(self: *Lexer) !Token.TextRange {
-        const start = self.j;
-        // Eat until special character
-        while (self.peek()) |result| {
-            const char = result.char;
-            const escaped = result.escaped;
-
-            switch (char) {
-                '{', '}', ';', '\'', '\"', ' ', '|', '&', '>', ',' => {
-                    return .{ .start = start, .end = self.j };
-                },
-                else => {
-                    if (!escaped and
-                        (self.in_cmd_subst == .dollar and char == ')') or (self.in_cmd_subst == .backtick and char == '`'))
-                    {
-                        return .{ .start = start, .end = self.j };
-                    }
-                    _ = self.eat() orelse unreachable;
-                    try self.strpool.append(char);
-                    self.j += 1;
-                },
-            }
-        }
-        return .{ .start = start, .end = self.j };
-    }
-
-    fn eat(self: *Lexer) ?InputChar {
-        if (self.read_char()) |result| {
-            self.i += 1 + @as(u32, @intFromBool(result.escaped));
-            return result;
-        }
-        return null;
-    }
-
-    fn eat_slice(self: *Lexer, comptime N: usize) ?[N]u8 {
-        var slice = [_]u8{0} ** N;
-        var i: usize = 0;
-        while (self.peek()) |result| {
-            slice[i] = result.char;
-            i += 1;
-            _ = self.eat();
-            if (i == N) {
-                return slice;
-            }
-        }
-
-        return null;
-    }
-
-    fn peek(self: *Lexer) ?InputChar {
-        if (self.read_char()) |result| {
-            return result;
-        }
-
-        return null;
-    }
-
-    fn read_char(self: *Lexer) ?InputChar {
-        if (self.i >= self.src.len) return null;
-        var char = self.src[self.i];
-        if (char != '\\' or self.state == .Single) return .{ .char = char };
-
-        // Handle backslash
-        switch (self.state) {
-            .Normal => {
-                if (self.i + 1 >= self.src.len) return null;
-                char = self.src[self.i + 1];
-            },
-            .Double => {
-                if (self.i + 1 >= self.src.len) return null;
-                const next_char = self.src[self.i + 1];
-                switch (next_char) {
-                    // Backslash only applies to these characters
-                    '$', '`', '"', '\\', '\n' => {
-                        char = next_char;
+            while (self.eat()) |result| {
+                const char = result.char;
+                switch (char) {
+                    '0'...'9' => {
+                        buf[count] = char;
+                        count += 1;
+                        continue;
                     },
-                    else => return .{ .char = char, .escaped = false },
+                    else => {
+                        break;
+                    },
                 }
-            },
-            else => unreachable,
+            }
+
+            if (count == 0) {
+                self.backtrack(snap);
+                return null;
+            }
+
+            var num = std.fmt.parseInt(usize, buf[0..count], 10) catch {
+                self.backtrack(snap);
+                return null;
+            };
+
+            return num;
         }
 
-        return .{ .char = char, .escaped = true };
-    }
-
-    fn debug_tokens(self: *const Lexer) void {
-        std.debug.print("Tokens: \n", .{});
-        for (self.tokens.items, 0..) |tok, i| {
-            std.debug.print("{d}: ", .{i});
-            tok.debug(self.strpool.items[0..self.strpool.items.len]);
+        fn eat_cmd_subst(self: *@This(), kind: CmdSubstKind) !void {
+            if (kind == .dollar) {
+                _ = self.eat();
+            }
+            try self.tokens.append(.CmdSubstBegin);
+            var sublexer = self.make_sublexer(kind);
+            try sublexer.lex();
+            self.continue_from_sublexer(&sublexer);
         }
-    }
-};
 
-pub const Test = struct {
-    pub const TestToken = union(TokenTag) {
-        // |
-        Pipe,
-        // ||
-        DoublePipe,
-        // &
-        Ampersand,
-        // &&
-        DoubleAmpersand,
+        fn eat_js_obj_ref(self: *@This()) ?Token {
+            const snap = self.make_snapshot();
+            if (self.eat_literal(@This().js_objref_prefix)) {
+                if (self.eat_number_word()) |num| {
+                    if (num <= std.math.maxInt(u32)) {
+                        return .{ .JSObjRef = @truncate(num) };
+                    }
+                }
+            }
+            self.backtrack(snap);
+            return null;
+        }
 
-        // >
-        Redirect: AST.Cmd.RedirectFlags,
+        fn eat_var(self: *@This()) !Token.TextRange {
+            const start = self.j;
+            // Eat until special character
+            while (self.peek()) |result| {
+                const char = result.char;
+                const escaped = result.escaped;
 
-        // $
-        Dollar,
-        // *
-        Asterisk,
-        DoubleAsterisk,
-        // =
-        Eq,
-        Semicolon,
+                switch (char) {
+                    '{', '}', ';', '\'', '\"', ' ', '|', '&', '>', ',' => {
+                        return .{ .start = start, .end = self.j };
+                    },
+                    else => {
+                        if (!escaped and
+                            (self.in_cmd_subst == .dollar and char == ')') or (self.in_cmd_subst == .backtick and char == '`'))
+                        {
+                            return .{ .start = start, .end = self.j };
+                        }
+                        _ = self.eat() orelse unreachable;
+                        try self.strpool.append(char);
+                        self.j += 1;
+                    },
+                }
+            }
+            return .{ .start = start, .end = self.j };
+        }
 
-        BraceBegin,
-        Comma,
-        BraceEnd,
-        CmdSubstBegin,
-        CmdSubstEnd,
+        fn eat(self: *@This()) ?InputChar {
+            return self.chars.eat();
+        }
 
-        Var: []const u8,
-        Text: []const u8,
-        JSObjRef: u32,
+        fn eat_slice(self: *@This(), comptime N: usize) ?[N]u8 {
+            var slice = [_]u8{0} ** N;
+            var i: usize = 0;
+            while (self.peek()) |result| {
+                slice[i] = result.char;
+                i += 1;
+                _ = self.eat();
+                if (i == N) {
+                    return slice;
+                }
+            }
 
-        Delimit,
-        Eof,
+            return null;
+        }
 
-        pub fn from_real(the_token: Token, buf: []const u8) TestToken {
-            switch (the_token) {
-                .Var => |txt| return .{ .Var = buf[txt.start..txt.end] },
-                .Text => |txt| return .{ .Text = buf[txt.start..txt.end] },
-                .JSObjRef => |val| return .{ .JSObjRef = val },
-                .Pipe => return .Pipe,
-                .DoublePipe => return .DoublePipe,
-                .Ampersand => return .Ampersand,
-                .DoubleAmpersand => return .DoubleAmpersand,
-                .Redirect => |r| return .{ .Redirect = r },
-                .Dollar => return .Dollar,
-                .Asterisk => return .Asterisk,
-                .DoubleAsterisk => return .DoubleAsterisk,
-                .Eq => return .Eq,
-                .Semicolon => return .Semicolon,
-                .BraceBegin => return .BraceBegin,
-                .Comma => return .Comma,
-                .BraceEnd => return .BraceEnd,
-                .CmdSubstBegin => return .CmdSubstBegin,
-                .CmdSubstEnd => return .CmdSubstEnd,
-                .Delimit => return .Delimit,
-                .Eof => return .Eof,
+        fn peek(self: *@This()) ?InputChar {
+            return self.chars.peek();
+        }
+
+        fn read_char(self: *@This()) ?InputChar {
+            return self.chars.read_char();
+        }
+
+        fn debug_tokens(self: *const @This()) void {
+            std.debug.print("Tokens: \n", .{});
+            for (self.tokens.items, 0..) |tok, i| {
+                std.debug.print("{d}: ", .{i});
+                tok.debug(self.strpool.items[0..self.strpool.items.len]);
             }
         }
     };
+}
+
+const StringEncoding = enum { ascii, wtf8, utf16 };
+
+const SrcAscii = struct {
+    bytes: []const u8,
+    i: usize,
+
+    const IndexValue = packed struct {
+        char: u7,
+        escaped: bool = false,
+    };
+
+    fn init(bytes: []const u8) SrcAscii {
+        return .{
+            .bytes = bytes,
+            .i = 0,
+        };
+    }
+
+    inline fn index(this: *const SrcAscii) ?IndexValue {
+        if (this.i >= this.bytes.len) return null;
+        return .{ .char = @intCast(this.bytes[this.i]) };
+    }
+
+    inline fn indexNext(this: *const SrcAscii) ?IndexValue {
+        if (this.i + 1 >= this.bytes.len) return null;
+        return .{ .char = @intCast(this.bytes[this.i + 1]) };
+    }
+
+    inline fn eat(this: *SrcAscii, escaped: bool) void {
+        this.i += 1 + @as(u32, @intFromBool(escaped));
+    }
 };
+
+const SrcUnicode = struct {
+    iter: *const CodepointIterator,
+    cursor: CodepointIterator.Cursor,
+    next_cursor: CodepointIterator.Cursor,
+
+    const IndexValue = packed struct {
+        char: u29,
+        width: u3 = 0,
+    };
+
+    fn init(bytes: []const u8) SrcUnicode {
+        var iter = CodepointIterator.init(bytes);
+        var cursor = CodepointIterator.Cursor{};
+        _ = iter.next(&cursor);
+        var next_cursor: ?CodepointIterator.Cursor = cursor;
+        _ = iter.next(&next_cursor);
+        return .{ .iter = iter, .cursor = cursor, .next_cursor = next_cursor };
+    }
+
+    inline fn index(this: *const SrcUnicode) ?IndexValue {
+        if (this.cursor.width + this.cursor.i >= this.iter.bytes.len) return null;
+        return .{ .char = this.cursor.c, .width = this.cursor.width };
+    }
+
+    inline fn indexNext(this: *const SrcUnicode) ?IndexValue {
+        if (this.next_cursor.width + this.next_cursor.i >= this.iter.bytes.len) return null;
+        return .{ .char = this.next_cursor.c, .width = this.next_cursor.width };
+    }
+
+    inline fn eat(this: *SrcUnicode, escaped: bool) void {
+        // eat two codepoints
+        if (escaped) {
+            _ = this.iter.next(&this.next_cursor);
+            this.iter.cursor = this.next_cursor;
+            _ = this.iter.next(&this.next_cursor);
+        } else {
+            // eat one codepoint
+            this.cursor = this.next_cursor;
+            this.iter.next(&this.next_cursor);
+        }
+    }
+};
+
+pub fn ShellCharIter(comptime encoding: StringEncoding) type {
+    return struct {
+        src: Src,
+        state: State = .Normal,
+
+        const Src = switch (encoding) {
+            .ascii => SrcAscii,
+            .wtf8, .utf16 => SrcUnicode,
+        };
+
+        const CodepointType = if (encoding == .ascii) u7 else u32;
+
+        const InputChar = if (encoding == .ascii) SrcAscii.IndexValue else struct {
+            char: u32,
+            escaped: bool = false,
+        };
+
+        const State = enum {
+            Normal,
+            Single,
+            Double,
+        };
+
+        fn init(bytes: []const u8) @This() {
+            const src = if (comptime encoding == .ascii)
+                SrcAscii.init(bytes)
+            else
+                SrcUnicode.init(bytes);
+
+            return .{
+                .src = src,
+            };
+        }
+
+        fn eat(self: *@This()) ?InputChar {
+            if (self.read_char()) |result| {
+                self.src.eat(result.escaped);
+                return result;
+            }
+            return null;
+        }
+
+        fn peek(self: *@This()) ?InputChar {
+            if (self.read_char()) |result| {
+                return result;
+            }
+
+            return null;
+        }
+
+        fn read_char(self: *@This()) ?InputChar {
+            const indexed_value = self.src.index() orelse return null;
+            var char = indexed_value.char;
+            if (char != '\\' or self.state == .Single) return .{ .char = char };
+
+            // Handle backslash
+            switch (self.state) {
+                .Normal => {
+                    const peeked = self.src.indexNext() orelse return null;
+                    char = peeked.char;
+                },
+                .Double => {
+                    const peeked = self.src.indexNext() orelse return null;
+                    switch (peeked.char) {
+                        // Backslash only applies to these characters
+                        '$', '`', '"', '\\', '\n' => {
+                            char = peeked.char;
+                        },
+                        else => return .{ .char = char, .escaped = false },
+                    }
+                },
+                else => unreachable,
+            }
+
+            return .{ .char = char, .escaped = true };
+        }
+    };
+}
+
+// pub fn ShellCharIter(comptime encoding: StringEncoding) type {
+//     const CodepointType = switch (encoding) {
+//         .ascii => u8,
+//         .wtf8, .utf16 => CodepointIterator.CodePointType,
+//     };
+//     const unicode_zerovalue: u32 = CodepointIterator.zeroValue;
+//     _ = unicode_zerovalue;
+//     return struct {
+//         src: Src,
+//         index: Cursor = .{},
+//         state: State = .Normal,
+
+//         /// Quote state
+//         const State = enum {
+//             Normal,
+//             Single,
+//             Double,
+//         };
+
+//         const Src = switch (encoding) {
+//             .ascii => SrcAscii,
+//             .wtf8, .utf16 => SrcUnicode,
+//         };
+
+//         const SrcAscii = struct {
+//             val: []const u8,
+
+//             fn next(this: *const SrcAscii, cursor: *const CursorAscii) ?InputCharAscii {
+//                 if (cursor.i >= this.val.len) return null;
+//                 const ret = this.val[cursor.i];
+//                 return ret;
+//             }
+
+//             fn peek(this: *const SrcAscii, cursor: *const CursorAscii) ?InputCharAscii {
+//                 if (cursor.i >= this.val.len) return null;
+//                 return .{ .char = this.val[cursor.i] };
+//             }
+//         };
+
+//         const SrcUnicode = struct {
+//             iter: *const CodepointIterator,
+
+//             fn peek(this: *const SrcUnicode, cursor: *const CodepointIterator.Cursor) ?InputCharUnicode {
+//                 const peeked = this.iter.peekCursor(cursor) orelse return null;
+//                 return .{ .char = peeked.c, .width = peeked.width };
+//             }
+//         };
+
+//         const Cursor = switch (encoding) {
+//             .ascii => CursorAscii,
+//             .wtf8, .utf16 => CursorUnicode,
+//         };
+
+//         const InputChar = switch (encoding) {
+//             .ascii => InputCharAscii,
+//             .wtf8, .utf16 => InputCharUnicode,
+//         };
+
+//         const CursorAscii = struct {
+//             value: usize = 0,
+
+//             fn offset(this: CursorAscii) usize {
+//                 return this.value;
+//             }
+
+//             fn width(this: CursorAscii) u3 {
+//                 _ = this;
+//                 return 1;
+//             }
+
+//             fn read(this: *CursorAscii, src: *const SrcAscii) ?CodepointType {
+//                 return src.next(this);
+//             }
+
+//             inline fn fromPeek(this: *const CursorAscii, peeked: InputCharAscii) CursorAscii {
+//                 _ = peeked;
+//                 return .{ .value = this.value + 1 };
+//             }
+//         };
+
+//         const CursorUnicode = packed struct {
+//             cursor: CodepointIterator.Cursor = .{},
+
+//             fn offset(this: *CursorUnicode) u32 {
+//                 return this.cursor.i;
+//             }
+
+//             fn width(this: *CursorUnicode) u3 {
+//                 return this.cursor.width;
+//             }
+
+//             fn read(this: *CursorUnicode, src: *const SrcUnicode) ?CodepointType {
+//                 return src.next(this.cursor);
+//             }
+
+//             fn fromPeek(this: *const CursorUnicode, peeked: InputCharUnicode) CursorUnicode {
+//                 return .{
+//                     .cursor = .{
+//                         .i = this.cursor.i + this.cursor.width,
+//                         .c = peeked.char,
+//                         .width = peeked.width,
+//                     },
+//                 };
+//             }
+//         };
+
+//         const InputCharAscii = packed struct {
+//             char: u7,
+//             escaped: bool = false,
+
+//             fn width(this: *const InputCharAscii) u3 {
+//                 _ = this;
+//                 return 1;
+//             }
+
+//             fn fromEscapedPeek(peeked: SrcAscii.Peek) InputCharAscii {
+//                 return .{ .char = peeked.c, .escaped = true };
+//             }
+//         };
+
+//         const InputCharUnicode = packed struct {
+//             char: u24,
+
+//             width: u3 = 0,
+//             escaped: bool = false,
+//             escaped_width: u3 = 0,
+//             _pad: u1 = 0,
+
+//             fn fromEscapedPeek(peeked: SrcUnicode.Peek) InputCharUnicode {
+//                 return .{
+//                     .char = peeked.c,
+//                     .width = peeked.width(),
+//                     .escaped = true,
+//                 };
+//             }
+
+//             fn isEscaped(this: InputCharUnicode) bool {
+//                 return @as(u4, @bitCast(this.escaped.escaped)) != 0;
+//             }
+
+//             fn toCursor(this: InputCharUnicode) CodepointIterator.Cursor {
+//                 if (this.isEscaped()) {}
+//                 return .{ .c = this.char, .width = this.width };
+//             }
+//         };
+
+//         pub fn init(str: []const u8) ShellCharIter {
+//             return .{
+//                 .src = str,
+//             };
+//         }
+
+//         fn peek(self: *@This()) ?InputChar {
+//             if (self.read_char()) |result| {
+//                 return result;
+//             }
+
+//             return null;
+//         }
+
+//         fn eat(self: *@This()) ?InputChar {
+//             if (self.read_char()) |result| {
+//                 if (comptime encoding == StringEncoding.ascii) {
+//                     self.index.value += 1 + @as(u32, @intFromBool(result.escaped));
+//                     return result;
+//                 }
+//                 self.index = self.index.fromPeek(result);
+//                 return result;
+//             }
+//             return null;
+//         }
+
+//         fn read_char(self: *@This()) ?InputChar {
+//             const peeked = self.src.next(&self.index) orelse return null;
+//             if (peeked.char != '\\' or self.state == .Single) return peeked;
+
+//             var temp_cursor = self.index.fromPeek(peeked);
+//             // Handle backslash
+//             switch (self.state) {
+//                 .Normal => {
+//                     const peeked2 = self.src.peek(&temp_cursor) orelse return null;
+//                     return InputChar.fromEscapedPeek(peeked2);
+//                 },
+//                 .Double => {
+//                     const peeked2 = self.src.peek(&self.index) orelse return null;
+//                     switch (peeked2.char) {
+//                         // Backslash only applies to these characters
+//                         '$', '`', '"', '\\', '\n' => {
+//                             return InputChar.fromEscapedPeek(peeked2);
+//                         },
+//                         else => return .{ .char = char, .escaped = false },
+//                     }
+//                 },
+//                 else => unreachable,
+//             }
+
+//             return .{ .char = char, .escaped = true };
+//         }
+//     };
+// }
+
+pub fn escape(string: []const u8, out: *std.ArrayList(u8)) !void {
+    try out.append("\"");
+
+    try escapeAsciiSlow(string, out);
+
+    try out.append("\"");
+}
+
+fn escapeAsciiSlow(string: []const u8, out: *std.ArrayList(u8)) !void {
+    for (string) |char| {
+        switch (char) {
+            // if slash, slash the slash to escape it
+            '\\' => try out.appendSlice("\\\\"),
+            // escape the double quote
+            '"' => try out.appendSlice("\\\""),
+            '$' => try out.appendSlice("\\$"),
+            '`' => try out.appendSlice("\\`"),
+            else => try out.append(char),
+        }
+    }
+}
 
 // fn isValidGlobPattern(potential_pattern: []const u8) bool {
 
@@ -3302,3 +3577,66 @@ const ExpansionStr = union(enum) {};
 /// So the special tokens:
 /// `?, *, **, [, ], !`
 const VarExpansionStr = struct {};
+
+pub const Test = struct {
+    pub const TestToken = union(TokenTag) {
+        // |
+        Pipe,
+        // ||
+        DoublePipe,
+        // &
+        Ampersand,
+        // &&
+        DoubleAmpersand,
+
+        // >
+        Redirect: AST.Cmd.RedirectFlags,
+
+        // $
+        Dollar,
+        // *
+        Asterisk,
+        DoubleAsterisk,
+        // =
+        Eq,
+        Semicolon,
+
+        BraceBegin,
+        Comma,
+        BraceEnd,
+        CmdSubstBegin,
+        CmdSubstEnd,
+
+        Var: []const u8,
+        Text: []const u8,
+        JSObjRef: u32,
+
+        Delimit,
+        Eof,
+
+        pub fn from_real(the_token: Token, buf: []const u8) TestToken {
+            switch (the_token) {
+                .Var => |txt| return .{ .Var = buf[txt.start..txt.end] },
+                .Text => |txt| return .{ .Text = buf[txt.start..txt.end] },
+                .JSObjRef => |val| return .{ .JSObjRef = val },
+                .Pipe => return .Pipe,
+                .DoublePipe => return .DoublePipe,
+                .Ampersand => return .Ampersand,
+                .DoubleAmpersand => return .DoubleAmpersand,
+                .Redirect => |r| return .{ .Redirect = r },
+                .Dollar => return .Dollar,
+                .Asterisk => return .Asterisk,
+                .DoubleAsterisk => return .DoubleAsterisk,
+                .Eq => return .Eq,
+                .Semicolon => return .Semicolon,
+                .BraceBegin => return .BraceBegin,
+                .Comma => return .Comma,
+                .BraceEnd => return .BraceEnd,
+                .CmdSubstBegin => return .CmdSubstBegin,
+                .CmdSubstEnd => return .CmdSubstEnd,
+                .Delimit => return .Delimit,
+                .Eof => return .Eof,
+            }
+        }
+    };
+};

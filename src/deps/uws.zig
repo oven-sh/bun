@@ -359,18 +359,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         /// # Returns
         /// This function returns a slice of the buffer on success, or null on failure.
         pub fn localAddressBinary(this: ThisSocket, buf: []u8) ?[]const u8 {
-            var length: i32 = @intCast(buf.len);
-            us_socket_local_address(
-                comptime ssl_int,
-                this.socket,
-                buf.ptr,
-                &length,
-            );
-
-            if (length <= 0) {
-                return null;
-            }
-            return buf[0..@intCast(length)];
+            return us_local_address_binary(this.socket, buf, comptime ssl_int);
         }
 
         /// Get the local address of a socket in text format.
@@ -382,31 +371,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         /// # Returns
         /// This function returns a slice of the buffer on success, or null on failure.
         pub fn localAddressText(this: ThisSocket, buf: []u8, is_ipv6: *bool) ?[]const u8 {
-            const addr_v4_len = @sizeOf(std.meta.FieldType(std.os.sockaddr.in, .addr));
-            const addr_v6_len = @sizeOf(std.meta.FieldType(std.os.sockaddr.in6, .addr));
-
-            var sa_buf: [addr_v6_len + 1]u8 = undefined;
-            const binary = this.localAddressBinary(&sa_buf);
-            if (binary == null) {
-                return null;
-            }
-            const addr_len: usize = binary.?.len;
-            sa_buf[addr_len] = 0;
-
-            var ret: ?[*:0]const u8 = null;
-            if (addr_len == addr_v4_len) {
-                ret = bun.c_ares.ares_inet_ntop(std.os.AF.INET, &sa_buf, buf.ptr, @as(u32, @intCast(buf.len)));
-                is_ipv6.* = false;
-            } else if (addr_len == addr_v6_len) {
-                ret = bun.c_ares.ares_inet_ntop(std.os.AF.INET6, &sa_buf, buf.ptr, @as(u32, @intCast(buf.len)));
-                is_ipv6.* = true;
-            }
-
-            if (ret) |_| {
-                const length: usize = @intCast(bun.len(bun.cast([*:0]u8, buf)));
-                return buf[0..length];
-            }
-            return null;
+            return us_local_address_text(this.socket, buf, is_ipv6, comptime ssl_int);
         }
 
         pub fn connect(
@@ -1560,12 +1525,63 @@ pub const Request = opaque {
     extern fn uws_req_get_parameter(res: *Request, index: c_ushort, dest: *[*]const u8) usize;
 };
 
+pub fn us_local_address_binary(this: *Socket, buf: []u8, ssl: i32) ?[]const u8 {
+    var length: i32 = @intCast(buf.len);
+    us_socket_local_address(
+        ssl,
+        @as(*uws.Socket, @ptrCast(this)),
+        buf.ptr,
+        &length,
+    );
+
+    if (length <= 0) {
+        return null;
+    }
+    return buf[0..@intCast(length)];
+}
+
+pub fn us_local_address_text(this: *Socket, buf: []u8, is_ipv6: *bool, ssl: i32) ?[]const u8 {
+    const addr_v4_len = @sizeOf(std.meta.FieldType(std.os.sockaddr.in, .addr));
+    const addr_v6_len = @sizeOf(std.meta.FieldType(std.os.sockaddr.in6, .addr));
+
+    var sa_buf: [addr_v6_len + 1]u8 = undefined;
+    const binary = us_local_address_binary(this, &sa_buf, ssl);
+    if (binary == null) {
+        return null;
+    }
+    const addr_len: usize = binary.?.len;
+    sa_buf[addr_len] = 0;
+
+    var ret: ?[*:0]const u8 = null;
+    if (addr_len == addr_v4_len) {
+        ret = bun.c_ares.ares_inet_ntop(std.os.AF.INET, &sa_buf, buf.ptr, @as(u32, @intCast(buf.len)));
+        is_ipv6.* = false;
+    } else if (addr_len == addr_v6_len) {
+        ret = bun.c_ares.ares_inet_ntop(std.os.AF.INET6, &sa_buf, buf.ptr, @as(u32, @intCast(buf.len)));
+        is_ipv6.* = true;
+    }
+
+    if (ret) |_| {
+        const length: usize = @intCast(bun.len(bun.cast([*:0]u8, buf)));
+        return buf[0..length];
+    }
+    return null;
+}
+
 pub const ListenSocket = opaque {
     pub fn close(this: *ListenSocket, ssl: bool) void {
         us_listen_socket_close(@intFromBool(ssl), this);
     }
     pub fn getLocalPort(this: *ListenSocket, ssl: bool) i32 {
         return us_socket_local_port(@intFromBool(ssl), @as(*uws.Socket, @ptrCast(this)));
+    }
+
+    pub fn localAddressBinary(this: *ListenSocket, buf: []u8, ssl: bool) ?[]const u8 {
+        return us_local_address_binary(@as(*uws.Socket, @ptrCast(this)), buf, @intFromBool(ssl));
+    }
+
+    pub fn localAddressText(this: *ListenSocket, buf: []u8, is_ipv6: *bool, ssl: bool) ?[]const u8 {
+        return us_local_address_text(@as(*uws.Socket, @ptrCast(this)), buf, is_ipv6, @intFromBool(ssl));
     }
 };
 extern fn us_listen_socket_close(ssl: i32, ls: *ListenSocket) void;

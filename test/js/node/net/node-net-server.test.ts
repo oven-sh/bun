@@ -184,6 +184,41 @@ describe("net.createServer listen", () => {
     );
   });
 
+  it("should return local address when listening on localhost", done => {
+    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+
+    const server: Server = createServer();
+
+    let timeout: Timer;
+    const closeAndFail = () => {
+      clearTimeout(timeout);
+      server.close();
+      mustNotCall()();
+    };
+    server.on("error", closeAndFail);
+    timeout = setTimeout(closeAndFail, 100);
+
+    server.listen(
+      0,
+      "localhost",
+      mustCall(() => {
+        const { address, family, port } = server.address() as AddressInfo;
+        expect(port).toBeInteger();
+        expect(port).toBeGreaterThan(0);
+        expect(port).toBeLessThan(65536);
+        expect(["IPv4", "IPv6"]).toContain(family);
+        if (family === "IPv4") {
+          expect(address).toStrictEqual("127.0.0.1");
+        } else {
+          expect(address).toStrictEqual("::1");
+        }
+        server.close();
+        expect(server.address()).toBe(null);
+        done();
+      }),
+    );
+  });
+
   it("should listen without port or host", done => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
 

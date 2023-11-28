@@ -887,6 +887,38 @@ pub const Listener = struct {
         return JSValue.jsNumber(this.connection.host.port);
     }
 
+    extern fn JSSocketAddress__create(global: *JSC.JSGlobalObject, ip: JSValue, port: i32, is_ipv6: bool) JSValue;
+
+    pub fn getAddress(this: *Listener, globalObject: *JSGlobalObject) callconv(.C) JSC.JSValue {
+        switch (this.connection) {
+            .unix => {
+                return this.getUnix(globalObject);
+            },
+            .host => {
+                const port = this.connection.host.port;
+
+                var buf: [64]u8 = [_]u8{0} ** 64;
+                var is_ipv6: bool = false;
+                if (this.listener) |listener| {
+                    if (listener.localAddressText(&buf, &is_ipv6, this.ssl)) |slice| {
+                        var ip = bun.String.createUTF8(slice);
+                        return JSSocketAddress__create(
+                            globalObject,
+                            ip.toJS(globalObject),
+                            port,
+                            is_ipv6,
+                        );
+                    }
+                }
+
+                return JSValue.jsNull();
+            },
+            .fd => {
+                return JSValue.jsNull();
+            },
+        }
+    }
+
     pub fn ref(this: *Listener, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         const this_value = callframe.this();
         if (this.listener == null) return JSValue.jsUndefined();

@@ -13,6 +13,7 @@ const Braces = @import("./braces.zig");
 const Syscall = @import("../sys.zig");
 const Glob = @import("../glob.zig");
 const ResolvePath = @import("../resolver/resolve_path.zig");
+const DirIterator = @import("../bun.js/node/dir_iterator.zig");
 
 pub const ShellError = error{ Process, GlobalThisThrown, Init };
 pub const ParseError = error{
@@ -56,6 +57,7 @@ pub const Interpreter = struct {
     prev_cwd: [:0]const u8,
     __cwd_pathbuf: *[bun.MAX_PATH_BYTES]u8,
     cwd: [:0]const u8,
+    // FIXME TODO deinit
     cwd_fd: bun.FileDescriptor,
 
     /// There are three types of contexts that anvironment variables can be in:
@@ -218,6 +220,18 @@ pub const Interpreter = struct {
             echo,
             pwd,
             which,
+            rm,
+
+            pub fn usageString(this: Kind) []const u8 {
+                return switch (this) {
+                    .@"export" => "",
+                    .cd => "",
+                    .echo => "",
+                    .pwd => "",
+                    .which => "",
+                    .rm => "usage: rm [-f | -i] [-dIPRrvWx] file ...\n       unlink [--] file",
+                };
+            }
 
             pub fn asString(this: Kind) []const u8 {
                 return switch (this) {
@@ -226,6 +240,7 @@ pub const Interpreter = struct {
                     .echo => "echo",
                     .pwd => "pwd",
                     .which => "which",
+                    .rm => "rm",
                 };
             }
 
@@ -808,7 +823,7 @@ pub const Interpreter = struct {
                         }
 
                         if (cmd.redirect.stderr) {
-                            stdout = builtinio;
+                            stderr = builtinio;
                         }
                     } else if (self.jsobjs[file.jsbuf.idx].as(JSC.WebCore.Blob)) |blob| {
                         _ = blob;
@@ -867,7 +882,46 @@ pub const Interpreter = struct {
             .cd => try self.interpret_builtin_cd(bltn),
             .pwd => try self.interpret_builtin_pwd(bltn),
             .which => try self.interpret_builtin_which(bltn),
+            .rm => try self.interpret_builtin_rm(bltn),
         };
+    }
+
+    fn interpret_builtin_rm(self: *Interpreter, bltn: *Builtin) !u8 {
+        const args = bltn.argsSlice();
+        if (args.len == 0) {
+            try bltn.write_err(&bltn.stderr, .rm, "missing operand", .{});
+            return 1;
+        }
+
+        var opts: Rm.Opts = .{};
+        const filepaths_start = (try opts.parse(bltn, args)) orelse args.len;
+        if (filepaths_start >= args.len) {
+            try bltn.write_fmt(&bltn.stderr, "{s}\n", .{Builtin.Kind.rm.usageString()});
+            return 64;
+        }
+
+        const filepath_args = args[filepaths_start..];
+        var paths = brk: {
+            var paths = try std.ArrayList(Rm.Item).initCapacity(self.allocator, filepath_args.len);
+            for (filepath_args) |arg| {
+                try paths.append(.{
+                    .path = arg[0..std.mem.len(arg)],
+                    .should_dealloc = false,
+                });
+            }
+            break :brk paths;
+        };
+
+        var rm = Rm{
+            .allocator = self.allocator,
+            .stack = paths,
+            .opts = opts,
+            .bltn = bltn,
+            .cwd = self.cwd,
+            .cwd_fd = self.cwd_fd,
+        };
+
+        return rm.exec();
     }
 
     fn interpret_builtin_which(self: *Interpreter, bltn: *Builtin) !u8 {
@@ -1063,7 +1117,7 @@ pub const Interpreter = struct {
                         return 1;
                     },
                     @as(usize, @intFromEnum(bun.C.E.NOENT)) => {
-                        try bltn.write_err(&bltn.stderr, kind, "not such file or directory: {s}", .{new_cwd_});
+                        try bltn.write_err(&bltn.stderr, kind, "no such file or directory: {s}", .{new_cwd_});
                         return 1;
                     },
                     else => {},
@@ -1072,6 +1126,7 @@ pub const Interpreter = struct {
                 return @intCast(err.errno);
             },
         };
+        _ = Syscall.close2(self.cwd_fd);
 
         var prev_cwd_buf = brk: {
             if (self.__prevcwd_pathbuf) |prev| break :brk prev;
@@ -2403,7 +2458,7 @@ pub const Lexer = struct {
                 else => return false,
             }
         }
-        @panic("Unexpected EOF");
+        return false;
     }
 
     fn eat_redirect(self: *Lexer, first: InputChar) ?AST.Cmd.RedirectFlags {
@@ -2819,5 +2874,354 @@ const CmdEnvIter = struct {
             .key = .{ .val = entry.key_ptr.* },
             .value = .{ .val = entry.value_ptr.* },
         };
+    }
+};
+
+pub const Rm = struct {
+    const Builtin = Interpreter.Builtin;
+    const IO = Builtin.BuiltinIO;
+
+    allocator: Allocator,
+    stack: std.ArrayList(Item),
+    opts: Opts,
+    bltn: *Builtin,
+    cwd: [:0]const u8,
+    cwd_fd: bun.FileDescriptor,
+    pathbuf: [bun.MAX_PATH_BYTES]u8 = [_]u8{0} ** bun.MAX_PATH_BYTES,
+
+    const Item = struct {
+        action: Action = .queue,
+        path: []const u8,
+        should_dealloc: bool,
+
+        const Action = enum {
+            queue,
+            remove_dir,
+        };
+    };
+
+    pub const Opts = struct {
+        /// `--no-preserve-root` / `--preserve-root`
+        ///
+        /// If set to false, then allow the recursive removal of the root directory.
+        /// Safety feature to prevent accidental deletion of the root directory.
+        preserve_root: bool = true,
+
+        /// `-f`, `--force`
+        ///
+        /// Ignore nonexistent files and arguments, never prompt.
+        force: bool = false,
+
+        /// Configures how the user should be prompted on removal of files.
+        prompt_behaviour: PromptBehaviour = .never,
+
+        /// `-r`, `-R`, `--recursive`
+        ///
+        /// Remove directories and their contents recursively.
+        recursive: bool = false,
+
+        /// `-v`, `--verbose`
+        ///
+        /// Explain what is being done (prints which files/dirs are being deleted).
+        verbose: bool = false,
+
+        /// `-d`, `--dir`
+        ///
+        /// Remove empty directories. This option permits you to remove a directory
+        /// without specifying `-r`/`-R`/`--recursive`, provided that the directory is
+        /// empty.
+        remove_empty_dirs: bool = false,
+
+        const PromptBehaviour = union(enum) {
+            /// `--interactive=never`
+            ///
+            /// Default
+            never,
+
+            /// `-I`, `--interactive=once`
+            ///
+            /// Once before removing more than three files, or when removing recursively.
+            once: struct {
+                removed_count: u32 = 0,
+            },
+
+            /// `-i`, `--interactive=always`
+            ///
+            /// Prompt before every removal.
+            always,
+        };
+
+        pub fn parse(opts: *Opts, bltn: *Builtin, args: []const [*:0]const u8) !?usize {
+            for (args, 0..) |arg_raw, i| {
+                const arg = arg_raw[0..std.mem.len(arg_raw)];
+
+                const ret = try opts.parseFlag(bltn, arg);
+                switch (ret) {
+                    0 => {},
+                    1 => {
+                        return i;
+                    },
+                    else => return null,
+                }
+            }
+            return null;
+        }
+
+        fn parseFlag(this: *Opts, bltn: *Builtin, flag: []const u8) !u8 {
+            if (flag.len == 0) return 1;
+            if (flag[0] != '-') return 1;
+            if (flag.len > 2 and flag[1] == '-') {
+                if (bun.strings.eqlComptime(flag, "--preserve-root")) {
+                    this.preserve_root = true;
+                    return 0;
+                } else if (bun.strings.eqlComptime(flag, "--no-preserve-root")) {
+                    this.preserve_root = false;
+                    return 0;
+                } else if (bun.strings.eqlComptime(flag, "--recursive")) {
+                    this.recursive = true;
+                    return 0;
+                } else if (bun.strings.eqlComptime(flag, "--verbose")) {
+                    this.verbose = true;
+                    return 0;
+                } else if (bun.strings.eqlComptime(flag, "--dir")) {
+                    this.remove_empty_dirs = true;
+                    return 0;
+                } else if (bun.strings.eqlComptime(flag, "--interactive=never")) {
+                    this.prompt_behaviour = .never;
+                    return 0;
+                } else if (bun.strings.eqlComptime(flag, "--interactive=once")) {
+                    this.prompt_behaviour = .{ .once = .{} };
+                    return 0;
+                } else if (bun.strings.eqlComptime(flag, "--interactive=always")) {
+                    this.prompt_behaviour = .always;
+                    return 0;
+                }
+
+                try bltn.write_err(&bltn.stderr, .rm, "illegal option -- -\n", .{});
+                return 1;
+            }
+
+            const small_flags = flag[1..];
+            for (small_flags) |char| {
+                switch (char) {
+                    'f' => {
+                        this.force = true;
+                        this.prompt_behaviour = .never;
+                    },
+                    'r', 'R' => {
+                        this.recursive = true;
+                    },
+                    'v' => {
+                        this.verbose = true;
+                    },
+                    'd' => {
+                        this.remove_empty_dirs = true;
+                    },
+                    'i' => {
+                        this.prompt_behaviour = .{ .once = .{} };
+                    },
+                    'I' => {
+                        this.prompt_behaviour = .always;
+                    },
+                    else => {
+                        try bltn.write_err(&bltn.stderr, .rm, "illegal option -- {s}\n", .{flag[1..]});
+                        return 1;
+                    },
+                }
+            }
+
+            return 0;
+        }
+    };
+
+    pub fn exec(this: *Rm) !u8 {
+        defer {
+            while (this.stack.popOrNull()) |item| {
+                if (item.should_dealloc) {
+                    this.allocator.free(item.path);
+                }
+            }
+            this.stack.deinit();
+        }
+
+        while (this.stack.popOrNull()) |item_| {
+            var item = item_;
+            defer {
+                if (item.should_dealloc) {
+                    this.allocator.free(item.path);
+                }
+            }
+            log("[rm] Process: {s} {s}\n", .{ item.path, @tagName(item.action) });
+
+            if (item.action == .remove_dir) {
+                const absolute_path = this.preparePath(item.path);
+                const code = try this.rmDir(absolute_path, item.path);
+                if (code != 0) return code;
+            }
+
+            const code = try this.rmPath(&item);
+            if (code != 0) return code;
+        }
+
+        return 0;
+    }
+
+    fn rmPath(this: *Rm, item: *Item) !u8 {
+        const path = item.path;
+        if (path.len == 0) {
+            if (this.opts.force) return 0;
+            try this.bltn.write_err(&this.bltn.stderr, .rm, "{s}: No such file or directory", .{path});
+            return 1;
+        }
+
+        if (path.len > bun.MAX_PATH_BYTES) {
+            try this.bltn.write_err(&this.bltn.stderr, .rm, "{s}: File name too long", .{path});
+            return 1;
+        }
+
+        const absolute_path = this.preparePath(path);
+
+        if (this.isRoot(absolute_path) and this.opts.preserve_root) return 0;
+
+        const dir_fd = switch (Syscall.openat(this.cwd_fd, absolute_path, std.os.O.DIRECTORY, 0)) {
+            .result => |fd| fd,
+            .err => |err| {
+                const errno: usize = @intCast(err.errno);
+                switch (errno) {
+                    @as(usize, @intFromEnum(bun.C.E.NOTDIR)) => {
+                        return this.rmFile(absolute_path, path);
+                    },
+                    @as(usize, @intFromEnum(bun.C.E.NOENT)) => {
+                        if (this.opts.force) return 0;
+                        try this.bltn.write_err(&this.bltn.stderr, .rm, "No such file or directory: {s}\n", .{path});
+                        return 1;
+                    },
+                    else => return @intCast(err.errno),
+                }
+            },
+        };
+        defer {
+            _ = Syscall.close2(dir_fd);
+        }
+
+        if (!this.opts.recursive and !this.opts.remove_empty_dirs) {
+            try this.bltn.write_err(&this.bltn.stderr, .rm, "{s}: is a directory\n", .{path});
+            return 0;
+        }
+
+        var dir = std.fs.Dir{ .fd = bun.fdcast(dir_fd) };
+        var iterator = DirIterator.iterate(dir);
+        var entry = iterator.next();
+
+        if (this.opts.remove_empty_dirs) {
+            switch (entry) {
+                .result => |res| {
+                    if (res != null) {
+                        try this.bltn.write_err(&this.bltn.stderr, .rm, "{s}: Directory not empty\n", .{path});
+                        return 1;
+                    }
+                    return try this.rmDir(absolute_path, path);
+                },
+                .err => |err| {
+                    _ = err;
+                    @panic("FIXME TODO");
+                },
+            }
+            return 0;
+        }
+
+        const start = this.stack.items.len;
+        while (switch (entry) {
+            .result => |e| e,
+            .err => |err| {
+                _ = err;
+                @panic("FIXME TODO");
+            },
+        }) |current| : (entry = iterator.next()) {
+            const new_path = ResolvePath.joinZ(&[_][]const u8{ path, current.name.slice() }, .auto);
+            const new_path_duped = try this.allocator.dupeZ(u8, new_path[0..new_path.len]);
+            try this.stack.append(.{ .path = new_path_duped, .should_dealloc = true });
+        }
+
+        item.should_dealloc = false;
+        try this.stack.append(.{ .path = item.path, .should_dealloc = true, .action = .remove_dir });
+        const end = this.stack.items.len;
+
+        // Reverse
+        {
+            var i: usize = start;
+            var j: usize = end - 1;
+
+            while (i < j) {
+                const tmp = this.stack.items[i];
+                this.stack.items[i] = this.stack.items[j];
+                this.stack.items[j] = tmp;
+                i += 1;
+                j -= 1;
+            }
+        }
+        for (this.stack.items[start..end]) |item2| {
+            log("[rm] added to stack: {s} {s}\n", .{ item2.path, @tagName(item2.action) });
+        }
+
+        return 0;
+    }
+
+    /// FIXME TODO error code is not u8 this will cause @intCast truncate bits panic
+    fn rmDir(this: *Rm, absolute_path: [:0]const u8, path: []const u8) !u8 {
+        log("[rm] delete: {s}", .{absolute_path});
+        // FIXME TODO handle this better
+        try this.verboseDelete(path);
+        const result = std.os.system.rmdir(absolute_path);
+        return @intCast(result);
+    }
+
+    fn rmFile(this: *Rm, absolute_path: [:0]const u8, path: []const u8) !u8 {
+        log("[rm] delete: {s}", .{absolute_path});
+        return switch (Syscall.unlink(absolute_path)) {
+            .result => {
+                try this.verboseDelete(path);
+                return 0;
+            },
+            .err => |err| {
+                return @intCast(err.errno);
+            },
+        };
+    }
+
+    fn verboseDelete(this: *Rm, path: []const u8) !void {
+        if (this.opts.verbose) {
+            try this.bltn.write_fmt(&this.bltn.stdout, "{s}\n", .{path});
+        }
+    }
+
+    fn isRoot(this: *Rm, path: []const u8) bool {
+        // FIXME TODO Windows
+        _ = this;
+        if (path.len == 0) return false;
+        if (path.len == 1 and path[0] == '/') return true;
+        return false;
+    }
+
+    fn preparePath(this: *Rm, path: []const u8) [:0]const u8 {
+        if (ResolvePath.Platform.auto.isAbsolute(path)) {
+            @memcpy(this.pathbuf[0..path.len], path);
+            this.pathbuf[path.len] = 0;
+            return this.pathbuf[0..path.len :0];
+        }
+
+        const existing_cwd = this.cwd;
+        const path_str = ResolvePath.joinZBuf(this.pathbuf[0..], &[_][]const u8{
+            existing_cwd,
+            path,
+        }, .auto);
+
+        return path_str;
+    }
+
+    fn promptDelete(this: *Rm, path: []const u8) !bool {
+        _ = path;
+        _ = this;
+        @panic("FIXME TODO");
     }
 };

@@ -4,6 +4,7 @@ import { join, relative } from "path";
 import { redirect } from "./util";
 import { tmpdir } from "os";
 import { describe, test, afterAll, beforeAll, expect } from "bun:test";
+import { tempDirWithFiles } from "harness";
 
 let temp_dir: string;
 const temp_files = ["foo.txt", "lmao.ts"];
@@ -172,6 +173,45 @@ describe("bunshell", () => {
     const bunWhich = Bun.which(BUN);
     expect(str).toEqual(`${bunWhich}\n${bogus} not found\n`);
   });
+
+  describe("rm", () => {
+    let temp_dir: string;
+    const files = {
+      "foo": "bar",
+      "bar": "baz",
+      "dir": {
+        "some": "more",
+        "files": "here",
+      },
+    };
+    beforeAll(() => {
+      temp_dir = tempDirWithFiles("temp-rm", files);
+    });
+
+    // test("error without recursive option", () => {
+    //   const buffer = new Uint8Array(8192);
+    //   const result = $`rm -v ${temp_dir} 2> ${buffer}`;
+    //   const sentinel = sentinelByte(buffer);
+    //   const str = new TextDecoder().decode(buffer.slice(0, sentinel));
+    //   expect(str).toEqual(`rm: ${temp_dir}: is a directory\n`);
+    // });
+
+    test("recursive", () => {
+      const buffer = new Uint8Array(8192);
+      const result = $`rm -vrf ${temp_dir} > ${buffer}`;
+      const sentinel = sentinelByte(buffer);
+      const str = new TextDecoder().decode(buffer.slice(0, sentinel));
+      expect(str).toEqual(
+        `${temp_dir}/foo
+${temp_dir}/dir/files
+${temp_dir}/dir/some
+${temp_dir}/dir
+${temp_dir}/bar
+${temp_dir}
+`,
+      );
+    });
+  });
 });
 
 function stringifyBuffer(buffer: Uint8Array): string {
@@ -186,3 +226,15 @@ function sentinelByte(buf: Uint8Array): number {
   }
   throw new Error("No sentinel byte");
 }
+
+const foo = [
+  { "Text": "rm" },
+  { "Delimit": {} },
+  { "Text": "-v" },
+  { "Delimit": {} },
+  { "Text": "/private/var/folders/wy/3969rv2x63g63jf8jwlcb2x40000gn/T/bun-add.testvdWFVi" },
+  { "Delimit": {} },
+  { "Redirect": { "stdin": false, "stdout": false, "stderr": true, "append": false, "__unused": 0 } },
+  { "JSObjRef": 0 },
+  { "Eof": {} },
+];

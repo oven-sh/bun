@@ -37,7 +37,7 @@ case $(uname -ms) in
     ;;
 esac
 
-url="https://ziglang.org/builds/zig-${platform}-${arch}-${zig_version}.tar.xz"
+url="https://ziglang.org/builds/zig-${target}-${arch}-${zig_version}.tar.xz"
 dest=".cache/zig-${zig_version}.tar.xz"
 extract_at=".cache/zig"
 

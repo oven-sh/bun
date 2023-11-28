@@ -472,9 +472,6 @@ pub fn relative(from: []const u8, to: []const u8) []const u8 {
 }
 
 pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
-    if (from.len == 0) return to; // if to is empty as well, this will return the empty slice as expected in the both empty case
-    if (to.len == 0) return from;
-
     const normalized_from = if (platform.isAbsolute(from)) brk: {
         var path = normalizeStringBuf(from, relative_from_buf[1..], true, platform, true);
         if (platform == .windows) break :brk path;
@@ -586,7 +583,6 @@ pub fn normalizeStringGeneric(
     _: anytype,
     comptime preserve_trailing_slash: bool,
 ) []u8 {
-    std.debug.assert(path_.len > 0);
     const isWindows = comptime separator == std.fs.path.sep_windows;
 
     var buf_i: usize = 0;
@@ -621,7 +617,7 @@ pub fn normalizeStringGeneric(
                 buf_i = 2;
                 dotdot = buf_i;
             }
-        } else if (isSeparator(path_[0])) {
+        } else if (path_.len > 0 and isSeparator(path_[0])) {
             buf[buf_i] = separator;
             buf_i += 1;
             dotdot = 1;

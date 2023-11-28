@@ -3,23 +3,22 @@
   // It will force the garbage collector to run after every test and every call to expect()
   // it makes our tests very slow
   // But it helps catch memory bugs
-
   "version": "0.2.0",
   "configurations": [
     {
-      "type": "cppvsdbg",
+      "type": "lldb",
       "request": "launch",
       "name": "bun test [file]",
-      "program": "${workspaceFolder}/build/bun-debug.exe",
-      "args": ["C:/Users/windo/Code/Test/wtf.mjs", "--outfile", "yellow.js"],
+      "program": "bun-debug",
+      "args": ["test", "${file}"],
       // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
-      "cwd": "C:/Users/windo/Code/Test/"
-      // "env": {
-      //   "FORCE_COLOR": "1",
-      //   "BUN_DEBUG_QUIET_LOGS": "1",
-      //   "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
-      // },
-      // "console": "externalTerminal"
+      "cwd": "${workspaceFolder}/test",
+      "env": {
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
+        "FORCE_COLOR": "1",
+        "BUN_DEBUG_QUIET_LOGS": "1"
+      },
+      "console": "internalConsole"
     },
     {
       "type": "lldb",
@@ -35,7 +34,6 @@
       },
       "console": "internalConsole"
     },
-
     {
       "type": "lldb",
       "request": "launch",

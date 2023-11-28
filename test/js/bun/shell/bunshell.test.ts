@@ -119,6 +119,15 @@ describe("bunshell", () => {
       });
     });
 
+    test("expand shell var", () => {
+      const buffer = new Uint8Array(8192);
+      $`FOO=bar BAR=baz; echo $FOO $BAR > ${buffer}`;
+      const sentinel = sentinelByte(buffer);
+      const str = new TextDecoder().decode(buffer.slice(0, sentinel));
+
+      expect(str).toEqual("bar baz\n");
+    });
+
     test("shell var", () => {
       const buffer = new Uint8Array(8192);
       $`FOO=bar BAR=baz && BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log(JSON.stringify(process.env))" > ${buffer}`;

@@ -1181,12 +1181,15 @@ pub const Interpreter = struct {
         if (atom.has_brace_expansion()) {
             try self.eval_atom_with_brace_expansion(for_spawn, atom, out);
             if (atom.has_glob_expansion()) {
-                const brace_expansion_len = out.items.len;
-                _ = brace_expansion_len;
-                try self.eval_atom_with_glob_expansions(for_spawn, atom, out);
+                @panic("FIXME TODO handle glob expansion or throw error that it is not supported yet");
             }
             return;
         }
+
+        // if (atom.has_glob_expansion()) {
+        //     try self.eval_atom_with_glob_expansions(for_spawn, atom, out);
+        //     return;
+        // }
 
         const brace_str = try self.eval_atom_no_brace_expansion(atom);
         try out.append(brace_str);

@@ -441,7 +441,7 @@ describe("Headers", () => {
             },
             null,
             2,
-          ).replace(/(\s+})$/, ',$1'), // add trailing comma
+          ).replace(/(\s+})$/, ",$1"), // add trailing comma
       );
     });
   });

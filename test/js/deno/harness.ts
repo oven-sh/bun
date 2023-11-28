@@ -78,6 +78,16 @@ export function createDenoTest(path: string) {
     }
   };
 
+  denoTest.todo = (arg0: Fn | Options, arg1?: Fn) => {
+    if (typeof arg0 === "function") {
+      test.todo(arg0.name, arg0);
+    } else if (typeof arg1 === "function") {
+      test.todo(arg1.name, arg1);
+    } else {
+      unimplemented(`test.ignore(${typeof arg0}, ${typeof arg1})`);
+    }
+  };
+
   // Deno's assertions implemented using expect().
   // https://github.com/denoland/deno/blob/main/cli/tests/unit/test_util.ts
 

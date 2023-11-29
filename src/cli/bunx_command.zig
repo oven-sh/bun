@@ -258,6 +258,13 @@ pub const BunxCommand = struct {
 
         var update_request = update_requests[0];
 
+        // Indicates that the package name follows the @user/package format,
+        // so the bin name should have the prefix removed
+        if (update_request.version.tag == .github)
+            bin_name[0] = update_request.version.value.github.repo.slice(update_request.version_buf)
+        else if (strings.lastIndexOfChar(update_request.name, '/')) |index|
+            bin_name[0] = update_request.name[index + 1 ..];
+
         // if you type "tsc" and TypeScript is not installed:
         // 1. Install TypeScript
         // 2. Run tsc

@@ -1745,6 +1745,10 @@ pub const Path = struct {
     pub fn isNodeModule(this: *const Path) bool {
         return strings.lastIndexOf(this.name.dir, std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str) != null;
     }
+
+    pub fn isJSXFile(this: *const Path) bool {
+        return strings.hasSuffixComptime(this.name.filename, ".jsx") or strings.hasSuffixComptime(this.name.filename, ".tsx");
+    }
 };
 
 // pub fn customRealpath(allocator: std.mem.Allocator, path: string) !string {

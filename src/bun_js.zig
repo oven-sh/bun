@@ -103,6 +103,8 @@ pub const Run = struct {
             .unspecified => {},
         }
 
+        b.options.env.behavior = .disable;
+
         b.configureRouter(false) catch {
             if (Output.enable_ansi_colors_stderr) {
                 vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
@@ -191,6 +193,7 @@ pub const Run = struct {
         b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
 
+        b.options.env.behavior = .disable;
         // b.options.minify_syntax = ctx.bundler_options.minify_syntax;
 
         switch (ctx.debug.macros) {

@@ -293,8 +293,6 @@ pub const Runtime = struct {
 
         set_breakpoint_on_first_line: bool = false,
 
-        runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
-
         /// Instead of jsx("div", {}, void 0)
         /// ->
         /// {
@@ -332,6 +330,39 @@ pub const Runtime = struct {
         commonjs_at_runtime: bool = false,
 
         emit_decorator_metadata: bool = false,
+
+        runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
+
+        const hash_fields_for_runtime_transpiler = .{
+            .top_level_await,
+            .auto_import_jsx,
+            .allow_runtime,
+            .inlining,
+            .commonjs_named_exports,
+            .minify_syntax,
+            .minify_identifiers,
+            .dead_code_elimination,
+            .set_breakpoint_on_first_line,
+            .trim_unused_imports,
+            .should_fold_typescript_constant_expressions,
+            .dynamic_require,
+            .dont_bundle_twice,
+            .commonjs_at_runtime,
+            .emit_decorator_metadata,
+
+            // note that we do not include .inject_jest_globals, as we bail out of the cache entirely if this is true
+        };
+
+        pub fn hashForRuntimeTranspiler(this: *const Features, hasher: *std.hash.Wyhash) void {
+            std.debug.assert(this.runtime_transpiler_cache != null);
+
+            var bools: [std.meta.fieldNames(@TypeOf(hash_fields_for_runtime_transpiler)).len]bool = undefined;
+            inline for (hash_fields_for_runtime_transpiler, 0..) |field, i| {
+                bools[i] = @field(this, @tagName(field));
+            }
+
+            hasher.update(std.mem.asBytes(&bools));
+        }
 
         pub fn shouldUnwrapRequire(this: *const Features, package_name: string) bool {
             return package_name.len > 0 and strings.indexEqualAny(this.unwrap_commonjs_packages, package_name) != null;

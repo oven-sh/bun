@@ -10,6 +10,7 @@ const MINIMUM_CACHE_SIZE = 50 * 1024;
 pub const RuntimeTranspilerCache = struct {
     input_hash: ?u64 = null,
     input_byte_length: ?u64 = null,
+    features_hash: ?u64 = null,
     exports_kind: bun.JSAst.ExportsKind = .none,
     output_code: ?bun.String = null,
     entry: ?Entry = null,
@@ -22,6 +23,8 @@ pub const RuntimeTranspilerCache = struct {
         cache_version: u32 = expected_version,
         output_encoding: Encoding = Encoding.none,
         module_type: ModuleType = ModuleType.none,
+
+        features_hash: u64 = 0,
 
         input_byte_length: u64 = 0,
         input_hash: u64 = 0,
@@ -49,6 +52,8 @@ pub const RuntimeTranspilerCache = struct {
             try writer.writeInt(u8, @intFromEnum(this.module_type), .little);
             try writer.writeInt(u8, @intFromEnum(this.output_encoding), .little);
 
+            try writer.writeInt(u64, this.features_hash, .little);
+
             try writer.writeInt(u64, this.input_byte_length, .little);
             try writer.writeInt(u64, this.input_hash, .little);
 
@@ -63,8 +68,14 @@ pub const RuntimeTranspilerCache = struct {
 
         pub fn decode(this: *Metadata, reader: anytype) !void {
             this.cache_version = try reader.readInt(u32, .little);
+            if (this.cache_version != expected_version) {
+                return error.StaleCache;
+            }
+
             this.module_type = @enumFromInt(try reader.readInt(u8, .little));
             this.output_encoding = @enumFromInt(try reader.readInt(u8, .little));
+
+            this.features_hash = try reader.readInt(u64, .little);
 
             this.input_byte_length = try reader.readInt(u64, .little);
             this.input_hash = try reader.readInt(u64, .little);
@@ -76,10 +87,6 @@ pub const RuntimeTranspilerCache = struct {
             this.sourcemap_byte_offset = try reader.readInt(u64, .little);
             this.sourcemap_byte_length = try reader.readInt(u64, .little);
             this.sourcemap_hash = try reader.readInt(u64, .little);
-
-            if (this.cache_version != expected_version) {
-                return error.StaleCache;
-            }
 
             switch (this.module_type) {
                 .esm, .cjs => {},
@@ -117,6 +124,7 @@ pub const RuntimeTranspilerCache = struct {
             destination_path: bun.PathString,
             input_byte_length: u64,
             input_hash: u64,
+            features_hash: u64,
             sourcemap: []const u8,
             output_code: OutputCode,
             exports_kind: bun.JSAst.ExportsKind,
@@ -140,6 +148,7 @@ pub const RuntimeTranspilerCache = struct {
                 var metadata = Metadata{
                     .input_byte_length = input_byte_length,
                     .input_hash = input_hash,
+                    .features_hash = features_hash,
                     .module_type = switch (exports_kind) {
                         .cjs => ModuleType.cjs,
                         else => ModuleType.esm,
@@ -329,6 +338,9 @@ pub const RuntimeTranspilerCache = struct {
         input_hash: u64,
     ) ![:0]const u8 {
         const cache_dir = getCacheDir(buf);
+        if (cache_dir.len == 0) {
+            return "";
+        }
         buf[cache_dir.len] = std.fs.path.sep;
         const cache_filename_len = try writeCacheFilename(buf[cache_dir.len + 1 ..], input_hash);
         buf[cache_dir.len + 1 + cache_filename_len] = 0;
@@ -336,9 +348,25 @@ pub const RuntimeTranspilerCache = struct {
         return buf[0 .. cache_dir.len + 1 + cache_filename_len :0];
     }
 
-    fn getCacheDir(
+    fn reallyGetCacheDir(
         buf: *[bun.MAX_PATH_BYTES]u8,
     ) [:0]const u8 {
+        if (bun.getenvZ("BUN_RUNTIME_TRANSPILER_CACHE_PATH")) |dir| {
+            if (dir.len == 0 or (dir.len == 1 and dir[0] == '0')) {
+                return "";
+            }
+
+            var dest = buf[0..@min(dir.len, bun.MAX_PATH_BYTES - 1)];
+            @memcpy(dest, dir[0..@min(dir.len, bun.MAX_PATH_BYTES - 1)]);
+            dest[dest.len - 1] = 0;
+            return dest[0.. :0];
+        }
+
+        if (bun.getenvZ("XDG_CACHE_HOME")) |dir| {
+            var parts = &[_][]const u8{ dir, "bun", "@t@" };
+            return bun.fs.FileSystem.instance.absBufZ(parts, buf);
+        }
+
         if (comptime bun.Environment.isMac) {
             // On a mac, default to ~/Library/Caches/bun/*
             // This is different than ~/.bun/install/cache, and not configurable by the user.
@@ -354,11 +382,6 @@ pub const RuntimeTranspilerCache = struct {
             }
         }
 
-        if (bun.getenvZ("XDG_CACHE_HOME")) |dir| {
-            var parts = &[_][]const u8{ dir, "bun", "@t@" };
-            return bun.fs.FileSystem.instance.absBufZ(parts, buf);
-        }
-
         if (bun.getenvZ(bun.DotEnv.home_env)) |dir| {
             var parts = &[_][]const u8{ dir, ".bun", "install", "cache", "@t@" };
             return bun.fs.FileSystem.instance.absBufZ(parts, buf);
@@ -370,8 +393,31 @@ pub const RuntimeTranspilerCache = struct {
         }
     }
 
+    // Only do this at most once per-thread.
+    threadlocal var runtime_transpiler_cache_static_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var runtime_transpiler_cache: [:0]u8 = undefined;
+    threadlocal var runtime_transpiler_cache_loaded: bool = false;
+    pub var is_disabled = false;
+
+    fn getCacheDir(
+        buf: *[bun.MAX_PATH_BYTES]u8,
+    ) [:0]const u8 {
+        if (is_disabled) return "";
+
+        if (!runtime_transpiler_cache_loaded) {
+            runtime_transpiler_cache_loaded = true;
+            runtime_transpiler_cache = @constCast(reallyGetCacheDir(&runtime_transpiler_cache_static_buffer));
+        }
+
+        @memcpy(buf[0..runtime_transpiler_cache.len], runtime_transpiler_cache);
+        buf[runtime_transpiler_cache.len] = 0;
+
+        return buf[0..runtime_transpiler_cache.len :0];
+    }
+
     pub fn fromFile(
         input_hash: u64,
+        feature_hash: u64,
         input_stat_size: u64,
         sourcemap_allocator: std.mem.Allocator,
         output_code_allocator: std.mem.Allocator,
@@ -381,12 +427,23 @@ pub const RuntimeTranspilerCache = struct {
 
         var cache_file_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         const cache_file_path = try getCacheFilePath(&cache_file_path_buf, input_hash);
-        return fromFileWithCacheFilePath(bun.PathString.init(cache_file_path), input_hash, input_stat_size, sourcemap_allocator, output_code_allocator);
+        if (cache_file_path.len == 0) {
+            return error.CacheDisabled;
+        }
+        return fromFileWithCacheFilePath(
+            bun.PathString.init(cache_file_path),
+            input_hash,
+            feature_hash,
+            input_stat_size,
+            sourcemap_allocator,
+            output_code_allocator,
+        );
     }
 
     pub fn fromFileWithCacheFilePath(
         cache_file_path: bun.PathString,
         input_hash: u64,
+        feature_hash: u64,
         input_stat_size: u64,
         sourcemap_allocator: std.mem.Allocator,
         output_code_allocator: std.mem.Allocator,
@@ -412,7 +469,12 @@ pub const RuntimeTranspilerCache = struct {
         try entry.metadata.decode(reader);
         if (entry.metadata.input_hash != input_hash or entry.metadata.input_byte_length != input_stat_size) {
             // delete the cache in this case
-            return error.InvalidHash;
+            return error.InvalidInputHash;
+        }
+
+        if (entry.metadata.features_hash != feature_hash) {
+            // delete the cache in this case
+            return error.MismatchedFeatureHash;
         }
 
         try entry.load(file, sourcemap_allocator, output_code_allocator);
@@ -430,6 +492,7 @@ pub const RuntimeTranspilerCache = struct {
     pub fn toFile(
         input_byte_length: u64,
         input_hash: u64,
+        features_hash: u64,
         sourcemap: []const u8,
         source_code: bun.String,
         exports_kind: bun.JSAst.ExportsKind,
@@ -448,13 +511,19 @@ pub const RuntimeTranspilerCache = struct {
             bun.PathString.init(try getCacheFilePath(&cache_file_path_buf, input_hash)),
             input_byte_length,
             input_hash,
+            features_hash,
             sourcemap,
             output_code,
             exports_kind,
         );
     }
 
-    pub fn get(this: *RuntimeTranspilerCache, source: *const bun.logger.Source) bool {
+    pub fn get(
+        this: *RuntimeTranspilerCache,
+        source: *const bun.logger.Source,
+        parser_options: *const bun.js_parser.Parser.Options,
+        used_jsx: bool,
+    ) bool {
         if (comptime !bun.FeatureFlags.runtime_transpiler_cache)
             return false;
 
@@ -470,11 +539,18 @@ pub const RuntimeTranspilerCache = struct {
         this.input_hash = input_hash;
         this.input_byte_length = source.contents.len;
 
-        this.entry = fromFile(input_hash, source.contents.len, this.sourcemap_allocator, this.output_code_allocator) catch |err| {
+        var features_hasher = std.hash.Wyhash.init(seed);
+        parser_options.hashForRuntimeTranspiler(&features_hasher, used_jsx);
+        this.features_hash = features_hasher.final();
+
+        this.entry = fromFile(input_hash, this.features_hash.?, source.contents.len, this.sourcemap_allocator, this.output_code_allocator) catch |err| {
             debug("get(\"{s}\") = {s}", .{ source.path.text, @errorName(err) });
             return false;
         };
-        debug("get(\"{s}\") = {d} bytes", .{ source.path.text, this.entry.?.output_code.byteSlice().len });
+        if (comptime bun.Environment.allow_assert)
+            debug("get(\"{s}\") = {d} bytes", .{ source.path.text, this.entry.?.output_code.byteSlice().len });
+
+        bun.Analytics.Features.transpiler_cache = true;
 
         return this.entry != null;
     }
@@ -487,11 +563,11 @@ pub const RuntimeTranspilerCache = struct {
         const output_code = bun.String.createLatin1(output_code_bytes);
         this.output_code = output_code;
 
-        toFile(this.input_byte_length.?, this.input_hash.?, sourcemap, output_code, this.exports_kind) catch |err| {
+        toFile(this.input_byte_length.?, this.input_hash.?, this.features_hash.?, sourcemap, output_code, this.exports_kind) catch |err| {
             debug("put() = {s}", .{@errorName(err)});
             return;
         };
-
-        debug("put() = {d} bytes", .{output_code.latin1().len});
+        if (comptime bun.Environment.allow_assert)
+            debug("put() = {d} bytes", .{output_code.latin1().len});
     }
 };

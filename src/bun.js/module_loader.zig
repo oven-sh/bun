@@ -426,7 +426,7 @@ pub const RuntimeTranspilerStore = struct {
                     vm.main_hash == hash and
                     strings.eqlLong(vm.main, path.text, false),
                 .set_breakpoint_on_first_line = vm.debugger != null and vm.debugger.?.set_breakpoint_on_first_line and strings.eqlLong(vm.main, path.text, true) and setBreakPointOnFirstLine(),
-                .runtime_transpiler_cache = &cache,
+                .runtime_transpiler_cache = if (!JSC.RuntimeTranspilerCache.is_disabled) &cache else null,
             };
 
             defer {
@@ -1528,7 +1528,7 @@ pub const ModuleLoader = struct {
                     .inject_jest_globals = jsc_vm.bundler.options.rewrite_jest_for_tests and is_main,
                     .set_breakpoint_on_first_line = is_main and jsc_vm.debugger != null and jsc_vm.debugger.?.set_breakpoint_on_first_line and setBreakPointOnFirstLine(),
 
-                    .runtime_transpiler_cache = if (!disable_transpilying) &cache else null,
+                    .runtime_transpiler_cache = if (!disable_transpilying and !JSC.RuntimeTranspilerCache.is_disabled) &cache else null,
                 };
                 defer {
                     if (should_close_input_file_fd and input_file_fd != bun.invalid_fd) {

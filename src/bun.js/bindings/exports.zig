@@ -2992,6 +2992,7 @@ pub const ZigConsoleClient = struct {
 
                         if (iter.always_newline) {
                             this.indent -|= 1;
+                            this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
                             writer.writeAll("\n");
                             this.writeIndent(Writer, writer_) catch {};
                             writer.writeAll("}");

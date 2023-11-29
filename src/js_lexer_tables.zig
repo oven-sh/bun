@@ -250,11 +250,12 @@ pub const PropertyModifierKeyword = enum {
     });
 };
 
-pub const TypeScriptAccessibilityModifier = ComptimeStringMap(u1, .{
-    .{ "private", 1 },
-    .{ "protected", 1 },
-    .{ "public", 1 },
-    .{ "readonly", 1 },
+pub const TypeScriptAccessibilityModifier = ComptimeStringMap(void, .{
+    .{ "override", void },
+    .{ "private", void },
+    .{ "protected", void },
+    .{ "public", void },
+    .{ "readonly", void },
 });
 
 pub const TokenEnumType = std.EnumArray(T, []u8);

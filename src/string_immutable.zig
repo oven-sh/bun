@@ -7,6 +7,7 @@ const CodePoint = bun.CodePoint;
 const bun = @import("root").bun;
 pub const joiner = @import("./string_joiner.zig");
 const log = bun.Output.scoped(.STR, true);
+const js_lexer = @import("./js_lexer.zig");
 
 pub const Encoding = enum {
     ascii,
@@ -216,7 +217,6 @@ pub fn fmtIdentifier(name: string) FormatValidIdentifier {
 /// This will always allocate
 pub const FormatValidIdentifier = struct {
     name: string,
-    const js_lexer = @import("./js_lexer.zig");
     pub fn format(self: FormatValidIdentifier, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         var iterator = strings.CodepointIterator.init(self.name);
         var cursor = strings.CodepointIterator.Cursor{};
@@ -4439,6 +4439,24 @@ pub fn containsNonBmpCodePoint(text: string) bool {
 
     while (iter.next(&curs)) {
         if (curs.c > 0xFFFF) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+pub fn containsNonBmpCodePointOrIsInvalidIdentifier(text: string) bool {
+    var iter = CodepointIterator.init(text);
+    var curs = CodepointIterator.Cursor{};
+
+    if (!iter.next(&curs)) return true;
+
+    if (curs.c > 0xFFFF or !js_lexer.isIdentifierStart(curs.c))
+        return true;
+
+    while (iter.next(&curs)) {
+        if (curs.c > 0xFFFF or !js_lexer.isIdentifierContinue(curs.c)) {
             return true;
         }
     }

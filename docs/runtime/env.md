@@ -137,6 +137,11 @@ These environment variables are read by Bun and configure aspects of its behavio
 
 ---
 
+- `BUN_RUNTIME_TRANSPILER_CACHE_PATH`
+- The runtime transpiler caches the transpiled output of source files larger than 50 kb. This makes CLIs using Bun load faster. If `BUN_RUNTIME_TRANSPILER_CACHE_PATH` is set, then the runtime transpiler will cache transpiled output to the specified directory. If `BUN_RUNTIME_TRANSPILER_CACHE_PATH` is set to an empty string or the string `"0"`, then the runtime transpiler will not cache transpiled output. If `BUN_RUNTIME_TRANSPILER_CACHE_PATH` is unset, then the runtime transpiler will cache transpiled output to the platform-specific cache directory.
+
+---
+
 - `TMPDIR`
 - Bun occasionally requires a directory to store intermediate assets during bundling or other operations. If unset, defaults to the platform-specific temporary directory: `/tmp` on Linux, `/private/tmp` on macOS.
 
@@ -153,6 +158,31 @@ These environment variables are read by Bun and configure aspects of its behavio
 ---
 
 - `DO_NOT_TRACK`
-- If `DO_NOT_TRACK=1`, then analytics are [disabled](https://do-not-track.dev/). Bun records bundle timings (so we can answer with data, "is Bun getting faster?") and feature usage (e.g., "are people actually using macros?"). The request body size is about 60 bytes, so it's not a lot of data. Equivalent of `telemetry=false` in bunfig.
+- Telemetry is not sent yet as of November 28th, 2023, but we are planning to add telemetry in the coming months. If `DO_NOT_TRACK=1`, then analytics are [disabled](https://do-not-track.dev/). Bun records bundle timings (so we can answer with data, "is Bun getting faster?") and feature usage (e.g., "are people actually using macros?"). The request body size is about 60 bytes, so it's not a lot of data. Equivalent of `telemetry=false` in bunfig.
 
 {% /table %}
+
+## Runtime transpiler caching
+
+For files larger than 50 KB, Bun caches transpiled output into `$BUN_RUNTIME_TRANSPILER_CACHE_PATH` or the platform-specific cache directory. This makes CLIs using Bun load faster.
+
+This transpiler cache is global and shared across all projects. It is safe to delete the cache at any time. It is a content-addressable cache, so it will never contain duplicate entries. It is also safe to delete the cache while a Bun process is running.
+
+It is recommended to disable this cache when using ephemeral filesystems like Docker. Bun's Docker images automatically disable this cache.
+
+### Disable the runtime transpiler cache
+
+To disable the runtime transpiler cache, set `BUN_RUNTIME_TRANSPILER_CACHE_PATH` to an empty string or the string `"0"`.
+
+```sh
+BUN_RUNTIME_TRANSPILER_CACHE_PATH=0 bun run dev
+```
+
+### What does it cache?
+
+It caches:
+
+- The transpiled output of source files larger than 50 KB.
+- The sourcemap for the transpiled output of the file
+
+The file extension `.pile` is used for these cached files.

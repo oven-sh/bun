@@ -1108,10 +1108,9 @@ pub const Command = struct {
     };
 
     pub fn isBunX(argv0: []const u8) bool {
-        const suffix = if(Environment.isWindows) ".exe" else "";
-        
-        return strings.endsWithComptime(argv0, "bunx" ++ suffix)
-            or (Environment.isDebug and strings.endsWithComptime(argv0, "bunx-debug" ++ suffix));
+        const suffix = if (Environment.isWindows) ".exe" else "";
+
+        return strings.endsWithComptime(argv0, "bunx" ++ suffix) or (Environment.isDebug and strings.endsWithComptime(argv0, "bunx-debug" ++ suffix));
     }
 
     pub fn which() Tag {

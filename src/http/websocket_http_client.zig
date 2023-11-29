@@ -755,7 +755,7 @@ fn parseWebSocketHeader(
     // + - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - +
     // |                     Payload Data continued ...                |
     // +---------------------------------------------------------------+
-    const header = @as(WebsocketHeader, @bitCast(@byteSwap(@as(u16, @bitCast(bytes)))));
+    const header = WebsocketHeader.fromSlice(bytes);
     const payload = @as(usize, header.len);
     payload_length.* = payload;
     receiving_type.* = header.opcode;
@@ -765,9 +765,12 @@ fn parseWebSocketHeader(
     } or !header.final;
     is_final.* = header.final;
     need_compression.* = header.compressed;
-
     if (header.mask and (header.opcode == .Text or header.opcode == .Binary)) {
         return .need_mask;
+    }
+    // reserved bits must be 0
+    if (header.rsv != 0) {
+        return .fail;
     }
 
     return switch (header.opcode) {
@@ -890,12 +893,14 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         outgoing_websocket: ?*CppWebSocket = null,
 
         receive_state: ReceiveState = ReceiveState.need_header,
-        receive_header: WebsocketHeader = @as(WebsocketHeader, @bitCast(@as(u16, 0))),
         receiving_type: Opcode = Opcode.ResB,
+        // we need to start with final so we validate the first frame
+        receiving_is_final: bool = true,
 
         ping_frame_bytes: [128 + 6]u8 = [_]u8{0} ** (128 + 6),
         ping_len: u8 = 0,
         ping_received: bool = false,
+        close_received: bool = false,
 
         receive_frame: usize = 0,
         receive_body_remain: usize = 0,
@@ -906,6 +911,8 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
         globalThis: *JSC.JSGlobalObject,
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
+
+        header_fragment: ?u8 = null,
 
         initial_data_handler: ?*InitialDataHandler = null,
 
@@ -1049,6 +1056,11 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             };
             switch (kind) {
                 .Text => {
+                    // must be valid UTF-8
+                    if (!strings.isValidUTF8(data_)) {
+                        this.terminate(ErrorCode.invalid_utf8);
+                        return;
+                    }
                     // this function encodes to UTF-16 if > 127
                     // so we don't need to worry about latin1 non-ascii code points
                     const utf16_bytes_ = strings.toUTF16Alloc(bun.default_allocator, data_, true) catch {
@@ -1071,7 +1083,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     JSC.markBinding(@src());
                     out.didReceiveBytes(data_.ptr, data_.len, @as(u8, @intFromEnum(kind)));
                 },
-                else => unreachable,
+                else => {
+                    this.terminate(ErrorCode.unexpected_opcode);
+                },
             }
         }
 
@@ -1081,12 +1095,18 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             // did all the data fit in the buffer?
             // we can avoid copying & allocating a temporary buffer
             if (is_final and data_.len == left_in_fragment and this.receive_pending_chunk_len == 0) {
-                this.dispatchData(data_, kind);
-                return data_.len;
+                if (this.receive_buffer.count == 0) {
+                    this.dispatchData(data_, kind);
+                    return data_.len;
+                } else if (data_.len == 0) {
+                    this.dispatchData(this.receive_buffer.readableSlice(0), kind);
+                    this.clearReceiveBuffers(false);
+                    return 0;
+                }
             }
 
             // this must come after the above check
-            std.debug.assert(data_.len > 0);
+            if (data_.len == 0) return 0;
 
             var writable = this.receive_buffer.writableWithSize(data_.len) catch unreachable;
             @memcpy(writable[0..data_.len], data_);
@@ -1094,8 +1114,11 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
             if (left_in_fragment >= data_.len and left_in_fragment - data_.len - this.receive_pending_chunk_len == 0) {
                 this.receive_pending_chunk_len = 0;
-                this.dispatchData(this.receive_buffer.readableSlice(0), kind);
-                this.clearReceiveBuffers(false);
+                this.receive_body_remain = 0;
+                if (is_final) {
+                    this.dispatchData(this.receive_buffer.readableSlice(0), kind);
+                    this.clearReceiveBuffers(false);
+                }
             } else {
                 this.receive_pending_chunk_len -|= left_in_fragment;
             }
@@ -1103,6 +1126,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         pub fn handleData(this: *WebSocket, socket: Socket, data_: []const u8) void {
+            // after receiving close we should ignore the data
+            if (this.close_received) return;
+
             // This is the start of a task, so we need to drain the microtask queue at the end
             defer JSC.VirtualMachine.get().drainMicrotasks();
 
@@ -1130,21 +1156,16 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             var is_fragmented = false;
             var receiving_type = this.receiving_type;
             var receive_body_remain = this.receive_body_remain;
-            var is_final = false;
+            var is_final = this.receiving_is_final;
             var last_receive_data_type = receiving_type;
 
             defer {
-                if (!terminated) {
+                if (terminated) {
+                    this.close_received = true;
+                } else {
                     this.receive_state = receive_state;
                     this.receiving_type = last_receive_data_type;
                     this.receive_body_remain = receive_body_remain;
-
-                    // if we receive multiple pings in a row
-                    // we just send back the last one
-                    if (this.ping_received) {
-                        _ = this.sendPong(socket);
-                        this.ping_received = false;
-                    }
                 }
             }
 
@@ -1173,12 +1194,23 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     // +---------------------------------------------------------------+
                     .need_header => {
                         if (data.len < 2) {
-                            this.terminate(ErrorCode.control_frame_is_fragmented);
-                            terminated = true;
-                            break;
+                            std.debug.assert(data.len > 0);
+                            if (this.header_fragment == null) {
+                                this.header_fragment = data[0];
+                                break;
+                            }
                         }
 
-                        header_bytes[0..2].* = data[0..2].*;
+                        if (this.header_fragment) |header_fragment| {
+                            header_bytes[0] = header_fragment;
+                            header_bytes[1] = data[0];
+                            data = data[1..];
+                        } else {
+                            header_bytes[0..2].* = data[0..2].*;
+                            data = data[2..];
+                        }
+                        this.header_fragment = null;
+
                         receive_body_remain = 0;
                         var need_compression = false;
                         is_final = false;
@@ -1191,16 +1223,27 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                             &is_final,
                             &need_compression,
                         );
-
-                        last_receive_data_type =
-                            if (receiving_type == .Text or receiving_type == .Binary)
-                            receiving_type
-                        else
-                            last_receive_data_type;
-
-                        data = data[2..];
-
-                        if (receiving_type.isControl() and is_fragmented) {
+                        if (receiving_type == .Continue) {
+                            // if is final is true continue is invalid
+                            if (this.receiving_is_final) {
+                                // nothing to continue here
+                                this.terminate(ErrorCode.unexpected_opcode);
+                                terminated = true;
+                                break;
+                            }
+                            // only update final if is a valid continue
+                            this.receiving_is_final = is_final;
+                        } else if (receiving_type == .Text or receiving_type == .Binary) {
+                            // if the last one is not final this is invalid because we are waiting a continue
+                            if (!this.receiving_is_final) {
+                                this.terminate(ErrorCode.unexpected_opcode);
+                                terminated = true;
+                                break;
+                            }
+                            // for text and binary frames we need to keep track of final and type
+                            this.receiving_is_final = is_final;
+                            last_receive_data_type = receiving_type;
+                        } else if (receiving_type.isControl() and is_fragmented) {
                             // Control frames must not be fragmented.
                             this.terminate(ErrorCode.control_frame_is_fragmented);
                             terminated = true;
@@ -1282,21 +1325,42 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                         }
                     },
                     .ping => {
-                        const ping_len = @min(data.len, @min(receive_body_remain, 125));
-                        this.ping_len = ping_len;
-                        this.ping_received = true;
-
-                        this.dispatchData(data[0..ping_len], .Ping);
-
-                        if (ping_len > 0) {
-                            @memcpy(this.ping_frame_bytes[6..][0..ping_len], data[0..ping_len]);
-                            data = data[ping_len..];
+                        if (!this.ping_received) {
+                            if (receive_body_remain > 125) {
+                                this.terminate(ErrorCode.invalid_control_frame);
+                                terminated = true;
+                                break;
+                            }
+                            this.ping_len = @truncate(receive_body_remain);
+                            receive_body_remain = 0;
+                            this.ping_received = true;
                         }
+                        const ping_len = this.ping_len;
+
+                        if (data.len > 0) {
+                            // copy the data to the ping frame
+                            const total_received = @min(ping_len, receive_body_remain + data.len);
+                            const slice = this.ping_frame_bytes[6..][receive_body_remain..total_received];
+                            @memcpy(slice, data[0..slice.len]);
+                            receive_body_remain = total_received;
+                            data = data[slice.len..];
+                        }
+                        const pending_body = ping_len - receive_body_remain;
+                        if (pending_body > 0) {
+                            // wait for more data it can be fragmented
+                            break;
+                        }
+
+                        const ping_data = this.ping_frame_bytes[6..][0..ping_len];
+                        this.dispatchData(ping_data, .Ping);
 
                         receive_state = .need_header;
                         receive_body_remain = 0;
                         receiving_type = last_receive_data_type;
+                        this.ping_received = false;
 
+                        // we need to send all pongs to pass autobahn tests
+                        _ = this.sendPong(socket);
                         if (data.len == 0) break;
                     },
                     .pong => {
@@ -1312,22 +1376,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                         if (data.len == 0) break;
                     },
                     .need_body => {
-                        // Empty messages are valid, but we handle that earlier in the flow.
-                        if (receive_body_remain == 0 and data.len > 0) {
-                            this.terminate(ErrorCode.expected_control_frame);
-                            terminated = true;
-                            break;
-                        }
-                        if (data.len == 0) return;
-
                         const to_consume = @min(receive_body_remain, data.len);
 
                         const consumed = this.consume(data[0..to_consume], receive_body_remain, last_receive_data_type, is_final);
-                        if (consumed == 0 and last_receive_data_type == .Text) {
-                            this.terminate(ErrorCode.invalid_utf8);
-                            terminated = true;
-                            break;
-                        }
 
                         receive_body_remain -= consumed;
                         data = data[to_consume..];
@@ -1340,12 +1391,37 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     },
 
                     .close => {
-                        // closing frame data is text only.
+                        this.close_received = true;
 
-                        // 2 byte close code
-                        if (data.len > 2 and receive_body_remain >= 2) {
-                            _ = this.consume(data[2..receive_body_remain], receive_body_remain - 2, .Text, true);
+                        // invalid close frame with 1 byte
+                        if (data.len == 1 and receive_body_remain == 1) {
+                            this.terminate(ErrorCode.invalid_control_frame);
+                            terminated = true;
+                            break;
+                        }
+                        // 2 byte close code and optional reason
+                        if (data.len >= 2 and receive_body_remain >= 2) {
+                            var code = std.mem.readInt(u16, data[0..2], .big);
+                            log("Received close with code {d}", .{code});
+                            if (code == 1001) {
+                                // going away actual sends 1000 (normal close)
+                                code = 1000;
+                            } else if ((code < 1000) or (code >= 1004 and code < 1007) or (code >= 1016 and code <= 2999)) {
+                                // invalid codes must clean close with 1002
+                                code = 1002;
+                            }
+                            const reason_len = receive_body_remain - 2;
+                            if (reason_len > 125) {
+                                this.terminate(ErrorCode.invalid_control_frame);
+                                terminated = true;
+                                break;
+                            }
+                            var close_reason_buf: [125]u8 = undefined;
+                            @memcpy(close_reason_buf[0..reason_len], data[2..receive_body_remain]);
+                            this.sendCloseWithBody(socket, code, &close_reason_buf, reason_len);
                             data = data[receive_body_remain..];
+                            terminated = true;
+                            break;
                         }
 
                         this.sendClose();
@@ -1362,7 +1438,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         pub fn sendClose(this: *WebSocket) void {
-            this.sendCloseWithBody(this.tcp, 1001, null, 0);
+            this.sendCloseWithBody(this.tcp, 1000, null, 0);
         }
 
         fn enqueueEncodedBytes(
@@ -1448,15 +1524,16 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
             var to_mask = this.ping_frame_bytes[6..][0..this.ping_len];
 
-            header.mask = to_mask.len > 0;
+            header.mask = true;
             header.len = @as(u7, @truncate(this.ping_len));
-            this.ping_frame_bytes[0..2].* = @as([2]u8, @bitCast(header));
+            this.ping_frame_bytes[0..2].* = header.slice();
 
             if (to_mask.len > 0) {
                 Mask.fill(this.globalThis, this.ping_frame_bytes[2..6], to_mask, to_mask);
                 return this.enqueueEncodedBytes(socket, this.ping_frame_bytes[0 .. 6 + @as(usize, this.ping_len)]);
             } else {
-                return this.enqueueEncodedBytes(socket, this.ping_frame_bytes[0..2]);
+                @memset(this.ping_frame_bytes[2..6], 0); //autobahn tests require that we mask empty pongs
+                return this.enqueueEncodedBytes(socket, this.ping_frame_bytes[0..6]);
             }
         }
 
@@ -1481,15 +1558,21 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             header.opcode = .Close;
             header.mask = true;
             header.len = @as(u7, @truncate(body_len + 2));
-            final_body_bytes[0..2].* = @as([2]u8, @bitCast(@as(u16, @bitCast(header))));
+            final_body_bytes[0..2].* = header.slice();
             var mask_buf: *[4]u8 = final_body_bytes[2..6];
-            final_body_bytes[6..8].* = @bitCast(@byteSwap(code));
+            final_body_bytes[6..8].* = if (native_endian == .big) @bitCast(code) else @bitCast(@byteSwap(code));
 
             var reason = bun.String.empty;
             if (body) |data| {
                 if (body_len > 0) {
-                    reason = bun.String.create(data[0..body_len]);
-                    @memcpy(final_body_bytes[8..][0..body_len], data[0..body_len]);
+                    const body_slice = data[0..body_len];
+                    // close is always utf8
+                    if (!strings.isValidUTF8(body_slice)) {
+                        this.terminate(ErrorCode.invalid_utf8);
+                        return;
+                    }
+                    reason = bun.String.create(body_slice);
+                    @memcpy(final_body_bytes[8..][0..body_len], body_slice);
                 }
             }
 

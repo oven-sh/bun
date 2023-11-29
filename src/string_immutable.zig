@@ -3336,6 +3336,35 @@ pub const AsciiVectorU1Small = @Vector(8, u1);
 pub const AsciiVectorU16U1 = @Vector(ascii_u16_vector_size, u1);
 pub const AsciiU16Vector = @Vector(ascii_u16_vector_size, u16);
 pub const max_4_ascii: @Vector(4, u8) = @splat(@as(u8, 127));
+
+pub fn isValidUTF8(slice: []const u8) bool {
+    if (bun.FeatureFlags.use_simdutf)
+        return bun.simdutf.validate.utf8(slice);
+
+    var i: usize = 0;
+
+    while (i < slice.len) : (i += 1) {
+        const byte = slice[i];
+
+        if (byte & 0x80 == 0) continue; // ASCII character, continue to the next byte
+
+        const highBits = byte << 1;
+        const continuationByte = (slice[i + 1] & 0xC0) == 0x80;
+
+        switch (highBits) {
+            0xC0 | 0x80, 0xE0 | 0xA0, 0xF0 | 0x90, 0xF8 | 0x88, 0xFC | 0x84 => {
+                if (!continuationByte) return false;
+            },
+            else => {
+                return false; // Invalid UTF-8 sequence
+            },
+        }
+
+        i += 1; // Move to the next character in the sequence
+    }
+
+    return true;
+}
 pub fn isAllASCII(slice: []const u8) bool {
     if (bun.FeatureFlags.use_simdutf)
         return bun.simdutf.validate.ascii(slice);

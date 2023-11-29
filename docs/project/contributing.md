@@ -95,7 +95,7 @@ If not, run this to manually link it:
 
 ```bash#macOS (Homebrew)
 # use fish_add_path if you're using fish
-$ export PATH="$PATH:$(brew --prefix llvm@16)/bin"
+$ export PATH="$(brew --prefix llvm@16)/bin:$PATH"
 ```
 
 ```bash#Arch

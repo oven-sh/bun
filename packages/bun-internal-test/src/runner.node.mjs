@@ -49,6 +49,7 @@ async function runTest(path) {
         FORCE_COLOR: "1",
         BUN_GARBAGE_COLLECTOR_LEVEL: "1",
         BUN_JSC_forceRAMSize,
+        BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
       },
     });
   } catch (e) {

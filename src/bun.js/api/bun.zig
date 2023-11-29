@@ -309,20 +309,35 @@ fn appendJSValueStr(
     const bunstr = jsval.toBunString(globalThis);
     bunstr.ref();
     defer bunstr.deref();
-    if (bunstr.isUTF8()) {
-        try outbuf.appendSlice(bunstr.byteSlice());
+    if (bunstr.isUTF16()) {
+        const slice: [*]const u16 = @ptrCast(@alignCast(bunstr.byteSlice().ptr));
+        const len = bunstr.byteSlice().len / 2;
+        const result = bun.simdutf.simdutf__validate_utf16le_with_errors(slice, len);
+        if (result.status != .success) {
+            return false;
+        }
+        const utf8 = bunstr.toUTF8(allocator);
+        defer utf8.deinit();
+        try outbuf.appendSlice(utf8.slice());
         return true;
     }
-    const slice: [*]const u16 = @ptrCast(@alignCast(bunstr.byteSlice().ptr));
-    const len = bunstr.byteSlice().len / 2;
-    const result = bun.simdutf.simdutf__validate_utf16le_with_errors(slice, len);
-    if (result.status != .success) {
-        return false;
+
+    if (bunstr.is8Bit()) {
+        if (bun.strings.isAllASCII(bunstr.byteSlice())) {
+            try outbuf.appendSlice(bunstr.byteSlice());
+            return true;
+        }
+        if (bunstr.isUTF8()) {
+            try outbuf.appendSlice(bunstr.byteSlice());
+            return true;
+        }
+        const utf8 = bunstr.toUTF8(allocator);
+        utf8.deinit();
+        try outbuf.appendSlice(utf8.slice());
+        return true;
     }
-    const utf8 = bunstr.toUTF8(allocator);
-    utf8.deinit();
-    try outbuf.appendSlice(utf8.slice());
-    return true;
+
+    @panic("unreachable i think");
 }
 
 pub fn shellCmdFromJS(
@@ -418,7 +433,7 @@ pub fn shellLex(
             };
             break :brk lexer.get_result();
         }
-        var lexer = Shell.LexerAscii.new(arena.allocator(), script.items[0..]);
+        var lexer = Shell.LexerUnicode.new(arena.allocator(), script.items[0..]);
         lexer.lex() catch |err| {
             globalThis.throwError(err, "failed to lex shell");
             return JSValue.undefined;
@@ -486,7 +501,7 @@ pub fn shellParse(
             };
             break :brk lexer.get_result();
         }
-        var lexer = Shell.LexerAscii.new(arena.allocator(), script.items[0..]);
+        var lexer = Shell.LexerUnicode.new(arena.allocator(), script.items[0..]);
         lexer.lex() catch |err| {
             globalThis.throwError(err, "failed to lex shell");
             return JSValue.undefined;
@@ -563,7 +578,7 @@ pub fn shell(
             };
             break :brk lexer.get_result();
         }
-        var lexer = Shell.LexerAscii.new(arena.allocator(), script.items[0..]);
+        var lexer = Shell.LexerUnicode.new(arena.allocator(), script.items[0..]);
         lexer.lex() catch |err| {
             globalThis.throwError(err, "failed to lex shell");
             return JSValue.undefined;

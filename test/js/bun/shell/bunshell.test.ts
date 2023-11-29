@@ -24,18 +24,74 @@ afterAll(async () => {
 const BUN = process.argv0;
 
 describe("bunshell", () => {
-  describe("invalid surrogates", () => {
-    test("invalid lone surrogate", () => {
+  describe("unicode", () => {
+    test("basic", () => {
+      const buffer = new Uint8Array(1 << 20);
+      const whatsupbro = "元気かい、兄弟";
+      const result = $`echo ${whatsupbro} > ${buffer}`;
+
+      const sentinel = sentinelByte(buffer);
+      expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual(whatsupbro + "\n");
+    });
+
+    test("escape unicode", () => {
+      const buffer = new Uint8Array(1 << 20);
+      const result = $`echo \\弟\\気 > ${buffer}`;
+
+      const sentinel = sentinelByte(buffer);
+      expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual(`\弟\気\n`);
+    });
+
+    // Only A-Z, a-z, 0-9, and _ are allowed in variable names
+    test("varname fails", () => {
+      const error = runWithError(() => {
+        const buffer = new Uint8Array(1 << 20);
+        const whatsupbro = "元気かい、兄弟";
+        const result = $`${whatsupbro}=NICE; echo $${whatsupbro} > ${buffer}`;
+      });
+      expect(error).toBeDefined();
+    });
+
+    test("var value", () => {
+      const error = runWithError(() => {
+        const buffer = new Uint8Array(1 << 20);
+        const whatsupbro = "元気かい、兄弟";
+        const result = $`FOO=${whatsupbro}; echo $FOO > ${buffer}`;
+        const sentinel = sentinelByte(buffer);
+        expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual(whatsupbro + "\n");
+      });
+      expect(error).toBeDefined();
+    });
+
+    test("in compound word", () => {
+      const buffer = new Uint8Array(1 << 20);
+      const whatsupbro = "元気かい、兄弟";
+      const holymoly = "ホーリーモーリー";
+      const result = $`echo "${whatsupbro}&&nice"${holymoly} > ${buffer}`;
+
+      const sentinel = sentinelByte(buffer);
+      expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual(`${whatsupbro}&&nice${holymoly}\n`);
+    });
+
+    test("cmd subst", () => {
+      const buffer = new Uint8Array(1 << 20);
+      const haha = "ハハ";
+      const result = $`echo $(echo ${haha}) > ${buffer}`;
+
+      const sentinel = sentinelByte(buffer);
+      expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual(`${haha}\n`);
+    });
+
+    test("invalid lone surrogate fails", () => {
       const err = runWithError(() => {
         const loneSurrogate = randomLoneSurrogate();
-        console.log("Lone surrogate", loneSurrogate);
         const buffer = new Uint8Array(8192);
         const result = $`echo ${loneSurrogate} > ${buffer}`;
       });
       expect(err?.message).toEqual("bunshell: invalid string");
     });
 
-    test("invalid surrogate pair", () => {
+    test("invalid surrogate pair fails", () => {
       const err = runWithError(() => {
         const loneSurrogate = randomInvalidSurrogatePair();
         const buffer = new Uint8Array(8192);
@@ -86,6 +142,13 @@ describe("bunshell", () => {
 
     const sentinel = sentinelByte(buffer);
     expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual("LMAO\n");
+  });
+
+  test("cmd subst", () => {
+    const buffer = new Uint8Array(1 << 20);
+    const haha = "noice";
+    console.log($`echo $(echo noice) > ${buffer}`);
+    expect(stringifyBuffer(buffer)).toEqual(`noice\n`);
   });
 
   describe("brace expansion", () => {
@@ -262,14 +325,81 @@ function sentinelByte(buf: Uint8Array): number {
   throw new Error("No sentinel byte");
 }
 
-const foo = [
-  { "Text": "rm" },
+const foo = {
+  "stmts": [
+    {
+      "exprs": [
+        {
+          "cmd": {
+            "assigns": [],
+            "name_and_args": [{ "simple": { "Text": "echo" } }],
+            "redirect": { "stdin": false, "stdout": true, "stderr": false, "append": false, "__unused": 0 },
+            "redirect_file": { "jsbuf": { "idx": 0 } },
+          },
+        },
+      ],
+    },
+  ],
+};
+
+const lex = [
+  { "Text": "echo" },
   { "Delimit": {} },
-  { "Text": "-v" },
+  { "CmdSubstBegin": {} },
+  { "Text": "echo" },
   { "Delimit": {} },
-  { "Text": "/private/var/folders/wy/3969rv2x63g63jf8jwlcb2x40000gn/T/bun-add.testvdWFVi" },
+  { "Text": "ハハ" },
   { "Delimit": {} },
-  { "Redirect": { "stdin": false, "stdout": false, "stderr": true, "append": false, "__unused": 0 } },
+  { "CmdSubstEnd": {} },
+  { "Redirect": { "stdin": false, "stdout": true, "stderr": false, "append": false, "__unused": 0 } },
   { "JSObjRef": 0 },
   { "Eof": {} },
 ];
+
+const lex2 = [
+  { "Text": "echo" },
+  { "Delimit": {} },
+  { "CmdSubstBegin": {} },
+  { "Text": "echo" },
+  { "Delimit": {} },
+  { "Text": "noice" },
+  { "Delimit": {} },
+  { "CmdSubstEnd": {} },
+  { "Redirect": { "stdin": false, "stdout": true, "stderr": false, "append": false, "__unused": 0 } },
+  { "JSObjRef": 0 },
+  { "Eof": {} },
+];
+
+const parse2 = {
+  "stmts": [
+    {
+      "exprs": [
+        {
+          "cmd": {
+            "assigns": [],
+            "name_and_args": [{ "simple": { "Text": "echo" } }],
+            "redirect": { "stdin": false, "stdout": true, "stderr": false, "append": false, "__unused": 0 },
+            "redirect_file": { "jsbuf": { "idx": 0 } },
+          },
+        },
+      ],
+    },
+  ],
+};
+
+const lsdkjfs = {
+  "stmts": [
+    {
+      "exprs": [
+        {
+          "cmd": {
+            "assigns": [],
+            "name_and_args": [{ "simple": { "Text": "echo" } }],
+            "redirect": { "stdin": false, "stdout": true, "stderr": false, "append": false, "__unused": 0 },
+            "redirect_file": { "jsbuf": { "idx": 0 } },
+          },
+        },
+      ],
+    },
+  ],
+};

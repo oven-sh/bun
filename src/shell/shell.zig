@@ -1441,7 +1441,19 @@ pub const Interpreter = struct {
 
         // We set stdout to .pipe so it /should/ create a Pipe with buffered output
         const output = subcmd.expectStdoutSlice();
-        try array_list.appendSlice(output);
+        if (output.len == 0) return;
+        var trimmed = output;
+
+        // Posix standard trims newlines from the end of the output of command substitution
+        var i: usize = output.len - 1;
+        while (i >= 0) : (i -= 1) {
+            if (trimmed[i] == '\n') {
+                trimmed = trimmed[0..i];
+            } else break;
+            if (i == 0) break;
+        }
+
+        try array_list.appendSlice(trimmed);
     }
 
     fn eval_var(self: *const Interpreter, label: []const u8) []const u8 {
@@ -1696,10 +1708,14 @@ pub const Parser = struct {
     // FIXME error location
     const Error = struct { msg: []const u8 };
 
-    pub fn new(allocator: Allocator, lexer: *const Lexer, jsobjs: []JSValue) !Parser {
+    pub fn new(
+        allocator: Allocator,
+        lex_result: LexResult,
+        jsobjs: []JSValue,
+    ) !Parser {
         return .{
-            .strpool = lexer.strpool.items[0..lexer.strpool.items.len],
-            .tokens = lexer.tokens.items[0..lexer.tokens.items.len],
+            .strpool = lex_result.strpool,
+            .tokens = lex_result.tokens,
             .alloc = allocator,
             .jsobjs = jsobjs,
             .errors = std.ArrayList(Error).init(allocator),
@@ -2154,7 +2170,13 @@ pub const Token = union(TokenTag) {
     }
 };
 
-pub const Lexer = NewLexer(.ascii);
+pub const LexerAscii = NewLexer(.ascii);
+pub const LexerUnicode = NewLexer(.wtf8);
+pub const LexResult = struct {
+    tokens: []const Token,
+    strpool: []const u8,
+};
+pub const LEX_JS_OBJREF_PREFIX = "$__bun_";
 
 pub fn NewLexer(comptime encoding: StringEncoding) type {
     const Chars = ShellCharIter(encoding);
@@ -2177,7 +2199,13 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
         const CmdSubstKind = enum { backtick, dollar };
 
-        const LexerError = error{ Unexpected, OutOfMemory };
+        const LexerError = error{
+            Unexpected,
+            OutOfMemory,
+            Utf8CannotEncodeSurrogateHalf,
+            Utf8InvalidStartByte,
+            CodepointTooLarge,
+        };
         const Error = struct {
             msg: []const u8,
         };
@@ -2201,6 +2229,13 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 .tokens = ArrayList(Token).init(alloc),
                 .strpool = ArrayList(u8).init(alloc),
                 .errors = ArrayList(Error).init(alloc),
+            };
+        }
+
+        pub fn get_result(self: @This()) LexResult {
+            return .{
+                .tokens = self.tokens.items[0..],
+                .strpool = self.strpool.items[0..],
             };
         }
 
@@ -2467,12 +2502,20 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 try self.strpool.append(char);
                 self.j += 1;
             } else {
-                const char_len = try std.unicode.utf8ByteSequenceLength(@intCast(char >> 24));
+                if (char <= 0x7F) {
+                    try self.strpool.append(@intCast(char));
+                    self.j += 1;
+                    return;
+                }
+                const char_len = try std.unicode.utf8CodepointSequenceLength(@intCast(char));
                 const start = self.strpool.items.len;
                 const end = start + char_len;
                 try self.strpool.appendNTimes(0, char_len);
                 var slice = self.strpool.items[start..end];
-                try std.unicode.utf8Encode(@truncate(char), slice);
+                const n = try std.unicode.utf8Encode(@intCast(char), slice);
+                if (bun.Environment.allow_assert) {
+                    std.debug.assert(n == char_len);
+                }
                 self.j += char_len;
             }
         }
@@ -2491,7 +2534,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 }
             } else if (in_normal_space and self.tokens.items.len > 0 and
                 switch (self.tokens.items[self.tokens.items.len - 1]) {
-                .Var, .Text, .BraceBegin, .Comma, .BraceEnd => true,
+                .Var, .Text, .BraceBegin, .Comma, .BraceEnd, .CmdSubstEnd => true,
                 else => false,
             }) {
                 try self.tokens.append(.Delimit);
@@ -2525,15 +2568,16 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             var flags: AST.Cmd.RedirectFlags = .{};
             switch (first.char) {
                 '0'...'9' => {
+                    // Codepoint int casts are safe here because the digits are in the ASCII range
                     var count: usize = 1;
-                    var buf: [32]u8 = [_]u8{first.char} ** 32;
+                    var buf: [32]u8 = [_]u8{@intCast(first.char)} ** 32;
 
                     while (self.peek()) |peeked| {
                         const char = peeked.char;
                         switch (char) {
                             '0'...'9' => {
                                 _ = self.eat();
-                                buf[count] = char;
+                                buf[count] = @intCast(char);
                                 count += 1;
                                 continue;
                             },
@@ -2586,15 +2630,15 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
         /// Assumes the first character of the literal has been eaten
         /// Backtracks and returns false if unsuccessful
-        fn eat_literal(self: *@This(), comptime literal: []const u8) bool {
+        fn eat_literal(self: *@This(), comptime CodepointType: type, comptime literal: []const CodepointType) bool {
             const literal_skip_first = literal[1..];
             const snapshot = self.make_snapshot();
-            const slice = self.eat_slice(literal_skip_first.len) orelse {
+            const slice = self.eat_slice(CodepointType, literal_skip_first.len) orelse {
                 self.backtrack(snapshot);
                 return false;
             };
 
-            if (std.mem.eql(u8, &slice, literal_skip_first))
+            if (std.mem.eql(CodepointType, &slice, literal_skip_first))
                 return true;
 
             self.backtrack(snapshot);
@@ -2610,7 +2654,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 const char = result.char;
                 switch (char) {
                     '0'...'9' => {
-                        buf[count] = char;
+                        // Safe to cast here because 0-8 is in ASCII range
+                        buf[count] = @intCast(char);
                         count += 1;
                         continue;
                     },
@@ -2645,10 +2690,10 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
         fn eat_js_obj_ref(self: *@This()) ?Token {
             const snap = self.make_snapshot();
-            if (self.eat_literal(@This().js_objref_prefix)) {
+            if (self.eat_literal(u8, LEX_JS_OBJREF_PREFIX)) {
                 if (self.eat_number_word()) |num| {
                     if (num <= std.math.maxInt(u32)) {
-                        return .{ .JSObjRef = @truncate(num) };
+                        return .{ .JSObjRef = @intCast(num) };
                     }
                 }
             }
@@ -2685,11 +2730,23 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             return self.chars.eat();
         }
 
-        fn eat_slice(self: *@This(), comptime N: usize) ?[N]u8 {
-            var slice = [_]u8{0} ** N;
+        fn eat_slice(self: *@This(), comptime CodepointType: type, comptime N: usize) ?[N]CodepointType {
+            var slice = [_]CodepointType{0} ** N;
             var i: usize = 0;
             while (self.peek()) |result| {
-                slice[i] = result.char;
+                // If we passed in codepoint range that is equal to the source
+                // string, or is greater than the codepoint range of source string than an int cast
+                // will not panic
+                if (CodepointType == Chars.CodepointType or std.math.maxInt(CodepointType) >= std.math.maxInt(Chars.CodepointType)) {
+                    slice[i] = @intCast(result.char);
+                } else {
+                    // Otherwise the codepoint range is smaller than the source, so we need to check that the chars are valid
+                    if (result.char > std.math.maxInt(CodepointType)) {
+                        return null;
+                    }
+                    slice[i] = @intCast(result.char);
+                }
+
                 i += 1;
                 _ = self.eat();
                 if (i == N) {
@@ -2752,7 +2809,7 @@ const SrcAscii = struct {
 };
 
 const SrcUnicode = struct {
-    iter: *const CodepointIterator,
+    iter: CodepointIterator,
     cursor: CodepointIterator.Cursor,
     next_cursor: CodepointIterator.Cursor,
 
@@ -2761,35 +2818,44 @@ const SrcUnicode = struct {
         width: u3 = 0,
     };
 
+    fn nextCursor(iter: *const CodepointIterator, cursor: *CodepointIterator.Cursor) void {
+        if (!iter.next(cursor)) {
+            // This will make `i > sourceBytes.len` so the condition in `index` will fail
+            cursor.i = @intCast(iter.bytes.len + 1);
+            cursor.width = 1;
+            cursor.c = CodepointIterator.ZeroValue;
+        }
+    }
+
     fn init(bytes: []const u8) SrcUnicode {
         var iter = CodepointIterator.init(bytes);
         var cursor = CodepointIterator.Cursor{};
-        _ = iter.next(&cursor);
-        var next_cursor: ?CodepointIterator.Cursor = cursor;
-        _ = iter.next(&next_cursor);
+        nextCursor(&iter, &cursor);
+        var next_cursor: CodepointIterator.Cursor = cursor;
+        nextCursor(&iter, &next_cursor);
         return .{ .iter = iter, .cursor = cursor, .next_cursor = next_cursor };
     }
 
     inline fn index(this: *const SrcUnicode) ?IndexValue {
-        if (this.cursor.width + this.cursor.i >= this.iter.bytes.len) return null;
+        if (this.cursor.width + this.cursor.i > this.iter.bytes.len) return null;
         return .{ .char = this.cursor.c, .width = this.cursor.width };
     }
 
     inline fn indexNext(this: *const SrcUnicode) ?IndexValue {
-        if (this.next_cursor.width + this.next_cursor.i >= this.iter.bytes.len) return null;
+        if (this.next_cursor.width + this.next_cursor.i > this.iter.bytes.len) return null;
         return .{ .char = this.next_cursor.c, .width = this.next_cursor.width };
     }
 
     inline fn eat(this: *SrcUnicode, escaped: bool) void {
         // eat two codepoints
         if (escaped) {
-            _ = this.iter.next(&this.next_cursor);
-            this.iter.cursor = this.next_cursor;
-            _ = this.iter.next(&this.next_cursor);
+            nextCursor(&this.iter, &this.next_cursor);
+            this.cursor = this.next_cursor;
+            nextCursor(&this.iter, &this.next_cursor);
         } else {
             // eat one codepoint
             this.cursor = this.next_cursor;
-            this.iter.next(&this.next_cursor);
+            nextCursor(&this.iter, &this.next_cursor);
         }
     }
 };
@@ -2817,23 +2883,23 @@ pub fn ShellCharIter(comptime encoding: StringEncoding) type {
             Double,
         };
 
-        pub fn codepointByteLength(cp: CodepointType) u3 {
+        pub fn codepointByteLength(cp: CodepointType) !u3 {
             if (comptime encoding == .ascii) return 1;
-            return std.unicode.utf8ByteSequenceLength(cp);
+            return try std.unicode.utfCodepointByteLength(@intCast(cp));
         }
 
-        pub fn encodeCodepoint(cp: CodepointType, buf: []u8) void {
+        pub fn encodeCodepoint(cp: CodepointType, buf: []u8) !void {
             if (comptime encoding == .ascii) {
                 buf[0] = cp;
                 return;
             }
-            return std.unicode.utf8Encode(@truncate(cp), buf);
+            return try std.unicode.utf8Encode(@intCast(cp), buf);
         }
 
-        pub fn encodeCodepointStack(cp: CodepointType, buf: *[4]u8) []u8 {
+        pub fn encodeCodepointStack(cp: CodepointType, buf: *[4]u8) ![]u8 {
             const this = comptime @This();
             const len = this.codepointByteLength(cp);
-            this.encodeCodepoint(cp, buf[0..len]);
+            try this.encodeCodepoint(cp, buf[0..len]);
             return buf[0..len];
         }
 

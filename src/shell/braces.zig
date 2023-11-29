@@ -775,7 +775,7 @@ pub fn NewLexer(comptime encoding: Encoding) type {
                         return;
                     }
                     var buf = [4]u8{ 0, 0, 0, 0 };
-                    const slice = Chars.encodeCodepointStack(char, &buf);
+                    const slice = try Chars.encodeCodepointStack(char, &buf);
                     try last.text.appendSlice(self.alloc, slice);
                     return;
                 }
@@ -787,7 +787,7 @@ pub fn NewLexer(comptime encoding: Encoding) type {
                 });
             } else {
                 var buf = [4]u8{ 0, 0, 0, 0 };
-                const slice = Chars.encodeCodepointStack(char, &buf);
+                const slice = try Chars.encodeCodepointStack(char, &buf);
                 try self.tokens.append(.{
                     .text = try SmolStr.fromSlice(self.alloc, slice),
                 });

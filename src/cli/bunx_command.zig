@@ -153,7 +153,7 @@ pub const BunxCommand = struct {
         const cli = try CommandLineArguments.parse(ctx.allocator);
 
         var requests_buf = bun.PackageManager.UpdateRequest.Array.init(0) catch unreachable;
-        var run_in_bun = ctx.debug.run_in_bun;
+        var run_in_bun = ctx.debug.run_in_bun or cli.run_in_bun;
 
         var passthrough_list = try std.ArrayList(string).initCapacity(ctx.allocator, argv.len);
 
@@ -177,14 +177,6 @@ pub const BunxCommand = struct {
                             found_subcommand_name = true;
                             if (positional.len == 1 and positional[0] == 'x')
                                 continue;
-                        }
-                    }
-
-                    if (!run_in_bun and !found_subcommand_name) {
-                        // Hm, should we grab this from the parsed args now?
-                        if (strings.eqlComptime(positional, "--bun")) {
-                            run_in_bun = true;
-                            continue;
                         }
                     }
 
@@ -571,6 +563,7 @@ pub const BunxCommand = struct {
 
     pub const CommandLineArguments = struct {
         package: string = "",
+        run_in_bun: bool = false,
         pub fn parse(allocator: std.mem.Allocator) !CommandLineArguments {
             var cli = CommandLineArguments{};
 
@@ -593,6 +586,10 @@ pub const BunxCommand = struct {
 
             if (args.option("--package")) |package| {
                 cli.package = package;
+            }
+
+            if (args.flag("--bun")) {
+                cli.run_in_bun = true;
             }
 
             return cli;

@@ -91,6 +91,11 @@ RUN apk --no-cache add \
 
 FROM alpine:3.18
 
+# Disable the runtime transpiler cache by default inside Docker containers.
+# On ephemeral containers, the cache is not useful
+ARG BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
+ENV BUN_RUNTIME_TRANSPILER_CACHE_PATH=${BUN_RUNTIME_TRANSPILER_CACHE_PATH}
+
 COPY --from=build /tmp/glibc.apk /tmp/
 COPY --from=build /tmp/glibc-bin.apk /tmp/
 COPY --from=build /usr/local/bin/bun /usr/local/bin/

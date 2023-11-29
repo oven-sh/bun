@@ -57,6 +57,11 @@ RUN apt-get update -qq \
 
 FROM gcr.io/distroless/base-nossl-debian11
 
+# Disable the runtime transpiler cache by default inside Docker containers.
+# On ephemeral containers, the cache is not useful
+ARG BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
+ENV BUN_RUNTIME_TRANSPILER_CACHE_PATH=${BUN_RUNTIME_TRANSPILER_CACHE_PATH}
+
 COPY --from=build /usr/local/bin/bun /usr/local/bin/
 
 # Temporarily use the `build`-stage image binaries to create a symlink:

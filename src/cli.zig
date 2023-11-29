@@ -1338,14 +1338,12 @@ pub const Command = struct {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunxCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .BunxCommand);
 
-                // TODO: This probably isn't right anymore
                 try BunxCommand.exec(ctx, bun.argv()[1..]);
                 return;
             },
             .ReplCommand => {
                 // TODO: Put this in native code.
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunxCommand) unreachable;
-                // Why does .ReplCommand use .BunxCommand?
                 var ctx = try Command.Context.create(allocator, log, .BunxCommand);
                 ctx.debug.run_in_bun = true; // force the same version of bun used. fixes bun-debug for example
                 var args = bun.argv()[1..];

@@ -161,8 +161,6 @@ pub const BunxCommand = struct {
 
         var package_name_for_update_request = [1]string{""};
 
-        // Current behavior:
-        // bunx cowsay "hi"
         if (cli.package.len == 0) {
             {
                 var found_subcommand_name = false;
@@ -190,18 +188,6 @@ pub const BunxCommand = struct {
                 }
             }
         } else {
-            // New behavior
-            // bun x cowsay hello // this is existing shortcut behavior
-            // bun x -- cowsay hello
-            // bun x --package=cowsay -- cowthink hello
-            // bunx -- cowsay hello
-            // bunx --package=cowsay -- cowthink hello
-            // bunx --package=cowsay -- cowthink --version
-
-            // current bug:
-            // when package is specified, the command that gets run is implicit
-            // but really the "what package should I run" logic should look like this:
-            // to_run = first item in passthrough
             package_name_for_update_request[0] = cli.package;
             var parsing_passthroughs = false;
             var captured_bin_name = false;
@@ -272,7 +258,6 @@ pub const BunxCommand = struct {
 
         var update_request = update_requests[0];
 
-        // TODO: test "tsc"
         // if you type "tsc" and TypeScript is not installed:
         // 1. Install TypeScript
         // 2. Run tsc
@@ -524,8 +509,6 @@ pub const BunxCommand = struct {
     }
 
     pub fn printHelp() void {
-
-        // TODO: Finish text
         const intro_text =
             \\<b>bunx<r>
             \\<b>Usage<r>: <b><green>bun install<r> <cyan>[flags]<r> [...\<pkg\>]

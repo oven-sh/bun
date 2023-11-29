@@ -3838,12 +3838,11 @@ pub const Expect = struct {
                 // Even though they point to the same native functions for all matchers,
                 // multiple instances are created because each instance will hold the matcher_fn as a property
 
-                var symmetric_fn_jsvalue = Bun__JSWrappingFunction__create(globalObject, &matcher_name, &Expect.applyCustomSymmetricMatcher, matcher_fn, true);
-                var asymmetric_fn_jsvalue = Bun__JSWrappingFunction__create(globalObject, &matcher_name, &ExpectCustomAsymmetricMatcher.create, matcher_fn, true);
+                var wrapper_fn = Bun__JSWrappingFunction__create(globalObject, &matcher_name, &Expect.applyCustomMatcher, matcher_fn, true);
 
-                expect_proto.put(globalObject, &matcher_name, symmetric_fn_jsvalue);
-                expect_constructor.put(globalObject, &matcher_name, asymmetric_fn_jsvalue);
-                expect_static_proto.put(globalObject, &matcher_name, asymmetric_fn_jsvalue);
+                expect_proto.put(globalObject, &matcher_name, wrapper_fn);
+                expect_constructor.put(globalObject, &matcher_name, wrapper_fn);
+                expect_static_proto.put(globalObject, &matcher_name, wrapper_fn);
             }
         }
 
@@ -3933,24 +3932,29 @@ pub const Expect = struct {
         }
     }
 
-    pub fn applyCustomSymmetricMatcher(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    /// Function that is run for either `expect.myMatcher()` call or `expect().myMatcher` call,
+    /// and we can known which case it is based on if the `callFrame.this()` value is an instance of Expect
+    pub fn applyCustomMatcher(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
         defer globalObject.bunVM().autoGarbageCollect();
 
-        // retrieve the Expect instance (to get the flags)
-        var expect_jsvalue: JSValue = callFrame.this();
-        var expect: *Expect = Expect.fromJS(expect_jsvalue) orelse {
-            globalObject.throw("Called on an invalid this: must be an instance of Expect", .{});
-            return .zero;
-        };
-
-        // retrieve the user-provided matcher function
+        // retrieve the user-provided matcher function (matcher_fn)
         var func: JSValue = callFrame.callee();
-        var matcher_fn = getCustomMatcherFn(func, globalObject) orelse unreachable;
+        var matcher_fn = getCustomMatcherFn(func, globalObject) orelse JSValue.undefined;
         if (!matcher_fn.jsType().isFunction()) {
-            globalObject.throw("Internal consistency error: the ExpectCustomMatcher(matcherName) is not a function!", .{});
+            globalObject.throw("Internal consistency error: failed to retrieve the matcher function for a custom matcher!", .{});
             return .zero;
         }
         matcher_fn.ensureStillAlive();
+
+        // try to retrieve the Expect instance
+        var thisValue: JSValue = callFrame.this();
+        var expect: *Expect = Expect.fromJS(thisValue) orelse {
+            // if no Expect instance, assume it is a static call (`expect.myMatcher()`), so create an ExpectCustomAsymmetricMatcher instance
+            return ExpectCustomAsymmetricMatcher.create(globalObject, callFrame, matcher_fn);
+        };
+
+        // if we got an Expect instance, then it's a non-static call (`expect().myMatcher`),
+        // so now execute the symmetric matching
 
         // retrieve the matcher name
         const matcher_name = matcher_fn.getName(globalObject);
@@ -3961,7 +3965,7 @@ pub const Expect = struct {
         }
 
         // retrieve the captured expected value
-        var value = Expect.capturedValueGetCached(expect_jsvalue) orelse {
+        var value = Expect.capturedValueGetCached(thisValue) orelse {
             globalObject.throw("Internal consistency error: failed to retrieve the captured value", .{});
             return .zero;
         };
@@ -3984,7 +3988,7 @@ pub const Expect = struct {
         // call the matcher, which will throw a js exception when failed
         _ = executeCustomMatcher(globalObject, matcher_name, matcher_fn, matcher_args.items, expect.flags, false);
 
-        return expect_jsvalue;
+        return thisValue;
     }
 
     pub const assertions = notImplementedStaticFn;
@@ -4472,17 +4476,14 @@ pub const ExpectCustomAsymmetricMatcher = struct {
     /// Implements the static call of the custom matcher (`expect.myCustomMatcher(<args>)`),
     /// which creates an asymmetric matcher instance (`ExpectCustomAsymmetricMatcher`).
     /// This will not run the matcher, but just capture the args etc.
-    pub fn create(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
-        defer globalObject.bunVM().autoGarbageCollect();
-
+    pub fn create(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame, matcher_fn: JSValue) callconv(.C) JSValue {
         var flags: Expect.Flags = undefined;
 
         // try to retrieve the ExpectStatic instance (to get the flags)
-        var thisValue: JSValue = callFrame.this();
-        if (ExpectStatic.fromJS(thisValue)) |expect_static| {
+        if (ExpectStatic.fromJS(callFrame.this())) |expect_static| {
             flags = expect_static.flags;
         } else {
-            // if it's not an ExpectStatic instance, it was called from the Expect constructor, so assume default flags
+            // if it's not an ExpectStatic instance, assume it was called from the Expect constructor, so use the default flags
             flags = .{};
         }
 

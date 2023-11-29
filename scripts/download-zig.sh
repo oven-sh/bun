@@ -79,7 +79,7 @@ fi
 
 rm -rf "${extract_at}"
 mkdir -p "${extract_at}"
-tar -xzf "${dest}" -C "${extract_at}" --strip-components=1
+tar -xf "${dest}" -C "${extract_at}" --strip-components=1
 
 echo "${url}" > "${extract_at}/.version"
 

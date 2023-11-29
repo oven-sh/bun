@@ -293,6 +293,8 @@ pub const Runtime = struct {
 
         set_breakpoint_on_first_line: bool = false,
 
+        runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
+
         /// Instead of jsx("div", {}, void 0)
         /// ->
         /// {

@@ -3070,10 +3070,24 @@ pub const Parser = struct {
             try p.lexer.next();
         }
 
+        // Detect a leading "// @bun" pragma
         if (p.lexer.bun_pragma and p.options.features.dont_bundle_twice) {
             return js_ast.Result{
                 .already_bundled = {},
             };
+        }
+
+        // We must check the cache only after we've consumed the hashbang and leading // @bun pragma
+        // We don't want to ever put files with `// @bun` into this cache, as that would be wasteful.
+        if (comptime Environment.isNative and bun.FeatureFlags.runtime_transpiler_cache) {
+            var runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = p.options.features.runtime_transpiler_cache;
+            if (runtime_transpiler_cache) |cache| {
+                if (cache.get(p.source)) {
+                    return js_ast.Result{
+                        .cached = {},
+                    };
+                }
+            }
         }
 
         // Parse the file in the first pass, but do not bind symbols
@@ -3936,6 +3950,13 @@ pub const Parser = struct {
 
         // Pop the module scope to apply the "ContainsDirectEval" rules
         // p.popScope();
+
+        if (comptime Environment.isNative and bun.FeatureFlags.runtime_transpiler_cache) {
+            var runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = p.options.features.runtime_transpiler_cache;
+            if (runtime_transpiler_cache) |cache| {
+                cache.exports_kind = exports_kind;
+            }
+        }
 
         return js_ast.Result{ .ast = try p.toAST(parts_slice, exports_kind, wrapper_expr, hashbang) };
     }

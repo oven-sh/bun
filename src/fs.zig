@@ -494,6 +494,10 @@ pub const FileSystem = struct {
         return path_handler.joinAbsStringBuf(f.top_level_dir, buf, parts, .loose);
     }
 
+    pub fn absBufZ(f: *@This(), parts: anytype, buf: []u8) stringZ {
+        return path_handler.joinAbsStringBufZ(f.top_level_dir, buf, parts, .loose);
+    }
+
     pub fn joinAlloc(f: *@This(), allocator: std.mem.Allocator, parts: anytype) !string {
         const joined = f.join(parts);
         return try allocator.dupe(u8, joined);
@@ -617,14 +621,6 @@ pub const FileSystem = struct {
             tmpdir_path_set = true;
         }
 
-        pub fn fetchCacheFile(fs: *RealFS, basename: string) !std.fs.File {
-            const file = try fs._fetchCacheFile(basename);
-            if (comptime FeatureFlags.store_file_descriptors) {
-                setMaxFd(file.handle);
-            }
-            return file;
-        }
-
         pub const TmpfilePosix = struct {
             fd: bun.FileDescriptor = bun.invalid_fd,
             dir_fd: bun.FileDescriptor = bun.invalid_fd,
@@ -728,18 +724,6 @@ pub const FileSystem = struct {
                 this.close();
             }
         };
-
-        inline fn _fetchCacheFile(fs: *RealFS, basename: string) !std.fs.File {
-            var parts = [_]string{ "node_modules", ".cache", basename };
-            var path = fs.parent_fs.join(&parts);
-            return std.fs.cwd().openFile(path, .{ .mode = .read_write, .lock = .Shared }) catch {
-                path = fs.parent_fs.join(parts[0..2]);
-                try std.fs.cwd().makePath(path);
-
-                path = fs.parent_fs.join(&parts);
-                return try std.fs.cwd().createFile(path, .{ .mode = .read_write, .lock = .Shared });
-            };
-        }
 
         pub fn needToCloseFiles(rfs: *const RealFS) bool {
             // On Windows, we must always close open file handles

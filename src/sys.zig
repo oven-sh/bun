@@ -1085,6 +1085,17 @@ pub fn unlink(from: [:0]const u8) Maybe(void) {
     unreachable;
 }
 
+pub fn unlinkat(dirfd: bun.FileDescriptor, to: [:0]const u8) Maybe(void) {
+    while (true) {
+        if (Maybe(void).errnoSys(sys.unlinkat(dirfd, to), .unlink)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+        return Maybe(void).success;
+    }
+    unreachable;
+}
+
 pub fn getFdPath(fd_: bun.FileDescriptor, out_buffer: *[MAX_PATH_BYTES]u8) Maybe([]u8) {
     const fd = bun.fdcast(fd_);
     switch (comptime builtin.os.tag) {

@@ -31,6 +31,8 @@ pub const meta = @import("./meta.zig");
 pub const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
 pub const base64 = @import("./base64/base64.zig");
 pub const path = @import("./resolver/resolve_path.zig");
+pub const resolver = @import("./resolver//resolver.zig");
+pub const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 pub const fmt = struct {
     pub usingnamespace std.fmt;
 

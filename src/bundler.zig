@@ -76,6 +76,8 @@ pub const ParseResult = struct {
     empty: bool = false,
     pending_imports: _resolver.PendingResolution.List = .{},
 
+    runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
+
     pub fn isPendingImport(this: *const ParseResult, id: u32) bool {
         const import_record_ids = this.pending_imports.items(.import_record_id);
 
@@ -813,6 +815,7 @@ pub const Bundler = struct {
                                 .esm_ascii,
                                 is_source_map,
                                 source_map_handler,
+                                null,
                             ),
                             .cjs => try bundler.printWithSourceMapMaybe(
                                 result.ast,
@@ -822,6 +825,7 @@ pub const Bundler = struct {
                                 .cjs,
                                 is_source_map,
                                 source_map_handler,
+                                null,
                             ),
                             else => unreachable,
                         },
@@ -843,6 +847,7 @@ pub const Bundler = struct {
                             .esm,
                             is_source_map,
                             source_map_handler,
+                            null,
                         ),
                         .cjs => try bundler.printWithSourceMapMaybe(
                             result.ast,
@@ -852,6 +857,7 @@ pub const Bundler = struct {
                             .cjs,
                             is_source_map,
                             source_map_handler,
+                            null,
                         ),
                         else => unreachable,
                     },
@@ -1059,6 +1065,7 @@ pub const Bundler = struct {
         comptime format: js_printer.Format,
         comptime enable_source_map: bool,
         source_map_context: ?js_printer.SourceMapHandler,
+        runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache,
     ) !usize {
         const tracer = bun.tracy.traceNamed(@src(), if (enable_source_map) "JSPrinter.printWithSourceMap" else "JSPrinter.print");
         defer tracer.end();
@@ -1084,6 +1091,7 @@ pub const Bundler = struct {
                     .minify_syntax = bundler.options.minify_syntax,
                     .minify_identifiers = bundler.options.minify_identifiers,
                     .transform_only = bundler.options.transform_only,
+                    .runtime_transpiler_cache = runtime_transpiler_cache,
                 },
                 enable_source_map,
             ),
@@ -1107,6 +1115,7 @@ pub const Bundler = struct {
                     .minify_identifiers = bundler.options.minify_identifiers,
                     .transform_only = bundler.options.transform_only,
                     .import_meta_ref = ast.import_meta_ref,
+                    .runtime_transpiler_cache = runtime_transpiler_cache,
                 },
                 enable_source_map,
             ),
@@ -1131,6 +1140,7 @@ pub const Bundler = struct {
                         .module_type = if (ast.exports_kind == .cjs) .cjs else .esm,
                         .inline_require_and_import_errors = false,
                         .import_meta_ref = ast.import_meta_ref,
+                        .runtime_transpiler_cache = runtime_transpiler_cache,
                     },
                     enable_source_map,
                 ),
@@ -1154,6 +1164,7 @@ pub const Bundler = struct {
             format,
             false,
             null,
+            null,
         );
     }
 
@@ -1173,6 +1184,7 @@ pub const Bundler = struct {
             format,
             true,
             handler,
+            result.runtime_transpiler_cache,
         );
     }
 
@@ -1198,6 +1210,8 @@ pub const Bundler = struct {
 
         dont_bundle_twice: bool = false,
         allow_commonjs: bool = false,
+
+        runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
     };
 
     pub fn parse(
@@ -1316,6 +1330,7 @@ pub const Bundler = struct {
                 opts.features.should_fold_typescript_constant_expressions = loader.isTypeScript() or target.isBun() or bundler.options.minify_syntax;
                 opts.features.dynamic_require = target.isBun();
                 opts.features.no_macros = bundler.options.no_macros;
+                opts.features.runtime_transpiler_cache = this_parse.runtime_transpiler_cache;
                 opts.transform_only = bundler.options.transform_only;
 
                 // @bun annotation
@@ -1371,6 +1386,14 @@ pub const Bundler = struct {
                 ) catch null) orelse return null) {
                     .ast => |value| ParseResult{
                         .ast = value,
+                        .source = source,
+                        .loader = loader,
+                        .input_fd = input_fd,
+                        .runtime_transpiler_cache = this_parse.runtime_transpiler_cache,
+                    },
+                    .cached => ParseResult{
+                        .ast = undefined,
+                        .runtime_transpiler_cache = this_parse.runtime_transpiler_cache,
                         .source = source,
                         .loader = loader,
                         .input_fd = input_fd,
@@ -1743,7 +1766,7 @@ pub const Bundler = struct {
         var entry_points = try allocator.alloc(_resolver.Result, bundler.options.entry_points.len);
         entry_points = entry_points[0..bundler.enqueueEntryPoints(entry_points, true)];
 
-        if (log.level == .verbose) {
+        if (log.level.atLeast(.debug)) {
             bundler.resolver.debug_logs = try DebugLogs.init(allocator);
         }
         bundler.options.transform_only = true;

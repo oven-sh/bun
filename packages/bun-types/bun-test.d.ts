@@ -515,6 +515,8 @@ declare module "bun:test" {
    * @param actual the actual value
    */
   export const expect: {
+    <T = undefined>(): Expect<T>;
+    <T = unknown>(actual: T): Expect<T>;
     <T = unknown>(actual?: T): Expect<T>;
     any: (
       constructor: ((..._: any[]) => any) | { new (..._: any[]): any },

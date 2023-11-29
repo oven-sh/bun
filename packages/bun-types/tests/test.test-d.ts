@@ -62,6 +62,7 @@ describe("bun:test", () => {
     expect(null).toBeNull();
     expect(undefined).toBeUndefined();
     expect(undefined).not.toBeDefined();
+    expect(((): string | undefined => undefined)()).toBe(undefined);
   });
 });
 

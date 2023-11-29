@@ -3869,7 +3869,7 @@ pub const Parser = struct {
             for (p.import_records.items) |*item| {
                 // skip if they did import it
                 if (strings.eqlComptime(item.path.text, "bun:test") or strings.eqlComptime(item.path.text, "@jest/globals") or strings.eqlComptime(item.path.text, "vitest")) {
-                    if (p.options.runtime_transpiler_cache) |cache| {
+                    if (p.options.features.runtime_transpiler_cache) |cache| {
                         // If we rewrote import paths, we need to disable the runtime transpiler cache
                         if (!strings.eqlComptime(item.path.text, "bun:test")) {
                             cache.input_hash = null;

@@ -537,11 +537,6 @@ describe.if(which("docker"))("autobahn", async () => {
       "url": "ws://127.0.0.1:9001",
       "outdir": "./",
       "cases": ["*"],
-      "exclude-cases": [
-          "9.*",
-          "12.*",
-          "13.*"
-      ],
       "exclude-agent-cases": {}
     }`,
     "index.json": "{}",
@@ -660,7 +655,9 @@ describe.if(which("docker"))("autobahn", async () => {
   });
   for (let i = 1; i <= count; i++) {
     const info = await getCaseInfo(i);
-    it(`Running test case ${info.id}: ${info.description}`, async () => {
+    const test = parseInt(info.id.split(".")[0]) > 10 ? it.todo : it;
+    // tests > 10 are compression tests, which are not supported yet
+    test(`Running test case ${info.id}: ${info.description}`, async () => {
       await runTestCase(i);
       const result = await getCaseStatus(i);
       expect(["OK", "INFORMATIONAL", "NON-STRICT"]).toContain(result.behavior);

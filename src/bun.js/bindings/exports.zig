@@ -1836,17 +1836,8 @@ pub const ZigConsoleClient = struct {
                             .failed = false,
                         };
 
-                        var name_str = value.getName(globalThis);
-                        defer name_str.deref();
-                        if (!name_str.isEmpty() and !name_str.eqlComptime("Object")) {
+                        if (getObjectName(globalThis, value)) |name_str| {
                             writer.print("{} ", .{name_str});
-                        } else {
-                            name_str.deref();
-                            name_str = value.getPrototype(globalThis).getName(globalThis);
-
-                            if (!name_str.isEmpty() and !name_str.eqlComptime("Object")) {
-                                writer.print("{} ", .{name_str});
-                            }
                         }
                     }
 
@@ -1971,6 +1962,15 @@ pub const ZigConsoleClient = struct {
                     }
                 }
             };
+        }
+
+        fn getObjectName(globalThis: *JSC.JSGlobalObject, value: JSValue) ?ZigString {
+            var name_str = ZigString.init("");
+            value.getClassName(globalThis, &name_str);
+            if (!name_str.eqlComptime("Object")) {
+                return name_str;
+            }
+            return null;
         }
 
         extern fn JSC__JSValue__callCustomInspectFunction(
@@ -2971,13 +2971,18 @@ pub const ZigConsoleClient = struct {
                             this.printAs(.Class, Writer, writer_, value, jsType, enable_ansi_colors)
                         else if (value.isCallable(this.globalThis.vm()))
                             this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors)
-                        else
+                        else {
+                            if (getObjectName(this.globalThis, value)) |name_str| {
+                                writer.print("{} ", .{name_str});
+                            }
                             writer.writeAll("{}");
+                        }
                     } else {
                         this.depth -= 1;
 
                         if (iter.always_newline) {
                             this.indent -|= 1;
+                            this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
                             writer.writeAll("\n");
                             this.writeIndent(Writer, writer_) catch {};
                             writer.writeAll("}");

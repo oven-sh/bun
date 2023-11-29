@@ -56,6 +56,7 @@ pub const BunObject = struct {
     pub const SHA512 = Crypto.SHA512.getter;
     pub const SHA512_256 = Crypto.SHA512_256.getter;
     pub const TOML = Bun.getTOMLObject;
+    pub const Glob = Bun.getGlobConstructor;
     pub const Transpiler = Bun.getTranspilerConstructor;
     pub const argv = Bun.getArgv;
     pub const assetPrefix = Bun.getAssetPrefix;
@@ -102,6 +103,7 @@ pub const BunObject = struct {
         @export(BunObject.SHA512, .{ .name = getterName("SHA512") });
         @export(BunObject.SHA512_256, .{ .name = getterName("SHA512_256") });
         @export(BunObject.TOML, .{ .name = getterName("TOML") });
+        @export(BunObject.Glob, .{ .name = getterName("Glob") });
         @export(BunObject.Transpiler, .{ .name = getterName("Transpiler") });
         @export(BunObject.argv, .{ .name = getterName("argv") });
         @export(BunObject.assetPrefix, .{ .name = getterName("assetPrefix") });
@@ -159,7 +161,7 @@ const Bun = @This();
 const default_allocator = @import("root").bun.default_allocator;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
-const NetworkThread = @import("root").bun.HTTP.NetworkThread;
+const NetworkThread = @import("root").bun.http.NetworkThread;
 const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
@@ -181,7 +183,6 @@ const ServerEntryPoint = bun.bundler.ServerEntryPoint;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
-const http = @import("../../bun_dev_http_server.zig");
 const NodeFallbackModules = @import("../../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
 const Analytics = @import("../../analytics/analytics_thread.zig");
@@ -235,6 +236,7 @@ const Which = @import("../../which.zig");
 const ErrorableString = JSC.ErrorableString;
 const is_bindgen = JSC.is_bindgen;
 const max_addressible_memory = std.math.maxInt(u56);
+const glob = @import("../../glob.zig");
 const Async = bun.Async;
 const SemverObject = @import("../../install/semver.zig").SemverObject;
 
@@ -2965,6 +2967,13 @@ pub fn getTOMLObject(
     _: *JSC.JSObject,
 ) callconv(.C) JSC.JSValue {
     return TOMLObject.create(globalThis);
+}
+
+pub fn getGlobConstructor(
+    globalThis: *JSC.JSGlobalObject,
+    _: *JSC.JSObject,
+) callconv(.C) JSC.JSValue {
+    return JSC.API.Glob.getConstructor(globalThis);
 }
 
 pub fn getSemver(

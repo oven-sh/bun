@@ -10,6 +10,7 @@ const WebCore = JSC.WebCore;
 const Bun = JSC.API.Bun;
 const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
 const typeBaseName = @import("../meta.zig").typeBaseName;
+const AsyncGlobWalkTask = JSC.API.Glob.WalkTask.AsyncGlobWalkTask;
 const CopyFilePromiseTask = WebCore.Blob.Store.CopyFile.CopyFilePromiseTask;
 const AsyncTransformTask = JSC.API.JSTranspiler.TransformTask.AsyncTransformTask;
 const ReadFileTask = WebCore.Blob.Store.ReadFile.ReadFileTask;
@@ -20,7 +21,7 @@ const JSValue = JSC.JSValue;
 const js = JSC.C;
 pub const WorkPool = @import("../work_pool.zig").WorkPool;
 pub const WorkPoolTask = @import("../work_pool.zig").Task;
-const NetworkThread = @import("root").bun.HTTP.NetworkThread;
+const NetworkThread = @import("root").bun.http.NetworkThread;
 const uws = @import("root").bun.uws;
 const Async = bun.Async;
 
@@ -316,6 +317,7 @@ const Write = JSC.Node.Async.write;
 const Truncate = JSC.Node.Async.truncate;
 const FTruncate = JSC.Node.Async.ftruncate;
 const Readdir = JSC.Node.Async.readdir;
+const ReaddirRecursive = JSC.Node.Async.readdir_recursive;
 const Readv = JSC.Node.Async.readv;
 const Writev = JSC.Node.Async.writev;
 const Close = JSC.Node.Async.close;
@@ -347,6 +349,7 @@ const WaitPidResultTask = JSC.Subprocess.WaiterThread.WaitPidResultTask;
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
+    AsyncGlobWalkTask,
     AsyncTransformTask,
     ReadFileTask,
     CopyFilePromiseTask,
@@ -373,6 +376,7 @@ pub const Task = TaggedPointerUnion(.{
     Truncate,
     FTruncate,
     Readdir,
+    ReaddirRecursive,
     Close,
     Rm,
     Rmdir,
@@ -689,6 +693,11 @@ pub const EventLoop = struct {
                     var fetch_task: *Fetch.FetchTasklet = task.get(Fetch.FetchTasklet).?;
                     fetch_task.onProgressUpdate();
                 },
+                @field(Task.Tag, @typeName(AsyncGlobWalkTask)) => {
+                    var globWalkTask: *AsyncGlobWalkTask = task.get(AsyncGlobWalkTask).?;
+                    globWalkTask.*.runFromJS();
+                    globWalkTask.deinit();
+                },
                 @field(Task.Tag, @typeName(AsyncTransformTask)) => {
                     var transform_task: *AsyncTransformTask = task.get(AsyncTransformTask).?;
                     transform_task.*.runFromJS();
@@ -812,6 +821,10 @@ pub const EventLoop = struct {
                 },
                 @field(Task.Tag, typeBaseName(@typeName(Readdir))) => {
                     var any: *Readdir = task.get(Readdir).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(ReaddirRecursive))) => {
+                    var any: *ReaddirRecursive = task.get(ReaddirRecursive).?;
                     any.runFromJSThread();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(Close))) => {

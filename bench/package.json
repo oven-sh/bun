@@ -7,6 +7,8 @@
     "benchmark": "^2.1.4",
     "esbuild": "^0.14.12",
     "eventemitter3": "^5.0.0",
+    "fast-glob": "3.3.1",
+    "fdir": "^6.1.0",
     "mitata": "^0.1.6"
   },
   "scripts": {

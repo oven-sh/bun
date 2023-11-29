@@ -55,11 +55,18 @@ pub inline fn isNodeModules(this: *const DirInfo) bool {
     return this.flags.contains(.is_node_modules);
 }
 
+/// Is this inside a "node_modules" directory?
+pub inline fn isInsideNodeModules(this: *const DirInfo) bool {
+    return this.flags.contains(.inside_node_modules);
+}
+
 pub const Flags = enum {
     /// This directory is a node_modules directory
     is_node_modules,
     /// This directory has a node_modules subdirectory
     has_node_modules,
+
+    inside_node_modules,
 
     pub const Set = std.enums.EnumSet(Flags);
 };

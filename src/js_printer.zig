@@ -1217,7 +1217,7 @@ fn NewPrinter(
         pub fn printClauseAlias(p: *Printer, alias: string) void {
             std.debug.assert(alias.len > 0);
 
-            if (!strings.containsNonBmpCodePoint(alias)) {
+            if (!strings.containsNonBmpCodePointOrIsInvalidIdentifier(alias)) {
                 p.printSpaceBeforeIdentifier();
                 p.printIdentifier(alias);
             } else {
@@ -1724,13 +1724,32 @@ fn NewPrinter(
                 //      const foo = await Promise.resolve(globalThis.Bun)
                 //      const bar = globalThis.Bun
                 //
-                if (record.tag == .bun) {
-                    if (record.kind == .dynamic) {
-                        p.print("Promise.resolve(globalThis.Bun)");
-                    } else if (record.kind == .require) {
-                        p.print("globalThis.Bun");
-                    }
-                    return;
+                switch (record.tag) {
+                    .bun => {
+                        if (record.kind == .dynamic) {
+                            p.print("Promise.resolve(globalThis.Bun)");
+                        } else if (record.kind == .require) {
+                            p.print("globalThis.Bun");
+                        }
+                        return;
+                    },
+                    .bun_test => {
+                        if (record.kind == .dynamic) {
+                            if (p.options.module_type == .cjs) {
+                                p.print("Promise.resolve(globalThis.Bun.jest(__filename))");
+                            } else {
+                                p.print("Promise.resolve(globalThis.Bun.jest(import.meta.path))");
+                            }
+                        } else if (record.kind == .require) {
+                            if (p.options.module_type == .cjs) {
+                                p.print("globalThis.Bun.jest(__filename)");
+                            } else {
+                                p.print("globalThis.Bun.jest(import.meta.path)");
+                            }
+                        }
+                        return;
+                    },
+                    else => {},
                 }
             }
 

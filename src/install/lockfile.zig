@@ -35,14 +35,14 @@ const bundler = bun.bundler;
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
 const Run = @import("../bun_js.zig").Run;
-const HeaderBuilder = bun.HTTP.HeaderBuilder;
+const HeaderBuilder = bun.http.HeaderBuilder;
 const Fs = @import("../fs.zig");
 const FileSystem = Fs.FileSystem;
 const Lock = @import("../lock.zig").Lock;
 const URL = @import("../url.zig").URL;
-const AsyncHTTP = bun.HTTP.AsyncHTTP;
-const HTTPChannel = bun.HTTP.HTTPChannel;
-const NetworkThread = bun.HTTP.NetworkThread;
+const AsyncHTTP = bun.http.AsyncHTTP;
+const HTTPChannel = bun.http.HTTPChannel;
+const NetworkThread = bun.http.NetworkThread;
 
 const Integrity = @import("./integrity.zig").Integrity;
 const clap = bun.clap;
@@ -3344,35 +3344,22 @@ pub const Package = extern struct {
                 dependency_version.value.workspace = path;
 
                 var workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, name_hash);
-                if (workspace_entry.found_existing) {
-                    if (strings.eqlComptime(workspace, "*")) return null;
-
-                    const old_path = workspace_entry.value_ptr.*.slice(buf);
-                    if (!strings.eqlComptime(old_path, "*")) {
-                        if (strings.eql(old_path, path.slice(buf))) return null;
-
-                        log.addErrorFmt(&source, logger.Loc.Empty, allocator, "Workspace name \"{s}\" already exists", .{
-                            external_alias.slice(buf),
-                        }) catch {};
-                        return error.InstallFailed;
-                    }
-                }
-                workspace_entry.value_ptr.* = path;
+                const found_matching_workspace = workspace_entry.found_existing or PackageManager.instance.workspaces.contains(lockfile.str(&external_alias.value));
 
                 if (workspace_version) |ver| {
                     try lockfile.workspace_versions.put(allocator, name_hash, ver);
-
                     for (package_dependencies[0..dependencies_count]) |*package_dep| {
                         if (switch (package_dep.version.tag) {
                             // `dependencies` & `workspaces` defined within the same `package.json`
                             .npm => String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash and
                                 package_dep.version.value.npm.version.satisfies(ver, buf, buf),
                             // `workspace:*`
-                            .workspace => workspace_entry.found_existing and
+                            .workspace => found_matching_workspace and
                                 String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash,
                             else => false,
                         }) {
                             package_dep.version = dependency_version;
+                            workspace_entry.value_ptr.* = path;
                             return null;
                         }
                     }
@@ -3387,6 +3374,8 @@ pub const Package = extern struct {
                     }
                     return error.InstallFailed;
                 }
+
+                workspace_entry.value_ptr.* = path;
             },
             else => {},
         }
@@ -4223,7 +4212,19 @@ pub const Package = extern struct {
 
         inline for (dependency_groups) |group| {
             if (group.behavior.isWorkspace()) {
+                var seen_workspace_names = NameHashSet{};
+                defer seen_workspace_names.deinit(allocator);
                 for (workspace_names.values(), workspace_names.keys()) |entry, path| {
+
+                    // workspace names from their package jsons. duplicates not allowed
+                    var gop = try seen_workspace_names.getOrPut(allocator, @truncate(String.Builder.stringHash(entry.name)));
+                    if (gop.found_existing) {
+                        log.addErrorFmt(&source, logger.Loc.Empty, allocator, "Workspace name \"{s}\" already exists", .{
+                            entry.name,
+                        }) catch {};
+                        return error.InstallFailed;
+                    }
+
                     const external_name = string_builder.append(ExternalString, entry.name);
 
                     const workspace_version = brk: {

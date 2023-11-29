@@ -50,7 +50,7 @@ pub const StandaloneModuleGraph = struct {
                 blob_.* = bun.JSC.WebCore.Blob.initWithStore(store, globalObject);
                 blob_.allocator = bun.default_allocator;
 
-                if (bun.HTTP.MimeType.byExtensionNoDefault(bun.strings.trimLeadingChar(std.fs.path.extension(this.name), '.'))) |mime| {
+                if (bun.http.MimeType.byExtensionNoDefault(bun.strings.trimLeadingChar(std.fs.path.extension(this.name), '.'))) |mime| {
                     store.mime_type = mime;
                     blob_.content_type = mime.value;
                     blob_.content_type_was_set = true;

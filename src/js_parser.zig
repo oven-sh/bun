@@ -3934,7 +3934,7 @@ pub const Parser = struct {
             }) catch unreachable;
 
             // If we injected jest globals, we need to disable the runtime transpiler cache
-            if (p.options.runtime_transpiler_cache) |cache| {
+            if (p.options.features.runtime_transpiler_cache) |cache| {
                 cache.input_hash = null;
             }
         }

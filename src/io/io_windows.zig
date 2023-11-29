@@ -420,6 +420,7 @@ pub fn open(
     flags: bun.Mode,
     _: bun.Mode,
 ) void {
+    bun.strings.assertIsValidWindowsPath(path);
     self.submit(
         context,
         callback,

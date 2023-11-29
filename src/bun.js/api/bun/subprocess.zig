@@ -420,10 +420,6 @@ pub const Subprocess = struct {
     }
 
     pub fn tryKill(this: *Subprocess, sig: i32) JSC.Node.Maybe(void) {
-        if(Environment.isWindows) {
-            @panic("todo: tryKill");
-        }
-
         if (this.hasExited()) {
             return .{ .result = {} };
         }
@@ -451,6 +447,13 @@ pub const Subprocess = struct {
                         break :send_signal;
                     }
                 }
+            }
+            if (comptime Environment.isWindows) {
+                if (uv.uv_kill(this.pid, sig).errEnum()) |err| {
+                    if (err != .SRCH)
+                        return .{ .err = bun.sys.Error.fromCode(err, .kill) };
+                }
+                return .{ .result = {} };
             }
 
             const err = std.c.kill(this.pid, sig);
@@ -957,7 +960,7 @@ pub const Subprocess = struct {
         pub fn init(stdio: Stdio, fd: i32, globalThis: *JSC.JSGlobalObject) !Writable {
             switch (stdio) {
                 .pipe => {
-                    if(Environment.isWindows)@panic("TODO");
+                    if (Environment.isWindows) @panic("TODO");
                     var sink = try globalThis.bunVM().allocator.create(JSC.WebCore.FileSink);
                     sink.* = .{
                         .fd = bun.toFD(fd),
@@ -1153,10 +1156,6 @@ pub const Subprocess = struct {
         secondaryArgsValue: ?JSValue,
         comptime is_sync: bool,
     ) JSValue {
-        if (comptime Environment.isWindows and !is_sync) {
-            globalThis.throwTODO("Async spawn() is not yet implemented on Windows");
-            return .zero;
-        }
         var arena = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var allocator = arena.allocator();
@@ -1382,7 +1381,7 @@ pub const Subprocess = struct {
                 }
 
                 if (args.get(globalThis, "ipc")) |val| {
-                    if(Environment.isWindows) {
+                    if (Environment.isWindows) {
                         globalThis.throwTODO("TODO: IPC is not yet supported on Windows");
                         return .zero;
                     }
@@ -1395,7 +1394,7 @@ pub const Subprocess = struct {
                     }
                 }
 
-                if(Environment.isWindows) {
+                if (Environment.isWindows) {
                     if (args.get(globalThis, "windowsHide")) |val| {
                         if (val.isBoolean()) {
                             windows_hide = @intFromBool(val.asBoolean());
@@ -1406,7 +1405,7 @@ pub const Subprocess = struct {
         }
 
         // WINDOWS:
-        if(Environment.isWindows) {
+        if (Environment.isWindows) {
             argv.append(allocator, null) catch {
                 globalThis.throwOutOfMemory();
                 return .zero;
@@ -1437,7 +1436,7 @@ pub const Subprocess = struct {
 
             const options = uv.uv_process_options_t{
                 .exit_cb = uvExitCallback,
-                .args = @ptrCast(argv.items[0..argv.items.len - 1 :null]),
+                .args = @ptrCast(argv.items[0 .. argv.items.len - 1 :null]),
                 .cwd = cwd_resolver.resolveCWDZ(cwd) catch |err| return globalThis.handleError(err, "in uv_spawn"),
                 .env = env,
                 .file = argv.items[0].?,
@@ -1445,10 +1444,10 @@ pub const Subprocess = struct {
                 .uid = 0,
                 .stdio = &uv_stdio,
                 .stdio_count = uv_stdio.len,
-                .flags = if(windows_hide == 1) uv.UV_PROCESS_WINDOWS_HIDE else 0,
+                .flags = if (windows_hide == 1) uv.UV_PROCESS_WINDOWS_HIDE else 0,
             };
             var handle: uv.uv_process_t = undefined;
-            if(uv.uv_spawn(jsc_vm.uvLoop(), &handle, &options).errEnum()) |errno| {
+            if (uv.uv_spawn(jsc_vm.uvLoop(), &handle, &options).errEnum()) |errno| {
                 globalThis.throwValue(bun.sys.Error.fromCode(errno, .uv_spawn).toJSC(globalThis));
                 return .zero;
             }
@@ -1471,7 +1470,7 @@ pub const Subprocess = struct {
                 .stdout = Readable.init(stdio[1], stdout_pipe[0], jsc_vm.allocator, default_max_buffer_size),
                 .stderr = Readable.init(stdio[2], stderr_pipe[0], jsc_vm.allocator, default_max_buffer_size),
                 .on_exit_callback = if (on_exit_callback != .zero) JSC.Strong.create(on_exit_callback, globalThis) else .{},
-                
+
                 .ipc_mode = ipc_mode,
                 .ipc = undefined,
                 .ipc_callback = undefined,
@@ -1481,7 +1480,36 @@ pub const Subprocess = struct {
                 },
             };
             handle.data = subprocess;
-            std.debug.assert(ipc_mode == .none);//TODO:
+            std.debug.assert(ipc_mode == .none); //TODO:
+
+            const out = if (comptime !is_sync) subprocess.toJS(globalThis) else .zero;
+            subprocess.this_jsvalue = out;
+
+            if (subprocess.stdin == .buffered_input) {
+                subprocess.stdin.buffered_input.remain = switch (subprocess.stdin.buffered_input.source) {
+                    .blob => subprocess.stdin.buffered_input.source.blob.slice(),
+                    .array_buffer => |array_buffer| array_buffer.slice(),
+                };
+                subprocess.stdin.buffered_input.writeIfPossible(is_sync);
+            }
+
+            if (subprocess.stdout == .pipe and subprocess.stdout.pipe == .buffer) {
+                if (is_sync or !lazy) {
+                    subprocess.stdout.pipe.buffer.readAll();
+                }
+            }
+
+            if (subprocess.stderr == .pipe and subprocess.stderr.pipe == .buffer) {
+                if (is_sync or !lazy) {
+                    subprocess.stderr.pipe.buffer.readAll();
+                }
+            }
+
+            if (comptime !is_sync) {
+                return out;
+            }
+
+            // sync
 
             while (!subprocess.hasExited()) {
                 if (subprocess.stderr == .pipe and subprocess.stderr.pipe == .buffer) {
@@ -2177,7 +2205,7 @@ pub const Subprocess = struct {
         pub fn makeUVPipe(stdio: @This(), global: *JSGlobalObject) ?[2]uv.uv_file {
             std.debug.assert(stdio.isPiped());
             var pipe: [2]uv.uv_file = undefined;
-            if(uv.uv_pipe(&pipe, 0, 0).errEnum()) |errno| {
+            if (uv.uv_pipe(&pipe, 0, 0).errEnum()) |errno| {
                 global.throwValue(bun.sys.Error.fromCode(errno, .uv_pipe).toJSC(global));
                 return null;
             }

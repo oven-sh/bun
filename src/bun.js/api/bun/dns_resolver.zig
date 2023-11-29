@@ -79,7 +79,7 @@ const LibInfo = struct {
         var cache = this.getOrPutIntoPendingCache(key, .pending_host_cache_native);
 
         if (cache == .inflight) {
-            var dns_lookup = DNSLookup.init(globalThis, globalThis.allocator()) catch unreachable;
+            var dns_lookup = DNSLookup.init(globalThis, globalThis.allocator()) catch bun.outOfMemory();
 
             cache.inflight.append(dns_lookup);
 
@@ -136,6 +136,9 @@ const LibInfo = struct {
 
 const LibC = struct {
     pub fn lookup(this: *DNSResolver, query_init: GetAddrInfo, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        if (Environment.isWindows) {
+            @compileError("Do not use this path on Windows");
+        }
         const key = GetAddrInfoRequest.PendingCacheKey.init(query_init);
 
         var cache = this.getOrPutIntoPendingCache(key, .pending_host_cache_native);
@@ -168,6 +171,62 @@ const LibC = struct {
         io.schedule();
 
         return promise_value;
+    }
+};
+
+const libuv = bun.windows.libuv;
+
+/// The windows implementation borrows the struct used for libc getaddrinfo
+const LibUVBackend = struct {
+    pub fn lookup(this: *DNSResolver, query: GetAddrInfo, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        const key = GetAddrInfoRequest.PendingCacheKey.init(query);
+
+        var cache = this.getOrPutIntoPendingCache(key, .pending_host_cache_native);
+        if (cache == .inflight) {
+            var dns_lookup = DNSLookup.init(globalThis, globalThis.allocator()) catch bun.outOfMemory();
+
+            cache.inflight.append(dns_lookup);
+
+            return dns_lookup.promise.value();
+        }
+
+        var request = GetAddrInfoRequest.init(
+            cache,
+            .{
+                .libc = .{
+                    .uv = undefined,
+                },
+            },
+            this,
+            query,
+            globalThis,
+            "pending_host_cache_native",
+        ) catch bun.outOfMemory();
+
+        var hints = query.options.toLibC();
+        var port_buf: [128]u8 = undefined;
+        var port = std.fmt.bufPrintIntToSlice(&port_buf, query.port, 10, .lower, .{});
+        port_buf[port.len] = 0;
+        var portZ = port_buf[0..port.len :0];
+        var hostname: [bun.MAX_PATH_BYTES]u8 = undefined;
+        _ = strings.copy(hostname[0..], query.name);
+        hostname[query.name.len] = 0;
+        var host = hostname[0..query.name.len :0];
+
+        request.backend.libc.uv.data = request;
+
+        if (libuv.uv_getaddrinfo(
+            this.vm.uvLoop(),
+            &request.backend.libc.uv,
+            &GetAddrInfoRequest.onLibUVComplete,
+            host.ptr,
+            portZ.ptr,
+            if (hints) |*hint| hint else null,
+        ).errEnum()) |_| {
+            @panic("TODO: ahndle error");
+        }
+
+        return request.head.promise.value();
     }
 };
 
@@ -525,10 +584,10 @@ pub const GetAddrInfo = struct {
             .{ "getaddrinfo", .libc },
         });
 
-        pub const default: GetAddrInfo.Backend = if (Environment.isMac)
-            GetAddrInfo.Backend.system
-        else
-            GetAddrInfo.Backend.c_ares;
+        pub const default: GetAddrInfo.Backend = switch (Environment.os) {
+            .mac, .windows => .system,
+            else => .c_ares,
+        };
 
         pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject) !Backend {
             if (value.isEmptyOrUndefinedOrNull())
@@ -1080,52 +1139,58 @@ pub const GetAddrInfoRequest = struct {
     pub const Backend = union(enum) {
         c_ares: void,
         libinfo: GetAddrInfoRequest.Backend.LibInfo,
-        libc: union(enum) {
-            success: GetAddrInfo.Result.List,
-            err: i32,
-            query: GetAddrInfo,
+        libc: if (Environment.isWindows)
+            struct {
+                uv: libuv.uv_getaddrinfo_t = undefined,
 
-            pub fn run(this: *@This()) void {
-                if (comptime Environment.isWindows) {
-                    @panic("TODO on Windows");
+                pub fn run(_: *@This()) void {
+                    @panic("This path should never be reached on Windows");
                 }
-                const query = this.query;
-                defer bun.default_allocator.free(bun.constStrToU8(query.name));
-                var hints = query.options.toLibC();
-                var port_buf: [128]u8 = undefined;
-                var port = std.fmt.bufPrintIntToSlice(&port_buf, query.port, 10, .lower, .{});
-                port_buf[port.len] = 0;
-                var portZ = port_buf[0..port.len :0];
-                var hostname: [bun.MAX_PATH_BYTES]u8 = undefined;
-                _ = strings.copy(hostname[0..], query.name);
-                hostname[query.name.len] = 0;
-                var addrinfo: ?*std.c.addrinfo = null;
-                var host = hostname[0..query.name.len :0];
-                const debug_timer = bun.Output.DebugTimer.start();
-                const err = std.c.getaddrinfo(
-                    host.ptr,
-                    if (port.len > 0) portZ.ptr else null,
-                    if (hints) |*hint| hint else null,
-                    &addrinfo,
-                );
-                bun.sys.syslog("getaddrinfo({s}, {d}) = {d} ({any})", .{
-                    query.name,
-                    port,
-                    err,
-                    debug_timer,
-                });
-                if (@intFromEnum(err) != 0 or addrinfo == null) {
-                    this.* = .{ .err = @intFromEnum(err) };
-                    return;
-                }
-
-                // do not free addrinfo when err != 0
-                // https://github.com/ziglang/zig/pull/14242
-                defer std.c.freeaddrinfo(addrinfo.?);
-
-                this.* = .{ .success = GetAddrInfo.Result.toList(default_allocator, addrinfo.?) catch unreachable };
             }
-        },
+        else
+            union(enum) {
+                success: GetAddrInfo.Result.List,
+                err: i32,
+                query: GetAddrInfo,
+
+                pub fn run(this: *@This()) void {
+                    const query = this.query;
+                    defer bun.default_allocator.free(bun.constStrToU8(query.name));
+                    var hints = query.options.toLibC();
+                    var port_buf: [128]u8 = undefined;
+                    var port = std.fmt.bufPrintIntToSlice(&port_buf, query.port, 10, .lower, .{});
+                    port_buf[port.len] = 0;
+                    var portZ = port_buf[0..port.len :0];
+                    var hostname: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    _ = strings.copy(hostname[0..], query.name);
+                    hostname[query.name.len] = 0;
+                    var addrinfo: ?*std.c.addrinfo = null;
+                    var host = hostname[0..query.name.len :0];
+                    const debug_timer = bun.Output.DebugTimer.start();
+                    const err = std.c.getaddrinfo(
+                        host.ptr,
+                        if (port.len > 0) portZ.ptr else null,
+                        if (hints) |*hint| hint else null,
+                        &addrinfo,
+                    );
+                    bun.sys.syslog("getaddrinfo({s}, {d}) = {d} ({any})", .{
+                        query.name,
+                        port,
+                        err,
+                        debug_timer,
+                    });
+                    if (@intFromEnum(err) != 0 or addrinfo == null) {
+                        this.* = .{ .err = @intFromEnum(err) };
+                        return;
+                    }
+
+                    // do not free addrinfo when err != 0
+                    // https://github.com/ziglang/zig/pull/14242
+                    defer std.c.freeaddrinfo(addrinfo.?);
+
+                    this.* = .{ .success = GetAddrInfo.Result.toList(default_allocator, addrinfo.?) catch unreachable };
+                }
+            },
 
         pub const LibInfo = struct {
             file_poll: ?*bun.Async.FilePoll = null,
@@ -1199,6 +1264,31 @@ pub const GetAddrInfoRequest = struct {
         bun.default_allocator.destroy(this);
 
         head.processGetAddrInfo(err_, timeout, result);
+    }
+
+    // fn (*uv_getaddrinfo_t, c_int, ?*anyopaque) callconv(.C) void
+    pub fn onLibUVComplete(uv_info: *libuv.uv_getaddrinfo_t, status: libuv.ReturnCode, maybe_addrinfo: ?*anyopaque) callconv(.C) void {
+        const this: *GetAddrInfoRequest = @alignCast(@ptrCast(uv_info.data));
+        std.debug.assert(uv_info == &this.backend.libc.uv);
+
+        if (maybe_addrinfo) |addrinfo| {
+            defer libuv.uv_freeaddrinfo(addrinfo);
+            if(GetAddrInfo.Result.fromAddrInfo(@alignCast(@ptrCast(addrinfo)))) |info| {
+                this.head.promise.resolve(
+                    this.head.globalThis,
+                    info.toJS(this.head.globalThis, default_allocator),
+                );
+                return;
+            }
+        }
+        var e = bun.sys.Error{
+            .errno = status.errno() orelse 0,
+            .syscall = .getaddrinfo,
+        };
+        this.head.promise.reject(
+            this.head.globalThis,
+            e.toJS(this.head.globalThis.ref()).?.value(),
+        );
     }
 };
 
@@ -2129,13 +2219,21 @@ pub const DNSResolver = struct {
             .port = port,
             .name = normalized,
         };
+
+        if (Environment.isWindows and opts.backend == .c_ares) {
+            globalThis.throwTODO("The c-ares dns lookup backend does not yet work on Windows.");
+            return .zero;
+        }
+
         return switch (opts.backend) {
             .c_ares => this.c_aresLookupWithNormalizedName(query, globalThis),
-            .libc => LibC.lookup(this, query, globalThis),
-            .system => if (comptime Environment.isMac)
-                LibInfo.lookup(this, query, globalThis)
-            else
-                LibC.lookup(this, query, globalThis),
+            .libc => (if (Environment.isWindows) LibUVBackend else LibC)
+                .lookup(this, query, globalThis),
+            .system => switch (comptime Environment.os) {
+                .mac => LibInfo.lookup(this, query, globalThis),
+                .windows => LibUVBackend.lookup(this, query, globalThis),
+                else => LibC.lookup(this, query, globalThis),
+            },
         };
     }
 

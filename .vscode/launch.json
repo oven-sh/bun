@@ -348,6 +348,14 @@
         "BUN_DEBUG_QUIET_LOGS": "1"
       },
       "terminal": "integrated"
-    }
+    },
+    {
+      "type": "cppdbg",
+      "request": "launch",
+      "name": "Windows: bun run [file]",
+      "program": "${workspaceFolder}/build/bun-debug.exe",
+      "args": ["run", "${file}"],
+      "cwd": "${fileDirname}",
+    },
   ]
 }

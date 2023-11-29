@@ -1712,19 +1712,25 @@ pub fn toWDirPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     return toWPathMaybeDir(wbuf, utf8, true);
 }
 
-pub fn toWPathMaybeDir(wbuf: []u16, utf8: []const u8, comptime add_trailing_lash: bool) [:0]const u16 {
-    std.debug.assert(wbuf.len > 0);
-
-    if (Environment.allow_assert) {
-        if (Environment.isWindows and windowsPathIsPosixAbsolute(utf8)) {
-            std.debug.panic("Do not pass posix paths to windows APIs, was given '{s}' (missing a root like 'C:\\', see PosixToWinNormalizer for why this is an assertion)", .{utf8});
+pub fn assertIsValidWindowsPath(utf8: []const u8) void {
+    if (Environment.allow_assert and Environment.isWindows) {
+        if (windowsPathIsPosixAbsolute(utf8)) {
+            std.debug.panic("Do not pass posix paths to windows APIs, was given '{s}' (missing a root like 'C:\\', see PosixToWinNormalizer for why this is an assertion)", .{
+                utf8,
+            });
         }
-        if (Environment.isWindows and startsWith(utf8, ":/")) {
+        if (startsWith(utf8, ":/")) {
             std.debug.panic("Path passed to windows API '{s}' is almost certainly invalid. Where did the drive letter go?", .{
                 utf8,
             });
         }
     }
+}
+
+pub fn toWPathMaybeDir(wbuf: []u16, utf8: []const u8, comptime add_trailing_lash: bool) [:0]const u16 {
+    std.debug.assert(wbuf.len > 0);
+
+    assertIsValidWindowsPath(utf8);
 
     var result = bun.simdutf.convert.utf8.to.utf16.with_errors.le(
         utf8,

@@ -1394,7 +1394,7 @@ const union_unnamed_435 = extern union {
     connect: struct_unnamed_437,
 };
 pub const uv_getaddrinfo_t = struct_uv_getaddrinfo_s;
-pub const uv_getaddrinfo_cb = ?*const fn ([*c]uv_getaddrinfo_t, c_int, ?*anyopaque) callconv(.C) void;
+pub const uv_getaddrinfo_cb = ?*const fn (*uv_getaddrinfo_t, ReturnCode, ?*anyopaque) callconv(.C) void;
 pub const struct_uv_getaddrinfo_s = extern struct {
     data: ?*anyopaque,
     type: uv_req_type,
@@ -1946,9 +1946,16 @@ pub extern fn uv_timer_again(handle: *uv_timer_t) c_int;
 pub extern fn uv_timer_set_repeat(handle: *uv_timer_t, repeat: u64) void;
 pub extern fn uv_timer_get_repeat(handle: *const uv_timer_t) u64;
 pub extern fn uv_timer_get_due_in(handle: *const uv_timer_t) u64;
-// pub extern fn uv_getaddrinfo(loop: *uv_loop_t, req: [*c]uv_getaddrinfo_t, getaddrinfo_cb: uv_getaddrinfo_cb, node: [*]const u8, service: [*]const u8, hints: [*c]const struct_addrinfo) c_int;
-// pub extern fn uv_freeaddrinfo(ai: [*c]struct_addrinfo) void;
-// pub extern fn uv_getnameinfo(loop: *uv_loop_t, req: [*c]uv_getnameinfo_t, getnameinfo_cb: uv_getnameinfo_cb, addr: [*c]const sockaddr, flags: c_int) c_int;
+pub extern fn uv_getaddrinfo(
+    loop: *uv_loop_t,
+    req: *uv_getaddrinfo_t,
+    getaddrinfo_cb: uv_getaddrinfo_cb,
+    node: [*:0]const u8,
+    service: [*:0]const u8,
+    hints: ?*const anyopaque
+) ReturnCode;
+pub extern fn uv_freeaddrinfo(ai: *anyopaque) void;
+pub extern fn uv_getnameinfo(loop: *uv_loop_t, req: [*c]uv_getnameinfo_t, getnameinfo_cb: uv_getnameinfo_cb, addr: [*c]const sockaddr, flags: c_int) c_int;
 pub const UV_IGNORE: c_int = 0;
 pub const UV_CREATE_PIPE: c_int = 1;
 pub const UV_INHERIT_FD: c_int = 2;
@@ -1988,8 +1995,8 @@ pub const UV_PROCESS_WINDOWS_HIDE_CONSOLE: c_int = 32;
 pub const UV_PROCESS_WINDOWS_HIDE_GUI: c_int = 64;
 pub const enum_uv_process_flags = c_uint;
 pub extern fn uv_spawn(loop: *uv_loop_t, handle: *uv_process_t, options: *const uv_process_options_t) ReturnCode;
-pub extern fn uv_process_kill([*c]uv_process_t, signum: c_int) c_int;
-pub extern fn uv_kill(pid: c_int, signum: c_int) c_int;
+pub extern fn uv_process_kill([*c]uv_process_t, signum: c_int) ReturnCode;
+pub extern fn uv_kill(pid: c_int, signum: c_int) ReturnCode;
 pub extern fn uv_process_get_pid([*c]const uv_process_t) uv_pid_t;
 pub extern fn uv_queue_work(loop: *uv_loop_t, req: [*c]uv_work_t, work_cb: uv_work_cb, after_work_cb: uv_after_work_cb) c_int;
 pub extern fn uv_cancel(req: [*c]uv_req_t) c_int;

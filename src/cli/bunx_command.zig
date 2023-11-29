@@ -456,7 +456,6 @@ pub const BunxCommand = struct {
 
         absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, bin_name[0] }) catch unreachable;
 
-        // TODO: This section is duplicated. Make sure it matches above.
         // Similar to "npx":
         //
         //  1. Try the bin in the global cache

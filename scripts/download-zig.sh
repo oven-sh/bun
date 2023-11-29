@@ -29,7 +29,7 @@ case $(uname -ms) in
     ;;
 'Linux x86_64')
     target='linux'
-    arch='aarch64'
+    arch='x86_64'
     ;;
 *)
     printf "error: cannot get platform name from '%s'\n" "${unamestr}"

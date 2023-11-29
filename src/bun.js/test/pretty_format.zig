@@ -1984,6 +1984,7 @@ pub const JestPrettyFormat = struct {
         _ = Format;
 
         if (value.as(expect.ExpectAnything)) |matcher| {
+            printAsymmetricMatcherPromisePrefix(matcher.flags, this, writer);
             if (matcher.flags.not) {
                 this.addForNewLine("NotAnything".len);
                 writer.writeAll("NotAnything");
@@ -1996,11 +1997,11 @@ pub const JestPrettyFormat = struct {
 
             printAsymmetricMatcherPromisePrefix(matcher.flags, this, writer);
             if (matcher.flags.not) {
-                this.addForNewLine("Any<".len);
-                writer.writeAll("Any<");
-            } else {
                 this.addForNewLine("NotAny<".len);
                 writer.writeAll("NotAny<");
+            } else {
+                this.addForNewLine("Any<".len);
+                writer.writeAll("Any<");
             }
 
             var class_name = ZigString.init(&name_buf);

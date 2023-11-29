@@ -3829,8 +3829,7 @@ pub const Expect = struct {
                 const matcher_fn: JSValue = iter.value;
 
                 if (!matcher_fn.jsType().isFunction()) {
-                    var type_str: *JSC.JSString = matcher_fn.jsTypeString(globalObject);
-                    var type_name = bun.String.init(type_str.getZigString(globalObject));
+                    var type_name = if (matcher_fn.isNull()) bun.String.static("null") else bun.String.init(matcher_fn.jsTypeString(globalObject).getZigString(globalObject));
                     globalObject.throwInvalidArguments("expect.extend: `{s}` is not a valid matcher. Must be a function, is \"{s}\"", .{ matcher_name, type_name });
                     return .zero;
                 }

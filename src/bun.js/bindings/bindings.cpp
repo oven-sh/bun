@@ -145,8 +145,7 @@ enum class AsymmetricMatcherResult : uint8_t {
     NOT_MATCHER,
 };
 
-template<class T>
-bool readFlagsAndProcessPromise(JSValue& instanceValue, T* instance, ExpectFlags& flags, JSGlobalObject* globalObject, JSValue& value)
+bool readFlagsAndProcessPromise(JSValue& instanceValue, ExpectFlags& flags, JSGlobalObject* globalObject, JSValue& value)
 {
     JSC::EncodedJSValue valueEncoded = JSValue::encode(value);
     if (Expect_readFlagsAndProcessPromise(JSValue::encode(instanceValue), globalObject, &flags, &valueEncoded)) {
@@ -162,7 +161,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
     JSCell* matcherPropCell = matcherProp.asCell();
 
     if (auto* expectAnything = jsDynamicCast<JSExpectAnything*>(matcherPropCell)) {
-        if (!readFlagsAndProcessPromise(matcherProp, expectAnything, flags, globalObject, otherProp))
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
             return AsymmetricMatcherResult::FAIL;
 
         if (otherProp.isUndefinedOrNull()) {
@@ -171,7 +170,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
 
         return AsymmetricMatcherResult::PASS;
     } else if (auto* expectAny = jsDynamicCast<JSExpectAny*>(matcherPropCell)) {
-        if (!readFlagsAndProcessPromise(matcherProp, expectAny, flags, globalObject, otherProp))
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
             return AsymmetricMatcherResult::FAIL;
 
         JSValue constructorValue = expectAny->m_constructorValue.get();
@@ -219,7 +218,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
 
         return AsymmetricMatcherResult::FAIL;
     } else if (auto* expectStringContaining = jsDynamicCast<JSExpectStringContaining*>(matcherPropCell)) {
-        if (!readFlagsAndProcessPromise(matcherProp, expectStringContaining, flags, globalObject, otherProp))
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
             return AsymmetricMatcherResult::FAIL;
 
         JSValue expectedSubstring = expectStringContaining->m_stringValue.get();
@@ -238,7 +237,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
 
         return AsymmetricMatcherResult::FAIL;
     } else if (auto* expectStringMatching = jsDynamicCast<JSExpectStringMatching*>(matcherPropCell)) {
-        if (!readFlagsAndProcessPromise(matcherProp, expectStringMatching, flags, globalObject, otherProp))
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
             return AsymmetricMatcherResult::FAIL;
 
         JSValue expectedTestValue = expectStringMatching->m_testValue.get();
@@ -266,7 +265,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
 
         return AsymmetricMatcherResult::FAIL;
     } else if (auto* expectArrayContaining = jsDynamicCast<JSExpectArrayContaining*>(matcherPropCell)) {
-        if (!readFlagsAndProcessPromise(matcherProp, expectArrayContaining, flags, globalObject, otherProp))
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
             return AsymmetricMatcherResult::FAIL;
 
         JSValue expectedArrayValue = expectArrayContaining->m_arrayValue.get();
@@ -310,7 +309,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
 
         return AsymmetricMatcherResult::FAIL;
     } else if (auto* expectObjectContaining = jsDynamicCast<JSExpectObjectContaining*>(matcherPropCell)) {
-        if (!readFlagsAndProcessPromise(matcherProp, expectObjectContaining, flags, globalObject, otherProp))
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
             return AsymmetricMatcherResult::FAIL;
 
         JSValue patternObject = expectObjectContaining->m_objectValue.get();
@@ -325,7 +324,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
 
         return AsymmetricMatcherResult::FAIL;
     } else if (auto* expectCloseTo = jsDynamicCast<JSExpectCloseTo*>(matcherPropCell)) {
-        if (!readFlagsAndProcessPromise(matcherProp, expectCloseTo, flags, globalObject, otherProp))
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
             return AsymmetricMatcherResult::FAIL;
 
         if (!otherProp.isNumber()) {
@@ -340,7 +339,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         double received = otherProp.toNumber(globalObject);
         double expected = expectedValue.toNumber(globalObject);
 
-        const double infinity = std::numeric_limits<double>::infinity();
+        constexpr double infinity = std::numeric_limits<double>::infinity();
 
         // special handing because (Infinity - Infinity) or (-Infinity - -Infinity) is NaN
         if ((received == infinity && expected == infinity) || (received == -infinity && expected == -infinity)) {
@@ -353,7 +352,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
             return isClose ? AsymmetricMatcherResult::PASS : AsymmetricMatcherResult::FAIL;
         }
     } else if (auto* customMatcher = jsDynamicCast<JSExpectCustomAsymmetricMatcher*>(matcherPropCell)) {
-        if (!readFlagsAndProcessPromise(matcherProp, customMatcher, flags, globalObject, otherProp))
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
             return AsymmetricMatcherResult::FAIL;
 
         // ignore the "not" flag here, because the custom matchers handle it themselves (accessing this.isNot)

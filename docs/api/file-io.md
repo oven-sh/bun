@@ -300,7 +300,7 @@ interface BunFile {
   readonly type: string;
 
   text(): Promise<string>;
-  stream(): Promise<ReadableStream>;
+  stream(): ReadableStream;
   arrayBuffer(): Promise<ArrayBuffer>;
   json(): Promise<any>;
   writer(params: { highWaterMark?: number }): FileSink;

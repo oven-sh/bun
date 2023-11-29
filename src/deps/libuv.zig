@@ -1946,14 +1946,7 @@ pub extern fn uv_timer_again(handle: *uv_timer_t) c_int;
 pub extern fn uv_timer_set_repeat(handle: *uv_timer_t, repeat: u64) void;
 pub extern fn uv_timer_get_repeat(handle: *const uv_timer_t) u64;
 pub extern fn uv_timer_get_due_in(handle: *const uv_timer_t) u64;
-pub extern fn uv_getaddrinfo(
-    loop: *uv_loop_t,
-    req: *uv_getaddrinfo_t,
-    getaddrinfo_cb: uv_getaddrinfo_cb,
-    node: [*:0]const u8,
-    service: [*:0]const u8,
-    hints: ?*const anyopaque
-) ReturnCode;
+pub extern fn uv_getaddrinfo(loop: *uv_loop_t, req: *uv_getaddrinfo_t, getaddrinfo_cb: uv_getaddrinfo_cb, node: [*:0]const u8, service: [*:0]const u8, hints: ?*const anyopaque) ReturnCode;
 pub extern fn uv_freeaddrinfo(ai: *anyopaque) void;
 pub extern fn uv_getnameinfo(loop: *uv_loop_t, req: [*c]uv_getnameinfo_t, getnameinfo_cb: uv_getnameinfo_cb, addr: [*c]const sockaddr, flags: c_int) c_int;
 pub const UV_IGNORE: c_int = 0;

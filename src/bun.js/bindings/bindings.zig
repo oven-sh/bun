@@ -2488,6 +2488,13 @@ pub const JSFunction = extern struct {
     //     return cppFn("toString", .{ this, globalThis });
     // }
 
+    extern fn JSC__JSFunction__getSourceCode(value: JSValue, out: *ZigString) bool;
+
+    pub fn getSourceCode(value: JSValue) ?bun.String {
+        var str: ZigString = undefined;
+        return if (JSC__JSFunction__getSourceCode(value, &str)) bun.String.init(str) else null;
+    }
+
     pub const Extern = [_][]const u8{
         "fromString",
         // "createFromSourceCode",

@@ -1805,6 +1805,19 @@ void JSC__JSFunction__optimizeSoon(JSC__JSValue JSValue0)
     JSC::optimizeNextInvocation(value);
 }
 
+bool JSC__JSFunction__getSourceCode(JSC__JSValue JSValue0, ZigString* outSourceCode)
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    if (JSC::JSFunction* func = jsDynamicCast<JSC::JSFunction*>(value)) {
+        auto* sourceCode = func->sourceCode();
+        if (sourceCode != nullptr) { // native functions have no source code
+            *outSourceCode = Zig::toZigString(sourceCode->view());
+            return true;
+        }
+        return false;
+    }
+}
+
 void JSC__JSValue__jsonStringify(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, uint32_t arg2,
     BunString* arg3)
 {

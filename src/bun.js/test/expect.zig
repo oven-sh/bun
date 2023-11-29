@@ -97,15 +97,22 @@ pub const Expect = struct {
         return received ++ matcher_name ++ "<d>(<r>" ++ args ++ "<d>)<r>";
     }
 
-    pub fn getFullSignature(comptime matcher: string, comptime args: string, comptime flags: Flags) string {
-        const fmt = "<d>expect(<r><red>received<r><d>).<r>" ++ if (flags.promise != .none)
-            switch (flags.promise) {
-                .resolves => if (flags.not) "resolves<d>.<r>not<d>.<r>" else "resolves<d>.<r>",
-                .rejects => if (flags.not) "rejects<d>.<r>not<d>.<r>" else "rejects<d>.<r>",
-                else => unreachable,
-            }
-        else if (flags.not) "not<d>.<r>" else "";
-        return fmt ++ matcher ++ "<d>(<r>" ++ args ++ "<d>)<r>";
+    pub fn throwPrettyMatcherError(globalThis: *JSGlobalObject, matcher_name: anytype, matcher_params: anytype, flags: Flags, comptime message_fmt: string, message_args: anytype) void {
+        switch (Output.enable_ansi_colors) {
+            inline else => |colors| {
+                const chain = switch (flags.promise) {
+                    .resolves => if (flags.not) Output.prettyFmt("resolves<d>.<r>not<d>.<r>", colors) else Output.prettyFmt("resolves<d>.<r>", colors),
+                    .rejects => if (flags.not) Output.prettyFmt("rejects<d>.<r>not<d>.<r>", colors) else Output.prettyFmt("rejects<d>.<r>", colors),
+                    .none => if (flags.not) Output.prettyFmt("not<d>.<r>", colors) else "",
+                };
+                const fmt = comptime Output.prettyFmt("<d>expect(<r><red>received<r><d>).<r>{s}{s}<d>(<r>{s}<d>)<r>\n\n" ++ message_fmt, colors);
+                globalThis.throwPretty(fmt, .{
+                    chain,
+                    matcher_name,
+                    matcher_params,
+                } ++ message_args);
+            },
+        }
     }
 
     pub fn getNot(this: *Expect, thisValue: JSValue, _: *JSGlobalObject) callconv(.C) JSValue {
@@ -137,7 +144,7 @@ pub const Expect = struct {
         return thisValue;
     }
 
-    pub fn getValue(this: *Expect, globalThis: *JSGlobalObject, thisValue: JSValue, comptime matcher_name: string, comptime matcher_args: string) ?JSValue {
+    pub fn getValue(this: *Expect, globalThis: *JSGlobalObject, thisValue: JSValue, matcher_name: string, comptime matcher_params_fmt: string) ?JSValue {
         if (this.scope.tests.items.len <= this.test_id) {
             globalThis.throw("{s}() must be called in a test", .{matcher_name});
             return null;
@@ -148,13 +155,17 @@ pub const Expect = struct {
             return null;
         };
         value.ensureStillAlive();
-        return processPromise(this.flags, globalThis, value, matcher_name, matcher_args, false);
+
+        const matcher_params = switch (Output.enable_ansi_colors) {
+            inline else => |colors| comptime Output.prettyFmt(matcher_params_fmt, colors),
+        };
+        return processPromise(this.flags, globalThis, value, matcher_name, matcher_params, false);
     }
 
     /// Processes the async flags (resolves/rejects), waiting for the async value if needed.
     /// If no flags, returns the original value
     /// If either flag is set, waits for the result, and returns either it as a JSValue, or null if the expectation failed (in which case if silent is false, also throws a js exception)
-    pub fn processPromise(flags: Expect.Flags, globalThis: *JSGlobalObject, value: JSValue, comptime matcher_name: string, comptime matcher_args: string, comptime silent: bool) ?JSValue {
+    pub fn processPromise(flags: Expect.Flags, globalThis: *JSGlobalObject, value: JSValue, matcher_name: anytype, matcher_params: anytype, comptime silent: bool) ?JSValue {
         switch (flags.promise) {
             inline .resolves, .rejects => |resolution| {
                 if (value.asAnyPromise()) |promise| {
@@ -173,41 +184,25 @@ pub const Expect = struct {
 
                     const newValue = promise.result(vm);
                     switch (promise.status(vm)) {
-                        .Fulfilled => switch (comptime resolution) {
+                        .Fulfilled => switch (resolution) {
                             .resolves => {},
                             .rejects => {
                                 if (!silent) {
-                                    if (flags.not) {
-                                        const signature = comptime getFullSignature(matcher_name, matcher_args, .{ .not = true, .promise = .rejects });
-                                        const fmt = signature ++ "\n\nExpected promise that rejects<r>\nReceived promise that resolved: <red>{any}<r>\n";
-                                        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
-                                        globalThis.throwPretty(fmt, .{newValue.toFmt(globalThis, &formatter)});
-                                    } else {
-                                        const signature = comptime getFullSignature(matcher_name, matcher_args, .{ .not = false, .promise = .rejects });
-                                        const fmt = signature ++ "\n\nExpected promise that rejects<r>\nReceived promise that resolved: <red>{any}<r>\n";
-                                        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
-                                        globalThis.throwPretty(fmt, .{newValue.toFmt(globalThis, &formatter)});
-                                    }
+                                    var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                                    const message = "Expected promise that rejects<r>\nReceived promise that resolved: <red>{any}<r>\n";
+                                    throwPrettyMatcherError(globalThis, matcher_name, matcher_params, flags, message, .{value.toFmt(globalThis, &formatter)});
                                 }
                                 return null;
                             },
                             .none => unreachable,
                         },
-                        .Rejected => switch (comptime resolution) {
+                        .Rejected => switch (resolution) {
                             .rejects => {},
                             .resolves => {
                                 if (!silent) {
-                                    if (flags.not) {
-                                        const signature = comptime getFullSignature(matcher_name, matcher_args, .{ .not = true, .promise = .resolves });
-                                        const fmt = signature ++ "\n\nExpected promise that resolves<r>\nReceived promise that rejected: <red>{any}<r>\n";
-                                        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
-                                        globalThis.throwPretty(fmt, .{newValue.toFmt(globalThis, &formatter)});
-                                    } else {
-                                        const signature = comptime getFullSignature(matcher_name, matcher_args, .{ .not = false, .promise = .resolves });
-                                        const fmt = signature ++ "\n\nExpected promise that resolves<r>\nReceived promise that rejected: <red>{any}<r>\n";
-                                        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
-                                        globalThis.throwPretty(fmt, .{newValue.toFmt(globalThis, &formatter)});
-                                    }
+                                    var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                                    const message = "Expected promise that resolves<r>\nReceived promise that rejected: <red>{any}<r>\n";
+                                    throwPrettyMatcherError(globalThis, matcher_name, matcher_params, flags, message, .{value.toFmt(globalThis, &formatter)});
                                 }
                                 return null;
                             },
@@ -219,41 +214,12 @@ pub const Expect = struct {
                     newValue.ensureStillAlive();
                     return newValue;
                 } else {
-                    switch (flags.promise) {
-                        .resolves => {
-                            if (!silent) {
-                                if (flags.not) {
-                                    const signature = comptime getFullSignature(matcher_name, matcher_args, .{ .not = true, .promise = .resolves });
-                                    const fmt = signature ++ "\n\nExpected promise<r>\nReceived: <red>{any}<r>\n";
-                                    var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
-                                    globalThis.throwPretty(fmt, .{value.toFmt(globalThis, &formatter)});
-                                } else {
-                                    const signature = comptime getFullSignature(matcher_name, matcher_args, .{ .not = false, .promise = .resolves });
-                                    const fmt = signature ++ "\n\nExpected promise<r>\nReceived: <red>{any}<r>\n";
-                                    var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
-                                    globalThis.throwPretty(fmt, .{value.toFmt(globalThis, &formatter)});
-                                }
-                            }
-                            return null;
-                        },
-                        .rejects => {
-                            if (!silent) {
-                                if (flags.not) {
-                                    const signature = comptime getFullSignature(matcher_name, matcher_args, .{ .not = true, .promise = .rejects });
-                                    const fmt = signature ++ "\n\nExpected promise<r>\nReceived: <red>{any}<r>\n";
-                                    var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
-                                    globalThis.throwPretty(fmt, .{value.toFmt(globalThis, &formatter)});
-                                } else {
-                                    const signature = comptime getFullSignature(matcher_name, matcher_args, .{ .not = false, .promise = .rejects });
-                                    const fmt = signature ++ "\n\nExpected promise<r>\nReceived: <red>{any}<r>\n";
-                                    var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
-                                    globalThis.throwPretty(fmt, .{value.toFmt(globalThis, &formatter)});
-                                }
-                            }
-                            return null;
-                        },
-                        .none => unreachable,
+                    if (!silent) {
+                        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                        const message = "Expected promise<r>\nReceived: <red>{any}<r>\n";
+                        throwPrettyMatcherError(globalThis, matcher_name, matcher_params, flags, message, .{value.toFmt(globalThis, &formatter)});
                     }
+                    return null;
                 }
             },
             else => {},
@@ -288,6 +254,7 @@ pub const Expect = struct {
 
         outFlags.* = flags.encode();
 
+        // (note that matcher_name/matcher_args are not used because silent=true)
         if (processPromise(flags, globalThis, value.*, "", "", true)) |result| {
             value.* = result;
             return true;
@@ -3851,6 +3818,73 @@ pub const Expect = struct {
         return thisValue;
     }
 
+    const CustomMatcherParamsFormatter = struct {
+        colors: bool,
+        globalObject: *JSC.JSGlobalObject,
+        matcher_fn: JSValue,
+
+        pub fn format(this: CustomMatcherParamsFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            // try to detect param names from matcher_fn (user function) source code
+            if (JSC.JSFunction.getSourceCode(this.matcher_fn)) |source_str| {
+                var source_slice = source_str.toSlice(this.globalObject.allocator());
+                defer source_slice.deinit();
+
+                var source: string = source_slice.slice();
+                if (std.mem.indexOfScalar(u8, source, '(')) |lparen| {
+                    if (std.mem.indexOfScalarPos(u8, source, lparen, ')')) |rparen| {
+                        var params_str = source[(lparen + 1)..rparen];
+                        var param_index: usize = 0;
+                        var iter = std.mem.splitScalar(u8, params_str, ',');
+                        while (iter.next()) |param_name| : (param_index += 1) {
+                            if (param_index > 0) { // skip the first param from the matcher_fn, which is the received value
+                                if (param_index > 1) {
+                                    try writer.writeAll(if (this.colors) Output.prettyFmt("<r><d>, <r><green>", true) else ", ");
+                                } else if (this.colors) {
+                                    try writer.writeAll("<green>");
+                                }
+                                var param_name_trimmed = std.mem.trim(u8, param_name, " ");
+                                if (param_name_trimmed.len > 0) {
+                                    try writer.writeAll(param_name_trimmed);
+                                } else {
+                                    try writer.print("arg{d}", .{param_index - 1});
+                                }
+                            }
+                        }
+                        if (param_index > 1 and this.colors) {
+                            try writer.writeAll("<r>");
+                        }
+                        return; // don't do fallback
+                    }
+                }
+            }
+
+            // fallback
+            switch (this.colors) {
+                inline else => |colors| try writer.print(Output.prettyFmt("<green>...args<r>", colors), .{}),
+            }
+        }
+    };
+
+    fn throwInvalidMatcherError(globalObject: *JSC.JSGlobalObject, matcher_name: bun.String, result: JSValue) void {
+        @setCold(true);
+
+        var formatter = JSC.ZigConsoleClient.Formatter{
+            .globalThis = globalObject,
+            .quote_strings = true,
+        };
+
+        const fmt =
+            "Unexpected return from matcher function `{s}`.\n" ++
+            "Matcher functions should return an object in the following format:\n" ++
+            "  {{message?: string | function, pass: boolean}}\n" ++
+            "'{any}' was returned";
+        const err = switch (Output.enable_ansi_colors) {
+            inline else => |colors| globalObject.createErrorInstance(Output.prettyFmt(fmt, colors), .{ matcher_name, result.toFmt(globalObject, &formatter) }),
+        };
+        err.put(globalObject, ZigString.static("name"), ZigString.init("InvalidMatcherError").toValueGC(globalObject));
+        globalObject.throwValue(err);
+    }
+
     /// Execute the custom matcher for the given args (the left value + the args passed to the matcher call).
     /// This function is called both for symmetric and asymmetric matching.
     /// If silent=false, throws an exception in JS if the matcher result didn't result in a pass (or if the matcher result is invalid).
@@ -3865,71 +3899,100 @@ pub const Expect = struct {
         matcher_context_jsvalue.ensureStillAlive();
 
         // call the custom matcher implementation
-        var matcher_result = matcher_fn.callWithThis(globalObject, matcher_context_jsvalue, args);
-        if (matcher_result.isAnyError()) {
-            globalObject.bunVM().onUnhandledError(globalObject, matcher_result);
-            return false;
-        }
-
-        // parse and validate the matcher result (which should be: { pass: boolean, message: () => string })
-        if (!matcher_result.isObject()) {
-            const err = globalObject.createErrorInstance("expect.{s}(): matcher did not return an object", .{matcher_name});
-            err.put(globalObject, ZigString.static("name"), ZigString.init("InvalidMatcherError").toValueGC(globalObject));
+        var result = matcher_fn.callWithThis(globalObject, matcher_context_jsvalue, args);
+        std.debug.assert(!result.isEmpty());
+        if (result.toError()) |err| {
             globalObject.throwValue(err);
             return false;
         }
+        // support for async matcher results
+        if (result.asAnyPromise()) |promise| {
+            var vm = globalObject.vm();
+            promise.setHandled(vm);
 
-        var pass = if (matcher_result.get(globalObject, "pass")) |val| val.toBoolean() else {
-            const err = globalObject.createErrorInstance("expect.{s}() did not return an object containing a \"pass\" property", .{matcher_name});
-            err.put(globalObject, ZigString.static("name"), ZigString.init("InvalidMatcherError").toValueGC(globalObject));
-            globalObject.throwValue(err);
-            return false;
+            const now = std.time.Instant.now() catch unreachable;
+            const pending_test = Jest.runner.?.pending_test.?;
+            const elapsed = @divFloor(now.since(pending_test.started_at), std.time.ns_per_ms);
+            const remaining = @as(u32, @truncate(Jest.runner.?.last_test_timeout_timer_duration -| elapsed));
+
+            if (!globalObject.bunVM().waitForPromiseWithTimeout(promise, remaining)) {
+                pending_test.timeout();
+                globalObject.throw("Timed out while awaiting the promise returned by matcher \"{s}\"", .{matcher_name});
+                return false;
+            }
+            result = promise.result(vm);
+            result.ensureStillAlive();
+            std.debug.assert(!result.isEmpty());
+            switch (promise.status(vm)) {
+                .Pending => unreachable,
+                .Fulfilled => {},
+                .Rejected => {
+                    // TODO throw the actual rejection error
+                    globalObject.bunVM().runErrorHandler(result, null);
+                    globalObject.throw("Matcher `{s}` returned a promise that rejected", .{matcher_name});
+                    return false;
+                },
+            }
+        }
+
+        var pass: bool = undefined;
+        var message: JSValue = undefined;
+
+        // Parse and validate the custom matcher result, which should conform to: { pass: boolean, message?: () => string }
+        var is_valid = valid: {
+            if (result.isObject()) {
+                if (result.get(globalObject, "pass")) |pass_value| {
+                    pass = pass_value.toBoolean();
+
+                    if (result.get(globalObject, "message")) |message_value| {
+                        if (!message_value.isString() and !message_value.isCallable(globalObject.vm())) {
+                            break :valid false;
+                        }
+                        message = message_value;
+                    } else {
+                        message = JSValue.undefined;
+                    }
+
+                    break :valid true;
+                }
+            }
+            break :valid false;
         };
+        if (!is_valid) {
+            throwInvalidMatcherError(globalObject, matcher_name, result);
+            return false;
+        }
 
         if (flags.not) pass = !pass;
         if (pass or silent) return pass;
 
         // handle failure
-        const message_fn = matcher_result.get(globalObject, "message") orelse JSValue.undefined;
-        if (message_fn.isCallable(globalObject.vm())) {
-            var message_result = message_fn.callWithGlobalThis(globalObject, &[_]JSValue{});
+        var message_text: bun.String = undefined;
+        if (message.isUndefined()) {
+            message_text = bun.String.static("No message was specified for this matcher.");
+        } else if (message.isString()) {
+            message_text = message.toBunString(globalObject);
+        } else { // callable
+            var message_result = message.callWithGlobalThis(globalObject, &[_]JSValue{});
+            std.debug.assert(!message_result.isEmpty());
             if (message_result.toError()) |err| {
-                globalObject.bunVM().onUnhandledError(globalObject, err);
+                globalObject.throwValue(err);
                 return false;
             }
-            if (message_result.asAnyPromise()) |promise| {
-                var vm = globalObject.vm();
-                promise.setHandled(vm);
-
-                const now = std.time.Instant.now() catch unreachable;
-                const pending_test = Jest.runner.?.pending_test.?;
-                const elapsed = @divFloor(now.since(pending_test.started_at), std.time.ns_per_ms);
-                const remaining = @as(u32, @truncate(Jest.runner.?.last_test_timeout_timer_duration -| elapsed));
-
-                if (!globalObject.bunVM().waitForPromiseWithTimeout(promise, remaining)) {
-                    pending_test.timeout();
-                    globalObject.throw("Timed out while awaiting the promise of the message returned by matcher \"{s}\"", .{matcher_name});
-                    return false;
-                }
-
-                message_result = promise.result(vm);
-                message_result.ensureStillAlive();
-            }
-            if (message_result.isAnyError()) {
-                globalObject.throwValue(message_result);
+            if (message_result.toStringOrNull(globalObject)) |str| {
+                message_text = bun.String.init(str.getZigString(globalObject));
+            } else {
                 return false;
             }
-
-            const message = bun.String.init(message_result.toString(globalObject).getZigString(globalObject));
-            const fmt = comptime Expect.getSignature("{s}", "<green>expected<r>", false) ++ "\n\n{s}\n";
-            globalObject.throwPretty(Output.prettyFmt(fmt, true), .{ matcher_name, message });
-            return false;
-        } else {
-            const err = globalObject.createErrorInstance("expect.{s}() did not return an object containing a \"message\" method", .{matcher_name});
-            err.put(globalObject, ZigString.static("name"), ZigString.init("InvalidMatcherError").toValueGC(globalObject));
-            globalObject.throwValue(err);
-            return false;
         }
+
+        const matcher_params = CustomMatcherParamsFormatter{
+            .colors = Output.enable_ansi_colors,
+            .globalObject = globalObject,
+            .matcher_fn = matcher_fn,
+        };
+        throwPrettyMatcherError(globalObject, matcher_name, matcher_params, .{}, "{s}", .{message_text});
+        return false;
     }
 
     /// Function that is run for either `expect.myMatcher()` call or `expect().myMatcher` call,
@@ -3964,12 +4027,18 @@ pub const Expect = struct {
             return .zero;
         }
 
+        const matcher_params = CustomMatcherParamsFormatter{
+            .colors = Output.enable_ansi_colors,
+            .globalObject = globalObject,
+            .matcher_fn = matcher_fn,
+        };
+
         // retrieve the captured expected value
         var value = Expect.capturedValueGetCached(thisValue) orelse {
             globalObject.throw("Internal consistency error: failed to retrieve the captured value", .{});
             return .zero;
         };
-        value = Expect.processPromise(expect.flags, globalObject, value, "[[custom matcher]]", "<green>expected<r>", false) orelse return .zero;
+        value = Expect.processPromise(expect.flags, globalObject, value, matcher_name, matcher_params, false) orelse return .zero;
         value.ensureStillAlive();
 
         active_test_expectation_counter.actual += 1;
@@ -4487,15 +4556,6 @@ pub const ExpectCustomAsymmetricMatcher = struct {
             flags = .{};
         }
 
-        // retrieve the user-provided matcher function
-        var func: JSValue = callFrame.callee();
-        var matcher_fn = getCustomMatcherFn(func, globalObject) orelse unreachable;
-        if (!matcher_fn.jsType().isFunction()) {
-            globalObject.throw("Internal consistency error: the ExpectCustomMatcher(matcherName) is not a function!", .{});
-            return .zero;
-        }
-        matcher_fn.ensureStillAlive();
-
         // create the matcher instance
         const instance = globalObject.bunVM().allocator.create(ExpectCustomAsymmetricMatcher) catch {
             globalObject.throwOutOfMemory();
@@ -4587,11 +4647,11 @@ pub const ExpectCustomAsymmetricMatcher = struct {
                 }
 
                 var result = matcher_fn.callWithThis(globalObject, thisValue, args.items);
-                if (result.isAnyError()) {
+                if (result.toError()) |err| {
                     if (dontThrow) {
                         return false;
                     } else {
-                        globalObject.throwValue(globalObject, result);
+                        globalObject.throwValue(globalObject, err);
                         return error.JSError;
                     }
                 }

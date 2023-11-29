@@ -1412,7 +1412,7 @@ declare module "bun:test" {
 
   export interface MatcherResult {
     pass: boolean;
-    message: string | (() => string);
+    message?: string | (() => string);
   }
 
   export type CustomMatcher<E, P extends any[]> = (

@@ -12,6 +12,8 @@ interface CustomMatchersForTest {
   _toFailWithoutMessage(): any;
   _toBeOne(): any;
   _toAllowOverridingExistingMatcher(): any;
+  _toCustomA(): any;
+  _toCustomB(): any;
 
   _toThrowErrorMatchingSnapshot(): any; // TODO: remove when implemented
 }

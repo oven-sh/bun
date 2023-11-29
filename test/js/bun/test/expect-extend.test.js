@@ -8,7 +8,7 @@
  */
 
 import test_interop from "./test-interop.js";
-var { expect, describe, test, it } = await test_interop();
+var { isBun, expect, describe, test, it } = await test_interop();
 
 //expect.addSnapshotSerializer(alignedAnsiStyleSerializer);
 
@@ -182,27 +182,129 @@ it("throws descriptive errors for invalid matchers", () => {
   expect(() =>
     expect.extend({
       // @ts-expect-error
-      default: undefined,
+      _default: undefined,
     }),
-  ).toThrow(/*'expect.extend: `default` is not a valid matcher. Must be a function, is "undefined"'*/);
+  ).toThrow('expect.extend: `_default` is not a valid matcher. Must be a function, is "undefined"');
   expect(() =>
     expect.extend({
       // @ts-expect-error
-      default: undefined,
+      _default: null,
     }),
-  ).toThrow(/*'expect.extend: `default` is not a valid matcher. Must be a function, is "undefined"'*/);
+  ).toThrow('expect.extend: `_default` is not a valid matcher. Must be a function, is "null"');
   expect(() =>
     expect.extend({
       // @ts-expect-error
-      default: 42,
+      _default: 42,
     }),
-  ).toThrow(/*'expect.extend: `default` is not a valid matcher. Must be a function, is "number"'*/);
+  ).toThrow('expect.extend: `_default` is not a valid matcher. Must be a function, is "number"');
   expect(() =>
     expect.extend({
       // @ts-expect-error
-      default: "foobar",
+      _default: "foobar",
     }),
-  ).toThrow(/*'expect.extend: `default` is not a valid matcher. Must be a function, is "string"'*/);
+  ).toThrow('expect.extend: `_default` is not a valid matcher. Must be a function, is "string"');
+});
+
+describe("invalid matcher implementations errors", () => {
+  const buildErrorMsg = (/** @type {string} */ val) => {
+    return (
+      (isBun
+        ? "Unexpected return from matcher function `_toCustomA`.\n"
+        : "Unexpected return from a matcher function.\n") +
+      "Matcher functions should return an object in the following format:\n" +
+      "  {message?: string | function, pass: boolean}\n" +
+      `'${val}' was returned`
+    );
+  };
+
+  it("handles correctly when matcher throws", () => {
+    expect.extend({
+      _toCustomA: _expected => {
+        throw new Error("MyError");
+      },
+    });
+    expect(() => expect(0)._toCustomA()).toThrow("MyError");
+  });
+
+  it("throws when returns undefined", () => {
+    expect.extend({
+      // @ts-expect-error
+      _toCustomA: _expected => 42,
+    });
+    expect(() => expect(0)._toCustomA()).toThrow(buildErrorMsg("42"));
+  });
+
+  it("throws when returns not an object", () => {
+    expect.extend({
+      // @ts-expect-error
+      _toCustomA: _expected => 42,
+    });
+    expect(() => expect(0)._toCustomA()).toThrow(buildErrorMsg("42"));
+  });
+
+  it('throws when return is missing "pass"', () => {
+    expect.extend({
+      // @ts-expect-error
+      _toCustomA: _expected => ({}),
+    });
+    expect(() => expect(0)._toCustomA()).toThrow(buildErrorMsg("{}"));
+  });
+
+  it("supports undefined message", () => {
+    expect.extend({
+      _toCustomA: _expected => ({ pass: _expected === 1 }),
+    });
+    expect(() => expect(1)._toCustomA()).not.toThrow();
+    expect(() => expect(0).not._toCustomA()).not.toThrow();
+
+    // check default values
+    expect(() => expect(0)._toCustomA()).toThrow("No message was specified for this matcher.");
+    expect(() => expect(1).not._toCustomA()).toThrow("No message was specified for this matcher.");
+  });
+
+  it('handles correctly when "message" getter throws', () => {
+    expect.extend({
+      _toCustomA: _expected => ({
+        pass: false,
+        message: () => {
+          throw new Error("MyError");
+        },
+      }), // not a function
+    });
+    expect(() => expect(0)._toCustomA()).toThrow("MyError");
+  });
+});
+
+describe("async support", () => {
+  it("supports async matcher result", async () => {
+    expect.extend({
+      _toCustomA: _expected => Promise.resolve({ pass: _expected === 1 }),
+      _toCustomB: async _expected => Promise.resolve({ pass: _expected === 1 }),
+    });
+
+    await expect(1)._toCustomA(); // symmetric use
+    await expect(1)._toCustomB(); // symmetric use
+    if (isBun) {
+      // jest somehow can't handle this
+      await expect(1).toEqual(expect._toCustomA()); // asymmetric use
+      await expect(1).toEqual(expect._toCustomB()); // asymmetric use
+    }
+  });
+
+  it("throws on async matcher result rejection", async () => {
+    expect.extend({
+      _toCustomA: _expected => Promise.reject("error"),
+      _toCustomB: async _expected => Promise.reject("error"),
+    });
+
+    if (isBun) {
+      // jest throws an UnhandledPromiseRejection
+      await expect(async () => await expect(1)._toCustomA()).toThrow(); // symmetric use
+      await expect(async () => await expect(1)._toCustomB()).toThrow(); // symmetric use
+      await expect(async () => await expect(1).toEqual(expect._toCustomA())).toThrow(); // asymmetric use
+      await expect(async () => await expect(1).toEqual(expect._toCustomB())).toThrow(); // asymmetric use
+    }
+  });
 });
 
 it("should not crash under intensive usage", () => {

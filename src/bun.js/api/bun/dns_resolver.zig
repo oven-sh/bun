@@ -223,8 +223,12 @@ const LibUVBackend = struct {
             portZ.ptr,
             if (hints) |*hint| hint else null,
         ).errEnum()) |_| {
-            @panic("TODO: ahndle error");
+            @panic("TODO: handle error");
         }
+
+        request.backend.libc.uv.data = request;
+
+        defer request.head.promise.resolveOnNextTick(globalThis, JSValue.jsNumber(142));
 
         return request.head.promise.value();
     }
@@ -1267,28 +1271,20 @@ pub const GetAddrInfoRequest = struct {
     }
 
     // fn (*uv_getaddrinfo_t, c_int, ?*anyopaque) callconv(.C) void
-    pub fn onLibUVComplete(uv_info: *libuv.uv_getaddrinfo_t, status: libuv.ReturnCode, maybe_addrinfo: ?*anyopaque) callconv(.C) void {
+    pub fn onLibUVComplete(uv_info: *libuv.uv_getaddrinfo_t, retcode: libuv.ReturnCode, addrinfo: ?*libuv.addrinfo) callconv(.C) void {
         const this: *GetAddrInfoRequest = @alignCast(@ptrCast(uv_info.data));
         std.debug.assert(uv_info == &this.backend.libc.uv);
 
-        if (maybe_addrinfo) |addrinfo| {
-            defer libuv.uv_freeaddrinfo(addrinfo);
-            if(GetAddrInfo.Result.fromAddrInfo(@alignCast(@ptrCast(addrinfo)))) |info| {
-                this.head.promise.resolve(
-                    this.head.globalThis,
-                    info.toJS(this.head.globalThis, default_allocator),
-                );
+        if (this.resolver_for_caching) |resolver| {
+            if (this.cache.pending_cache) {
+                resolver.drainPendingHostNative(this.cache.pos_in_pending, this.head.globalThis, retcode.value, .{ .addrinfo = addrinfo });
                 return;
             }
         }
-        var e = bun.sys.Error{
-            .errno = status.errno() orelse 0,
-            .syscall = .getaddrinfo,
-        };
-        this.head.promise.reject(
-            this.head.globalThis,
-            e.toJS(this.head.globalThis.ref()).?.value(),
-        );
+
+        var head = this.head;
+        head.processGetAddrInfoNative(retcode.value, addrinfo);
+        head.globalThis.allocator().destroy(this);
     }
 };
 
@@ -1508,6 +1504,7 @@ pub const DNSLookup = struct {
         if (result == null or result.?.node == null) {
             var promise = this.promise;
             var globalThis = this.globalThis;
+            
             const error_value = globalThis.createErrorInstance("DNS lookup failed: {s}", .{"No results"});
             error_value.put(
                 globalThis,

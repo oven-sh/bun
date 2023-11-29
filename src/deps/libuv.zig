@@ -1394,7 +1394,7 @@ const union_unnamed_435 = extern union {
     connect: struct_unnamed_437,
 };
 pub const uv_getaddrinfo_t = struct_uv_getaddrinfo_s;
-pub const uv_getaddrinfo_cb = ?*const fn (*uv_getaddrinfo_t, ReturnCode, ?*anyopaque) callconv(.C) void;
+pub const uv_getaddrinfo_cb = ?*const fn (*uv_getaddrinfo_t, ReturnCode, ?*addrinfo) callconv(.C) void;
 pub const struct_uv_getaddrinfo_s = extern struct {
     data: ?*anyopaque,
     type: uv_req_type,
@@ -1408,8 +1408,8 @@ pub const struct_uv_getaddrinfo_s = extern struct {
     node: [*]WCHAR,
     service: [*]WCHAR,
     addrinfow: ?*anyopaque,
-    addrinfo: ?*anyopaque,
-    retcode: c_int,
+    addrinfo: ?*addrinfo,
+    retcode: ReturnCode,
 };
 const struct_unnamed_439 = extern struct {
     overlapped: OVERLAPPED,
@@ -2425,3 +2425,5 @@ pub const S = struct {
         return m & IFMT == IFSOCK;
     }
 };
+
+pub const addrinfo = std.os.windows.ws2_32.addrinfo;

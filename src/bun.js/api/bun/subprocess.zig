@@ -26,7 +26,7 @@ pub const Subprocess = struct {
     pub usingnamespace JSC.Codegen.JSSubprocess;
     const default_max_buffer_size = 1024 * 1024 * 4;
 
-    pid: if (Environment.isWindows) uv.uv_pid_t else std.os.pid_t,
+    pid: if (Environment.isWindows) uv.uv_process_t else std.os.pid_t,
     // on macOS, this is nothing
     // on linux, it's a pidfd
     pidfd: if (Environment.isLinux) bun.FileDescriptor else u0 = std.math.maxInt(if (Environment.isLinux) bun.FileDescriptor else u0),
@@ -449,7 +449,7 @@ pub const Subprocess = struct {
                 }
             }
             if (comptime Environment.isWindows) {
-                if (uv.uv_kill(this.pid, sig).errEnum()) |err| {
+                if (uv.uv_process_kill(&this.pid, sig).errEnum()) |err| {
                     if (err != .SRCH)
                         return .{ .err = bun.sys.Error.fromCode(err, .kill) };
                 }
@@ -526,7 +526,7 @@ pub const Subprocess = struct {
         this: *Subprocess,
         _: *JSGlobalObject,
     ) callconv(.C) JSValue {
-        return JSValue.jsNumber(this.pid);
+        return JSValue.jsNumber(if (Environment.isWindows) this.pid.pid else this.pid);
     }
 
     pub fn getKilled(
@@ -1446,21 +1446,22 @@ pub const Subprocess = struct {
                 .stdio_count = uv_stdio.len,
                 .flags = if (windows_hide == 1) uv.UV_PROCESS_WINDOWS_HIDE else 0,
             };
-            var handle: uv.uv_process_t = undefined;
-            if (uv.uv_spawn(jsc_vm.uvLoop(), &handle, &options).errEnum()) |errno| {
-                globalThis.throwValue(bun.sys.Error.fromCode(errno, .uv_spawn).toJSC(globalThis));
-                return .zero;
-            }
-
-            var subprocess = globalThis.allocator().create(Subprocess) catch {
+            const alloc = globalThis.allocator();
+            var subprocess = allocator.create(Subprocess) catch {
                 globalThis.throwOutOfMemory();
                 return .zero;
             };
 
+            if (uv.uv_spawn(jsc_vm.uvLoop(), &subprocess.pid, &options).errEnum()) |errno| {
+                alloc.destroy(subprocess);
+                globalThis.throwValue(bun.sys.Error.fromCode(errno, .uv_spawn).toJSC(globalThis));
+                return .zero;
+            }
+
             // When run synchronously, subprocess isn't garbage collected
             subprocess.* = Subprocess{
                 .globalThis = globalThis,
-                .pid = handle.pid,
+                .pid = subprocess.pid,
                 .pidfd = 0,
                 .stdin = Writable.init(stdio[0], stdin_pipe[1], globalThis) catch {
                     globalThis.throwOutOfMemory();
@@ -1479,7 +1480,7 @@ pub const Subprocess = struct {
                     .is_sync = is_sync,
                 },
             };
-            handle.data = subprocess;
+            subprocess.pid.data = subprocess;
             std.debug.assert(ipc_mode == .none); //TODO:
 
             const out = if (comptime !is_sync) subprocess.toJS(globalThis) else .zero;
@@ -1624,7 +1625,7 @@ pub const Subprocess = struct {
         // the ipc fd to be any number and it just works. But most people only care about the default `.fork()`
         // behavior, where this workaround suffices.
         //
-        // When Bun.spawn() is given a `.onMessage` callback, it enables IPC as follows:
+        // When Bun.spawn() is given an `.ipc` callback, it enables IPC as follows:
         var socket: IPC.Socket = undefined;
         if (ipc_mode != .none) {
             if (comptime is_sync) {
@@ -2024,8 +2025,7 @@ pub const Subprocess = struct {
         const subprocess: *Subprocess = @alignCast(@ptrCast(process.data.?));
         subprocess.globalThis.assertOnJSThread();
         subprocess.exit_code = @intCast(exit_status);
-        std.debug.print("TODO : handle term signal: {d}\n", .{term_signal});
-        // subprocess.signal_code = @as(SignalCode, @enumFromInt(term_signal));
+        subprocess.signal_code = if (term_signal > 0 and term_signal < @intFromEnum(SignalCode.SIGSYS)) @enumFromInt(term_signal) else null;
         subprocess.onExit(subprocess.globalThis, subprocess.this_jsvalue);
     }
 
@@ -2081,7 +2081,11 @@ pub const Subprocess = struct {
         globalThis: *JSC.JSGlobalObject,
         this_jsvalue: JSC.JSValue,
     ) void {
-        log("onExit({d}) = {d}, \"{s}\"", .{ this.pid, if (this.exit_code) |e| @as(i32, @intCast(e)) else -1, if (this.signal_code) |code| @tagName(code) else "" });
+        log("onExit({d}) = {d}, \"{s}\"", .{
+            if (Environment.isWindows) this.pid.pid else this.pid,
+            if (this.exit_code) |e| @as(i32, @intCast(e)) else -1,
+            if (this.signal_code) |code| @tagName(code) else "",
+        });
         defer this.updateHasPendingActivity();
         this_jsvalue.ensureStillAlive();
 

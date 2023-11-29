@@ -319,6 +319,9 @@ pub inline fn constStrToU8(s: []const u8) []u8 {
 
 pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.MAX_PATH_BYTES;
 pub const PathBuffer = [MAX_PATH_BYTES]u8;
+pub const OSPathSlice = if (Environment.isWindows) [:0]const u16 else [:0]const u8;
+pub const OSPathSliceWithoutSentinel = if (Environment.isWindows) []const u16 else []const u8;
+pub const OSPathBuffer = if (Environment.isWindows) WPathBuffer else PathBuffer;
 pub const WPathBuffer = [MAX_PATH_BYTES / 2]u16;
 
 pub inline fn cast(comptime To: type, value: anytype) To {
@@ -2059,9 +2062,6 @@ pub fn fdi32(fd_: anytype) i32 {
     return @intCast(fd_);
 }
 
-pub const OSPathSlice = if (Environment.isWindows) [:0]const u16 else [:0]const u8;
-pub const OSPathSliceWithoutSentinel = if (Environment.isWindows) []const u16 else []const u8;
-pub const OSPathBuffer = if (Environment.isWindows) WPathBuffer else PathBuffer;
 pub const LazyBoolValue = enum {
     unknown,
     no,

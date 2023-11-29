@@ -510,10 +510,10 @@ pub const BunxCommand = struct {
 
     pub fn printHelp() void {
         const intro_text =
-            \\<b>bunx<r>
-            \\<b>Usage<r>: <b><green>bun install<r> <cyan>[flags]<r> [...\<pkg\>]
-            \\<b>Alias: <b>bun i<r>
-            \\  Install the dependencies listed in package.json
+            \\<b>Usage<r>:
+            \\<b><green>bun x<r> <cyan>\<pkg\><r> [args...]
+            \\<b><green>bun x<r> <cyan>--package=\<pkg\>[\<version\>]<r> -- \<cmd\> [args...]
+            \\  Execute a package binary (CLI), installing if needed <d>(bunx)<r>
         ;
 
         const outro_text =

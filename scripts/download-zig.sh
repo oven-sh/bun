@@ -29,7 +29,7 @@ case $(uname -ms) in
     ;;
 'Linux x86_64')
     target='linux'
-    arch='aarch64'
+    arch='x86_64'
     ;;
 *)
     printf "error: cannot get platform name from '%s'\n" "${unamestr}"
@@ -79,7 +79,7 @@ fi
 
 rm -rf "${extract_at}"
 mkdir -p "${extract_at}"
-tar -xzf "${dest}" -C "${extract_at}" --strip-components=1
+tar -xf "${dest}" -C "${extract_at}" --strip-components=1
 
 echo "${url}" > "${extract_at}/.version"
 

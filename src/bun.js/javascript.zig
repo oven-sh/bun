@@ -2069,7 +2069,7 @@ pub const VirtualMachine = struct {
                         null,
                         logger.Loc.Empty,
                         this.allocator,
-                        "{s} resolving preload {any}",
+                        "{s} resolving preload {}",
                         .{
                             @errorName(e),
                             js_printer.formatJSONString(preload),
@@ -2082,7 +2082,7 @@ pub const VirtualMachine = struct {
                         null,
                         logger.Loc.Empty,
                         this.allocator,
-                        "preload not found {any}",
+                        "preload not found {}",
                         .{
                             js_printer.formatJSONString(preload),
                         },
@@ -2511,14 +2511,12 @@ pub const VirtualMachine = struct {
 
                 if (file.len == 0 and func.len == 0) continue;
 
-                const has_name = std.fmt.count("{any}", .{frame.nameFormatter(
-                    false,
-                )}) > 0;
+                const has_name = std.fmt.count("{}", .{frame.nameFormatter(false)}) > 0;
 
                 if (has_name) {
                     try writer.print(
                         comptime Output.prettyFmt(
-                            "<r>      <d>at <r>{any}<d> (<r>{any}<d>)<r>\n",
+                            "<r>      <d>at <r>{}<d> (<r>{}<d>)<r>\n",
                             allow_ansi_colors,
                         ),
                         .{
@@ -2536,7 +2534,7 @@ pub const VirtualMachine = struct {
                 } else {
                     try writer.print(
                         comptime Output.prettyFmt(
-                            "<r>      <d>at <r>{any}\n",
+                            "<r>      <d>at <r>{}\n",
                             allow_ansi_colors,
                         ),
                         .{
@@ -2630,7 +2628,7 @@ pub const VirtualMachine = struct {
                 }
                 exception.stack.frames_len = @as(u8, @truncate(j));
                 frames.len = j;
-            } else {}
+            }
         }
 
         if (frames.len == 0) return;
@@ -2638,23 +2636,23 @@ pub const VirtualMachine = struct {
         var top = &frames[0];
         var top_source_url = top.source_url.toUTF8(bun.default_allocator);
         defer top_source_url.deinit();
-        var mapping_: ?SourceMap.Mapping = null;
-        if (top.remapped) {
-            mapping_ = SourceMap.Mapping{
+
+        const mapping_ = if (top.remapped)
+            SourceMap.Mapping{
                 .generated = .{},
                 .original = .{
                     .lines = @max(top.position.line, 0),
                     .columns = @max(top.position.column_start, 0),
                 },
                 .source_index = 0,
-            };
-        } else {
-            mapping_ = this.source_mappings.resolveMapping(
+            }
+        else
+            this.source_mappings.resolveMapping(
                 top_source_url.slice(),
                 @max(top.position.line, 0),
                 @max(top.position.column_start, 0),
             );
-        }
+
         if (mapping_) |mapping| {
             var log = logger.Log.init(default_allocator);
             var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return;
@@ -2752,7 +2750,7 @@ pub const VirtualMachine = struct {
             try writer.writeByteNTimes(' ', pad);
 
             try writer.print(
-                comptime Output.prettyFmt("<r><d>{d} | <r>{any}\n", allow_ansi_color),
+                comptime Output.prettyFmt("<r><d>{d} | <r>{}\n", allow_ansi_color),
                 .{
                     display_line,
                     bun.fmt.fmtJavaScript(std.mem.trimRight(u8, std.mem.trim(u8, source.text.slice(), "\n"), "\t "), allow_ansi_color),
@@ -2776,7 +2774,7 @@ pub const VirtualMachine = struct {
 
                 try writer.print(
                     comptime Output.prettyFmt(
-                        "<r><d>- |<r> {any}\n",
+                        "<r><d>- |<r> {}\n",
                         allow_ansi_color,
                     ),
                     .{
@@ -2797,7 +2795,7 @@ pub const VirtualMachine = struct {
 
                 try writer.print(
                     comptime Output.prettyFmt(
-                        "<r><b>{d} |<r> {any}\n",
+                        "<r><b>{d} |<r> {}\n",
                         allow_ansi_color,
                     ),
                     .{ display_line, bun.fmt.fmtJavaScript(remainder, allow_ansi_color) },
@@ -2881,7 +2879,7 @@ pub const VirtualMachine = struct {
                         var bun_str = bun.String.empty;
                         defer bun_str.deref();
                         value.jsonStringify(this.global, 2, &bun_str); //2
-                        try writer.print(comptime Output.prettyFmt(" {s}<d>: <r>{any}<r>\n", allow_ansi_color), .{ field, bun_str });
+                        try writer.print(comptime Output.prettyFmt(" {s}<d>: <r>{}<r>\n", allow_ansi_color), .{ field, bun_str });
                         add_extra_line = true;
                     }
                 }
@@ -2944,7 +2942,7 @@ pub const VirtualMachine = struct {
         if (!name.isEmpty() and !message.isEmpty()) {
             const display_name: String = if (name.eqlComptime("Error")) String.init("error") else name;
 
-            try writer.print(comptime Output.prettyFmt("<r><red>{any}<r><d>:<r> <b>{s}<r>\n", allow_ansi_color), .{
+            try writer.print(comptime Output.prettyFmt("<r><red>{}<r><d>:<r> <b>{s}<r>\n", allow_ansi_color), .{
                 display_name,
                 message,
             });

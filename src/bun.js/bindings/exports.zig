@@ -636,12 +636,6 @@ pub const ZigStackFrame = extern struct {
             switch (this.code_type) {
                 .Eval => {
                     try writer.writeAll("(eval)");
-
-                    if (!name.isEmpty()) {
-                        try std.fmt.format(writer, "{}", .{name});
-                    }
-                },
-                .Module => {
                     if (!name.isEmpty()) {
                         try std.fmt.format(writer, "{}", .{name});
                     }

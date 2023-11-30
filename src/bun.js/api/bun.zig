@@ -4675,7 +4675,7 @@ const InternalTestingAPIs = struct {
         var writer = buffer.bufferedWriter();
         var formatter = bun.fmt.fmtJavaScript(code.slice(), true);
         formatter.limited = false;
-        std.fmt.format(writer.writer(), "{any}", .{formatter}) catch |err| {
+        std.fmt.format(writer.writer(), "{}", .{formatter}) catch |err| {
             globalThis.throwError(err, "Error formatting code");
             return .zero;
         };

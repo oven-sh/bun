@@ -3719,7 +3719,7 @@ public:
             frame.isGlobalCode = true;
         }
 
-        if (functionName.length() > 4 && functionName.startsWith("new "_s)) {
+        if (functionName.startsWith("new "_s)) {
             frame.isConstructor = true;
             functionName = functionName.substring(4);
         }

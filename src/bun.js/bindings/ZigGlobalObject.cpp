@@ -321,15 +321,15 @@ static bool skipNextComputeErrorInfo = false;
 
 WTF::String Bun::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const WTF::String& name, const WTF::String& message, unsigned& line, unsigned& column, WTF::String& sourceURL, Vector<JSC::StackFrame>& stackTrace, JSC::JSObject* errorInstance)
 {
-
     WTF::StringBuilder sb;
 
     if (!name.isEmpty()) {
         sb.append(name);
-        sb.append(": "_s);
-    }
-
-    if (!message.isEmpty()) {
+        if (!message.isEmpty()) {
+            sb.append(": "_s);
+            sb.append(message);
+        }
+    } else if (!message.isEmpty()) {
         sb.append(message);
     }
 
@@ -338,8 +338,6 @@ WTF::String Bun::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject
     size_t framesCount = stackTrace.size();
 
     bool hasSet = false;
-
-    bool needsNewline = !name.isEmpty() || !message.isEmpty();
 
     if (JSC::ErrorInstance* err = jsDynamicCast<JSC::ErrorInstance*>(errorInstance)) {
         if (err->errorType() == ErrorType::SyntaxError && (stackTrace.isEmpty() || stackTrace.at(0).sourceURL(vm) != err->sourceURL())) {
@@ -370,11 +368,9 @@ WTF::String Bun::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject
                 Bun__remapStackFramePositions(globalObject, &remappedFrame, 1);
             }
 
-            if (needsNewline) {
-                sb.append("\n"_s);
-            }
-
-            needsNewline = true;
+            // there is always a newline before each stack frame line, ensuring that the name + message
+            // exist on the first line, even if both are empty
+            sb.append("\n"_s);
 
             sb.append("    at <parse> ("_s);
 
@@ -403,16 +399,12 @@ WTF::String Bun::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject
         return sb.toString();
     }
 
-    if (needsNewline) {
-        sb.append("\n"_s);
-    }
+    sb.append("\n"_s);
 
     for (size_t i = 0; i < framesCount; i++) {
         StackFrame& frame = stackTrace.at(i);
 
         sb.append("    at "_s);
-
-        WTF::String functionName = frame.functionName(vm);
 
         if (auto codeblock = frame.codeBlock()) {
             if (codeblock->isConstructor()) {
@@ -422,13 +414,12 @@ WTF::String Bun::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject
             // TODO: async
         }
 
+        WTF::String functionName = frame.functionName(vm);
         if (functionName.isEmpty()) {
             sb.append("<anonymous>"_s);
         } else {
             sb.append(functionName);
         }
-
-        sb.append(" ("_s);
 
         if (frame.hasLineAndColumnInfo()) {
             unsigned int thisLine = 0;
@@ -467,15 +458,20 @@ WTF::String Bun::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject
                 }
             }
 
+            if (sourceURLForFrame.isEmpty()) {
+                sourceURLForFrame = String("[native]"_s);
+            }
+
+            sb.append(" ("_s);
             sb.append(sourceURLForFrame);
             sb.append(":"_s);
             sb.append(remappedFrame.position.line);
             sb.append(":"_s);
             sb.append(remappedFrame.position.column_start);
+            sb.append(")"_s);
         } else {
-            sb.append("native"_s);
+            sb.append(" (native)"_s);
         }
-        sb.append(")"_s);
 
         if (i != framesCount - 1) {
             sb.append("\n"_s);

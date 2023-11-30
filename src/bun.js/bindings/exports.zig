@@ -3264,13 +3264,14 @@ pub const ZigConsoleClient = struct {
         // console
         _: ZigConsoleClient.Type,
         // global
-        _: *JSGlobalObject,
+        global: *JSGlobalObject,
         // chars
         chars: [*]const u8,
         // len
         len: usize,
         // args
-        _: *ScriptArguments,
+        args: [*]JSValue,
+        args_len: usize,
     ) callconv(.C) void {
         if (!pending_time_logs_loaded) {
             return;
@@ -3282,13 +3283,32 @@ pub const ZigConsoleClient = struct {
         // then display it in milliseconds
         Output.printElapsed(@as(f64, @floatFromInt(value.read() / std.time.ns_per_us)) / std.time.us_per_ms);
         switch (len) {
-            0 => Output.printErrorln("\n", .{}),
-            else => Output.printErrorln(" {s}", .{chars[0..len]}),
+            0 => {},
+            else => Output.printError(" {s}", .{chars[0..len]}),
         }
-
         Output.flush();
 
-        // TODO: print the arguments
+        // print the arguments
+        var fmt = ZigConsoleClient.Formatter{
+            .remaining_values = &[_]JSValue{},
+            .globalThis = global,
+            .ordered_properties = false,
+            .quote_strings = false,
+        };
+        var console = global.bunVM().console;
+        var writer = console.error_writer.writer();
+        const Writer = @TypeOf(writer);
+        for (args[0..args_len]) |arg| {
+            const tag = ZigConsoleClient.Formatter.Tag.get(arg, global);
+            _ = writer.write(" ") catch 0;
+            if (Output.enable_ansi_colors_stderr) {
+                fmt.format(tag, Writer, writer, arg, global, true);
+            } else {
+                fmt.format(tag, Writer, writer, arg, global, false);
+            }
+        }
+        _ = writer.write("\n") catch 0;
+        writer.context.flush() catch {};
     }
     pub fn profile(
         // console

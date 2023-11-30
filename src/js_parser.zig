@@ -21303,19 +21303,11 @@ fn NewParser_(
                 //
                 //   (function (exports, require, module, __filename, __dirname) {
                 //      ...
-                //   }).call(
-                //      this.module.exports,
-                //      this.module.exports,
-                //      this.require,
-                //      this.module,
-                //      this.__filename,
-                //      this.__dirname,
-                //  );
+                //   })
                 //
-                //  `this` is a `CommonJSFunctionArgumentsStructure`
-                //  which is initialized in `evaluateCommonJSModuleOnce`
+                //  which is then called in `evaluateCommonJSModuleOnce`
                 .bun_js => {
-                    var args = allocator.alloc(Arg, 5) catch unreachable;
+                    var args = allocator.alloc(Arg, 5 + @as(usize, @intFromBool(p.has_import_meta))) catch bun.outOfMemory();
                     args[0..5].* = .{
                         Arg{ .binding = p.b(B.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty) },
                         Arg{ .binding = p.b(B.Identifier{ .ref = p.require_ref }, logger.Loc.Empty) },
@@ -21323,18 +21315,17 @@ fn NewParser_(
                         Arg{ .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty) },
                         Arg{ .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty) },
                     };
-
-                    const cjsArguments = Expr{
-                        .data = .{ .e_this = .{} },
-                        .loc = logger.Loc.Empty,
-                    };
+                    if (p.has_import_meta) {
+                        p.import_meta_ref = p.newSymbol(.other, "$Bun_import_meta") catch bun.outOfMemory();
+                        args[5] = Arg{ .binding = p.b(B.Identifier{ .ref = p.import_meta_ref }, logger.Loc.Empty) };
+                    }
 
                     var total_stmts_count: usize = 0;
                     for (parts) |part| {
                         total_stmts_count += part.stmts.len;
                     }
 
-                    var stmts_to_copy = allocator.alloc(Stmt, total_stmts_count) catch unreachable;
+                    var stmts_to_copy = allocator.alloc(Stmt, total_stmts_count) catch bun.outOfMemory();
                     {
                         var remaining_stmts = stmts_to_copy;
                         for (parts) |part| {
@@ -21350,7 +21341,7 @@ fn NewParser_(
                             .func = G.Fn{
                                 .name = null,
                                 .open_parens_loc = logger.Loc.Empty,
-                                .args = args[0..5],
+                                .args = args,
                                 .body = .{ .loc = logger.Loc.Empty, .stmts = stmts_to_copy },
                                 .flags = Flags.Function.init(.{ .is_export = false }),
                             },
@@ -21358,111 +21349,11 @@ fn NewParser_(
                         logger.Loc.Empty,
                     );
 
-                    const this_module = p.newExpr(
-                        E.Dot{
-                            .name = "module",
-                            .target = cjsArguments,
-                            .name_loc = logger.Loc.Empty,
-                        },
-                        logger.Loc.Empty,
-                    );
-
-                    const module_exports = p.newExpr(
-                        E.Dot{
-                            .name = "exports",
-                            .target = this_module,
-                            .name_loc = logger.Loc.Empty,
-                        },
-                        logger.Loc.Empty,
-                    );
-
-                    var call_args = allocator.alloc(Expr, 6) catch unreachable;
-                    call_args[0..6].* = .{
-                        module_exports, // this.module.exports (this value inside fn)
-                        module_exports, // this.module.exports (arg 1)
-                        p.newExpr(
-                            E.Dot{
-                                .name = "require",
-                                .target = cjsArguments,
-                                .name_loc = logger.Loc.Empty,
-                            },
-                            logger.Loc.Empty,
-                        ),
-                        this_module, // this.module
-                        p.newExpr(
-                            E.Dot{
-                                .name = "__filename",
-                                .target = cjsArguments,
-                                .name_loc = logger.Loc.Empty,
-                            },
-                            logger.Loc.Empty,
-                        ),
-                        p.newExpr(
-                            E.Dot{
-                                .name = "__dirname",
-                                .target = cjsArguments,
-                                .name_loc = logger.Loc.Empty,
-                            },
-                            logger.Loc.Empty,
-                        ),
-                    };
-
-                    const call = p.newExpr(
-                        E.Call{
-                            .target = p.newExpr(
-                                E.Dot{
-                                    .target = wrapper,
-                                    .name = "call",
-                                    .name_loc = logger.Loc.Empty,
-                                },
-                                logger.Loc.Empty,
-                            ),
-                            .args = ExprNodeList.init(call_args),
-                        },
-                        logger.Loc.Empty,
-                    );
-
-                    var top_level_stmts = p.allocator.alloc(Stmt, 1 + @as(usize, @intFromBool(p.has_import_meta))) catch unreachable;
+                    var top_level_stmts = p.allocator.alloc(Stmt, 1) catch bun.outOfMemory();
                     parts[0].stmts = top_level_stmts;
-
-                    // var $Bun_import_meta = this.createImportMeta(this.filename);
-                    if (p.has_import_meta) {
-                        p.import_meta_ref = p.newSymbol(.other, "$Bun_import_meta") catch unreachable;
-                        var decl = allocator.alloc(Decl, 1) catch unreachable;
-                        decl[0] = Decl{
-                            .binding = Binding.alloc(
-                                p.allocator,
-                                B.Identifier{
-                                    .ref = p.import_meta_ref,
-                                },
-                                logger.Loc.Empty,
-                            ),
-                            .value = p.newExpr(
-                                E.Call{
-                                    .target = p.newExpr(E.Dot{
-                                        .target = cjsArguments,
-                                        .name = "createImportMeta",
-                                        .name_loc = logger.Loc.Empty,
-                                    }, logger.Loc.Empty),
-                                    // reuse the `this.__filename` argument
-                                    .args = ExprNodeList.init(call_args[5..6]),
-                                },
-                                logger.Loc.Empty,
-                            ),
-                        };
-
-                        top_level_stmts[0] = p.s(
-                            S.Local{
-                                .decls = G.Decl.List.init(decl),
-                                .kind = .k_var,
-                            },
-                            logger.Loc.Empty,
-                        );
-                        top_level_stmts = top_level_stmts[1..];
-                    }
                     top_level_stmts[0] = p.s(
                         S.SExpr{
-                            .value = call,
+                            .value = wrapper,
                         },
                         logger.Loc.Empty,
                     );

@@ -29,7 +29,7 @@ case $(uname -ms) in
     ;;
 'Linux x86_64')
     target='linux'
-    arch='aarch64'
+    arch='x86_64'
     ;;
 *)
     printf "error: cannot get platform name from '%s'\n" "${unamestr}"
@@ -37,7 +37,7 @@ case $(uname -ms) in
     ;;
 esac
 
-url="https://ziglang.org/builds/zig-${platform}-${arch}-${zig_version}.tar.xz"
+url="https://ziglang.org/builds/zig-${target}-${arch}-${zig_version}.tar.xz"
 dest=".cache/zig-${zig_version}.tar.xz"
 extract_at=".cache/zig"
 
@@ -73,13 +73,13 @@ if [ -e "${extract_at}/.version" ]; then
 fi
 
 if ! [ -e "${dest}" ]; then
-  printf "-- Downloading Zig v%s\n" "${zig_version}"
+  printf -- "-- Downloading Zig v%s\n" "${zig_version}"
   curl -o "$dest" -L "$url"
 fi
 
 rm -rf "${extract_at}"
 mkdir -p "${extract_at}"
-tar -xzf "${dest}" -C "${extract_at}" --strip-components=1
+tar -xf "${dest}" -C "${extract_at}" --strip-components=1
 
 echo "${url}" > "${extract_at}/.version"
 

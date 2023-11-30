@@ -1967,11 +1967,6 @@ JSC_DECLARE_HOST_FUNCTION(getInternalWritableStream);
 JSC_DECLARE_HOST_FUNCTION(whenSignalAborted);
 JSC_DECLARE_HOST_FUNCTION(isAbortSignal);
 
-JSC_DEFINE_HOST_FUNCTION(jsCreateCJSImportMeta, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    return JSValue::encode(Zig::ImportMetaObject::create(globalObject, callFrame->argument(0).toString(globalObject)));
-}
-
 JSC_DEFINE_HOST_FUNCTION(makeThisTypeErrorForBuiltins, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     ASSERT(callFrame);
@@ -2867,65 +2862,6 @@ void GlobalObject::finishCreation(VM& vm)
                     init.vm, reinterpret_cast<Zig::GlobalObject*>(init.owner)));
         });
 
-    m_commonJSFunctionArgumentsStructure.initLater(
-        [](const Initializer<Structure>& init) {
-            auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(init.owner);
-
-            auto prototype = JSC::constructEmptyObject(init.owner, globalObject->objectPrototype(), 1);
-            prototype->putDirect(
-                init.vm,
-                Identifier::fromString(init.vm, "createImportMeta"_s),
-                JSFunction::create(init.vm, init.owner, 2, ""_s, jsCreateCJSImportMeta, ImplementationVisibility::Public),
-                PropertyAttribute::DontDelete | PropertyAttribute::DontEnum | 0);
-
-            JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(
-                globalObject,
-                prototype,
-                5);
-            JSC::PropertyOffset offset;
-
-            auto& vm = globalObject->vm();
-
-            auto& builtinNames = WebCore::builtinNames(vm);
-
-            structure = structure->addPropertyTransition(
-                vm,
-                structure,
-                JSC::Identifier::fromString(vm, "module"_s),
-                0,
-                offset);
-
-            structure = structure->addPropertyTransition(
-                vm,
-                structure,
-                builtinNames.requirePublicName(),
-                0,
-                offset);
-
-            structure = structure->addPropertyTransition(
-                vm,
-                structure,
-                builtinNames.resolvePublicName(),
-                0,
-                offset);
-
-            structure = structure->addPropertyTransition(
-                vm,
-                structure,
-                JSC::Identifier::fromString(vm, "__dirname"_s),
-                0,
-                offset);
-
-            structure = structure->addPropertyTransition(
-                vm,
-                structure,
-                JSC::Identifier::fromString(vm, "__filename"_s),
-                0,
-                offset);
-
-            init.set(structure);
-        });
-
     m_JSSocketAddressStructure.initLater(
         [](const Initializer<Structure>& init) {
             init.set(JSSocketAddress::createStructure(init.vm, init.owner));
@@ -3445,16 +3381,6 @@ JSC_DEFINE_CUSTOM_SETTER(JSDOMFileConstructor_setter,
     return true;
 }
 
-JSC_DEFINE_CUSTOM_GETTER(BunCommonJSModule_getter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    Zig::GlobalObject* bunGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
-    JSValue returnValue = bunGlobalObject->m_BunCommonJSModuleValue.get();
-    if (!returnValue) {
-        returnValue = jsUndefined();
-    }
-    return JSValue::encode(returnValue);
-}
-
 extern "C" JSC__JSValue Bun__Timer__setImmediate(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue JSValue3);
 // https://developer.mozilla.org/en-US/docs/Web/API/Window/setImmediate
 JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
@@ -3751,6 +3677,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectBuiltinFunction(vm, this, builtinNames.internalRequirePrivateName(), importMetaObjectInternalRequireCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.requireNativeModulePrivateName(), moduleRequireNativeModuleCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 
+    
     putDirectBuiltinFunction(vm, this, builtinNames.overridableRequirePrivateName(), moduleOverridableRequireCodeGenerator(vm), 0);
 
     putDirectNativeFunction(vm, this, builtinNames.createUninitializedArrayBufferPrivateName(), 1, functionCreateUninitializedArrayBuffer, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
@@ -3936,7 +3863,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_lazyPreloadTestModuleObject.visit(visitor);
     thisObject->m_commonJSModuleObjectStructure.visit(visitor);
     thisObject->m_memoryFootprintStructure.visit(visitor);
-    thisObject->m_commonJSFunctionArgumentsStructure.visit(visitor);
     thisObject->m_JSSocketAddressStructure.visit(visitor);
     thisObject->m_cachedGlobalObjectStructure.visit(visitor);
     thisObject->m_cachedGlobalProxyStructure.visit(visitor);
@@ -3955,7 +3881,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     }
 
     thisObject->visitGeneratedLazyClasses<Visitor>(thisObject, visitor);
-    visitor.append(thisObject->m_BunCommonJSModuleValue);
     thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 

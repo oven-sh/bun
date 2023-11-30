@@ -2624,6 +2624,17 @@ pub const VirtualMachine = struct {
         if (frames.len == 0) return;
 
         var top = &frames[0];
+        if (this.hide_bun_stackframes) {
+            for (frames) |*frame| {
+                if (frame.source_url.hasPrefixComptime("bun:") or frame.source_url.hasPrefixComptime("node:") or frame.source_url.isEmpty()) {
+                    continue;
+                }
+
+                top = frame;
+                break;
+            }
+        }
+
         var top_source_url = top.source_url.toUTF8(bun.default_allocator);
         defer top_source_url.deinit();
         if (this.source_mappings.resolveMapping(
@@ -2659,7 +2670,7 @@ pub const VirtualMachine = struct {
 
                 var lines_ = lines[0..@min(lines.len, source_lines.len)];
                 for (lines_, 0..) |line, j| {
-                    source_lines[(lines_.len - 1) - j] = String.init(line);
+                    source_lines[(lines_.len - 1) - j] = String.init(std.mem.trimRight(u8, line, " \t"));
                     source_line_numbers[j] = top.position.line - @as(i32, @intCast(j)) + 1;
                 }
 
@@ -2675,8 +2686,8 @@ pub const VirtualMachine = struct {
         }
 
         if (frames.len > 1) {
-            for (frames[1..]) |*frame| {
-                if (frame.position.isInvalid()) continue;
+            for (frames) |*frame| {
+                if (frame == top or frame.position.isInvalid()) continue;
                 const source_url = frame.source_url.toUTF8(bun.default_allocator);
                 defer source_url.deinit();
                 if (this.source_mappings.resolveMapping(
@@ -2739,7 +2750,16 @@ pub const VirtualMachine = struct {
         if (source_lines.next()) |source| brk: {
             if (source.text.len == 0) break :brk;
 
-            const top_frame = if (exception.stack.frames_len > 0) exception.stack.frames()[0] else null;
+            var top_frame = if (exception.stack.frames_len > 0) &exception.stack.frames()[0] else null;
+
+            if (this.hide_bun_stackframes) {
+                for (exception.stack.frames()) |*frame| {
+                    if (frame.position.isInvalid() or frame.source_url.hasPrefixComptime("bun:") or frame.source_url.hasPrefixComptime("node:")) continue;
+                    top_frame = frame;
+                    break;
+                }
+            }
+
             if (top_frame == null or top_frame.?.position.isInvalid()) {
                 defer did_print_name = true;
                 defer source.text.deinit();
@@ -2778,7 +2798,7 @@ pub const VirtualMachine = struct {
                     while (first_non_whitespace < text.len and text[first_non_whitespace] == ' ') {
                         first_non_whitespace += 1;
                     }
-                    const indent = @as(usize, @intCast(pad)) + " | ".len + first_non_whitespace;
+                    const indent = @min(@as(usize, @intCast(pad)) + " | ".len + first_non_whitespace, text.len -| 2);
 
                     try writer.writeByteNTimes(' ', indent);
                     try writer.print(comptime Output.prettyFmt(

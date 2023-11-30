@@ -199,7 +199,10 @@ pub fn GlobWalker_(
                     .err => |err| return .{ .err = this.walker.handleSysErrWithPath(err, @ptrCast(path_buf[0 .. root_path.len + 1])) },
                     .result => |fd| fd,
                 };
-                this.fds_open += 1;
+
+                if (bun.Environment.allow_assert) {
+                    this.fds_open += 1;
+                }
 
                 this.cwd_fd = cwd_fd;
 

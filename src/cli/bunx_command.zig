@@ -226,7 +226,7 @@ pub const BunxCommand = struct {
                 \\
             ;
 
-            Output.pretty(text, .{ package_name_for_update_request[0], package_name_for_update_request[0] });
+            Output.prettyErrorln(text, .{ package_name_for_update_request[0], package_name_for_update_request[0] });
             Global.exit(1);
         }
 

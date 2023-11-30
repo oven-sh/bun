@@ -307,3 +307,22 @@ it("with --package, arguments after -- should be passed to package", async () =>
   expect(out.trim()).not.toContain("bun");
   expect(await exited).toBe(0);
 });
+
+it("should exit if --package specified without --", async () => {
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "x", "--package", "cowsay", "hello"],
+    cwd: x_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Perhaps you meant the following?");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out).toHaveLength(0);
+  expect(await exited).toBe(1);
+});

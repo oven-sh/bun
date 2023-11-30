@@ -4,10 +4,10 @@ const builtin = @import("builtin");
 const Arena = std.heap.ArenaAllocator;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
-const Subprocess =
-    @import("../bun.js/api/bun/subprocess.zig").Subprocess;
 const JSC = bun.JSC;
 const JSValue = bun.JSC.JSValue;
+const JSPromise = bun.JSC.JSPromise;
+const JSGlobalObject = bun.JSC.JSGlobalObject;
 const Which = @import("../which.zig");
 const Braces = @import("./braces.zig");
 const Syscall = @import("../sys.zig");
@@ -16,9 +16,23 @@ const ResolvePath = @import("../resolver/resolve_path.zig");
 const DirIterator = @import("../bun.js/node/dir_iterator.zig");
 const CodepointIterator = @import("../string_immutable.zig").PackedCodepointIterator;
 const isAllAscii = @import("../string_immutable.zig").isAllASCII;
+const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
+const NewSubprocess =
+    @import("../bun.js/api/bun/subprocess_impl.zig").NewSubprocess;
 
 const GlobWalker = Glob.GlobWalker_(null, true);
 // const GlobWalker = Glob.BunGlobWalker;
+
+const Subprocess = NewSubprocess(SubprocCtx, struct {
+    pub fn onExit(this: *SubprocCtx, exit_code: ?u8) void {
+        this.ended = true;
+        std.debug.print("SUBPROC CTX: {d}\n", .{exit_code orelse 69});
+    }
+});
+
+const SubprocCtx = struct {
+    ended: bool = false,
+};
 
 pub const ShellError = error{ Process, GlobalThisThrown, Init };
 pub const ParseError = error{
@@ -165,6 +179,7 @@ pub const Interpreter = struct {
 
         pub fn waitSubproc(subprocess: *Subprocess, jsc_vm: *JSC.VirtualMachine) !bool {
             log("Done waiting {any}", .{subprocess.hasExited()});
+
             // this seems hacky and bad
             while (!subprocess.hasExited()) {
                 if (subprocess.stderr == .pipe and subprocess.stderr.pipe == .buffer) {
@@ -178,6 +193,7 @@ pub const Interpreter = struct {
                 jsc_vm.tick();
                 jsc_vm.eventLoop().autoTick();
             }
+
             subprocess.wait(true);
             return (subprocess.exit_code orelse 1) == 0;
         }
@@ -470,13 +486,6 @@ pub const Interpreter = struct {
         }
     }
 
-    // fn interpret_pipeline(self: *Interpreter, pipeline: *const ast.Pipeline, io: *IO) !void {
-    //     _ = io;
-    //     _ = pipeline;
-    //     _ = self;
-    // }
-
-    // FIXME handle closing child processes properly
     fn interpret_pipeline(self: *Interpreter, pipeline: *const ast.Pipeline, io: *IO) anyerror!bool {
         const cmd_count = brk: {
             var count: usize = 0;
@@ -738,6 +747,8 @@ pub const Interpreter = struct {
             }
         }
 
+        var ctx_UNSAFE_JUST_TESTING_REMOVE_THIS_ZACK: SubprocCtx = .{};
+
         var out_watchfd: ?Subprocess.WatchFd = null;
         var out_err: ?JSValue = null;
         var subprocess = Subprocess.spawnMaybeSyncImpl(
@@ -747,6 +758,7 @@ pub const Interpreter = struct {
             &out_watchfd,
             &out_err,
             &spawn_args,
+            &ctx_UNSAFE_JUST_TESTING_REMOVE_THIS_ZACK,
         ) orelse {
             if (out_err) |err| {
                 const zigstr = err.getZigString(self.globalThis);
@@ -1504,6 +1516,272 @@ pub const Interpreter = struct {
     //     var buf = try stack_alloc.get().alloc(u8, len);
     //     try std.fmt.bufPrint(buf, "bunsh: " ++ fmt, args);
     // }
+};
+
+pub const StateMachine = struct {
+    const Machine = struct {
+        /// This is the arena used to allocate AST nodes
+        arena: bun.ArenaAllocator,
+
+        /// This is the allocator used to allocate machine state
+        allocator: Allocator,
+
+        /// The return value
+        promise: JSPromise.Strong = .{},
+
+        script: *AST.Script,
+
+        global: *JSGlobalObject,
+
+        const MachineErrorKind = error{
+            OutOfMemory,
+            Syscall,
+        };
+
+        const MachineError = union(enum) {
+            syscall: Syscall.Error,
+            other: MachineErrorKind,
+
+            fn toJSC(this: MachineError, globalThis: *JSGlobalObject) JSValue {
+                return switch (this) {
+                    .syscall => |err| err.toJSC(globalThis),
+                    .other => |err| bun.JSC.ZigString.fromBytes(@errorName(err)).toValueGC(globalThis),
+                };
+            }
+        };
+
+        /// If all initialization allocations succeed, the arena will be copied
+        /// into the machine struct, so it is not a stale reference.
+        pub fn dummy(allocator: Allocator, arena: *bun.ArenaAllocator, global: *JSGlobalObject) !*Machine {
+            var arena_allocator = arena.allocator();
+            var machine = try allocator.create(Machine);
+            machine.global = global;
+            errdefer {
+                allocator.destroy(machine);
+            }
+
+            // Make a dummy AST for `echo foo && echo hi`
+            {
+                var script = try arena_allocator.create(AST.Script);
+                var stmts = try arena_allocator.alloc(AST.Stmt, 2);
+                script.stmts = stmts;
+
+                var echo_foo = try arena_allocator.create(AST.Cmd);
+                echo_foo.name_and_args = try arena_allocator.alloc(AST.Atom, 2);
+                echo_foo.name_and_args[0] = .{ .simple = .{ .Text = "echo" } };
+                echo_foo.name_and_args[1] = .{ .simple = .{ .Text = "foo" } };
+
+                var echo_hi = try arena_allocator.create(AST.Cmd);
+                echo_hi.name_and_args = try arena_allocator.alloc(AST.Atom, 2);
+                echo_hi.name_and_args[0] = .{ .simple = .{ .Text = "echo" } };
+                echo_hi.name_and_args[1] = .{ .simple = .{ .Text = "hi" } };
+
+                stmts[0] = .{ .exprs = try arena_allocator.alloc(AST.Expr, 1) };
+                stmts[0].exprs[0] = .{ .cmd = echo_foo };
+
+                stmts[1] = .{ .exprs = try arena_allocator.alloc(AST.Expr, 1) };
+                stmts[1].exprs[0] = .{ .cmd = echo_hi };
+
+                machine.script = script;
+            }
+
+            machine.arena.* = arena;
+            machine.allocator = allocator;
+        }
+
+        fn start(this: *Machine, globalThis: *JSGlobalObject) !JSValue {
+            _ = globalThis;
+            var root = try Script.fromAST(this, this.script);
+            _ = root;
+        }
+
+        fn finish(this: *Machine) !void {
+            defer this.deinit();
+            this.promise.resolve(this.global, .true);
+        }
+
+        fn errored(this: *Machine, the_error: MachineError) void {
+            defer this.deinit();
+            this.promise.reject(this.global, the_error.toJSC(this.global));
+        }
+
+        fn deinit(this: *Machine) !void {
+            this.arena.deinit();
+            this.allocator.destroy(this);
+        }
+    };
+
+    fn signalDone(state: *State, exit_code: ?u8) void {
+        return switch (state.kind) {
+            .script => state.script.signalDone(),
+            .stmt => state.stmt.signalDone(exit_code),
+            .cmd => state.cmd.signalDone(),
+            .cond => state.cond.signalDone(),
+            .pipeline => state.pipeline.signalDone(),
+        };
+    }
+
+    const State = struct {
+        kind: StateKind,
+        machine: *Machine,
+    };
+
+    const StateKind = enum(u8) {
+        script,
+        stmt,
+        cmd,
+        cond,
+        pipeline,
+
+        pub fn toStruct(comptime this: StateKind) type {
+            return switch (this) {
+                .script => Script,
+                .stmt => Stmt,
+                .cmd => Cmd,
+                .cond => Cond,
+                .pipeline => Pipeline,
+            };
+        }
+    };
+
+    pub const Script = struct {
+        base: State,
+        node: *AST.Script,
+        idx: usize,
+
+        fn fromAST(machine: *Machine, node: *const AST.Script) !*Script {
+            var script = try machine.allocator.create(Script);
+            errdefer machine.allocator.destroy(script);
+            script.base = .{ .kind = .script, .machine = machine };
+            script.node = node;
+            script.idx = 0;
+            script.stmts = try machine.allocator.alloc(Stmt, node.stmts.len);
+            errdefer machine.allocator.free(script.stmts);
+            return script;
+        }
+
+        // pub fn tick(this: *Script) !void {
+        //     var idx = this.idx;
+        //     this.idx += 1;
+        //     this.base.machine.
+        // }
+
+        fn next(this: *Script) !void {
+            if (this.idx >= this.script.stmts.len) {
+                return this.base.machine.finish();
+            }
+
+            const stmt_node = &this.node.stmts[this.idx];
+
+            var stmt = try Stmt.fromAST(this.base.machine, stmt_node, this);
+            try stmt.next();
+        }
+
+        fn finish(this: *Script) !void {
+            _ = this;
+            // this.
+        }
+    };
+
+    pub const Stmt = struct {
+        base: State,
+        node: *AST.Stmt,
+        parent: *Script,
+        idx: usize,
+        last_exit_code: ?u8,
+
+        pub fn fromAST(machine: *Machine, node: *const AST.Stmt, parent: *Script) !*Stmt {
+            var script = try machine.allocator.create(Stmt);
+            script.base = .{ .kind = .stmt, .machine = machine };
+            script.node = node;
+            script.parent = parent;
+            script.last_exit_code = null;
+            return script;
+        }
+
+        pub fn next(this: *Stmt) !void {
+            if (this.idx >= this.node.exprs.len) {
+                return this.parent.finish();
+            }
+
+            const expr_node = &this.node.exprs[this.idx];
+            switch (expr_node.*) {
+                .cmd => {
+                    // var cmd =
+                },
+                .conditional => {},
+                else => @panic("TODO"),
+            }
+        }
+    };
+
+    pub const Cmd = struct {
+        base: State,
+        cmd: *Subprocess,
+        parent: TaggedPointerUnion(struct {
+            stmt: Stmt,
+            cond: Cond,
+            pipeline: Pipeline,
+            // TODO
+            subst: void,
+        }),
+        exit_code: ?u8,
+
+        pub fn fromAST(machine: *Machine, node: *const AST.Cmd, parent: *Stmt) !*Cmd {
+            _ = node;
+            var cmd = try machine.allocator.create(Cmd);
+            cmd.base = .{ .kind = .cmd, .machine = machine };
+            cmd.cmd = try machine.allocator.create(Interpreter.Cmd);
+            cmd.parent = .{ .stmt = parent };
+            return cmd;
+        }
+
+        fn initSubproc(parent: *Stmt, foo: bool) !*Subprocess {
+            var arena = bun.ArenaAllocator.init(parent.base.machine.allocator);
+            defer arena.deinit();
+
+            var spawn_args = Subprocess.SpawnArgs.default(&arena, parent.base.machine.global, false);
+            spawn_args.argv = std.ArrayListUnmanaged(?[*:0]const u8){};
+
+            try spawn_args.argv.append(arena, "/bin/echo".ptr);
+            if (foo) {
+                try spawn_args.argv.append(arena, "foo".ptr);
+            } else {
+                try spawn_args.argv.append(arena, "bar".ptr);
+            }
+        }
+
+        fn signalDone(this: *Cmd) void {
+            _ = this;
+        }
+    };
+
+    pub const Cond = struct {
+        base: State,
+        node: *AST.Conditional,
+        /// Based on precedence rules conditional can only be child of a stmt or
+        /// another conditional
+        parent: TaggedPointerUnion(struct {
+            stmt: Stmt,
+            cond: Cond,
+        }),
+        left: ?u8,
+        right: ?u8,
+    };
+
+    pub const Pipeline = struct {
+        base: State,
+        node: *AST.Pipeline,
+        /// Based on precedence rules pipeline can only be child of a stmt or
+        /// conditional
+        parent: TaggedPointerUnion(struct {
+            stmt: Stmt,
+            cond: Cond,
+        }),
+        idx: usize,
+        pipes: []Pipe,
+        exit_codes: []?u8,
+    };
 };
 
 pub const AST = struct {

@@ -29,7 +29,7 @@ pub const Tmpfile = struct {
                     },
                     .err => |err| {
                         switch (err.getErrno()) {
-                            .INVAL, .OPNOTSUP, .NOSYS => {
+                            .INVAL, .OPNOTSUPP, .NOSYS => {
                                 tmpfile.using_tmpfile = false;
                             },
                             else => return .{ .err = err },

@@ -1,7 +1,7 @@
 import assert from "assert";
 import { Subprocess } from "bun";
-import { describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "fs";
+import { beforeEach, describe, expect, test } from "bun:test";
+import { realpathSync, chmodSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, bunRun } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -15,10 +15,8 @@ function dummyFile(size: number, cache_bust: string, value: string) {
   return data;
 }
 
-const temp_dir = `${tmpdir()}/bun-test-transpiler-cache-` + (Math.random() * 81023).toString(36).slice(2);
-mkdirSync(temp_dir, { recursive: true });
-
-const cache_dir = join(temp_dir, ".cache");
+let temp_dir: string = "/dev/null";
+let cache_dir = join(temp_dir, ".cache");
 
 const env = {
   ...bunEnv,
@@ -46,9 +44,18 @@ function removeCache() {
   }
 }
 
-console.log(temp_dir);
+beforeEach(() => {
+  if (cache_dir) {
+    rmSync(temp_dir, { recursive: true, force: true });
+    removeCache();
+  }
 
-assert(!existsSync(cache_dir));
+  temp_dir = join(tmpdir(), `bun-test-transpiler-cache-${Date.now()}-` + (Math.random() * 81023).toString(36).slice(2));
+  mkdirSync(temp_dir, { recursive: true });
+  temp_dir = realpathSync(temp_dir);
+  cache_dir = join(temp_dir, ".cache");
+  env.BUN_RUNTIME_TRANSPILER_CACHE_PATH = cache_dir;
+});
 
 describe("transpiler cache", () => {
   test("works", async () => {
@@ -62,14 +69,12 @@ describe("transpiler cache", () => {
     expect(newCacheCount()).toBe(0);
   });
   test("ignores files under 50kb", async () => {
-    removeCache();
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024 - 1, "1", "a"));
     const a = bunRun(join(temp_dir, "a.js"), env);
     expect(a.stdout == "a");
     assert(!existsSync(cache_dir));
   });
   test("it is indeed content addressable", async () => {
-    removeCache();
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "b"));
     const a = bunRun(join(temp_dir, "a.js"), env);
     expect(a.stdout == "b");
@@ -86,7 +91,6 @@ describe("transpiler cache", () => {
     expect(newCacheCount()).toBe(0);
   });
   test("doing 500 buns at once does not crash", async () => {
-    removeCache();
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "b"));
     writeFileSync(join(temp_dir, "b.js"), dummyFile(50 * 1024, "2", "b"));
 
@@ -127,8 +131,8 @@ describe("transpiler cache", () => {
     }
   }, 99999999);
   test("works if the cache is not user-readable", () => {
-    removeCache();
-    writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "b"));
+    mkdirSync(cache_dir, { recursive: true });
+    writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "b"));
     const a = bunRun(join(temp_dir, "a.js"), env);
     expect(a.stdout == "b");
     expect(newCacheCount()).toBe(1);
@@ -145,8 +149,8 @@ describe("transpiler cache", () => {
     expect(c.stdout == "b");
   });
   test("works if the cache is not user-writable", () => {
-    removeCache();
-    writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "b"));
+    mkdirSync(cache_dir, { recursive: true });
+    writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "b"));
 
     chmodSync(join(cache_dir), "0");
 

@@ -137,8 +137,12 @@ pub fn moveFileZWithHandle(from_handle: std.os.fd_t, from_dir: std.os.fd_t, file
                 return;
             }
 
-            try copyFileZSlowWithHandle(from_handle, to_dir, destination);
-            _ = bun.sys.unlinkat(from_dir, filename);
+            if (err.getErrno() == .XDEV) {
+                try copyFileZSlowWithHandle(from_handle, to_dir, destination);
+                _ = bun.sys.unlinkat(from_dir, filename);
+            }
+
+            return bun.AsyncIO.asError(err.errno);
         },
         .result => {},
     }
@@ -149,8 +153,8 @@ pub fn moveFileZWithHandle(from_handle: std.os.fd_t, from_dir: std.os.fd_t, file
 pub fn moveFileZSlow(from_dir: std.os.fd_t, filename: [:0]const u8, to_dir: std.os.fd_t, destination: [:0]const u8) !void {
     const in_handle = try bun.sys.openat(from_dir, filename, std.os.O.RDONLY | std.os.O.CLOEXEC, if (Environment.isWindows) 0 else 0o644).unwrap();
     defer _ = bun.sys.close(in_handle);
-    try copyFileZSlowWithHandle(in_handle, to_dir, destination);
     _ = bun.sys.unlinkat(from_dir, filename);
+    try copyFileZSlowWithHandle(in_handle, to_dir, destination);
 }
 
 pub fn copyFileZSlowWithHandle(in_handle: std.os.fd_t, to_dir: std.os.fd_t, destination: [:0]const u8) !void {

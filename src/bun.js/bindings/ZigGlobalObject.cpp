@@ -458,10 +458,6 @@ WTF::String Bun::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject
                 }
             }
 
-            if (sourceURLForFrame.isEmpty()) {
-                sourceURLForFrame = String("[native]"_s);
-            }
-
             sb.append(" ("_s);
             sb.append(sourceURLForFrame);
             sb.append(":"_s);

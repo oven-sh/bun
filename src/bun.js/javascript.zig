@@ -2812,8 +2812,7 @@ pub const VirtualMachine = struct {
                 try writer.writeByteNTimes(' ', pad);
                 defer source.text.deinit();
                 const text = source.text.slice();
-                _ = text;
-                const remainder = std.mem.trimRight(u8, std.mem.trim(u8, source.text.slice(), "\n"), "\t ");
+                const remainder = std.mem.trimRight(u8, std.mem.trim(u8, text, "\n"), "\t ");
 
                 try writer.print(
                     comptime Output.prettyFmt(

@@ -274,10 +274,6 @@ pub const Data = struct {
 
         if (this.location) |*location| {
             if (location.line_text) |line_text_| {
-                // const location_in_line_text_original = @as(usize, @intCast(@max(location.column, 1) - 1));
-                // const line_text_left_trimmed_offset = line_text_right_trimmed.len - line_text.len;
-                // const location_in_line_text: usize = line_text_left_trimmed_offset + (location_in_line_text_original -| @as(usize, @intCast(line_text_.len -| line_text.len)));
-
                 const line_text_right_trimmed = std.mem.trimRight(u8, line_text_, " \r\n\t");
                 const line_text = std.mem.trimLeft(u8, line_text_right_trimmed, "\n\r");
                 if (location.column > -1 and line_text.len > 0) {

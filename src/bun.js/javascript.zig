@@ -2698,7 +2698,6 @@ pub const VirtualMachine = struct {
                 for (lines, source_lines[0..lines.len], source_line_numbers[0..lines.len]) |line, *line_dest, *line_number| {
                     line_dest.* = String.init(line);
                     line_number.* = current_line_number;
-
                 }
 
                 exception.stack.source_lines_len = @as(u8, @truncate(lines.len));

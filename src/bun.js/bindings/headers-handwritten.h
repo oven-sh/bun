@@ -362,7 +362,7 @@ template<bool isStrict, bool enableAsymmetricMatchers>
 bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSC::ThrowScope* scope, bool addToStack);
 
 template<bool enableAsymmetricMatchers>
-bool Bun__deepMatch(JSC::JSValue object, JSC::JSValue subset, JSC::JSGlobalObject* globalObject, JSC::ThrowScope* throwScope, bool replacePropsWithAsymmetricMatchers);
+bool Bun__deepMatch(JSC::JSValue object, JSC::JSValue subset, JSC::JSGlobalObject* globalObject, JSC::ThrowScope* throwScope, bool replacePropsWithAsymmetricMatchers, bool isMatchingObjectContaining);
 
 extern "C" void Bun__remapStackFramePositions(JSC::JSGlobalObject*, ZigStackFrame*, size_t);
 

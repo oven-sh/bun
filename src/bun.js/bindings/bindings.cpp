@@ -129,23 +129,50 @@ using namespace JSC;
 
 using namespace WebCore;
 
+typedef uint8_t ExpectFlags;
+
+// Note: keep this in sync with Expect.Flags implementation in zig (at expect.zig)
+static const int FLAG_PROMISE_RESOLVES = (1 << 0);
+static const int FLAG_PROMISE_REJECTS = (1 << 1);
+static const int FLAG_NOT = (1 << 2);
+
+extern "C" bool Expect_readFlagsAndProcessPromise(JSC__JSValue instanceValue, JSC__JSGlobalObject* globalObject, ExpectFlags* flags, JSC__JSValue* value);
+extern "C" bool ExpectCustomAsymmetricMatcher__execute(void* self, JSC__JSValue thisValue, JSC__JSGlobalObject* globalObject, JSC__JSValue leftValue);
+
 enum class AsymmetricMatcherResult : uint8_t {
     PASS,
     FAIL,
     NOT_MATCHER,
 };
 
-AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSCell* matcherPropCell, JSValue otherProp, ThrowScope* throwScope)
+bool readFlagsAndProcessPromise(JSValue& instanceValue, ExpectFlags& flags, JSGlobalObject* globalObject, JSValue& value)
+{
+    JSC::EncodedJSValue valueEncoded = JSValue::encode(value);
+    if (Expect_readFlagsAndProcessPromise(JSValue::encode(instanceValue), globalObject, &flags, &valueEncoded)) {
+        value = JSValue::decode(valueEncoded);
+        return true;
+    }
+    return false;
+}
+
+AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* globalObject, JSValue matcherProp, JSValue otherProp, ThrowScope* throwScope, ExpectFlags& flags)
 {
     VM& vm = globalObject->vm();
+    JSCell* matcherPropCell = matcherProp.asCell();
 
     if (auto* expectAnything = jsDynamicCast<JSExpectAnything*>(matcherPropCell)) {
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
+            return AsymmetricMatcherResult::FAIL;
+
         if (otherProp.isUndefinedOrNull()) {
             return AsymmetricMatcherResult::FAIL;
         }
 
         return AsymmetricMatcherResult::PASS;
     } else if (auto* expectAny = jsDynamicCast<JSExpectAny*>(matcherPropCell)) {
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
+            return AsymmetricMatcherResult::FAIL;
+
         JSValue constructorValue = expectAny->m_constructorValue.get();
         JSObject* constructorObject = constructorValue.getObject();
 
@@ -191,6 +218,9 @@ AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSC
 
         return AsymmetricMatcherResult::FAIL;
     } else if (auto* expectStringContaining = jsDynamicCast<JSExpectStringContaining*>(matcherPropCell)) {
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
+            return AsymmetricMatcherResult::FAIL;
+
         JSValue expectedSubstring = expectStringContaining->m_stringValue.get();
 
         if (otherProp.isString()) {
@@ -207,6 +237,9 @@ AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSC
 
         return AsymmetricMatcherResult::FAIL;
     } else if (auto* expectStringMatching = jsDynamicCast<JSExpectStringMatching*>(matcherPropCell)) {
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
+            return AsymmetricMatcherResult::FAIL;
+
         JSValue expectedTestValue = expectStringMatching->m_testValue.get();
 
         if (otherProp.isString()) {
@@ -232,6 +265,9 @@ AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSC
 
         return AsymmetricMatcherResult::FAIL;
     } else if (auto* expectArrayContaining = jsDynamicCast<JSExpectArrayContaining*>(matcherPropCell)) {
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
+            return AsymmetricMatcherResult::FAIL;
+
         JSValue expectedArrayValue = expectArrayContaining->m_arrayValue.get();
 
         if (JSC::isArray(globalObject, otherProp)) {
@@ -272,9 +308,72 @@ AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSC
         }
 
         return AsymmetricMatcherResult::FAIL;
+    } else if (auto* expectObjectContaining = jsDynamicCast<JSExpectObjectContaining*>(matcherPropCell)) {
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
+            return AsymmetricMatcherResult::FAIL;
+
+        JSValue patternObject = expectObjectContaining->m_objectValue.get();
+        if (patternObject.isObject()) {
+            if (otherProp.isObject()) {
+                ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
+                if (Bun__deepMatch<true>(otherProp, patternObject, globalObject, &scope, false, true)) {
+                    return AsymmetricMatcherResult::PASS;
+                }
+            }
+        }
+
+        return AsymmetricMatcherResult::FAIL;
+    } else if (auto* expectCloseTo = jsDynamicCast<JSExpectCloseTo*>(matcherPropCell)) {
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
+            return AsymmetricMatcherResult::FAIL;
+
+        if (!otherProp.isNumber()) {
+            // disable the "not" flag here, because if not a number it should still return FAIL when negated
+            flags = flags & ~FLAG_NOT;
+            return AsymmetricMatcherResult::FAIL;
+        }
+
+        JSValue expectedValue = expectCloseTo->m_numberValue.get();
+        JSValue digitsValue = expectCloseTo->m_digitsValue.get();
+
+        double received = otherProp.toNumber(globalObject);
+        double expected = expectedValue.toNumber(globalObject);
+
+        constexpr double infinity = std::numeric_limits<double>::infinity();
+
+        // special handing because (Infinity - Infinity) or (-Infinity - -Infinity) is NaN
+        if ((received == infinity && expected == infinity) || (received == -infinity && expected == -infinity)) {
+            return AsymmetricMatcherResult::PASS;
+        } else {
+            int32_t digits = digitsValue.toInt32(globalObject);
+
+            double threshold = 0.5 * std::pow(10.0, -digits);
+            bool isClose = std::abs(expected - received) < threshold;
+            return isClose ? AsymmetricMatcherResult::PASS : AsymmetricMatcherResult::FAIL;
+        }
+    } else if (auto* customMatcher = jsDynamicCast<JSExpectCustomAsymmetricMatcher*>(matcherPropCell)) {
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
+            return AsymmetricMatcherResult::FAIL;
+
+        // ignore the "not" flag here, because the custom matchers handle it themselves (accessing this.isNot)
+        // and it would result in a double negation
+        flags = flags & ~FLAG_NOT;
+
+        bool passed = ExpectCustomAsymmetricMatcher__execute(customMatcher->wrapped(), JSValue::encode(matcherProp), globalObject, JSValue::encode(otherProp));
+        return passed ? AsymmetricMatcherResult::PASS : AsymmetricMatcherResult::FAIL;
     }
 
     return AsymmetricMatcherResult::NOT_MATCHER;
+}
+
+AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSValue matcherProp, JSValue otherProp, ThrowScope* throwScope)
+{
+    ExpectFlags flags = ExpectFlags();
+    AsymmetricMatcherResult result = matchAsymmetricMatcherAndGetFlags(globalObject, matcherProp, otherProp, throwScope, flags);
+    if (result != AsymmetricMatcherResult::NOT_MATCHER && (flags & FLAG_NOT)) {
+        result = (result == AsymmetricMatcherResult::PASS) ? AsymmetricMatcherResult::FAIL : AsymmetricMatcherResult::PASS;
+    }
+    return result;
 }
 
 template<typename PromiseType, bool isInternal>
@@ -350,7 +449,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     // can match against any type of value.
     if constexpr (enableAsymmetricMatchers) {
         if (v2.isCell() && !v2.isEmpty() && v2.asCell()->type() == JSC::JSType(JSDOMWrapperType)) {
-            switch (matchAsymmetricMatcher(globalObject, v2.asCell(), v1, scope)) {
+            switch (matchAsymmetricMatcher(globalObject, v2, v1, scope)) {
             case AsymmetricMatcherResult::FAIL:
                 return false;
             case AsymmetricMatcherResult::PASS:
@@ -360,7 +459,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 break;
             }
         } else if (v1.isCell() && !v1.isEmpty() && v1.asCell()->type() == JSC::JSType(JSDOMWrapperType)) {
-            switch (matchAsymmetricMatcher(globalObject, v1.asCell(), v2, scope)) {
+            switch (matchAsymmetricMatcher(globalObject, v1, v2, scope)) {
             case AsymmetricMatcherResult::FAIL:
                 return false;
             case AsymmetricMatcherResult::PASS:
@@ -981,7 +1080,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 }
 
 template<bool enableAsymmetricMatchers>
-bool Bun__deepMatch(JSValue objValue, JSValue subsetValue, JSGlobalObject* globalObject, ThrowScope* throwScope, bool replacePropsWithAsymmetricMatchers)
+bool Bun__deepMatch(JSValue objValue, JSValue subsetValue, JSGlobalObject* globalObject, ThrowScope* throwScope, bool replacePropsWithAsymmetricMatchers, bool isMatchingObjectContaining)
 {
     VM& vm = globalObject->vm();
     JSObject* obj = objValue.getObject();
@@ -1023,7 +1122,7 @@ bool Bun__deepMatch(JSValue objValue, JSValue subsetValue, JSGlobalObject* globa
 
         if constexpr (enableAsymmetricMatchers) {
             if (subsetPropCell && subsetPropCell->type() == JSC::JSType(JSDOMWrapperType)) {
-                switch (matchAsymmetricMatcher(globalObject, subsetPropCell, prop, throwScope)) {
+                switch (matchAsymmetricMatcher(globalObject, subsetProp, prop, throwScope)) {
                 case AsymmetricMatcherResult::FAIL:
                     return false;
                 case AsymmetricMatcherResult::PASS:
@@ -1036,7 +1135,7 @@ bool Bun__deepMatch(JSValue objValue, JSValue subsetValue, JSGlobalObject* globa
                     break;
                 }
             } else if (propCell && propCell->type() == JSC::JSType(JSDOMWrapperType)) {
-                switch (matchAsymmetricMatcher(globalObject, propCell, subsetProp, throwScope)) {
+                switch (matchAsymmetricMatcher(globalObject, prop, subsetProp, throwScope)) {
                 case AsymmetricMatcherResult::FAIL:
                     return false;
                 case AsymmetricMatcherResult::PASS:
@@ -1052,8 +1151,18 @@ bool Bun__deepMatch(JSValue objValue, JSValue subsetValue, JSGlobalObject* globa
         }
 
         if (subsetProp.isObject() and prop.isObject()) {
-            if (!Bun__deepMatch<enableAsymmetricMatchers>(prop, subsetProp, globalObject, throwScope, replacePropsWithAsymmetricMatchers)) {
-                return false;
+            // if this is called from inside an objectContaining asymmetric matcher, it should behave slighlty differently:
+            // in such case, it expects exhaustive matching of any nested object properties, not just a subset,
+            // and the user would need to opt-in to subset matching by using another nested objectContaining matcher
+            if (enableAsymmetricMatchers && isMatchingObjectContaining) {
+                Vector<std::pair<JSValue, JSValue>, 16> stack;
+                if (!Bun__deepEquals<false, true>(globalObject, prop, subsetProp, stack, throwScope, true)) {
+                    return false;
+                }
+            } else {
+                if (!Bun__deepMatch<enableAsymmetricMatchers>(prop, subsetProp, globalObject, throwScope, replacePropsWithAsymmetricMatchers, isMatchingObjectContaining)) {
+                    return false;
+                }
             }
         } else {
             if (!sameValue(globalObject, prop, subsetProp)) {
@@ -1492,6 +1601,17 @@ JSC__JSObject__create(JSC__JSGlobalObject* globalObject, size_t initialCapacity,
     return JSC::JSValue::encode(object);
 }
 
+JSC__JSValue JSC__JSValue__constructEmptyObject(JSC__JSGlobalObject* globalObject,
+    JSC__JSObject* prototype,
+    size_t initialCapacity)
+{
+    if (prototype == nullptr) {
+        return JSC::JSValue::encode(JSC::constructEmptyObject(globalObject->vm(), globalObject->nullPrototypeObjectStructure()));
+    } else {
+        return JSC::JSValue::encode(JSC::constructEmptyObject(globalObject, prototype, std::min(static_cast<unsigned int>(initialCapacity), JSFinalObject::maxInlineCapacity)));
+    }
+}
+
 JSC__JSValue JSC__JSValue__createEmptyObject(JSC__JSGlobalObject* globalObject,
     size_t initialCapacity)
 {
@@ -1685,6 +1805,19 @@ void JSC__JSFunction__optimizeSoon(JSC__JSValue JSValue0)
     JSC::optimizeNextInvocation(value);
 }
 
+bool JSC__JSFunction__getSourceCode(JSC__JSValue JSValue0, ZigString* outSourceCode)
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    if (JSC::JSFunction* func = jsDynamicCast<JSC::JSFunction*>(value)) {
+        auto* sourceCode = func->sourceCode();
+        if (sourceCode != nullptr) { // native functions have no source code
+            *outSourceCode = Zig::toZigString(sourceCode->view());
+            return true;
+        }
+        return false;
+    }
+}
+
 void JSC__JSValue__jsonStringify(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, uint32_t arg2,
     BunString* arg3)
 {
@@ -1701,6 +1834,12 @@ unsigned char JSC__JSValue__jsType(JSC__JSValue JSValue0)
         return jsValue.asCell()->type();
 
     return 0;
+}
+
+CPP_DECL JSC__JSString* JSC__jsTypeStringForValue(JSC__JSGlobalObject* globalObject, JSC__JSValue value)
+{
+    JSC::JSValue jsValue = JSC::JSValue::decode(value);
+    return jsTypeStringForValue(globalObject, jsValue);
 }
 
 JSC__JSValue JSC__JSPromise__asValue(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1)
@@ -1864,7 +2003,7 @@ bool JSC__JSValue__deepMatch(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__
 
     ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
-    return Bun__deepMatch<false>(obj, subset, globalObject, &scope, replacePropsWithAsymmetricMatchers);
+    return Bun__deepMatch<false>(obj, subset, globalObject, &scope, replacePropsWithAsymmetricMatchers, false);
 }
 
 bool JSC__JSValue__jestDeepMatch(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject, bool replacePropsWithAsymmetricMatchers)
@@ -1874,7 +2013,7 @@ bool JSC__JSValue__jestDeepMatch(JSC__JSValue JSValue0, JSC__JSValue JSValue1, J
 
     ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
-    return Bun__deepMatch<true>(obj, subset, globalObject, &scope, replacePropsWithAsymmetricMatchers);
+    return Bun__deepMatch<true>(obj, subset, globalObject, &scope, replacePropsWithAsymmetricMatchers, false);
 }
 
 // This is the same as the C API version, except it returns a JSValue which may be a *Exception
@@ -3170,6 +3309,33 @@ JSC__JSValue JSC__JSValue__getIfPropertyExistsImpl(JSC__JSValue JSValue0,
     auto property = JSC::PropertyName(identifier);
 
     return JSC::JSValue::encode(object->getIfPropertyExists(globalObject, property));
+}
+
+extern "C" JSC__JSValue JSC__JSValue__getIfPropertyExistsImplString(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, BunString* propertyName)
+{
+    JSValue value = JSC::JSValue::decode(JSValue0);
+    if (UNLIKELY(!value.isObject()))
+        return JSValue::encode({});
+
+    JSC::VM& vm = globalObject->vm();
+    JSC::JSObject* object = value.getObject();
+    auto identifier = JSC::Identifier::fromString(vm, propertyName->toWTFString(BunString::ZeroCopy));
+    auto property = JSC::PropertyName(identifier);
+
+    return JSC::JSValue::encode(object->getIfPropertyExists(globalObject, property));
+}
+
+extern "C" JSC__JSValue JSC__JSValue__getOwn(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, BunString* propertyName)
+{
+    VM& vm = globalObject->vm();
+    JSValue value = JSC::JSValue::decode(JSValue0);
+    auto identifier = JSC::Identifier::fromString(vm, propertyName->toWTFString(BunString::ZeroCopy));
+    auto property = JSC::PropertyName(identifier);
+    PropertySlot slot(value, PropertySlot::InternalMethodType::GetOwnProperty);
+    if (value.getOwnPropertySlot(globalObject, property, slot)) {
+        return JSValue::encode(slot.getValue(globalObject, property));
+    }
+    return JSValue::encode({});
 }
 
 JSC__JSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, JSC__JSValue arg1)
@@ -4780,4 +4946,20 @@ extern "C" EncodedJSValue JSC__createError(JSC::JSGlobalObject* globalObject, Bu
 {
     return JSValue::encode(
         JSC::createError(globalObject, str->toWTFString()));
+}
+
+extern "C" EncodedJSValue ExpectMatcherUtils__getSingleton(JSC::JSGlobalObject* globalObject_)
+{
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject_);
+    return JSValue::encode(globalObject->m_testMatcherUtilsObject.getInitializedOnMainThread(globalObject));
+}
+
+extern "C" EncodedJSValue Expect__getPrototype(JSC::JSGlobalObject* globalObject)
+{
+    return JSValue::encode(reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSExpectPrototype());
+}
+
+extern "C" EncodedJSValue ExpectStatic__getPrototype(JSC::JSGlobalObject* globalObject)
+{
+    return JSValue::encode(reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSExpectStaticPrototype());
 }

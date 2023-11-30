@@ -503,6 +503,7 @@ declare module "bun:test" {
    */
   export const test: Test;
   export { test as it };
+
   /**
    * Asserts that a value matches some criteria.
    *
@@ -512,16 +513,73 @@ declare module "bun:test" {
    * expect([1,2,3]).toContain(2);
    * expect(null).toBeNull();
    *
-   * @param actual the actual value
+   * @param actual The actual (received) value
    */
-  export const expect: {
-    <T = unknown>(actual?: T): Expect<T>;
-    any: (
-      constructor: ((..._: any[]) => any) | { new (..._: any[]): any },
-    ) => Expect;
-    anything: () => Expect;
-    stringContaining: (str: string) => Expect<string>;
-    stringMatching: <T extends RegExp | string>(regex: T) => Expect<T>;
+  export const expect: Expect;
+
+  type ExpectNot = Omit<AsymmetricMatchers, keyof AsymmetricMatchersBuiltin> &
+    AsymmetricMatchersBuiltinNegated;
+
+  export interface Expect extends AsymmetricMatchers {
+    // the `expect()` callable signature
+    <T = unknown>(actual?: T): Matchers<T>;
+
+    /**
+     * Access to negated asymmetric matchers.
+     *
+     * @example
+     * expect("abc").toEqual(expect.stringContaining("abc")); // will pass
+     * expect("abc").toEqual(expect.not.stringContaining("abc")); // will fail
+     */
+    not: ExpectNot;
+
+    /**
+     * Create an asymmetric matcher for a promise resolved value.
+     *
+     * @example
+     * expect(Promise.resolve("value")).toEqual(expect.resolvedTo.stringContaining("value")); // will pass
+     * expect(Promise.reject("value")).toEqual(expect.resolvedTo.stringContaining("value")); // will fail
+     * expect("value").toEqual(expect.resolvedTo.stringContaining("value")); // will fail
+     */
+    resolvedTo: AsymmetricMatchers;
+
+    /**
+     * Create an asymmetric matcher for a promise rejected value.
+     *
+     * @example
+     * expect(Promise.reject("error")).toEqual(expect.rejectedTo.stringContaining("error")); // will pass
+     * expect(Promise.resolve("error")).toEqual(expect.rejectedTo.stringContaining("error")); // will fail
+     * expect("error").toEqual(expect.rejectedTo.stringContaining("error")); // will fail
+     */
+    rejectedTo: AsymmetricMatchers;
+
+    /**
+     * Register new custom matchers.
+     * @param matchers An object containing the matchers to register, where each key is the matcher name, and its value the implementation function.
+     * The function must satisfy: `(actualValue, ...matcherInstantiationArguments) => { pass: true|false, message: () => string }`
+     *
+     * @example
+     * expect.extend({
+     *     toBeWithinRange(actual, min, max) {
+     *         if (typeof actual !== 'number' || typeof min !== 'number' || typeof max !== 'number')
+     *             throw new Error('Invalid usage');
+     *         const pass = actual >= min && actual <= max;
+     *         return {
+     *             pass: pass,
+     *             message: () => `expected ${this.utils.printReceived(actual)} ` +
+     *                 (pass ? `not to be`: `to be`) + ` within range ${this.utils.printExpected(`${min} .. ${max}`)}`,
+     *         };
+     *     },
+     * });
+     *
+     * test('some test', () => {
+     *   expect(50).toBeWithinRange(0, 100); // will pass
+     *   expect(50).toBeWithinRange(100, 200); // will fail
+     *   expect(50).toBe(expect.toBeWithinRange(0, 100)); // will pass
+     *   expect(50).toBe(expect.not.toBeWithinRange(100, 200)); // will pass
+     * });
+     */
+    extend<M>(matchers: ExpectExtendMatchers<M>): void;
 
     /**
      * Throw an error if this function is called.
@@ -546,41 +604,227 @@ declare module "bun:test" {
      * ```
      */
     unreachable(msg?: string | Error): never;
-  };
+  }
+
   /**
-   * Asserts that a value matches some criteria.
+   * You can extend this interface with declaration merging, in order to add type support for custom matchers.
+   * @template T Type of the actual value
    *
-   * @link https://jestjs.io/docs/expect#reference
    * @example
-   * expect(1 + 1).toBe(2);
-   * expect([1,2,3]).toContain(2);
-   * expect(null).toBeNull();
+   * // my_modules.d.ts
+   * interface MyCustomMatchers {
+   *   toBeWithinRange(floor: number, ceiling: number): any;
+   * }
+   * declare module "bun:test" {
+   *   interface Matchers<T> extends MyCustomMatchers {}
+   *   interface AsymmetricMatchers extends MyCustomMatchers {}
+   * }
+   * export {};
    *
-   * @param actual the actual value
+   * @example
+   * // my_modules.d.ts (alternatively)
+   * declare module "bun:test" {
+   *   interface Matchers<T> {
+   *     toBeWithinRange(floor: number, ceiling: number): any;
+   *   }
+   *   interface AsymmetricMatchers {
+   *     toBeWithinRange(floor: number, ceiling: number): any;
+   *   }
+   * }
+   * export {};
    */
-  export type Expect<T = unknown> = {
+  export interface Matchers<T = unknown> extends MatchersBuiltin<T> {}
+
+  /**
+   * You can extend this interface with declaration merging, in order to add type support for custom asymmetric matchers.
+   * @example
+   * // my_modules.d.ts
+   * interface MyCustomMatchers {
+   *   toBeWithinRange(floor: number, ceiling: number): any;
+   * }
+   * declare module "bun:test" {
+   *   interface Matchers<T> extends MyCustomMatchers {}
+   *   interface AsymmetricMatchers extends MyCustomMatchers {}
+   * }
+   * export {};
+   *
+   * @example
+   * // my_modules.d.ts (alternatively)
+   * declare module "bun:test" {
+   *   interface Matchers<T> {
+   *     toBeWithinRange(floor: number, ceiling: number): any;
+   *   }
+   *   interface AsymmetricMatchers {
+   *     toBeWithinRange(floor: number, ceiling: number): any;
+   *   }
+   * }
+   * export {};
+   */
+  export interface AsymmetricMatchers extends AsymmetricMatchersBuiltin {}
+
+  export interface AsymmetricMatchersBuiltin {
+    /**
+     * Matches anything that was created with the given constructor.
+     * You can use it inside `toEqual` or `toBeCalledWith` instead of a literal value.
+     *
+     * @example
+     *
+     * function randocall(fn) {
+     *   return fn(Math.floor(Math.random() * 6 + 1));
+     * }
+     *
+     * test('randocall calls its callback with a number', () => {
+     *   const mock = jest.fn();
+     *   randocall(mock);
+     *   expect(mock).toBeCalledWith(expect.any(Number));
+     * });
+     */
+    any(
+      constructor: ((..._: any[]) => any) | { new (..._: any[]): any },
+    ): AsymmetricMatcher;
+    /**
+     * Matches anything but null or undefined. You can use it inside `toEqual` or `toBeCalledWith` instead
+     * of a literal value. For example, if you want to check that a mock function is called with a
+     * non-null argument:
+     *
+     * @example
+     *
+     * test('map calls its argument with a non-null argument', () => {
+     *   const mock = jest.fn();
+     *   [1].map(x => mock(x));
+     *   expect(mock).toBeCalledWith(expect.anything());
+     * });
+     */
+    anything(): AsymmetricMatcher;
+    /**
+     * Matches any array made up entirely of elements in the provided array.
+     * You can use it inside `toEqual` or `toBeCalledWith` instead of a literal value.
+     *
+     * Optionally, you can provide a type for the elements via a generic.
+     */
+    arrayContaining<E = any>(arr: readonly E[]): AsymmetricMatcher;
+    /**
+     * Matches any object that recursively matches the provided keys.
+     * This is often handy in conjunction with other asymmetric matchers.
+     *
+     * Optionally, you can provide a type for the object via a generic.
+     * This ensures that the object contains the desired structure.
+     */
+    objectContaining(obj: object): AsymmetricMatcher;
+    /**
+     * Matches any received string that contains the exact expected string
+     */
+    stringContaining(str: string | String): AsymmetricMatcher;
+    /**
+     * Matches any string that contains the exact provided string
+     */
+    stringMatching(regex: string | String | RegExp): AsymmetricMatcher;
+    /**
+     * Useful when comparing floating point numbers in object properties or array item.
+     * If you need to compare a number, use `.toBeCloseTo` instead.
+     *
+     * The optional `numDigits` argument limits the number of digits to check after the decimal point.
+     * For the default value 2, the test criterion is `Math.abs(expected - received) < 0.005` (that is, `10 ** -2 / 2`).
+     */
+    closeTo(num: number, numDigits?: number): AsymmetricMatcher;
+  }
+
+  interface AsymmetricMatchersBuiltinNegated {
+    /**
+     * Create an asymmetric matcher that will fail on a promise resolved value that matches the chained matcher.
+     *
+     * @example
+     * expect(Promise.resolve("value")).toEqual(expect.not.resolvedTo.stringContaining("value")); // will fail
+     * expect(Promise.reject("value")).toEqual(expect.not.resolvedTo.stringContaining("value")); // will pass
+     * expect("value").toEqual(expect.not.resolvedTo.stringContaining("value")); // will pass
+     */
+    resolvedTo: ExpectNot;
+
+    /**
+     * Create an asymmetric matcher that will fail on a promise rejected value that matches the chained matcher.
+     *
+     * @example
+     * expect(Promise.reject("value")).toEqual(expect.not.rejectedTo.stringContaining("value")); // will fail
+     * expect(Promise.resolve("value")).toEqual(expect.not.rejectedTo.stringContaining("value")); // will pass
+     * expect("value").toEqual(expect.not.rejectedTo.stringContaining("value")); // will pass
+     */
+    rejectedTo: ExpectNot;
+
+    /**
+     * `expect.not.arrayContaining(array)` matches a received array which
+     * does not contain all of the elements in the expected array. That is,
+     * the expected array is not a subset of the received array. It is the
+     * inverse of `expect.arrayContaining`.
+     *
+     * Optionally, you can provide a type for the elements via a generic.
+     */
+    arrayContaining<E = any>(arr: readonly E[]): AsymmetricMatcher;
+
+    /**
+     * `expect.not.objectContaining(object)` matches any received object
+     * that does not recursively match the expected properties. That is, the
+     * expected object is not a subset of the received object. Therefore,
+     * it matches a received object which contains properties that are not
+     * in the expected object. It is the inverse of `expect.objectContaining`.
+     *
+     * Optionally, you can provide a type for the object via a generic.
+     * This ensures that the object contains the desired structure.
+     */
+    objectContaining(obj: object): AsymmetricMatcher;
+
+    /**
+     * `expect.not.stringContaining(string)` matches the received string
+     * that does not contain the exact expected string. It is the inverse of
+     * `expect.stringContaining`.
+     */
+    stringContaining(str: string | String): AsymmetricMatcher;
+
+    /**
+     * `expect.not.stringMatching(string | regexp)` matches the received
+     * string that does not match the expected regexp. It is the inverse of
+     * `expect.stringMatching`.
+     */
+    stringMatching(str: string | String | RegExp): AsymmetricMatcher;
+
+    /**
+     * `expect.not.closeTo` matches a number not close to the provided value.
+     * Useful when comparing floating point numbers in object properties or array item.
+     * It is the inverse of `expect.closeTo`.
+     */
+    closeTo(num: number, numDigits?: number): AsymmetricMatcher;
+  }
+
+  export interface MatchersBuiltin<T = unknown> {
     /**
      * Negates the result of a subsequent assertion.
+     * If you know how to test something, `.not` lets you test its opposite.
      *
      * @example
      * expect(1).not.toBe(0);
      * expect(null).not.toBeNull();
+     *
+     * @example
+     * expect(42).toEqual(42); // will pass
+     * expect(42).not.toEqual(42); // will fail
      */
-    not: Expect<unknown>;
+    not: Matchers<unknown>;
+
     /**
      * Expects the value to be a promise that resolves.
      *
      * @example
      * expect(Promise.resolve(1)).resolves.toBe(1);
      */
-    resolves: Expect<unknown>;
+    resolves: Matchers<Awaited<T>>;
+
     /**
      * Expects the value to be a promise that rejects.
      *
      * @example
      * expect(Promise.reject("error")).rejects.toBe("error");
      */
-    rejects: Expect<unknown>;
+    rejects: Matchers<unknown>;
+
     /**
      * Assertion which passes.
      *
@@ -720,16 +964,21 @@ declare module "bun:test" {
     toHaveLength(length: number): void;
     /**
      * Asserts that a value has a property with the
-     * expected name, and value, if provided.
+     * expected name, and value if provided.
      *
      * @example
      * expect(new Set()).toHaveProperty("size");
      * expect(new Uint8Array()).toHaveProperty("byteLength", 0);
+     * expect({ kitchen: { area: 20 }}).toHaveProperty("kitchen.area", 20);
+     * expect({ kitchen: { area: 20 }}).toHaveProperty(["kitchen", "area"], 20);
      *
-     * @param name the expected property name
+     * @param keyPath the expected property name or path, or an index
      * @param value the expected property value, if provided
      */
-    toHaveProperty(name: string, value?: unknown): void;
+    toHaveProperty(
+      keyPath: string | number | (string | number)[],
+      value?: unknown,
+    ): void;
     /**
      * Asserts that a value is "truthy".
      *
@@ -890,7 +1139,7 @@ declare module "bun:test" {
      * @param propertyMatchers Object containing properties to match against the value.
      * @param hint Hint used to identify the snapshot in the snapshot file.
      */
-    toMatchSnapshot(propertyMatchers?: Object, hint?: string): void;
+    toMatchSnapshot(propertyMatchers?: object, hint?: string): void;
     /**
      * Asserts that an object matches a subset of properties.
      *
@@ -900,7 +1149,7 @@ declare module "bun:test" {
      *
      * @param subset Subset of properties to match with.
      */
-    toMatchObject(subset: Object): void;
+    toMatchObject(subset: object): void;
     /**
      * Asserts that a value is empty.
      *
@@ -1153,7 +1402,110 @@ declare module "bun:test" {
      * Ensure that a mock function is called with specific arguments for the nth call.
      */
     toHaveBeenNthCalledWith(n: number, ...expected: Array<unknown>): void;
+  }
+
+  /**
+   * Object representing an asymmetric matcher obtained by an static call to expect like `expect.anything()`, `expect.stringContaining("...")`, etc.
+   */
+  // Defined as an alias of `any` so that it does not trigger any type mismatch
+  export type AsymmetricMatcher = any;
+
+  export interface MatcherResult {
+    pass: boolean;
+    message?: string | (() => string);
+  }
+
+  export type CustomMatcher<E, P extends any[]> = (
+    this: MatcherContext,
+    expected: E,
+    ...matcherArguments: P
+  ) => MatcherResult | Promise<MatcherResult>;
+
+  /** All non-builtin matchers and asymmetric matchers that have been type-registered through declaration merging */
+  export type CustomMatchersDetected = Omit<
+    Matchers<unknown>,
+    keyof MatchersBuiltin<unknown>
+  > &
+    Omit<AsymmetricMatchers, keyof AsymmetricMatchersBuiltin>;
+
+  /**
+   * If the types has been defined through declaration merging, enforce it.
+   * Otherwise enforce the generic custom matcher signature.
+   */
+  export type ExpectExtendMatchers<M> = {
+    [k in keyof M]: k extends keyof CustomMatchersDetected
+      ? CustomMatcher<unknown, Parameters<CustomMatchersDetected[k]>>
+      : CustomMatcher<unknown, any[]>;
   };
+
+  /** Custom equality tester */
+  export type Tester = (
+    this: TesterContext,
+    a: any,
+    b: any,
+    customTesters: Array<Tester>,
+  ) => boolean | undefined;
+
+  export type EqualsFunction = (
+    a: unknown,
+    b: unknown,
+    //customTesters?: Array<Tester>,
+    //strictCheck?: boolean,
+  ) => boolean;
+
+  export interface TesterContext {
+    equals: EqualsFunction;
+  }
+
+  interface MatcherState {
+    //assertionCalls: number;
+    //currentConcurrentTestName?: () => string | undefined;
+    //currentTestName?: string;
+    //error?: Error;
+    //expand: boolean;
+    //expectedAssertionsNumber: number | null;
+    //expectedAssertionsNumberError?: Error;
+    //isExpectingAssertions: boolean;
+    //isExpectingAssertionsError?: Error;
+    isNot: boolean;
+    //numPassingAsserts: number;
+    promise: string;
+    //suppressedErrors: Array<Error>;
+    //testPath?: string;
+  }
+
+  type MatcherHintColor = (arg: string) => string; // subset of Chalk type
+
+  interface MatcherUtils {
+    //customTesters: Array<Tester>;
+    //dontThrow(): void; // (internally used by jest snapshot)
+    equals: EqualsFunction;
+    utils: Readonly<{
+      stringify(value: unknown): string;
+      printReceived(value: unknown): string;
+      printExpected(value: unknown): string;
+      matcherHint(
+        matcherName: string,
+        received?: unknown,
+        expected?: unknown,
+        options?: {
+          isNot?: boolean;
+          promise?: string;
+          isDirectExpectCall?: boolean; // (internal)
+          comment?: string;
+          expectedColor?: MatcherHintColor;
+          receivedColor?: MatcherHintColor;
+          secondArgument?: string;
+          secondArgumentColor?: MatcherHintColor;
+        },
+      ): string;
+      //iterableEquality: Tester;
+      //subsetEquality: Tester;
+      // ...
+    }>;
+  }
+
+  type MatcherContext = MatcherUtils & MatcherState;
 }
 
 declare module "test" {

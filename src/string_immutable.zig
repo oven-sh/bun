@@ -4049,6 +4049,10 @@ pub fn indexOfLineRanges(text: []const u8, target_line: u32, comptime line_range
 
     ranges.appendAssumeCapacity(first_newline_range);
 
+    if (target_line == 0) {
+        return ranges;
+    }
+
     var prev_end = first_newline_range.end;
     while (strings.indexOfNewlineOrNonASCIICheckStart(text, cursor.i + @as(u32, cursor.width), true)) |current_i| {
         cursor.i = current_i;

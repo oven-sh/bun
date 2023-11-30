@@ -398,12 +398,12 @@ pub const Process = extern struct {
 };
 
 pub const ZigStackTrace = extern struct {
-    source_lines_ptr: [*c]bun.String,
-    source_lines_numbers: [*c]i32,
+    source_lines_ptr: [*]bun.String,
+    source_lines_numbers: [*]i32,
     source_lines_len: u8,
     source_lines_to_collect: u8,
 
-    frames_ptr: [*c]ZigStackFrame,
+    frames_ptr: [*]ZigStackFrame,
     frames_len: u8,
 
     pub fn toAPI(

@@ -2810,7 +2810,7 @@ pub const VirtualMachine = struct {
                     }
                     const indent = @as(usize, @intCast(pad)) + " | ".len + first_non_whitespace;
 
-                    try writer.writeByteNTimes(' ', indent);
+                    try writer.writeByteNTimes(' ', indent + 1);
                     try writer.print(comptime Output.prettyFmt(
                         "<red><b>^<r>\n",
                         allow_ansi_color,

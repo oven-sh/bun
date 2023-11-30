@@ -354,6 +354,7 @@ pub const RuntimeTranspilerCache = struct {
     ) [:0]const u8 {
         if (bun.getenvZ("BUN_RUNTIME_TRANSPILER_CACHE_PATH")) |dir| {
             if (dir.len == 0 or (dir.len == 1 and dir[0] == '0')) {
+                is_disabled = true;
                 return "";
             }
 
@@ -509,6 +510,10 @@ pub const RuntimeTranspilerCache = struct {
 
         const cache_file_path = try getCacheFilePath(&cache_file_path_buf, input_hash);
 
+        if (cache_file_path.len == 0) {
+            return;
+        }
+
         const cache_dir_fd = brk: {
             if (std.fs.path.dirname(cache_file_path)) |dirname| {
                 const dir = try std.fs.cwd().makeOpenPathIterable(dirname, .{ .access_sub_paths = true });
@@ -545,6 +550,9 @@ pub const RuntimeTranspilerCache = struct {
         if (source.contents.len < MINIMUM_CACHE_SIZE)
             return false;
 
+        if (is_disabled)
+            return false;
+
         if (!source.path.isFile())
             return false;
 
@@ -569,7 +577,7 @@ pub const RuntimeTranspilerCache = struct {
     }
 
     pub fn put(this: *RuntimeTranspilerCache, output_code_bytes: []const u8, sourcemap: []const u8) void {
-        if (this.input_hash == null) {
+        if (this.input_hash == null or is_disabled) {
             return;
         }
         std.debug.assert(this.entry == null);

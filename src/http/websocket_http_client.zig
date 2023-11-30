@@ -1296,6 +1296,8 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                             .extended_payload_length_16 => @as(usize, 2),
                             else => unreachable,
                         };
+                        // we need to wait for more data
+                        if(data.len == 0) return;
 
                         if (data.len < byte_size) {
                             this.terminate(ErrorCode.control_frame_is_fragmented);

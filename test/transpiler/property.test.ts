@@ -15,7 +15,7 @@ test("non-ascii property name", () => {
       "código3": 3,
       "código4": 4,
       "código5": 5,
-      "😋 Get ": 6
+      "😋 Get ": 6,
     } 1 1 2 3 4 3 2 4 5 2 6 6 6 6 6 6 6 6
 `
       .replaceAll("\n", "")
@@ -23,6 +23,6 @@ test("non-ascii property name", () => {
   );
   // just to be sure
   expect(Buffer.from(Bun.CryptoHasher.hash("sha1", filtered) as Uint8Array).toString("hex")).toBe(
-    "4dd3c3a66c282e3463048a952f21227485f91822",
+    "0bf68c8c4a35576ca3e27240565582ddc7c3ed3f",
   );
 });

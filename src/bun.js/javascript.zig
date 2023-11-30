@@ -2634,6 +2634,17 @@ pub const VirtualMachine = struct {
         if (frames.len == 0) return;
 
         var top = &frames[0];
+        if (this.hide_bun_stackframes) {
+            for (frames) |*frame| {
+                if (frame.source_url.hasPrefixComptime("bun:") or frame.source_url.hasPrefixComptime("node:") or frame.source_url.isEmpty()) {
+                    continue;
+                }
+
+                top = frame;
+                break;
+            }
+        }
+
         var top_source_url = top.source_url.toUTF8(bun.default_allocator);
         defer top_source_url.deinit();
 
@@ -2681,12 +2692,13 @@ pub const VirtualMachine = struct {
                 var source_line_numbers = exception.stack.source_lines_numbers[0..JSC.ZigException.Holder.source_lines_count];
                 @memset(source_lines, String.empty);
                 @memset(source_line_numbers, 0);
+
                 lines = lines[0..@min(@as(usize, lines.len), source_lines.len)];
                 var current_line_number: i32 = @intCast(last_line);
                 for (lines, source_lines[0..lines.len], source_line_numbers[0..lines.len]) |line, *line_dest, *line_number| {
                     line_dest.* = String.init(line);
                     line_number.* = current_line_number;
-                    current_line_number -= 1;
+
                 }
 
                 exception.stack.source_lines_len = @as(u8, @truncate(lines.len));
@@ -2701,8 +2713,8 @@ pub const VirtualMachine = struct {
         }
 
         if (frames.len > 1) {
-            for (frames[1..]) |*frame| {
-                if (frame.position.isInvalid()) continue;
+            for (frames) |*frame| {
+                if (frame == top or frame.position.isInvalid()) continue;
                 const source_url = frame.source_url.toUTF8(bun.default_allocator);
                 defer source_url.deinit();
                 if (this.source_mappings.resolveMapping(
@@ -2766,7 +2778,16 @@ pub const VirtualMachine = struct {
         if (source_lines.next()) |source| brk: {
             if (source.text.len == 0) break :brk;
 
-            const top_frame = if (exception.stack.frames_len > 0) exception.stack.frames()[0] else null;
+            var top_frame = if (exception.stack.frames_len > 0) &exception.stack.frames()[0] else null;
+
+            if (this.hide_bun_stackframes) {
+                for (exception.stack.frames()) |*frame| {
+                    if (frame.position.isInvalid() or frame.source_url.hasPrefixComptime("bun:") or frame.source_url.hasPrefixComptime("node:")) continue;
+                    top_frame = frame;
+                    break;
+                }
+            }
+
             if (top_frame == null or top_frame.?.position.isInvalid()) {
                 defer did_print_name = true;
                 defer source.text.deinit();
@@ -2806,7 +2827,7 @@ pub const VirtualMachine = struct {
                     while (first_non_whitespace < text.len and text[first_non_whitespace] == ' ') {
                         first_non_whitespace += 1;
                     }
-                    const indent = @as(usize, @intCast(pad)) + " | ".len + first_non_whitespace;
+                    const indent = @min(@as(usize, @intCast(pad)) + " | ".len + first_non_whitespace, text.len -| 2);
 
                     try writer.writeByteNTimes(' ', indent + 1);
                     try writer.print(comptime Output.prettyFmt(

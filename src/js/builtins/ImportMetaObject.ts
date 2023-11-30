@@ -144,6 +144,7 @@ export function internalRequire(this: ImportMetaObject, id) {
   }
 }
 
+$visibility = "Private";
 export function createRequireCache() {
   var moduleMap = new Map();
   var inner = {};

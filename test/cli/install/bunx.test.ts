@@ -270,3 +270,22 @@ it("with --package, should invoke bin with name that does not match package name
   expect(out.trim()).toContain("( moo )");
   expect(await exited).toBe(0);
 });
+
+it("with --package, arguments after -- should be passed to package", async () => {
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "x", "--package", "cowsay", "--", "cowthink", "--help"],
+    cwd: x_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).not.toContain("error");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.trim()).toContain("Usage: cowthink");
+  expect(out.trim()).not.toContain("bun");
+  expect(await exited).toBe(0);
+});

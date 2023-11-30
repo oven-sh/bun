@@ -8,11 +8,11 @@
 [0.22ms] label 2000-06-27T02:24:34.304Z
 [0.29ms] label [ 123, 456, 789 ]
 [0.34ms] label {
-  name: "foo"
+  name: "foo",
 }
 [0.37ms] label {
   a: 123,
   b: 456,
-  c: 789
+  c: 789,
 }
 [0.39ms] label

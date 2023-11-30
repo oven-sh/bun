@@ -1056,14 +1056,10 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             };
             switch (kind) {
                 .Text => {
-                    // must be valid UTF-8
-                    if (!strings.isValidUTF8(data_)) {
-                        this.terminate(ErrorCode.invalid_utf8);
-                        return;
-                    }
                     // this function encodes to UTF-16 if > 127
                     // so we don't need to worry about latin1 non-ascii code points
-                    const utf16_bytes_ = strings.toUTF16Alloc(bun.default_allocator, data_, true) catch {
+                    // we avoid trim since we wanna keep the utf8 validation intact
+                    const utf16_bytes_ = strings.toUTF16AllocNoTrim(bun.default_allocator, data_, true) catch {
                         this.terminate(ErrorCode.invalid_utf8);
                         return;
                     };

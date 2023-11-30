@@ -3361,7 +3361,7 @@ const utf8d: [364]u8 = .{
 };
 
 pub fn decodeCheck(state: u8, byte: u8) u8 {
-    var char_type: u32 = utf8d[byte];
+    const char_type: u32 = utf8d[byte];
     // we dont care about the codep
     // codep = if (*state != UTF8_ACCEPT) (byte & 0x3f) | (*codep << 6) else (0xff >> char_type) & (byte);
 

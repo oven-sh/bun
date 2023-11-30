@@ -1013,6 +1013,17 @@ pub fn rename(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
     unreachable;
 }
 
+pub fn renameat(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.FileDescriptor, to: [:0]const u8) Maybe(void) {
+    while (true) {
+        if (Maybe(void).errnoSys(sys.renameat(from_dir, from, to_dir, to), .rename)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+        return Maybe(void).success;
+    }
+    unreachable;
+}
+
 pub fn chown(path: [:0]const u8, uid: os.uid_t, gid: os.gid_t) Maybe(void) {
     while (true) {
         if (Maybe(void).errnoSys(C.chown(path, uid, gid), .chown)) |err| {
@@ -1085,7 +1096,18 @@ pub fn unlink(from: [:0]const u8) Maybe(void) {
     unreachable;
 }
 
-pub fn unlinkat(dirfd: bun.FileDescriptor, to: [:0]const u8) Maybe(void) {
+pub fn rmdirat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
+    while (true) {
+        if (Maybe(void).errnoSys(sys.unlinkat(dirfd, to, 1), .unlink)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+        return Maybe(void).success;
+    }
+    unreachable;
+}
+
+pub fn unlinkat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
     while (true) {
         if (Maybe(void).errnoSys(sys.unlinkat(dirfd, to, 0), .unlink)) |err| {
             if (err.getErrno() == .INTR) continue;

@@ -38,7 +38,7 @@ pub const Tmpfile = struct {
                 }
             }
 
-            tmpfile.fd = switch (bun.sys.openat(bun.toFD(bun.fs.FileSystem.instance.tmpdir().fd), tmpfilename, O.CREAT | O.CLOEXEC | O.WRONLY, perm)) {
+            tmpfile.fd = switch (bun.sys.openat(destination_dir, tmpfilename, O.CREAT | O.CLOEXEC | O.WRONLY, perm)) {
                 .result => |fd| fd,
                 .err => |err| return .{ .err = err },
             };
@@ -55,6 +55,6 @@ pub const Tmpfile = struct {
             }
         }
 
-        try bun.C.moveFileZWithHandle(bun.fdcast(this.fd), this.destination_dir, this.tmpfilename.ptr, bun.fdcast(this.destination_dir), destname.ptr);
+        try bun.C.moveFileZWithHandle(bun.fdcast(this.fd), this.destination_dir, this.tmpfilename, bun.fdcast(this.destination_dir), destname);
     }
 };

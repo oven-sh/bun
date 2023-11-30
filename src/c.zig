@@ -105,89 +105,70 @@ pub fn lstat_absolute(path: [:0]const u8) !Stat {
 
 // renameatZ fails when renaming across mount points
 // we assume that this is relatively uncommon
-pub fn moveFileZ(from_dir: std.os.fd_t, filename: [*:0]const u8, to_dir: std.os.fd_t, destination: [*:0]const u8) !void {
-    std.os.renameatZ(from_dir, filename, to_dir, destination) catch |err| {
-        switch (err) {
-            error.RenameAcrossMountPoints => {
+pub fn moveFileZ(from_dir: std.os.fd_t, filename: [:0]const u8, to_dir: std.os.fd_t, destination: [:0]const u8) !void {
+    switch (bun.sys.renameat(from_dir, filename, to_dir, destination)) {
+        .err => |err| {
+            // allow over-writing an empty directory
+            if (err.getErrno() == .ISDIR) {
+                _ = bun.sys.rmdirat(to_dir, destination.ptr);
+
+                try (bun.sys.renameat(from_dir, filename, to_dir, destination).unwrap());
+                return;
+            }
+
+            if (err.getErrno() == .XDEV) {
                 try moveFileZSlow(from_dir, filename, to_dir, destination);
-            },
-            else => {
-                return err;
-            },
-        }
-    };
+            } else {
+                return bun.AsyncIO.asError(err.errno);
+            }
+        },
+        .result => {},
+    }
 }
 
-pub fn moveFileZWithHandle(from_handle: std.os.fd_t, from_dir: std.os.fd_t, filename: [*:0]const u8, to_dir: std.os.fd_t, destination: [*:0]const u8) !void {
-    std.os.renameatZ(from_dir, filename, to_dir, destination) catch |err| {
-        switch (err) {
-            error.RenameAcrossMountPoints => {
-                try copyFileZSlowWithHandle(from_handle, to_dir, destination);
-                std.os.unlinkatZ(from_dir, filename, 0) catch {};
-            },
-            else => {
-                return err;
-            },
-        }
-    };
+pub fn moveFileZWithHandle(from_handle: std.os.fd_t, from_dir: std.os.fd_t, filename: [:0]const u8, to_dir: std.os.fd_t, destination: [:0]const u8) !void {
+    switch (bun.sys.renameat(from_dir, filename, to_dir, destination)) {
+        .err => |err| {
+            // allow over-writing an empty directory
+            if (err.getErrno() == .ISDIR) {
+                _ = bun.sys.rmdirat(to_dir, destination.ptr);
+
+                try (bun.sys.renameat(from_dir, filename, to_dir, destination).unwrap());
+                return;
+            }
+
+            try copyFileZSlowWithHandle(from_handle, to_dir, destination);
+            _ = bun.sys.unlinkat(from_dir, filename);
+        },
+        .result => {},
+    }
 }
 
 // On Linux, this will be fast because sendfile() supports copying between two file descriptors on disk
 // macOS & BSDs will be slow because
-pub fn moveFileZSlow(from_dir: std.os.fd_t, filename: [*:0]const u8, to_dir: std.os.fd_t, destination: [*:0]const u8) !void {
-    const in_handle = try std.os.openatZ(from_dir, filename, std.os.O.RDONLY | std.os.O.CLOEXEC, if (Environment.isWindows) 0 else 0o600);
-    defer std.os.close(in_handle);
+pub fn moveFileZSlow(from_dir: std.os.fd_t, filename: [:0]const u8, to_dir: std.os.fd_t, destination: [:0]const u8) !void {
+    const in_handle = try bun.sys.openat(from_dir, filename, std.os.O.RDONLY | std.os.O.CLOEXEC, if (Environment.isWindows) 0 else 0o644).unwrap();
+    defer _ = bun.sys.close(in_handle);
     try copyFileZSlowWithHandle(in_handle, to_dir, destination);
-    std.os.unlinkatZ(from_dir, filename, 0) catch {};
+    _ = bun.sys.unlinkat(from_dir, filename);
 }
 
-pub fn copyFileZSlowWithHandle(in_handle: std.os.fd_t, to_dir: std.os.fd_t, destination: [*:0]const u8) !void {
+pub fn copyFileZSlowWithHandle(in_handle: std.os.fd_t, to_dir: std.os.fd_t, destination: [:0]const u8) !void {
     const stat_ = if (comptime Environment.isPosix) try std.os.fstat(in_handle) else void{};
-    const size = brk: {
-        if (comptime Environment.isPosix) {
-            break :brk stat_.size;
-        }
 
-        break :brk try std.os.windows.GetFileSizeEx(in_handle);
-    };
-
-    // delete if exists, don't care if it fails. it may fail due to the file not existing
-    // delete here because we run into weird truncation issues if we do not
-    // ftruncate() instead didn't work.
-    // this is technically racy because it could end up deleting the file without saving
-    std.os.unlinkatZ(to_dir, destination, 0) catch {};
-    const out_handle = try std.os.openatZ(
+    const out_handle = try bun.sys.openat(
         to_dir,
         destination,
-        std.os.O.WRONLY | std.os.O.CREAT | std.os.O.CLOEXEC,
-        if (comptime Environment.isPosix) 0o022 else 0,
-    );
-    defer std.os.close(out_handle);
-    if (comptime Environment.isLinux) {
-        _ = std.os.system.fallocate(out_handle, 0, 0, @as(i64, @intCast(size)));
-        _ = try std.os.sendfile(out_handle, in_handle, 0, @as(usize, @intCast(size)), &[_]std.os.iovec_const{}, &[_]std.os.iovec_const{}, 0);
-    } else {
-        if (comptime Environment.isMac) {
-            // if this fails, it doesn't matter
-            // we only really care about read & write succeeding
-            PlatformSpecific.preallocate_file(
-                out_handle,
-                @as(std.os.off_t, @intCast(0)),
-                @as(std.os.off_t, @intCast(size)),
-            ) catch {};
-        }
+        std.os.O.WRONLY | std.os.O.CREAT | std.os.O.CLOEXEC | std.os.O.TRUNC,
+        if (comptime Environment.isPosix) 0o644 else 0,
+    ).unwrap();
+    defer _ = bun.sys.close(out_handle);
 
-        var buf: [8092 * 2]u8 = undefined;
-        var total_read: usize = 0;
-        while (true) {
-            const read = try std.os.pread(in_handle, &buf, total_read);
-            total_read += read;
-            if (read == 0) break;
-            const bytes = buf[0..read];
-            const written = try std.os.write(out_handle, bytes);
-            if (written == 0) break;
-        }
+    if (comptime Environment.isLinux) {
+        _ = std.os.linux.fallocate(out_handle, 0, 0, @intCast(stat_.size));
     }
+
+    try bun.copyFile(in_handle, out_handle);
 
     if (comptime Environment.isPosix) {
         _ = fchmod(out_handle, stat_.mode);

@@ -2026,7 +2026,7 @@ pub const OutputFile = struct {
     }
 
     pub fn moveTo(file: *const OutputFile, _: string, rel_path: []u8, dir: FileDescriptorType) !void {
-        try bun.C.moveFileZ(bun.fdcast(file.value.move.dir), &(try std.os.toPosixPath(file.value.move.getPathname())), bun.fdcast(dir), &(try std.os.toPosixPath(rel_path)));
+        try bun.C.moveFileZ(bun.fdcast(file.value.move.dir), bun.sliceTo(&(try std.os.toPosixPath(file.value.move.getPathname())), 0), bun.fdcast(dir), bun.sliceTo(&(try std.os.toPosixPath(rel_path)), 0));
     }
 
     pub fn copyTo(file: *const OutputFile, _: string, rel_path: []u8, dir: FileDescriptorType) !void {

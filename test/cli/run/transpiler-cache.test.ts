@@ -1,11 +1,10 @@
-import { describe, test, expect } from "bun:test";
-import { mkdtempSync, writeFileSync, existsSync, readdirSync, rmSync } from "fs";
+import assert from "assert";
+import { Subprocess } from "bun";
+import { describe, expect, test } from "bun:test";
+import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, bunRun } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
-import { bunEnv, bunExe, bunRun } from "harness";
-import assert from "assert";
-import { chmodSync } from "../../js/node/fs/export-star-from";
-import { Subprocess } from "bun";
 
 function dummyFile(size: number, cache_bust: string, value: string) {
   const data = Buffer.alloc(size);
@@ -16,7 +15,9 @@ function dummyFile(size: number, cache_bust: string, value: string) {
   return data;
 }
 
-const temp_dir = mkdtempSync(`${tmpdir()}/bun-test-transpiler-cache-`);
+const temp_dir = `${tmpdir()}/bun-test-transpiler-cache-` + (Math.random() * 81023).toString(36).slice(2);
+mkdirSync(temp_dir, { recursive: true });
+
 const cache_dir = join(temp_dir, ".cache");
 
 const env = {
@@ -51,7 +52,7 @@ assert(!existsSync(cache_dir));
 
 describe("transpiler cache", () => {
   test("works", async () => {
-    writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "a"));
+    writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "a"));
     const a = bunRun(join(temp_dir, "a.js"), env);
     expect(a.stdout == "a");
     assert(existsSync(cache_dir));
@@ -84,7 +85,7 @@ describe("transpiler cache", () => {
     expect(b.stdout == "b");
     expect(newCacheCount()).toBe(0);
   });
-  test.todo("doing 500 buns at once does not crash", async () => {
+  test("doing 500 buns at once does not crash", async () => {
     removeCache();
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "b"));
     writeFileSync(join(temp_dir, "b.js"), dummyFile(50 * 1024, "2", "b"));
@@ -124,7 +125,7 @@ describe("transpiler cache", () => {
       expect(proc.exitCode).toBe(0);
       expect(await Bun.readableStreamToText(proc.stdout)).toBe("b\n");
     }
-  });
+  }, 99999999);
   test("works if the cache is not user-readable", () => {
     removeCache();
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "b"));

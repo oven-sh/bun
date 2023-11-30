@@ -39,7 +39,7 @@ test("migrate from npm during `bun add`", () => {
 
 test("migrate from npm lockfile v2 during `bun add`", () => {
   testMigration("migrate-from-lockfilev2-fixture.json");
-})
+});
 
 // Currently this upgrades svelte :(
 test.todo("migrate workspace from npm during `bun add`", async () => {

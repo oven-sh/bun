@@ -15,6 +15,24 @@ afterEach(async () => {
   await rm(x_dir, { force: true, recursive: true });
 });
 
+it("should invoke default package bin", async () => {
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "x", "cowsay", "hello"],
+    cwd: x_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).not.toContain("error");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.trim()).toContain("< hello >");
+  expect(await exited).toBe(0);
+});
+
 it("should choose the tagged versions instead of the PATH versions when a tag is specified", async () => {
   const processes = Array.from({ length: 3 }, (_, i) => {
     return spawn({

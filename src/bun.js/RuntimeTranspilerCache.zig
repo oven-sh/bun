@@ -354,7 +354,6 @@ pub const RuntimeTranspilerCache = struct {
     ) [:0]const u8 {
         if (bun.getenvZ("BUN_RUNTIME_TRANSPILER_CACHE_PATH")) |dir| {
             if (dir.len == 0 or (dir.len == 1 and dir[0] == '0')) {
-                is_disabled = true;
                 return "";
             }
 
@@ -409,6 +408,10 @@ pub const RuntimeTranspilerCache = struct {
         if (!runtime_transpiler_cache_loaded) {
             runtime_transpiler_cache_loaded = true;
             runtime_transpiler_cache = @constCast(reallyGetCacheDir(&runtime_transpiler_cache_static_buffer));
+            if (runtime_transpiler_cache.len == 0) {
+                is_disabled = true;
+                return "";
+            }
         }
 
         @memcpy(buf[0..runtime_transpiler_cache.len], runtime_transpiler_cache);
@@ -522,7 +525,9 @@ pub const RuntimeTranspilerCache = struct {
 
             break :brk bun.toFD(std.fs.cwd().fd);
         };
-        defer _ = bun.sys.close(cache_dir_fd);
+        defer {
+            if (cache_dir_fd != bun.toFD(std.fs.cwd().fd)) _ = bun.sys.close(cache_dir_fd);
+        }
 
         try Entry.save(
             cache_dir_fd,

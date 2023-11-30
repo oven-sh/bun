@@ -128,7 +128,7 @@ describe("URLSearchParams", () => {
         bar: "baz",
       });
       expect(Bun.inspect(params)).toBe(
-        "URLSearchParams {" + "\n" + '  "foo": [ "bar", "boop" ],' + "\n" + '  "bar": "baz"' + "\n" + "}",
+        "URLSearchParams {" + "\n" + '  "foo": [ "bar", "boop" ],' + "\n" + '  "bar": "baz",' + "\n" + "}",
       );
       params.delete("foo");
       // @ts-ignore

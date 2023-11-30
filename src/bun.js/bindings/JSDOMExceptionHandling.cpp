@@ -26,11 +26,11 @@
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMPromiseDeferred.h"
 
-#include "JavaScriptCore/ErrorHandlingScope.h"
-#include "JavaScriptCore/Exception.h"
-#include "JavaScriptCore/ExceptionHelpers.h"
-#include "JavaScriptCore/ScriptCallStack.h"
-#include "JavaScriptCore/ScriptCallStackFactory.h"
+#include <JavaScriptCore/ErrorHandlingScope.h>
+#include <JavaScriptCore/Exception.h>
+#include <JavaScriptCore/ExceptionHelpers.h>
+#include <JavaScriptCore/ScriptCallStack.h>
+#include <JavaScriptCore/ScriptCallStackFactory.h>
 #include "headers.h"
 
 #include "CachedScript.h"
@@ -200,7 +200,7 @@ void propagateExceptionSlowPath(JSC::JSGlobalObject& lexicalGlobalObject, JSC::T
     throwException(&lexicalGlobalObject, throwScope, createDOMException(lexicalGlobalObject, WTFMove(exception)));
 }
 
-static EncodedJSValue throwTypeError(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, const String& errorMessage)
+static JSC::EncodedJSValue throwTypeError(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, const String& errorMessage)
 {
     return throwVMTypeError(&lexicalGlobalObject, scope, errorMessage);
 }

@@ -7,7 +7,6 @@
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSString.h>
-#include <JavaScriptCore/JSValueInternal.h>
 #include <JavaScriptCore/ThrowScope.h>
 #include <JavaScriptCore/VM.h>
 

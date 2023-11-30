@@ -1,4 +1,4 @@
-import { define } from "../scripts/class-definitions";
+import { define } from "../../codegen/class-definitions";
 
 export default [
   define({
@@ -118,6 +118,10 @@ export default [
       rejects: {
         getter: "getStaticRejects",
       },
+      unreachable: {
+        fn: "doUnreachable",
+        length: 1,
+      },
     },
     proto: {
       pass: {
@@ -142,15 +146,12 @@ export default [
       },
       toHaveBeenCalledWith: {
         fn: "toHaveBeenCalledWith",
-        length: 1,
       },
       toHaveBeenLastCalledWith: {
         fn: "toHaveBeenLastCalledWith",
-        length: 1,
       },
       toHaveBeenNthCalledWith: {
         fn: "toHaveBeenNthCalledWith",
-        length: 1,
       },
       toHaveReturnedTimes: {
         fn: "toHaveReturnedTimes",

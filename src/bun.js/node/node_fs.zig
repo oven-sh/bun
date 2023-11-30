@@ -4,6 +4,7 @@
 const std = @import("std");
 const bun = @import("root").bun;
 const strings = bun.strings;
+const windows = bun.windows;
 const string = bun.string;
 const AsyncIO = @import("root").bun.AsyncIO;
 const JSC = @import("root").bun.JSC;
@@ -39,7 +40,6 @@ const ReadPosition = i64;
 
 const Stats = JSC.Node.Stats;
 const Dirent = JSC.Node.Dirent;
-
 pub const FlavoredIO = struct {
     io: *AsyncIO,
 };
@@ -102,6 +102,8 @@ pub const Async = struct {
 
     pub const cp = AsyncCpTask;
 
+    pub const readdir_recursive = AsyncReaddirRecursiveTask;
+
     fn NewAsyncFSTask(comptime ReturnType: type, comptime ArgumentType: type, comptime Function: anytype) type {
         return struct {
             promise: JSC.JSPromise.Strong,
@@ -109,7 +111,7 @@ pub const Async = struct {
             globalObject: *JSC.JSGlobalObject,
             task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
             result: JSC.Maybe(ReturnType),
-            ref: JSC.PollRef = .{},
+            ref: bun.Async.KeepAlive = .{},
             tracker: JSC.AsyncTaskTracker,
 
             pub const Task = @This();
@@ -209,7 +211,7 @@ pub const AsyncCpTask = struct {
     globalObject: *JSC.JSGlobalObject,
     task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
     result: JSC.Maybe(Return.Cp),
-    ref: JSC.PollRef = .{},
+    ref: bun.Async.KeepAlive = .{},
     arena: bun.ArenaAllocator,
     tracker: JSC.AsyncTaskTracker,
     has_result: std.atomic.Atomic(bool),
@@ -224,6 +226,11 @@ pub const AsyncCpTask = struct {
         vm: *JSC.VirtualMachine,
         arena: bun.ArenaAllocator,
     ) JSC.JSValue {
+        if (comptime Environment.isWindows) {
+            globalObject.throwTODO("fs.promises.cp is not implemented on Windows yet");
+            return .zero;
+        }
+
         var task = bun.default_allocator.create(AsyncCpTask) catch @panic("out of memory");
         task.* = AsyncCpTask{
             .promise = JSC.JSPromise.Strong.init(globalObject),
@@ -312,6 +319,349 @@ pub const AsyncCpTask = struct {
     }
 };
 
+pub const AsyncReaddirRecursiveTask = struct {
+    promise: JSC.JSPromise.Strong,
+    args: Arguments.Readdir,
+    globalObject: *JSC.JSGlobalObject,
+    task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
+    ref: bun.Async.KeepAlive = .{},
+    tracker: JSC.AsyncTaskTracker,
+
+    // It's not 100% clear this one is necessary
+    has_result: std.atomic.Atomic(bool),
+
+    subtask_count: std.atomic.Atomic(usize),
+
+    /// The final result list
+    result_list: ResultListEntry.Value = undefined,
+
+    /// When joining the result list, we use this to preallocate the joined array.
+    result_list_count: std.atomic.Atomic(usize) = std.atomic.Atomic(usize).init(0),
+
+    /// A lockless queue of result lists.
+    ///
+    /// Using a lockless queue instead of mutex + joining the lists as we go was a meaningful performance improvement
+    result_list_queue: ResultListEntry.Queue = ResultListEntry.Queue{},
+
+    /// All the subtasks will use this fd to open files
+    root_fd: FileDescriptor = bun.invalid_fd,
+
+    /// This isued when joining the file paths for error messages
+    root_path: PathString = PathString.empty,
+
+    pending_err: ?Syscall.Error = null,
+    pending_err_mutex: bun.Lock = bun.Lock.init(),
+
+    pub const ResultListEntry = struct {
+        pub const Value = union(Return.Readdir.Tag) {
+            with_file_types: std.ArrayList(Dirent),
+            buffers: std.ArrayList(Buffer),
+            files: std.ArrayList(bun.String),
+
+            pub fn deinit(this: *@This()) void {
+                switch (this.*) {
+                    .with_file_types => |*res| {
+                        for (res.items) |item| {
+                            item.name.deref();
+                        }
+                        res.clearAndFree();
+                    },
+                    .buffers => |*res| {
+                        for (res.items) |item| {
+                            bun.default_allocator.free(item.buffer.byteSlice());
+                        }
+                        res.clearAndFree();
+                    },
+                    .files => |*res| {
+                        for (res.items) |item| {
+                            item.deref();
+                        }
+
+                        res.clearAndFree();
+                    },
+                }
+            }
+        };
+        next: ?*ResultListEntry = null,
+        value: Value,
+
+        pub const Queue = bun.UnboundedQueue(ResultListEntry, .next);
+    };
+
+    pub const Subtask = struct {
+        readdir_task: *AsyncReaddirRecursiveTask,
+        basename: bun.PathString = bun.PathString.empty,
+        task: JSC.WorkPoolTask = .{ .callback = call },
+
+        pub fn call(task: *JSC.WorkPoolTask) void {
+            var this: *Subtask = @fieldParentPtr(Subtask, "task", task);
+            defer {
+                bun.default_allocator.free(this.basename.sliceAssumeZ());
+                bun.default_allocator.destroy(this);
+            }
+            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            this.readdir_task.performWork(this.basename.sliceAssumeZ(), &buf, false);
+        }
+    };
+
+    pub fn enqueue(
+        readdir_task: *AsyncReaddirRecursiveTask,
+        basename: [:0]const u8,
+    ) void {
+        var task = bun.default_allocator.create(Subtask) catch bun.outOfMemory();
+        task.* = Subtask{
+            .readdir_task = readdir_task,
+            .basename = bun.PathString.init(bun.default_allocator.dupeZ(u8, basename) catch bun.outOfMemory()),
+        };
+        std.debug.assert(readdir_task.subtask_count.fetchAdd(1, .Monotonic) > 0);
+        JSC.WorkPool.schedule(&task.task);
+    }
+
+    pub fn create(
+        globalObject: *JSC.JSGlobalObject,
+        args: Arguments.Readdir,
+        vm: *JSC.VirtualMachine,
+    ) JSC.JSValue {
+        if (comptime Environment.isWindows) {
+            globalObject.throwTODO("fs.promises.readdir is not implemented on Windows yet");
+            return .zero;
+        }
+
+        var task = bun.default_allocator.create(AsyncReaddirRecursiveTask) catch bun.outOfMemory();
+        task.* = AsyncReaddirRecursiveTask{
+            .promise = JSC.JSPromise.Strong.init(globalObject),
+            .args = args,
+            .has_result = .{ .value = false },
+            .globalObject = globalObject,
+            .tracker = JSC.AsyncTaskTracker.init(vm),
+            .subtask_count = .{ .value = 1 },
+            .root_path = PathString.init(bun.default_allocator.dupeZ(u8, args.path.slice()) catch bun.outOfMemory()),
+            .result_list = switch (args.tag()) {
+                .files => .{ .files = std.ArrayList(bun.String).init(bun.default_allocator) },
+                .with_file_types => .{ .with_file_types = std.ArrayList(Dirent).init(bun.default_allocator) },
+                .buffers => .{ .buffers = std.ArrayList(Buffer).init(bun.default_allocator) },
+            },
+        };
+        task.ref.ref(vm);
+        task.args.toThreadSafe();
+        task.tracker.didSchedule(globalObject);
+
+        JSC.WorkPool.schedule(&task.task);
+
+        return task.promise.value();
+    }
+
+    pub fn performWork(this: *AsyncReaddirRecursiveTask, basename: [:0]const u8, buf: *[bun.MAX_PATH_BYTES]u8, comptime is_root: bool) void {
+        switch (this.args.tag()) {
+            inline else => |tag| {
+                const ResultType = comptime switch (tag) {
+                    .files => bun.String,
+                    .with_file_types => Dirent,
+                    .buffers => Buffer,
+                };
+                var stack = std.heap.stackFallback(8192, bun.default_allocator);
+
+                // This is a stack-local copy to avoid resizing heap-allocated arrays in the common case of a small directory
+                var entries = std.ArrayList(ResultType).init(stack.get());
+
+                defer entries.deinit();
+
+                switch (NodeFS.readdirWithEntriesRecursiveAsync(
+                    buf,
+                    this.args,
+                    this,
+                    basename,
+                    ResultType,
+                    &entries,
+                    is_root,
+                )) {
+                    .err => |err| {
+                        for (entries.items) |*item| {
+                            switch (comptime ResultType) {
+                                bun.String => item.deref(),
+                                Dirent => item.name.deref(),
+                                Buffer => bun.default_allocator.free(item.buffer.byteSlice()),
+                                else => unreachable,
+                            }
+                        }
+
+                        {
+                            this.pending_err_mutex.lock();
+                            defer this.pending_err_mutex.unlock();
+                            if (this.pending_err == null) {
+                                const err_path = if (err.path.len > 0) err.path else this.args.path.slice();
+                                this.pending_err = err.withPath(bun.default_allocator.dupe(u8, err_path) catch "");
+                            }
+                        }
+
+                        if (this.subtask_count.fetchSub(1, .Monotonic) == 1) {
+                            this.finishConcurrently();
+                        }
+                    },
+                    .result => {
+                        this.writeResults(ResultType, &entries);
+                    },
+                }
+            },
+        }
+    }
+
+    fn workPoolCallback(task: *JSC.WorkPoolTask) void {
+        var this: *AsyncReaddirRecursiveTask = @fieldParentPtr(AsyncReaddirRecursiveTask, "task", task);
+        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        this.performWork(this.root_path.sliceAssumeZ(), &buf, true);
+    }
+
+    pub fn writeResults(this: *AsyncReaddirRecursiveTask, comptime ResultType: type, result: *std.ArrayList(ResultType)) void {
+        if (result.items.len > 0) {
+            const Field = comptime switch (ResultType) {
+                bun.String => .files,
+                Dirent => .with_file_types,
+                Buffer => .buffers,
+                else => unreachable,
+            };
+            var list = bun.default_allocator.create(ResultListEntry) catch bun.outOfMemory();
+            errdefer {
+                bun.default_allocator.destroy(list);
+            }
+            var clone = std.ArrayList(ResultType).initCapacity(bun.default_allocator, result.items.len) catch bun.outOfMemory();
+            clone.appendSliceAssumeCapacity(result.items);
+            _ = this.result_list_count.fetchAdd(clone.items.len, .Monotonic);
+            list.* = ResultListEntry{ .next = null, .value = @unionInit(ResultListEntry.Value, @tagName(Field), clone) };
+            this.result_list_queue.push(list);
+        }
+
+        if (this.subtask_count.fetchSub(1, .Monotonic) == 1) {
+            this.finishConcurrently();
+        }
+    }
+
+    /// May be called from any thread (the subtasks)
+    pub fn finishConcurrently(this: *AsyncReaddirRecursiveTask) void {
+        if (this.has_result.compareAndSwap(false, true, .Monotonic, .Monotonic)) |_| {
+            return;
+        }
+
+        std.debug.assert(this.subtask_count.load(.Monotonic) == 0);
+
+        const root_fd = this.root_fd;
+        if (root_fd != bun.invalid_fd) {
+            this.root_fd = bun.invalid_fd;
+            _ = Syscall.close(root_fd);
+            bun.default_allocator.free(this.root_path.slice());
+            this.root_path = PathString.empty;
+        }
+
+        if (this.pending_err != null) {
+            this.clearResultList();
+        }
+
+        {
+            var list = this.result_list_queue.popBatch();
+            var iter = list.iterator();
+
+            // we have to free only the previous one because the next value will
+            // be read by the iterator.
+            var to_destroy: ?*ResultListEntry = null;
+
+            switch (this.args.tag()) {
+                inline else => |tag| {
+                    var results = &@field(this.result_list, @tagName(tag));
+                    results.ensureTotalCapacityPrecise(this.result_list_count.swap(0, .Monotonic)) catch bun.outOfMemory();
+                    while (iter.next()) |val| {
+                        if (to_destroy) |dest| {
+                            bun.default_allocator.destroy(dest);
+                        }
+                        to_destroy = val;
+
+                        var to_copy = &@field(val.value, @tagName(tag));
+                        results.appendSliceAssumeCapacity(to_copy.items);
+                        to_copy.clearAndFree();
+                    }
+
+                    if (to_destroy) |dest| {
+                        bun.default_allocator.destroy(dest);
+                    }
+                },
+            }
+        }
+
+        this.globalObject.bunVMConcurrently().enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.Task.init(this)));
+    }
+
+    fn clearResultList(this: *AsyncReaddirRecursiveTask) void {
+        this.result_list.deinit();
+        var batch = this.result_list_queue.popBatch();
+        var iter = batch.iterator();
+        var to_destroy: ?*ResultListEntry = null;
+
+        while (iter.next()) |val| {
+            val.value.deinit();
+            if (to_destroy) |dest| {
+                bun.default_allocator.destroy(dest);
+            }
+            to_destroy = val;
+        }
+        if (to_destroy) |dest| {
+            bun.default_allocator.destroy(dest);
+        }
+        this.result_list_count.store(0, .Monotonic);
+    }
+
+    pub fn runFromJSThread(this: *AsyncReaddirRecursiveTask) void {
+        var globalObject = this.globalObject;
+        var success = this.pending_err == null;
+        const result = if (this.pending_err) |*err| err.toJSC(globalObject) else brk: {
+            const res = switch (this.result_list) {
+                .with_file_types => |*res| Return.Readdir{ .with_file_types = res.moveToUnmanaged().items },
+                .buffers => |*res| Return.Readdir{ .buffers = res.moveToUnmanaged().items },
+                .files => |*res| Return.Readdir{ .files = res.moveToUnmanaged().items },
+            };
+            var exceptionref: JSC.C.JSValueRef = null;
+            const out = res.toJS(globalObject, &exceptionref);
+            const exception = JSC.JSValue.c(exceptionref);
+            if (exception != .zero) {
+                success = false;
+                break :brk exception;
+            }
+
+            break :brk out.?.value();
+        };
+        var promise_value = this.promise.value();
+        var promise = this.promise.get();
+        promise_value.ensureStillAlive();
+
+        const tracker = this.tracker;
+        tracker.willDispatch(globalObject);
+        defer tracker.didDispatch(globalObject);
+
+        this.deinit();
+        switch (success) {
+            false => {
+                promise.reject(globalObject, result);
+            },
+            true => {
+                promise.resolve(globalObject, result);
+            },
+        }
+    }
+
+    pub fn deinit(this: *AsyncReaddirRecursiveTask) void {
+        std.debug.assert(this.root_fd == bun.invalid_fd); // should already have closed it
+        if (this.pending_err) |*err| {
+            bun.default_allocator.free(err.path);
+        }
+
+        this.ref.unref(this.globalObject.bunVM());
+        this.args.deinit();
+        bun.default_allocator.free(this.root_path.slice());
+        this.clearResultList();
+        this.promise.strong.deinit();
+
+        bun.default_allocator.destroy(this);
+    }
+};
+
 /// This task is used by `AsyncCpTask/fs.promises.cp` to copy a single file.
 /// When clonefile cannot be used, this task is started once per file.
 pub const AsyncCpSingleFileTask = struct {
@@ -352,7 +702,7 @@ pub const AsyncCpSingleFileTask = struct {
         brk: {
             switch (result) {
                 .err => |err| {
-                    if (err.errno == @intFromEnum(os.E.EXIST) and !args.flags.errorOnExist) {
+                    if (err.errno == @intFromEnum(E.EXIST) and !args.flags.errorOnExist) {
                         break :brk;
                     }
                     this.cp_task.finishConcurrently(result);
@@ -1639,6 +1989,7 @@ pub const Arguments = struct {
         path: PathLike,
         encoding: Encoding = Encoding.utf8,
         with_file_types: bool = false,
+        recursive: bool = false,
 
         pub fn deinit(this: Readdir) void {
             this.path.deinit();
@@ -1650,6 +2001,16 @@ pub const Arguments = struct {
 
         pub fn toThreadSafe(this: *Readdir) void {
             this.path.toThreadSafe();
+        }
+
+        pub fn tag(this: *const Readdir) Return.Readdir.Tag {
+            return switch (this.encoding) {
+                .buffer => .buffers,
+                else => if (this.with_file_types)
+                    .with_file_types
+                else
+                    .files,
+            };
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Readdir {
@@ -1669,6 +2030,7 @@ pub const Arguments = struct {
 
             var encoding = Encoding.utf8;
             var with_file_types = false;
+            var recursive = false;
 
             if (arguments.next()) |val| {
                 arguments.eat();
@@ -1681,6 +2043,13 @@ pub const Arguments = struct {
                         if (val.isObject()) {
                             if (val.getIfPropertyExists(ctx.ptr(), "encoding")) |encoding_| {
                                 encoding = Encoding.fromJS(encoding_, ctx.ptr()) orelse Encoding.utf8;
+                            }
+
+                            if (val.getOptional(ctx.ptr(), "recursive", bool) catch {
+                                path.deinit();
+                                return null;
+                            }) |recursive_| {
+                                recursive = recursive_;
                             }
 
                             if (val.getOptional(ctx.ptr(), "withFileTypes", bool) catch {
@@ -1698,6 +2067,7 @@ pub const Arguments = struct {
                 .path = path,
                 .encoding = encoding,
                 .with_file_types = with_file_types,
+                .recursive = recursive,
             };
         }
     };
@@ -3420,13 +3790,14 @@ pub const NodeFS = struct {
         _ = flavor;
         const ret = Maybe(Return.CopyFile);
 
-        var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var src = args.src.sliceZ(&src_buf);
-        var dest = args.dest.sliceZ(&dest_buf);
-
         // TODO: do we need to fchown?
         if (comptime Environment.isMac) {
+            var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+
+            var src = args.src.sliceZ(&src_buf);
+            var dest = args.dest.sliceZ(&dest_buf);
+
             if (args.mode.isForceClone()) {
                 // https://www.manpagez.com/man/2/clonefile/
                 return ret.errnoSysP(C.clonefile(src, dest, 0), .clonefile, src) orelse ret.success;
@@ -3493,6 +3864,11 @@ pub const NodeFS = struct {
         }
 
         if (comptime Environment.isLinux) {
+            var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var src = args.src.sliceZ(&src_buf);
+            var dest = args.dest.sliceZ(&dest_buf);
+
             // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
             if (args.mode.isForceClone()) {
                 return Maybe(Return.CopyFile).todo;
@@ -3576,6 +3952,26 @@ pub const NodeFS = struct {
 
             return ret.success;
         }
+
+        if (comptime Environment.isWindows) {
+            if (args.mode.isForceClone()) {
+                return Maybe(Return.CopyFile).todo;
+            }
+
+            var src_buf: bun.MAX_WPATH = undefined;
+            var dest_buf: bun.MAX_WPATH = undefined;
+            var src = strings.toWPathNormalizeAutoExtend(&src_buf, args.src.slice());
+            var dest = strings.toWPathNormalizeAutoExtend(&dest_buf, args.dest.slice());
+            if (windows.CopyFileW(src.ptr, dest.ptr, if (args.mode.shouldntOverwrite()) 1 else 0) == windows.FALSE) {
+                if (ret.errnoSysP(0, .copyfile, args.src.slice())) |rest| {
+                    return rest;
+                }
+            }
+
+            return ret.success;
+        }
+
+        return Maybe(Return.CopyFile).todo;
     }
 
     pub fn exists(this: *NodeFS, args: Arguments.Exists, comptime flavor: Flavor) Maybe(Return.Exists) {
@@ -4090,62 +4486,31 @@ pub const NodeFS = struct {
     }
 
     pub fn readdir(this: *NodeFS, args: Arguments.Readdir, comptime flavor: Flavor) Maybe(Return.Readdir) {
-        return switch (args.encoding) {
-            .buffer => _readdir(
-                &this.sync_error_buf,
-                args,
-                Buffer,
-                flavor,
-            ),
-            else => {
-                if (!args.with_file_types) {
-                    return _readdir(
-                        &this.sync_error_buf,
-                        args,
-                        bun.String,
-                        flavor,
-                    );
-                }
+        if (comptime flavor != .sync) {
+            if (args.recursive) {
+                @panic("Assertion failure: this code path should never be reached.");
+            }
+        }
 
-                return _readdir(
-                    &this.sync_error_buf,
-                    args,
-                    Dirent,
-                    flavor,
-                );
+        return switch (args.recursive) {
+            inline else => |recursive| switch (args.tag()) {
+                .buffers => _readdir(&this.sync_error_buf, args, Buffer, recursive, flavor),
+                .with_file_types => _readdir(&this.sync_error_buf, args, Dirent, recursive, flavor),
+                .files => _readdir(&this.sync_error_buf, args, bun.String, recursive, flavor),
             },
         };
     }
 
-    pub fn _readdir(
-        buf: *[bun.MAX_PATH_BYTES]u8,
+    fn readdirWithEntries(
         args: Arguments.Readdir,
+        fd: bun.FileDescriptor,
         comptime ExpectedType: type,
-        comptime _: Flavor,
-    ) Maybe(Return.Readdir) {
-        const file_type = comptime switch (ExpectedType) {
-            Dirent => "with_file_types",
-            bun.String => "files",
-            Buffer => "buffers",
-            else => unreachable,
-        };
-
-        var path = args.path.sliceZ(buf);
-        const flags = os.O.DIRECTORY | os.O.RDONLY;
-        const fd = switch (Syscall.open(path, flags, 0)) {
-            .err => |err| return .{
-                .err = err.withPath(args.path.slice()),
-            },
-            .result => |fd_| fd_,
-        };
-        defer {
-            _ = Syscall.close(fd);
-        }
-
-        var entries = std.ArrayList(ExpectedType).init(bun.default_allocator);
+        entries: *std.ArrayList(ExpectedType),
+    ) Maybe(void) {
         var dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
         var iterator = DirIterator.iterate(dir);
         var entry = iterator.next();
+
         while (switch (entry) {
             .err => |err| {
                 for (entries.items) |*item| {
@@ -4177,19 +4542,335 @@ pub const NodeFS = struct {
                     entries.append(.{
                         .name = bun.String.create(utf8_name),
                         .kind = current.kind,
-                    }) catch unreachable;
+                    }) catch bun.outOfMemory();
                 },
                 Buffer => {
-                    entries.append(Buffer.fromString(utf8_name, bun.default_allocator) catch unreachable) catch unreachable;
+                    entries.append(Buffer.fromString(utf8_name, bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
                 },
                 bun.String => {
-                    entries.append(bun.String.create(utf8_name)) catch unreachable;
+                    entries.append(bun.String.create(utf8_name)) catch bun.outOfMemory();
                 },
                 else => unreachable,
             }
         }
 
-        return .{ .result = @unionInit(Return.Readdir, file_type, entries.items) };
+        return Maybe(void).success;
+    }
+
+    pub fn readdirWithEntriesRecursiveAsync(
+        buf: *[bun.MAX_PATH_BYTES]u8,
+        args: Arguments.Readdir,
+        async_task: *AsyncReaddirRecursiveTask,
+        basename: [:0]const u8,
+        comptime ExpectedType: type,
+        entries: *std.ArrayList(ExpectedType),
+        comptime is_root: bool,
+    ) Maybe(void) {
+        const flags = os.O.DIRECTORY | os.O.RDONLY;
+        const fd = switch (Syscall.openat(if (comptime is_root) bun.toFD(std.fs.cwd().fd) else async_task.root_fd, basename, flags, 0)) {
+            .err => |err| {
+                if (comptime !is_root) {
+                    switch (err.getErrno()) {
+                        // These things can happen and there's nothing we can do about it.
+                        //
+                        // This is different than what Node does, at the time of writing.
+                        // Node doesn't gracefully handle errors like these. It fails the entire operation.
+                        .NOENT, .NOTDIR, .PERM => {
+                            return Maybe(void).success;
+                        },
+                        else => {},
+                    }
+
+                    const path_parts = [_]string{ async_task.root_path.slice(), basename };
+                    return .{
+                        .err = err.withPath(bun.path.joinZBuf(buf, &path_parts, .auto)),
+                    };
+                }
+
+                return .{
+                    .err = err.withPath(args.path.slice()),
+                };
+            },
+            .result => |fd_| fd_,
+        };
+
+        if (comptime is_root) {
+            async_task.root_fd = fd;
+        }
+
+        defer {
+            if (comptime !is_root) {
+                _ = Syscall.close(fd);
+            }
+        }
+
+        var iterator = DirIterator.iterate(.{ .fd = bun.fdcast(fd) });
+        var entry = iterator.next();
+
+        while (switch (entry) {
+            .err => |err| {
+                if (comptime !is_root) {
+                    const path_parts = [_]string{ async_task.root_path.slice(), basename };
+                    return .{
+                        .err = err.withPath(bun.path.joinZBuf(buf, &path_parts, .auto)),
+                    };
+                }
+
+                return .{
+                    .err = err.withPath(args.path.slice()),
+                };
+            },
+            .result => |ent| ent,
+        }) |current| : (entry = iterator.next()) {
+            const utf8_name = current.name.slice();
+
+            const name_to_copy: [:0]const u8 = brk: {
+                if (async_task.root_path.sliceAssumeZ().ptr == basename.ptr) {
+                    break :brk @ptrCast(utf8_name);
+                }
+
+                const path_parts = [_]string{ basename, utf8_name };
+                break :brk bun.path.joinZBuf(buf, &path_parts, .auto);
+            };
+
+            enqueue: {
+                switch (current.kind) {
+                    // a symlink might be a directory or might not be
+                    // if it's not a directory, the task will fail at that point.
+                    .sym_link,
+
+                    // we know for sure it's a directory
+                    .directory,
+                    => {
+                        // if the name is too long, we can't enqueue it regardless
+                        // the operating system would just return ENAMETOOLONG
+                        //
+                        // Technically, we could work around that due to the
+                        // usage of openat, but then we risk leaving too many
+                        // file descriptors open.
+                        if (current.name.len + 1 + name_to_copy.len > bun.MAX_PATH_BYTES) break :enqueue;
+
+                        async_task.enqueue(name_to_copy);
+                    },
+                    else => {},
+                }
+            }
+
+            switch (comptime ExpectedType) {
+                Dirent => {
+                    entries.append(.{
+                        .name = bun.String.create(name_to_copy),
+                        .kind = current.kind,
+                    }) catch bun.outOfMemory();
+                },
+                Buffer => {
+                    entries.append(Buffer.fromString(name_to_copy, bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
+                },
+                bun.String => {
+                    entries.append(bun.String.create(name_to_copy)) catch bun.outOfMemory();
+                },
+                else => bun.outOfMemory(),
+            }
+        }
+
+        return Maybe(void).success;
+    }
+
+    fn readdirWithEntriesRecursiveSync(
+        buf: *[bun.MAX_PATH_BYTES]u8,
+        args: Arguments.Readdir,
+        root_basename: [:0]const u8,
+        comptime ExpectedType: type,
+        entries: *std.ArrayList(ExpectedType),
+    ) Maybe(void) {
+        var iterator_stack = std.heap.stackFallback(128, bun.default_allocator);
+        var stack = std.fifo.LinearFifo([:0]const u8, .{ .Dynamic = {} }).init(iterator_stack.get());
+        var basename_stack = std.heap.stackFallback(8192 * 2, bun.default_allocator);
+        const basename_allocator = basename_stack.get();
+        defer {
+            while (stack.readItem()) |name| {
+                basename_allocator.free(name);
+            }
+            stack.deinit();
+        }
+
+        stack.writeItem(root_basename) catch unreachable;
+        var root_fd: bun.FileDescriptor = bun.invalid_fd;
+
+        defer {
+            // all other paths are relative to the root directory
+            // so we can only close it once we're 100% done
+            if (root_fd != bun.invalid_fd) {
+                _ = Syscall.close(root_fd);
+            }
+        }
+
+        while (stack.readItem()) |basename| {
+            defer {
+                if (root_basename.ptr != basename.ptr) {
+                    basename_allocator.free(basename);
+                }
+            }
+
+            const flags = os.O.DIRECTORY | os.O.RDONLY;
+            const fd = switch (Syscall.openat(if (root_fd == bun.invalid_fd) std.fs.cwd().fd else root_fd, basename, flags, 0)) {
+                .err => |err| {
+                    if (root_fd == bun.invalid_fd) {
+                        return .{
+                            .err = err.withPath(args.path.slice()),
+                        };
+                    }
+
+                    switch (err.getErrno()) {
+                        // These things can happen and there's nothing we can do about it.
+                        //
+                        // This is different than what Node does, at the time of writing.
+                        // Node doesn't gracefully handle errors like these. It fails the entire operation.
+                        .NOENT, .NOTDIR, .PERM => continue,
+                        else => {
+                            const path_parts = [_]string{ args.path.slice(), basename };
+                            return .{
+                                .err = err.withPath(bun.default_allocator.dupe(u8, bun.path.joinZBuf(buf, &path_parts, .auto)) catch ""),
+                            };
+                        },
+                    }
+                },
+                .result => |fd_| fd_,
+            };
+            if (root_fd == bun.invalid_fd) {
+                root_fd = fd;
+            }
+
+            defer {
+                if (fd != root_fd) {
+                    _ = Syscall.close(fd);
+                }
+            }
+
+            var iterator = DirIterator.iterate(.{ .fd = bun.fdcast(fd) });
+            var entry = iterator.next();
+
+            while (switch (entry) {
+                .err => |err| {
+                    return .{
+                        .err = err.withPath(args.path.slice()),
+                    };
+                },
+                .result => |ent| ent,
+            }) |current| : (entry = iterator.next()) {
+                const utf8_name = current.name.slice();
+
+                const name_to_copy = brk: {
+                    if (root_basename.ptr == basename.ptr) {
+                        break :brk utf8_name;
+                    }
+
+                    const path_parts = [_]string{ basename, utf8_name };
+                    break :brk bun.path.joinZBuf(buf, &path_parts, .auto);
+                };
+
+                enqueue: {
+                    switch (current.kind) {
+                        // a symlink might be a directory or might not be
+                        // if it's not a directory, the task will fail at that point.
+                        .sym_link,
+
+                        // we know for sure it's a directory
+                        .directory,
+                        => {
+                            if (current.name.len + 1 + name_to_copy.len > bun.MAX_PATH_BYTES) break :enqueue;
+                            stack.writeItem(basename_allocator.dupeZ(u8, name_to_copy) catch break :enqueue) catch break :enqueue;
+                        },
+                        else => {},
+                    }
+                }
+
+                switch (comptime ExpectedType) {
+                    Dirent => {
+                        entries.append(.{
+                            .name = bun.String.create(name_to_copy),
+                            .kind = current.kind,
+                        }) catch bun.outOfMemory();
+                    },
+                    Buffer => {
+                        entries.append(Buffer.fromString(name_to_copy, bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
+                    },
+                    bun.String => {
+                        entries.append(bun.String.create(name_to_copy)) catch bun.outOfMemory();
+                    },
+                    else => @compileError("Impossible"),
+                }
+            }
+        }
+
+        return Maybe(void).success;
+    }
+
+    fn _readdir(
+        buf: *[bun.MAX_PATH_BYTES]u8,
+        args: Arguments.Readdir,
+        comptime ExpectedType: type,
+        comptime recursive: bool,
+        comptime flavor: Flavor,
+    ) Maybe(Return.Readdir) {
+        const file_type = comptime switch (ExpectedType) {
+            Dirent => "with_file_types",
+            bun.String => "files",
+            Buffer => "buffers",
+            else => unreachable,
+        };
+
+        var path = args.path.sliceZ(buf);
+        if (comptime recursive and flavor == .sync) {
+            var buf_to_pass: [bun.MAX_PATH_BYTES]u8 = undefined;
+
+            var entries = std.ArrayList(ExpectedType).init(bun.default_allocator);
+            return switch (readdirWithEntriesRecursiveSync(&buf_to_pass, args, path, ExpectedType, &entries)) {
+                .err => |err| {
+                    for (entries.items) |*result| {
+                        switch (comptime ExpectedType) {
+                            Dirent => {
+                                result.name.deref();
+                            },
+                            Buffer => {
+                                result.destroy();
+                            },
+                            bun.String => {
+                                result.deref();
+                            },
+                            else => unreachable,
+                        }
+                    }
+
+                    entries.deinit();
+
+                    return .{
+                        .err = err,
+                    };
+                },
+                .result => .{ .result = @unionInit(Return.Readdir, file_type, entries.items) },
+            };
+        }
+
+        if (comptime recursive) {
+            @panic("This code path should never be reached. It should only go through readdirWithEntriesRecursiveAsync.");
+        }
+
+        const flags = os.O.DIRECTORY | os.O.RDONLY;
+        const fd = switch (Syscall.open(path, flags, 0)) {
+            .err => |err| return .{
+                .err = err.withPath(args.path.slice()),
+            },
+            .result => |fd_| fd_,
+        };
+
+        var entries = std.ArrayList(ExpectedType).init(bun.default_allocator);
+        return switch (readdirWithEntries(args, fd, ExpectedType, &entries)) {
+            .err => |err| return .{
+                .err = err,
+            },
+            .result => .{ .result = @unionInit(Return.Readdir, file_type, entries.items) },
+        };
     }
 
     pub const StringType = enum {
@@ -4960,7 +5641,15 @@ pub const NodeFS = struct {
     /// This function is `cpSync`, but only if you pass `{ recursive: ..., force: ..., errorOnExist: ..., mode: ... }'
     /// The other options like `filter` use a JS fallback, see `src/js/internal/fs/cp.ts`
     pub fn cp(this: *NodeFS, args: Arguments.Cp, comptime flavor: Flavor) Maybe(Return.Cp) {
+        if (comptime Environment.isWindows) {
+            return Maybe(Return.Cp).todo;
+        }
+
         comptime std.debug.assert(flavor == .sync);
+
+        if (comptime Environment.isWindows) {
+            return Maybe(Return.Cp).todo;
+        }
 
         var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -4996,7 +5685,7 @@ pub const NodeFS = struct {
                 @enumFromInt((if (args.errorOnExist or !args.force) Constants.COPYFILE_EXCL else @as(u8, 0))),
                 stat_,
             );
-            if (r == .err and r.err.errno == @intFromEnum(os.E.EXIST) and !args.errorOnExist) {
+            if (r == .err and r.err.errno == @intFromEnum(E.EXIST) and !args.errorOnExist) {
                 return Maybe(Return.Cp).success;
             }
             return r;
@@ -5006,7 +5695,7 @@ pub const NodeFS = struct {
             @memcpy(this.sync_error_buf[0..src.len], src);
             return .{
                 .err = .{
-                    .errno = @intFromEnum(std.os.E.ISDIR),
+                    .errno = @intFromEnum(E.ISDIR),
                     .syscall = .copyfile,
                     .path = this.sync_error_buf[0..src.len],
                 },
@@ -5095,7 +5784,7 @@ pub const NodeFS = struct {
                     );
                     switch (r) {
                         .err => {
-                            if (r.err.errno == @intFromEnum(os.E.EXIST) and !args.errorOnExist) {
+                            if (r.err.errno == @intFromEnum(E.EXIST) and !args.errorOnExist) {
                                 continue;
                             }
                             return r;
@@ -5351,6 +6040,11 @@ pub const NodeFS = struct {
     /// Directory scanning + clonefile will block this thread, then each individual file copy (what the sync version
     /// calls "_copySingleFileSync") will be dispatched as a separate task.
     pub fn cpAsync(this: *NodeFS, task: *AsyncCpTask) void {
+        if (comptime Environment.isWindows) {
+            task.finishConcurrently(Maybe(Return.Cp).todo);
+            return;
+        }
+
         const args = task.args;
         var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -5374,7 +6068,7 @@ pub const NodeFS = struct {
                 @enumFromInt((if (args.flags.errorOnExist or !args.flags.force) Constants.COPYFILE_EXCL else @as(u8, 0))),
                 stat_,
             );
-            if (r == .err and r.err.errno == @intFromEnum(os.E.EXIST) and !args.flags.errorOnExist) {
+            if (r == .err and r.err.errno == @intFromEnum(E.EXIST) and !args.flags.errorOnExist) {
                 task.finishConcurrently(Maybe(Return.Cp).success);
                 return;
             }
@@ -5385,7 +6079,7 @@ pub const NodeFS = struct {
         if (!args.flags.recursive) {
             @memcpy(this.sync_error_buf[0..src.len], src);
             task.finishConcurrently(.{ .err = .{
-                .errno = @intFromEnum(std.os.E.ISDIR),
+                .errno = @intFromEnum(E.ISDIR),
                 .syscall = .copyfile,
                 .path = this.sync_error_buf[0..src.len],
             } });

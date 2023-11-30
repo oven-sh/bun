@@ -15,37 +15,41 @@ Symbol(Symbol Description)
 2000-06-27T02:24:34.304Z
 [ 123, 456, 789 ]
 {
-  name: "foo"
+  name: "foo",
 }
 {
   a: 123,
   b: 456,
-  c: 789
+  c: 789,
 }
 {
   a: {
     b: {
-      c: 123
+      c: 123,
     },
-    bacon: true
+    bacon: true,
   },
-  name: "bar"
+  name: "bar",
 }
 Promise { <pending> }
+{}
 [Function]
 [Function]
 [class Foo]
 [class (anonymous)]
-{}
+Foo {}
+FooWithProp {
+  a: 1,
+}
 [Function: foooo]
 /FooRegex/
 Is it a bug or a feature that formatting numbers like 123 is colored
 String 123 should be 2nd word, 456 == 456 and percent s %s == What okay
 {
   foo: {
-    name: "baz"
+    name: "baz",
   },
-  bar: [Circular]
+  bar: [Circular],
 } am
 [
   {}, {}, {}, {}
@@ -53,25 +57,70 @@ String 123 should be 2nd word, 456 == 456 and percent s %s == What okay
 {
   level1: {
     level2: {
-      level3: [Object ...]
-    }
-  }
+      level3: [Object ...],
+    },
+  },
 }
 {
-  "1": [Object ...]
+  "1": [Object ...],
 }
 {
-  "1": [Object ...]
+  "1": [Object ...],
 }
 {
   "1": {
-    "2": [Object ...]
-  }
+    "2": [Object ...],
+  },
 }
 {
   "1": {
     "2": {
-      "3": 3
-    }
-  }
+      "3": 3,
+    },
+  },
+}
+SetIterator { 
+  1,
+  "123",
+  {
+    a: [],
+    str: "123123132",
+    nr: 3453,
+  },
+}
+SetIterator { 
+  1,
+  "123",
+  {
+    a: [],
+    str: "123123132",
+    nr: 3453,
+  },
+}
+SetIterator { } SetIterator { }
+MapIterator { 
+  "key",
+  "key_2",
+}
+MapIterator { 
+  {
+    a: [],
+    str: "123123132",
+    nr: 3453,
+  },
+  {
+    b: "test",
+  },
+}
+MapIterator { } MapIterator { }
+NestedClass {
+  a: 1,
+  b: 2,
+  foo: FooWithProp {
+    a: 1,
+  },
+  test: [Function: test],
+}
+myCustomName {
+  [Symbol(Symbol.toStringTag)]: "myCustomName",
 }

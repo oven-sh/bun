@@ -12,21 +12,21 @@ const C = bun.C;
 
 const sync = @import("../sync.zig");
 const std = @import("std");
-const HTTP = @import("root").bun.HTTP;
+const HTTP = @import("root").bun.http;
 const NetworkThread = HTTP.NetworkThread;
 const URL = @import("../url.zig").URL;
 const Fs = @import("../fs.zig");
 const Analytics = @import("./analytics_schema.zig").analytics;
 const Writer = @import("./analytics_schema.zig").Writer;
-const Headers = @import("root").bun.HTTP.Headers;
+const Headers = @import("root").bun.http.Headers;
 const Futex = @import("../futex.zig");
 const Semver = @import("../install/semver.zig");
 
 fn NewUint64(val: u64) Analytics.Uint64 {
     const bytes = std.mem.asBytes(&val);
     return .{
-        .first = std.mem.readIntNative(u32, bytes[0..4]),
-        .second = std.mem.readIntNative(u32, bytes[4..]),
+        .first = std.mem.readInt(u32, bytes[0..4], .little),
+        .second = std.mem.readInt(u32, bytes[4..], .little),
     };
 }
 
@@ -332,7 +332,7 @@ pub const GenerateHeader = struct {
                 "IOPlatformExpertDevice",
             };
 
-            const result = try std.ChildProcess.exec(.{
+            const result = try std.ChildProcess.run(.{
                 .allocator = default_allocator,
                 .cwd = Fs.FileSystem.instance.top_level_dir,
                 .argv = std.mem.span(&cmds),
@@ -350,8 +350,8 @@ pub const GenerateHeader = struct {
             const hash = bun.hash(std.mem.trim(u8, out, "\n\r "));
             var hash_bytes = std.mem.asBytes(&hash);
             return Analytics.Uint64{
-                .first = std.mem.readIntNative(u32, hash_bytes[0..4]),
-                .second = std.mem.readIntNative(u32, hash_bytes[4..8]),
+                .first = std.mem.readInt(u32, hash_bytes[0..4], .little),
+                .second = std.mem.readInt(u32, hash_bytes[4..8], .little),
             };
         }
 
@@ -367,8 +367,8 @@ pub const GenerateHeader = struct {
             const hash = bun.hash(std.mem.trim(u8, linux_machine_id[0..read_count], "\n\r "));
             var hash_bytes = std.mem.asBytes(&hash);
             return Analytics.Uint64{
-                .first = std.mem.readIntNative(u32, hash_bytes[0..4]),
-                .second = std.mem.readIntNative(u32, hash_bytes[4..8]),
+                .first = std.mem.readInt(u32, hash_bytes[0..4], .little),
+                .second = std.mem.readInt(u32, hash_bytes[4..8], .little),
             };
         }
     };
@@ -496,8 +496,8 @@ pub const EventList = struct {
 
             const analytics_event = Analytics.EventHeader{
                 .timestamp = Analytics.Uint64{
-                    .first = std.mem.readIntNative(u32, time_bytes[0..4]),
-                    .second = std.mem.readIntNative(u32, time_bytes[4..8]),
+                    .first = std.mem.readInt(u32, time_bytes[0..4], .little),
+                    .second = std.mem.readInt(u32, time_bytes[4..8], .little),
                 },
                 .kind = event.data.toKind(),
             };

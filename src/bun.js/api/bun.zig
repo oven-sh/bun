@@ -56,6 +56,7 @@ pub const BunObject = struct {
     pub const SHA512 = Crypto.SHA512.getter;
     pub const SHA512_256 = Crypto.SHA512_256.getter;
     pub const TOML = Bun.getTOMLObject;
+    pub const Glob = Bun.getGlobConstructor;
     pub const Transpiler = Bun.getTranspilerConstructor;
     pub const argv = Bun.getArgv;
     pub const assetPrefix = Bun.getAssetPrefix;
@@ -69,6 +70,7 @@ pub const BunObject = struct {
     pub const stdin = Bun.getStdin;
     pub const stdout = Bun.getStdout;
     pub const unsafe = Bun.getUnsafe;
+    pub const semver = Bun.getSemver;
     // --- Getters ---
 
     fn getterName(comptime baseName: anytype) [:0]const u8 {
@@ -101,6 +103,7 @@ pub const BunObject = struct {
         @export(BunObject.SHA512, .{ .name = getterName("SHA512") });
         @export(BunObject.SHA512_256, .{ .name = getterName("SHA512_256") });
         @export(BunObject.TOML, .{ .name = getterName("TOML") });
+        @export(BunObject.Glob, .{ .name = getterName("Glob") });
         @export(BunObject.Transpiler, .{ .name = getterName("Transpiler") });
         @export(BunObject.argv, .{ .name = getterName("argv") });
         @export(BunObject.assetPrefix, .{ .name = getterName("assetPrefix") });
@@ -114,6 +117,7 @@ pub const BunObject = struct {
         @export(BunObject.stdin, .{ .name = getterName("stdin") });
         @export(BunObject.stdout, .{ .name = getterName("stdout") });
         @export(BunObject.unsafe, .{ .name = getterName("unsafe") });
+        @export(BunObject.semver, .{ .name = getterName("semver") });
         // --- Getters --
 
         // -- Callbacks --
@@ -157,7 +161,7 @@ const Bun = @This();
 const default_allocator = @import("root").bun.default_allocator;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
-const NetworkThread = @import("root").bun.HTTP.NetworkThread;
+const NetworkThread = @import("root").bun.http.NetworkThread;
 const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
@@ -179,7 +183,6 @@ const ServerEntryPoint = bun.bundler.ServerEntryPoint;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
-const http = @import("../../bun_dev_http_server.zig");
 const NodeFallbackModules = @import("../../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
 const Analytics = @import("../../analytics/analytics_thread.zig");
@@ -204,7 +207,6 @@ const MarkedArrayBuffer = @import("../base.zig").MarkedArrayBuffer;
 const getAllocator = @import("../base.zig").getAllocator;
 const JSValue = @import("root").bun.JSC.JSValue;
 
-const Microtask = @import("root").bun.JSC.Microtask;
 const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
 const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;
 const JSPrivateDataPtr = @import("root").bun.JSC.JSPrivateDataPtr;
@@ -234,6 +236,9 @@ const Which = @import("../../which.zig");
 const ErrorableString = JSC.ErrorableString;
 const is_bindgen = JSC.is_bindgen;
 const max_addressible_memory = std.math.maxInt(u56);
+const glob = @import("../../glob.zig");
+const Async = bun.Async;
+const SemverObject = @import("../../install/semver.zig").SemverObject;
 
 threadlocal var css_imports_list_strings: [512]ZigString = undefined;
 threadlocal var css_imports_list: [512]Api.StringPointer = undefined;
@@ -1554,12 +1559,12 @@ pub const Crypto = struct {
             promise: JSC.JSPromise.Strong,
             event_loop: *JSC.EventLoop,
             global: *JSC.JSGlobalObject,
-            ref: JSC.PollRef = .{},
+            ref: Async.KeepAlive = .{},
             task: JSC.WorkPoolTask = .{ .callback = &run },
 
             pub const Result = struct {
                 value: Value,
-                ref: JSC.PollRef = .{},
+                ref: Async.KeepAlive = .{},
 
                 task: JSC.AnyTask = undefined,
                 promise: JSC.JSPromise.Strong,
@@ -1804,12 +1809,12 @@ pub const Crypto = struct {
             promise: JSC.JSPromise.Strong,
             event_loop: *JSC.EventLoop,
             global: *JSC.JSGlobalObject,
-            ref: JSC.PollRef = .{},
+            ref: Async.KeepAlive = .{},
             task: JSC.WorkPoolTask = .{ .callback = &run },
 
             pub const Result = struct {
                 value: Value,
-                ref: JSC.PollRef = .{},
+                ref: Async.KeepAlive = .{},
 
                 task: JSC.AnyTask = undefined,
                 promise: JSC.JSPromise.Strong,
@@ -2964,6 +2969,20 @@ pub fn getTOMLObject(
     return TOMLObject.create(globalThis);
 }
 
+pub fn getGlobConstructor(
+    globalThis: *JSC.JSGlobalObject,
+    _: *JSC.JSObject,
+) callconv(.C) JSC.JSValue {
+    return JSC.API.Glob.getConstructor(globalThis);
+}
+
+pub fn getSemver(
+    globalThis: *JSC.JSGlobalObject,
+    _: *JSC.JSObject,
+) callconv(.C) JSC.JSValue {
+    return SemverObject.create(globalThis);
+}
+
 pub fn getUnsafe(
     globalThis: *JSC.JSGlobalObject,
     _: *JSC.JSObject,
@@ -3335,7 +3354,8 @@ pub const Timer = struct {
 
                             if (val.did_unref_timer) {
                                 val.did_unref_timer = false;
-                                vm.event_loop_handle.?.num_polls += 1;
+                                if (comptime Environment.isPosix)
+                                    vm.event_loop_handle.?.num_polls += 1;
                             }
                         }
                     }
@@ -3408,7 +3428,7 @@ pub const Timer = struct {
                     .callback = JSC.Strong.create(callback, globalThis),
                     .globalThis = globalThis,
                     .timer = uws.Timer.create(
-                        vm.event_loop_handle.?,
+                        vm.uwsLoop(),
                         id,
                     ),
                 };
@@ -3454,7 +3474,8 @@ pub const Timer = struct {
 
                             if (!val.did_unref_timer) {
                                 val.did_unref_timer = true;
-                                vm.event_loop_handle.?.num_polls -= 1;
+                                if (comptime Environment.isPosix)
+                                    vm.event_loop_handle.?.num_polls -= 1;
                             }
                         }
                     }
@@ -3484,7 +3505,7 @@ pub const Timer = struct {
         globalThis: *JSC.JSGlobalObject,
         timer: *uws.Timer,
         did_unref_timer: bool = false,
-        poll_ref: JSC.PollRef = JSC.PollRef.init(),
+        poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
         arguments: JSC.Strong = .{},
         has_scheduled_job: bool = false,
 
@@ -3606,8 +3627,9 @@ pub const Timer = struct {
 
             this.timer.deinit(false);
 
-            // balance double unreffing in doUnref
-            vm.event_loop_handle.?.num_polls += @as(i32, @intFromBool(this.did_unref_timer));
+            if (comptime Environment.isPosix)
+                // balance double unreffing in doUnref
+                vm.event_loop_handle.?.num_polls += @as(i32, @intFromBool(this.did_unref_timer));
 
             this.callback.deinit();
             this.arguments.deinit();
@@ -3630,7 +3652,6 @@ pub const Timer = struct {
         var map = vm.timer.maps.get(kind);
 
         // setImmediate(foo)
-        // setTimeout(foo, 0)
         if (kind == .setTimeout and interval == 0) {
             var cb: CallbackJob = .{
                 .callback = JSC.Strong.create(callback, globalThis),
@@ -3651,7 +3672,7 @@ pub const Timer = struct {
             job.task = CallbackJob.Task.init(job);
             job.ref.ref(vm);
 
-            vm.enqueueTask(JSC.Task.init(&job.task));
+            vm.enqueueImmediateTask(JSC.Task.init(&job.task));
             if (vm.isInspectorEnabled()) {
                 Debugger.didScheduleAsyncCall(globalThis, .DOMTimer, Timeout.ID.asyncID(.{ .id = id, .kind = kind }), !repeat);
             }
@@ -3663,7 +3684,7 @@ pub const Timer = struct {
             .callback = JSC.Strong.create(callback, globalThis),
             .globalThis = globalThis,
             .timer = uws.Timer.create(
-                vm.event_loop_handle.?,
+                vm.uwsLoop(),
                 Timeout.ID{
                     .id = id,
                     .kind = kind,
@@ -3693,6 +3714,31 @@ pub const Timer = struct {
         );
     }
 
+    pub fn setImmediate(
+        globalThis: *JSGlobalObject,
+        callback: JSValue,
+        arguments: JSValue,
+    ) callconv(.C) JSValue {
+        JSC.markBinding(@src());
+        const id = globalThis.bunVM().timer.last_id;
+        globalThis.bunVM().timer.last_id +%= 1;
+
+        const interval: i32 = 0;
+
+        const wrappedCallback = callback.withAsyncContextIfNeeded(globalThis);
+
+        Timer.set(id, globalThis, wrappedCallback, interval, arguments, false) catch
+            return JSValue.jsUndefined();
+
+        return TimerObject.init(globalThis, id, .setTimeout, interval, wrappedCallback, arguments);
+    }
+
+    comptime {
+        if (!JSC.is_bindgen) {
+            @export(setImmediate, .{ .name = "Bun__Timer__setImmediate" });
+        }
+    }
+
     pub fn setTimeout(
         globalThis: *JSGlobalObject,
         callback: JSValue,
@@ -3705,7 +3751,8 @@ pub const Timer = struct {
 
         const interval: i32 = @max(
             countdown.coerce(i32, globalThis),
-            0,
+            // It must be 1 at minimum or setTimeout(cb, 0) will seemingly hang
+            1,
         );
 
         const wrappedCallback = callback.withAsyncContextIfNeeded(globalThis);
@@ -4414,8 +4461,16 @@ pub const FFIObject = struct {
 /// Also, you can't iterate over process.env normally since it only exists at build-time otherwise
 // This is aliased to Bun.env
 pub const EnvironmentVariables = struct {
-    pub export fn Bun__getEnvNames(globalObject: *JSC.JSGlobalObject, names: [*]ZigString, max: usize) usize {
-        return getEnvNames(globalObject, names[0..max]);
+    pub export fn Bun__getEnvCount(globalObject: *JSC.JSGlobalObject, ptr: *[*][]const u8) usize {
+        const bunVM = globalObject.bunVM();
+        ptr.* = bunVM.bundler.env.map.map.keys().ptr;
+        return bunVM.bundler.env.map.map.unmanaged.entries.len;
+    }
+
+    pub export fn Bun__getEnvKey(ptr: [*][]const u8, i: usize, data_ptr: *[*]const u8) usize {
+        const item = ptr[i];
+        data_ptr.* = item.ptr;
+        return item.len;
     }
 
     pub export fn Bun__getEnvValue(globalObject: *JSC.JSGlobalObject, name: *ZigString, value: *ZigString) bool {
@@ -4453,7 +4508,8 @@ export fn Bun__reportError(globalObject: *JSGlobalObject, err: JSC.JSValue) void
 comptime {
     if (!is_bindgen) {
         _ = Bun__reportError;
-        _ = EnvironmentVariables.Bun__getEnvNames;
+        _ = EnvironmentVariables.Bun__getEnvCount;
+        _ = EnvironmentVariables.Bun__getEnvKey;
         _ = EnvironmentVariables.Bun__getEnvValue;
     }
 }

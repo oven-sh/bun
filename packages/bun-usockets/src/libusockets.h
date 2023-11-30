@@ -153,6 +153,12 @@ struct us_socket_context_options_t {
     int ssl_prefer_low_memory_usage; /* Todo: rename to prefer_low_memory_usage and apply for TCP as well */
 };
 
+struct us_bun_verify_error_t {
+    long error;
+    const char* code;
+    const char* reason;
+};
+
 struct us_socket_events_t {
     struct us_socket_t *(*on_open)(struct us_socket_t *, int is_client, char *ip, int ip_length);
     struct us_socket_t *(*on_data)(struct us_socket_t *, char *data, int length);
@@ -166,11 +172,6 @@ struct us_socket_events_t {
     void (*on_handshake)(struct us_socket_t*, int success, struct us_bun_verify_error_t verify_error, void* custom_data);
 };
 
-struct us_bun_verify_error_t {
-    long error;
-    const char* code;
-    const char* reason;
-};
 
 struct us_bun_socket_context_options_t {
     const char *key_file_name;
@@ -231,7 +232,7 @@ void us_socket_context_on_long_timeout(int ssl, struct us_socket_context_t *cont
 void us_socket_context_on_connect_error(int ssl, struct us_socket_context_t *context,
     struct us_socket_t *(*on_connect_error)(struct us_socket_t *s, int code));
 
-void us_socket_context_on_handshake(int ssl, struct us_socket_context_t *context, void (*on_handshake)(struct us_socket_context_t *, int success, struct us_bun_verify_error_t verify_error, void* custom_data), void* custom_data);
+void us_socket_context_on_handshake(int ssl, struct us_socket_context_t *context, void (*on_handshake)(struct us_socket_t *, int success, struct us_bun_verify_error_t verify_error, void* custom_data), void* custom_data);
 
 /* Emitted when a socket has been half-closed */
 void us_socket_context_on_end(int ssl, struct us_socket_context_t *context, struct us_socket_t *(*on_end)(struct us_socket_t *s));
@@ -396,6 +397,7 @@ int us_socket_raw_write(int ssl, struct us_socket_t *s, const char *data, int le
 struct us_socket_t* us_socket_open(int ssl, struct us_socket_t * s, int is_client, char* ip, int ip_length);
 int us_raw_root_certs(struct us_cert_string_t**out);
 unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, const char **dest, int *port, int *is_ipv6);
+int us_socket_get_error(int ssl, struct us_socket_t *s);
 
 #ifdef __cplusplus
 }

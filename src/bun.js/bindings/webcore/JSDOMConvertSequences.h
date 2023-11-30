@@ -29,10 +29,10 @@
 #include "JSDOMConvertBase.h"
 #include "JSDOMConvertNumbers.h"
 #include "JSDOMGlobalObject.h"
-#include "JavaScriptCore/IteratorOperations.h"
-#include "JavaScriptCore/JSArray.h"
-#include "JavaScriptCore/JSGlobalObjectInlines.h"
-#include "JavaScriptCore/ObjectConstructor.h"
+#include <JavaScriptCore/IteratorOperations.h>
+#include <JavaScriptCore/JSArray.h>
+#include <JavaScriptCore/JSGlobalObjectInlines.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 
 namespace WebCore {
 

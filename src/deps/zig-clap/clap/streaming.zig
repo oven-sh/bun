@@ -1,6 +1,7 @@
 const builtin = @import("builtin");
 const clap = @import("../clap.zig");
 const std = @import("std");
+const Output = @import("root").bun.Output;
 
 const args = clap.args;
 const debug = std.debug;
@@ -10,6 +11,7 @@ const mem = std.mem;
 const os = std.os;
 const testing = std.testing;
 
+pub var warn_on_unrecognized_flag = true;
 /// The result returned from StreamingClap.next
 pub fn Arg(comptime Id: type) type {
     return struct {
@@ -36,6 +38,8 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
             };
         };
 
+        const ArgError = error{ DoesntTakeValue, MissingValue, InvalidArgument };
+
         params: []const clap.Param(Id),
         iter: *ArgIterator,
         state: State = .normal,
@@ -43,7 +47,7 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
         diagnostic: ?*clap.Diagnostic = null,
 
         /// Get the next Arg that matches a Param.
-        pub fn next(parser: *@This()) !?Arg(Id) {
+        pub fn next(parser: *@This()) ArgError!?Arg(Id) {
             switch (parser.state) {
                 .normal => return try parser.normal(),
                 .chaining => |state| return try parser.chainging(state),
@@ -55,7 +59,7 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
             }
         }
 
-        fn normal(parser: *@This()) !?Arg(Id) {
+        fn normal(parser: *@This()) ArgError!?Arg(Id) {
             const ArgType = Arg(Id);
             const arg_info = (try parser.parseNextArg()) orelse return null;
             const arg = arg_info.arg;
@@ -64,6 +68,7 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
                 .long => {
                     const eql_index = mem.indexOfScalar(u8, arg, '=');
                     const name = if (eql_index) |i| arg[0..i] else arg;
+
                     const maybe_value = if (eql_index) |i| arg[i + 1 ..] else null;
 
                     for (parser.params) |*param| {
@@ -92,6 +97,22 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
                         return ArgType{ .param = param, .value = value };
                     }
 
+                    // unrecognized command
+                    // if flag else arg
+                    if (arg_info.kind == .long or arg_info.kind == .short) {
+                        if (warn_on_unrecognized_flag) {
+                            Output.prettyWarnln("<r><yellow>warn<r><d>:<r> unrecognized flag: {s}{s}\n", .{ if (arg_info.kind == .long) "--" else "-", name });
+                            Output.flush();
+                        }
+
+                        // continue parsing after unrecognized flag
+                        return parser.next();
+                    }
+
+                    if (warn_on_unrecognized_flag) {
+                        Output.prettyWarnln("<r><yellow>warn<r><d>:<r> unrecognized argument: {s}\n", .{name});
+                        Output.flush();
+                    }
                     return null;
                 },
                 .short => return try parser.chainging(.{
@@ -104,6 +125,7 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
                     // arguments.
                     if (mem.eql(u8, arg, "--")) {
                         parser.state = .rest_are_positional;
+                        // return null to terminate arg parsing
                         const value = parser.iter.next() orelse return null;
                         return Arg(Id){ .param = param, .value = value };
                     }
@@ -115,7 +137,7 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
             }
         }
 
-        fn chainging(parser: *@This(), state: State.Chaining) !?Arg(Id) {
+        fn chainging(parser: *@This(), state: State.Chaining) ArgError!?Arg(Id) {
             const arg = state.arg;
             const index = state.index;
             const next_index = index + 1;
@@ -188,7 +210,7 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
             },
         };
 
-        fn parseNextArg(parser: *@This()) !?ArgInfo {
+        fn parseNextArg(parser: *@This()) ArgError!?ArgInfo {
             const full_arg = parser.iter.next() orelse return null;
             if (mem.eql(u8, full_arg, "--") or mem.eql(u8, full_arg, "-"))
                 return ArgInfo{ .arg = full_arg, .kind = .positional };

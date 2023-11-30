@@ -35,14 +35,14 @@ var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
 const PathString = bun.PathString;
 const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
-const HTTPThread = @import("root").bun.HTTP.HTTPThread;
+const HTTPThread = @import("root").bun.http.HTTPThread;
 
 const JSC = @import("root").bun.JSC;
 const jest = JSC.Jest;
 const TestRunner = JSC.Jest.TestRunner;
 const Snapshots = JSC.Snapshot.Snapshots;
 const Test = TestRunner.Test;
-const NetworkThread = @import("root").bun.HTTP.NetworkThread;
+const NetworkThread = @import("root").bun.http.NetworkThread;
 const uws = @import("root").bun.uws;
 
 fn fmtStatusTextLine(comptime status: @Type(.EnumLiteral), comptime emoji: bool) []const u8 {
@@ -436,7 +436,7 @@ const Scanner = struct {
 
         // In this particular case, we don't actually care about non-ascii latin1 characters.
         // so we skip the ascii check
-        const slice = if (test_name_str.is8Bit()) test_name_str.latin1() else brk: {
+        const slice = brk: {
             zig_slice = test_name_str.toUTF8(bun.default_allocator);
             break :brk zig_slice.slice();
         };
@@ -580,6 +580,7 @@ pub const TestCommand = struct {
         var snapshot_file_buf = std.ArrayList(u8).init(ctx.allocator);
         var snapshot_values = Snapshots.ValuesHashMap.init(ctx.allocator);
         var snapshot_counts = bun.StringHashMap(usize).init(ctx.allocator);
+        JSC.isBunTest = true;
 
         var reporter = try ctx.allocator.create(CommandLineReporter);
         reporter.* = CommandLineReporter{
@@ -934,7 +935,7 @@ pub const TestCommand = struct {
             }
             Output.flush();
 
-            var promise = try vm.loadEntryPoint(file_path);
+            var promise = try vm.loadEntryPointForTestRunner(file_path);
             reporter.summary.files += 1;
 
             switch (promise.status(vm.global.vm())) {
@@ -968,7 +969,7 @@ pub const TestCommand = struct {
             const file_end = reporter.jest.files.len;
 
             for (file_start..file_end) |module_id| {
-                const module = reporter.jest.files.items(.module_scope)[module_id];
+                const module: *jest.DescribeScope = reporter.jest.files.items(.module_scope)[module_id];
 
                 vm.onUnhandledRejectionCtx = null;
                 vm.onUnhandledRejection = jest.TestRunnerTask.onUnhandledRejection;
@@ -976,14 +977,18 @@ pub const TestCommand = struct {
                 vm.eventLoop().tick();
 
                 var prev_unhandled_count = vm.unhandled_error_counter;
-                while (vm.active_tasks > 0) {
-                    if (!jest.Jest.runner.?.has_pending_tests) jest.Jest.runner.?.drain();
+                while (vm.active_tasks > 0) : (vm.eventLoop().flushImmediateQueue()) {
+                    if (!jest.Jest.runner.?.has_pending_tests) {
+                        jest.Jest.runner.?.drain();
+                    }
                     vm.eventLoop().tick();
 
                     while (jest.Jest.runner.?.has_pending_tests) {
                         vm.eventLoop().autoTick();
                         if (!jest.Jest.runner.?.has_pending_tests) break;
                         vm.eventLoop().tick();
+                    } else {
+                        vm.eventLoop().tickImmediateTasks();
                     }
 
                     while (prev_unhandled_count < vm.unhandled_error_counter) {
@@ -991,6 +996,9 @@ pub const TestCommand = struct {
                         prev_unhandled_count = vm.unhandled_error_counter;
                     }
                 }
+
+                vm.eventLoop().flushImmediateQueue();
+
                 switch (vm.aggressive_garbage_collection) {
                     .none => {},
                     .mild => {

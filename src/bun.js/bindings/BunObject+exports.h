@@ -5,6 +5,7 @@
     macro(CryptoHasher) \
     macro(FFI) \
     macro(FileSystemRouter) \
+    macro(Glob) \
     macro(MD4) \
     macro(MD5) \
     macro(SHA1) \
@@ -27,6 +28,7 @@
     macro(stdin) \
     macro(stdout) \
     macro(unsafe) \
+    macro(semver) \
 
 // --- Callbacks ---
 #define FOR_EACH_CALLBACK(macro) \

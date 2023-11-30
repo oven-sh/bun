@@ -28,7 +28,7 @@ const bundler = bun.bundler;
 const DotEnv = @import("env_loader.zig");
 const which = @import("which.zig").which;
 const JSC = @import("root").bun.JSC;
-const AsyncHTTP = @import("root").bun.HTTP.AsyncHTTP;
+const AsyncHTTP = @import("root").bun.http.AsyncHTTP;
 const Arena = @import("./mimalloc_arena.zig").Arena;
 
 const OpaqueWrap = JSC.OpaqueWrap;
@@ -168,6 +168,14 @@ pub const Run = struct {
         vm.arena = &run.arena;
         vm.allocator = arena.allocator();
 
+        if (ctx.runtime_options.eval_script.len > 0) {
+            vm.module_loader.eval_script = ptr: {
+                var v = try bun.default_allocator.create(logger.Source);
+                v.* = logger.Source.initPathString(entry_path, ctx.runtime_options.eval_script);
+                break :ptr v;
+            };
+        }
+
         b.options.install = ctx.install;
         b.resolver.opts.install = ctx.install;
         b.resolver.opts.global_cache = ctx.debug.global_cache;
@@ -238,10 +246,16 @@ pub const Run = struct {
         run.any_unhandled = true;
     }
 
+    extern fn Bun__ExposeNodeModuleGlobals(*JSC.JSGlobalObject) void;
+
     pub fn start(this: *Run) void {
         var vm = this.vm;
         vm.hot_reload = this.ctx.debug.hot_reload;
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
+
+        if (this.ctx.runtime_options.eval_script.len > 0) {
+            Bun__ExposeNodeModuleGlobals(vm.global);
+        }
 
         switch (this.ctx.debug.hot_reload) {
             .hot => JSC.HotReloader.enableHotModuleReloading(vm),

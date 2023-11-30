@@ -31,19 +31,25 @@ class InternalModuleRegistry;
 } // namespace Bun
 
 #include "root.h"
-
 #include "headers-handwritten.h"
-
-#include "JavaScriptCore/CatchScope.h"
-#include "JavaScriptCore/JSGlobalObject.h"
-#include "JavaScriptCore/JSTypeInfo.h"
-#include "JavaScriptCore/Structure.h"
-#include "WebCoreJSBuiltins.h"
-
+#include <JavaScriptCore/CatchScope.h>
+#include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/JSTypeInfo.h>
+#include <JavaScriptCore/Structure.h>
 #include "DOMConstructors.h"
 #include "BunPlugin.h"
 #include "JSMockFunction.h"
 #include "InternalModuleRegistry.h"
+#include "ProcessBindingConstants.h"
+#include "WebCoreJSBuiltins.h"
+#include "headers-handwritten.h"
+#include "BunCommonStrings.h"
+
+namespace WebCore {
+class GlobalScope;
+class SubtleCrypto;
+class EventTarget;
+}
 
 extern "C" void Bun__reportError(JSC__JSGlobalObject*, JSC__JSValue);
 extern "C" void Bun__reportUnhandledError(JSC__JSGlobalObject*, JSC::EncodedJSValue);
@@ -162,6 +168,7 @@ public:
     static JSC::JSInternalPromise* moduleLoaderFetch(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue, JSC::JSValue, JSC::JSValue);
     static JSC::JSObject* moduleLoaderCreateImportMetaProperties(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue, JSC::JSModuleRecord*, JSC::JSValue);
     static JSC::JSValue moduleLoaderEvaluate(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue, JSC::JSValue, JSC::JSValue, JSC::JSValue, JSC::JSValue);
+    static ScriptExecutionStatus scriptExecutionStatus(JSGlobalObject*, JSObject*);
     static void promiseRejectionTracker(JSGlobalObject*, JSC::JSPromise*, JSC::JSPromiseRejectionOperation);
     void setConsole(void* console);
     WebCore::JSBuiltinInternalFunctions& builtinInternalFunctions() { return m_builtinInternalFunctions; }
@@ -213,6 +220,7 @@ public:
 
     JSC::JSMap* readableStreamNativeMap() { return m_lazyReadableStreamPrototypeMap.getInitializedOnMainThread(this); }
     JSC::JSMap* requireMap() { return m_requireMap.getInitializedOnMainThread(this); }
+    JSC::JSMap* esmRegistryMap() { return m_esmRegistryMap.getInitializedOnMainThread(this); }
     JSC::Structure* encodeIntoObjectStructure() { return m_encodeIntoObjectStructure.getInitializedOnMainThread(this); }
 
     JSC::Structure* callSiteStructure() const { return m_callSiteStructure.getInitializedOnMainThread(this); }
@@ -246,7 +254,6 @@ public:
     Structure* ImportMetaObjectStructure() { return m_importMetaObjectStructure.getInitializedOnMainThread(this); }
     Structure* AsyncContextFrameStructure() { return m_asyncBoundFunctionStructure.getInitializedOnMainThread(this); }
 
-    Structure* commonJSFunctionArgumentsStructure() { return m_commonJSFunctionArgumentsStructure.getInitializedOnMainThread(this); }
     Structure* JSSocketAddressStructure() { return m_JSSocketAddressStructure.getInitializedOnMainThread(this); }
 
     JSWeakMap* vmModuleContextMap() { return m_vmModuleContextMap.getInitializedOnMainThread(this); }
@@ -270,7 +277,7 @@ public:
 
     JSObject* subtleCrypto() { return m_subtleCryptoObject.getInitializedOnMainThread(this); }
 
-    EncodedJSValue assignToStream(JSValue stream, JSValue controller);
+    JSC::EncodedJSValue assignToStream(JSValue stream, JSValue controller);
 
     WebCore::EventTarget& eventTarget();
     Bun::GlobalScope& globalEventScope;
@@ -349,8 +356,6 @@ public:
     mutable WriteBarrier<JSFunction> m_nodeModuleOverriddenResolveFilename;
 
     mutable WriteBarrier<Unknown> m_nextTickQueue;
-    // Value of $_BunCommonJSModule_$
-    mutable WriteBarrier<Unknown> m_BunCommonJSModuleValue;
 
     // mutable WriteBarrier<Unknown> m_JSBunDebuggerValue;
     mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
@@ -417,6 +422,7 @@ public:
 
     JSObject* cryptoObject() { return m_cryptoObject.getInitializedOnMainThread(this); }
     JSObject* JSDOMFileConstructor() { return m_JSDOMFileConstructor.getInitializedOnMainThread(this); }
+    Bun::CommonStrings& commonStrings() { return m_commonStrings; }
 
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 
@@ -434,6 +440,7 @@ private:
     Lock m_gcLock;
     WebCore::ScriptExecutionContext* m_scriptExecutionContext;
     Ref<WebCore::DOMWrapperWorld> m_world;
+    Bun::CommonStrings m_commonStrings;
 
     // JSC's hashtable code-generator tries to access these properties, so we make them public.
     // However, we'd like it better if they could be protected.
@@ -481,6 +488,7 @@ public:
     LazyProperty<JSGlobalObject, JSFunction> m_emitReadableNextTickFunction;
     LazyProperty<JSGlobalObject, JSMap> m_lazyReadableStreamPrototypeMap;
     LazyProperty<JSGlobalObject, JSMap> m_requireMap;
+    LazyProperty<JSGlobalObject, JSMap> m_esmRegistryMap;
     LazyProperty<JSGlobalObject, Structure> m_encodeIntoObjectStructure;
     LazyProperty<JSGlobalObject, JSObject> m_JSArrayBufferControllerPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_JSFileSinkControllerPrototype;
@@ -496,7 +504,6 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_cachedGlobalObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_cachedGlobalProxyStructure;
     LazyProperty<JSGlobalObject, Structure> m_commonJSModuleObjectStructure;
-    LazyProperty<JSGlobalObject, Structure> m_commonJSFunctionArgumentsStructure;
     LazyProperty<JSGlobalObject, Structure> m_JSSocketAddressStructure;
     LazyProperty<JSGlobalObject, Structure> m_memoryFootprintStructure;
     LazyProperty<JSGlobalObject, JSObject> m_requireFunctionUnbound;
@@ -525,6 +532,13 @@ private:
 };
 
 } // namespace Zig
+
+// TODO: move this
+namespace Bun {
+
+String formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const WTF::String& name, const WTF::String& message, unsigned& line, unsigned& column, WTF::String& sourceURL, Vector<JSC::StackFrame>& stackTrace, JSC::JSObject* errorInstance);
+
+}
 
 #ifndef RENAMED_JSDOM_GLOBAL_OBJECT
 #define RENAMED_JSDOM_GLOBAL_OBJECT

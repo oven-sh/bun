@@ -38,6 +38,11 @@ import.meta.resolveSync("zod")
 
 ---
 
+- `import.meta.env`
+- An alias to `process.env`.
+
+---
+
 - `import.meta.resolve{Sync}`
 - Resolve a module specifier (e.g. `"zod"` or `"./file.tsx"`) to an absolute path. While file would be imported if the specifier were imported from this file?
 

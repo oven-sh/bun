@@ -3,56 +3,57 @@
 #include "root.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
-#include "JavaScriptCore/JSObjectInlines.h"
-#include "JavaScriptCore/JSCellInlines.h"
-#include "wtf/text/ExternalStringImpl.h"
-#include "wtf/text/StringCommon.h"
-#include "wtf/text/StringImpl.h"
-#include "JavaScriptCore/JSMicrotask.h"
-#include "JavaScriptCore/ObjectConstructor.h"
-#include "JavaScriptCore/JSModuleLoader.h"
-#include "wtf/text/StringView.h"
-#include "wtf/text/StringBuilder.h"
-#include "wtf/text/WTFString.h"
+#include <JavaScriptCore/JSObjectInlines.h>
+#include <JavaScriptCore/JSCellInlines.h>
+#include <wtf/text/ExternalStringImpl.h>
+#include <wtf/text/StringCommon.h>
+#include <wtf/text/StringImpl.h>
+#include <JavaScriptCore/JSMicrotask.h>
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/JSModuleLoader.h>
+#include <wtf/text/StringView.h>
+#include <wtf/text/StringBuilder.h>
+#include <wtf/text/WTFString.h>
 #include "BufferEncodingType.h"
-#include "JavaScriptCore/AggregateError.h"
-#include "JavaScriptCore/BytecodeIndex.h"
-#include "JavaScriptCore/CallFrame.h"
-#include "JavaScriptCore/CallFrameInlines.h"
-#include "JavaScriptCore/ClassInfo.h"
-#include "JavaScriptCore/CodeBlock.h"
-#include "JavaScriptCore/Completion.h"
-#include "JavaScriptCore/Error.h"
-#include "JavaScriptCore/ErrorInstance.h"
-#include "JavaScriptCore/Exception.h"
-#include "JavaScriptCore/ExceptionScope.h"
-#include "JavaScriptCore/FunctionConstructor.h"
-#include "JavaScriptCore/HashMapImpl.h"
-#include "JavaScriptCore/HashMapImplInlines.h"
-#include "JavaScriptCore/Heap.h"
-#include "JavaScriptCore/Identifier.h"
-#include "JavaScriptCore/InitializeThreading.h"
-#include "JavaScriptCore/IteratorOperations.h"
-#include "JavaScriptCore/JSArray.h"
-#include "JavaScriptCore/JSInternalPromise.h"
-#include "JavaScriptCore/ObjectConstructor.h"
-#include "JavaScriptCore/ArrayBuffer.h"
-#include "JavaScriptCore/JSArrayBuffer.h"
+#include <JavaScriptCore/AggregateError.h>
+#include <JavaScriptCore/BytecodeIndex.h>
+#include <JavaScriptCore/CallFrame.h>
+#include <JavaScriptCore/CallFrameInlines.h>
+#include <JavaScriptCore/ClassInfo.h>
+#include <JavaScriptCore/CodeBlock.h>
+#include <JavaScriptCore/Completion.h>
+#include <JavaScriptCore/Error.h>
+#include <JavaScriptCore/ErrorInstance.h>
+#include <JavaScriptCore/Exception.h>
+#include <JavaScriptCore/ExceptionScope.h>
+#include <JavaScriptCore/FunctionConstructor.h>
+#include <JavaScriptCore/HashMapImpl.h>
+#include <JavaScriptCore/HashMapImplInlines.h>
+#include <JavaScriptCore/Heap.h>
+#include <JavaScriptCore/Identifier.h>
+#include <JavaScriptCore/InitializeThreading.h>
+#include <JavaScriptCore/IteratorOperations.h>
+#include <JavaScriptCore/JSArray.h>
+#include <JavaScriptCore/JSInternalPromise.h>
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/ArrayBuffer.h>
+#include <JavaScriptCore/JSArrayBuffer.h>
 #include "JSFFIFunction.h"
-#include "JavaScriptCore/JavaScript.h"
-#include "JavaScriptCore/JSWeakValue.h"
+#include <JavaScriptCore/JavaScript.h>
+#include <JavaScriptCore/JSWeakValue.h>
 #include "napi.h"
-#include "JavaScriptCore/GetterSetter.h"
-#include "JavaScriptCore/JSSourceCode.h"
-#include "JavaScriptCore/JSNativeStdFunction.h"
-#include "JavaScriptCore/BigIntObject.h"
+#include <JavaScriptCore/GetterSetter.h>
+#include <JavaScriptCore/JSSourceCode.h>
+#include <JavaScriptCore/JSNativeStdFunction.h>
+#include <JavaScriptCore/BigIntObject.h>
 #include "ScriptExecutionContext.h"
 #include "Strong.h"
 
 #include "../modules/ObjectModule.h"
 
-#include "JavaScriptCore/JSSourceCode.h"
+#include <JavaScriptCore/JSSourceCode.h>
 #include "napi_external.h"
+#include <JavaScriptCore/JSArrayBuffer.h>
 
 // #include <iostream>
 using namespace JSC;
@@ -443,6 +444,38 @@ extern "C" napi_status napi_set_named_property(napi_env env, napi_value object,
     target->putDirect(globalObject->vm(), name, jsValue, 0);
     RETURN_IF_EXCEPTION(scope, napi_generic_failure);
     scope.clearException();
+    return napi_ok;
+}
+
+extern "C" napi_status napi_create_arraybuffer(napi_env env,
+    size_t byte_length, void** data,
+    napi_value* result)
+
+{
+    JSC::JSGlobalObject* globalObject = toJS(env);
+    if (UNLIKELY(!globalObject || !result)) {
+        return napi_invalid_arg;
+    }
+
+    auto& vm = globalObject->vm();
+
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
+    // Node probably doesn't create uninitialized array buffers
+    // but the node-api docs don't specify whether memory is initialized or not.
+    RefPtr<ArrayBuffer> arrayBuffer = ArrayBuffer::tryCreateUninitialized(byte_length, 1);
+
+    if (!arrayBuffer) {
+        return napi_invalid_arg;
+    }
+
+    auto* jsArrayBuffer = JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(), WTFMove(arrayBuffer));
+    RETURN_IF_EXCEPTION(scope, napi_generic_failure);
+
+    if (LIKELY(data && jsArrayBuffer->impl())) {
+        *data = jsArrayBuffer->impl()->data();
+    }
+    *result = toNapi(jsArrayBuffer);
     return napi_ok;
 }
 
@@ -1483,19 +1516,6 @@ NapiClass* NapiClass::create(VM& vm, Zig::GlobalObject* globalObject, const char
     return napiClass;
 }
 
-CallData NapiClass::getConstructData(JSCell* cell)
-{
-    auto construct = JSC::jsCast<NapiClass*>(cell)->constructor();
-    if (!construct) {
-        return NapiClass::Base::getConstructData(cell);
-    }
-
-    CallData constructData;
-    constructData.type = CallData::Type::Native;
-    constructData.native.function = construct;
-    return constructData;
-}
-
 void NapiClass::finishCreation(VM& vm, NativeExecutable* executable, unsigned length, const String& name, napi_callback constructor,
     void* data,
     size_t property_count,
@@ -1771,15 +1791,22 @@ extern "C" napi_status napi_get_value_string_utf8(napi_env env,
         return napi_ok;
     }
 
-    if (bufsize == NAPI_AUTO_LENGTH) {
-        bufsize = strlen(buf);
+    if (UNLIKELY(bufsize == 0)) {
+        *writtenPtr = 0;
+        return napi_ok;
+    }
+
+    if (UNLIKELY(bufsize == NAPI_AUTO_LENGTH)) {
+        *writtenPtr = 0;
+        buf[0] = '\0';
+        return napi_ok;
     }
 
     size_t written;
     if (view.is8Bit()) {
-        written = Bun__encoding__writeLatin1(view.characters8(), view.length(), reinterpret_cast<unsigned char*>(buf), bufsize, static_cast<uint8_t>(WebCore::BufferEncodingType::utf8));
+        written = Bun__encoding__writeLatin1(view.characters8(), view.length(), reinterpret_cast<unsigned char*>(buf), bufsize - 1, static_cast<uint8_t>(WebCore::BufferEncodingType::utf8));
     } else {
-        written = Bun__encoding__writeUTF16(view.characters16(), view.length(), reinterpret_cast<unsigned char*>(buf), bufsize, static_cast<uint8_t>(WebCore::BufferEncodingType::utf8));
+        written = Bun__encoding__writeUTF16(view.characters16(), view.length(), reinterpret_cast<unsigned char*>(buf), bufsize - 1, static_cast<uint8_t>(WebCore::BufferEncodingType::utf8));
     }
 
     if (writtenPtr != nullptr) {

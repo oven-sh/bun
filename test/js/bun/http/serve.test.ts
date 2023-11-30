@@ -40,7 +40,7 @@ afterAll(() => {
   }
 });
 
-[101, 418, 599, 200, 200n, 101n, 599n].forEach(statusCode => {
+[200, 200n, 303, 418, 599, 599n].forEach(statusCode => {
   it(`should response with HTTP status code (${statusCode})`, async () => {
     await runTest(
       {
@@ -947,6 +947,18 @@ describe("should support Content-Range with Bun.file()", () => {
     },
   });
 
+  const getServerWithSize = runTest.bind(null, {
+    fetch(req) {
+      const { searchParams } = new URL(req.url);
+      const start = Number(searchParams.get("start"));
+      const end = Number(searchParams.get("end"));
+      const file = Bun.file(fixture);
+      return new Response(file.slice(start, end), {
+        headers: { "Content-Range": "bytes " + start + "-" + end + "/" + file.size },
+      });
+    },
+  });
+
   const good = [
     [0, 1],
     [1, 2],
@@ -967,6 +979,19 @@ describe("should support Content-Range with Bun.file()", () => {
         const response = await fetch(`http://${server.hostname}:${server.port}/?start=${start}&end=${end}`, {
           verbose: true,
         });
+        expect(await response.arrayBuffer()).toEqual(full.buffer.slice(start, end));
+        expect(response.status).toBe(start > 0 || end < full.byteLength ? 206 : 200);
+      });
+    });
+  }
+
+  for (const [start, end] of good) {
+    it(`good range with size: ${start} - ${end}`, async () => {
+      await getServerWithSize(async server => {
+        const response = await fetch(`http://${server.hostname}:${server.port}/?start=${start}&end=${end}`, {
+          verbose: true,
+        });
+        expect(parseInt(response.headers.get("Content-Range")?.split("/")[1])).toEqual(full.byteLength);
         expect(await response.arrayBuffer()).toEqual(full.buffer.slice(start, end));
         expect(response.status).toBe(start > 0 || end < full.byteLength ? 206 : 200);
       });
@@ -1304,3 +1329,14 @@ it("should response with HTTP 413 when request body is larger than maxRequestBod
 
   server.stop(true);
 });
+if (process.platform === "linux")
+  it("should use correct error when using a root range port(#7187)", () => {
+    expect(() => {
+      const server = Bun.serve({
+        port: 1003,
+        fetch(req) {
+          return new Response("request answered");
+        },
+      });
+    }).toThrow("permission denied 0.0.0.0:1003");
+  });

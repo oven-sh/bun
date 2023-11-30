@@ -1,0 +1,43 @@
+{
+	"name": "two-range-deps",
+	"versions": {
+		"1.0.0": {
+			"name": "two-range-deps",
+			"version": "1.0.0",
+			"dependencies": {
+				"no-deps": "^1.0.0",
+				"@types/is-number": ">=1.0.0"
+			},
+			"_id": "two-range-deps@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-N+6kPy/GxuMncNz/EKuIrwdoYbh1qmvHDnw1UbM3sQE184kBn+6qAQgtf1wgT9dJnt6X+tWcTzSmfDvtJikVBA==",
+				"shasum": "2b86cdb44f621705851c782ca89a949c241ca71a",
+				"tarball": "http://localhost:4873/two-range-deps/-/two-range-deps-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:33.066Z",
+		"created": "2023-11-01T22:05:33.066Z",
+		"1.0.0": "2023-11-01T22:05:33.066Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"two-range-deps-1.0.0.tgz": {
+			"shasum": "2b86cdb44f621705851c782ca89a949c241ca71a",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-9adefdb14041c57e",
+	"_id": "two-range-deps",
+	"readme": "ERROR: No README data found!"
+}

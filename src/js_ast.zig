@@ -19,7 +19,6 @@ const ObjectPool = @import("./pool.zig").ObjectPool;
 const ImportRecord = @import("import_record.zig").ImportRecord;
 const allocators = @import("allocators.zig");
 const JSC = @import("root").bun.JSC;
-const HTTP = @import("root").bun.HTTP;
 const RefCtx = @import("./ast/base.zig").RefCtx;
 const JSONParser = bun.JSON;
 const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
@@ -28,6 +27,7 @@ const JSPrinter = @import("./js_printer.zig");
 const js_lexer = @import("./js_lexer.zig");
 const TypeScript = @import("./js_parser.zig").TypeScript;
 const ThreadlocalArena = @import("./mimalloc_arena.zig").Arena;
+const MimeType = bun.http.MimeType;
 
 /// This is the index to the automatically-generated part containing code that
 /// calls "__export(exports, { ... getters ... })". This is used to generate
@@ -108,10 +108,10 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
 
         overflow: Overflow = Overflow{},
 
-        pub threadlocal var _self: *Self = undefined;
+        pub threadlocal var _self: ?*Self = null;
 
         pub fn reclaim() []*Block {
-            var overflow = &_self.overflow;
+            var overflow = &_self.?.overflow;
 
             if (overflow.used == 0) {
                 if (overflow.allocated == 0 or overflow.ptrs[0].used == 0) {
@@ -153,7 +153,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
         /// Nested parsing should either use the same store, or call
         /// Store.reclaim.
         pub fn reset() void {
-            const blocks = _self.overflow.slice();
+            const blocks = _self.?.overflow.slice();
             for (blocks) |b| {
                 if (comptime Environment.isDebug) {
                     // ensure we crash if we use a freed value
@@ -162,7 +162,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
                 }
                 b.used = 0;
             }
-            _self.overflow.used = 0;
+            _self.?.overflow.used = 0;
         }
 
         pub fn init(allocator: std.mem.Allocator) *Self {
@@ -174,33 +174,39 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
 
             _self = instance;
 
-            return _self;
+            return _self.?;
+        }
+
+        pub fn onThreadExit(_: *anyopaque) callconv(.C) void {
+            deinit();
         }
 
         fn deinit() void {
-            var sliced = _self.overflow.slice();
-            var allocator = _self.overflow.allocator;
+            if (_self) |this| {
+                _self = null;
+                var sliced = this.overflow.slice();
+                var allocator = this.overflow.allocator;
 
-            if (sliced.len > 1) {
-                var i: usize = 1;
-                const end = sliced.len;
-                while (i < end) {
-                    var ptrs = @as(*[2]Block, @ptrCast(sliced[i]));
-                    allocator.free(ptrs);
-                    i += 2;
+                if (sliced.len > 1) {
+                    var i: usize = 1;
+                    const end = sliced.len;
+                    while (i < end) {
+                        var ptrs = @as(*[2]Block, @ptrCast(sliced[i]));
+                        allocator.free(ptrs);
+                        i += 2;
+                    }
+                    this.overflow.allocated = 1;
                 }
-                _self.overflow.allocated = 1;
+                var base_store = @fieldParentPtr(WithBase, "store", this);
+                if (this.overflow.ptrs[0] == &base_store.head) {
+                    allocator.destroy(base_store);
+                }
             }
-            var base_store = @fieldParentPtr(WithBase, "store", _self);
-            if (_self.overflow.ptrs[0] == &base_store.head) {
-                allocator.destroy(base_store);
-            }
-            _self = undefined;
         }
 
         pub fn append(comptime Disabler: type, comptime ValueType: type, value: ValueType) *ValueType {
             Disabler.assert();
-            return _self._append(ValueType, value);
+            return _self.?._append(ValueType, value);
         }
 
         inline fn _append(self: *Self, comptime ValueType: type, value: ValueType) *ValueType {
@@ -1666,8 +1672,8 @@ pub const E = struct {
         /// JSX element children <div>{this_is_a_child_element}</div>
         children: ExprNodeList = ExprNodeList{},
 
-        /// key is the key prop like <ListItem key="foo">
-        key: ?ExprNodeIndex = null,
+        // needed to make sure parse and visit happen in the same order
+        key_prop_index: i32 = -1,
 
         flags: Flags.JSXElement.Bitset = Flags.JSXElement.Bitset{},
 
@@ -3006,7 +3012,7 @@ pub const Stmt = struct {
             }
 
             pub fn toOwnedSlice() []*Store.All.Block {
-                if (!has_inited or Store.All._self.overflow.used == 0 or disable_reset) return &[_]*Store.All.Block{};
+                if (!has_inited or Store.All._self.?.overflow.used == 0 or disable_reset) return &[_]*Store.All.Block{};
                 return Store.All.reclaim();
             }
         };
@@ -3078,13 +3084,13 @@ pub const Expr = struct {
     pub fn fromBlob(
         blob: *const JSC.WebCore.Blob,
         allocator: std.mem.Allocator,
-        mime_type_: ?HTTP.MimeType,
+        mime_type_: ?MimeType,
         log: *logger.Log,
         loc: logger.Loc,
     ) !Expr {
         var bytes = blob.sharedView();
 
-        const mime_type = mime_type_ orelse HTTP.MimeType.init(blob.content_type, null, null);
+        const mime_type = mime_type_ orelse MimeType.init(blob.content_type, null, null);
 
         if (mime_type.category == .json) {
             var source = logger.Source.initPathString("fetch.json", bytes);
@@ -5392,7 +5398,7 @@ pub const Expr = struct {
             }
 
             pub fn toOwnedSlice() []*Store.All.Block {
-                if (!has_inited or Store.All._self.overflow.used == 0 or disable_reset or memory_allocator != null) return &[_]*Store.All.Block{};
+                if (!has_inited or Store.All._self.?.overflow.used == 0 or disable_reset or memory_allocator != null) return &[_]*Store.All.Block{};
                 return Store.All.reclaim();
             }
         };
@@ -5432,7 +5438,7 @@ pub const S = struct {
     pub const Comment = struct { text: string };
 
     pub const Directive = struct {
-        value: []const u16,
+        value: []const u8,
     };
 
     pub const ExportClause = struct { items: []ClauseItem, is_single_line: bool = false };
@@ -5541,6 +5547,7 @@ pub const S = struct {
     pub const With = struct {
         value: ExprNodeIndex,
         body: StmtNodeIndex,
+        body_loc: logger.Loc = logger.Loc.Empty,
     };
 
     pub const Try = struct {
@@ -6768,10 +6775,7 @@ pub const Macro = struct {
             source: *const logger.Source,
             import_range: logger.Range,
             caller: Expr,
-            args: []Expr,
             function_name: string,
-            comptime Visitor: type,
-            visitor: Visitor,
         ) anyerror!Expr {
             Expr.Data.Store.disable_reset = true;
             Stmt.Data.Store.disable_reset = true;
@@ -6785,37 +6789,44 @@ pub const Macro = struct {
 
             std.debug.assert(!isMacroPath(import_record_path_without_macro_prefix));
 
-            const resolve_result = this.resolver.resolve(source_dir, import_record_path_without_macro_prefix, .stmt) catch |err| {
-                switch (err) {
-                    error.ModuleNotFound => {
-                        log.addResolveError(
-                            source,
-                            import_range,
-                            log.msgs.allocator,
-                            "Macro \"{s}\" not found",
-                            .{import_record_path},
-                            .stmt,
-                            err,
-                        ) catch unreachable;
-                        return error.MacroNotFound;
-                    },
-                    else => {
-                        log.addRangeErrorFmt(
-                            source,
-                            import_range,
-                            log.msgs.allocator,
-                            "{s} resolving macro \"{s}\"",
-                            .{ @errorName(err), import_record_path },
-                        ) catch unreachable;
-                        return err;
-                    },
+            const input_specifier = brk: {
+                if (JSC.HardcodedModule.Aliases.get(import_record_path, .bun)) |replacement| {
+                    break :brk replacement.path;
                 }
+
+                const resolve_result = this.resolver.resolve(source_dir, import_record_path_without_macro_prefix, .stmt) catch |err| {
+                    switch (err) {
+                        error.ModuleNotFound => {
+                            log.addResolveError(
+                                source,
+                                import_range,
+                                log.msgs.allocator,
+                                "Macro \"{any}\" not found",
+                                .{import_record_path},
+                                .stmt,
+                                err,
+                            ) catch unreachable;
+                            return error.MacroNotFound;
+                        },
+                        else => {
+                            log.addRangeErrorFmt(
+                                source,
+                                import_range,
+                                log.msgs.allocator,
+                                "{s} resolving macro \"{s}\"",
+                                .{ @errorName(err), import_record_path },
+                            ) catch unreachable;
+                            return err;
+                        },
+                    }
+                };
+                break :brk resolve_result.path_pair.primary.text;
             };
 
             var specifier_buf: [64]u8 = undefined;
             var specifier_buf_len: u32 = 0;
             const hash = MacroEntryPoint.generateID(
-                resolve_result.path_pair.primary.text,
+                input_specifier,
                 function_name,
                 &specifier_buf,
                 &specifier_buf_len,
@@ -6826,7 +6837,7 @@ pub const Macro = struct {
                 macro_entry.value_ptr.* = Macro.init(
                     default_allocator,
                     this.resolver,
-                    resolve_result,
+                    input_specifier,
                     log,
                     this.env,
                     function_name,
@@ -6846,19 +6857,31 @@ pub const Macro = struct {
             }
             macro.vm.enableMacroMode();
             defer macro.vm.disableMacroMode();
-            return try Macro.Runner.run(
-                macro,
-                log,
-                default_allocator,
-                function_name,
-                caller,
-                args,
-                source,
-                hash,
-                comptime Visitor,
-                visitor,
-                this.javascript_object,
-            );
+
+            const Wrapper = struct {
+                args: std.meta.ArgsTuple(@TypeOf(Macro.Runner.run)),
+                ret: Runner.MacroError!Expr,
+
+                pub fn call(self: *@This()) void {
+                    self.ret = @call(.auto, Macro.Runner.run, self.args);
+                }
+            };
+            var wrapper = Wrapper{
+                .args = .{
+                    macro,
+                    log,
+                    default_allocator,
+                    function_name,
+                    caller,
+                    source,
+                    hash,
+                    this.javascript_object,
+                },
+                .ret = undefined,
+            };
+
+            macro.vm.runWithAPILock(Wrapper, &wrapper, Wrapper.call);
+            return try wrapper.ret;
             // this.macros.getOrPut(key: K)
         }
     };
@@ -6877,15 +6900,13 @@ pub const Macro = struct {
     pub fn init(
         _: std.mem.Allocator,
         resolver: *Resolver,
-        resolved: ResolveResult,
+        input_specifier: []const u8,
         log: *logger.Log,
         env: *DotEnv.Loader,
         function_name: string,
         specifier: string,
         hash: i32,
     ) !Macro {
-        const path = resolved.path_pair.primary;
-
         var vm: *JavaScript.VirtualMachine = if (JavaScript.VirtualMachine.isLoaded())
             JavaScript.VirtualMachine.get()
         else brk: {
@@ -6911,7 +6932,7 @@ pub const Macro = struct {
 
         vm.enableMacroMode();
 
-        var loaded_result = try vm.loadMacroEntryPoint(path.text, function_name, specifier, hash);
+        var loaded_result = try vm.loadMacroEntryPoint(input_specifier, function_name, specifier, hash);
 
         if (loaded_result.status(vm.global.vm()) == JSC.JSPromise.Status.Rejected) {
             vm.runErrorHandler(loaded_result.result(vm.global.vm()), null);
@@ -6925,7 +6946,6 @@ pub const Macro = struct {
 
         return Macro{
             .vm = vm,
-            .resolved = resolved,
             .resolver = resolver,
         };
     }
@@ -6937,329 +6957,320 @@ pub const Macro = struct {
         threadlocal var exception_holder: Zig.ZigException.Holder = undefined;
         pub const MacroError = error{ MacroFailed, OutOfMemory } || ToJSError;
 
-        pub fn NewRun(comptime Visitor: type) type {
-            return struct {
-                const Run = @This();
-                caller: Expr,
-                function_name: string,
-                macro: *const Macro,
-                global: *JSC.JSGlobalObject,
-                allocator: std.mem.Allocator,
-                id: i32,
+        pub const Run = struct {
+            caller: Expr,
+            function_name: string,
+            macro: *const Macro,
+            global: *JSC.JSGlobalObject,
+            allocator: std.mem.Allocator,
+            id: i32,
+            log: *logger.Log,
+            source: *const logger.Source,
+            visited: VisitMap = VisitMap{},
+            is_top_level: bool = false,
+
+            pub fn runAsync(
+                macro: Macro,
                 log: *logger.Log,
+                allocator: std.mem.Allocator,
+                function_name: string,
+                caller: Expr,
+                args: []JSC.JSValue,
                 source: *const logger.Source,
-                visited: VisitMap = VisitMap{},
-                visitor: Visitor,
-                is_top_level: bool = false,
+                id: i32,
+            ) MacroError!Expr {
+                if (comptime is_bindgen) return undefined;
+                var macro_callback = macro.vm.macros.get(id) orelse return caller;
 
-                pub fn runAsync(
-                    macro: Macro,
-                    log: *logger.Log,
-                    allocator: std.mem.Allocator,
-                    function_name: string,
-                    caller: Expr,
-                    args_count: usize,
-                    args_ptr: [*]JSC.JSValue,
-                    source: *const logger.Source,
-                    id: i32,
-                    visitor: Visitor,
-                ) MacroError!Expr {
-                    if (comptime is_bindgen) return undefined;
-                    var macro_callback = macro.vm.macros.get(id) orelse return caller;
+                var result = js.JSObjectCallAsFunctionReturnValueHoldingAPILock(
+                    macro.vm.global,
+                    macro_callback,
+                    null,
+                    args.len,
+                    @as([*]js.JSObjectRef, @ptrCast(args.ptr)),
+                );
 
-                    var result = js.JSObjectCallAsFunctionReturnValueHoldingAPILock(
-                        macro.vm.global,
-                        macro_callback,
-                        null,
-                        args_count,
-                        @as([*]js.JSObjectRef, @ptrCast(args_ptr)),
-                    );
+                var runner = Run{
+                    .caller = caller,
+                    .function_name = function_name,
+                    .macro = &macro,
+                    .allocator = allocator,
+                    .global = macro.vm.global,
+                    .id = id,
+                    .log = log,
+                    .source = source,
+                    .visited = VisitMap{},
+                };
 
-                    var runner = Run{
-                        .caller = caller,
-                        .function_name = function_name,
-                        .macro = &macro,
-                        .allocator = allocator,
-                        .global = macro.vm.global,
-                        .id = id,
-                        .log = log,
-                        .source = source,
-                        .visited = VisitMap{},
-                        .visitor = visitor,
-                    };
+                defer runner.visited.deinit(allocator);
 
-                    defer runner.visited.deinit(allocator);
+                return try runner.run(
+                    result,
+                );
+            }
 
-                    return try runner.run(
-                        result,
-                    );
-                }
+            pub fn run(
+                this: *Run,
+                value: JSC.JSValue,
+            ) MacroError!Expr {
+                return try switch (JSC.ZigConsoleClient.Formatter.Tag.get(value, this.global).tag) {
+                    .Error => this.coerce(value, .Error),
+                    .Undefined => this.coerce(value, .Undefined),
+                    .Null => this.coerce(value, .Null),
+                    .Private => this.coerce(value, .Private),
+                    .Boolean => this.coerce(value, .Boolean),
+                    .Array => this.coerce(value, .Array),
+                    .Object => this.coerce(value, .Object),
+                    .toJSON, .JSON => this.coerce(value, .JSON),
+                    .Integer => this.coerce(value, .Integer),
+                    .Double => this.coerce(value, .Double),
+                    .String => this.coerce(value, .String),
+                    .Promise => this.coerce(value, .Promise),
+                    else => brk: {
+                        this.log.addErrorFmt(
+                            this.source,
+                            this.caller.loc,
+                            this.allocator,
+                            "cannot coerce {s} to Bun's AST. Please return a simpler type",
+                            .{@tagName(value.jsType())},
+                        ) catch unreachable;
+                        break :brk error.MacroFailed;
+                    },
+                };
+            }
 
-                pub fn run(
-                    this: *Run,
-                    value: JSC.JSValue,
-                ) MacroError!Expr {
-                    return try switch (JSC.ZigConsoleClient.Formatter.Tag.get(value, this.global).tag) {
-                        .Error => this.coerce(value, .Error),
-                        .Undefined => this.coerce(value, .Undefined),
-                        .Null => this.coerce(value, .Null),
-                        .Private => this.coerce(value, .Private),
-                        .Boolean => this.coerce(value, .Boolean),
-                        .Array => this.coerce(value, .Array),
-                        .Object => this.coerce(value, .Object),
-                        .JSON => this.coerce(value, .JSON),
-                        .Integer => this.coerce(value, .Integer),
-                        .Double => this.coerce(value, .Double),
-                        .String => this.coerce(value, .String),
-                        .Promise => this.coerce(value, .Promise),
-                        else => brk: {
-                            this.log.addErrorFmt(
-                                this.source,
-                                this.caller.loc,
-                                this.allocator,
-                                "cannot coerce {s} to Bun's AST. Please return a valid macro using the JSX syntax",
-                                .{@tagName(value.jsType())},
-                            ) catch unreachable;
-                            break :brk error.MacroFailed;
-                        },
-                    };
-                }
+            pub fn coerce(
+                this: *Run,
+                value: JSC.JSValue,
+                comptime tag: JSC.ZigConsoleClient.Formatter.Tag,
+            ) MacroError!Expr {
+                switch (comptime tag) {
+                    .Error => {
+                        this.macro.vm.runErrorHandler(value, null);
+                        return this.caller;
+                    },
+                    .Undefined => if (this.is_top_level)
+                        return this.caller
+                    else
+                        return Expr.init(E.Undefined, E.Undefined{}, this.caller.loc),
+                    .Null => return Expr.init(E.Null, E.Null{}, this.caller.loc),
+                    .Private => {
+                        this.is_top_level = false;
+                        var _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
+                        if (_entry.found_existing) {
+                            return _entry.value_ptr.*;
+                        }
 
-                pub fn coerce(
-                    this: *Run,
-                    value: JSC.JSValue,
-                    comptime tag: JSC.ZigConsoleClient.Formatter.Tag,
-                ) MacroError!Expr {
-                    switch (comptime tag) {
-                        .Error => {
-                            this.macro.vm.runErrorHandler(value, null);
-                            return this.caller;
-                        },
-                        .Undefined => if (this.is_top_level)
-                            return this.caller
-                        else
-                            return Expr.init(E.Undefined, E.Undefined{}, this.caller.loc),
-                        .Null => return Expr.init(E.Null, E.Null{}, this.caller.loc),
-                        .Private => {
-                            this.is_top_level = false;
-                            var _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
-                            if (_entry.found_existing) {
-                                return _entry.value_ptr.*;
-                            }
+                        var blob_: ?JSC.WebCore.Blob = null;
+                        var mime_type: ?MimeType = null;
 
-                            var blob_: ?JSC.WebCore.Blob = null;
-                            var mime_type: ?HTTP.MimeType = null;
-
-                            if (value.jsType() == .DOMWrapper) {
-                                if (value.as(JSC.WebCore.Response)) |resp| {
-                                    mime_type = HTTP.MimeType.init(resp.mimeType(null), null, null);
-                                    blob_ = resp.body.use();
-                                } else if (value.as(JSC.WebCore.Request)) |resp| {
-                                    mime_type = HTTP.MimeType.init(resp.mimeType(), null, null);
-                                    blob_ = resp.body.value.use();
-                                } else if (value.as(JSC.WebCore.Blob)) |resp| {
-                                    blob_ = resp.*;
-                                    blob_.?.allocator = null;
-                                } else if (value.as(JSC.ResolveMessage) != null or value.as(JSC.BuildMessage) != null) {
-                                    this.macro.vm.runErrorHandler(value, null);
-                                    return error.MacroFailed;
-                                }
-                            }
-
-                            if (blob_) |*blob| {
-                                const out_expr = Expr.fromBlob(
-                                    blob,
-                                    this.allocator,
-                                    mime_type,
-                                    this.log,
-                                    this.caller.loc,
-                                ) catch {
-                                    blob.deinit();
-                                    return error.MacroFailed;
-                                };
-                                if (out_expr.data == .e_string) {
-                                    blob.deinit();
-                                }
-
-                                return out_expr;
-                            }
-
-                            return Expr.init(E.String, E.String.empty, this.caller.loc);
-                        },
-
-                        .Boolean => {
-                            return Expr{ .data = .{ .e_boolean = .{ .value = value.toBoolean() } }, .loc = this.caller.loc };
-                        },
-                        JSC.ZigConsoleClient.Formatter.Tag.Array => {
-                            this.is_top_level = false;
-
-                            var _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
-                            if (_entry.found_existing) {
-                                switch (_entry.value_ptr.*.data) {
-                                    .e_object, .e_array => {
-                                        this.log.addErrorFmt(this.source, this.caller.loc, this.allocator, "converting circular structure to Bun AST is not implemented yet", .{}) catch unreachable;
-                                        return error.MacroFailed;
-                                    },
-                                    else => {},
-                                }
-                                return _entry.value_ptr.*;
-                            }
-
-                            var iter = JSC.JSArrayIterator.init(value, this.global);
-                            if (iter.len == 0) {
-                                const result = Expr.init(
-                                    E.Array,
-                                    E.Array{
-                                        .items = ExprNodeList.init(&[_]Expr{}),
-                                        .was_originally_macro = true,
-                                    },
-                                    this.caller.loc,
-                                );
-                                _entry.value_ptr.* = result;
-                                return result;
-                            }
-                            var array = this.allocator.alloc(Expr, iter.len) catch unreachable;
-                            var out = Expr.init(
-                                E.Array,
-                                E.Array{
-                                    .items = ExprNodeList.init(array[0..0]),
-                                    .was_originally_macro = true,
-                                },
-                                this.caller.loc,
-                            );
-                            _entry.value_ptr.* = out;
-
-                            errdefer this.allocator.free(array);
-                            var i: usize = 0;
-                            while (iter.next()) |item| {
-                                array[i] = try this.run(item);
-                                if (array[i].isMissing())
-                                    continue;
-                                i += 1;
-                            }
-                            out.data.e_array.items = ExprNodeList.init(array);
-                            _entry.value_ptr.* = out;
-                            return out;
-                        },
-                        // TODO: optimize this
-                        JSC.ZigConsoleClient.Formatter.Tag.Object => {
-                            this.is_top_level = false;
-                            var _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
-                            if (_entry.found_existing) {
-                                switch (_entry.value_ptr.*.data) {
-                                    .e_object, .e_array => {
-                                        this.log.addErrorFmt(this.source, this.caller.loc, this.allocator, "converting circular structure to Bun AST is not implemented yet", .{}) catch unreachable;
-                                        return error.MacroFailed;
-                                    },
-                                    else => {},
-                                }
-                                return _entry.value_ptr.*;
-                            }
-
-                            var object = value.asObjectRef();
-                            var object_iter = JSC.JSPropertyIterator(.{
-                                .skip_empty_name = false,
-                                .include_value = true,
-                            }).init(this.global, object);
-                            defer object_iter.deinit();
-                            var properties = this.allocator.alloc(G.Property, object_iter.len) catch unreachable;
-                            errdefer this.allocator.free(properties);
-                            var out = Expr.init(
-                                E.Object,
-                                E.Object{
-                                    .properties = BabyList(G.Property).init(properties),
-                                    .was_originally_macro = true,
-                                },
-                                this.caller.loc,
-                            );
-                            _entry.value_ptr.* = out;
-
-                            while (object_iter.next()) |prop| {
-                                properties[object_iter.i] = G.Property{
-                                    .key = Expr.init(E.String, E.String.init(prop.toOwnedSlice(this.allocator) catch unreachable), this.caller.loc),
-                                    .value = try this.run(object_iter.value),
-                                };
-                            }
-                            out.data.e_object.properties = BabyList(G.Property).init(properties[0..object_iter.i]);
-                            _entry.value_ptr.* = out;
-                            return out;
-                        },
-
-                        .JSON => {
-                            this.is_top_level = false;
-                            // if (console_tag.cell == .JSDate) {
-                            //     // in the code for printing dates, it never exceeds this amount
-                            //     var iso_string_buf = this.allocator.alloc(u8, 36) catch unreachable;
-                            //     var str = JSC.ZigString.init("");
-                            //     value.jsonStringify(this.global, 0, &str);
-                            //     var out_buf: []const u8 = std.fmt.bufPrint(iso_string_buf, "{}", .{str}) catch "";
-                            //     if (out_buf.len > 2) {
-                            //         // trim the quotes
-                            //         out_buf = out_buf[1 .. out_buf.len - 1];
-                            //     }
-                            //     return Expr.init(E.New, E.New{.target = Expr.init(E.Dot{.target = E}) })
-                            // }
-                        },
-
-                        .Integer => {
-                            return Expr.init(E.Number, E.Number{ .value = @as(f64, @floatFromInt(value.toInt32())) }, this.caller.loc);
-                        },
-                        .Double => {
-                            return Expr.init(E.Number, E.Number{ .value = value.asNumber() }, this.caller.loc);
-                        },
-                        .String => {
-                            var bun_str = value.toBunString(this.global);
-
-                            // encode into utf16 so the printer escapes the string correctly
-                            var utf16_bytes = this.allocator.alloc(u16, bun_str.length()) catch unreachable;
-                            var out_slice = utf16_bytes[0 .. (bun_str.encodeInto(std.mem.sliceAsBytes(utf16_bytes), .utf16le) catch 0) / 2];
-                            return Expr.init(E.String, E.String.init(out_slice), this.caller.loc);
-                        },
-                        .Promise => {
-                            var _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
-                            if (_entry.found_existing) {
-                                return _entry.value_ptr.*;
-                            }
-
-                            var promise_result = JSC.JSValue.zero;
-                            var rejected = false;
-                            if (value.asAnyPromise()) |promise| {
-                                this.macro.vm.waitForPromise(promise);
-                                promise_result = promise.result(this.global.vm());
-                                rejected = promise.status(this.global.vm()) == .Rejected;
-                            } else {
-                                @panic("Unexpected promise type");
-                            }
-
-                            if (promise_result.isUndefined() and this.is_top_level) {
-                                this.is_top_level = false;
-                                return this.caller;
-                            }
-
-                            if (rejected or promise_result.isError() or promise_result.isAggregateError(this.global) or promise_result.isException(this.global.vm())) {
-                                this.macro.vm.runErrorHandler(promise_result, null);
+                        if (value.jsType() == .DOMWrapper) {
+                            if (value.as(JSC.WebCore.Response)) |resp| {
+                                return this.run(resp.getBlobWithoutCallFrame(this.global));
+                            } else if (value.as(JSC.WebCore.Request)) |resp| {
+                                return this.run(resp.getBlobWithoutCallFrame(this.global));
+                            } else if (value.as(JSC.WebCore.Blob)) |resp| {
+                                blob_ = resp.*;
+                                blob_.?.allocator = null;
+                            } else if (value.as(JSC.ResolveMessage) != null or value.as(JSC.BuildMessage) != null) {
+                                this.macro.vm.runErrorHandler(value, null);
                                 return error.MacroFailed;
                             }
-                            this.is_top_level = false;
-                            const result = try this.run(promise_result);
+                        }
 
+                        if (blob_) |*blob| {
+                            const out_expr = Expr.fromBlob(
+                                blob,
+                                this.allocator,
+                                mime_type,
+                                this.log,
+                                this.caller.loc,
+                            ) catch {
+                                blob.deinit();
+                                return error.MacroFailed;
+                            };
+                            if (out_expr.data == .e_string) {
+                                blob.deinit();
+                            }
+
+                            return out_expr;
+                        }
+
+                        return Expr.init(E.String, E.String.empty, this.caller.loc);
+                    },
+
+                    .Boolean => {
+                        return Expr{ .data = .{ .e_boolean = .{ .value = value.toBoolean() } }, .loc = this.caller.loc };
+                    },
+                    JSC.ZigConsoleClient.Formatter.Tag.Array => {
+                        this.is_top_level = false;
+
+                        var _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
+                        if (_entry.found_existing) {
+                            switch (_entry.value_ptr.*.data) {
+                                .e_object, .e_array => {
+                                    this.log.addErrorFmt(this.source, this.caller.loc, this.allocator, "converting circular structure to Bun AST is not implemented yet", .{}) catch unreachable;
+                                    return error.MacroFailed;
+                                },
+                                else => {},
+                            }
+                            return _entry.value_ptr.*;
+                        }
+
+                        var iter = JSC.JSArrayIterator.init(value, this.global);
+                        if (iter.len == 0) {
+                            const result = Expr.init(
+                                E.Array,
+                                E.Array{
+                                    .items = ExprNodeList.init(&[_]Expr{}),
+                                    .was_originally_macro = true,
+                                },
+                                this.caller.loc,
+                            );
                             _entry.value_ptr.* = result;
                             return result;
-                        },
-                        else => {},
-                    }
+                        }
+                        var array = this.allocator.alloc(Expr, iter.len) catch unreachable;
+                        var out = Expr.init(
+                            E.Array,
+                            E.Array{
+                                .items = ExprNodeList.init(array[0..0]),
+                                .was_originally_macro = true,
+                            },
+                            this.caller.loc,
+                        );
+                        _entry.value_ptr.* = out;
 
-                    this.log.addErrorFmt(
-                        this.source,
-                        this.caller.loc,
-                        this.allocator,
-                        "cannot coerce {s} to Bun's AST. Please return a valid macro using the JSX syntax",
-                        .{@tagName(value.jsType())},
-                    ) catch unreachable;
-                    return error.MacroFailed;
+                        errdefer this.allocator.free(array);
+                        var i: usize = 0;
+                        while (iter.next()) |item| {
+                            array[i] = try this.run(item);
+                            if (array[i].isMissing())
+                                continue;
+                            i += 1;
+                        }
+                        out.data.e_array.items = ExprNodeList.init(array);
+                        _entry.value_ptr.* = out;
+                        return out;
+                    },
+                    // TODO: optimize this
+                    JSC.ZigConsoleClient.Formatter.Tag.Object => {
+                        this.is_top_level = false;
+                        var _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
+                        if (_entry.found_existing) {
+                            switch (_entry.value_ptr.*.data) {
+                                .e_object, .e_array => {
+                                    this.log.addErrorFmt(this.source, this.caller.loc, this.allocator, "converting circular structure to Bun AST is not implemented yet", .{}) catch unreachable;
+                                    return error.MacroFailed;
+                                },
+                                else => {},
+                            }
+                            return _entry.value_ptr.*;
+                        }
+
+                        var object = value.asObjectRef();
+                        var object_iter = JSC.JSPropertyIterator(.{
+                            .skip_empty_name = false,
+                            .include_value = true,
+                        }).init(this.global, object);
+                        defer object_iter.deinit();
+                        var properties = this.allocator.alloc(G.Property, object_iter.len) catch unreachable;
+                        errdefer this.allocator.free(properties);
+                        var out = Expr.init(
+                            E.Object,
+                            E.Object{
+                                .properties = BabyList(G.Property).init(properties),
+                                .was_originally_macro = true,
+                            },
+                            this.caller.loc,
+                        );
+                        _entry.value_ptr.* = out;
+
+                        while (object_iter.next()) |prop| {
+                            properties[object_iter.i] = G.Property{
+                                .key = Expr.init(E.String, E.String.init(prop.toOwnedSlice(this.allocator) catch unreachable), this.caller.loc),
+                                .value = try this.run(object_iter.value),
+                            };
+                        }
+                        out.data.e_object.properties = BabyList(G.Property).init(properties[0..object_iter.i]);
+                        _entry.value_ptr.* = out;
+                        return out;
+                    },
+
+                    .JSON => {
+                        this.is_top_level = false;
+                        // if (console_tag.cell == .JSDate) {
+                        //     // in the code for printing dates, it never exceeds this amount
+                        //     var iso_string_buf = this.allocator.alloc(u8, 36) catch unreachable;
+                        //     var str = JSC.ZigString.init("");
+                        //     value.jsonStringify(this.global, 0, &str);
+                        //     var out_buf: []const u8 = std.fmt.bufPrint(iso_string_buf, "{}", .{str}) catch "";
+                        //     if (out_buf.len > 2) {
+                        //         // trim the quotes
+                        //         out_buf = out_buf[1 .. out_buf.len - 1];
+                        //     }
+                        //     return Expr.init(E.New, E.New{.target = Expr.init(E.Dot{.target = E}) })
+                        // }
+                    },
+
+                    .Integer => {
+                        return Expr.init(E.Number, E.Number{ .value = @as(f64, @floatFromInt(value.toInt32())) }, this.caller.loc);
+                    },
+                    .Double => {
+                        return Expr.init(E.Number, E.Number{ .value = value.asNumber() }, this.caller.loc);
+                    },
+                    .String => {
+                        var bun_str = value.toBunString(this.global);
+
+                        // encode into utf16 so the printer escapes the string correctly
+                        var utf16_bytes = this.allocator.alloc(u16, bun_str.length()) catch unreachable;
+                        var out_slice = utf16_bytes[0 .. (bun_str.encodeInto(std.mem.sliceAsBytes(utf16_bytes), .utf16le) catch 0) / 2];
+                        return Expr.init(E.String, E.String.init(out_slice), this.caller.loc);
+                    },
+                    .Promise => {
+                        var _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
+                        if (_entry.found_existing) {
+                            return _entry.value_ptr.*;
+                        }
+
+                        var promise_result = JSC.JSValue.zero;
+                        var rejected = false;
+                        if (value.asAnyPromise()) |promise| {
+                            this.macro.vm.waitForPromise(promise);
+                            promise_result = promise.result(this.global.vm());
+                            rejected = promise.status(this.global.vm()) == .Rejected;
+                        } else {
+                            @panic("Unexpected promise type");
+                        }
+
+                        if (promise_result.isUndefined() and this.is_top_level) {
+                            this.is_top_level = false;
+                            return this.caller;
+                        }
+
+                        if (rejected or promise_result.isError() or promise_result.isAggregateError(this.global) or promise_result.isException(this.global.vm())) {
+                            this.macro.vm.runErrorHandler(promise_result, null);
+                            return error.MacroFailed;
+                        }
+                        this.is_top_level = false;
+                        const result = try this.run(promise_result);
+
+                        _entry.value_ptr.* = result;
+                        return result;
+                    },
+                    else => {},
                 }
-            };
-        }
+
+                this.log.addErrorFmt(
+                    this.source,
+                    this.caller.loc,
+                    this.allocator,
+                    "cannot coerce {s} to Bun's AST. Please return a simpler type",
+                    .{@tagName(value.jsType())},
+                ) catch unreachable;
+                return error.MacroFailed;
+            }
+        };
 
         pub fn run(
             macro: Macro,
@@ -7267,19 +7278,17 @@ pub const Macro = struct {
             allocator: std.mem.Allocator,
             function_name: string,
             caller: Expr,
-            _: []Expr,
             source: *const logger.Source,
             id: i32,
-            comptime Visitor: type,
-            visitor: Visitor,
             javascript_object: JSC.JSValue,
         ) MacroError!Expr {
             if (comptime Environment.isDebug) Output.prettyln("<r><d>[macro]<r> call <d><b>{s}<r>", .{function_name});
 
             exception_holder = Zig.ZigException.Holder.init();
             var js_args: []JSC.JSValue = &.{};
+            var js_processed_args_len: usize = 0;
             defer {
-                for (js_args[0 .. js_args.len - @as(usize, @intFromBool(!javascript_object.isEmpty()))]) |arg| {
+                for (js_args[0..js_processed_args_len -| @as(usize, @intFromBool(!javascript_object.isEmpty()))]) |arg| {
                     arg.unprotect();
                 }
 
@@ -7292,12 +7301,18 @@ pub const Macro = struct {
                 .e_call => |call| {
                     const call_args: []Expr = call.args.slice();
                     js_args = try allocator.alloc(JSC.JSValue, call_args.len + @as(usize, @intFromBool(!javascript_object.isEmpty())));
+                    js_processed_args_len = js_args.len;
 
-                    for (call_args, js_args[0..call_args.len]) |in, *out| {
-                        const value = try in.toJS(
+                    for (0.., call_args, js_args[0..call_args.len]) |i, in, *out| {
+                        const value = in.toJS(
                             allocator,
                             globalObject,
-                        );
+                        ) catch |e| {
+                            // Keeping a separate variable instead of modifying js_args.len
+                            // due to allocator.free call in defer
+                            js_processed_args_len = i;
+                            return e;
+                        };
                         value.protect();
                         out.* = value;
                     }
@@ -7317,8 +7332,6 @@ pub const Macro = struct {
 
                 js_args[js_args.len - 1] = javascript_object;
             }
-
-            const Run = NewRun(Visitor);
 
             const CallFunction = @TypeOf(Run.runAsync);
             const CallArgs = std.meta.ArgsTuple(CallFunction);
@@ -7347,11 +7360,9 @@ pub const Macro = struct {
                 allocator,
                 function_name,
                 caller,
-                js_args.len,
-                js_args.ptr,
+                js_args,
                 source,
                 id,
-                visitor,
             });
         }
 

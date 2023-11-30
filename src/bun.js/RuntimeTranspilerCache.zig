@@ -357,10 +357,10 @@ pub const RuntimeTranspilerCache = struct {
                 return "";
             }
 
-            var dest = buf[0..@min(dir.len, bun.MAX_PATH_BYTES - 1)];
-            @memcpy(dest, dir[0..@min(dir.len, bun.MAX_PATH_BYTES - 1)]);
-            dest[dest.len - 1] = 0;
-            return dest[0.. :0];
+            const len = @min(dir.len, bun.MAX_PATH_BYTES - 1);
+            @memcpy(buf[0..len], dir[0..len]);
+            buf[len] = 0;
+            return buf[0..len :0];
         }
 
         if (bun.getenvZ("XDG_CACHE_HOME")) |dir| {

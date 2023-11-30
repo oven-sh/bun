@@ -22,7 +22,8 @@ pub const Tmpfile = struct {
 
         open: while (true) {
             if (comptime Environment.isLinux) {
-                switch (bun.sys.openat(destination_dir, ".", O.WRONLY | O.TMPFILE | O.CREAT | O.CLOEXEC, perm)) {
+                
+                switch (bun.sys.openat(destination_dir, ".", O.WRONLY | O.TMPFILE | O.CLOEXEC, perm)) {
                     .result => |fd| {
                         tmpfile.fd = fd;
                         break :open;

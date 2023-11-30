@@ -511,8 +511,8 @@ pub const RuntimeTranspilerCache = struct {
 
         const cache_dir_fd = brk: {
             if (std.fs.path.dirname(cache_file_path)) |dirname| {
-                const dir = try std.fs.cwd().makeOpenPath(dirname, .{ .access_sub_paths = true });
-                break :brk bun.toFD(dir.fd);
+                const dir = try std.fs.cwd().makeOpenPathIterable(dirname, .{ .access_sub_paths = true });
+                break :brk bun.toFD(dir.dir.fd);
             }
 
             break :brk bun.toFD(std.fs.cwd().fd);

@@ -185,6 +185,9 @@ pub fn GlobWalker_(
             iter_state: IterState = .get_next,
             cwd_fd: bun.FileDescriptor = 0,
             empty_dir_path: [0:0]u8 = [0:0]u8{},
+            /// This is to make sure in debug/tests that we are closing file descriptors
+            /// We should only have max 2 open at a time. One for the cwd, and one for the
+            /// directory being iterated on.
             fds_open: if (bun.Environment.allow_assert) usize else u0 = 0,
 
             pub fn init(this: *Iterator) !Maybe(void) {
@@ -246,7 +249,8 @@ pub fn GlobWalker_(
             pub fn bumpOpenFds(this: *Iterator) void {
                 if (bun.Environment.allow_assert) {
                     this.fds_open += 1;
-                    std.debug.assert(this.fds_open <= 4);
+                    // If this is over 2 then this means that there is a bug in the iterator code
+                    std.debug.assert(this.fds_open <= 2);
                 }
             }
 

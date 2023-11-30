@@ -174,7 +174,6 @@ describe("glob.match", async () => {
       try {
         cb();
       } catch (err) {
-        console.error("Error", err);
         // @ts-expect-error
         return err;
       }

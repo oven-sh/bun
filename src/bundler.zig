@@ -457,7 +457,7 @@ pub const Bundler = struct {
 
     pub fn runEnvLoader(this: *Bundler) !void {
         switch (this.options.env.behavior) {
-            .prefix, .load_all => {
+            .prefix, .load_all, .load_all_without_inlining => {
                 // Step 1. Load the project root.
                 const dir_info = this.resolver.readDirInfo(this.fs.top_level_dir) catch return orelse return;
 

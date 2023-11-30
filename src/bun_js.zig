@@ -103,7 +103,7 @@ pub const Run = struct {
             .unspecified => {},
         }
 
-        b.options.env.behavior = .disable;
+        b.options.env.behavior = .load_all_without_inlining;
 
         b.configureRouter(false) catch {
             if (Output.enable_ansi_colors_stderr) {
@@ -193,7 +193,7 @@ pub const Run = struct {
         b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
 
-        b.options.env.behavior = .disable;
+        b.options.env.behavior = .load_all_without_inlining;
         // b.options.minify_syntax = ctx.bundler_options.minify_syntax;
 
         switch (ctx.debug.macros) {

@@ -38,6 +38,8 @@ import npm_which from 'which';
 import openEditor from 'open-editor';
 import bcrypt from 'bcryptjs';
 import argon2 from 'argon2';
+import node_semver from 'semver';
+import * as smol_toml from 'smol-toml';
 
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
@@ -46,7 +48,7 @@ export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satis
 
 //? These are automatically updated on build by tools/updateversions.ts, do not edit manually.
 export const version = '1.0.13' satisfies typeof Bun.version;
-export const revision = '222bfda9cc2a5b22d737e4657246e3127600fb09' satisfies typeof Bun.revision;
+export const revision = '10f4a4e73cf1169d29dc4003504be62d43cac308' satisfies typeof Bun.revision;
 
 export const gc = (globalThis.gc ? (() => (globalThis.gc!(), process.memoryUsage().heapUsed)) : (() => {
     const err = new Error('[bun-polyfills] Garbage collection polyfills are only available when Node.js is ran with the --expose-gc flag.');
@@ -407,6 +409,26 @@ export const escapeHTML = ((input) => {
     }
     return out;
 }) satisfies typeof Bun.escapeHTML;
+
+export const TOML = {
+    parse(input) {
+        // Bun's TOML parser seems highly non-compliant with the TOML spec and not very well tested,
+        // for instance it doesn't seem to support Dates and Times at all, and doesn't really handle big integers,
+        // the latter is a property smol-toml shares with Bun's parser, only erroring on values that are too big to fit in a JS number,
+        // rather than simply silently losing the precision like Bun currently does, which can lead to behavior differences in this polyfill.
+        // However most of this is caused by Bun's parser spec non-compliance, so this is an issue to be solved on Bun's native side.
+        return smol_toml.parse(input);
+    },
+} satisfies typeof Bun.TOML;
+
+export const semver = {
+    order(v1, v2) {
+        return node_semver.compare(v1.toString(), v2.toString());
+    },
+    satisfies(version, range) {
+        return node_semver.satisfies(version.toString(), range.toString());
+    },
+} satisfies typeof Bun.semver;
 
 export const readableStreamToFormData = (async (stream, boundary?) => {
     if (boundary) {

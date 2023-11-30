@@ -311,6 +311,9 @@ pub const fmt = struct {
                                     },
                                     else => {},
                                 }
+                            } else if (i < remain.len and remain[i] == '(') {
+                                try writer.print(Output.prettyFmt("<r><blue>{s}<r>", true), .{remain[0..i]});
+                                break :write;
                             }
 
                             try writer.writeAll(remain[0..i]);

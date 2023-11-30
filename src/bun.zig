@@ -2058,3 +2058,5 @@ pub fn exitThread() noreturn {
 pub fn outOfMemory() noreturn {
     @panic("Out of memory");
 }
+
+pub const Tmpfile = @import("./tmp.zig").Tmpfile;

@@ -134,85 +134,86 @@ pub const RuntimeTranspilerCache = struct {
 
             // atomically write to a tmpfile and then move it to the final destination
             var tmpname_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            const tmpfilename = try bun.fs.FileSystem.instance.tmpname(std.fs.path.extension(destination_path.slice()), &tmpname_buf, input_hash);
+            const tmpfilename = bun.sliceTo(try bun.fs.FileSystem.instance.tmpname(std.fs.path.extension(destination_path.slice()), &tmpname_buf, input_hash), 0);
 
             const output_bytes = output_code.byteSlice();
 
             // First we open the tmpfile, to avoid any other work in the event of failure.
-            const fd = try bun.sys.openat(bun.toFD(bun.fs.FileSystem.instance.tmpdir().fd), bun.sliceTo(tmpfilename, 0), std.os.O.CREAT | std.os.O.CLOEXEC | std.os.O.WRONLY, 0o644).unwrap();
-
-            defer _ = bun.sys.close(fd);
-
-            var metadata_buf = [_]u8{0} ** (Metadata.size * 2);
-            const metadata_bytes = brk: {
-                var metadata = Metadata{
-                    .input_byte_length = input_byte_length,
-                    .input_hash = input_hash,
-                    .features_hash = features_hash,
-                    .module_type = switch (exports_kind) {
-                        .cjs => ModuleType.cjs,
-                        else => ModuleType.esm,
-                    },
-                    .output_encoding = switch (output_code) {
-                        .utf8 => Encoding.utf8,
-                        .string => |str| switch (str.encoding()) {
-                            .utf8 => Encoding.utf8,
-                            .utf16 => Encoding.utf16,
-                            .latin1 => Encoding.latin1,
-                            else => @panic("Unexpected encoding"),
+            var tmpfile = try bun.Tmpfile.create(destination_dir, tmpfilename).unwrap();
+            defer {
+                _ = bun.sys.close(tmpfile.fd);
+            }
+            {
+                errdefer {
+                    if (!tmpfile.using_tmpfile) {
+                        _ = bun.sys.unlinkat(destination_dir, tmpfilename);
+                    }
+                }
+                var metadata_buf = [_]u8{0} ** (Metadata.size * 2);
+                const metadata_bytes = brk: {
+                    var metadata = Metadata{
+                        .input_byte_length = input_byte_length,
+                        .input_hash = input_hash,
+                        .features_hash = features_hash,
+                        .module_type = switch (exports_kind) {
+                            .cjs => ModuleType.cjs,
+                            else => ModuleType.esm,
                         },
-                    },
-                    .sourcemap_byte_length = sourcemap.len,
-                    .output_byte_offset = Metadata.size,
-                    .output_byte_length = output_bytes.len,
-                    .sourcemap_byte_offset = Metadata.size + output_bytes.len,
+                        .output_encoding = switch (output_code) {
+                            .utf8 => Encoding.utf8,
+                            .string => |str| switch (str.encoding()) {
+                                .utf8 => Encoding.utf8,
+                                .utf16 => Encoding.utf16,
+                                .latin1 => Encoding.latin1,
+                                else => @panic("Unexpected encoding"),
+                            },
+                        },
+                        .sourcemap_byte_length = sourcemap.len,
+                        .output_byte_offset = Metadata.size,
+                        .output_byte_length = output_bytes.len,
+                        .sourcemap_byte_offset = Metadata.size + output_bytes.len,
+                    };
+
+                    metadata.output_hash = hash(output_bytes);
+                    metadata.sourcemap_hash = hash(sourcemap);
+                    var metadata_stream = std.io.fixedBufferStream(&metadata_buf);
+
+                    try metadata.encode(metadata_stream.writer());
+
+                    if (comptime bun.Environment.allow_assert) {
+                        var metadata_stream2 = std.io.fixedBufferStream(metadata_buf[0..Metadata.size]);
+                        var metadata2 = Metadata{};
+                        metadata2.decode(metadata_stream2.reader()) catch |err| bun.Output.panic("Metadata did not rountrip encode -> decode  successfully: {s}", .{@errorName(err)});
+                        std.debug.assert(std.meta.eql(metadata, metadata2));
+                    }
+
+                    break :brk metadata_buf[0..metadata_stream.pos];
                 };
 
-                metadata.output_hash = hash(output_bytes);
-                metadata.sourcemap_hash = hash(sourcemap);
-                var metadata_stream = std.io.fixedBufferStream(&metadata_buf);
+                var vecs: [3]std.os.iovec = .{
+                    .{ .iov_base = metadata_bytes.ptr, .iov_len = metadata_bytes.len },
+                    .{ .iov_base = @constCast(output_bytes.ptr), .iov_len = output_bytes.len },
+                    .{ .iov_base = @constCast(sourcemap.ptr), .iov_len = sourcemap.len },
+                };
 
-                try metadata.encode(metadata_stream.writer());
+                var position: isize = 0;
+                const end_position = Metadata.size + output_bytes.len + sourcemap.len;
+                std.debug.assert(end_position == @as(i64, @intCast(vecs[0].iov_len + vecs[1].iov_len + vecs[2].iov_len)));
+                std.debug.assert(end_position == @as(i64, @intCast(sourcemap.len + output_bytes.len + Metadata.size)));
 
-                if (comptime bun.Environment.allow_assert) {
-                    var metadata_stream2 = std.io.fixedBufferStream(metadata_buf[0..Metadata.size]);
-                    var metadata2 = Metadata{};
-                    metadata2.decode(metadata_stream2.reader()) catch |err| bun.Output.panic("Metadata did not rountrip encode -> decode  successfully: {s}", .{@errorName(err)});
-                    std.debug.assert(std.meta.eql(metadata, metadata2));
+                bun.C.preallocate_file(tmpfile.fd, 0, @intCast(end_position)) catch {};
+                var current_vecs: []std.os.iovec = vecs[0..];
+                while (position < end_position) {
+                    const written = try bun.sys.pwritev(tmpfile.fd, current_vecs, position).unwrap();
+                    if (written <= 0) {
+                        return error.WriteFailed;
+                    }
+
+                    position += @intCast(written);
                 }
-
-                break :brk metadata_buf[0..metadata_stream.pos];
-            };
-
-            var vecs: [3]std.os.iovec = .{
-                .{ .iov_base = metadata_bytes.ptr, .iov_len = metadata_bytes.len },
-                .{ .iov_base = @constCast(output_bytes.ptr), .iov_len = output_bytes.len },
-                .{ .iov_base = @constCast(sourcemap.ptr), .iov_len = sourcemap.len },
-            };
-
-            var position: isize = 0;
-            const end_position = Metadata.size + output_bytes.len + sourcemap.len;
-            std.debug.assert(end_position == @as(i64, @intCast(vecs[0].iov_len + vecs[1].iov_len + vecs[2].iov_len)));
-            std.debug.assert(end_position == @as(i64, @intCast(sourcemap.len + output_bytes.len + Metadata.size)));
-
-            bun.C.preallocate_file(fd, 0, @intCast(end_position)) catch {};
-            var current_vecs: []std.os.iovec = vecs[0..];
-            while (position < end_position) {
-                const written = try bun.sys.pwritev(fd, current_vecs, position).unwrap();
-                if (written <= 0) {
-                    return error.WriteFailed;
-                }
-
-                position += @intCast(written);
             }
 
-            // In the extremely unlikely scenario where it already existed.
-            // _ = bun.sys.ftruncate(fd, @intCast(end_position));
-
-            bun.C.moveFileZWithHandle(bun.fdcast(fd), bun.fs.FileSystem.instance.tmpdir().fd, tmpfilename, bun.fdcast(destination_dir), destination_path.sliceAssumeZ()) catch {
-                std.fs.Dir.makePath(std.fs.Dir{ .fd = destination_dir }, std.fs.path.dirname(destination_path.slice()).?) catch {};
-                try bun.C.moveFileZWithHandle(bun.fdcast(fd), bun.fs.FileSystem.instance.tmpdir().fd, tmpfilename, bun.fdcast(destination_dir), destination_path.sliceAssumeZ());
-            };
+            try tmpfile.finish(destination_path.sliceAssumeZ());
         }
 
         pub fn load(
@@ -506,9 +507,21 @@ pub const RuntimeTranspilerCache = struct {
             else => .{ .string = source_code },
         };
 
+        const cache_file_path = try getCacheFilePath(&cache_file_path_buf, input_hash);
+
+        const cache_dir_fd = brk: {
+            if (std.fs.path.dirname(cache_file_path)) |dirname| {
+                const dir = try std.fs.cwd().makeOpenPath(dirname, .{ .access_sub_paths = true });
+                break :brk bun.toFD(dir.fd);
+            }
+
+            break :brk bun.toFD(std.fs.cwd().fd);
+        };
+        defer _ = bun.sys.close(cache_dir_fd);
+
         try Entry.save(
-            std.fs.cwd().fd,
-            bun.PathString.init(try getCacheFilePath(&cache_file_path_buf, input_hash)),
+            cache_dir_fd,
+            bun.PathString.init(cache_file_path),
             input_byte_length,
             input_hash,
             features_hash,

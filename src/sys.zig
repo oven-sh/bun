@@ -1087,7 +1087,7 @@ pub fn unlink(from: [:0]const u8) Maybe(void) {
 
 pub fn unlinkat(dirfd: bun.FileDescriptor, to: [:0]const u8) Maybe(void) {
     while (true) {
-        if (Maybe(void).errnoSys(sys.unlinkat(dirfd, to), .unlink)) |err| {
+        if (Maybe(void).errnoSys(sys.unlinkat(dirfd, to, 0), .unlink)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -1546,5 +1546,23 @@ pub fn linkat(dir_fd: bun.FileDescriptor, basename: []const u8, dest_dir_fd: bun
         ),
         .link,
         basename,
+    ) orelse Maybe(void).success;
+}
+
+pub fn linkatTmpfile(tmpfd: bun.FileDescriptor, dirfd: bun.FileDescriptor, name: [:0]const u8) Maybe(void) {
+    if (comptime !Environment.isLinux) {
+        @compileError("Linux only.");
+    }
+
+    return Maybe(void).errnoSysP(
+        std.os.linux.linkat(
+            bun.fdcast(tmpfd),
+            "",
+            dirfd,
+            name,
+            os.AT.EMPTY_PATH,
+        ),
+        .link,
+        name,
     ) orelse Maybe(void).success;
 }

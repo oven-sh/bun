@@ -274,103 +274,44 @@ pub const Data = struct {
 
         if (this.location) |*location| {
             if (location.line_text) |line_text_| {
-                const location_in_line_text_original = @as(usize, @intCast(@max(location.column, 1) - 1));
+                // const location_in_line_text_original = @as(usize, @intCast(@max(location.column, 1) - 1));
+                // const line_text_left_trimmed_offset = line_text_right_trimmed.len - line_text.len;
+                // const location_in_line_text: usize = line_text_left_trimmed_offset + (location_in_line_text_original -| @as(usize, @intCast(line_text_.len -| line_text.len)));
 
                 const line_text_right_trimmed = std.mem.trimRight(u8, line_text_, " \r\n\t");
                 const line_text = std.mem.trimLeft(u8, line_text_right_trimmed, "\n\r");
-                const line_text_left_trimmed_offset = line_text_right_trimmed.len -| line_text.len;
-                const location_in_line_text: usize = line_text_left_trimmed_offset + (location_in_line_text_original -| @as(usize, @intCast(line_text_.len -| line_text.len)));
+                if (location.column > -1 and line_text.len > 0) {
+                    var line_offset_for_second_line: usize = @intCast(location.column - 1);
 
-                const has_position = location.column > -1 and line_text.len > 0 and location_in_line_text < line_text.len;
-
-                var line_offset_for_second_line: usize = location_in_line_text;
-
-                if (has_position) {
-                    if (comptime enable_ansi_colors) {
-                        const is_colored = message_color.len > 0;
-
-                        var before_segment = line_text[0..location_in_line_text];
-                        if (before_segment.len > 40) {
-                            before_segment = before_segment[before_segment.len - 40 ..];
+                    if (location.line > -1) {
+                        switch (kind == .err or kind == .warn) {
+                            inline else => |bold| try to.print(
+                                // bold the line number for error but dim for the attached note
+                                if (bold)
+                                    comptime Output.prettyFmt("<b>{d} | <r>", enable_ansi_colors)
+                                else
+                                    comptime Output.prettyFmt("<d>{d} | <r>", enable_ansi_colors),
+                                .{
+                                    location.line,
+                                },
+                            ),
                         }
 
-                        if (location.line > -1) {
-                            try std.fmt.format(to, comptime Output.prettyFmt("<d>{d} | <r>", true), .{
-                                location.line,
-                            });
-                        }
-
-                        try to.writeAll(before_segment);
-
-                        const rest_of_line = line_text[location_in_line_text..];
-                        line_offset_for_second_line = before_segment.len + " | ".len + bun.fmt.fastDigitCount(@intCast(location.line));
-
-                        const end_of_segment: usize = brk: {
-                            if (rest_of_line.len == 0) break :brk 0;
-                            if (location.length > 0 and location.length < rest_of_line.len) {
-                                break :brk location.length;
-                            }
-
-                            var iter = strings.CodepointIterator.initOffset(rest_of_line, 1);
-                            switch (line_text[location_in_line_text]) {
-                                '\'' => {
-                                    break :brk iter.scanUntilQuotedValueOrEOF('\'');
-                                },
-                                '"' => {
-                                    break :brk iter.scanUntilQuotedValueOrEOF('"');
-                                },
-                                '<' => {
-                                    break :brk iter.scanUntilQuotedValueOrEOF('>');
-                                },
-                                '`' => {
-                                    break :brk iter.scanUntilQuotedValueOrEOF('`');
-                                },
-                                else => {},
-                            }
-
-                            break :brk 1;
-                        };
-
-                        var middle_segment: []const u8 = rest_of_line[0..end_of_segment];
-
-                        if (middle_segment.len > 0) {
-                            try to.writeAll(Output.color_map.get("b").?);
-                            try to.writeAll(middle_segment);
-
-                            if (is_colored) {
-                                try to.writeAll("\x1b[0m");
-                            }
-
-                            var after = rest_of_line[middle_segment.len..];
-                            if (after.len > 40) {
-                                after = after[0..40];
-                            }
-                            try to.writeAll(after);
-                        } else if (is_colored) {
-                            try to.writeAll("\x1b[0m");
-                        }
-                    } else {
-                        line_offset_for_second_line = location_in_line_text;
-                        try to.writeAll(line_text);
+                        line_offset_for_second_line += std.fmt.count("{d} | ", .{location.line});
                     }
 
-                    try to.writeAll("\n");
+                    try to.print("{}\n", .{bun.fmt.fmtJavaScript(line_text, enable_ansi_colors)});
 
                     try to.writeByteNTimes(' ', line_offset_for_second_line);
-                    if (comptime enable_ansi_colors) {
-                        const is_colored = message_color.len > 0;
-                        if (is_colored) {
-                            try to.writeAll(message_color);
-                            try to.writeAll(color_name);
-                            // always bold the ^
-                            try to.writeAll(comptime Output.color_map.get("b").?);
-                        }
+                    if ((comptime enable_ansi_colors) and message_color.len > 0) {
+                        try to.writeAll(message_color);
+                        try to.writeAll(color_name);
+                        // always bold the ^
+                        try to.writeAll(comptime Output.color_map.get("b").?);
 
                         try to.writeByte('^');
 
-                        if (is_colored) {
-                            try to.writeAll("\x1b[0m\n");
-                        }
+                        try to.writeAll("\x1b[0m\n");
                     } else {
                         try to.writeAll("^\n");
                     }
@@ -384,34 +325,42 @@ pub const Data = struct {
 
         try to.writeAll(kind.string());
 
-        try std.fmt.format(to, comptime Output.prettyFmt("<r><d>: <r>", enable_ansi_colors), .{});
+        try to.print(comptime Output.prettyFmt("<r><d>: <r>", enable_ansi_colors), .{});
 
         if (comptime enable_ansi_colors) {
             try to.writeAll(message_color);
         }
 
-        try std.fmt.format(to, comptime Output.prettyFmt("{s}<r>", enable_ansi_colors), .{this.text});
+        try to.print(comptime Output.prettyFmt("{s}<r>", enable_ansi_colors), .{this.text});
 
         if (this.location) |*location| {
             if (location.file.len > 0) {
                 try to.writeAll("\n");
                 try to.writeByteNTimes(' ', (kind.string().len + ": ".len) - "at ".len);
 
-                try std.fmt.format(to, comptime Output.prettyFmt("<d>at <r><cyan>{s}<r>", enable_ansi_colors), .{
+                try to.print(comptime Output.prettyFmt("<d>at <r><cyan>{s}<r>", enable_ansi_colors), .{
                     location.file,
                 });
 
                 if (location.line > -1 and location.column > -1) {
-                    try std.fmt.format(to, comptime Output.prettyFmt("<d>:<r><yellow>{d}<r><d>:<r><yellow>{d}<r> <d>{d}<r>", enable_ansi_colors), .{
+                    try to.print(comptime Output.prettyFmt("<d>:<r><yellow>{d}<r><d>:<r><yellow>{d}<r>", enable_ansi_colors), .{
                         location.line,
                         location.column,
-                        location.offset,
                     });
                 } else if (location.line > -1) {
-                    try std.fmt.format(to, comptime Output.prettyFmt("<d>:<r><yellow>{d}<r> <d>{d}<r>", enable_ansi_colors), .{
+                    try to.print(comptime Output.prettyFmt("<d>:<r><yellow>{d}<r>", enable_ansi_colors), .{
                         location.line,
-                        location.offset,
                     });
+                }
+
+                if (Environment.isDebug) {
+                    // comptime magic: do not print byte when using Bun.inspect, but only print
+                    // when you the writer is to a file (like standard out)
+                    if (comptime std.mem.indexOf(u8, @typeName(@TypeOf(to)), "fs.file") != null) {
+                        try to.print(comptime Output.prettyFmt(" <d>byte={d}<r>", enable_ansi_colors), .{
+                            location.offset,
+                        });
+                    }
                 }
             }
         }

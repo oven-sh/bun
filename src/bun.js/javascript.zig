@@ -2748,7 +2748,7 @@ pub const VirtualMachine = struct {
         var line_numbers = exception.stack.source_lines_numbers[0..exception.stack.source_lines_len];
         var max_line: i32 = -1;
         for (line_numbers) |line| max_line = @max(max_line, line);
-        const max_line_number_pad = std.fmt.count("{d}", .{max_line});
+        const max_line_number_pad = std.fmt.count("{d}", .{max_line + 1});
 
         var source_lines = exception.stack.sourceLineIterator();
         var last_pad: u64 = 0;
@@ -2812,6 +2812,7 @@ pub const VirtualMachine = struct {
                 try writer.writeByteNTimes(' ', pad);
                 defer source.text.deinit();
                 const text = source.text.slice();
+                _ = text;
                 const remainder = std.mem.trimRight(u8, std.mem.trim(u8, source.text.slice(), "\n"), "\t ");
 
                 try writer.print(
@@ -2823,13 +2824,9 @@ pub const VirtualMachine = struct {
                 );
 
                 if (!top.position.isInvalid()) {
-                    var first_non_whitespace = @max(@as(u32, @intCast(top.position.column_start)), 1);
-                    while (first_non_whitespace < text.len and text[first_non_whitespace] == ' ') {
-                        first_non_whitespace += 1;
-                    }
-                    const indent = @min(@as(usize, @intCast(pad)) + " | ".len + first_non_whitespace, text.len -| 2);
+                    const indent = max_line_number_pad + " | ".len + @as(u64, @intCast(top.position.column_start));
 
-                    try writer.writeByteNTimes(' ', indent + 1);
+                    try writer.writeByteNTimes(' ', indent);
                     try writer.print(comptime Output.prettyFmt(
                         "<red><b>^<r>\n",
                         allow_ansi_color,

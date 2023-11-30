@@ -42,6 +42,7 @@ pub const BunObject = struct {
     pub const which = Bun.which;
     pub const write = JSC.WebCore.Blob.writeFile;
     pub const @"$" = Bun.shell;
+    pub const dummyShell = Bun.dummyShell;
     pub const shellParse = Bun.shellParse;
     pub const shellLex = Bun.shellLex;
     pub const braces = Bun.braces;
@@ -159,6 +160,7 @@ pub const BunObject = struct {
         @export(BunObject.which, .{ .name = callbackName("which") });
         @export(BunObject.write, .{ .name = callbackName("write") });
         @export(BunObject.@"$", .{ .name = callbackName("$") });
+        @export(BunObject.dummyShell, .{ .name = callbackName("dummyShell") });
         @export(BunObject.shellParse, .{ .name = callbackName("shellParse") });
         @export(BunObject.shellLex, .{ .name = callbackName("shellLex") });
         // -- Callbacks --
@@ -607,6 +609,24 @@ pub fn shell(
     };
 
     return JSValue.undefined;
+}
+
+pub fn dummyShell(
+    globalThis: *JSC.JSGlobalObject,
+    callframe: *JSC.CallFrame,
+) callconv(.C) JSC.JSValue {
+    _ = callframe;
+    var allocator = globalThis.bunVM().allocator;
+    var arena = bun.ArenaAllocator.init(allocator);
+
+    var machine = Shell.StateMachine.Machine.dummy(allocator, &arena, globalThis) catch {
+        arena.deinit();
+        return .false;
+    };
+
+    return machine.start(globalThis) catch {
+        return .false;
+    };
 }
 
 pub fn braces(

@@ -674,11 +674,6 @@ pub const Interpreter = struct {
             break :args args;
         };
         spawn_args.argv = std.ArrayListUnmanaged(?[*:0]const u8){ .items = args.items, .capacity = args.capacity };
-        spawn_args.shell_state = StateMachine.StatePtr{
-            .__ptr = 420,
-            .kind = .cmd,
-        };
-
         io.to_subproc_stdio(&spawn_args.stdio);
 
         if (cmd.redirect_file) |redirect| {
@@ -1538,7 +1533,7 @@ pub const StateMachine = struct {
             // Make a dummy AST for `echo foo && echo hi`
             {
                 var script = try arena_allocator.create(AST.Script);
-                var stmts = try arena_allocator.alloc(AST.Stmt, 2);
+                var stmts = try arena_allocator.alloc(AST.Stmt, 1);
                 script.stmts = stmts;
 
                 var echo_foo = try arena_allocator.create(AST.Cmd);
@@ -1551,26 +1546,35 @@ pub const StateMachine = struct {
                 echo_hi.name_and_args[0] = .{ .simple = .{ .Text = "echo" } };
                 echo_hi.name_and_args[1] = .{ .simple = .{ .Text = "hi" } };
 
-                stmts[0] = .{ .exprs = try arena_allocator.alloc(AST.Expr, 1) };
-                stmts[0].exprs[0] = .{ .cmd = echo_foo };
+                var merged = try arena_allocator.create(AST.Conditional);
+                merged.* = AST.Conditional{
+                    .op = .And,
+                    .left = .{ .cmd = echo_foo },
+                    .right = .{ .cmd = echo_hi },
+                };
 
-                stmts[1] = .{ .exprs = try arena_allocator.alloc(AST.Expr, 1) };
-                stmts[1].exprs[0] = .{ .cmd = echo_hi };
+                stmts[0].exprs = try arena_allocator.alloc(AST.Expr, 1);
+                stmts[0].exprs[0] = .{ .cond = merged };
 
                 machine.script = script;
             }
 
-            machine.arena.* = arena;
+            machine.arena = arena.*;
             machine.allocator = allocator;
+            machine.promise = .{};
+            var promise = JSC.JSPromise.create(global);
+            machine.promise.strong.set(global, promise.asValue(global));
+            return machine;
         }
 
-        fn start(this: *Machine, globalThis: *JSGlobalObject) !JSValue {
+        pub fn start(this: *Machine, globalThis: *JSGlobalObject) !JSValue {
             _ = globalThis;
             var root = try Script.fromAST(this, this.script);
-            _ = root;
+            try root.start();
+            return this.promise.value();
         }
 
-        fn finish(this: *Machine) !void {
+        fn finish(this: *Machine) void {
             defer this.deinit();
             this.promise.resolve(this.global, .true);
         }
@@ -1580,53 +1584,15 @@ pub const StateMachine = struct {
             this.promise.reject(this.global, the_error.toJSC(this.global));
         }
 
-        fn deinit(this: *Machine) !void {
+        fn deinit(this: *Machine) void {
             this.arena.deinit();
             this.allocator.destroy(this);
         }
     };
 
-    fn signalDone(state: *State, exit_code: ?u8) void {
-        return switch (state.kind) {
-            .script => state.script.onExit(exit_code),
-            .stmt => state.stmt.onExit(exit_code),
-            .cmd => state.cmd.onExit(exit_code),
-            .cond => state.cond.onExit(exit_code),
-            .pipeline => state.pipeline.onExit(exit_code),
-        };
-    }
-
     pub const State = packed struct {
         kind: StateKind,
         machine: *Machine,
-
-        pub fn cast(comptime T: type, this: *State) *T {
-            if (@typeInfo(T) != .Struct) @compileError("Not a struct");
-            const fields = std.meta.fields(T);
-            if (!std.mem.eql(u8, fields[0].name, "base")) @compileError("Invalid state type");
-            if (fields[0].type != State) @compileError("Invalid state type");
-            return @fieldParentPtr(T, "base", this);
-        }
-
-        pub fn onExit(this: *State, exit_code: ?u8) void {
-            return switch (this.kind) {
-                .script => this.onExitImpl(.script, exit_code),
-                .stmt => this.onExitImpl(.stmt, exit_code),
-                .cmd => this.onExitImpl(.cmd, exit_code),
-                .cond => this.onExitImpl(.cond, exit_code),
-                .pipeline => this.onExitImpl(.pipeline, exit_code),
-            };
-        }
-
-        pub fn onExitImpl(this: *State, comptime kind: StateKind, exit_code: ?u8) void {
-            return switch (kind) {
-                .script => this.cast(Script).onExit(exit_code),
-                .stmt => this.cast(Stmt).onExit(exit_code),
-                .cmd => this.cast(Cmd).onExit(exit_code),
-                .cond => this.cast(Cond).onExit(exit_code),
-                .pipeline => this.cast(Pipeline).onExit(exit_code),
-            };
-        }
     };
 
     pub const StatePtr = packed struct {
@@ -1639,17 +1605,15 @@ pub const StateMachine = struct {
             return @ptrFromInt(@as(usize, @intCast(this.__ptr)));
         }
 
-        pub fn onExit(this: StatePtr, exit_code: ?u8) void {
-            _ = this;
-            log("onExit: {d}", .{exit_code orelse 69});
-            // return switch (this.kind) {
-            //     .script => this.ptr().onExitImpl(.script, exit_code),
-            //     .stmt => this.ptr(Stmt).onExitImpl(.stmt, exit_code),
-            //     .cmd => this.ptr(Cmd).onExitImpl(.cmd, exit_code),
-            //     .cond => this.ptr(Cond).onExitImpl(.cond, exit_code),
-            //     .pipeline => this.ptr(Pipeline).onExitImpl(.pipeline, exit_code),
-            // };
-        }
+        // pub fn onExit(this: StatePtr, exit_code: ?u8) void {
+        //     return switch (this.kind) {
+        //         .script => this.ptr().onExitImpl(.script, exit_code),
+        //         .stmt => this.ptr(Stmt).onExitImpl(.stmt, exit_code),
+        //         .cmd => this.ptr(Cmd).onExitImpl(.cmd, exit_code),
+        //         .cond => this.ptr(Cond).onExitImpl(.cond, exit_code),
+        //         .pipeline => this.ptr(Pipeline).onExitImpl(.pipeline, exit_code),
+        //     };
+        // }
     };
 
     const StateKind = enum(u8) {
@@ -1672,7 +1636,7 @@ pub const StateMachine = struct {
 
     pub const Script = struct {
         base: State,
-        node: *AST.Script,
+        node: *const AST.Script,
         idx: usize,
 
         fn fromAST(machine: *Machine, node: *const AST.Script) !*Script {
@@ -1681,42 +1645,33 @@ pub const StateMachine = struct {
             script.base = .{ .kind = .script, .machine = machine };
             script.node = node;
             script.idx = 0;
-            script.stmts = try machine.allocator.alloc(Stmt, node.stmts.len);
-            errdefer machine.allocator.free(script.stmts);
             return script;
         }
 
-        pub fn onExit(this: *Script, exit_code: ?u8) void {
-            _ = exit_code;
-            _ = this;
-        }
-
-        // pub fn tick(this: *Script) !void {
-        //     var idx = this.idx;
-        //     this.idx += 1;
-        //     this.base.machine.
-        // }
-
-        fn next(this: *Script) !void {
-            if (this.idx >= this.script.stmts.len) {
-                return this.base.machine.finish();
+        fn start(this: *Script) !void {
+            if (bun.Environment.allow_assert) {
+                std.debug.assert(this.idx == 0);
             }
 
-            const stmt_node = &this.node.stmts[this.idx];
+            if (this.node.stmts.len == 0)
+                return this.childDone(0);
+
+            const stmt_node = &this.node.stmts[0];
 
             var stmt = try Stmt.fromAST(this.base.machine, stmt_node, this);
-            try stmt.next();
+            try stmt.start();
         }
 
-        fn finish(this: *Script) !void {
-            _ = this;
-            // this.
+        fn childDone(this: *Script, exit_code: u8) void {
+            _ = exit_code;
+            log("SCRIPT DONE YO!", .{});
+            this.base.machine.finish();
         }
     };
 
     pub const Stmt = struct {
         base: State,
-        node: *AST.Stmt,
+        node: *const AST.Stmt,
         parent: *Script,
         idx: usize,
         last_exit_code: ?u8,
@@ -1726,93 +1681,222 @@ pub const StateMachine = struct {
             script.base = .{ .kind = .stmt, .machine = machine };
             script.node = node;
             script.parent = parent;
+            script.idx = 0;
             script.last_exit_code = null;
             return script;
         }
 
-        pub fn next(this: *Stmt) !void {
-            if (this.idx >= this.node.exprs.len) {
-                return this.parent.finish();
+        pub fn start(this: *Stmt) !void {
+            if (bun.Environment.allow_assert) {
+                std.debug.assert(this.idx == 0);
+                std.debug.assert(this.last_exit_code == null);
             }
 
-            const expr_node = &this.node.exprs[this.idx];
-            switch (expr_node.*) {
-                .cmd => {
-                    // var cmd =
+            if (this.node.exprs.len == 0)
+                return this.parent.childDone(0);
+
+            const child = &this.node.exprs[0];
+            switch (child.*) {
+                .cond => {
+                    const cond = Cond.fromAST(this.base.machine, child.cond, Cond.ParentPtr.init(this));
+                    cond.start();
                 },
-                .conditional => {},
                 else => @panic("TODO"),
+            }
+        }
+
+        pub fn childDone(this: *Stmt, exit_code: u8) void {
+            this.last_exit_code = exit_code;
+            const next_idx = this.idx + 1;
+            if (next_idx >= this.node.exprs.len)
+                return this.parent.childDone(exit_code);
+
+            const child = &this.node.exprs[next_idx];
+            switch (child.*) {
+                .cond => {
+                    const cond = Cond.fromAST(this.base.machine, child.cond, Cond.ParentPtr.init(this));
+                    cond.start();
+                },
+                else => @panic("TODO"),
+            }
+        }
+    };
+
+    pub const Cond = struct {
+        base: State,
+        node: *const AST.Conditional,
+        /// Based on precedence rules conditional can only be child of a stmt or
+        /// another conditional
+        parent: ParentPtr,
+        left: ?u8 = null,
+        right: ?u8 = null,
+        currently_executing: ?ChildPtr = null,
+
+        const ChildPtr = TaggedPointerUnion(.{ Cmd, Pipeline, Cond });
+
+        const ParentPtr = TaggedPointerUnion(.{
+            Stmt,
+            Cond,
+        });
+
+        pub fn fromAST(machine: *Machine, node: *const AST.Conditional, parent: ParentPtr) *Cond {
+            var cond = machine.allocator.create(Cond) catch |err| {
+                std.debug.print("Ruh roh: {any}\n", .{err});
+                @panic("Ruh roh");
+            };
+            cond.node = node;
+            cond.base = .{ .kind = .cond, .machine = machine };
+            cond.parent = parent;
+            cond.left = null;
+            cond.right = null;
+            cond.currently_executing = null;
+            return cond;
+        }
+
+        fn start(this: *Cond) void {
+            log("conditional start {x} ({s})", .{ @intFromPtr(this), @tagName(this.node.op) });
+            if (comptime bun.Environment.allow_assert) {
+                std.debug.assert(this.left == null);
+                std.debug.assert(this.right == null);
+                std.debug.assert(this.currently_executing == null);
+            }
+
+            this.currently_executing = this.makeChild(true);
+            var child = this.currently_executing.?.as(Cmd);
+            child.start(true);
+        }
+
+        fn makeChild(this: *Cond, left: bool) ChildPtr {
+            const node = if (left) &this.node.left else &this.node.right;
+            switch (node.*) {
+                .cmd => {
+                    const cmd = Cmd.fromAST(this.base.machine, node.cmd, Cmd.ParentPtr.init(this));
+                    return ChildPtr.init(cmd);
+                },
+                .cond => {
+                    const cond = Cond.fromAST(this.base.machine, node.cond, Cond.ParentPtr.init(this));
+                    return ChildPtr.init(cond);
+                },
+                .assign, .pipeline => @panic("TODO"),
+            }
+        }
+
+        pub fn childDone(this: *Cond, exit_code: u8) void {
+            if (comptime bun.Environment.allow_assert) {
+                std.debug.assert(this.left == null or this.right == null);
+                std.debug.assert(this.currently_executing != null);
+            }
+            log("conditional child done {x} ({s}) {s}", .{ @intFromPtr(this), @tagName(this.node.op), if (this.left == null) "right" else "left" });
+
+            if (this.left == null) {
+                this.left = exit_code;
+                if (exit_code != 0) {
+                    switch (this.parent.tag()) {
+                        // FIXME errors
+                        .Stmt => this.parent.as(Stmt).childDone(exit_code),
+                        .Cond => this.parent.as(Cond).childDone(exit_code),
+                        else => @panic("JSALDKJSD"),
+                    }
+                    return;
+                }
+
+                this.currently_executing = this.makeChild(false);
+                this.currently_executing.?.as(Cmd).start(false);
+                return;
+            }
+
+            this.right = exit_code;
+            switch (this.parent.tag()) {
+                .Stmt => this.parent.as(Stmt).childDone(exit_code),
+                .Cond => this.parent.as(Cond).childDone(exit_code),
+                else => @panic("JSALDKJSD"),
             }
         }
     };
 
     pub const Cmd = struct {
         base: State,
-        cmd: *Subprocess,
-        parent: TaggedPointerUnion(struct {
-            stmt: Stmt,
-            cond: Cond,
-            pipeline: Pipeline,
-            // TODO
-            subst: void,
-        }),
+        node: *const AST.Cmd,
+        cmd: ?*Subprocess,
+        parent: ParentPtr,
         exit_code: ?u8,
 
-        pub fn fromAST(machine: *Machine, node: *const AST.Cmd, parent: *Stmt) !*Cmd {
-            _ = node;
-            var cmd = try machine.allocator.create(Cmd);
+        const ParentPtr = TaggedPointerUnion(.{
+            Stmt,
+            Cond,
+            Pipeline,
+            // TODO
+            // .subst = void,
+        });
+
+        pub fn start(this: *Cmd, foo: bool) void {
+            log("cmd start {x}", .{@intFromPtr(this)});
+            this.initSubproc(foo) catch bun.outOfMemory();
+        }
+
+        pub fn fromAST(machine: *Machine, node: *const AST.Cmd, parent: ParentPtr) *Cmd {
+            var cmd = machine.allocator.create(Cmd) catch |err| {
+                std.debug.print("Ruh roh: {any}\n", .{err});
+                @panic("Ruh roh");
+            };
             cmd.base = .{ .kind = .cmd, .machine = machine };
-            cmd.cmd = try machine.allocator.create(Interpreter.Cmd);
-            cmd.parent = .{ .stmt = parent };
+            cmd.node = node;
+            cmd.cmd = null;
+            cmd.parent = parent;
+            cmd.exit_code = null;
             return cmd;
         }
 
-        fn initSubproc(parent: *Stmt, foo: bool) !*Subprocess {
-            var arena = bun.ArenaAllocator.init(parent.base.machine.allocator);
+        fn initSubproc(this: *Cmd, foo: bool) !void {
+            log("cmd init subproc {x}", .{@intFromPtr(this)});
+            var arena = bun.ArenaAllocator.init(this.base.machine.allocator);
             defer arena.deinit();
 
-            var spawn_args = Subprocess.SpawnArgs.default(&arena, parent.base.machine.global, false);
+            var spawn_args = Subprocess.SpawnArgs.default(&arena, this.base.machine.global.bunVM(), false);
+            spawn_args.stdio[bun.STDIN_FD] = .inherit;
+            spawn_args.stdio[bun.STDOUT_FD] = .inherit;
+            spawn_args.stdio[bun.STDERR_FD] = .inherit;
             spawn_args.argv = std.ArrayListUnmanaged(?[*:0]const u8){};
+            spawn_args.cmd_parent = this;
 
-            try spawn_args.argv.append(arena, "/bin/echo".ptr);
             if (foo) {
-                try spawn_args.argv.append(arena, "foo".ptr);
+                try spawn_args.argv.append(arena.allocator(), @as([*:0]const u8, @ptrCast("/bin/sleep".ptr)));
+                try spawn_args.argv.append(arena.allocator(), @as([*:0]const u8, @ptrCast("2".ptr)));
             } else {
-                try spawn_args.argv.append(arena, "bar".ptr);
+                try spawn_args.argv.append(arena.allocator(), @as([*:0]const u8, @ptrCast("/bin/echo".ptr)));
+                try spawn_args.argv.append(arena.allocator(), @as([*:0]const u8, @ptrCast("bar".ptr)));
+            }
+
+            const subproc = (try Subprocess.spawnAsync(this.base.machine.global, spawn_args)) orelse return ShellError.Spawn;
+            this.cmd = subproc;
+        }
+
+        pub fn onExit(this: *Cmd, exit_code: u8) void {
+            log("cmd exit code={d} ({x})", .{ exit_code, @intFromPtr(this) });
+            this.exit_code = exit_code;
+            switch (this.parent.tag()) {
+                .Stmt => @panic("TODO"),
+                .Cond => this.parent.as(Cond).childDone(exit_code),
+                .Pipeline => @panic("TODO"),
+                else => @panic("JSALDKJSD"),
             }
         }
-
-        pub fn onExit(this: *Cmd, exit_code: ?u8) void {
-            _ = exit_code;
-            _ = this;
-        }
-    };
-
-    pub const Cond = struct {
-        base: State,
-        node: *AST.Conditional,
-        /// Based on precedence rules conditional can only be child of a stmt or
-        /// another conditional
-        parent: TaggedPointerUnion(struct {
-            stmt: Stmt,
-            cond: Cond,
-        }),
-        left: ?u8,
-        right: ?u8,
     };
 
     pub const Pipeline = struct {
         base: State,
-        node: *AST.Pipeline,
+        node: *const AST.Pipeline,
         /// Based on precedence rules pipeline can only be child of a stmt or
         /// conditional
-        parent: TaggedPointerUnion(struct {
-            stmt: Stmt,
-            cond: Cond,
-        }),
+        parent: ParentPtr,
         idx: usize,
         pipes: []Pipe,
         exit_codes: []?u8,
+
+        const ParentPtr = TaggedPointerUnion(.{
+            Stmt,
+            Cond,
+        });
     };
 };
 

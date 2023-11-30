@@ -20,6 +20,7 @@ const uws = bun.uws;
 const PosixSpawn = @import("../bun.js/api/bun/spawn.zig").PosixSpawn;
 
 const ShellStatePtr = @import("./shell.zig").StateMachine.StatePtr;
+const ShellCmd = @import("./shell.zig").StateMachine.Cmd;
 
 const util = @import("../subproc/util.zig");
 
@@ -27,7 +28,7 @@ pub const ShellSubprocess = struct {
     const log = Output.scoped(.Subprocess, false);
     pub const default_max_buffer_size = 1024 * 1024 * 4;
 
-    shell_state: ?ShellStatePtr,
+    cmd_parent: ?*ShellCmd = null,
     pid: std.os.pid_t,
     // on macOS, this is nothing
     // on linux, it's a pidfd
@@ -256,8 +257,8 @@ pub const ShellSubprocess = struct {
 
     pub const SpawnArgs = struct {
         arena: *bun.ArenaAllocator,
+        cmd_parent: ?*ShellCmd = null,
 
-        shell_state: ShellStatePtr,
         override_env: bool = false,
         env_array: std.ArrayListUnmanaged(?[*:0]const u8) = .{
             .items = &.{},
@@ -346,7 +347,6 @@ pub const ShellSubprocess = struct {
                     .{ .inherit = {} },
                 },
                 .lazy = false,
-                .shell_state = undefined,
                 .PATH = jsc_vm.bundler.env.get("PATH") orelse "",
                 .argv = undefined,
                 .detached = false,
@@ -665,15 +665,19 @@ pub const ShellSubprocess = struct {
     }
 
     fn runOnExit(this: *ShellSubprocess, globalThis: *JSC.JSGlobalObject) void {
+        log("run on exit {d}", .{this.pid});
         _ = globalThis;
         const waitpid_error = this.waitpid_err;
         _ = waitpid_error;
         this.waitpid_err = null;
 
-        if (this.shell_state) |state| {
-            defer this.shell_state = null;
-            state.onExit(this.exit_code);
-            // FIXME handle waitpid_error here like below
+        // FIXME remove when we get rid of old shell interpreter
+        if (this.cmd_parent) |cmd| {
+            if (cmd.exit_code == null) {
+                // defer this.shell_state = null;
+                cmd.onExit(this.exit_code.?);
+                // FIXME handle waitpid_error here like below
+            }
         }
 
         // if (this.on_exit_callback.trySwap()) |callback| {

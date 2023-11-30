@@ -68,6 +68,7 @@
     macro($) \
     macro(shellParse) \
     macro(shellLex) \
+    macro(dummyShell) \
 
 #define DECLARE_ZIG_BUN_OBJECT_CALLBACK(name) extern "C" JSC::EncodedJSValue BunObject_callback_##name(JSC::JSGlobalObject*, JSC::CallFrame*);
 FOR_EACH_CALLBACK(DECLARE_ZIG_BUN_OBJECT_CALLBACK);

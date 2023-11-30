@@ -1266,7 +1266,7 @@ pub fn spawnMaybeSyncImpl(
             .flags = .{
                 .is_sync = is_sync,
             },
-            .shell_state = spawn_args.shell_state,
+            .cmd_parent = spawn_args.cmd_parent,
         };
     }
 

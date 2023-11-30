@@ -502,7 +502,7 @@ pub const ZigStackTrace = extern struct {
     pub fn sourceLineIterator(this: *const ZigStackTrace) SourceLineIterator {
         var i: usize = 0;
         for (this.source_lines_numbers[0..this.source_lines_len], 0..) |num, j| {
-            if (num > -1) {
+            if (num >= 0) {
                 i = @max(j, i);
             }
         }

@@ -3558,12 +3558,20 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
         // Most of the time, when you look at a stack trace, you want a couple lines above
 
         source_lines[0] = Bun::toStringRef(sourceString.substring(lineStart, lineStop - lineStart).toStringWithoutCopying());
-        source_line_numbers[0] = line;
+        source_line_numbers[0] = line - 1;
 
         if (lineStart > 0) {
             auto byte_offset_in_source_string = lineStart - 1;
             uint8_t source_line_i = 1;
             auto remaining_lines_to_grab = source_lines_count - 1;
+
+            {
+                // This should probably be code points instead of newlines
+                while (byte_offset_in_source_string > 0 && chars[byte_offset_in_source_string] != '\n') {
+                    byte_offset_in_source_string--;
+                }
+                byte_offset_in_source_string -= byte_offset_in_source_string > 0;
+            }
 
             while (byte_offset_in_source_string > 0 && remaining_lines_to_grab > 0) {
                 unsigned int end_of_line_offset = byte_offset_in_source_string;
@@ -3576,7 +3584,7 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
                 // We are at the beginning of the line
                 source_lines[source_line_i] = Bun::toStringRef(sourceString.substring(byte_offset_in_source_string, end_of_line_offset - byte_offset_in_source_string + 1).toStringWithoutCopying());
 
-                source_line_numbers[source_line_i] = line - source_line_i;
+                source_line_numbers[source_line_i] = line - source_line_i - 1;
                 source_line_i++;
 
                 remaining_lines_to_grab--;

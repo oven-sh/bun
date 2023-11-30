@@ -300,7 +300,7 @@ pub const fmt = struct {
                                         prev_keyword = null;
 
                                         if (i < remain.len and remain[i] == '(') {
-                                            try writer.print(Output.prettyFmt("<r><cyan>{s}<r>", true), .{remain[0..i]});
+                                            try writer.print(Output.prettyFmt("<r><b>{s}<r>", true), .{remain[0..i]});
                                             break :write;
                                         }
                                     },
@@ -312,7 +312,7 @@ pub const fmt = struct {
                                     else => {},
                                 }
                             } else if (i < remain.len and remain[i] == '(') {
-                                try writer.print(Output.prettyFmt("<r><blue>{s}<r>", true), .{remain[0..i]});
+                                try writer.print(Output.prettyFmt("<r><b><i>{s}<r>", true), .{remain[0..i]});
                                 break :write;
                             }
 

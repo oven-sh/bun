@@ -22,6 +22,10 @@ describe.if(isDockerEnabled())("autobahn", async () => {
   const agent = encodeURIComponent("bun/1.0.0");
   let docker: child_process.ChildProcessWithoutNullStreams | null = null;
   const { promise, resolve } = Promise.withResolvers();
+  // we can exclude cases by adding them to the exclude-cases array
+  // "exclude-cases": [
+  //   "9.*"
+  // ],
   const CWD = tempDirWithFiles("autobahn", {
     "fuzzingserver.json": `{
         "url": "ws://127.0.0.1:9001",

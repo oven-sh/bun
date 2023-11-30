@@ -1006,7 +1006,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
 
     this.meta_hash = try this.generateMetaHash(false);
 
-    return LoadFromDiskResult{ .ok = .{ .lockfile = this, .was_migrated = true } };
+    return LoadFromDiskResult{ .ok = .{ .lockfile = this } };
 }
 
 fn packageNameFromPath(pkg_path: []const u8) []const u8 {

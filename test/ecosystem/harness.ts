@@ -10,7 +10,7 @@ export type TestOptions = {
   repository: string;
   ref: string | null;
   paths: string[];
-  runner: "jest" | "ava" | "mocha" | "qunit" | "tap";
+  runner: "jest" | "vitest" | "ava" | "mocha" | "qunit" | "tap" | "utest" | "script";
   skip?: boolean | string;
   todo?: boolean | string;
 };
@@ -24,57 +24,59 @@ export function runTests({ package: name, repository, ref, paths, runner, skip, 
     return;
   }
 
-  const run = import(join(import.meta.dir, "runner", `${runner}.js`));
-  const tmp = mkdtempSync(join(tmpdir(), `${name.replace(/\//g, "-")}-`));
-  const cwd = join(tmp, "node_modules", name);
+  describe(name, () => {
+    const run = import(join(import.meta.dir, "runner", `${runner}.js`));
+    const tmp = mkdtempSync(join(tmpdir(), `${name.replace(/\//g, "-")}-`));
+    const cwd = join(tmp, "node_modules", name);
 
-  {
-    const target = ref ? `${repository}#${ref}` : repository;
-    const { exitCode } = spawnSync({
-      cwd: tmp,
-      cmd: [bunExe(), "install", target],
-      env: bunEnv,
-      stdout: "inherit",
-      stderr: "inherit",
-    });
+    {
+      const target = ref ? `${repository}#${ref}` : repository;
+      const { exitCode } = spawnSync({
+        cwd: tmp,
+        cmd: [bunExe(), "install", target],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
 
-    if (exitCode !== 0) {
-      throw `bun install ${target}`;
-    }
-  }
-
-  {
-    const { exitCode } = spawnSync({
-      cwd,
-      cmd: [bunExe(), "install"],
-      env: bunEnv,
-      stdout: "inherit",
-      stderr: "inherit",
-    });
-
-    if (exitCode !== 0) {
-      throw "bun install";
-    }
-  }
-
-  for (const path of paths) {
-    const tests = [...new Glob(path).scanSync({ cwd })];
-
-    if (!tests.length) {
-      throw `No tests found: ${path}`;
+      if (exitCode !== 0) {
+        throw `bun install ${target}`;
+      }
     }
 
-    for (const test of tests) {
-      const absolutePath = resolve(cwd, test);
+    {
+      const { exitCode } = spawnSync({
+        cwd,
+        cmd: [bunExe(), "install"],
+        env: bunEnv,
+        stdout: "inherit",
+        stderr: "inherit",
+      });
 
-      if (!test.includes(".test.") && !test.includes(".spec.")) {
-        symlinkSync(absolutePath, absolutePath.replace(/\.(c|m)?js$/, ".test.js"));
+      if (exitCode !== 0) {
+        throw "bun install";
+      }
+    }
+
+    for (const path of paths) {
+      const tests = [...new Glob(path).scanSync({ cwd })];
+
+      if (!tests.length) {
+        throw `No tests found: ${path}`;
       }
 
-      describe(test, async () => {
-        const runner = await run;
-        await runner.run(absolutePath);
-      });
+      for (const test of tests) {
+        const absolutePath = resolve(cwd, test);
+
+        if (!test.includes(".test.") && !test.includes(".spec.")) {
+          symlinkSync(absolutePath, absolutePath.replace(/\.(c|m)?(j|t)sx?$/, ".test.ts"));
+        }
+
+        describe(test, async () => {
+          const runner = await run;
+          await runner.run(absolutePath);
+        });
+      }
     }
-  }
+  });
 }

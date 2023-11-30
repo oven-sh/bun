@@ -24,6 +24,8 @@ function* findTests(dir, query) {
   for (const entry of readdirSync(resolve(dir), { encoding: "utf-8", withFileTypes: true })) {
     const path = resolve(dir, entry.name);
     if (entry.isDirectory()) {
+      // Do not run ecosystem tests here
+      if (entry.name === "ecosystem") continue;
       yield* findTests(path, query);
     } else if (entry.name.includes(".test.")) {
       yield path;

@@ -1,0 +1,1027 @@
+// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`test/bin/semver.js inc tests 1`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"2.0.0
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`test/bin/semver.js inc tests 2`] = `
+{
+  "code": 1,
+  "err": 
+"--inc can only be used on a single version with no range
+"
+,
+  "out": "",
+  "signal": null,
+}
+`;
+
+exports[`test/bin/semver.js inc tests 3`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"2.0.0-beta.0
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`test/bin/semver.js inc tests 4`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"2.0.0-beta.1
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`test/bin/semver.js inc tests 5`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"2.0.0-beta
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`test/bin/semver.js inc tests 6`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"1.2.4
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`test/bin/semver.js help output 1`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"SemVer 7.5.4
+
+A JavaScript implementation of the https://semver.org/ specification
+Copyright Isaac Z. Schlueter
+
+Usage: semver [options] <version> [<version> [...]]
+Prints valid versions sorted by SemVer precedence
+
+Options:
+-r --range <range>
+        Print versions that match the specified range.
+
+-i --increment [<level>]
+        Increment a version by the specified level.  Level can
+        be one of: major, minor, patch, premajor, preminor,
+        prepatch, or prerelease.  Default level is 'patch'.
+        Only one version may be specified.
+
+--preid <identifier>
+        Identifier to be used to prefix premajor, preminor,
+        prepatch or prerelease version increments.
+
+-l --loose
+        Interpret versions and ranges loosely
+
+-p --include-prerelease
+        Always include prerelease versions in range matching
+
+-c --coerce
+        Coerce a string into SemVer if possible
+        (does not imply --loose)
+
+--rtl
+        Coerce version strings right to left
+
+--ltr
+        Coerce version strings left to right (default)
+
+-n <base>
+        Base number to be used for the prerelease identifier.
+        Can be either 0 or 1, or false to omit the number altogether.
+        Defaults to 0.
+
+Program exits successfully if any valid version satisfies
+all supplied ranges, and prints all satisfying versions.
+
+If no satisfying versions are found, then exits failure.
+
+Versions are printed in ascending order, so supplying
+multiple versions to the utility will just sort them.
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`test/bin/semver.js help output 2`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"SemVer 7.5.4
+
+A JavaScript implementation of the https://semver.org/ specification
+Copyright Isaac Z. Schlueter
+
+Usage: semver [options] <version> [<version> [...]]
+Prints valid versions sorted by SemVer precedence
+
+Options:
+-r --range <range>
+        Print versions that match the specified range.
+
+-i --increment [<level>]
+        Increment a version by the specified level.  Level can
+        be one of: major, minor, patch, premajor, preminor,
+        prepatch, or prerelease.  Default level is 'patch'.
+        Only one version may be specified.
+
+--preid <identifier>
+        Identifier to be used to prefix premajor, preminor,
+        prepatch or prerelease version increments.
+
+-l --loose
+        Interpret versions and ranges loosely
+
+-p --include-prerelease
+        Always include prerelease versions in range matching
+
+-c --coerce
+        Coerce a string into SemVer if possible
+        (does not imply --loose)
+
+--rtl
+        Coerce version strings right to left
+
+--ltr
+        Coerce version strings left to right (default)
+
+-n <base>
+        Base number to be used for the prerelease identifier.
+        Can be either 0 or 1, or false to omit the number altogether.
+        Defaults to 0.
+
+Program exits successfully if any valid version satisfies
+all supplied ranges, and prints all satisfying versions.
+
+If no satisfying versions are found, then exits failure.
+
+Versions are printed in ascending order, so supplying
+multiple versions to the utility will just sort them.
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`test/bin/semver.js help output 3`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"SemVer 7.5.4
+
+A JavaScript implementation of the https://semver.org/ specification
+Copyright Isaac Z. Schlueter
+
+Usage: semver [options] <version> [<version> [...]]
+Prints valid versions sorted by SemVer precedence
+
+Options:
+-r --range <range>
+        Print versions that match the specified range.
+
+-i --increment [<level>]
+        Increment a version by the specified level.  Level can
+        be one of: major, minor, patch, premajor, preminor,
+        prepatch, or prerelease.  Default level is 'patch'.
+        Only one version may be specified.
+
+--preid <identifier>
+        Identifier to be used to prefix premajor, preminor,
+        prepatch or prerelease version increments.
+
+-l --loose
+        Interpret versions and ranges loosely
+
+-p --include-prerelease
+        Always include prerelease versions in range matching
+
+-c --coerce
+        Coerce a string into SemVer if possible
+        (does not imply --loose)
+
+--rtl
+        Coerce version strings right to left
+
+--ltr
+        Coerce version strings left to right (default)
+
+-n <base>
+        Base number to be used for the prerelease identifier.
+        Can be either 0 or 1, or false to omit the number altogether.
+        Defaults to 0.
+
+Program exits successfully if any valid version satisfies
+all supplied ranges, and prints all satisfying versions.
+
+If no satisfying versions are found, then exits failure.
+
+Versions are printed in ascending order, so supplying
+multiple versions to the utility will just sort them.
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`test/bin/semver.js help output 4`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"SemVer 7.5.4
+
+A JavaScript implementation of the https://semver.org/ specification
+Copyright Isaac Z. Schlueter
+
+Usage: semver [options] <version> [<version> [...]]
+Prints valid versions sorted by SemVer precedence
+
+Options:
+-r --range <range>
+        Print versions that match the specified range.
+
+-i --increment [<level>]
+        Increment a version by the specified level.  Level can
+        be one of: major, minor, patch, premajor, preminor,
+        prepatch, or prerelease.  Default level is 'patch'.
+        Only one version may be specified.
+
+--preid <identifier>
+        Identifier to be used to prefix premajor, preminor,
+        prepatch or prerelease version increments.
+
+-l --loose
+        Interpret versions and ranges loosely
+
+-p --include-prerelease
+        Always include prerelease versions in range matching
+
+-c --coerce
+        Coerce a string into SemVer if possible
+        (does not imply --loose)
+
+--rtl
+        Coerce version strings right to left
+
+--ltr
+        Coerce version strings left to right (default)
+
+-n <base>
+        Base number to be used for the prerelease identifier.
+        Can be either 0 or 1, or false to omit the number altogether.
+        Defaults to 0.
+
+Program exits successfully if any valid version satisfies
+all supplied ranges, and prints all satisfying versions.
+
+If no satisfying versions are found, then exits failure.
+
+Versions are printed in ascending order, so supplying
+multiple versions to the utility will just sort them.
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`test/bin/semver.js sorting and filtering 1`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"1.2.3
+2.3.4
+3.2.1
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`test/bin/semver.js sorting and filtering 2`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"1.2.3
+2.3.4-beta
+2.3.4
+3.2.1
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`test/bin/semver.js sorting and filtering 3`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"1.2.3
+2.3.4
+3.2.1
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`test/bin/semver.js sorting and filtering 4`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"3.2.1
+2.3.4
+1.2.3
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`test/bin/semver.js sorting and filtering 5`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"1.2.3-bar
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`test/bin/semver.js sorting and filtering 6`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"1.2.3-bar
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`test/bin/semver.js sorting and filtering 7`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"2.3.4
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`test/bin/semver.js sorting and filtering 8`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"2.3.4
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`test/bin/semver.js sorting and filtering 9`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"2.3.4-beta
+2.3.4
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`test/bin/semver.js sorting and filtering 10`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"2.3.4-beta
+2.3.4
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`test/bin/semver.js sorting and filtering 11`] = `
+{
+  "code": 1,
+  "err": "",
+  "out": "",
+  "signal": null,
+}
+`;
+
+exports[`test/bin/semver.js coercing 1`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"1.2.3
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`test/bin/semver.js coercing 2`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"4.5.6
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`test/bin/semver.js coercing 3`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"1.2.3
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`test/bin/semver.js coercing 4`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"1.2.3
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`test/bin/semver.js coercing 5`] = `
+{
+  "code": 1,
+  "err": "",
+  "out": "",
+  "signal": null,
+}
+`;
+
+exports[`semver test/bin/semver.js inc tests 1`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"2.0.0
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`semver test/bin/semver.js inc tests 2`] = `
+{
+  "code": 1,
+  "err": 
+"--inc can only be used on a single version with no range
+"
+,
+  "out": "",
+  "signal": null,
+}
+`;
+
+exports[`semver test/bin/semver.js inc tests 3`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"2.0.0-beta.0
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`semver test/bin/semver.js inc tests 4`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"2.0.0-beta.1
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`semver test/bin/semver.js inc tests 5`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"2.0.0-beta
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`semver test/bin/semver.js inc tests 6`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"1.2.4
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`semver test/bin/semver.js help output 1`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"SemVer 7.5.4
+
+A JavaScript implementation of the https://semver.org/ specification
+Copyright Isaac Z. Schlueter
+
+Usage: semver [options] <version> [<version> [...]]
+Prints valid versions sorted by SemVer precedence
+
+Options:
+-r --range <range>
+        Print versions that match the specified range.
+
+-i --increment [<level>]
+        Increment a version by the specified level.  Level can
+        be one of: major, minor, patch, premajor, preminor,
+        prepatch, or prerelease.  Default level is 'patch'.
+        Only one version may be specified.
+
+--preid <identifier>
+        Identifier to be used to prefix premajor, preminor,
+        prepatch or prerelease version increments.
+
+-l --loose
+        Interpret versions and ranges loosely
+
+-p --include-prerelease
+        Always include prerelease versions in range matching
+
+-c --coerce
+        Coerce a string into SemVer if possible
+        (does not imply --loose)
+
+--rtl
+        Coerce version strings right to left
+
+--ltr
+        Coerce version strings left to right (default)
+
+-n <base>
+        Base number to be used for the prerelease identifier.
+        Can be either 0 or 1, or false to omit the number altogether.
+        Defaults to 0.
+
+Program exits successfully if any valid version satisfies
+all supplied ranges, and prints all satisfying versions.
+
+If no satisfying versions are found, then exits failure.
+
+Versions are printed in ascending order, so supplying
+multiple versions to the utility will just sort them.
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`semver test/bin/semver.js help output 2`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"SemVer 7.5.4
+
+A JavaScript implementation of the https://semver.org/ specification
+Copyright Isaac Z. Schlueter
+
+Usage: semver [options] <version> [<version> [...]]
+Prints valid versions sorted by SemVer precedence
+
+Options:
+-r --range <range>
+        Print versions that match the specified range.
+
+-i --increment [<level>]
+        Increment a version by the specified level.  Level can
+        be one of: major, minor, patch, premajor, preminor,
+        prepatch, or prerelease.  Default level is 'patch'.
+        Only one version may be specified.
+
+--preid <identifier>
+        Identifier to be used to prefix premajor, preminor,
+        prepatch or prerelease version increments.
+
+-l --loose
+        Interpret versions and ranges loosely
+
+-p --include-prerelease
+        Always include prerelease versions in range matching
+
+-c --coerce
+        Coerce a string into SemVer if possible
+        (does not imply --loose)
+
+--rtl
+        Coerce version strings right to left
+
+--ltr
+        Coerce version strings left to right (default)
+
+-n <base>
+        Base number to be used for the prerelease identifier.
+        Can be either 0 or 1, or false to omit the number altogether.
+        Defaults to 0.
+
+Program exits successfully if any valid version satisfies
+all supplied ranges, and prints all satisfying versions.
+
+If no satisfying versions are found, then exits failure.
+
+Versions are printed in ascending order, so supplying
+multiple versions to the utility will just sort them.
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`semver test/bin/semver.js help output 3`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"SemVer 7.5.4
+
+A JavaScript implementation of the https://semver.org/ specification
+Copyright Isaac Z. Schlueter
+
+Usage: semver [options] <version> [<version> [...]]
+Prints valid versions sorted by SemVer precedence
+
+Options:
+-r --range <range>
+        Print versions that match the specified range.
+
+-i --increment [<level>]
+        Increment a version by the specified level.  Level can
+        be one of: major, minor, patch, premajor, preminor,
+        prepatch, or prerelease.  Default level is 'patch'.
+        Only one version may be specified.
+
+--preid <identifier>
+        Identifier to be used to prefix premajor, preminor,
+        prepatch or prerelease version increments.
+
+-l --loose
+        Interpret versions and ranges loosely
+
+-p --include-prerelease
+        Always include prerelease versions in range matching
+
+-c --coerce
+        Coerce a string into SemVer if possible
+        (does not imply --loose)
+
+--rtl
+        Coerce version strings right to left
+
+--ltr
+        Coerce version strings left to right (default)
+
+-n <base>
+        Base number to be used for the prerelease identifier.
+        Can be either 0 or 1, or false to omit the number altogether.
+        Defaults to 0.
+
+Program exits successfully if any valid version satisfies
+all supplied ranges, and prints all satisfying versions.
+
+If no satisfying versions are found, then exits failure.
+
+Versions are printed in ascending order, so supplying
+multiple versions to the utility will just sort them.
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`semver test/bin/semver.js help output 4`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"SemVer 7.5.4
+
+A JavaScript implementation of the https://semver.org/ specification
+Copyright Isaac Z. Schlueter
+
+Usage: semver [options] <version> [<version> [...]]
+Prints valid versions sorted by SemVer precedence
+
+Options:
+-r --range <range>
+        Print versions that match the specified range.
+
+-i --increment [<level>]
+        Increment a version by the specified level.  Level can
+        be one of: major, minor, patch, premajor, preminor,
+        prepatch, or prerelease.  Default level is 'patch'.
+        Only one version may be specified.
+
+--preid <identifier>
+        Identifier to be used to prefix premajor, preminor,
+        prepatch or prerelease version increments.
+
+-l --loose
+        Interpret versions and ranges loosely
+
+-p --include-prerelease
+        Always include prerelease versions in range matching
+
+-c --coerce
+        Coerce a string into SemVer if possible
+        (does not imply --loose)
+
+--rtl
+        Coerce version strings right to left
+
+--ltr
+        Coerce version strings left to right (default)
+
+-n <base>
+        Base number to be used for the prerelease identifier.
+        Can be either 0 or 1, or false to omit the number altogether.
+        Defaults to 0.
+
+Program exits successfully if any valid version satisfies
+all supplied ranges, and prints all satisfying versions.
+
+If no satisfying versions are found, then exits failure.
+
+Versions are printed in ascending order, so supplying
+multiple versions to the utility will just sort them.
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`semver test/bin/semver.js sorting and filtering 1`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"1.2.3
+2.3.4
+3.2.1
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`semver test/bin/semver.js sorting and filtering 2`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"1.2.3
+2.3.4-beta
+2.3.4
+3.2.1
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`semver test/bin/semver.js sorting and filtering 3`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"1.2.3
+2.3.4
+3.2.1
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`semver test/bin/semver.js sorting and filtering 4`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"3.2.1
+2.3.4
+1.2.3
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`semver test/bin/semver.js sorting and filtering 5`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"1.2.3-bar
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`semver test/bin/semver.js sorting and filtering 6`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"1.2.3-bar
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`semver test/bin/semver.js sorting and filtering 7`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"2.3.4
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`semver test/bin/semver.js sorting and filtering 8`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"2.3.4
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`semver test/bin/semver.js sorting and filtering 9`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"2.3.4-beta
+2.3.4
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`semver test/bin/semver.js sorting and filtering 10`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"2.3.4-beta
+2.3.4
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`semver test/bin/semver.js sorting and filtering 11`] = `
+{
+  "code": 1,
+  "err": "",
+  "out": "",
+  "signal": null,
+}
+`;
+
+exports[`semver test/bin/semver.js coercing 1`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"1.2.3
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`semver test/bin/semver.js coercing 2`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"4.5.6
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`semver test/bin/semver.js coercing 3`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"1.2.3
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`semver test/bin/semver.js coercing 4`] = `
+{
+  "code": 0,
+  "err": "",
+  "out": 
+"1.2.3
+"
+,
+  "signal": null,
+}
+`;
+
+exports[`semver test/bin/semver.js coercing 5`] = `
+{
+  "code": 1,
+  "err": "",
+  "out": "",
+  "signal": null,
+}
+`;

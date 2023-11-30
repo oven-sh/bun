@@ -1297,7 +1297,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                             else => unreachable,
                         };
                         // we need to wait for more data
-                        if(data.len == 0) return;
+                        if (data.len == 0) return;
 
                         if (data.len < byte_size) {
                             this.terminate(ErrorCode.control_frame_is_fragmented);

@@ -168,7 +168,10 @@ pub const LoadFromDiskResult = union(enum) {
         step: Step,
         value: anyerror,
     },
-    ok: *Lockfile,
+    ok: struct {
+        lockfile: *Lockfile,
+        was_migrated: bool = false,
+    },
 
     pub const Step = enum { open_file, read_file, parse_file, migrating };
 };
@@ -221,7 +224,7 @@ pub fn loadFromBytes(this: *Lockfile, buf: []u8, allocator: Allocator, log: *log
         this.verifyData() catch @panic("lockfile data is corrupt");
     }
 
-    return LoadFromDiskResult{ .ok = this };
+    return LoadFromDiskResult{ .ok = .{ .lockfile = this } };
 }
 
 pub const InstallResult = struct {

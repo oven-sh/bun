@@ -125,6 +125,7 @@ pub const FilePoll = struct {
     const FileSink = JSC.WebCore.FileSink;
     const FIFO = JSC.WebCore.FIFO;
     const Subprocess = JSC.Subprocess;
+    const ShellSubprocess = bun.ShellSubprocess;
     const BufferedInput = Subprocess.BufferedInput;
     const BufferedOutput = Subprocess.BufferedOutput;
     const DNSResolver = JSC.DNS.DNSResolver;
@@ -137,6 +138,7 @@ pub const FilePoll = struct {
         FileReader,
         FileSink,
         Subprocess,
+        ShellSubprocess,
         BufferedInput,
         FIFO,
         Deactivated,
@@ -245,6 +247,12 @@ pub const FilePoll = struct {
             @field(Owner.Tag, "Subprocess") => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) Subprocess", .{poll.fd});
                 var loader = ptr.as(JSC.Subprocess);
+
+                loader.onExitNotificationTask();
+            },
+            @field(Owner.Tag, "ShellSubprocess") => {
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) Subprocess", .{poll.fd});
+                var loader = ptr.as(ShellSubprocess);
 
                 loader.onExitNotificationTask();
             },

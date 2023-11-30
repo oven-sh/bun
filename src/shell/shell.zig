@@ -17,24 +17,12 @@ const DirIterator = @import("../bun.js/node/dir_iterator.zig");
 const CodepointIterator = @import("../string_immutable.zig").PackedCodepointIterator;
 const isAllAscii = @import("../string_immutable.zig").isAllASCII;
 const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
-const NewSubprocess =
-    @import("../bun.js/api/bun/subprocess_impl.zig").NewSubprocess;
+const Subprocess = bun.ShellSubprocess;
 
 const GlobWalker = Glob.GlobWalker_(null, true);
 // const GlobWalker = Glob.BunGlobWalker;
 
-const Subprocess = NewSubprocess(SubprocCtx, struct {
-    pub fn onExit(this: *SubprocCtx, exit_code: ?u8) void {
-        this.ended = true;
-        std.debug.print("SUBPROC CTX: {d}\n", .{exit_code orelse 69});
-    }
-});
-
-const SubprocCtx = struct {
-    ended: bool = false,
-};
-
-pub const ShellError = error{ Process, GlobalThisThrown, Init };
+pub const ShellError = error{ Init, Process, GlobalThisThrown, Spawn };
 pub const ParseError = error{
     Expected,
     Unknown,
@@ -686,6 +674,10 @@ pub const Interpreter = struct {
             break :args args;
         };
         spawn_args.argv = std.ArrayListUnmanaged(?[*:0]const u8){ .items = args.items, .capacity = args.capacity };
+        spawn_args.shell_state = StateMachine.StatePtr{
+            .__ptr = 420,
+            .kind = .cmd,
+        };
 
         io.to_subproc_stdio(&spawn_args.stdio);
 
@@ -747,25 +739,8 @@ pub const Interpreter = struct {
             }
         }
 
-        var ctx_UNSAFE_JUST_TESTING_REMOVE_THIS_ZACK: SubprocCtx = .{};
-
-        var out_watchfd: ?Subprocess.WatchFd = null;
-        var out_err: ?JSValue = null;
-        var subprocess = Subprocess.spawnMaybeSyncImpl(
-            self.globalThis,
-            false,
-            self.arena.allocator(),
-            &out_watchfd,
-            &out_err,
-            &spawn_args,
-            &ctx_UNSAFE_JUST_TESTING_REMOVE_THIS_ZACK,
-        ) orelse {
-            if (out_err) |err| {
-                const zigstr = err.getZigString(self.globalThis);
-                std.debug.print("VALUe: {s}\n", .{zigstr.full()});
-                self.globalThis.throwValue(err);
-            }
-            return ShellError.Process;
+        var subprocess = try Subprocess.spawnAsync(self.globalThis, spawn_args) orelse {
+            return ShellError.Spawn;
         };
         subprocess.ref();
 
@@ -1519,7 +1494,7 @@ pub const Interpreter = struct {
 };
 
 pub const StateMachine = struct {
-    const Machine = struct {
+    pub const Machine = struct {
         /// This is the arena used to allocate AST nodes
         arena: bun.ArenaAllocator,
 
@@ -1613,17 +1588,68 @@ pub const StateMachine = struct {
 
     fn signalDone(state: *State, exit_code: ?u8) void {
         return switch (state.kind) {
-            .script => state.script.signalDone(),
-            .stmt => state.stmt.signalDone(exit_code),
-            .cmd => state.cmd.signalDone(),
-            .cond => state.cond.signalDone(),
-            .pipeline => state.pipeline.signalDone(),
+            .script => state.script.onExit(exit_code),
+            .stmt => state.stmt.onExit(exit_code),
+            .cmd => state.cmd.onExit(exit_code),
+            .cond => state.cond.onExit(exit_code),
+            .pipeline => state.pipeline.onExit(exit_code),
         };
     }
 
-    const State = struct {
+    pub const State = packed struct {
         kind: StateKind,
         machine: *Machine,
+
+        pub fn cast(comptime T: type, this: *State) *T {
+            if (@typeInfo(T) != .Struct) @compileError("Not a struct");
+            const fields = std.meta.fields(T);
+            if (!std.mem.eql(u8, fields[0].name, "base")) @compileError("Invalid state type");
+            if (fields[0].type != State) @compileError("Invalid state type");
+            return @fieldParentPtr(T, "base", this);
+        }
+
+        pub fn onExit(this: *State, exit_code: ?u8) void {
+            return switch (this.kind) {
+                .script => this.onExitImpl(.script, exit_code),
+                .stmt => this.onExitImpl(.stmt, exit_code),
+                .cmd => this.onExitImpl(.cmd, exit_code),
+                .cond => this.onExitImpl(.cond, exit_code),
+                .pipeline => this.onExitImpl(.pipeline, exit_code),
+            };
+        }
+
+        pub fn onExitImpl(this: *State, comptime kind: StateKind, exit_code: ?u8) void {
+            return switch (kind) {
+                .script => this.cast(Script).onExit(exit_code),
+                .stmt => this.cast(Stmt).onExit(exit_code),
+                .cmd => this.cast(Cmd).onExit(exit_code),
+                .cond => this.cast(Cond).onExit(exit_code),
+                .pipeline => this.cast(Pipeline).onExit(exit_code),
+            };
+        }
+    };
+
+    pub const StatePtr = packed struct {
+        const AddressableSize = u48;
+        __ptr: AddressableSize,
+        kind: StateKind,
+        _pad: u8 = 0,
+
+        pub fn ptr(this: StatePtr) *State {
+            return @ptrFromInt(@as(usize, @intCast(this.__ptr)));
+        }
+
+        pub fn onExit(this: StatePtr, exit_code: ?u8) void {
+            _ = this;
+            log("onExit: {d}", .{exit_code orelse 69});
+            // return switch (this.kind) {
+            //     .script => this.ptr().onExitImpl(.script, exit_code),
+            //     .stmt => this.ptr(Stmt).onExitImpl(.stmt, exit_code),
+            //     .cmd => this.ptr(Cmd).onExitImpl(.cmd, exit_code),
+            //     .cond => this.ptr(Cond).onExitImpl(.cond, exit_code),
+            //     .pipeline => this.ptr(Pipeline).onExitImpl(.pipeline, exit_code),
+            // };
+        }
     };
 
     const StateKind = enum(u8) {
@@ -1658,6 +1684,11 @@ pub const StateMachine = struct {
             script.stmts = try machine.allocator.alloc(Stmt, node.stmts.len);
             errdefer machine.allocator.free(script.stmts);
             return script;
+        }
+
+        pub fn onExit(this: *Script, exit_code: ?u8) void {
+            _ = exit_code;
+            _ = this;
         }
 
         // pub fn tick(this: *Script) !void {
@@ -1751,7 +1782,8 @@ pub const StateMachine = struct {
             }
         }
 
-        fn signalDone(this: *Cmd) void {
+        pub fn onExit(this: *Cmd, exit_code: ?u8) void {
+            _ = exit_code;
             _ = this;
         }
     };

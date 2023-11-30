@@ -404,7 +404,9 @@ pub const Task = TaggedPointerUnion(.{
     Lchmod,
     Lchown,
     Unlink,
-    WaitPidResultTask,
+    // WaitPidResultTask,
+    JSC.Subprocess.WaiterThread.WaitPidResultTask,
+    bun.ShellSubprocess.WaiterThread.WaitPidResultTask,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {

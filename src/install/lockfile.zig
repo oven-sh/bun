@@ -568,9 +568,9 @@ pub fn maybeCloneFilteringRootPackages(
     features: Features,
     exact_versions: bool,
 ) !*Lockfile {
-    const old_root_dependenices_list = old.packages.items(.dependencies)[0];
+    const old_root_dependencies_list = old.packages.items(.dependencies)[0];
     var old_root_resolutions = old.packages.items(.resolutions)[0];
-    const root_dependencies = old_root_dependenices_list.get(old.buffers.dependencies.items);
+    const root_dependencies = old_root_dependencies_list.get(old.buffers.dependencies.items);
     var resolutions = old_root_resolutions.mut(old.buffers.resolutions.items);
     var any_changes = false;
     const end = @as(PackageID, @truncate(old.packages.len));

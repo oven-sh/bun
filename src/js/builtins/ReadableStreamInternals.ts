@@ -1070,11 +1070,15 @@ export function createTextStream(highWaterMark) {
       }
 
       if (hasString && !hasBuffer) {
+        if (rope.charCodeAt(0) === 0xfeff) {
+          rope = rope.slice(1);
+        }
+
         return rope;
       }
 
       if (hasBuffer && !hasString) {
-        return new globalThis.TextDecoder().decode(Bun.concatArrayBuffers(array));
+        return new globalThis.TextDecoder("utf-8", { ignoreBOM: true }).decode(Bun.concatArrayBuffers(array));
       }
 
       // worst case: mixed content
@@ -1089,12 +1093,16 @@ export function createTextStream(highWaterMark) {
       }
       array.length = 0;
       if (rope.length > 0) {
+        if (rope.charCodeAt(0) === 0xfeff) {
+          rope = rope.slice(1);
+        }
+
         arrayBufferSink.write(rope);
         rope = "";
       }
 
       // TODO: use builtin
-      return new globalThis.TextDecoder().decode(arrayBufferSink.end());
+      return new globalThis.TextDecoder("utf-8", { ignoreBOM: true }).decode(arrayBufferSink.end());
     },
 
     close() {
@@ -1678,13 +1686,23 @@ export function readableStreamIntoArray(stream) {
   return processManyResult(manyResult);
 }
 
+export function withoutUTF8BOM(result) {
+  if (result.charCodeAt(0) === 0xfeff) {
+    return result.slice(1);
+  }
+
+  return result;
+}
+
 export function readableStreamIntoText(stream) {
   const [textStream, closer] = $createTextStream($getByIdDirectPrivate(stream, "highWaterMark"));
   const prom = $readStreamIntoSink(stream, textStream, false);
+
   if (prom && $isPromise(prom)) {
-    return Promise.$resolve(prom).$then(closer.promise);
+    return Promise.$resolve(prom).$then(closer.promise).$then($withoutUTF8BOM);
   }
-  return closer.promise;
+
+  return closer.promise.$then($withoutUTF8BOM);
 }
 
 export function readableStreamToArrayBufferDirect(stream, underlyingSource) {

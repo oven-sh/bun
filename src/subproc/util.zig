@@ -1154,6 +1154,8 @@ pub fn spawnMaybeSyncImpl(
 
         break :brk switch (PosixSpawn.spawnZ(spawn_args.argv.items[0].?, actions, attr, @as([*:null]?[*:0]const u8, @ptrCast(spawn_args.argv.items[0..].ptr)), env)) {
             .err => |err| {
+                var str = err.toJSC(globalThis).getZigString(globalThis);
+                std.debug.print("THE ERROR!: {s}\n", .{str});
                 globalThis.throwValue(err.toJSC(globalThis));
                 return null;
             },

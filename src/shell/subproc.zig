@@ -443,6 +443,8 @@ pub const ShellSubprocess = struct {
         ) orelse
             {
             if (out_err) |err| {
+                var str = err.getZigString(globalThis);
+                std.debug.print("THE STR: {s}\n", .{str});
                 globalThis.throwValue(err);
             }
             return null;

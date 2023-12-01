@@ -112,14 +112,14 @@ pub const Interpreter = struct {
 
     pub fn start(this: *Interpreter, globalThis: *JSGlobalObject) !JSValue {
         _ = globalThis;
-        var root = try Script.fromAST(this, this.script);
+        var root = try Script.init(this, this.script, .{});
         try root.start();
         return this.promise.value();
     }
 
-    fn finish(this: *Interpreter) void {
+    fn finish(this: *Interpreter, exit_code: u8) void {
         defer this.deinit();
-        this.promise.resolve(this.global, .true);
+        this.promise.resolve(this.global, JSValue.jsNumberFromInt32(@intCast(exit_code)));
     }
 
     fn errored(this: *Interpreter, the_error: ShellError) void {
@@ -131,7 +131,36 @@ pub const Interpreter = struct {
         this.arena.deinit();
         this.allocator.destroy(this);
     }
+
+    fn assignVar(this: *Interpreter, assign: *const ast.Assign, assign_ctx: AssignCtx) anyerror!void {
+        const brace_expansion = assign.value.has_brace_expansion();
+        const value = brk: {
+            var arena_alloc = this.arena.allocator();
+            var args = std.ArrayList(?[*:0]const u8).initCapacity(arena_alloc, 1);
+            var expander = ExpansionCtx(.{ .for_spawn = false }).init(
+                this,
+                arena_alloc,
+                &args,
+            );
+            try expander.evalNoBraceExpansion(&assign.value);
+            const value = args.items[0];
+            if (brace_expansion) {
+                @panic("TODO");
+                // // For some reason bash only sets the last value
+                // break :brk value.many.items[value.many.items.len - 1];
+            }
+            break :brk value;
+        };
+
+        switch (assign_ctx) {
+            .cmd => try this.cmd_local_env.put(assign.label, value),
+            .shell => try this.shell_env.put(assign.label, value),
+            .exported => try this.export_env.put(assign.label, value),
+        }
+    }
 };
+
+const AssignCtx = enum { cmd, shell, exported };
 
 const ExpansionOpts = struct {
     for_spawn: bool = true,
@@ -386,23 +415,68 @@ const StateKind = enum(u8) {
     }
 };
 
+const IO = struct {
+    stdin: Kind = .std,
+    stdout: Kind = .std,
+    stderr: Kind = .std,
+
+    const Kind = union(enum) {
+        /// Use stdin/stdout/stderr of this process
+        std,
+        fd: bun.FileDescriptor,
+        pipe,
+        ignore,
+
+        fn close(this: Kind) void {
+            switch (this) {
+                .fd => {
+                    closefd(this.fd);
+                },
+                else => {},
+            }
+        }
+
+        fn to_subproc_stdio(this: Kind) Subprocess.Stdio {
+            return switch (this) {
+                .std => .inherit,
+                .fd => |val| .{ .fd = val },
+                .pipe => .{ .pipe = null },
+                .ignore => .ignore,
+            };
+        }
+    };
+
+    fn to_subproc_stdio(this: IO, stdio: *[3]Subprocess.Stdio) void {
+        stdio[bun.STDIN_FD] = this.stdin.to_subproc_stdio();
+        stdio[bun.STDOUT_FD] = this.stdout.to_subproc_stdio();
+        stdio[bun.STDERR_FD] = this.stderr.to_subproc_stdio();
+    }
+};
+
 pub const Script = struct {
     base: State,
     node: *const ast.Script,
     idx: usize,
+    currently_executing: ?ChildPtr,
+    io: IO,
 
     pub const ChildPtr = struct {
-        pub fn init(child: *Stmt) *Stmt {
-            return child;
+        val: *Stmt,
+        pub inline fn init(child: *Stmt) ChildPtr {
+            return .{ .val = child };
+        }
+        pub inline fn deinit(this: ChildPtr) void {
+            this.val.deinit();
         }
     };
 
-    fn fromAST(interpreter: *Interpreter, node: *const ast.Script) !*Script {
+    fn init(interpreter: *Interpreter, node: *const ast.Script, io: IO) !*Script {
         var script = try interpreter.allocator.create(Script);
         errdefer interpreter.allocator.destroy(script);
         script.base = .{ .kind = .script, .interpreter = interpreter };
         script.node = node;
         script.idx = 0;
+        script.io = io;
         return script;
     }
 
@@ -412,23 +486,22 @@ pub const Script = struct {
         }
 
         if (this.node.stmts.len == 0)
-            return this.finish();
+            return this.finish(0);
 
         const stmt_node = &this.node.stmts[0];
 
-        var stmt = try Stmt.fromAST(this.base.interpreter, stmt_node, this);
+        var stmt = try Stmt.init(this.base.interpreter, stmt_node, this, this.io);
         try stmt.start();
     }
 
-    fn finish(this: *Script) void {
-        this.base.interpreter.finish();
+    fn finish(this: *Script, exit_code: u8) void {
+        this.base.interpreter.finish(exit_code);
     }
 
-    fn childDone(this: *Script, child: *Stmt, exit_code: u8) void {
-        _ = child;
-        _ = exit_code;
+    fn childDone(this: *Script, child: ChildPtr, exit_code: u8) void {
         log("SCRIPT DONE YO!", .{});
-        this.finish();
+        child.deinit();
+        this.finish(exit_code);
     }
 };
 
@@ -438,18 +511,29 @@ pub const Stmt = struct {
     parent: *Script,
     idx: usize,
     last_exit_code: ?u8,
+    currently_executing: ?ChildPtr,
+    io: IO,
 
-    const ChildPtr = struct {
-        pub fn init(_: anytype) void {}
-    };
+    const ChildPtr = StatePtrUnion(.{
+        Cond,
+        Pipeline,
+        Cmd,
+    });
 
-    pub fn fromAST(interpreter: *Interpreter, node: *const ast.Stmt, parent: *Script) !*Stmt {
+    pub fn init(
+        interpreter: *Interpreter,
+        node: *const ast.Stmt,
+        parent: *Script,
+        io: IO,
+    ) !*Stmt {
         var script = try interpreter.allocator.create(Stmt);
         script.base = .{ .kind = .stmt, .interpreter = interpreter };
         script.node = node;
         script.parent = parent;
         script.idx = 0;
         script.last_exit_code = null;
+        script.currently_executing = null;
+        script.io = io;
         return script;
     }
 
@@ -457,40 +541,55 @@ pub const Stmt = struct {
         if (bun.Environment.allow_assert) {
             std.debug.assert(this.idx == 0);
             std.debug.assert(this.last_exit_code == null);
+            std.debug.assert(this.currently_executing == null);
         }
 
         if (this.node.exprs.len == 0)
-            return this.parent.childDone(this, 0);
+            return this.parent.childDone(Script.ChildPtr.init(this), 0);
 
         const child = &this.node.exprs[0];
         switch (child.*) {
             .cond => {
-                const cond = Cond.fromAST(this.base.interpreter, child.cond, Cond.ParentPtr.init(this));
+                const cond = Cond.init(this.base.interpreter, child.cond, Cond.ParentPtr.init(this), this.io);
+                this.currently_executing = ChildPtr.init(cond);
                 cond.start();
             },
             .cmd => {
-                const parent_ptr = Cmd.ParentPtr.init(this);
-                const cmd = Cmd.fromAST(this.base.interpreter, child.cmd, parent_ptr);
+                const cmd = Cmd.init(this.base.interpreter, child.cmd, Cmd.ParentPtr.init(this), this.io);
+                this.currently_executing = ChildPtr.init(cmd);
                 cmd.start();
+            },
+            .pipeline => {
+                const pipeline = Pipeline.init(this.base.interpreter, child.pipeline, Pipeline.ParentPtr.init(this), this.io);
+                this.currently_executing = ChildPtr.init(pipeline);
+                pipeline.start();
+            },
+            else => @panic("Not possible"),
+        }
+    }
+
+    pub fn childDone(this: *Stmt, child: ChildPtr, exit_code: u8) void {
+        this.last_exit_code = exit_code;
+        const next_idx = this.idx + 1;
+        if (next_idx >= this.node.exprs.len)
+            return this.parent.childDone(Script.ChildPtr.init(this), exit_code);
+        child.deinit();
+
+        const next_child = &this.node.exprs[next_idx];
+        switch (next_child.*) {
+            .cond => {
+                const cond = Cond.init(this.base.interpreter, next_child.cond, Cond.ParentPtr.init(this), this.io);
+                cond.start();
             },
             else => @panic("TODO"),
         }
     }
 
-    pub fn childDone(this: *Stmt, _: void, exit_code: u8) void {
-        this.last_exit_code = exit_code;
-        const next_idx = this.idx + 1;
-        if (next_idx >= this.node.exprs.len)
-            return this.parent.childDone(this, exit_code);
-
-        const child = &this.node.exprs[next_idx];
-        switch (child.*) {
-            .cond => {
-                const cond = Cond.fromAST(this.base.interpreter, child.cond, Cond.ParentPtr.init(this));
-                cond.start();
-            },
-            else => @panic("TODO"),
+    pub fn deinit(this: *Stmt) void {
+        if (this.currently_executing) |child| {
+            child.deinit();
         }
+        this.base.interpreter.allocator.destroy(this);
     }
 };
 
@@ -502,6 +601,7 @@ pub const Cond = struct {
     parent: ParentPtr,
     left: ?u8 = null,
     right: ?u8 = null,
+    io: IO,
     currently_executing: ?ChildPtr = null,
 
     const ChildPtr = StatePtrUnion(.{ Cmd, Pipeline, Cond });
@@ -511,7 +611,12 @@ pub const Cond = struct {
         Cond,
     });
 
-    pub fn fromAST(interpreter: *Interpreter, node: *const ast.Conditional, parent: ParentPtr) *Cond {
+    pub fn init(
+        interpreter: *Interpreter,
+        node: *const ast.Conditional,
+        parent: ParentPtr,
+        io: IO,
+    ) *Cond {
         var cond = interpreter.allocator.create(Cond) catch |err| {
             std.debug.print("Ruh roh: {any}\n", .{err});
             @panic("Ruh roh");
@@ -519,6 +624,7 @@ pub const Cond = struct {
         cond.node = node;
         cond.base = .{ .kind = .cond, .interpreter = interpreter };
         cond.parent = parent;
+        cond.io = io;
         cond.left = null;
         cond.right = null;
         cond.currently_executing = null;
@@ -542,11 +648,11 @@ pub const Cond = struct {
         const node = if (left) &this.node.left else &this.node.right;
         switch (node.*) {
             .cmd => {
-                const cmd = Cmd.fromAST(this.base.interpreter, node.cmd, Cmd.ParentPtr.init(this));
+                const cmd = Cmd.init(this.base.interpreter, node.cmd, Cmd.ParentPtr.init(this), this.io);
                 return ChildPtr.init(cmd);
             },
             .cond => {
-                const cond = Cond.fromAST(this.base.interpreter, node.cond, Cond.ParentPtr.init(this));
+                const cond = Cond.init(this.base.interpreter, node.cond, Cond.ParentPtr.init(this), this.io);
                 return ChildPtr.init(cond);
             },
             .assign, .pipeline => @panic("TODO"),
@@ -577,6 +683,13 @@ pub const Cond = struct {
         this.right = exit_code;
         this.parent.childDone(this, exit_code);
     }
+
+    pub fn deinit(this: *Cond) void {
+        if (this.currently_executing) |child| {
+            child.deinit();
+        }
+        this.base.interpreter.allocator.destroy(this);
+    }
 };
 
 pub const Pipeline = struct {
@@ -585,11 +698,17 @@ pub const Pipeline = struct {
     /// Based on precedence rules pipeline can only be child of a stmt or
     /// conditional
     parent: ParentPtr,
-    idx: usize,
-    pipes: []Pipe,
-    exit_codes: []?u8,
+    exited_count: u32,
+    cmds: ?[]CmdOrResult,
+    pipes: ?[]Pipe,
+    io: IO,
 
-    const ParentPtr = TaggedPointerUnion(.{
+    const TrackedFd = struct {
+        fd: bun.FileDescriptor,
+        open: bool = false,
+    };
+
+    const ParentPtr = StatePtrUnion(.{
         Stmt,
         Cond,
     });
@@ -598,25 +717,166 @@ pub const Pipeline = struct {
         Cmd,
     });
 
-    pub fn childDone(this: *Pipeline, child: ChildPtr, exit_code: u8) void {
-        _ = exit_code;
-        _ = child;
-        _ = this;
-        @panic("TODO!");
-        // if (comptime bun.Environment.allow_assert) {
-        //     std.debug.assert(this.idx < this.node.cmds.len);
-        // }
-        // log("pipeline child done {x} ({d})", .{ @intFromPtr(this), exit_code });
-        // this.exit_codes[this.idx] = exit_code;
-        // this.idx += 1;
-        // if (this.idx >= this.node.cmds.len) {
-        //     this.parent.childDone(this, exit_code);
-        //     return;
-        // }
+    const CmdOrResult = union(enum) {
+        cmd: *Cmd,
+        result: u8,
+    };
 
-        // const cmd = this.node.cmds[this.idx];
-        // const child = Cmd.fromAST(this.base.interpreter, cmd, Cmd.ParentPtr.init(this));
-        // child.start(true);
+    pub fn init(
+        interpreter: *Interpreter,
+        node: *const ast.Pipeline,
+        parent: ParentPtr,
+        io: IO,
+    ) *Pipeline {
+        var pipeline = interpreter.allocator.create(Pipeline) catch |err| {
+            std.debug.print("Ruh roh: {any}\n", .{err});
+            @panic("Ruh roh");
+        };
+        pipeline.base = .{ .kind = .pipeline, .interpreter = interpreter };
+        pipeline.node = node;
+        pipeline.parent = parent;
+        pipeline.exited_count = 0;
+        pipeline.io = io;
+
+        const cmd_count = brk: {
+            var i: u32 = 0;
+            for (node.items) |*item| {
+                if (item.* == .cmd) i += 1;
+            }
+            break :brk i;
+        };
+
+        pipeline.cmds = if (cmd_count >= 1) interpreter.allocator.alloc(CmdOrResult, node.items.len) catch bun.outOfMemory() else null;
+        if (pipeline.cmds == null) return pipeline;
+        var pipes = interpreter.allocator.alloc(Pipe, if (cmd_count > 1) cmd_count - 1 else 1) catch bun.outOfMemory();
+
+        if (cmd_count > 1) {
+            var pipes_set: u32 = 0;
+            Pipeline.initializePipes(pipes, &pipes_set) catch {
+                for (pipes[0..pipes_set]) |*pipe| {
+                    closefd(pipe[0]);
+                    closefd(pipe[1]);
+                }
+                // FIXME this should really return an error
+                @panic("Ruh roh");
+            };
+        }
+
+        var i: u32 = 0;
+        for (node.items) |*item| {
+            if (item.* == .cmd) {
+                var kind = "subproc";
+                _ = kind;
+                var cmd_io = io;
+                var stdin = if (cmd_count > 1) Pipeline.readPipe(pipes, i, &cmd_io) else cmd_io.stdin;
+                var stdout = if (cmd_count > 1) Pipeline.writePipe(pipes, i, cmd_count, &cmd_io) else cmd_io.stdout;
+                cmd_io.stdin = stdin;
+                cmd_io.stdout = stdout;
+                pipeline.cmds.?[i] = .{ .cmd = Cmd.init(interpreter, &item.cmd, Cmd.ParentPtr.init(pipeline), cmd_io) };
+                i += 1;
+            }
+        }
+
+        pipeline.pipes = pipes;
+
+        return pipeline;
+    }
+
+    pub fn start(this: *Pipeline) void {
+        var cmds = this.cmds orelse {
+            this.parent.childDone(this, 0);
+            return;
+        };
+
+        if (comptime bun.Environment.allow_assert) {
+            std.debug.assert(this.exited_count == 0);
+        }
+        log("pipeline start {x} (count={d})", .{ @intFromPtr(this), this.node.items.len });
+        if (this.node.items.len == 0) {
+            this.parent.childDone(this, 0);
+            return;
+        }
+
+        for (cmds, 0..) |*cmd_or_result, i| {
+            var stdin: IO.Kind = if (i == 0) this.io.stdin else .{ .fd = this.pipes.?[i - 1][0] };
+            var stdout: IO.Kind = if (i == cmds.len - 1) this.io.stdout else .{ .fd = this.pipes.?[i][1] };
+
+            std.debug.assert(cmd_or_result.* == .cmd);
+            var cmd = cmd_or_result.cmd;
+            log("Spawn: proc_idx={d} stdin={any} stdout={any} stderr={any}\n", .{ i, stdin, stdout, cmd.io.stderr });
+            cmd.start();
+
+            // If command is a subproc (and not a builtin) we need to close the fd
+            if (cmd.isSubproc()) {
+                stdin.close();
+                stdout.close();
+            }
+        }
+    }
+
+    pub fn childDone(this: *Pipeline, child: ChildPtr, exit_code: u8) void {
+        if (comptime bun.Environment.allow_assert) {
+            std.debug.assert(this.cmds.?.len > 0);
+        }
+
+        const idx = brk: {
+            const ptr_value: u64 = @bitCast(child.ptr.repr);
+            _ = ptr_value;
+            for (this.cmds.?, 0..) |cmd_or_result, i| {
+                if (cmd_or_result == .cmd) {
+                    if (@intFromPtr(cmd_or_result.cmd) == @as(usize, @intCast(child.ptr.repr._ptr))) break :brk i;
+                }
+            }
+            unreachable;
+        };
+
+        log("pipeline child done {x} ({d}) i={d}", .{ @intFromPtr(this), exit_code, idx });
+        child.deinit();
+        this.cmds.?[idx] = .{ .result = exit_code };
+        this.exited_count += 1;
+
+        if (this.exited_count >= this.cmds.?.len) {
+            var last_exit_code: u8 = 0;
+            for (this.cmds.?) |cmd_or_result| {
+                if (cmd_or_result == .result) {
+                    last_exit_code = cmd_or_result.result;
+                    break;
+                }
+            }
+            this.parent.childDone(this, last_exit_code);
+            return;
+        }
+    }
+
+    pub fn deinit(this: *Pipeline) void {
+        // If commands was zero then we didn't allocate anything
+        if (this.cmds == null) return;
+        for (this.cmds.?) |*cmd_or_result| {
+            if (cmd_or_result.* == .cmd) {
+                cmd_or_result.cmd.deinit();
+            }
+        }
+        this.base.interpreter.allocator.free(this.pipes);
+        this.base.interpreter.allocator.free(this.cmds);
+    }
+
+    fn initializePipes(pipes: []Pipe, set_count: *u32) !void {
+        for (pipes) |*pipe| {
+            pipe.* = try std.os.pipe();
+            set_count.* += 1;
+        }
+    }
+
+    fn writePipe(pipes: []Pipe, proc_idx: usize, cmd_count: usize, io: *IO) IO.Kind {
+        // Last command in the pipeline should write to stdout
+        if (proc_idx == cmd_count - 1) return io.stdout;
+        return .{ .fd = pipes[proc_idx][1] };
+    }
+
+    fn readPipe(pipes: []Pipe, proc_idx: usize, io: *IO) IO.Kind {
+        // First command in the pipeline should read from stdin
+        if (proc_idx == 0) return io.stdin;
+        return .{ .fd = pipes[proc_idx - 1][0] };
     }
 };
 
@@ -626,6 +886,7 @@ pub const Cmd = struct {
     cmd: ?*Subprocess,
     parent: ParentPtr,
     exit_code: ?u8,
+    io: IO,
 
     const ParentPtr = StatePtrUnion(.{
         Stmt,
@@ -637,10 +898,18 @@ pub const Cmd = struct {
 
     pub fn start(this: *Cmd) void {
         log("cmd start {x}", .{@intFromPtr(this)});
-        this.initSubproc() catch bun.outOfMemory();
+        this.initSubproc() catch |err| {
+            std.debug.print("THIS THE ERROR: {any}\n", .{err});
+            bun.outOfMemory();
+        };
     }
 
-    pub fn fromAST(interpreter: *Interpreter, node: *const ast.Cmd, parent: ParentPtr) *Cmd {
+    pub fn isSubproc(this: *Cmd) bool {
+        _ = this;
+        return true;
+    }
+
+    pub fn init(interpreter: *Interpreter, node: *const ast.Cmd, parent: ParentPtr, io: IO) *Cmd {
         var cmd = interpreter.allocator.create(Cmd) catch |err| {
             std.debug.print("Ruh roh: {any}\n", .{err});
             @panic("Ruh roh");
@@ -650,6 +919,7 @@ pub const Cmd = struct {
         cmd.cmd = null;
         cmd.parent = parent;
         cmd.exit_code = null;
+        cmd.io = io;
         return cmd;
     }
 
@@ -660,9 +930,7 @@ pub const Cmd = struct {
         defer arena.deinit();
 
         var spawn_args = Subprocess.SpawnArgs.default(&arena, this.base.interpreter.global.bunVM(), false);
-        spawn_args.stdio[bun.STDIN_FD] = .inherit;
-        spawn_args.stdio[bun.STDOUT_FD] = .inherit;
-        spawn_args.stdio[bun.STDERR_FD] = .inherit;
+
         spawn_args.argv = std.ArrayListUnmanaged(?[*:0]const u8){};
         spawn_args.cmd_parent = this;
 
@@ -712,13 +980,14 @@ pub const Cmd = struct {
         };
         spawn_args.argv = std.ArrayListUnmanaged(?[*:0]const u8){ .items = args.items, .capacity = args.capacity };
 
+        // FIXME support redirects
+        // spawn_args.stdio[bun.STDIN_FD] = .inherit;
+        // spawn_args.stdio[bun.STDOUT_FD] = .inherit;
+        // spawn_args.stdio[bun.STDERR_FD] = .inherit;
+        this.io.to_subproc_stdio(&spawn_args.stdio);
+
         const subproc = (try Subprocess.spawnAsync(this.base.interpreter.global, spawn_args)) orelse return ShellError.Spawn;
         this.cmd = subproc;
-    }
-
-    pub fn evalWord(this: *Cmd, word: *const ast.Atom) []const u8 {
-        _ = word;
-        _ = this;
     }
 
     pub fn onExit(this: *Cmd, exit_code: u8) void {
@@ -727,10 +996,16 @@ pub const Cmd = struct {
         this.parent.childDone(this, exit_code);
     }
 
+    // TODO check that this also makes sure that the poll ref is killed because if it isn't then this Cmd pointer will be stale and so when the event for pid exit happens it will cause crash
     pub fn deinit(this: *Cmd) void {
         if (this.cmd) |cmd| {
-            cmd.unref(true);
-            cmd.deinit();
+            if (cmd.hasExited()) {
+                cmd.unref(true);
+                cmd.deinit();
+            } else {
+                _ = cmd.tryKill(9);
+                cmd.unref(true);
+            }
         }
         this.base.interpreter.allocator.destroy(this);
     }
@@ -742,18 +1017,6 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
         ptr: Ptr,
 
         const Ptr = TaggedPointerUnion(TypesValue);
-
-        fn tagInt(this: @This()) Ptr.TagInt {
-            return @intFromEnum(this.ptr.tag());
-        }
-
-        pub fn init(_ptr: anytype) @This() {
-            return .{ .ptr = Ptr.init(_ptr) };
-        }
-
-        pub inline fn as(this: @This(), comptime Type: type) *Type {
-            return this.ptr.as(Type);
-        }
 
         pub fn start(this: @This()) void {
             const tags = comptime std.meta.fields(Ptr.Tag);
@@ -805,6 +1068,18 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
                 @panic("Bad tag");
             }
         }
+
+        fn tagInt(this: @This()) Ptr.TagInt {
+            return @intFromEnum(this.ptr.tag());
+        }
+
+        pub fn init(_ptr: anytype) @This() {
+            return .{ .ptr = Ptr.init(_ptr) };
+        }
+
+        pub inline fn as(this: @This(), comptime Type: type) *Type {
+            return this.ptr.as(Type);
+        }
     };
 }
 
@@ -816,4 +1091,15 @@ pub fn MaybeChild(comptime T: type) type {
         .Optional => |info| info.child,
         else => T,
     };
+}
+
+fn closefd(fd: bun.FileDescriptor) void {
+    if (Syscall.close2(fd)) |err| {
+        _ = err;
+        log("ERR closefd: {d}\n", .{fd});
+        // stderr_mutex.lock();
+        // defer stderr_mutex.unlock();
+        // const stderr = std.io.getStdErr().writer();
+        // err.toSystemError().format("error", .{}, stderr) catch @panic("damn");
+    }
 }

@@ -142,7 +142,10 @@ export async function load(url, context, nextLoad) {
 
 /** @type {globalPreload} */
 export function globalPreload(ctx) {
-    return /*js*/`process.env.BUN_POLYFILLS_TEST_RUNNER = 1;`;
+    return /*js*/`
+    process.env.BUN_POLYFILLS_TEST_RUNNER = 1;
+    process.execArgv.push('--input-type=module');
+    `;
 }
 
 /** @param {import('bun-wasm/schema').Message[]} buildErrors */

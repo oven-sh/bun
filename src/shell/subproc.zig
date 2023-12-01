@@ -19,8 +19,7 @@ const uws = bun.uws;
 
 const PosixSpawn = @import("../bun.js/api/bun/spawn.zig").PosixSpawn;
 
-const ShellStatePtr = @import("./shell.zig").StateMachine.StatePtr;
-const ShellCmd = @import("./shell.zig").StateMachine.Cmd;
+const ShellCmd = @import("./interpreter.zig").Cmd;
 
 const util = @import("../subproc/util.zig");
 

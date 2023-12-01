@@ -405,6 +405,7 @@ pub const Task = TaggedPointerUnion(.{
     Lchown,
     Unlink,
     // WaitPidResultTask,
+    // These need to be referenced like this so they both don't become `WaitPidResultTask`
     JSC.Subprocess.WaiterThread.WaitPidResultTask,
     bun.ShellSubprocess.WaiterThread.WaitPidResultTask,
 });

@@ -1601,15 +1601,10 @@ JSC__JSObject__create(JSC__JSGlobalObject* globalObject, size_t initialCapacity,
     return JSC::JSValue::encode(object);
 }
 
-JSC__JSValue JSC__JSValue__constructEmptyObject(JSC__JSGlobalObject* globalObject,
-    JSC__JSObject* prototype,
-    size_t initialCapacity)
+JSC__JSValue JSC__JSValue__createEmptyObjectWithNullPrototype(JSC__JSGlobalObject* globalObject)
 {
-    if (prototype == nullptr) {
-        return JSC::JSValue::encode(JSC::constructEmptyObject(globalObject->vm(), globalObject->nullPrototypeObjectStructure()));
-    } else {
-        return JSC::JSValue::encode(JSC::constructEmptyObject(globalObject, prototype, std::min(static_cast<unsigned int>(initialCapacity), JSFinalObject::maxInlineCapacity)));
-    }
+    return JSValue::encode(
+        JSC::constructEmptyObject(globalObject->vm(), globalObject->nullPrototypeObjectStructure()));
 }
 
 JSC__JSValue JSC__JSValue__createEmptyObject(JSC__JSGlobalObject* globalObject,

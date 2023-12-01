@@ -3555,11 +3555,10 @@ pub const JSValue = enum(JSValueReprInt) {
         return JSC__jsTypeStringForValue(globalObject, this);
     }
 
-    extern fn JSC__JSValue__constructEmptyObject(globalObject: *JSGlobalObject, prototype: [*c]JSC.JSObject, len: usize) JSValue;
+    extern fn JSC__JSValue__createEmptyObjectWithNullPrototype(globalObject: *JSGlobalObject) JSValue;
 
-    /// Creates a new empty object with the specified prototype, or no prototype if null
-    pub fn constructEmptyObject(global: *JSGlobalObject, prototype: ?*JSC.JSObject, len: usize) JSValue {
-        return JSC__JSValue__constructEmptyObject(global, prototype, len);
+    pub fn createEmptyObjectWithNullPrototype(global: *JSGlobalObject) JSValue {
+        return JSC__JSValue__createEmptyObjectWithNullPrototype(global);
     }
 
     /// Creates a new empty object, with Object as its prototype

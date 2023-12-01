@@ -622,7 +622,7 @@ pub fn parseArgs(globalThis: *JSGlobalObject, config_obj: JSValue) !JSValue {
     log("Phase 2: parse options from tokens (tokens.len={d})", .{tokens.items.len});
 
     // note that "values" needs to have a null prototype instead of Object, to avoid issues such as "values.toString"` being defined
-    var result_values = JSValue.constructEmptyObject(globalThis, null, 0);
+    var result_values = JSValue.createEmptyObjectWithNullPrototype(globalThis);
     var result_positionals = JSC.JSValue.createEmptyArray(globalThis, 0);
     var result_positionals_len: u32 = 0;
     for (tokens.items) |t| {

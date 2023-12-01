@@ -16,7 +16,7 @@ if (typeof process === 'object' && process !== null) {
     process.versions.c_ares = '0e7a5dee0fbb04080750cf6eabbe89d8bae87faa' satisfies Process['versions'][string];
     process.versions.zig = '0.12.0-dev.1604+caae40c21' satisfies Process['versions'][string];
     process.versions.bun = '1.0.13' satisfies Process['versions'][string];
-    Reflect.set(process, 'revision', 'ee140933258ea9bf72cfa0fdc1cd998c15680bc7' satisfies Process['revision']);
+    Reflect.set(process, 'revision', '19cee77e8b063917b04d1fb01b929890a4670741' satisfies Process['revision']);
     /** @end_generated_code */
 
     // Doesn't work on Windows sadly

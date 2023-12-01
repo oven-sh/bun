@@ -48,7 +48,7 @@ export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satis
 
 //? These are automatically updated on build by tools/updateversions.ts, do not edit manually.
 export const version = '1.0.13' satisfies typeof Bun.version;
-export const revision = 'ee140933258ea9bf72cfa0fdc1cd998c15680bc7' satisfies typeof Bun.revision;
+export const revision = '19cee77e8b063917b04d1fb01b929890a4670741' satisfies typeof Bun.revision;
 
 export const gc = (globalThis.gc ? (() => (globalThis.gc!(), process.memoryUsage().heapUsed)) : (() => {
     const err = new Error('[bun-polyfills] Garbage collection polyfills are only available when Node.js is ran with the --expose-gc flag.');
@@ -270,8 +270,7 @@ export const spawn = ((...args) => {
     if (opts.stdio[0] && typeof opts.stdio[0] !== 'string') {
         stdinSrc = opts.stdio[0];
         stdio[0] = 'pipe';
-    }
-
+    } else stdio[0] = opts.stdio[0];
     const subp = chp.spawn(cmd, argv, {
         cwd: opts.cwd ?? process.cwd(),
         // why is this set to (string | number) on env values...
@@ -299,12 +298,12 @@ export const spawn = ((...args) => {
     let internalStdinStream: streams.Writable;
     if (subpAsNode.stdin) {
         const wstream = subpAsNode.stdin;
-        Reflect.set(wstream, 'destroy', function (this: NodeJS.WritableStream, err?: Error) {
+        internalStdinStream = wstream;
+        (<Mutable<Subprocess>>subp).stdin = new FileSink(wstream);
+        Reflect.set(subp.stdin as FileSink, 'destroy', function (this: NodeJS.WritableStream, err?: Error) {
             void this.end(); /* if it fails its already closed */
             return this;
         });
-        internalStdinStream = wstream;
-        (<Mutable<Subprocess>>subp).stdin = new FileSink(wstream);
 
     }
     Object.defineProperty(subp, 'readable', { get(this: Subprocess) { return this.stdout; } });

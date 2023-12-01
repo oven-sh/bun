@@ -8166,6 +8166,7 @@ pub const PackageManager = struct {
         var root = Lockfile.Package{};
         var needs_new_lockfile = load_lockfile_result != .ok or
             (load_lockfile_result.ok.lockfile.buffers.dependencies.items.len == 0 and manager.package_json_updates.len > 0);
+
         manager.options.enable.force_save_lockfile = manager.options.enable.force_save_lockfile or (load_lockfile_result == .ok and load_lockfile_result.ok.was_migrated);
 
         // this defaults to false

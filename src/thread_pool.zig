@@ -52,7 +52,7 @@ const Sync = packed struct {
 /// Configuration options for the thread pool.
 /// TODO: add CPU core affinity?
 pub const Config = struct {
-    stack_size: u32 = (std.Thread.SpawnConfig{}).stack_size,
+    stack_size: u32 = default_stack_size,
     max_threads: u32,
 };
 
@@ -440,6 +440,22 @@ inline fn notify(self: *ThreadPool, is_waking: bool) void {
     return self.notifySlow(is_waking);
 }
 
+pub const default_stack_size = brk: {
+    // 2mb
+    const default = 2 * 1024 * 1024;
+
+    if (!Environment.isMac) break :brk default;
+
+    const size = default - (default % std.mem.page_size);
+
+    // stack size must be a multiple of page_size
+    // macOS will fail to spawn a thread if the stack size is not a multiple of page_size
+    if (size % std.mem.page_size != 0)
+        @compileError("Thread stack size is not a multiple of page size");
+
+    break :brk size;
+};
+
 /// Warm the thread pool up to the given number of threads.
 /// https://www.youtube.com/watch?v=ys3qcbO5KWw
 pub fn warm(self: *ThreadPool, count: u14) void {
@@ -457,13 +473,7 @@ pub fn warm(self: *ThreadPool, count: u14) void {
             .Release,
             .Monotonic,
         ) orelse break));
-        const spawn_config = if (Environment.isMac)
-            // stack size must be a multiple of page_size
-            // macOS will fail to spawn a thread if the stack size is not a multiple of page_size
-            std.Thread.SpawnConfig{ .stack_size = ((std.Thread.SpawnConfig{}).stack_size + (std.mem.page_size / 2) / std.mem.page_size) * std.mem.page_size }
-        else
-            std.Thread.SpawnConfig{};
-
+        const spawn_config = std.Thread.SpawnConfig{ .stack_size = default_stack_size };
         const thread = std.Thread.spawn(spawn_config, Thread.run, .{self}) catch return self.unregister(null);
         thread.detach();
     }
@@ -505,13 +515,7 @@ noinline fn notifySlow(self: *ThreadPool, is_waking: bool) void {
 
             // We signaled to spawn a new thread
             if (can_wake and sync.spawned < self.max_threads) {
-                const spawn_config = if (Environment.isMac)
-                    // stack size must be a multiple of page_size
-                    // macOS will fail to spawn a thread if the stack size is not a multiple of page_size
-                    std.Thread.SpawnConfig{ .stack_size = ((std.Thread.SpawnConfig{}).stack_size + (std.mem.page_size / 2) / std.mem.page_size) * std.mem.page_size }
-                else
-                    std.Thread.SpawnConfig{};
-
+                const spawn_config = std.Thread.SpawnConfig{ .stack_size = default_stack_size };
                 const thread = std.Thread.spawn(spawn_config, Thread.run, .{self}) catch return self.unregister(null);
                 // if (self.name.len > 0) thread.setName(self.name) catch {};
                 return thread.detach();

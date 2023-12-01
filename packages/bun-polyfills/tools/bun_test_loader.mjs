@@ -86,7 +86,7 @@ export async function resolve(specifier, context, nextResolve) {
 
 const APPLY_IMPORT_META_POLYFILL = /*js*/`
     ;(await import("${pathToFileURL(path.resolve(libRoot, 'global', 'importmeta.js')).href}")).default(import.meta);
-`;
+`.trim();
 /** @type {load} */
 export async function load(url, context, nextLoad) {
     //console.debug('Loading', url, 'with context', context);

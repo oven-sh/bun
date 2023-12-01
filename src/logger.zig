@@ -367,7 +367,7 @@ pub const Data = struct {
                 if (Environment.isDebug) {
                     // comptime magic: do not print byte when using Bun.inspect, but only print
                     // when you the writer is to a file (like standard out)
-                    if (comptime std.mem.indexOf(u8, @typeName(@TypeOf(to)), "fs.file") != null) {
+                    if ((comptime std.mem.indexOf(u8, @typeName(@TypeOf(to)), "fs.file") != null) and std.io.getStdOut().isTty()) {
                         try to.print(comptime Output.prettyFmt(" <d>byte={d}<r>", enable_ansi_colors), .{
                             location.offset,
                         });

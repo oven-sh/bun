@@ -4433,6 +4433,34 @@ declare module "bun" {
     buffer: ArrayBufferView | ArrayBufferLike,
     offset?: number,
   ): number;
+
+  /**
+   * Provides a higher level API for command-line argument parsing than interacting
+   * with `process.argv` directly. Takes a specification for the expected arguments
+   * and returns a structured object with the parsed options and positionals.
+   *
+   * ```js
+   * const args = ['-f', '--bar', 'b'];
+   * const options = {
+   *   foo: {
+   *     type: 'boolean',
+   *     short: 'f',
+   *   },
+   *   bar: {
+   *     type: 'string',
+   *   },
+   * };
+   * const {
+   *   values,
+   *   positionals,
+   * } = Bun.parseArgs({ args, options });
+   * console.log(values, positionals);
+   * // Prints: { foo: true, bar: 'b' } []
+   * ```
+   * @param config Used to provide arguments for parsing and to configure the parser.
+   * @return The parsed command line arguments
+   */
+  export const parseArgs: typeof import("util").parseArgs;
 }
 
 type TypedArray =

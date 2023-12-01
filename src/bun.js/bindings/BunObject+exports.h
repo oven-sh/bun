@@ -53,6 +53,7 @@
     macro(mmap) \
     macro(nanoseconds) \
     macro(openInEditor) \
+    macro(parseArgs) \
     macro(registerMacro) \
     macro(resolve) \
     macro(resolveSync) \

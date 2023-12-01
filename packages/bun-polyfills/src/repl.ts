@@ -1,6 +1,7 @@
 import bun from './index.js';
 import * as jsc from './modules/jsc.js';
 import * as ffi from './modules/ffi.js';
+import * as sqlite from './modules/sqlite.js';
 
 // This file serves two purposes:
 // 1. It is the entry point for using the Bun global in the REPL. (--import this file)
@@ -10,10 +11,9 @@ import * as ffi from './modules/ffi.js';
 globalThis.Bun = bun as typeof bun & {
     // TODO: Missing polyfills
     build: typeof import('bun').build;
-    TOML: typeof import('bun').TOML;
-    semver: typeof import('bun').semver;
     FileSystemRouter: typeof import('bun').FileSystemRouter;
 };
 
 Reflect.set(globalThis, 'jsc', jsc);
 Reflect.set(globalThis, 'ffi', ffi);
+Reflect.set(globalThis, 'sqlite', sqlite);

@@ -440,6 +440,12 @@ inline fn notify(self: *ThreadPool, is_waking: bool) void {
     return self.notifySlow(is_waking);
 }
 
+const default_stack_size = (std.Thread.SpawnConfig{}).stack_size;
+const stack_size = if (!Environment.isMac)
+    default_stack_size
+else
+    default_stack_size - (default_stack_size % std.mem.page_size);
+
 /// Warm the thread pool up to the given number of threads.
 /// https://www.youtube.com/watch?v=ys3qcbO5KWw
 pub fn warm(self: *ThreadPool, count: u14) void {
@@ -457,13 +463,7 @@ pub fn warm(self: *ThreadPool, count: u14) void {
             .Release,
             .Monotonic,
         ) orelse break));
-        const spawn_config = if (Environment.isMac)
-            // stack size must be a multiple of page_size
-            // macOS will fail to spawn a thread if the stack size is not a multiple of page_size
-            std.Thread.SpawnConfig{ .stack_size = ((std.Thread.SpawnConfig{}).stack_size + (std.mem.page_size / 2) / std.mem.page_size) * std.mem.page_size }
-        else
-            std.Thread.SpawnConfig{};
-
+        const spawn_config = std.Thread.SpawnConfig{ .stack_size = stack_size };
         const thread = std.Thread.spawn(spawn_config, Thread.run, .{self}) catch return self.unregister(null);
         thread.detach();
     }
@@ -505,13 +505,7 @@ noinline fn notifySlow(self: *ThreadPool, is_waking: bool) void {
 
             // We signaled to spawn a new thread
             if (can_wake and sync.spawned < self.max_threads) {
-                const spawn_config = if (Environment.isMac)
-                    // stack size must be a multiple of page_size
-                    // macOS will fail to spawn a thread if the stack size is not a multiple of page_size
-                    std.Thread.SpawnConfig{ .stack_size = ((std.Thread.SpawnConfig{}).stack_size + (std.mem.page_size / 2) / std.mem.page_size) * std.mem.page_size }
-                else
-                    std.Thread.SpawnConfig{};
-
+                const spawn_config = std.Thread.SpawnConfig{ .stack_size = stack_size };
                 const thread = std.Thread.spawn(spawn_config, Thread.run, .{self}) catch return self.unregister(null);
                 // if (self.name.len > 0) thread.setName(self.name) catch {};
                 return thread.detach();

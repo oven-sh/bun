@@ -4304,7 +4304,12 @@ it("should report error on duplicated workspace packages", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err.replace(/^bun install v.+\n/, "bun install\n").replace().replaceAll(package_dir, "[dir]")).toMatchSnapshot();
+  expect(
+    err
+      .replace(/^bun install v.+\n/, "bun install\n")
+      .replace()
+      .replaceAll(package_dir, "[dir]"),
+  ).toMatchSnapshot();
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out).toEqual("");

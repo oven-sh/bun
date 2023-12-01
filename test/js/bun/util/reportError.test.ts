@@ -10,7 +10,7 @@ test("reportError", () => {
     env: {
       ...bunEnv,
       // this is default enabled in debug, affects output.
-      BUN_JSC_showPrivateScriptsInStackTraces: '0',
+      BUN_JSC_showPrivateScriptsInStackTraces: "0",
     },
   });
   const output = stderr.toString().replaceAll(cwd, "");

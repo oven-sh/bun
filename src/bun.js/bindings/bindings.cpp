@@ -97,6 +97,7 @@
 
 #include "AsyncContextFrame.h"
 #include "JavaScriptCore/InternalFieldTuple.h"
+#include "wtf/text/StringToIntegerConversion.h"
 
 template<typename UWSResponse>
 static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
@@ -3718,12 +3719,20 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
         // Most of the time, when you look at a stack trace, you want a couple lines above
 
         source_lines[0] = Bun::toStringRef(sourceString.substring(lineStart, lineStop - lineStart).toStringWithoutCopying());
-        source_line_numbers[0] = line;
+        source_line_numbers[0] = line - 1;
 
         if (lineStart > 0) {
             auto byte_offset_in_source_string = lineStart - 1;
             uint8_t source_line_i = 1;
             auto remaining_lines_to_grab = source_lines_count - 1;
+
+            {
+                // This should probably be code points instead of newlines
+                while (byte_offset_in_source_string > 0 && chars[byte_offset_in_source_string] != '\n') {
+                    byte_offset_in_source_string--;
+                }
+                byte_offset_in_source_string -= byte_offset_in_source_string > 0;
+            }
 
             while (byte_offset_in_source_string > 0 && remaining_lines_to_grab > 0) {
                 unsigned int end_of_line_offset = byte_offset_in_source_string;
@@ -3736,7 +3745,7 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
                 // We are at the beginning of the line
                 source_lines[source_line_i] = Bun::toStringRef(sourceString.substring(byte_offset_in_source_string, end_of_line_offset - byte_offset_in_source_string + 1).toStringWithoutCopying());
 
-                source_line_numbers[source_line_i] = line - source_line_i;
+                source_line_numbers[source_line_i] = line - source_line_i - 1;
                 source_line_i++;
 
                 remaining_lines_to_grab--;
@@ -3774,6 +3783,133 @@ static void populateStackFrame(JSC::VM& vm, ZigStackTrace* trace, const JSC::Sta
         is_top ? trace->source_lines_numbers : nullptr,
         is_top ? trace->source_lines_to_collect : 0, &frame->position);
 }
+
+class V8StackTraceIterator {
+public:
+    class StackFrame {
+    public:
+        StringView functionName {};
+        StringView sourceURL {};
+        WTF::OrdinalNumber lineNumber = WTF::OrdinalNumber::fromZeroBasedInt(0);
+        WTF::OrdinalNumber columnNumber = WTF::OrdinalNumber::fromZeroBasedInt(0);
+
+        bool isConstructor = false;
+        bool isGlobalCode = false;
+    };
+
+    WTF::StringView stack;
+    unsigned int offset = 0;
+
+    V8StackTraceIterator(WTF::StringView stack_)
+        : stack(stack_)
+    {
+    }
+
+    bool parseFrame(StackFrame& frame)
+    {
+
+        if (offset >= stack.length())
+            return false;
+
+        auto start = stack.find("\n    at "_s, offset);
+
+        if (start == WTF::notFound) {
+            offset = stack.length();
+            return false;
+        }
+
+        start += 8;
+        auto end = stack.find("\n"_s, start);
+
+        if (end == WTF::notFound) {
+            offset = stack.length();
+            end = offset;
+        }
+
+        if (end == start || start == WTF::notFound) {
+            return false;
+        }
+
+        StringView line = stack.substring(start, end - start);
+        offset = end;
+
+        auto openingParenthese = line.reverseFind('(');
+        auto closingParenthese = line.reverseFind(')');
+
+        if (openingParenthese > closingParenthese)
+            openingParenthese = WTF::notFound;
+
+        if (closingParenthese == WTF::notFound || closingParenthese == WTF::notFound) {
+            offset = stack.length();
+            return false;
+        }
+
+        auto firstColon = line.find(':', openingParenthese + 1);
+
+        // if there is no colon, that means we only have a filename and no line number
+
+        //   at foo (native)
+        if (firstColon == WTF::notFound) {
+            frame.sourceURL = line.substring(openingParenthese + 1, closingParenthese - openingParenthese - 1);
+        } else {
+            // at foo (/path/to/file.js:
+            frame.sourceURL = line.substring(openingParenthese + 1, firstColon - openingParenthese - 1);
+        }
+
+        if (firstColon != WTF::notFound) {
+
+            auto secondColon = line.find(':', firstColon + 1);
+            // at foo (/path/to/file.js:1)
+            if (secondColon == WTF::notFound) {
+                if (auto lineNumber = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(line.substring(firstColon + 1, closingParenthese - firstColon - 1))) {
+                    frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(lineNumber.value());
+                }
+            } else {
+                // at foo (/path/to/file.js:1:)
+                if (auto lineNumber = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(line.substring(firstColon + 1, secondColon - firstColon - 1))) {
+                    frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(lineNumber.value());
+                }
+
+                // at foo (/path/to/file.js:1:2)
+                if (auto columnNumber = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(line.substring(secondColon + 1, closingParenthese - secondColon - 1))) {
+                    frame.columnNumber = WTF::OrdinalNumber::fromOneBasedInt(columnNumber.value());
+                }
+            }
+        }
+
+        StringView functionName = line.substring(0, openingParenthese - 1);
+
+        if (functionName == "<anonymous>"_s) {
+            functionName = StringView();
+        }
+
+        if (functionName == "global code"_s) {
+            functionName = StringView();
+            frame.isGlobalCode = true;
+        }
+
+        if (functionName.startsWith("new "_s)) {
+            frame.isConstructor = true;
+            functionName = functionName.substring(4);
+        }
+
+        frame.functionName = functionName;
+
+        return true;
+    }
+
+    void forEachFrame(const WTF::Function<void(const V8StackTraceIterator::StackFrame&, bool&)> callback)
+    {
+        bool stop = false;
+        while (!stop) {
+            StackFrame frame;
+            if (!parseFrame(frame))
+                break;
+            callback(frame, stop);
+        }
+    }
+};
+
 static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& frames, ZigStackTrace* trace)
 {
     uint8_t frame_i = 0;
@@ -3862,29 +3998,77 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     }
 
     if (getFromSourceURL) {
-        if (JSC::JSValue sourceURL = obj->getIfPropertyExists(global, vm.propertyNames->sourceURL)) {
-            except->stack.frames_ptr[0].source_url = Bun::toStringRef(global, sourceURL);
+        // we don't want to serialize JSC::StackFrame longer than we need to
+        // so in this case, we parse the stack trace as a string
+        if (JSC::JSValue stackValue = obj->getIfPropertyExists(global, vm.propertyNames->stack)) {
+            if (stackValue.isString()) {
+                WTF::String stack = stackValue.toWTFString(global);
 
-            if (JSC::JSValue column = obj->getIfPropertyExists(global, vm.propertyNames->column)) {
-                except->stack.frames_ptr[0].position.column_start = column.toInt32(global);
-            }
+                V8StackTraceIterator iterator(stack);
+                unsigned frameI = 0;
+                const uint8_t frame_count = except->stack.frames_len;
 
-            if (JSC::JSValue line = obj->getIfPropertyExists(global, vm.propertyNames->line)) {
-                except->stack.frames_ptr[0].position.line = line.toInt32(global);
+                except->stack.frames_len = 0;
 
-                if (JSC::JSValue lineText = obj->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "lineText"_s))) {
-                    if (JSC::JSString* jsStr = lineText.toStringOrNull(global)) {
-                        auto str = jsStr->value(global);
-                        except->stack.source_lines_ptr[0] = Bun::toStringRef(str);
-                        except->stack.source_lines_numbers[0] = except->stack.frames_ptr[0].position.line;
-                        except->stack.source_lines_len = 1;
-                        except->remapped = true;
+                iterator.forEachFrame([&](const V8StackTraceIterator::StackFrame& frame, bool& stop) -> void {
+                    ASSERT(except->stack.frames_len < frame_count);
+                    auto& current = except->stack.frames_ptr[except->stack.frames_len];
+
+                    String functionName = frame.functionName.toString();
+                    String sourceURL = frame.sourceURL.toString();
+                    current.function_name = Bun::toStringRef(functionName);
+                    current.source_url = Bun::toStringRef(sourceURL);
+                    current.position.line = frame.lineNumber.zeroBasedInt();
+                    current.position.column_start = frame.columnNumber.zeroBasedInt();
+                    current.position.column_stop = frame.columnNumber.zeroBasedInt();
+
+                    current.remapped = true;
+
+                    if (frame.isConstructor) {
+                        current.code_type = ZigStackFrameCodeConstructor;
+                    } else if (frame.isGlobalCode) {
+                        current.code_type = ZigStackFrameCodeGlobal;
                     }
+
+                    except->stack.frames_len += 1;
+
+                    stop = except->stack.frames_len >= frame_count;
+                });
+
+                if (except->stack.frames_len > 0) {
+                    getFromSourceURL = false;
+                    except->remapped = true;
+                } else {
+                    except->stack.frames_len = frame_count;
                 }
             }
+        }
 
-            except->stack.frames_len = 1;
-            except->stack.frames_ptr[0].remapped = obj->hasProperty(global, JSC::Identifier::fromString(vm, "originalLine"_s));
+        if (getFromSourceURL) {
+            if (JSC::JSValue sourceURL = obj->getIfPropertyExists(global, vm.propertyNames->sourceURL)) {
+                except->stack.frames_ptr[0].source_url = Bun::toStringRef(global, sourceURL);
+
+                if (JSC::JSValue column = obj->getIfPropertyExists(global, vm.propertyNames->column)) {
+                    except->stack.frames_ptr[0].position.column_start = column.toInt32(global);
+                }
+
+                if (JSC::JSValue line = obj->getIfPropertyExists(global, vm.propertyNames->line)) {
+                    except->stack.frames_ptr[0].position.line = line.toInt32(global);
+
+                    if (JSC::JSValue lineText = obj->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "lineText"_s))) {
+                        if (JSC::JSString* jsStr = lineText.toStringOrNull(global)) {
+                            auto str = jsStr->value(global);
+                            except->stack.source_lines_ptr[0] = Bun::toStringRef(str);
+                            except->stack.source_lines_numbers[0] = except->stack.frames_ptr[0].position.line;
+                            except->stack.source_lines_len = 1;
+                            except->remapped = true;
+                        }
+                    }
+                }
+
+                except->stack.frames_len = 1;
+                except->stack.frames_ptr[0].remapped = obj->hasProperty(global, JSC::Identifier::fromString(vm, "originalLine"_s));
+            }
         }
     }
 

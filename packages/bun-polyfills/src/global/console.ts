@@ -9,14 +9,30 @@
 //    };
 //}
 
+const consoleAsyncIterChunks: string[] = [];
 //? Implements: for await (const line of console) { ... }
 console[Symbol.asyncIterator] = async function* () {
-    while (true) yield await new Promise(resolve => {
-        process.stdin.on('data', (data: Buffer | string) => {
-            const str = data.toString('utf-8').replaceAll(/[\r\n]+/g, '');
-            resolve(str);
+    if (consoleAsyncIterChunks.length) {
+        for (const line of [...consoleAsyncIterChunks]) {
+            consoleAsyncIterChunks.shift();
+            if (!line) continue;
+            yield line;
+        }
+    }
+    while (true) {
+        const p = await new Promise<string[]>(resolve => {
+            process.stdin.once('data', (data: Buffer | string) => {
+                const str = data.toString('utf-8').split(/[\r\n]+/g);
+                resolve(str);
+            });
         });
-    });
+        consoleAsyncIterChunks.push(...p);
+        for (const line of p) {
+            consoleAsyncIterChunks.shift();
+            if (!line) continue;
+            yield line;
+        }
+    }
 } satisfies Console[typeof Symbol.asyncIterator];
 
 //? Implements: Bun-exclusive console function

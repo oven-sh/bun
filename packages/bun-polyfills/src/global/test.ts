@@ -1,4 +1,6 @@
 import testPoly from '../modules/test.js';
+import bun from '../modules/bun.js';
+Reflect.set(globalThis, 'Bun', bun);
 
 //! Not a polyfill
 // This file is used for preloading into the polyfills test runner, due to Jest's and by extension Bun's,

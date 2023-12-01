@@ -110,16 +110,15 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     Structure* structure = zigGlobalObject->NodeVMScriptStructure();
     if (UNLIKELY(zigGlobalObject->NodeVMScript() != newTarget)) {
         auto scope = DECLARE_THROW_SCOPE(vm);
-        JSObject* targetObj = asObject(newTarget);
-        if (targetObj == nullptr) {
+        if (!newTarget) {
             throwTypeError(globalObject, scope, "Class constructor Script cannot be invoked without 'new'"_s);
             return {};
         }
 
-        auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(getFunctionRealm(globalObject, targetObj));
+        auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(getFunctionRealm(globalObject, newTarget.getObject()));
         RETURN_IF_EXCEPTION(scope, {});
         structure = InternalFunction::createSubclassStructure(
-            globalObject, targetObj, functionGlobalObject->NodeVMScriptStructure());
+            globalObject, newTarget.getObject(), functionGlobalObject->NodeVMScriptStructure());
         scope.release();
     }
 

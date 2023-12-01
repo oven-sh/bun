@@ -4,7 +4,7 @@
   "module": "src/index.ts",
   "scripts": {
     "node": "tsx --no-warnings --enable-source-maps --import ./dist/src/repl.js",
-    "test": "cd ../../test && node --no-warnings --loader ../packages/bun-polyfills/tools/bun_test_loader.mjs --input-type=module",
+    "test": "cd ../../test && node --no-warnings --loader ../packages/bun-polyfills/tools/bun_test_loader.mjs --import ../packages/bun-polyfills/dist/src/global/index.js --input-type=module",
     "clean": "rm -rf dist",
     "preprocess": "bun tools/updateversions.ts",
     "build": "bun run clean && bun run preprocess && bunx tsc && bunx copyfiles \"./lib/**/*.wasm\" dist",

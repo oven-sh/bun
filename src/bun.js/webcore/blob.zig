@@ -3620,7 +3620,7 @@ pub const Blob = struct {
         if (could_be_all_ascii == null or !could_be_all_ascii.?) {
             // if toUTF16Alloc returns null, it means there are no non-ASCII characters
             // instead of erroring, invalid characters will become a U+FFFD replacement character
-            if (strings.toUTF16Alloc(bun.default_allocator, buf, false) catch unreachable) |external| {
+            if (strings.toUTF16AllocAllowBOM(bun.default_allocator, buf, false, true) catch unreachable) |external| {
                 if (lifetime != .temporary)
                     this.setIsASCIIFlag(false);
 
@@ -3702,7 +3702,7 @@ pub const Blob = struct {
             var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
             const allocator = stack_fallback.get();
             // if toUTF16Alloc returns null, it means there are no non-ASCII characters
-            if (strings.toUTF16Alloc(allocator, buf, false) catch null) |external| {
+            if (strings.toUTF16AllocAllowBOM(allocator, buf, false, true) catch null) |external| {
                 if (comptime lifetime != .temporary) this.setIsASCIIFlag(false);
                 const result = ZigString.init16(external).toJSONObject(global);
                 allocator.free(external);
@@ -4331,7 +4331,7 @@ pub const InternalBlob = struct {
     was_string: bool = false,
 
     pub fn toStringOwned(this: *@This(), globalThis: *JSC.JSGlobalObject) JSValue {
-        if (strings.toUTF16Alloc(globalThis.allocator(), this.bytes.items, false) catch &[_]u16{}) |out| {
+        if (strings.toUTF16AllocAllowBOM(globalThis.allocator(), this.bytes.items, false, true) catch &[_]u16{}) |out| {
             const return_value = ZigString.toExternalU16(out.ptr, out.len, globalThis);
             return_value.ensureStillAlive();
             this.deinit();
@@ -4344,7 +4344,7 @@ pub const InternalBlob = struct {
     }
 
     pub fn toJSON(this: *@This(), globalThis: *JSC.JSGlobalObject) JSValue {
-        const str_bytes = ZigString.init(this.bytes.items).withEncoding();
+        const str_bytes = ZigString.init(strings.withoutUTF8BOM(this.bytes.items)).withEncoding();
         const json = str_bytes.toJSONObject(globalThis);
         this.deinit();
         return json;

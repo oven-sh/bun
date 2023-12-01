@@ -3336,6 +3336,58 @@ pub const AsciiVectorU1Small = @Vector(8, u1);
 pub const AsciiVectorU16U1 = @Vector(ascii_u16_vector_size, u1);
 pub const AsciiU16Vector = @Vector(ascii_u16_vector_size, u16);
 pub const max_4_ascii: @Vector(4, u8) = @splat(@as(u8, 127));
+
+const UTF8_ACCEPT: u8 = 0;
+const UTF8_REJECT: u8 = 12;
+
+const utf8d: [364]u8 = .{
+    // The first part of the table maps bytes to character classes that
+    // to reduce the size of the transition table and create bitmasks.
+    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+    1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  9,  9,  9,  9,  9,  9,  9,  9,  9,  9,  9,  9,  9,  9,  9,  9,
+    7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,  7,
+    8,  8,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,
+    10, 3,  3,  3,  3,  3,  3,  3,  3,  3,  3,  3,  3,  4,  3,  3,  11, 6,  6,  6,  5,  8,  8,  8,  8,  8,  8,  8,  8,  8,  8,  8,
+
+    // The second part is a transition table that maps a combination
+    // of a state of the automaton and a character class to a state.
+    0,  12, 24, 36, 60, 96, 84, 12, 12, 12, 48, 72, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 0,  12, 12, 12, 12, 12, 0,
+    12, 0,  12, 12, 12, 24, 12, 12, 12, 12, 12, 24, 12, 24, 12, 12, 12, 12, 12, 12, 12, 12, 12, 24, 12, 12, 12, 12, 12, 24, 12, 12,
+    12, 12, 12, 12, 12, 24, 12, 12, 12, 12, 12, 12, 12, 12, 12, 36, 12, 36, 12, 12, 12, 36, 12, 12, 12, 12, 12, 36, 12, 36, 12, 12,
+    12, 36, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12,
+};
+
+pub fn decodeCheck(state: u8, byte: u8) u8 {
+    const char_type: u32 = utf8d[byte];
+    // we dont care about the codep
+    // codep = if (*state != UTF8_ACCEPT) (byte & 0x3f) | (*codep << 6) else (0xff >> char_type) & (byte);
+
+    const value = @as(u32, 256) + state + char_type;
+    if (value >= utf8d.len) return UTF8_REJECT;
+    return utf8d[value];
+}
+
+// Copyright (c) 2008-2009 Bjoern Hoehrmann <bjoern@hoehrmann.de>
+// See http://bjoern.hoehrmann.de/utf-8/decoder/dfa/ for details.
+pub fn isValidUTF8WithoutSIMD(slice: []const u8) bool {
+    var state: u8 = 0;
+
+    for (slice) |byte| {
+        state = decodeCheck(state, byte);
+    }
+    return state == UTF8_ACCEPT;
+}
+
+pub fn isValidUTF8(slice: []const u8) bool {
+    if (bun.FeatureFlags.use_simdutf)
+        return bun.simdutf.validate.utf8(slice);
+
+    return isValidUTF8WithoutSIMD(slice);
+}
+
 pub fn isAllASCII(slice: []const u8) bool {
     if (bun.FeatureFlags.use_simdutf)
         return bun.simdutf.validate.ascii(slice);

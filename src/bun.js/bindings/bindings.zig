@@ -260,12 +260,12 @@ pub const ZigString = extern struct {
         return this.slice()[0] == char;
     }
 
-    pub fn substringWithLen(this: ZigString, offset: usize, len: usize) ZigString {
+    pub fn substringWithLen(this: ZigString, start_index: usize, end_index: usize) ZigString {
         if (this.is16Bit()) {
-            return ZigString.from16Slice(this.utf16SliceAligned()[@min(this.len, offset)..len]);
+            return ZigString.from16Slice(this.utf16SliceAligned()[start_index..end_index]);
         }
 
-        var out = ZigString.init(this.slice()[@min(this.len, offset)..len]);
+        var out = ZigString.init(this.slice()[start_index..end_index]);
         if (this.isUTF8()) {
             out.markUTF8();
         }
@@ -277,8 +277,8 @@ pub const ZigString = extern struct {
         return out;
     }
 
-    pub fn substring(this: ZigString, offset: usize) ZigString {
-        return this.substringWithLen(offset, this.len);
+    pub fn substring(this: ZigString, start_index: usize) ZigString {
+        return this.substringWithLen(@min(this.len, start_index), this.len);
     }
 
     pub fn maxUTF8ByteLength(this: ZigString) usize {
@@ -2488,6 +2488,13 @@ pub const JSFunction = extern struct {
     //     return cppFn("toString", .{ this, globalThis });
     // }
 
+    extern fn JSC__JSFunction__getSourceCode(value: JSValue, out: *ZigString) bool;
+
+    pub fn getSourceCode(value: JSValue) ?bun.String {
+        var str: ZigString = undefined;
+        return if (JSC__JSFunction__getSourceCode(value, &str)) bun.String.init(str) else null;
+    }
+
     pub const Extern = [_][]const u8{
         "fromString",
         // "createFromSourceCode",
@@ -3546,6 +3553,19 @@ pub const JSValue = enum(JSValueReprInt) {
         return this.jsType();
     }
 
+    extern fn JSC__jsTypeStringForValue(globalObject: *JSGlobalObject, value: JSValue) *JSC.JSString;
+
+    pub fn jsTypeString(this: JSValue, globalObject: *JSGlobalObject) *JSC.JSString {
+        return JSC__jsTypeStringForValue(globalObject, this);
+    }
+
+    extern fn JSC__JSValue__createEmptyObjectWithNullPrototype(globalObject: *JSGlobalObject) JSValue;
+
+    pub fn createEmptyObjectWithNullPrototype(global: *JSGlobalObject) JSValue {
+        return JSC__JSValue__createEmptyObjectWithNullPrototype(global);
+    }
+
+    /// Creates a new empty object, with Object as its prototype
     pub fn createEmptyObject(global: *JSGlobalObject, len: usize) JSValue {
         return cppFn("createEmptyObject", .{ global, len });
     }
@@ -3876,6 +3896,32 @@ pub const JSValue = enum(JSValueReprInt) {
             strings_count,
             clone,
         });
+    }
+
+    /// Create a JSValue string from a zig format-print (fmt + args)
+    pub fn printString(globalThis: *JSGlobalObject, comptime stack_buffer_size: usize, comptime fmt: []const u8, args: anytype) !JSValue {
+        var stack_fallback = std.heap.stackFallback(stack_buffer_size, globalThis.allocator());
+
+        var buf = try bun.MutableString.init(stack_fallback.get(), stack_buffer_size);
+        defer buf.deinit();
+
+        var writer = buf.writer();
+        try writer.print(fmt, args);
+        return String.init(buf.toOwnedSliceLeaky()).toJSConst(globalThis);
+    }
+
+    /// Create a JSValue string from a zig format-print (fmt + args), with pretty format
+    pub fn printStringPretty(globalThis: *JSGlobalObject, comptime stack_buffer_size: usize, comptime fmt: []const u8, args: anytype) !JSValue {
+        var stack_fallback = std.heap.stackFallback(stack_buffer_size, globalThis.allocator());
+
+        var buf = try bun.MutableString.init(stack_fallback.get(), stack_buffer_size);
+        defer buf.deinit();
+
+        var writer = buf.writer();
+        switch (Output.enable_ansi_colors) {
+            inline else => |enabled| try writer.print(Output.prettyFmt(fmt, enabled), args),
+        }
+        return String.init(buf.toOwnedSliceLeaky()).toJSConst(globalThis);
     }
 
     pub fn fromEntries(globalThis: *JSGlobalObject, keys: [*c]ZigString, values: [*c]ZigString, strings_count: usize, clone: bool) JSValue {
@@ -4357,6 +4403,23 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn get(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
         const value = getIfPropertyExistsImpl(this, global, property.ptr, @as(u32, @intCast(property.len)));
+        return if (@intFromEnum(value) != 0) value else return null;
+    }
+
+    extern fn JSC__JSValue__getIfPropertyExistsImplString(value: JSValue, globalObject: *JSGlobalObject, propertyName: [*c]const bun.String) JSValue;
+
+    pub fn getWithString(this: JSValue, global: *JSGlobalObject, property_name: anytype) ?JSValue {
+        var property_name_str = bun.String.init(property_name);
+        const value = JSC__JSValue__getIfPropertyExistsImplString(this, global, &property_name_str);
+        return if (@intFromEnum(value) != 0) value else return null;
+    }
+
+    extern fn JSC__JSValue__getOwn(value: JSValue, globalObject: *JSGlobalObject, propertyName: [*c]const bun.String) JSValue;
+
+    /// Get *own* property value (i.e. does not resolve property in the prototype chain)
+    pub fn getOwn(this: JSValue, global: *JSGlobalObject, property_name: anytype) ?JSValue {
+        var property_name_str = bun.String.init(property_name);
+        const value = JSC__JSValue__getOwn(this, global, &property_name_str);
         return if (@intFromEnum(value) != 0) value else return null;
     }
 

@@ -102,8 +102,6 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         return false;
     }
 
-    JSC::Structure* thisObjectStructure = globalObject->commonJSFunctionArgumentsStructure();
-
     JSFunction* resolveFunction = JSC::JSBoundFunction::create(vm,
         globalObject,
         globalObject->requireResolveFunctionUnbound(),
@@ -117,22 +115,30 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     requireFunction->putDirect(vm, vm.propertyNames->resolve, resolveFunction, 0);
     moduleObject->putDirect(vm, WebCore::clientData(vm)->builtinNames().requirePublicName(), requireFunction, 0);
 
-    JSC::JSObject* thisObject = JSC::constructEmptyObject(vm, thisObjectStructure);
-    thisObject->putDirectOffset(vm, 0, moduleObject);
-    thisObject->putDirectOffset(vm, 1, requireFunction);
-    thisObject->putDirectOffset(vm, 2, resolveFunction);
-    thisObject->putDirectOffset(vm, 3, dirname);
-    thisObject->putDirectOffset(vm, 4, filename);
-
     moduleObject->hasEvaluated = true;
-    // TODO: try to not use this write barrier. it needs some extensive testing.
-    // there is some possible GC issue where `thisObject` is gc'd before it should be
-    globalObject->m_BunCommonJSModuleValue.set(vm, globalObject, thisObject);
 
-    JSValue empty = JSC::evaluate(globalObject, code->sourceCode(), thisObject, exception);
+    JSFunction* fn = jsCast<JSC::JSFunction*>(JSC::evaluate(globalObject, code->sourceCode(), jsUndefined(), exception));
 
-    ensureStillAliveHere(thisObject);
-    globalObject->m_BunCommonJSModuleValue.clear();
+    if (exception.get()) {
+        moduleObject->sourceCode.clear();
+        return false;
+    }
+
+    JSC::CallData callData = JSC::getCallData(fn);
+    MarkedArgumentBuffer args;
+    args.append(moduleObject->exportsObject()); // exports
+    args.append(requireFunction); // require
+    args.append(moduleObject); // module
+    args.append(filename); // filename
+    args.append(dirname); // dirname
+
+    if (fn->jsExecutable()->parameterCount() > 5) {
+        // it expects ImportMetaObject
+        args.append(Zig::ImportMetaObject::create(globalObject, filename));
+    }
+
+    JSC::call(globalObject, fn, callData, moduleObject, args, exception);
+
     moduleObject->sourceCode.clear();
 
     return exception.get() == nullptr;
@@ -442,7 +448,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject *
     String wrappedString = makeString(
         "(function(exports,require,module,__filename,__dirname){"_s,
         sourceString,
-        "\n}).call(this.module.exports,this.module.exports,this.require,this.module,this.__filename,this.__dirname)"_s);
+        "\n})"_s);
 
     SourceCode sourceCode = makeSource(
         WTFMove(wrappedString),

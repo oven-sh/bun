@@ -191,7 +191,7 @@ pub fn init() !void {
         global.waker = try AsyncIO.Waker.init(@import("root").bun.default_allocator);
     }
 
-    global.thread = try std.Thread.spawn(.{ .stack_size = 2 * 1024 * 1024 }, onStartIOThread, .{
+    global.thread = try std.Thread.spawn(.{ .stack_size = bun.default_stack_size }, onStartIOThread, .{
         global.waker,
     });
     global.thread.detach();

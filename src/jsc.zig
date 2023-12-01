@@ -58,7 +58,17 @@ pub const Node = struct {
     pub usingnamespace @import("./bun.js/node/node_fs_binding.zig");
     pub usingnamespace @import("./bun.js/node/node_os.zig");
     pub const fs = @import("./bun.js/node/node_fs_constant.zig");
+    pub const Util = struct {
+        pub const parseArgs = @import("./bun.js/node/util/parse_args.zig").parseArgs;
+    };
 };
+
+comptime {
+    if (!is_bindgen) {
+        @export(Node.Util.parseArgs, .{ .name = "Bun__NodeUtil__jsParseArgs" });
+    }
+}
+
 pub const Maybe = Node.Maybe;
 pub const jsNumber = @This().JSValue.jsNumber;
 pub const jsBoolean = @This().JSValue.jsBoolean;

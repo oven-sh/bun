@@ -86,7 +86,16 @@ void Zig::ConsoleClient::timeLog(JSGlobalObject* globalObject, const String& lab
     Ref<ScriptArguments>&& arguments)
 {
     auto input = label.tryGetUTF8().value();
-    Zig__ConsoleClient__timeLog(this->m_client, globalObject, reinterpret_cast<const unsigned char*>(input.data()), input.length(), arguments.ptr());
+
+    auto args = arguments.ptr();
+    JSC__JSValue jsArgs[255];
+    auto count = std::min(args->argumentCount(), (size_t)255);
+    for (size_t i = 0; i < count; i++) {
+        auto val = args->argumentAt(i);
+        jsArgs[i] = JSC::JSValue::encode(val);
+    }
+
+    Zig__ConsoleClient__timeLog(this->m_client, globalObject, reinterpret_cast<const unsigned char*>(input.data()), input.length(), jsArgs, count);
 }
 void Zig::ConsoleClient::timeEnd(JSGlobalObject* globalObject, const String& label)
 {

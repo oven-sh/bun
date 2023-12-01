@@ -758,6 +758,7 @@ pub const AsyncIO = @import("async_io");
 
 pub const logger = @import("./logger.zig");
 pub const ThreadPool = @import("./thread_pool.zig");
+pub const default_stack_size = ThreadPool.default_stack_size;
 pub const picohttp = @import("./deps/picohttp.zig");
 pub const uws = @import("./deps/uws.zig");
 pub const BoringSSL = @import("./boringssl.zig");

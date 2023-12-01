@@ -6058,7 +6058,7 @@ pub const PackageManager = struct {
                 log,
                 lockfile_path_z,
             )) {
-                .ok => |lockfile| manager.lockfile = lockfile,
+                .ok => |load| manager.lockfile = load.lockfile,
                 else => try manager.lockfile.initEmpty(allocator),
             }
         } else {
@@ -8172,7 +8172,9 @@ pub const PackageManager = struct {
 
         var root = Lockfile.Package{};
         var needs_new_lockfile = load_lockfile_result != .ok or
-            (load_lockfile_result.ok.buffers.dependencies.items.len == 0 and manager.package_json_updates.len > 0);
+            (load_lockfile_result.ok.lockfile.buffers.dependencies.items.len == 0 and manager.package_json_updates.len > 0);
+
+        manager.options.enable.force_save_lockfile = manager.options.enable.force_save_lockfile or (load_lockfile_result == .ok and load_lockfile_result.ok.was_migrated);
 
         // this defaults to false
         // but we force allowing updates to the lockfile when you do bun add
@@ -8220,7 +8222,7 @@ pub const PackageManager = struct {
             },
             .ok => {
                 differ: {
-                    root = load_lockfile_result.ok.rootPackage() orelse {
+                    root = load_lockfile_result.ok.lockfile.rootPackage() orelse {
                         needs_new_lockfile = true;
                         break :differ;
                     };

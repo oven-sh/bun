@@ -3,10 +3,12 @@ export function main() {
   return $requireMap.$get(Bun.main);
 }
 
+$visibility = "Private";
 export function require(this: CommonJSModuleRecord, id: string) {
   return $overridableRequire.$call(this, id);
 }
 
+$visibility = "Private";
 // overridableRequire can be overridden by setting `Module.prototype.require`
 export function overridableRequire(this: CommonJSModuleRecord, id: string) {
   const existing = $requireMap.$get(id) || $requireMap.$get((id = $resolveSync(id, this.path, false)));
@@ -74,10 +76,12 @@ export function overridableRequire(this: CommonJSModuleRecord, id: string) {
   return mod.exports;
 }
 
+$visibility = "Private";
 export function requireResolve(this: string | { path: string }, id: string) {
   return $resolveSync(id, typeof this === "string" ? this : this?.path, false);
 }
 
+$visibility = "Private";
 export function requireNativeModule(id: string) {
   let esm = Loader.registry.$get(id);
   if (esm?.evaluated && (esm.state ?? 0) >= $ModuleReady) {

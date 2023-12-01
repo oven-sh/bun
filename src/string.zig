@@ -663,8 +663,12 @@ pub const String = extern struct {
         return self.tag == .Empty;
     }
 
-    pub fn substring(self: String, offset: usize) String {
-        return String.init(self.toZigString().substring(offset));
+    pub fn substring(self: String, start_index: usize) String {
+        return String.init(self.toZigString().substring(start_index));
+    }
+
+    pub fn substringWithLen(self: String, start_index: usize, end_index: usize) String {
+        return String.init(self.toZigString().substringWithLen(start_index, end_index));
     }
 
     pub fn toUTF8(this: String, allocator: std.mem.Allocator) ZigString.Slice {
@@ -739,6 +743,52 @@ pub const String = extern struct {
             .ZigString => !this.value.ZigString.is16Bit(),
             else => true,
         };
+    }
+
+    pub fn charAt(this: String, index: usize) u16 {
+        if (comptime bun.Environment.allow_assert) {
+            std.debug.assert(index < this.length());
+        }
+        return switch (this.tag) {
+            .WTFStringImpl => if (this.value.WTFStringImpl.is8Bit()) @intCast(this.value.WTFStringImpl.utf8Slice()[index]) else this.value.WTFStringImpl.utf16Slice()[index],
+            .ZigString, .StaticZigString => if (!this.value.ZigString.is16Bit()) @intCast(this.value.ZigString.slice()[index]) else this.value.ZigString.utf16Slice()[index],
+            else => 0,
+        };
+    }
+
+    pub fn charAtU8(this: String, index: usize) u8 {
+        if (comptime bun.Environment.allow_assert) {
+            std.debug.assert(index < this.length());
+        }
+        return switch (this.tag) {
+            .WTFStringImpl => if (this.value.WTFStringImpl.is8Bit()) this.value.WTFStringImpl.utf8Slice()[index] else @truncate(this.value.WTFStringImpl.utf16Slice()[index]),
+            .ZigString, .StaticZigString => if (!this.value.ZigString.is16Bit()) this.value.ZigString.slice()[index] else @truncate(this.value.ZigString.utf16SliceAligned()[index]),
+            else => 0,
+        };
+    }
+
+    pub fn indexOfChar(this: String, chr: u16) ?usize {
+        switch (this.tag) {
+            .WTFStringImpl => {
+                if (this.value.WTFStringImpl.is8Bit()) {
+                    return std.mem.indexOfScalar(u8, this.value.WTFStringImpl.utf8Slice(), @truncate(chr));
+                } else {
+                    return std.mem.indexOfScalar(u16, this.value.WTFStringImpl.utf16Slice(), chr);
+                }
+            },
+            .ZigString, .StaticZigString => {
+                if (!this.value.ZigString.is16Bit()) {
+                    return std.mem.indexOfScalar(u8, this.value.ZigString.slice(), @truncate(chr));
+                } else {
+                    return std.mem.indexOfScalar(u16, this.value.ZigString.utf16SliceAligned(), chr);
+                }
+            },
+            else => return null,
+        }
+    }
+
+    pub fn indexOfCharU8(this: String, chr: u8) ?usize {
+        return indexOfChar(this, @intCast(chr));
     }
 
     pub fn indexOfComptimeWithCheckLen(this: String, comptime values: []const []const u8, comptime check_len: usize) ?usize {
@@ -876,6 +926,47 @@ pub const String = extern struct {
     }
 
     extern fn JSC__createError(*JSC.JSGlobalObject, str: *String) JSC.JSValue;
+
+    fn concat(comptime n: usize, allocator: std.mem.Allocator, strings: *const [n]String) !String {
+        var num_16bit: usize = 0;
+        inline for (strings) |str| {
+            if (!str.is8Bit()) num_16bit += 1;
+        }
+
+        if (num_16bit == n) {
+            // all are 16bit
+            var slices: [n][]const u16 = undefined;
+            for (strings, 0..) |str, i| {
+                slices[i] = switch (str.tag) {
+                    .WTFStringImpl => str.value.WTFStringImpl.utf16Slice(),
+                    .ZigString, .StaticZigString => str.value.ZigString.utf16SliceAligned(),
+                    else => &[_]u16{},
+                };
+            }
+            const result = try std.mem.concat(allocator, u16, &slices);
+            return init(ZigString.from16Slice(result));
+        } else {
+            // either all 8bit, or mixed 8bit and 16bit
+            var slices_holded: [n]SliceWithUnderlyingString = undefined;
+            var slices: [n][]const u8 = undefined;
+            inline for (strings, 0..) |str, i| {
+                slices_holded[i] = str.toSlice(allocator);
+                slices[i] = slices_holded[i].slice();
+            }
+            const result = try std.mem.concat(allocator, u8, &slices);
+            inline for (0..n) |i| {
+                slices_holded[i].deinit();
+            }
+            return create(result);
+        }
+    }
+
+    /// Creates a new String from a given tuple (of comptime-known size) of String.
+    ///
+    /// Note: the callee owns the resulting string and must call `.deref()` on it once done
+    pub inline fn createFromConcat(allocator: std.mem.Allocator, strings: anytype) !String {
+        return try concat(strings.len, allocator, strings);
+    }
 };
 
 pub const SliceWithUnderlyingString = struct {

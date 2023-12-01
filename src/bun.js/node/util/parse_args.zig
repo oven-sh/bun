@@ -555,7 +555,23 @@ pub fn createOutputTokensArray(globalThis: *JSGlobalObject, tokens: []const Toke
     return result;
 }
 
-pub fn parseArgs(globalThis: *JSGlobalObject, config_obj: JSValue) !JSValue {
+pub fn parseArgs(
+    globalThis: *JSGlobalObject,
+    callframe: *JSC.CallFrame,
+) callconv(.C) JSValue {
+    JSC.markBinding(@src());
+    const arguments = callframe.arguments(1).slice();
+    const config = if (arguments.len > 0) arguments[0] else JSValue.undefined;
+    return parseArgsImpl(globalThis, config) catch |err| {
+        // these two types of error will already throw their own js exception
+        if (err != error.ParseError and err != error.InvalidArgument) {
+            globalThis.throwOutOfMemory();
+        }
+        return JSValue.undefined;
+    };
+}
+
+pub fn parseArgsImpl(globalThis: *JSGlobalObject, config_obj: JSValue) !JSValue {
     //
     // Phase 0: parse the config object
     //

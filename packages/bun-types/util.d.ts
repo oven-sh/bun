@@ -1254,13 +1254,13 @@ declare module "util" {
     tokens?: boolean | undefined;
   }
   /*
-  IfDefaultsTrue and IfDefaultsFalse are helpers to handle default values for missing boolean properties.
-  TypeScript does not have exact types for objects: https://github.com/microsoft/TypeScript/issues/12936
-  This means it is impossible to distinguish between "field X is definitely not present" and "field X may or may not be present".
-  But we expect users to generally provide their config inline or `as const`, which means TS will always know whether a given field is present.
-  So this helper treats "not definitely present" (i.e., not `extends boolean`) as being "definitely not present", i.e. it should have its default value.
-  This is technically incorrect but is a much nicer UX for the common case.
-  The IfDefaultsTrue version is for things which default to true; the IfDefaultsFalse version is for things which default to false.
+    IfDefaultsTrue and IfDefaultsFalse are helpers to handle default values for missing boolean properties.
+    TypeScript does not have exact types for objects: https://github.com/microsoft/TypeScript/issues/12936
+    This means it is impossible to distinguish between "field X is definitely not present" and "field X may or may not be present".
+    But we expect users to generally provide their config inline or `as const`, which means TS will always know whether a given field is present.
+    So this helper treats "not definitely present" (i.e., not `extends boolean`) as being "definitely not present", i.e. it should have its default value.
+    This is technically incorrect but is a much nicer UX for the common case.
+    The IfDefaultsTrue version is for things which default to true; the IfDefaultsFalse version is for things which default to false.
   */
   type IfDefaultsTrue<T, IfTrue, IfFalse> = T extends true
     ? IfTrue

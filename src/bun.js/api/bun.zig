@@ -30,7 +30,6 @@ pub const BunObject = struct {
     pub const mmap = Bun.mmapFile;
     pub const nanoseconds = Bun.nanoseconds;
     pub const openInEditor = Bun.openInEditor;
-    pub const parseArgs = Bun.parseArgs;
     pub const registerMacro = Bun.registerMacro;
     pub const resolve = Bun.resolve;
     pub const resolveSync = Bun.resolveSync;
@@ -143,7 +142,6 @@ pub const BunObject = struct {
         @export(BunObject.mmap, .{ .name = callbackName("mmap") });
         @export(BunObject.nanoseconds, .{ .name = callbackName("nanoseconds") });
         @export(BunObject.openInEditor, .{ .name = callbackName("openInEditor") });
-        @export(BunObject.parseArgs, .{ .name = callbackName("parseArgs") });
         @export(BunObject.registerMacro, .{ .name = callbackName("registerMacro") });
         @export(BunObject.resolve, .{ .name = callbackName("resolve") });
         @export(BunObject.resolveSync, .{ .name = callbackName("resolveSync") });
@@ -241,7 +239,6 @@ const max_addressible_memory = std.math.maxInt(u56);
 const glob = @import("../../glob.zig");
 const Async = bun.Async;
 const SemverObject = @import("../../install/semver.zig").SemverObject;
-const parseArgsImpl = @import("../node/util/parse_args.zig").parseArgs;
 
 threadlocal var css_imports_list_strings: [512]ZigString = undefined;
 threadlocal var css_imports_list: [512]Api.StringPointer = undefined;
@@ -662,21 +659,6 @@ pub fn openInEditor(
     };
 
     return JSC.JSValue.jsUndefined();
-}
-
-pub fn parseArgs(
-    globalThis: js.JSContextRef,
-    callframe: *JSC.CallFrame,
-) callconv(.C) JSValue {
-    const arguments = callframe.arguments(1).slice();
-    const config = if (arguments.len > 0) arguments[0] else JSValue.undefined;
-    return parseArgsImpl(globalThis, config) catch |err| {
-        // these two types of error will already throw their own js exception
-        if (err != error.ParseError and err != error.InvalidArgument) {
-            globalThis.throwOutOfMemory();
-        }
-        return JSValue.undefined;
-    };
 }
 
 pub fn getPublicPath(to: string, origin: URL, comptime Writer: type, writer: Writer) void {

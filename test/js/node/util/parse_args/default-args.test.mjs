@@ -22,7 +22,7 @@ describe("parseArgs default args", () => {
     );
     await fs.writeFile(
       path.join(temp_dir, "file-test.js"),
-      `console.log(JSON.stringify({ argv: process.argv, execArgv: process.execArgv, ...Bun.parseArgs({ strict: false }) }));`,
+      `console.log(JSON.stringify({ argv: process.argv, execArgv: process.execArgv, ...require("node:util").parseArgs({ strict: false }) }));`,
     );
   });
   afterAll(async () => {

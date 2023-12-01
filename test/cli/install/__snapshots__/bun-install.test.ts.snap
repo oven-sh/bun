@@ -5,7 +5,8 @@ exports[`should report error on invalid format for package.json 1`] = `
 1 | foo
     ^
 error: Unexpected foo
-    at [dir]/package.json:1:1ParserError parsing package.json in "[dir]/"
+    at [dir]/package.json:1:1
+ParserError parsing package.json in "[dir]/"
 "
 `;
 
@@ -51,8 +52,10 @@ exports[`should report error on duplicated workspace packages 1`] = `
             ^
 error: Workspace name "moo" already exists
     at [dir]/baz/package.json:1:9
+
 1 | {"name":"moo","version":"0.0.2"}
             ^
 note: Package name is also declared here
-   at [dir]/bar/package.json:1:9"
+   at [dir]/bar/package.json:1:9
+"
 `;

@@ -17,7 +17,7 @@ function testMigration(lockfile: string) {
       },
     }),
   );
-  fs.cpSync(join(import.meta.dir, "add-while-migrate-fixture.json"), join(testDir, "package-lock.json"));
+  fs.cpSync(join(import.meta.dir, lockfile), join(testDir, "package-lock.json"));
 
   Bun.spawnSync([bunExe(), "add", "lodash@4.17.21"], {
     env: bunEnv,

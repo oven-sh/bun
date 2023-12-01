@@ -37,6 +37,7 @@
     "expect": "^29.7.0",
     "isomorphic-ws": "^5.0.0",
     "jest-each": "^29.7.0",
+    "jest-extended": "^4.0.2",
     "jest-mock": "^29.7.0",
     "js-md4": "^0.3.2",
     "koffi": "^2.6.3",

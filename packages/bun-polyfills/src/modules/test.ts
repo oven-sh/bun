@@ -2,6 +2,7 @@ import _dateFormat from 'dateformat';
 const dateFormat = _dateFormat as unknown as typeof import('dateformat').default; // 10/10 types :D
 import { expect as jestexpect } from 'expect';
 import _jesteach from 'jest-each';
+import extendedMatchers from 'jest-extended';
 const jesteach = _jesteach.default as unknown as typeof import('jest-each').default; // bad types, again...
 import * as jestmock from 'jest-mock';
 import nodetest from 'node:test';
@@ -26,6 +27,7 @@ bundescribe.each = (table: any) => {
     return (title: string, suite: AnyFunction) => jesteach(table).describe(title, suite);
 };
 
+jestexpect.extend(extendedMatchers);
 const bunExpect = jestexpect as unknown as typeof import('bun:test')['expect'];
 bunExpect.unreachable = (msg) => {
     if (msg instanceof Error) throw msg;

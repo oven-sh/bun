@@ -15,8 +15,8 @@ function dummyFile(size: number, cache_bust: string, value: string) {
   return data;
 }
 
-let temp_dir: string = "/dev/null";
-let cache_dir = join(temp_dir, ".cache");
+let temp_dir: string = "";
+let cache_dir = "";
 
 const env = {
   ...bunEnv,

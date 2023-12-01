@@ -31,6 +31,10 @@ $ docker pull oven/bun
 $ docker run --rm --init --ulimit memlock=-1:-1 oven/bun
 ```
 
+```bash#pkgx
+$ pkgx install bun # or run directly `pkgx bun`
+```
+
 ```bash#Proto
 $ proto install bun
 ```
@@ -226,6 +230,10 @@ $ npm uninstall -g bun
 
 ```bash#Homebrew
 $ brew uninstall bun
+```
+
+```bash#pkgx
+$ rm -rf ~/.local/bin/bun # for macOS, Linux, and WSL
 ```
 
 ```bash#Proto

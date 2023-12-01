@@ -37,7 +37,7 @@ Once a package is downloaded into the cache, Bun still needs to copy those files
 
 Since Bun uses hardlinks to "copy" a module into a project's `node_modules` directory on Linux, the contents of the package only exist in a single location on disk, greatly reducing the amount of disk space dedicated to `node_modules`.
 
-This benefit also applies to macOS, but there are exceptions for some older devices. Because it uses `clonefile`, the performance is spectacular, `clonefile` on APFS drives (which is the vast majority, only older machines using hard drives can still use HFS), the files still don't take up more space, and only if they still use HFS (which again, is very unlikely to happen nowadays) then this means they will take up more space.
+This benefit also applies to macOS, but there are exceptions. It uses `clonefile` which is copy-on-write, meaning it will not occupy disk space, but it will count towards drive's limit. This behavior is useful if something attempts to patch `node_modules/*`, so it's impossible to affect other installations.
 
 {% details summary="Installation strategies" %}
 This behavior is configurable with the `--backend` flag, which is respected by all of Bun's package management commands.

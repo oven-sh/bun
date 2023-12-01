@@ -399,12 +399,12 @@ pub const Process = extern struct {
 };
 
 pub const ZigStackTrace = extern struct {
-    source_lines_ptr: [*c]bun.String,
-    source_lines_numbers: [*c]i32,
+    source_lines_ptr: [*]bun.String,
+    source_lines_numbers: [*]i32,
     source_lines_len: u8,
     source_lines_to_collect: u8,
 
-    frames_ptr: [*c]ZigStackFrame,
+    frames_ptr: [*]ZigStackFrame,
     frames_len: u8,
 
     pub fn toAPI(
@@ -503,8 +503,8 @@ pub const ZigStackTrace = extern struct {
     pub fn sourceLineIterator(this: *const ZigStackTrace) SourceLineIterator {
         var i: usize = 0;
         for (this.source_lines_numbers[0..this.source_lines_len], 0..) |num, j| {
-            if (num > 0) {
-                i = j;
+            if (num >= 0) {
+                i = @max(j, i);
             }
         }
         return SourceLineIterator{ .trace = this, .i = @as(i16, @intCast(i)) };
@@ -602,10 +602,10 @@ pub const ZigStackFrame = extern struct {
                             writer,
                             // :
                             comptime Output.prettyFmt("<d>:<r><yellow>{d}<r><d>:<yellow>{d}<r>", true),
-                            .{ this.position.line + 1, this.position.column_start },
+                            .{ this.position.line + 1, this.position.column_start + 1 },
                         );
                     } else {
-                        try std.fmt.format(writer, ":{d}:{d}", .{ this.position.line + 1, this.position.column_start });
+                        try std.fmt.format(writer, ":{d}:{d}", .{ this.position.line + 1, this.position.column_start + 1 });
                     }
                 } else if (this.position.line > -1) {
                     if (this.enable_color) {
@@ -637,9 +637,9 @@ pub const ZigStackFrame = extern struct {
             switch (this.code_type) {
                 .Eval => {
                     try writer.writeAll("(eval)");
-                },
-                .Module => {
-                    // try writer.writeAll("(esm)");
+                    if (!name.isEmpty()) {
+                        try std.fmt.format(writer, "{}", .{name});
+                    }
                 },
                 .Function => {
                     if (!name.isEmpty()) {
@@ -663,7 +663,11 @@ pub const ZigStackFrame = extern struct {
                 .Constructor => {
                     try std.fmt.format(writer, "new {}", .{name});
                 },
-                else => {},
+                else => {
+                    if (!name.isEmpty()) {
+                        try std.fmt.format(writer, "{}", .{name});
+                    }
+                },
             }
         }
     };

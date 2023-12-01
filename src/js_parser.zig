@@ -5528,7 +5528,7 @@ fn NewParser_(
                 var notes = try p.allocator.alloc(logger.Data, 1);
                 notes[0] = logger.Data{
                     .text = try std.fmt.allocPrint(p.allocator, "\"{s}\" was originally exported here", .{alias}),
-                    .location = logger.Location.init_or_nil(p.source, js_lexer.rangeOfIdentifier(p.source, name.alias_loc)),
+                    .location = logger.Location.initOrNull(p.source, js_lexer.rangeOfIdentifier(p.source, name.alias_loc)),
                 };
                 try p.log.addRangeErrorFmtWithNotes(
                     p.source,
@@ -15025,7 +15025,7 @@ fn NewParser_(
                         var notes = p.allocator.alloc(logger.Data, 1) catch unreachable;
                         notes[0] = logger.Data{
                             .text = std.fmt.allocPrint(p.allocator, "The symbol \"{s}\" was declared a constant here:", .{name}) catch unreachable,
-                            .location = logger.Location.init_or_nil(p.source, js_lexer.rangeOfIdentifier(p.source, result.declare_loc.?)),
+                            .location = logger.Location.initOrNull(p.source, js_lexer.rangeOfIdentifier(p.source, result.declare_loc.?)),
                         };
 
                         const is_error = p.const_values.contains(result.ref) or p.options.bundle;

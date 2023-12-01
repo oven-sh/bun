@@ -4661,9 +4661,40 @@ pub const JSZlib = struct {
 
 pub usingnamespace @import("./bun/subprocess.zig");
 
+const InternalTestingAPIs = struct {
+    pub fn BunInternalFunction__syntaxHighlighter(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        const args = callframe.arguments(1);
+        if (args.len < 1) {
+            globalThis.throwNotEnoughArguments("code", 1, 0);
+        }
+
+        const code = args.ptr[0].toSliceOrNull(globalThis) orelse return .zero;
+        defer code.deinit();
+        var buffer = MutableString.initEmpty(bun.default_allocator);
+        defer buffer.deinit();
+        var writer = buffer.bufferedWriter();
+        var formatter = bun.fmt.fmtJavaScript(code.slice(), true);
+        formatter.limited = false;
+        std.fmt.format(writer.writer(), "{}", .{formatter}) catch |err| {
+            globalThis.throwError(err, "Error formatting code");
+            return .zero;
+        };
+
+        writer.flush() catch |err| {
+            globalThis.throwError(err, "Error formatting code");
+            return .zero;
+        };
+
+        var str = bun.String.create(buffer.list.items);
+        defer str.deref();
+        return str.toJS(globalThis);
+    }
+};
+
 comptime {
     if (!JSC.is_bindgen) {
         _ = Crypto.JSPasswordObject.JSPasswordObject__create;
         BunObject.exportAll();
+        @export(InternalTestingAPIs.BunInternalFunction__syntaxHighlighter, .{ .name = "BunInternalFunction__syntaxHighlighter" });
     }
 }

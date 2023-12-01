@@ -1456,7 +1456,7 @@ void WebCore__FetchHeaders__put_(WebCore__FetchHeaders* headers, const ZigString
 {
     auto throwScope = DECLARE_THROW_SCOPE(global->vm());
     WebCore::propagateException(*global, throwScope,
-        headers->set(Zig::toString(*arg1), Zig::toString(*arg2)));
+        headers->set(Zig::toString(*arg1), Zig::toStringCopy(*arg2)));
 }
 void WebCore__FetchHeaders__remove(WebCore__FetchHeaders* headers, const ZigString* arg1, JSC__JSGlobalObject* global)
 {

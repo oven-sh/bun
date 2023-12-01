@@ -408,7 +408,6 @@ pub const Response = struct {
             url_string = url_string_value.getZigString(globalThis.ptr());
         }
         var url_string_slice = url_string.toSlice(getAllocator(globalThis));
-        defer url_string_slice.deinit();
 
         if (args.nextEat()) |init| {
             if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {

@@ -1,12 +1,25 @@
 import fs from "fs";
-import { test, expect } from "bun:test";
+import { test, expect, beforeAll, afterAll } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { join } from "path";
+import { join, sep } from "path";
 import { mkdtempSync } from "js/node/fs/export-star-from";
 import { tmpdir } from "os";
 
+const ROOT_TEMP_DIR = join(tmpdir(), "migrate", sep);
+
+beforeAll(() => {
+  fs.mkdirSync(ROOT_TEMP_DIR);
+});
+
+afterAll(() => {
+  fs.rmSync(ROOT_TEMP_DIR, {
+    recursive: true,
+    force: true,
+  });
+});
+
 function testMigration(lockfile: string) {
-  const testDir = mkdtempSync(join(tmpdir(), "migrate-" + crypto.randomUUID()));
+  const testDir = mkdtempSync(ROOT_TEMP_DIR);
 
   fs.writeFileSync(
     join(testDir, "package.json"),
@@ -43,7 +56,7 @@ test("migrate from npm lockfile v2 during `bun add`", () => {
 
 // Currently this upgrades svelte :(
 test.todo("migrate workspace from npm during `bun add`", async () => {
-  const testDir = join(tmpdir(), "migrate-" + Math.random().toString(36).slice(2));
+  const testDir = mkdtempSync(ROOT_TEMP_DIR);
 
   fs.cpSync(join(import.meta.dir, "add-while-migrate-workspace"), testDir, { recursive: true });
 
@@ -62,7 +75,7 @@ test.todo("migrate workspace from npm during `bun add`", async () => {
 });
 
 test("migrate from npm lockfile that is missing `resolved` properties", async () => {
-  const testDir = join(tmpdir(), "migrate-" + Math.random().toString(36).slice(2));
+  const testDir = mkdtempSync(ROOT_TEMP_DIR);
 
   fs.cpSync(join(import.meta.dir, "missing-resolved-properties"), testDir, { recursive: true });
 

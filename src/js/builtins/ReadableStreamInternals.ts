@@ -1686,7 +1686,7 @@ export function readableStreamIntoArray(stream) {
   return processManyResult(manyResult);
 }
 
-function withoutUTF8BOM(result) {
+export function withoutUTF8BOM(result) {
   if (result.charCodeAt(0) === 0xfeff) {
     return result.slice(1);
   }

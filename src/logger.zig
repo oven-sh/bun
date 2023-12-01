@@ -84,6 +84,10 @@ pub const Loc = struct {
         return loc.start == other.start;
     }
 
+    pub inline fn isEmpty(this: Loc) bool {
+        return eql(this, Empty);
+    }
+
     pub fn jsonStringify(self: *const Loc, writer: anytype) !void {
         return try writer.write(self.start);
     }
@@ -175,8 +179,19 @@ pub const Location = struct {
         };
     }
 
-    pub fn init_or_nil(_source: ?*const Source, r: Range) ?Location {
+    pub fn initOrNull(_source: ?*const Source, r: Range) ?Location {
         if (_source) |source| {
+            if (r.isEmpty()) {
+                return Location{
+                    .file = source.path.text,
+                    .namespace = source.path.namespace,
+                    .line = -1,
+                    .column = -1,
+                    .length = 0,
+                    .line_text = "",
+                    .offset = 0,
+                };
+            }
             var data = source.initErrorPosition(r.loc);
             var full_line = source.contents[data.line_start..data.line_end];
             if (full_line.len > 80 + data.column_count) {
@@ -196,15 +211,15 @@ pub const Location = struct {
                 .line_text = std.mem.trimLeft(u8, full_line, "\n\r"),
                 .offset = @as(usize, @intCast(@max(r.loc.start, 0))),
             };
-        } else {
-            return null;
         }
+        return null;
     }
 };
 
 pub const Data = struct {
     text: string,
     location: ?Location = null,
+
     pub fn deinit(d: *Data, allocator: std.mem.Allocator) void {
         if (d.location) |*loc| {
             loc.deinit(allocator);
@@ -568,6 +583,7 @@ pub const Msg = struct {
 pub const Range = struct {
     loc: Loc = Loc.Empty,
     len: i32 = 0,
+
     pub const None = Range{ .loc = Loc.Empty, .len = 0 };
 
     pub fn in(this: Range, buf: []const u8) []const u8 {
@@ -995,12 +1011,12 @@ pub const Log = struct {
         });
     }
 
-    pub fn addRangeErrorFmtWithNotes(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, notes: []Data, comptime text: string, args: anytype) !void {
+    pub fn addRangeErrorFmtWithNotes(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, notes: []Data, comptime fmt: string, args: anytype) !void {
         @setCold(true);
         log.errors += 1;
         try log.addMsg(.{
             .kind = .err,
-            .data = try rangeData(source, r, allocPrint(allocator, text, args) catch unreachable).cloneLineText(log.clone_line_text, log.msgs.allocator),
+            .data = try rangeData(source, r, allocPrint(allocator, fmt, args) catch unreachable).cloneLineText(log.clone_line_text, log.msgs.allocator),
             .notes = notes,
         });
     }
@@ -1409,9 +1425,10 @@ pub const Source = struct {
         return Range{ .loc = loc };
     }
 
-    pub fn initErrorPosition(self: *const Source, _offset: Loc) ErrorPosition {
+    pub fn initErrorPosition(self: *const Source, offset_loc: Loc) ErrorPosition {
+        std.debug.assert(!offset_loc.isEmpty());
         var prev_code_point: i32 = 0;
-        var offset: usize = @min(if (_offset.start < 0) 0 else @as(usize, @intCast(_offset.start)), @max(self.contents.len, 1) - 1);
+        var offset: usize = @min(@as(usize, @intCast(offset_loc.start)), @max(self.contents.len, 1) - 1);
 
         const contents = self.contents;
 
@@ -1483,5 +1500,5 @@ pub const Source = struct {
 };
 
 pub fn rangeData(source: ?*const Source, r: Range, text: string) Data {
-    return Data{ .text = text, .location = Location.init_or_nil(source, r) };
+    return Data{ .text = text, .location = Location.initOrNull(source, r) };
 }

@@ -339,58 +339,60 @@ WTF::String Bun::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject
 
     bool hasSet = false;
 
-    if (JSC::ErrorInstance* err = jsDynamicCast<JSC::ErrorInstance*>(errorInstance)) {
-        if (err->errorType() == ErrorType::SyntaxError && (stackTrace.isEmpty() || stackTrace.at(0).sourceURL(vm) != err->sourceURL())) {
-            // There appears to be an off-by-one error.
-            // The following reproduces the issue:
-            // /* empty comment */
-            // "".test(/[a-0]/);
-            auto originalLine = WTF::OrdinalNumber::fromOneBasedInt(err->line());
+    if(errorInstance) {
+        if (JSC::ErrorInstance* err = jsDynamicCast<JSC::ErrorInstance*>(errorInstance)) {
+            if (err->errorType() == ErrorType::SyntaxError && (stackTrace.isEmpty() || stackTrace.at(0).sourceURL(vm) != err->sourceURL())) {
+                // There appears to be an off-by-one error.
+                // The following reproduces the issue:
+                // /* empty comment */
+                // "".test(/[a-0]/);
+                auto originalLine = WTF::OrdinalNumber::fromOneBasedInt(err->line());
 
-            ZigStackFrame remappedFrame;
-            memset(&remappedFrame, 0, sizeof(ZigStackFrame));
+                ZigStackFrame remappedFrame;
+                memset(&remappedFrame, 0, sizeof(ZigStackFrame));
 
-            remappedFrame.position.line = originalLine.zeroBasedInt() + 1;
-            remappedFrame.position.column_start = 0;
+                remappedFrame.position.line = originalLine.zeroBasedInt() + 1;
+                remappedFrame.position.column_start = 0;
 
-            String sourceURLForFrame = err->sourceURL();
+                String sourceURLForFrame = err->sourceURL();
 
-            // If it's not a Zig::GlobalObject, don't bother source-mapping it.
-            if (globalObject && !sourceURLForFrame.isEmpty()) {
-                if (!sourceURLForFrame.isEmpty()) {
-                    remappedFrame.source_url = Bun::toString(sourceURLForFrame);
-                } else {
-                    // https://github.com/oven-sh/bun/issues/3595
-                    remappedFrame.source_url = BunStringEmpty;
+                // If it's not a Zig::GlobalObject, don't bother source-mapping it.
+                if (globalObject && !sourceURLForFrame.isEmpty()) {
+                    if (!sourceURLForFrame.isEmpty()) {
+                        remappedFrame.source_url = Bun::toString(sourceURLForFrame);
+                    } else {
+                        // https://github.com/oven-sh/bun/issues/3595
+                        remappedFrame.source_url = BunStringEmpty;
+                    }
+
+                    // This ensures the lifetime of the sourceURL is accounted for correctly
+                    Bun__remapStackFramePositions(globalObject, &remappedFrame, 1);
                 }
 
-                // This ensures the lifetime of the sourceURL is accounted for correctly
-                Bun__remapStackFramePositions(globalObject, &remappedFrame, 1);
+                // there is always a newline before each stack frame line, ensuring that the name + message
+                // exist on the first line, even if both are empty
+                sb.append("\n"_s);
+
+                sb.append("    at <parse> ("_s);
+
+                sb.append(sourceURLForFrame);
+
+                if (remappedFrame.remapped) {
+                    errorInstance->putDirect(vm, Identifier::fromString(vm, "originalLine"_s), jsNumber(originalLine.oneBasedInt()), 0);
+                    hasSet = true;
+                    line = remappedFrame.position.line;
+                }
+
+                if (remappedFrame.remapped) {
+                    sb.append(":"_s);
+                    sb.append(remappedFrame.position.line);
+                } else {
+                    sb.append(":"_s);
+                    sb.append(originalLine.oneBasedInt());
+                }
+
+                sb.append(")"_s);
             }
-
-            // there is always a newline before each stack frame line, ensuring that the name + message
-            // exist on the first line, even if both are empty
-            sb.append("\n"_s);
-
-            sb.append("    at <parse> ("_s);
-
-            sb.append(sourceURLForFrame);
-
-            if (remappedFrame.remapped) {
-                errorInstance->putDirect(vm, Identifier::fromString(vm, "originalLine"_s), jsNumber(originalLine.oneBasedInt()), 0);
-                hasSet = true;
-                line = remappedFrame.position.line;
-            }
-
-            if (remappedFrame.remapped) {
-                sb.append(":"_s);
-                sb.append(remappedFrame.position.line);
-            } else {
-                sb.append(":"_s);
-                sb.append(originalLine.oneBasedInt());
-            }
-
-            sb.append(")"_s);
         }
     }
 

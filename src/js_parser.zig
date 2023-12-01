@@ -2798,7 +2798,6 @@ pub const Parser = struct {
         jsx: options.JSX.Pragma,
         ts: bool = false,
         keep_names: bool = true,
-        omit_runtime_for_tests: bool = false,
         ignore_dce_annotations: bool = false,
         preserve_unused_imports_ts: bool = false,
         use_define_for_class_fields: bool = false,
@@ -2819,6 +2818,31 @@ pub const Parser = struct {
         module_type: options.ModuleType = .unknown,
 
         transform_only: bool = false,
+
+        pub fn hashForRuntimeTranspiler(this: *const Options, hasher: *std.hash.Wyhash, did_use_jsx: bool) void {
+            std.debug.assert(!this.bundle);
+
+            if (did_use_jsx) {
+                if (this.jsx.parse) {
+                    this.jsx.hashForRuntimeTranspiler(hasher);
+                    const jsx_optimizations = [_]bool{
+                        this.features.jsx_optimization_inline,
+                        this.features.jsx_optimization_hoist,
+                    };
+                    hasher.update(std.mem.asBytes(&jsx_optimizations));
+                } else {
+                    hasher.update("NO_JSX");
+                }
+            }
+
+            if (this.ts) {
+                hasher.update("TS");
+            } else {
+                hasher.update("NO_TS");
+            }
+
+            this.features.hashForRuntimeTranspiler(hasher);
+        }
 
         pub fn init(jsx: options.JSX.Pragma, loader: options.Loader) Options {
             var opts = Options{
@@ -3070,10 +3094,24 @@ pub const Parser = struct {
             try p.lexer.next();
         }
 
+        // Detect a leading "// @bun" pragma
         if (p.lexer.bun_pragma and p.options.features.dont_bundle_twice) {
             return js_ast.Result{
                 .already_bundled = {},
             };
+        }
+
+        // We must check the cache only after we've consumed the hashbang and leading // @bun pragma
+        // We don't want to ever put files with `// @bun` into this cache, as that would be wasteful.
+        if (comptime Environment.isNative and bun.FeatureFlags.runtime_transpiler_cache) {
+            var runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = p.options.features.runtime_transpiler_cache;
+            if (runtime_transpiler_cache) |cache| {
+                if (cache.get(p.source, &p.options, p.options.jsx.parse and (!p.source.path.isNodeModule() or p.source.path.isJSXFile()))) {
+                    return js_ast.Result{
+                        .cached = {},
+                    };
+                }
+            }
         }
 
         // Parse the file in the first pass, but do not bind symbols
@@ -3271,45 +3309,57 @@ pub const Parser = struct {
         const postvisit_tracer = bun.tracy.traceNamed(@src(), "JSParser.postvisit");
         defer postvisit_tracer.end();
 
-        const uses_dirname = p.symbols.items[p.dirname_ref.innerIndex()].use_count_estimate > 0;
-        const uses_filename = p.symbols.items[p.filename_ref.innerIndex()].use_count_estimate > 0;
+        var uses_dirname = p.symbols.items[p.dirname_ref.innerIndex()].use_count_estimate > 0;
+        var uses_filename = p.symbols.items[p.filename_ref.innerIndex()].use_count_estimate > 0;
 
-        if (uses_dirname or uses_filename) {
-            const count = @as(usize, @intFromBool(uses_dirname)) + @as(usize, @intFromBool(uses_filename));
-            var declared_symbols = DeclaredSymbol.List.initCapacity(p.allocator, count) catch unreachable;
-            var decls = p.allocator.alloc(G.Decl, count) catch unreachable;
-            if (uses_dirname) {
-                decls[0] = .{
-                    .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty),
-                    .value = p.newExpr(
-                        // TODO: test UTF-8 file paths
-                        E.String.init(p.source.path.name.dir),
-                        logger.Loc.Empty,
-                    ),
-                };
-                declared_symbols.appendAssumeCapacity(.{ .ref = p.dirname_ref, .is_top_level = true });
-            }
-            if (uses_filename) {
-                decls[@as(usize, @intFromBool(uses_dirname))] = .{
-                    .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty),
-                    .value = p.newExpr(
-                        E.String.init(p.source.path.text),
-                        logger.Loc.Empty,
-                    ),
-                };
-                declared_symbols.appendAssumeCapacity(.{ .ref = p.filename_ref, .is_top_level = true });
-            }
+        // Handle dirname and filename at bundle-time
+        // We always inject it at the top of the module
+        //
+        // This inlines
+        //
+        //    var __dirname = "foo/bar"
+        //    var __filename = "foo/bar/baz.js"
+        //
+        if (p.options.bundle or !p.options.features.commonjs_at_runtime) {
+            if (uses_dirname or uses_filename) {
+                const count = @as(usize, @intFromBool(uses_dirname)) + @as(usize, @intFromBool(uses_filename));
+                var declared_symbols = DeclaredSymbol.List.initCapacity(p.allocator, count) catch unreachable;
+                var decls = p.allocator.alloc(G.Decl, count) catch unreachable;
+                if (uses_dirname) {
+                    decls[0] = .{
+                        .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty),
+                        .value = p.newExpr(
+                            // TODO: test UTF-8 file paths
+                            E.String.init(p.source.path.name.dir),
+                            logger.Loc.Empty,
+                        ),
+                    };
+                    declared_symbols.appendAssumeCapacity(.{ .ref = p.dirname_ref, .is_top_level = true });
+                }
+                if (uses_filename) {
+                    decls[@as(usize, @intFromBool(uses_dirname))] = .{
+                        .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty),
+                        .value = p.newExpr(
+                            E.String.init(p.source.path.text),
+                            logger.Loc.Empty,
+                        ),
+                    };
+                    declared_symbols.appendAssumeCapacity(.{ .ref = p.filename_ref, .is_top_level = true });
+                }
 
-            var part_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
-            part_stmts[0] = p.s(S.Local{
-                .kind = .k_var,
-                .decls = Decl.List.init(decls),
-            }, logger.Loc.Empty);
-            before.append(js_ast.Part{
-                .stmts = part_stmts,
-                .declared_symbols = declared_symbols,
-                .tag = .dirname_filename,
-            }) catch unreachable;
+                var part_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+                part_stmts[0] = p.s(S.Local{
+                    .kind = .k_var,
+                    .decls = Decl.List.init(decls),
+                }, logger.Loc.Empty);
+                before.append(js_ast.Part{
+                    .stmts = part_stmts,
+                    .declared_symbols = declared_symbols,
+                    .tag = .dirname_filename,
+                }) catch unreachable;
+                uses_dirname = false;
+                uses_filename = false;
+            }
         }
 
         var did_import_fast_refresh = false;
@@ -3752,6 +3802,62 @@ pub const Parser = struct {
             }
         }
 
+        // Handle dirname and filename at runtime.
+        //
+        // If we reach this point, it means:
+        //
+        // 1) we are building an ESM file that uses __dirname or __filename
+        // 2) we are targeting bun's runtime.
+        // 3) we are not bundling.
+        //
+        if (exports_kind == .esm and (uses_dirname or uses_filename)) {
+            std.debug.assert(!p.options.bundle);
+            const count = @as(usize, @intFromBool(uses_dirname)) + @as(usize, @intFromBool(uses_filename));
+            var declared_symbols = DeclaredSymbol.List.initCapacity(p.allocator, count) catch unreachable;
+            var decls = p.allocator.alloc(G.Decl, count) catch unreachable;
+            if (uses_dirname) {
+                // var __dirname = import.meta.dir
+                decls[0] = .{
+                    .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty),
+                    .value = p.newExpr(
+                        E.Dot{
+                            .name = "dir",
+                            .name_loc = logger.Loc.Empty,
+                            .target = p.newExpr(E.ImportMeta{}, logger.Loc.Empty),
+                        },
+                        logger.Loc.Empty,
+                    ),
+                };
+                declared_symbols.appendAssumeCapacity(.{ .ref = p.dirname_ref, .is_top_level = true });
+            }
+            if (uses_filename) {
+                // var __filename = import.meta.path
+                decls[@as(usize, @intFromBool(uses_dirname))] = .{
+                    .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty),
+                    .value = p.newExpr(
+                        E.Dot{
+                            .name = "path",
+                            .name_loc = logger.Loc.Empty,
+                            .target = p.newExpr(E.ImportMeta{}, logger.Loc.Empty),
+                        },
+                        logger.Loc.Empty,
+                    ),
+                };
+                declared_symbols.appendAssumeCapacity(.{ .ref = p.filename_ref, .is_top_level = true });
+            }
+
+            var part_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+            part_stmts[0] = p.s(S.Local{
+                .kind = .k_var,
+                .decls = Decl.List.init(decls),
+            }, logger.Loc.Empty);
+            before.append(js_ast.Part{
+                .stmts = part_stmts,
+                .declared_symbols = declared_symbols,
+                .tag = .dirname_filename,
+            }) catch unreachable;
+        }
+
         if (exports_kind == .esm and p.commonjs_named_exports.count() > 0 and !p.unwrap_all_requires and !force_esm) {
             exports_kind = .esm_with_dynamic_fallback_from_cjs;
         }
@@ -3763,6 +3869,13 @@ pub const Parser = struct {
             for (p.import_records.items) |*item| {
                 // skip if they did import it
                 if (strings.eqlComptime(item.path.text, "bun:test") or strings.eqlComptime(item.path.text, "@jest/globals") or strings.eqlComptime(item.path.text, "vitest")) {
+                    if (p.options.features.runtime_transpiler_cache) |cache| {
+                        // If we rewrote import paths, we need to disable the runtime transpiler cache
+                        if (!strings.eqlComptime(item.path.text, "bun:test")) {
+                            cache.input_hash = null;
+                        }
+                    }
+
                     break :outer;
                 }
             }
@@ -3819,6 +3932,11 @@ pub const Parser = struct {
                 .import_record_indices = bun.BabyList(u32).init(import_record_indices),
                 .tag = .bun_test,
             }) catch unreachable;
+
+            // If we injected jest globals, we need to disable the runtime transpiler cache
+            if (p.options.features.runtime_transpiler_cache) |cache| {
+                cache.input_hash = null;
+            }
         }
 
         if (p.legacy_cjs_import_stmts.items.len > 0 and p.options.legacy_transform_require_to_import) {
@@ -3936,6 +4054,19 @@ pub const Parser = struct {
 
         // Pop the module scope to apply the "ContainsDirectEval" rules
         // p.popScope();
+
+        if (comptime Environment.isNative and bun.FeatureFlags.runtime_transpiler_cache) {
+            var runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = p.options.features.runtime_transpiler_cache;
+            if (runtime_transpiler_cache) |cache| {
+                if (p.macro_call_count != 0) {
+                    // disable this for:
+                    // - macros
+                    cache.input_hash = null;
+                } else {
+                    cache.exports_kind = exports_kind;
+                }
+            }
+        }
 
         return js_ast.Result{ .ast = try p.toAST(parts_slice, exports_kind, wrapper_expr, hashbang) };
     }
@@ -21984,6 +22115,11 @@ fn NewParser_(
             if (opts.features.top_level_await or comptime only_scan_imports_and_do_not_visit) {
                 this.fn_or_arrow_data_parse.allow_await = .allow_expr;
                 this.fn_or_arrow_data_parse.is_top_level = true;
+            }
+
+            if (comptime !is_typescript_enabled) {
+                // This is so it doesn't impact runtime transpiler caching when not in use
+                this.options.features.emit_decorator_metadata = false;
             }
         }
     };

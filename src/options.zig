@@ -979,6 +979,15 @@ pub const JSX = struct {
             production: string = "react/jsx-runtime",
         };
 
+        pub fn hashForRuntimeTranspiler(this: *const Pragma, hasher: *std.hash.Wyhash) void {
+            for (this.factory) |factory| hasher.update(factory);
+            for (this.fragment) |fragment| hasher.update(fragment);
+            hasher.update(this.import_source.development);
+            hasher.update(this.import_source.production);
+            hasher.update(this.classic_import_source);
+            hasher.update(this.package_name);
+        }
+
         pub fn importSource(this: *const Pragma) string {
             return switch (this.development) {
                 true => this.import_source.development,
@@ -1707,9 +1716,8 @@ pub const BundleOptions = struct {
                 opts.allow_runtime = false;
             },
             .bun => {
-                // If we're doing SSR, we want all the URLs to be the same as what it would be in the browser
-                // If we're not doing SSR, we want all the import paths to be absolute
                 opts.import_path_format = if (opts.import_path_format == .absolute_url) .absolute_url else .absolute_path;
+
                 opts.env.behavior = .load_all;
                 if (transform.extension_order.len == 0) {
                     // we must also support require'ing .node files
@@ -2018,7 +2026,7 @@ pub const OutputFile = struct {
     }
 
     pub fn moveTo(file: *const OutputFile, _: string, rel_path: []u8, dir: FileDescriptorType) !void {
-        try bun.C.moveFileZ(bun.fdcast(file.value.move.dir), &(try std.os.toPosixPath(file.value.move.getPathname())), bun.fdcast(dir), &(try std.os.toPosixPath(rel_path)));
+        try bun.C.moveFileZ(bun.fdcast(file.value.move.dir), bun.sliceTo(&(try std.os.toPosixPath(file.value.move.getPathname())), 0), bun.fdcast(dir), bun.sliceTo(&(try std.os.toPosixPath(rel_path)), 0));
     }
 
     pub fn copyTo(file: *const OutputFile, _: string, rel_path: []u8, dir: FileDescriptorType) !void {

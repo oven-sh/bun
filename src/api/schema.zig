@@ -1244,6 +1244,9 @@ pub const Api = struct {
         /// load_all
         load_all,
 
+        /// load_all_without_inlining
+        load_all_without_inlining,
+
         _,
 
         pub fn jsonStringify(self: @This(), writer: anytype) !void {

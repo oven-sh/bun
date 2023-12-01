@@ -241,6 +241,7 @@ enum DotEnvBehavior {
   disable = 1;
   prefix = 2;
   load_all = 3;
+  load_all_without_inlining = 4;
 }
 
 message EnvConfig {

@@ -10,12 +10,13 @@ export type TestOptions = {
   repository: string;
   ref: string | null;
   paths: string[];
-  runner: "jest" | "vitest" | "ava" | "mocha" | "qunit" | "tap" | "utest" | "script";
+  runner: "jest" | "vitest" | "ava" | "mocha" | "qunit" | "tap" | "utest" | "uvu" | "script";
   skip?: boolean | string;
   todo?: boolean | string;
+  cmds?: string[][];
 };
 
-export function runTests({ package: name, repository, ref, paths, runner, skip, todo }: TestOptions): void {
+export function runTests({ package: name, repository, ref, paths, runner, skip, todo, cmds }: TestOptions): void {
   if (todo) {
     test.todo(name, () => {});
     return;
@@ -55,6 +56,23 @@ export function runTests({ package: name, repository, ref, paths, runner, skip, 
 
       if (exitCode !== 0) {
         throw "bun install";
+      }
+    }
+
+    for (const cmd of cmds ?? []) {
+      if (cmd[0] === "bun") {
+        cmd[0] = bunExe();
+      }
+      const { exitCode } = spawnSync({
+        cwd,
+        cmd,
+        env: bunEnv,
+        stdout: "inherit",
+        stderr: "inherit",
+      });
+
+      if (exitCode !== 0) {
+        throw cmd.join(" ");
       }
     }
 

@@ -3276,7 +3276,7 @@ pub const Package = extern struct {
 
                     notes[0] = .{
                         .text = try std.fmt.allocPrint(lockfile.allocator, "\"{s}\" originally specified here", .{external_alias.slice(buf)}),
-                        .location = logger.Location.init_or_nil(&source, source.rangeOfString(entry.value_ptr.*)),
+                        .location = logger.Location.initOrNull(&source, source.rangeOfString(entry.value_ptr.*)),
                     };
 
                     try log.addRangeErrorFmtWithNotes(
@@ -3303,6 +3303,7 @@ pub const Package = extern struct {
         pub const Entry = struct {
             name: string,
             version: ?string,
+            name_loc: logger.Loc,
         };
 
         pub fn init(allocator: std.mem.Allocator) WorkspaceMap {
@@ -3334,6 +3335,7 @@ pub const Package = extern struct {
             entry.value_ptr.* = .{
                 .name = try self.map.allocator.dupe(u8, value.name),
                 .version = value.version,
+                .name_loc = value.name_loc,
             };
         }
 
@@ -3357,6 +3359,7 @@ pub const Package = extern struct {
     const WorkspaceEntry = struct {
         path: []const u8 = "",
         name: []const u8 = "",
+        name_loc: logger.Loc = logger.Loc.Empty,
         version: ?[]const u8 = null,
     };
 
@@ -3395,6 +3398,7 @@ pub const Package = extern struct {
         @memcpy(name_to_copy[0..workspace_json.found_name.len], workspace_json.found_name);
         var entry = WorkspaceEntry{
             .name = name_to_copy[0..workspace_json.found_name.len],
+            .name_loc = workspace_json.name_loc,
             .path = path_to_use,
         };
         debug("processWorkspaceName({s}) = {s}", .{ path_to_use, entry.name });
@@ -3432,9 +3436,9 @@ pub const Package = extern struct {
             var input_path = item.asString(allocator) orelse {
                 log.addErrorFmt(source, item.loc, allocator,
                     \\Workspaces expects an array of strings, like:
-                    \\"workspaces": [
-                    \\  "path/to/package"
-                    \\]
+                    \\  <r><green>"workspaces"<r>: [
+                    \\    <green>"path/to/package"<r>
+                    \\  ]
                 , .{}) catch {};
                 return error.InvalidPackageJSON;
             };
@@ -3521,6 +3525,7 @@ pub const Package = extern struct {
 
             try workspace_names.insert(input_path, .{
                 .name = workspace_entry.name,
+                .name_loc = workspace_entry.name_loc,
                 .version = workspace_entry.version,
             });
         }
@@ -3658,6 +3663,7 @@ pub const Package = extern struct {
                     try workspace_names.insert(workspace_path, .{
                         .name = workspace_entry.name,
                         .version = workspace_entry.version,
+                        .name_loc = workspace_entry.name_loc,
                     });
                 }
             }
@@ -3819,9 +3825,9 @@ pub const Package = extern struct {
                         if (!group.behavior.isWorkspace()) {
                             log.addErrorFmt(&source, dependencies_q.loc, allocator,
                                 \\{0s} expects a map of specifiers, e.g.
-                                \\"{0s}": {{
-                                \\  "bun": "latest"
-                                \\}}
+                                \\  <r><green>"{0s}"<r>: {{
+                                \\    <green>"bun"<r>: <green>"latest"<r>
+                                \\  }}
                             , .{group.prop}) catch {};
                             return error.InvalidPackageJSON;
                         }
@@ -3862,10 +3868,11 @@ pub const Package = extern struct {
                             }
 
                             log.addErrorFmt(&source, dependencies_q.loc, allocator,
+                            // TODO: what if we could comptime call the syntax highlighter
                                 \\Workspaces expects an array of strings, e.g.
-                                \\"workspaces": [
-                                \\  "path/to/package"
-                                \\]
+                                \\  <r><green>"workspaces"<r>: [
+                                \\    <green>"path/to/package"<r>
+                                \\  ]
                             , .{}) catch {};
                             return error.InvalidPackageJSON;
                         }
@@ -3873,10 +3880,11 @@ pub const Package = extern struct {
                             const key = item.key.?.asString(allocator).?;
                             const value = item.value.?.asString(allocator) orelse {
                                 log.addErrorFmt(&source, item.value.?.loc, allocator,
+                                // TODO: what if we could comptime call the syntax highlighter
                                     \\{0s} expects a map of specifiers, e.g.
-                                    \\"{0s}": {{
-                                    \\  "bun": "latest"
-                                    \\}}
+                                    \\  <r><green>"{0s}"<r>: {{
+                                    \\    <green>"bun"<r>: <green>"latest"<r>
+                                    \\  }}
                                 , .{group.prop}) catch {};
                                 return error.InvalidPackageJSON;
                             };
@@ -3895,17 +3903,18 @@ pub const Package = extern struct {
                     else => {
                         if (group.behavior.isWorkspace()) {
                             log.addErrorFmt(&source, dependencies_q.loc, allocator,
+                            // TODO: what if we could comptime call the syntax highlighter
                                 \\Workspaces expects an array of strings, e.g.
-                                \\"workspaces": [
-                                \\  "path/to/package"
-                                \\]
+                                \\  <r><green>"workspaces"<r>: [
+                                \\    <green>"path/to/package"<r>
+                                \\  ]
                             , .{}) catch {};
                         } else {
                             log.addErrorFmt(&source, dependencies_q.loc, allocator,
                                 \\{0s} expects a map of specifiers, e.g.
-                                \\"{0s}": {{
-                                \\  "bun": "latest"
-                                \\}}
+                                \\  <r><green>"{0s}"<r>: {{
+                                \\    <green>"bun"<r>: <green>"latest"<r>
+                                \\  }}
                             , .{group.prop}) catch {};
                         }
                         return error.InvalidPackageJSON;
@@ -3923,9 +3932,9 @@ pub const Package = extern struct {
                             const name = item.asString(allocator) orelse {
                                 log.addErrorFmt(&source, q.loc, allocator,
                                     \\trustedDependencies expects an array of strings, e.g.
-                                    \\"trustedDependencies": [
-                                    \\  "package_name"
-                                    \\]
+                                    \\  <r><green>"trustedDependencies"<r>: [
+                                    \\    <green>"package_name"<r>
+                                    \\  ]
                                 , .{}) catch {};
                                 return error.InvalidPackageJSON;
                             };
@@ -3935,9 +3944,9 @@ pub const Package = extern struct {
                     else => {
                         log.addErrorFmt(&source, q.loc, allocator,
                             \\trustedDependencies expects an array of strings, e.g.
-                            \\"trustedDependencies": [
-                            \\  "package_name"
-                            \\]
+                            \\  <r><green>"trustedDependencies"<r>: [
+                            \\    <green>"package_name"<r>
+                            \\  ]
                         , .{}) catch {};
                         return error.InvalidPackageJSON;
                     },
@@ -4090,9 +4099,74 @@ pub const Package = extern struct {
                     // workspace names from their package jsons. duplicates not allowed
                     var gop = try seen_workspace_names.getOrPut(allocator, @truncate(String.Builder.stringHash(entry.name)));
                     if (gop.found_existing) {
-                        log.addErrorFmt(&source, logger.Loc.Empty, allocator, "Workspace name \"{s}\" already exists", .{
-                            entry.name,
-                        }) catch {};
+                        // this path does alot of extra work to format the error message
+                        // but this is ok because the install is going to fail anyways, so this
+                        // has zero effect on the happy path.
+                        var cwd_buf: bun.fs.PathBuffer = undefined;
+                        const cwd = try bun.getcwd(&cwd_buf);
+
+                        const num_notes = count: {
+                            var i: usize = 0;
+                            for (workspace_names.values()) |value| {
+                                if (strings.eql(value.name, entry.name))
+                                    i += 1;
+                            }
+                            break :count i;
+                        };
+                        const notes = notes: {
+                            var notes = try allocator.alloc(logger.Data, num_notes);
+                            var i: usize = 0;
+                            for (workspace_names.values(), workspace_names.keys()) |value, note_path| {
+                                if (note_path.ptr == path.ptr) continue;
+                                if (strings.eql(value.name, entry.name)) {
+                                    var note_abs_path = allocator.dupeZ(u8, Path.joinAbsStringZ(cwd, &.{ note_path, "package.json" }, .auto)) catch bun.outOfMemory();
+
+                                    const note_src = src: {
+                                        var workspace_file = std.fs.openFileAbsoluteZ(note_abs_path, .{ .mode = .read_only }) catch {
+                                            break :src logger.Source.initEmptyFile(note_abs_path);
+                                        };
+                                        defer workspace_file.close();
+
+                                        // TODO: when are these bytes supposed to be freed?
+                                        const workspace_bytes = try workspace_file.readToEndAlloc(allocator, std.math.maxInt(usize));
+                                        // defer allocator.free(workspace_bytes);
+                                        break :src logger.Source.initPathString(note_abs_path, workspace_bytes);
+                                    };
+
+                                    notes[i] = .{
+                                        .text = "Package name is also declared here",
+                                        .location = logger.Location.initOrNull(&note_src, note_src.rangeOfString(value.name_loc)),
+                                    };
+                                    i += 1;
+                                }
+                            }
+                            break :notes notes[0..i];
+                        };
+
+                        var abs_path = Path.joinAbsStringZ(cwd, &.{ path, "package.json" }, .auto);
+
+                        const src = src: {
+                            var workspace_file = std.fs.openFileAbsoluteZ(abs_path, .{ .mode = .read_only }) catch {
+                                break :src logger.Source.initEmptyFile(abs_path);
+                            };
+                            defer workspace_file.close();
+
+                            // TODO: when are these bytes supposed to be freed?
+                            const workspace_bytes = try workspace_file.readToEndAlloc(allocator, std.math.maxInt(usize));
+                            // defer allocator.free(workspace_bytes);
+                            break :src logger.Source.initPathString(abs_path, workspace_bytes);
+                        };
+
+                        log.addRangeErrorFmtWithNotes(
+                            &src,
+                            src.rangeOfString(entry.name_loc),
+                            allocator,
+                            notes,
+                            "Workspace name \"{s}\" already exists",
+                            .{
+                                entry.name,
+                            },
+                        ) catch {};
                         return error.InstallFailed;
                     }
 

@@ -323,15 +323,15 @@ static bool skipNextComputeErrorInfo = false;
 
 WTF::String Bun::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const WTF::String& name, const WTF::String& message, unsigned& line, unsigned& column, WTF::String& sourceURL, Vector<JSC::StackFrame>& stackTrace, JSC::JSObject* errorInstance)
 {
-
     WTF::StringBuilder sb;
 
     if (!name.isEmpty()) {
         sb.append(name);
-        sb.append(": "_s);
-    }
-
-    if (!message.isEmpty()) {
+        if (!message.isEmpty()) {
+            sb.append(": "_s);
+            sb.append(message);
+        }
+    } else if (!message.isEmpty()) {
         sb.append(message);
     }
 
@@ -339,25 +339,76 @@ WTF::String Bun::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject
     // https://discord.com/channels/876711213126520882/1174901590457585765/1174907969419350036
     size_t framesCount = stackTrace.size();
 
+    bool hasSet = false;
+
+    if(errorInstance) {
+        if (JSC::ErrorInstance* err = jsDynamicCast<JSC::ErrorInstance*>(errorInstance)) {
+            if (err->errorType() == ErrorType::SyntaxError && (stackTrace.isEmpty() || stackTrace.at(0).sourceURL(vm) != err->sourceURL())) {
+                // There appears to be an off-by-one error.
+                // The following reproduces the issue:
+                // /* empty comment */
+                // "".test(/[a-0]/);
+                auto originalLine = WTF::OrdinalNumber::fromOneBasedInt(err->line());
+
+                ZigStackFrame remappedFrame;
+                memset(&remappedFrame, 0, sizeof(ZigStackFrame));
+
+                remappedFrame.position.line = originalLine.zeroBasedInt() + 1;
+                remappedFrame.position.column_start = 0;
+
+                String sourceURLForFrame = err->sourceURL();
+
+                // If it's not a Zig::GlobalObject, don't bother source-mapping it.
+                if (globalObject && !sourceURLForFrame.isEmpty()) {
+                    if (!sourceURLForFrame.isEmpty()) {
+                        remappedFrame.source_url = Bun::toString(sourceURLForFrame);
+                    } else {
+                        // https://github.com/oven-sh/bun/issues/3595
+                        remappedFrame.source_url = BunStringEmpty;
+                    }
+
+                    // This ensures the lifetime of the sourceURL is accounted for correctly
+                    Bun__remapStackFramePositions(globalObject, &remappedFrame, 1);
+                }
+
+                // there is always a newline before each stack frame line, ensuring that the name + message
+                // exist on the first line, even if both are empty
+                sb.append("\n"_s);
+
+                sb.append("    at <parse> ("_s);
+
+                sb.append(sourceURLForFrame);
+
+                if (remappedFrame.remapped) {
+                    errorInstance->putDirect(vm, Identifier::fromString(vm, "originalLine"_s), jsNumber(originalLine.oneBasedInt()), 0);
+                    hasSet = true;
+                    line = remappedFrame.position.line;
+                }
+
+                if (remappedFrame.remapped) {
+                    sb.append(":"_s);
+                    sb.append(remappedFrame.position.line);
+                } else {
+                    sb.append(":"_s);
+                    sb.append(originalLine.oneBasedInt());
+                }
+
+                sb.append(")"_s);
+            }
+        }
+    }
+
     if (framesCount == 0) {
         ASSERT(stackTrace.isEmpty());
         return sb.toString();
     }
 
-    if ((!message.isEmpty() || !name.isEmpty())) {
-        sb.append("\n"_s);
-    }
+    sb.append("\n"_s);
 
-    ZigStackFrame remappedFrames[64];
-    framesCount = framesCount > 64 ? 64 : framesCount;
-
-    bool hasSet = false;
     for (size_t i = 0; i < framesCount; i++) {
         StackFrame& frame = stackTrace.at(i);
 
         sb.append("    at "_s);
-
-        WTF::String functionName = frame.functionName(vm);
 
         if (auto codeblock = frame.codeBlock()) {
             if (codeblock->isConstructor()) {
@@ -367,35 +418,34 @@ WTF::String Bun::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject
             // TODO: async
         }
 
+        WTF::String functionName = frame.functionName(vm);
         if (functionName.isEmpty()) {
             sb.append("<anonymous>"_s);
         } else {
             sb.append(functionName);
         }
 
-        sb.append(" ("_s);
-
         if (frame.hasLineAndColumnInfo()) {
             unsigned int thisLine = 0;
             unsigned int thisColumn = 0;
             frame.computeLineAndColumn(thisLine, thisColumn);
-            memset(remappedFrames + i, 0, sizeof(ZigStackFrame));
-            remappedFrames[i].position.line = thisLine;
-            remappedFrames[i].position.column_start = thisColumn;
+            ZigStackFrame remappedFrame;
+            remappedFrame.position.line = thisLine;
+            remappedFrame.position.column_start = thisColumn;
 
             String sourceURLForFrame = frame.sourceURL(vm);
 
             // If it's not a Zig::GlobalObject, don't bother source-mapping it.
             if (globalObject) {
                 if (!sourceURLForFrame.isEmpty()) {
-                    remappedFrames[i].source_url = Bun::toString(sourceURLForFrame);
+                    remappedFrame.source_url = Bun::toString(sourceURLForFrame);
                 } else {
                     // https://github.com/oven-sh/bun/issues/3595
-                    remappedFrames[i].source_url = BunStringEmpty;
+                    remappedFrame.source_url = BunStringEmpty;
                 }
 
                 // This ensures the lifetime of the sourceURL is accounted for correctly
-                Bun__remapStackFramePositions(globalObject, remappedFrames + i, 1);
+                Bun__remapStackFramePositions(globalObject, &remappedFrame, 1);
             }
 
             if (!hasSet) {
@@ -404,7 +454,7 @@ WTF::String Bun::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject
                 column = thisColumn;
                 sourceURL = frame.sourceURL(vm);
 
-                if (remappedFrames[i].remapped) {
+                if (remappedFrame.remapped) {
                     if (errorInstance) {
                         errorInstance->putDirect(vm, Identifier::fromString(vm, "originalLine"_s), jsNumber(thisLine), 0);
                         errorInstance->putDirect(vm, Identifier::fromString(vm, "originalColumn"_s), jsNumber(thisColumn), 0);
@@ -412,15 +462,16 @@ WTF::String Bun::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject
                 }
             }
 
+            sb.append(" ("_s);
             sb.append(sourceURLForFrame);
             sb.append(":"_s);
-            sb.append(remappedFrames[i].position.line);
+            sb.append(remappedFrame.position.line);
             sb.append(":"_s);
-            sb.append(remappedFrames[i].position.column_start);
+            sb.append(remappedFrame.position.column_start);
+            sb.append(")"_s);
         } else {
-            sb.append("native"_s);
+            sb.append(" (native)"_s);
         }
-        sb.append(")"_s);
 
         if (i != framesCount - 1) {
             sb.append("\n"_s);
@@ -471,11 +522,10 @@ static String computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObje
         size_t framesCount = stackTrace.size();
         ZigStackFrame remappedFrames[framesCount];
         for (int i = 0; i < framesCount; i++) {
-            memset(remappedFrames + i, 0, sizeof(ZigStackFrame));
             remappedFrames[i].source_url = Bun::toString(lexicalGlobalObject, stackTrace.at(i).sourceURL());
             if (JSCStackFrame::SourcePositions* sourcePositions = stackTrace.at(i).getSourcePositions()) {
-                remappedFrames[i].position.line = sourcePositions->line.zeroBasedInt();
-                remappedFrames[i].position.column_start = sourcePositions->startColumn.zeroBasedInt() + 1;
+                remappedFrames[i].position.line = sourcePositions->line.oneBasedInt();
+                remappedFrames[i].position.column_start = sourcePositions->startColumn.oneBasedInt() + 1;
             } else {
                 remappedFrames[i].position.line = -1;
                 remappedFrames[i].position.column_start = -1;
@@ -1597,6 +1647,8 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
     return JSC::JSValue::encode(jsUndefined());
 }
 
+extern "C" EncodedJSValue BunInternalFunction__syntaxHighlighter(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame);
+
 // we're trying out a new way to do this lazy loading
 // this is $lazy() in js code
 JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
@@ -1857,6 +1909,12 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
             obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "getWindowSize"_s)), JSFunction::create(vm, globalObject, 0, "getWindowSize"_s, Bun::Process_functionInternalGetWindowSize, ImplementationVisibility::Public), 2);
 
             return JSValue::encode(obj);
+        }
+
+        if (string == "unstable_syntaxHighlight"_s) {
+            JSFunction* syntaxHighlight = JSFunction::create(vm, globalObject, 1, "syntaxHighlight"_s, BunInternalFunction__syntaxHighlighter, ImplementationVisibility::Public);
+
+            return JSValue::encode(syntaxHighlight);
         }
 
         if (UNLIKELY(string == "noop"_s)) {
@@ -2759,8 +2817,8 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
         memset(remappedFrames + i, 0, sizeof(ZigStackFrame));
         remappedFrames[i].source_url = Bun::toString(lexicalGlobalObject, stackTrace.at(i).sourceURL());
         if (JSCStackFrame::SourcePositions* sourcePositions = stackTrace.at(i).getSourcePositions()) {
-            remappedFrames[i].position.line = sourcePositions->line.zeroBasedInt();
-            remappedFrames[i].position.column_start = sourcePositions->startColumn.zeroBasedInt() + 1;
+            remappedFrames[i].position.line = sourcePositions->line.oneBasedInt();
+            remappedFrames[i].position.column_start = sourcePositions->startColumn.oneBasedInt() + 1;
         } else {
             remappedFrames[i].position.line = -1;
             remappedFrames[i].position.column_start = -1;

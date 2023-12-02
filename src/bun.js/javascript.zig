@@ -2069,7 +2069,7 @@ pub const VirtualMachine = struct {
                         null,
                         logger.Loc.Empty,
                         this.allocator,
-                        "{s} resolving preload {any}",
+                        "{s} resolving preload {}",
                         .{
                             @errorName(e),
                             js_printer.formatJSONString(preload),
@@ -2082,7 +2082,7 @@ pub const VirtualMachine = struct {
                         null,
                         logger.Loc.Empty,
                         this.allocator,
-                        "preload not found {any}",
+                        "preload not found {}",
                         .{
                             js_printer.formatJSONString(preload),
                         },
@@ -2511,14 +2511,12 @@ pub const VirtualMachine = struct {
 
                 if (file.len == 0 and func.len == 0) continue;
 
-                const has_name = std.fmt.count("{any}", .{frame.nameFormatter(
-                    false,
-                )}) > 0;
+                const has_name = std.fmt.count("{}", .{frame.nameFormatter(false)}) > 0;
 
                 if (has_name) {
                     try writer.print(
                         comptime Output.prettyFmt(
-                            "<r>      <d>at <r>{any}<d> (<r>{any}<d>)<r>\n",
+                            "<r>      <d>at <r>{}<d> (<r>{}<d>)<r>\n",
                             allow_ansi_colors,
                         ),
                         .{
@@ -2536,7 +2534,7 @@ pub const VirtualMachine = struct {
                 } else {
                     try writer.print(
                         comptime Output.prettyFmt(
-                            "<r>      <d>at <r>{any}\n",
+                            "<r>      <d>at <r>{}\n",
                             allow_ansi_colors,
                         ),
                         .{
@@ -2572,6 +2570,7 @@ pub const VirtualMachine = struct {
                 frame.position.column_start = mapping.original.columns;
                 frame.remapped = true;
             } else {
+                // we don't want it to be remapped again
                 frame.remapped = true;
             }
         }
@@ -2601,6 +2600,12 @@ pub const VirtualMachine = struct {
                     start_index = i;
                     break;
                 }
+
+                // Workaround for being unable to hide that specific frame without also hiding the frame before it
+                if (frame.source_url.isEmpty() and frame.function_name.eqlComptime("moduleEvaluation")) {
+                    start_index = 0;
+                    break;
+                }
             }
 
             if (start_index) |k| {
@@ -2613,6 +2618,11 @@ pub const VirtualMachine = struct {
                     {
                         continue;
                     }
+
+                    // Workaround for being unable to hide that specific frame without also hiding the frame before it
+                    if (frame.source_url.isEmpty() and frame.function_name.eqlComptime("moduleEvaluation"))
+                        continue;
+
                     frames[j] = frame;
                     j += 1;
                 }
@@ -2637,11 +2647,24 @@ pub const VirtualMachine = struct {
 
         var top_source_url = top.source_url.toUTF8(bun.default_allocator);
         defer top_source_url.deinit();
-        if (this.source_mappings.resolveMapping(
-            top_source_url.slice(),
-            @max(top.position.line, 0),
-            @max(top.position.column_start, 0),
-        )) |mapping| {
+
+        const mapping_ = if (top.remapped)
+            SourceMap.Mapping{
+                .generated = .{},
+                .original = .{
+                    .lines = @max(top.position.line, 0),
+                    .columns = @max(top.position.column_start, 0),
+                },
+                .source_index = 0,
+            }
+        else
+            this.source_mappings.resolveMapping(
+                top_source_url.slice(),
+                @max(top.position.line, 0),
+                @max(top.position.column_start, 0),
+            );
+
+        if (mapping_) |mapping| {
             var log = logger.Log.init(default_allocator);
             var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return;
             const code = original_source.source_code.toUTF8(bun.default_allocator);
@@ -2658,25 +2681,29 @@ pub const VirtualMachine = struct {
             top.position.expression_start = mapping.original.columns;
             top.position.expression_stop = mapping.original.columns + 1;
 
+            const last_line = @max(top.position.line, 0);
             if (strings.getLinesInText(
                 code.slice(),
-                @as(u32, @intCast(top.position.line)),
+                @intCast(last_line),
                 JSC.ZigException.Holder.source_lines_count,
-            )) |lines| {
+            )) |lines_buf| {
+                var lines = lines_buf.slice();
                 var source_lines = exception.stack.source_lines_ptr[0..JSC.ZigException.Holder.source_lines_count];
                 var source_line_numbers = exception.stack.source_lines_numbers[0..JSC.ZigException.Holder.source_lines_count];
                 @memset(source_lines, String.empty);
                 @memset(source_line_numbers, 0);
 
-                var lines_ = lines[0..@min(lines.len, source_lines.len)];
-                for (lines_, 0..) |line, j| {
-                    source_lines[(lines_.len - 1) - j] = String.init(std.mem.trimRight(u8, line, " \t"));
-                    source_line_numbers[j] = top.position.line - @as(i32, @intCast(j)) + 1;
+                lines = lines[0..@min(@as(usize, lines.len), source_lines.len)];
+                var current_line_number: i32 = @intCast(last_line);
+                for (lines, source_lines[0..lines.len], source_line_numbers[0..lines.len]) |line, *line_dest, *line_number| {
+                    line_dest.* = String.init(line);
+                    line_number.* = current_line_number;
+                    current_line_number -= 1;
                 }
 
-                exception.stack.source_lines_len = @as(u8, @intCast(lines_.len));
+                exception.stack.source_lines_len = @as(u8, @truncate(lines.len));
 
-                top.position.column_stop = @as(i32, @intCast(source_lines[lines_.len - 1].length()));
+                top.position.column_stop = @as(i32, @intCast(source_lines[lines.len - 1].length()));
                 top.position.line_stop = top.position.column_stop;
 
                 // This expression range is no longer accurate
@@ -2721,23 +2748,24 @@ pub const VirtualMachine = struct {
         var line_numbers = exception.stack.source_lines_numbers[0..exception.stack.source_lines_len];
         var max_line: i32 = -1;
         for (line_numbers) |line| max_line = @max(max_line, line);
-        const max_line_number_pad = std.fmt.count("{d}", .{max_line});
+        const max_line_number_pad = std.fmt.count("{d}", .{max_line + 1});
 
         var source_lines = exception.stack.sourceLineIterator();
         var last_pad: u64 = 0;
         while (source_lines.untilLast()) |source| {
             defer source.text.deinit();
+            const display_line = source.line + 1;
 
-            const int_size = std.fmt.count("{d}", .{source.line});
+            const int_size = std.fmt.count("{d}", .{display_line});
             const pad = max_line_number_pad - int_size;
             last_pad = pad;
             try writer.writeByteNTimes(' ', pad);
 
             try writer.print(
-                comptime Output.prettyFmt("<r><d>{d} | <r>{s}\n", allow_ansi_color),
+                comptime Output.prettyFmt("<r><d>{d} | <r>{}\n", allow_ansi_color),
                 .{
-                    source.line,
-                    std.mem.trim(u8, source.text.slice(), "\n"),
+                    display_line,
+                    bun.fmt.fmtJavaScript(std.mem.trimRight(u8, std.mem.trim(u8, source.text.slice(), "\n"), "\t "), allow_ansi_color),
                 },
             );
         }
@@ -2763,42 +2791,39 @@ pub const VirtualMachine = struct {
             if (top_frame == null or top_frame.?.position.isInvalid()) {
                 defer did_print_name = true;
                 defer source.text.deinit();
-                var text = std.mem.trim(u8, source.text.slice(), "\n");
+                const text = std.mem.trimRight(u8, std.mem.trim(u8, source.text.slice(), "\n"), "\t ");
 
                 try writer.print(
                     comptime Output.prettyFmt(
-                        "<r><d>- |<r> {s}\n",
+                        "<r><d>- |<r> {}\n",
                         allow_ansi_color,
                     ),
                     .{
-                        text,
+                        bun.fmt.fmtJavaScript(text, allow_ansi_color),
                     },
                 );
 
                 try this.printErrorNameAndMessage(name, message, Writer, writer, allow_ansi_color);
             } else if (top_frame) |top| {
                 defer did_print_name = true;
-                const int_size = std.fmt.count("{d}", .{source.line});
+                const display_line = source.line + 1;
+                const int_size = std.fmt.count("{d}", .{display_line});
                 const pad = max_line_number_pad - int_size;
                 try writer.writeByteNTimes(' ', pad);
                 defer source.text.deinit();
                 const text = source.text.slice();
-                var remainder = std.mem.trim(u8, text, "\n");
+                const remainder = std.mem.trimRight(u8, std.mem.trim(u8, text, "\n"), "\t ");
 
                 try writer.print(
                     comptime Output.prettyFmt(
-                        "<r><d>{d} |<r> {s}\n",
+                        "<r><b>{d} |<r> {}\n",
                         allow_ansi_color,
                     ),
-                    .{ source.line, remainder },
+                    .{ display_line, bun.fmt.fmtJavaScript(remainder, allow_ansi_color) },
                 );
 
                 if (!top.position.isInvalid()) {
-                    var first_non_whitespace = @as(u32, @intCast(top.position.column_start));
-                    while (first_non_whitespace < text.len and text[first_non_whitespace] == ' ') {
-                        first_non_whitespace += 1;
-                    }
-                    const indent = @min(@as(usize, @intCast(pad)) + " | ".len + first_non_whitespace, text.len -| 2);
+                    const indent = max_line_number_pad + " | ".len + @as(u64, @intCast(top.position.column_start));
 
                     try writer.writeByteNTimes(' ', indent);
                     try writer.print(comptime Output.prettyFmt(
@@ -2871,7 +2896,7 @@ pub const VirtualMachine = struct {
                         var bun_str = bun.String.empty;
                         defer bun_str.deref();
                         value.jsonStringify(this.global, 2, &bun_str); //2
-                        try writer.print(comptime Output.prettyFmt(" {s}<d>: <r>{any}<r>\n", allow_ansi_color), .{ field, bun_str });
+                        try writer.print(comptime Output.prettyFmt(" {s}<d>: <r>{}<r>\n", allow_ansi_color), .{ field, bun_str });
                         add_extra_line = true;
                     }
                 }
@@ -2934,7 +2959,7 @@ pub const VirtualMachine = struct {
         if (!name.isEmpty() and !message.isEmpty()) {
             const display_name: String = if (name.eqlComptime("Error")) String.init("error") else name;
 
-            try writer.print(comptime Output.prettyFmt("<r><red>{any}<r><d>:<r> <b>{s}<r>\n", allow_ansi_color), .{
+            try writer.print(comptime Output.prettyFmt("<r><red>{}<r><d>:<r> <b>{s}<r>\n", allow_ansi_color), .{
                 display_name,
                 message,
             });

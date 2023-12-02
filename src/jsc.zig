@@ -104,3 +104,5 @@ pub const Codegen = struct {
 };
 
 pub const GeneratedClassesList = @import("./bun.js/bindings/generated_classes_list.zig").Classes;
+
+pub const RuntimeTranspilerCache = @import("./bun.js/RuntimeTranspilerCache.zig").RuntimeTranspilerCache;

@@ -494,6 +494,8 @@ pub const Options = struct {
     source_map_builder: ?*bun.sourcemap.Chunk.Builder = null,
     css_import_behavior: Api.CssInJsBehavior = Api.CssInJsBehavior.facade,
 
+    runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
+
     commonjs_named_exports: js_ast.Ast.CommonJSNamedExports = .{},
     commonjs_named_exports_deoptimized: bool = false,
     commonjs_named_exports_ref: Ref = Ref.None,
@@ -5790,7 +5792,20 @@ pub fn printAst(
         }
     }
 
-    if (comptime generate_source_map) {
+    if (comptime FeatureFlags.runtime_transpiler_cache and generate_source_map) {
+        if (opts.source_map_handler) |handler| {
+            const source_maps_chunk = printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten());
+            if (opts.runtime_transpiler_cache) |cache| {
+                cache.put(printer.writer.ctx.getWritten(), source_maps_chunk.buffer.list.items);
+            }
+
+            try handler.onSourceMapChunk(source_maps_chunk, source.*);
+        } else {
+            if (opts.runtime_transpiler_cache) |cache| {
+                cache.put(printer.writer.ctx.getWritten(), "");
+            }
+        }
+    } else if (comptime generate_source_map) {
         if (opts.source_map_handler) |handler| {
             try handler.onSourceMapChunk(printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten()), source.*);
         }

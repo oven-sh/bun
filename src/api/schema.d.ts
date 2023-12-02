@@ -201,6 +201,7 @@ export const enum DotEnvBehavior {
   disable = 1,
   prefix = 2,
   load_all = 3,
+  load_all_without_inlining = 4,
 }
 export const DotEnvBehaviorKeys: {
   1: "disable";
@@ -209,6 +210,8 @@ export const DotEnvBehaviorKeys: {
   prefix: "prefix";
   3: "load_all";
   load_all: "load_all";
+  4: "load_all_without_inlining";
+  load_all_without_inlining: "load_all_without_inlining";
 };
 export const enum SourceMapMode {
   inline_into_file = 1,

@@ -810,6 +810,17 @@ describe("readFile", () => {
       });
     });
   });
+
+  it("works using base64 encoding", async () => {
+    gc();
+    await new Promise((resolve, reject) => {
+      readFile(import.meta.dir + "/readFileSync.txt", "base64", (err, text) => {
+        gc();
+        expect(text).toBe("RmlsZSByZWFkIHN1Y2Nlc3NmdWxseQ=="); // "File read successfully" encoded in base64
+        resolve(true);
+      });
+    });
+  });
 });
 
 describe("writeFileSync", () => {

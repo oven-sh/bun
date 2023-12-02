@@ -29,12 +29,17 @@ console.log({
 console.log(new Promise(() => {}));
 
 class Foo {}
+class FooWithProp {
+  a = 1;
+}
 
+console.log({});
 console.log(() => {});
 console.log(function () {});
 console.log(Foo);
 console.log(class {});
 console.log(new Foo());
+console.log(new FooWithProp());
 console.log(function foooo() {});
 
 console.log(/FooRegex/);
@@ -76,3 +81,28 @@ console.dir({ 1: { 2: { 3: 3 } } }, { depth: 0, colors: false }, "Some ignored a
 console.dir({ 1: { 2: { 3: 3 } } }, { depth: -1, colors: false }, "Some ignored arg");
 console.dir({ 1: { 2: { 3: 3 } } }, { depth: 1.2, colors: false }, "Some ignored arg");
 console.dir({ 1: { 2: { 3: 3 } } }, { depth: Infinity, colors: false }, "Some ignored arg");
+const set = new Set([1, "123", { a: [], str: "123123132", nr: 3453 }]);
+console.log(set.keys());
+console.log(set.values());
+console.log(new Set().keys(), new Set().values());
+const m = new Map([
+  ["key", { a: [], str: "123123132", nr: 3453 }],
+  ["key_2", { b: "test" }],
+]);
+console.log(m.keys());
+console.log(m.values());
+console.log(new Map().keys(), new Map().values());
+class NestedClass {
+  a = 1;
+  b = 2;
+  foo = new FooWithProp();
+  test() {
+    return 3;
+  }
+}
+console.log(new NestedClass());
+
+const objectWithStringTag = {
+  [Symbol.toStringTag]: "myCustomName",
+};
+console.log(objectWithStringTag);

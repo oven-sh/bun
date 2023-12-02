@@ -192,7 +192,7 @@ const server = Bun.serve<{ username: string }>({
     close(ws) {
       const msg = `${ws.data.username} has left the chat`;
       ws.unsubscribe("the-group-chat");
-      ws.publish("the-group-chat", msg);
+      server.publish("the-group-chat", msg);
     },
   },
 });
@@ -246,10 +246,6 @@ The `.send(message)` method of `ServerWebSocket` returns a `number` indicating t
 This gives you better control over backpressure in your server.
 
 ## Connect to a `Websocket` server
-
-{% callout %}
-**🚧** — The `WebSocket` client still does not pass the full [Autobahn test suite](https://github.com/crossbario/autobahn-testsuite) and should not be considered ready for production.
-{% /callout %}
 
 Bun implements the `WebSocket` class. To create a WebSocket client that connects to a `ws://` or `wss://` server, create an instance of `WebSocket`, as you would in the browser.
 

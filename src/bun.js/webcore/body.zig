@@ -1,9 +1,9 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
 const bun = @import("root").bun;
-const MimeType = @import("../../bun_dev_http_server.zig").MimeType;
+const MimeType = bun.http.MimeType;
 const ZigURL = @import("../../url.zig").URL;
-const HTTPClient = @import("root").bun.HTTP;
+const HTTPClient = @import("root").bun.http;
 const NetworkThread = HTTPClient.NetworkThread;
 const AsyncIO = NetworkThread.AsyncIO;
 const JSC = @import("root").bun.JSC;
@@ -1085,6 +1085,13 @@ pub fn BodyMixin(comptime Type: type) type {
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
+            return this.getBlobWithoutCallFrame(globalObject);
+        }
+
+        pub fn getBlobWithoutCallFrame(
+            this: *Type,
+            globalObject: *JSC.JSGlobalObject,
+        ) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
 
             if (value.* == .Used) {

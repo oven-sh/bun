@@ -83,6 +83,28 @@ public:
         return ConnectionType::Remote;
     }
 
+    void doConnect(WebCore::ScriptExecutionContext& context)
+    {
+        this->status = ConnectionStatus::Connected;
+        auto* globalObject = context.jsGlobalObject();
+        if (this->unrefOnDisconnect) {
+            Bun__eventLoop__incrementRefConcurrently(reinterpret_cast<Zig::GlobalObject*>(globalObject)->bunVM(), 1);
+        }
+        globalObject->setInspectable(true);
+        auto& inspector = globalObject->inspectorDebuggable();
+        inspector.setInspectable(true);
+        globalObject->inspectorController().connectFrontend(*this, true, false); // waitingForConnection
+
+        Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
+        if (debugger) {
+            debugger->runWhilePausedCallback = [](JSC::JSGlobalObject& globalObject, bool& isDoneProcessingEvents) -> void {
+                BunInspectorConnection::runWhilePaused(globalObject, isDoneProcessingEvents);
+            };
+        }
+
+        this->receiveMessagesOnInspectorThread(context, reinterpret_cast<Zig::GlobalObject*>(globalObject), false);
+    }
+
     void connect()
     {
         switch (this->status) {
@@ -101,24 +123,7 @@ public:
         ScriptExecutionContext::ensureOnContextThread(scriptExecutionContextIdentifier, [connection = this](ScriptExecutionContext& context) {
             switch (connection->status) {
             case ConnectionStatus::Pending: {
-                connection->status = ConnectionStatus::Connected;
-                auto* globalObject = context.jsGlobalObject();
-                if (connection->unrefOnDisconnect) {
-                    Bun__eventLoop__incrementRefConcurrently(reinterpret_cast<Zig::GlobalObject*>(globalObject)->bunVM(), 1);
-                }
-                globalObject->setInspectable(true);
-                auto& inspector = globalObject->inspectorDebuggable();
-                inspector.setInspectable(true);
-                globalObject->inspectorController().connectFrontend(*connection, true, false); // waitingForConnection
-
-                Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
-                if (debugger) {
-                    debugger->runWhilePausedCallback = [](JSC::JSGlobalObject& globalObject, bool& isDoneProcessingEvents) -> void {
-                        BunInspectorConnection::runWhilePaused(globalObject, isDoneProcessingEvents);
-                    };
-                }
-
-                connection->receiveMessagesOnInspectorThread(context, reinterpret_cast<Zig::GlobalObject*>(globalObject));
+                connection->doConnect(context);
                 break;
             }
             default: {
@@ -180,10 +185,11 @@ public:
         for (auto* connection : connections) {
             if (connection->status == ConnectionStatus::Pending) {
                 connection->connect();
+                continue;
             }
 
             if (connection->status != ConnectionStatus::Disconnected) {
-                connection->receiveMessagesOnInspectorThread(*global->scriptExecutionContext(), global);
+                connection->receiveMessagesOnInspectorThread(*global->scriptExecutionContext(), global, true);
             }
         }
 
@@ -202,14 +208,14 @@ public:
                     }
                     break;
                 }
-                connection->receiveMessagesOnInspectorThread(*global->scriptExecutionContext(), global);
+                connection->receiveMessagesOnInspectorThread(*global->scriptExecutionContext(), global, true);
             }
         } else {
             while (!isDoneProcessingEvents) {
                 size_t closedCount = 0;
                 for (auto* connection : connections) {
                     closedCount += connection->status == ConnectionStatus::Disconnected || connection->status == ConnectionStatus::Disconnecting;
-                    connection->receiveMessagesOnInspectorThread(*global->scriptExecutionContext(), global);
+                    connection->receiveMessagesOnInspectorThread(*global->scriptExecutionContext(), global, true);
                     if (isDoneProcessingEvents)
                         break;
                 }
@@ -222,7 +228,7 @@ public:
         }
     }
 
-    void receiveMessagesOnInspectorThread(ScriptExecutionContext& context, Zig::GlobalObject* globalObject)
+    void receiveMessagesOnInspectorThread(ScriptExecutionContext& context, Zig::GlobalObject* globalObject, bool connectIfNeeded)
     {
         this->jsThreadMessageScheduledCount.store(0);
         WTF::Vector<WTF::String, 12> messages;
@@ -236,14 +242,21 @@ public:
         Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
 
         if (!debugger) {
+            if (connectIfNeeded && this->status == ConnectionStatus::Pending) {
+                this->doConnect(context);
+                return;
+            }
+
             for (auto message : messages) {
                 dispatcher.dispatchMessageFromRemote(WTFMove(message));
 
-                debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
-                if (debugger) {
-                    debugger->runWhilePausedCallback = [](JSC::JSGlobalObject& globalObject, bool& isDoneProcessingEvents) -> void {
-                        runWhilePaused(globalObject, isDoneProcessingEvents);
-                    };
+                if (!debugger) {
+                    debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
+                    if (debugger) {
+                        debugger->runWhilePausedCallback = [](JSC::JSGlobalObject& globalObject, bool& isDoneProcessingEvents) -> void {
+                            runWhilePaused(globalObject, isDoneProcessingEvents);
+                        };
+                    }
                 }
             }
         } else {
@@ -304,7 +317,7 @@ public:
             this->jsWaitForMessageFromInspectorLock.unlock();
         } else if (this->jsThreadMessageScheduledCount++ == 0) {
             ScriptExecutionContext::postTaskTo(scriptExecutionContextIdentifier, [connection = this](ScriptExecutionContext& context) {
-                connection->receiveMessagesOnInspectorThread(context, reinterpret_cast<Zig::GlobalObject*>(context.jsGlobalObject()));
+                connection->receiveMessagesOnInspectorThread(context, reinterpret_cast<Zig::GlobalObject*>(context.jsGlobalObject()), true);
             });
         }
     }
@@ -358,7 +371,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray, 2);
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
     }
 
     BunInspectorConnection* connection()

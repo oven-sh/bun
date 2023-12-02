@@ -1,0 +1,61 @@
+{
+	"name": "dragon-test-7-b",
+	"versions": {
+		"1.0.0": {
+			"name": "dragon-test-7-b",
+			"version": "1.0.0",
+			"dependencies": {
+				"dragon-test-7-c": "1.0.0"
+			},
+			"_id": "dragon-test-7-b@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-gNOTo7SaGKBIHxEh4U8T8GPOtFR2Lsu5SwaWoa/6gWG1yLkMRjB/RBi5cETrURa14GXKt0ReCxzg9N69SXveqg==",
+				"shasum": "20092c3a0200f5e2d514dfc7c69f6c9abf29d5a6",
+				"tarball": "http://localhost:4873/dragon-test-7-b/-/dragon-test-7-b-1.0.0.tgz"
+			},
+			"contributors": []
+		},
+		"2.0.0": {
+			"name": "dragon-test-7-b",
+			"version": "2.0.0",
+			"_id": "dragon-test-7-b@2.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-fmadq3Ue9G6dBq3VZpdgZQWlknqxd1pVig7Pa9YbEP+VJ1yDJ1CENGwgBztaNj5bx3z0We73/+tfncFJtyV/Kg==",
+				"shasum": "14ecbfb59d848644241401154045b1b566ee3c2c",
+				"tarball": "http://localhost:4873/dragon-test-7-b/-/dragon-test-7-b-2.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:04.648Z",
+		"created": "2023-11-01T22:05:04.363Z",
+		"1.0.0": "2023-11-01T22:05:04.363Z",
+		"2.0.0": "2023-11-01T22:05:04.648Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "2.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"dragon-test-7-b-1.0.0.tgz": {
+			"shasum": "20092c3a0200f5e2d514dfc7c69f6c9abf29d5a6",
+			"version": "1.0.0"
+		},
+		"dragon-test-7-b-2.0.0.tgz": {
+			"shasum": "14ecbfb59d848644241401154045b1b566ee3c2c",
+			"version": "2.0.0"
+		}
+	},
+	"_rev": "6-edbb2247f9e87b94",
+	"_id": "dragon-test-7-b",
+	"readme": "ERROR: No README data found!"
+}

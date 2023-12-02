@@ -1,0 +1,45 @@
+{
+	"name": "create-test-app",
+	"versions": {
+		"1.0.0": {
+			"name": "create-test-app",
+			"version": "1.0.0",
+			"bin": {
+				"create-test-app": "bin.js"
+			},
+			"dependencies": {
+				"no-deps": "1.0.0"
+			},
+			"_id": "create-test-app@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-ycrYS5QxZYat8csWp6SzLhAoO8ku1d/805g50NDX4XX2RPyGouMwMPVpPxlmRhWBaj14rpu7gyFSRJafIvW20Q==",
+				"shasum": "656ad53d7c55cd4a44b51b954c2e5b454e7e5c64",
+				"tarball": "http://localhost:4873/create-test-app/-/create-test-app-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:00.560Z",
+		"created": "2023-11-01T22:05:00.560Z",
+		"1.0.0": "2023-11-01T22:05:00.560Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"create-test-app-1.0.0.tgz": {
+			"shasum": "656ad53d7c55cd4a44b51b954c2e5b454e7e5c64",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-f512ebd283ddbb48",
+	"_id": "create-test-app",
+	"readme": "ERROR: No README data found!"
+}

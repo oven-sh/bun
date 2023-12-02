@@ -15,5 +15,5 @@
     "outDir": "dist",
     "types": ["node"]
   },
-  "include": ["src", "lib", "../bun-types/index.d.ts"],
+  "include": ["src", "lib", "../bun-types/index.d.ts"]
 }

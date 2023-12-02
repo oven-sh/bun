@@ -1,0 +1,62 @@
+{
+	"name": "what-bin",
+	"versions": {
+		"1.0.0": {
+			"name": "what-bin",
+			"version": "1.0.0",
+			"bin": {
+				"what-bin": "what-bin.js"
+			},
+			"_id": "what-bin@1.0.0",
+			"_nodeVersion": "21.1.0",
+			"_npmVersion": "8.19.4",
+			"dist": {
+				"integrity": "sha512-sa99On1k5aDqCvpni/TQ6rLzYprUWBlb8fNwWOzbjDlM24fRr7FKDOuaBO/Y9WEIcZuzoPkCW5EkBCpflj8REQ==",
+				"shasum": "89cf7e8f87026f4eb900c158372e1fc3d033e93a",
+				"tarball": "http://localhost:4873/what-bin/-/what-bin-1.0.0.tgz"
+			},
+			"contributors": []
+		},
+		"1.5.0": {
+			"name": "what-bin",
+			"version": "1.5.0",
+			"bin": {
+				"what-bin": "what-bin.js"
+			},
+			"_id": "what-bin@1.5.0",
+			"_nodeVersion": "21.1.0",
+			"_npmVersion": "8.19.4",
+			"dist": {
+				"integrity": "sha512-mbvEObM9mSliIzNJ4lJHfx8Zzdcf3v8PCIanJyIbXv6AFuuipK5tirQuM9Oi1yFXgO/YxI1W5zt4AwwLGxmaPA==",
+				"shasum": "934dc0859a1a9ccf90ac341b1d4867f94d8e4d11",
+				"tarball": "http://localhost:4873/what-bin/-/what-bin-1.5.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-16T02:04:45.718Z",
+		"created": "2023-11-16T02:04:37.490Z",
+		"1.0.0": "2023-11-16T02:04:37.490Z",
+		"1.5.0": "2023-11-16T02:04:45.718Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.5.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"what-bin-1.0.0.tgz": {
+			"shasum": "89cf7e8f87026f4eb900c158372e1fc3d033e93a",
+			"version": "1.0.0"
+		},
+		"what-bin-1.5.0.tgz": {
+			"shasum": "934dc0859a1a9ccf90ac341b1d4867f94d8e4d11",
+			"version": "1.5.0"
+		}
+	},
+	"_rev": "",
+	"_id": "what-bin",
+	"readme": "ERROR: No README data found!"
+}

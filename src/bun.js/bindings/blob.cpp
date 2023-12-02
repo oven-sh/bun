@@ -19,7 +19,7 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlo
     auto fileNameStr = impl->fileName();
     BunString filename = Bun::toString(fileNameStr);
 
-    EncodedJSValue encoded = Blob__create(lexicalGlobalObject, impl->impl());
+    JSC::EncodedJSValue encoded = Blob__create(lexicalGlobalObject, impl->impl());
     JSBlob* blob = jsCast<JSBlob*>(JSC::JSValue::decode(encoded));
     Blob__setAsFile(blob->wrapped(), &filename);
 

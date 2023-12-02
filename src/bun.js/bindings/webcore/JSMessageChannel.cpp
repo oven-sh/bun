@@ -91,7 +91,7 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSMessageChannelPrototype, JSMessageChannelP
 
 using JSMessageChannelDOMConstructor = JSDOMConstructor<JSMessageChannel>;
 
-template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSMessageChannelDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
+template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSMessageChannelDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     VM& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -179,7 +179,7 @@ void JSMessageChannel::destroy(JSC::JSCell* cell)
     thisObject->JSMessageChannel::~JSMessageChannel();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsMessageChannelConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsMessageChannelConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -197,7 +197,7 @@ static inline JSValue jsMessageChannel_port1Getter(JSGlobalObject& lexicalGlobal
     RELEASE_AND_RETURN(throwScope, (toJS<IDLInterface<MessagePort>>(lexicalGlobalObject, *thisObject.globalObject(), throwScope, impl.port1())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsMessageChannel_port1, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsMessageChannel_port1, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSMessageChannel>::get<jsMessageChannel_port1Getter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -210,7 +210,7 @@ static inline JSValue jsMessageChannel_port2Getter(JSGlobalObject& lexicalGlobal
     RELEASE_AND_RETURN(throwScope, (toJS<IDLInterface<MessagePort>>(lexicalGlobalObject, *thisObject.globalObject(), throwScope, impl.port2())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsMessageChannel_port2, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsMessageChannel_port2, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSMessageChannel>::get<jsMessageChannel_port2Getter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }

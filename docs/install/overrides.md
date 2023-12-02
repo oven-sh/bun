@@ -32,7 +32,7 @@ node_modules
 └── bar@4.5.6
 ```
 
-But what if a security vulnerability was introduced in `bar@4.5.6`? We may want a way to pin `bar` to an older version that doesn't have the vulerability. This is where `"overrides"`/`"resolutions"` come in.
+But what if a security vulnerability was introduced in `bar@4.5.6`? We may want a way to pin `bar` to an older version that doesn't have the vulnerability. This is where `"overrides"`/`"resolutions"` come in.
 
 ## `"overrides"`
 

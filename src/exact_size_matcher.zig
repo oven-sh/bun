@@ -27,10 +27,10 @@ pub fn ExactSizeMatcher(comptime max_bytes: usize) type {
                         @memset(tmp[str.len..], 0);
                     }
 
-                    return std.mem.readIntNative(T, &tmp);
+                    return std.mem.readInt(T, &tmp, .little);
                 },
                 max_bytes => {
-                    return std.mem.readIntSliceNative(T, str[0..]);
+                    return std.mem.readInt(T, str[0..max_bytes], .little);
                 },
                 0 => {
                     return 0;
@@ -49,10 +49,10 @@ pub fn ExactSizeMatcher(comptime max_bytes: usize) type {
                         tmp[i] = std.ascii.toLower(char);
                     }
                     @memset(tmp[str.len..], 0);
-                    return std.mem.readIntNative(T, &tmp);
+                    return std.mem.readInt(T, &tmp, .little);
                 },
                 max_bytes => {
-                    return std.mem.readIntSliceNative(T, str);
+                    return std.mem.readInt(T, str[0..max_bytes], .little);
                 },
                 0 => {
                     return 0;
@@ -67,9 +67,9 @@ pub fn ExactSizeMatcher(comptime max_bytes: usize) type {
             if (str.len < max_bytes) {
                 var bytes = std.mem.zeroes([max_bytes]u8);
                 bytes[0..str.len].* = str[0..str.len].*;
-                return std.mem.readIntNative(T, &bytes);
+                return std.mem.readInt(T, &bytes, .little);
             } else if (str.len == max_bytes) {
-                return std.mem.readIntNative(T, str[0..str.len]);
+                return std.mem.readInt(T, str[0..str.len], .little);
             } else {
                 @compileError("str: \"" ++ str ++ "\" too long");
             }

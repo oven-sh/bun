@@ -16,6 +16,13 @@ const deepEquals = Bun.deepEquals;
 const isDeepStrictEqual = (a, b) => deepEquals(a, b, true);
 var getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 
+// There is a memory issue in the parseArgs implementation
+// Do not expose it until that is addressed.
+// const { parseArgs } = $lazy("util");
+function parseArgs() {
+  throw new Error("Not implemented yet");
+}
+
 const inspect = utl.inspect;
 const formatWithOptions = utl.formatWithOptions;
 const format = utl.format;
@@ -147,7 +154,7 @@ var _extend = function (origin, add) {
   }
   return origin;
 };
-var kCustomPromisifiedSymbol = Symbol.for("util.promisify.custom");
+var kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
 var promisify = function promisify(original) {
   if (typeof original !== "function") throw new TypeError('The "original" argument must be of type Function');
   if (kCustomPromisifiedSymbol && original[kCustomPromisifiedSymbol]) {
@@ -270,4 +277,5 @@ export default Object.assign(cjs_exports, {
   isDeepStrictEqual,
   TextDecoder,
   TextEncoder,
+  parseArgs,
 });

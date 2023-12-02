@@ -1442,6 +1442,25 @@ it("read", () => {
   data.setUint8(0, 255, false);
   expect(buf.readUInt8(0)).toBe(255);
   reset();
+
+  data.setUint32(0, 0x55555555, false);
+  data.setUint16(4, 0x5555, false);
+  expect(buf.readUintBE(0, 5)).toBe(366503875925);
+  expect(buf.readUintBE(0, 6)).toBe(93824992236885);
+  reset();
+
+  data.setUint32(0, 0xaaaaaaaa, false);
+  data.setUint16(4, 0xaaaa, false);
+  expect(buf.readUintBE(0, 5)).toBe(733007751850);
+  expect(buf.readUintBE(0, 6)).toBe(187649984473770);
+  reset();
+
+  // issue#6759
+  data.setUint32(0, 0xffffffff, false);
+  data.setUint16(4, 0xffff, false);
+  expect(buf.readUintBE(0, 5)).toBe(1099511627775);
+  expect(buf.readUintBE(0, 6)).toBe(281474976710655);
+  reset();
 });
 
 // this is for checking the simd code path
@@ -1672,7 +1691,7 @@ it("Buffer.swap16", () => {
   const buf = Buffer.from("123", "utf-8");
   try {
     buf.swap16();
-    expect(false).toBe(true);
+    expect.unreachable();
   } catch (exception) {
     expect(exception.message).toBe("Buffer size must be a multiple of 16-bits");
   }
@@ -1698,7 +1717,7 @@ it("Buffer.swap32", () => {
   const buf = Buffer.from("12345", "utf-8");
   try {
     buf.swap32();
-    expect(false).toBe(true);
+    expect.unreachable();
   } catch (exception) {
     expect(exception.message).toBe("Buffer size must be a multiple of 32-bits");
   }
@@ -1724,7 +1743,7 @@ it("Buffer.swap64", () => {
   const buf = Buffer.from("123456789", "utf-8");
   try {
     buf.swap64();
-    expect(false).toBe(true);
+    expect.unreachable();
   } catch (exception) {
     expect(exception.message).toBe("Buffer size must be a multiple of 64-bits");
   }

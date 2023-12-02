@@ -1,0 +1,81 @@
+{
+	"name": "resolve",
+	"versions": {
+		"1.9.0": {
+			"name": "resolve",
+			"description": "resolve like require.resolve() on behalf of files asynchronously and synchronously",
+			"version": "1.9.0",
+			"repository": {
+				"type": "git",
+				"url": "git://github.com/browserify/resolve.git"
+			},
+			"main": "index.js",
+			"keywords": [
+				"resolve",
+				"require",
+				"node",
+				"module"
+			],
+			"scripts": {
+				"prepublish": "safe-publish-latest",
+				"lint": "eslint .",
+				"tests-only": "tape test/*.js",
+				"pretest": "npm run lint",
+				"test": "npm run --silent tests-only",
+				"posttest": "npm run test:multirepo",
+				"test:multirepo": "cd ./test/resolver/multirepo && npm install && npm test"
+			},
+			"devDependencies": {
+				"@ljharb/eslint-config": "^13.0.0",
+				"eslint": "^5.10.0",
+				"object-keys": "^1.0.12",
+				"safe-publish-latest": "^1.1.2",
+				"tap": "0.4.13",
+				"tape": "^4.9.1"
+			},
+			"license": "MIT",
+			"author": {
+				"name": "James Halliday",
+				"email": "mail@substack.net",
+				"url": "http://substack.net"
+			},
+			"dependencies": {
+				"path-parse": "^1.0.6"
+			},
+			"_id": "resolve@1.9.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"bugs": {
+				"url": "https://github.com/browserify/resolve/issues"
+			},
+			"homepage": "https://github.com/browserify/resolve#readme",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-7zYVbuWxx5BAkkct2qf2sFmllcHM6hFZLvdxrdGoWhwBQcSn4PdKqWXhOgkMQQNe+NPHp76DkNdak2C5w5tpEA==",
+				"shasum": "77be7e9c1e18d2a9aa901e9867eb549607172c37",
+				"tarball": "http://localhost:4873/resolve/-/resolve-1.9.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:31.863Z",
+		"created": "2023-11-01T22:05:31.863Z",
+		"1.9.0": "2023-11-01T22:05:31.863Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.9.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"resolve-1.9.0.tgz": {
+			"shasum": "77be7e9c1e18d2a9aa901e9867eb549607172c37",
+			"version": "1.9.0"
+		}
+	},
+	"_rev": "3-36a574af02b5566d",
+	"_id": "resolve",
+	"readme": "ERROR: No README data found!"
+}

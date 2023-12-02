@@ -20,7 +20,7 @@ test("party like it's 1999", () => {
 
 ---
 
-The `setSystemTime` function is commonly used on conjunction with [Lifecycle Hooks](/docs/test/lifecycle) to configure a testing environment with a determinstic "fake clock".
+The `setSystemTime` function is commonly used on conjunction with [Lifecycle Hooks](/docs/test/lifecycle) to configure a testing environment with a deterministic "fake clock".
 
 ```ts
 import { test, expect, beforeAll, setSystemTime } from "bun:test";

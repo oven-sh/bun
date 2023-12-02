@@ -87,6 +87,14 @@ describe("File", () => {
     }
   });
 
+  it("constructor without new", () => {
+    const result = () => File();
+    expect(result).toThrow({
+      name: "TypeError",
+      message: "Class constructor File cannot be invoked without 'new'",
+    });
+  });
+
   it("instanceof", () => {
     const file = new File(["foo"], "bar.txt", { type: "text/plain;charset=utf-8" });
     expect(file instanceof File).toBe(true);

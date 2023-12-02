@@ -1,0 +1,42 @@
+{
+	"name": "dragon-test-8-d",
+	"versions": {
+		"1.0.0": {
+			"name": "dragon-test-8-d",
+			"version": "1.0.0",
+			"peerDependencies": {
+				"dragon-test-8-c": "*"
+			},
+			"_id": "dragon-test-8-d@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-/VhaMbcVoSAgl9ez/U1I9qUFUwu+LzU8mMyrvsUUV9ylCekRn3UCkDmT0faWk0Wv3JJLZhBWii9TzSf+xDcgew==",
+				"shasum": "97056a070776456769fa36f47c5747ff7878d6bf",
+				"tarball": "http://localhost:4873/dragon-test-8-d/-/dragon-test-8-d-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:07.002Z",
+		"created": "2023-11-01T22:05:07.002Z",
+		"1.0.0": "2023-11-01T22:05:07.002Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"dragon-test-8-d-1.0.0.tgz": {
+			"shasum": "97056a070776456769fa36f47c5747ff7878d6bf",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-c11658ee4e460ead",
+	"_id": "dragon-test-8-d",
+	"readme": "ERROR: No README data found!"
+}

@@ -4,12 +4,13 @@ const Output = bun.Output;
 const log = Output.scoped(.Worker, true);
 const std = @import("std");
 const JSValue = JSC.JSValue;
+const Async = bun.Async;
 
 /// Shared implementation of Web and Node `Worker`
 pub const WebWorker = struct {
     /// null when haven't started yet
     vm: ?*JSC.VirtualMachine = null,
-    status: Status = .start,
+    status: std.atomic.Atomic(Status) = std.atomic.Atomic(Status).init(.start),
     /// To prevent UAF, the `spin` function (aka the worker's event loop) will call deinit once this is set and properly exit the loop.
     requested_terminate: bool = false,
     execution_context_id: u32 = 0,
@@ -28,9 +29,9 @@ pub const WebWorker = struct {
     /// if false, then the parent poll will always be unref, otherwise the worker's event loop will keep the poll alive.
     user_keep_alive: bool = false,
     worker_event_loop_running: bool = true,
-    parent_poll_ref: JSC.PollRef = .{},
+    parent_poll_ref: Async.KeepAlive = .{},
 
-    pub const Status = enum {
+    pub const Status = enum(u8) {
         start,
         starting,
         running,
@@ -50,7 +51,7 @@ pub const WebWorker = struct {
         worker.cpp_worker = ptr;
 
         var thread = std.Thread.spawn(
-            .{ .stack_size = 2 * 1024 * 1024 },
+            .{ .stack_size = bun.default_stack_size },
             startWithErrorHandling,
             .{worker},
         ) catch {
@@ -140,7 +141,7 @@ pub const WebWorker = struct {
             return;
         }
 
-        std.debug.assert(this.status == .start);
+        std.debug.assert(this.status.load(.Acquire) == .start);
         std.debug.assert(this.vm == null);
         this.arena = try bun.MimallocArena.init();
         var vm = try JSC.VirtualMachine.initWorker(this, .{
@@ -229,7 +230,8 @@ pub const WebWorker = struct {
 
     fn setStatus(this: *WebWorker, status: Status) void {
         log("[{d}] status: {s}", .{ this.execution_context_id, @tagName(status) });
-        this.status = status;
+
+        this.status.store(status, .Release);
     }
 
     fn unhandledError(this: *WebWorker, _: anyerror) void {
@@ -238,7 +240,7 @@ pub const WebWorker = struct {
 
     fn spin(this: *WebWorker) void {
         var vm = this.vm.?;
-        std.debug.assert(this.status == .start);
+        std.debug.assert(this.status.load(.Acquire) == .start);
         this.setStatus(.starting);
 
         var promise = vm.loadEntryPointForWebWorker(this.specifier) catch {
@@ -306,6 +308,9 @@ pub const WebWorker = struct {
     /// Request a terminate (Called from main thread from worker.terminate(), or inside worker in process.exit())
     /// The termination will actually happen after the next tick of the worker's loop.
     pub fn requestTerminate(this: *WebWorker) callconv(.C) void {
+        if (this.status.load(.Acquire) == .terminated) {
+            return;
+        }
         if (this.requested_terminate) {
             return;
         }
@@ -313,7 +318,7 @@ pub const WebWorker = struct {
         this.setRef(false);
         this.requested_terminate = true;
         if (this.vm) |vm| {
-            vm.global.vm().notifyNeedTermination();
+            vm.jsc.notifyNeedTermination();
             vm.eventLoop().wakeup();
         }
     }
@@ -321,22 +326,33 @@ pub const WebWorker = struct {
     /// This handles cleanup, emitting the "close" event, and deinit.
     /// Only call after the VM is initialized AND on the same thread as the worker.
     /// Otherwise, call `requestTerminate` to cause the event loop to safely terminate after the next tick.
-    fn exitAndDeinit(this: *WebWorker) void {
+    pub fn exitAndDeinit(this: *WebWorker) noreturn {
         JSC.markBinding(@src());
+        this.setStatus(.terminated);
+
         log("[{d}] exitAndDeinit", .{this.execution_context_id});
         var cpp_worker = this.cpp_worker;
         var exit_code: i32 = 0;
         var globalObject: ?*JSC.JSGlobalObject = null;
+        var vm_to_deinit: ?*JSC.VirtualMachine = null;
         if (this.vm) |vm| {
             this.vm = null;
             vm.onExit();
             exit_code = vm.exit_handler.exit_code;
             globalObject = vm.global;
-            this.arena.deinit();
-            vm.deinit(); // NOTE: deinit here isn't implemented, so freeing workers will leak the vm.
+            vm_to_deinit = vm;
         }
+        var arena = this.arena;
+
         WebWorker__dispatchExit(globalObject, cpp_worker, exit_code);
         this.deinit();
+
+        if (vm_to_deinit) |vm| {
+            vm.deinit(); // NOTE: deinit here isn't implemented, so freeing workers will leak the vm.
+        }
+
+        arena.deinit();
+        bun.exitThread();
     }
 
     comptime {

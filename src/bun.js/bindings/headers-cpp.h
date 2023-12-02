@@ -16,7 +16,7 @@
 
 #ifndef INCLUDED_JavaScriptCore_JSObject_h
 #define INCLUDED_JavaScriptCore_JSObject_h
-#include "JavaScriptCore/JSObject.h"
+#include <JavaScriptCore/JSObject.h>
 #endif
 
 extern "C" const size_t JSC__JSObject_object_size_ = sizeof(JSC::JSObject);
@@ -40,7 +40,7 @@ extern "C" const size_t WebCore__FetchHeaders_object_align_ = alignof(WebCore::F
 
 #ifndef INCLUDED_JavaScriptCore_JSCell_h
 #define INCLUDED_JavaScriptCore_JSCell_h
-#include "JavaScriptCore/JSCell.h"
+#include <JavaScriptCore/JSCell.h>
 #endif
 
 extern "C" const size_t JSC__JSCell_object_size_ = sizeof(JSC::JSCell);
@@ -48,7 +48,7 @@ extern "C" const size_t JSC__JSCell_object_align_ = alignof(JSC::JSCell);
 
 #ifndef INCLUDED_JavaScriptCore_JSString_h
 #define INCLUDED_JavaScriptCore_JSString_h
-#include "JavaScriptCore/JSString.h"
+#include <JavaScriptCore/JSString.h>
 #endif
 
 extern "C" const size_t JSC__JSString_object_size_ = sizeof(JSC::JSString);
@@ -56,7 +56,7 @@ extern "C" const size_t JSC__JSString_object_align_ = alignof(JSC::JSString);
 
 #ifndef INCLUDED_JavaScriptCore_JSModuleLoader_h
 #define INCLUDED_JavaScriptCore_JSModuleLoader_h
-#include "JavaScriptCore/JSModuleLoader.h"
+#include <JavaScriptCore/JSModuleLoader.h>
 #endif
 
 extern "C" const size_t JSC__JSModuleLoader_object_size_ = sizeof(JSC::JSModuleLoader);
@@ -72,7 +72,7 @@ extern "C" const size_t WebCore__AbortSignal_object_align_ = alignof(WebCore::Ab
 
 #ifndef INCLUDED_JavaScriptCore_JSPromise_h
 #define INCLUDED_JavaScriptCore_JSPromise_h
-#include "JavaScriptCore/JSPromise.h"
+#include <JavaScriptCore/JSPromise.h>
 #endif
 
 extern "C" const size_t JSC__JSPromise_object_size_ = sizeof(JSC::JSPromise);
@@ -80,7 +80,7 @@ extern "C" const size_t JSC__JSPromise_object_align_ = alignof(JSC::JSPromise);
 
 #ifndef INCLUDED_JavaScriptCore_JSInternalPromise_h
 #define INCLUDED_JavaScriptCore_JSInternalPromise_h
-#include "JavaScriptCore/JSInternalPromise.h"
+#include <JavaScriptCore/JSInternalPromise.h>
 #endif
 
 extern "C" const size_t JSC__JSInternalPromise_object_size_ = sizeof(JSC::JSInternalPromise);
@@ -88,7 +88,7 @@ extern "C" const size_t JSC__JSInternalPromise_object_align_ = alignof(JSC::JSIn
 
 #ifndef INCLUDED_JavaScriptCore_JSFunction_h
 #define INCLUDED_JavaScriptCore_JSFunction_h
-#include "JavaScriptCore/JSFunction.h"
+#include <JavaScriptCore/JSFunction.h>
 #endif
 
 extern "C" const size_t JSC__JSFunction_object_size_ = sizeof(JSC::JSFunction);
@@ -96,7 +96,7 @@ extern "C" const size_t JSC__JSFunction_object_align_ = alignof(JSC::JSFunction)
 
 #ifndef INCLUDED_JavaScriptCore_JSGlobalObject_h
 #define INCLUDED_JavaScriptCore_JSGlobalObject_h
-#include "JavaScriptCore/JSGlobalObject.h"
+#include <JavaScriptCore/JSGlobalObject.h>
 #endif
 
 extern "C" const size_t JSC__JSGlobalObject_object_size_ = sizeof(JSC::JSGlobalObject);
@@ -104,7 +104,7 @@ extern "C" const size_t JSC__JSGlobalObject_object_align_ = alignof(JSC::JSGloba
 
 #ifndef INCLUDED_JavaScriptCore_JSMap_h
 #define INCLUDED_JavaScriptCore_JSMap_h
-#include "JavaScriptCore/JSMap.h"
+#include <JavaScriptCore/JSMap.h>
 #endif
 
 extern "C" const size_t JSC__JSMap_object_size_ = sizeof(JSC::JSMap);
@@ -112,7 +112,7 @@ extern "C" const size_t JSC__JSMap_object_align_ = alignof(JSC::JSMap);
 
 #ifndef INCLUDED_JavaScriptCore_JSValue_h
 #define INCLUDED_JavaScriptCore_JSValue_h
-#include "JavaScriptCore/JSValue.h"
+#include <JavaScriptCore/JSValue.h>
 #endif
 
 extern "C" const size_t JSC__JSValue_object_size_ = sizeof(JSC::JSValue);
@@ -120,7 +120,7 @@ extern "C" const size_t JSC__JSValue_object_align_ = alignof(JSC::JSValue);
 
 #ifndef INCLUDED_JavaScriptCore_Exception_h
 #define INCLUDED_JavaScriptCore_Exception_h
-#include "JavaScriptCore/Exception.h"
+#include <JavaScriptCore/Exception.h>
 #endif
 
 extern "C" const size_t JSC__Exception_object_size_ = sizeof(JSC::Exception);
@@ -128,7 +128,7 @@ extern "C" const size_t JSC__Exception_object_align_ = alignof(JSC::Exception);
 
 #ifndef INCLUDED_JavaScriptCore_VM_h
 #define INCLUDED_JavaScriptCore_VM_h
-#include "JavaScriptCore/VM.h"
+#include <JavaScriptCore/VM.h>
 #endif
 
 extern "C" const size_t JSC__VM_object_size_ = sizeof(JSC::VM);
@@ -136,7 +136,7 @@ extern "C" const size_t JSC__VM_object_align_ = alignof(JSC::VM);
 
 #ifndef INCLUDED_JavaScriptCore_ThrowScope_h
 #define INCLUDED_JavaScriptCore_ThrowScope_h
-#include "JavaScriptCore/ThrowScope.h"
+#include <JavaScriptCore/ThrowScope.h>
 #endif
 
 extern "C" const size_t JSC__ThrowScope_object_size_ = sizeof(JSC::ThrowScope);
@@ -144,7 +144,7 @@ extern "C" const size_t JSC__ThrowScope_object_align_ = alignof(JSC::ThrowScope)
 
 #ifndef INCLUDED_JavaScriptCore_CatchScope_h
 #define INCLUDED_JavaScriptCore_CatchScope_h
-#include "JavaScriptCore/CatchScope.h"
+#include <JavaScriptCore/CatchScope.h>
 #endif
 
 extern "C" const size_t JSC__CatchScope_object_size_ = sizeof(JSC::CatchScope);

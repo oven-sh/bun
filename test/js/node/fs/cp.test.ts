@@ -286,3 +286,10 @@ for (const [name, copy] of impls) {
     });
   });
 }
+
+test("cp with missing callback throws", () => {
+  expect(() => {
+    // @ts-expect-error
+    fs.cp("a", "b" as any);
+  }).toThrow(/Callback/);
+});

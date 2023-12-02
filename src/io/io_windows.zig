@@ -115,14 +115,14 @@ pub const Waker = struct {
         };
     }
 
-    pub fn wait(this: Waker) !u64 {
+    pub fn wait(this: Waker) u64 {
         var overlapped = [_]os.windows.OVERLAPPED_ENTRY{std.mem.zeroes(os.windows.OVERLAPPED_ENTRY)} ** 1;
         var removed: u32 = 0;
         _ = kernel32.GetQueuedCompletionStatusEx(this.iocp, &overlapped, 1, &removed, 0, 1);
         return 0;
     }
 
-    pub fn wake(this: Waker) !void {
+    pub fn wake(this: Waker) void {
         var overlapped: os.windows.OVERLAPPED = std.mem.zeroes(os.windows.OVERLAPPED);
         _ = kernel32.PostQueuedCompletionStatus(this.iocp, 1, completion_key, &overlapped);
     }
@@ -430,11 +430,8 @@ pub fn open(
             .flags = flags,
         },
         struct {
-            fn do_operation(ctx: Completion.Context, op: anytype) OpenError!bun.FileDescriptor {
-                _ = ctx;
-                const result = bun.sys.openat(bun.invalid_fd, op.path, op.flags, 0);
-                try result.throw();
-                return result.result;
+            fn do_operation(_: Completion.Context, op: anytype) OpenError!bun.FileDescriptor {
+                return try bun.sys.openat(bun.invalid_fd, op.path, op.flags, 0).unwrap();
             }
         },
     );

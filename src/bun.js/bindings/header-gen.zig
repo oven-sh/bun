@@ -185,16 +185,7 @@ pub const C_Generator = struct {
         }
 
         self.write(")");
-        const nonnull_slice = comptime nonnull.slice();
-        if (comptime nonnull_slice.len > 0) {
-            self.write(" __attribute__((nonnull (");
-            inline for (comptime nonnull_slice, 0..) |i, j| {
-                self.write(comptime std.fmt.comptimePrint("{d}", .{i}));
-                if (j != nonnull_slice.len - 1)
-                    self.write(", ");
-            }
-            self.write(")))");
-        }
+        // we don't handle nonnull due to MSVC not supporting it.
         defer self.write(";\n");
         // const ReturnTypeInfo: std.builtin.Type = comptime @typeInfo(func.return_type);
         // switch (comptime ReturnTypeInfo) {
@@ -640,7 +631,11 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
                 \\
                 \\#ifdef __cplusplus
                 \\  #define AUTO_EXTERN_C extern "C"
+                \\  #ifdef WIN32
+                \\  #define AUTO_EXTERN_C_ZIG extern "C"
+                \\  #else
                 \\  #define AUTO_EXTERN_C_ZIG extern "C" __attribute__((weak))
+                \\  #endif
                 \\#else
                 \\  #define AUTO_EXTERN_C
                 \\  #define AUTO_EXTERN_C_ZIG __attribute__((weak))
@@ -655,7 +650,7 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
                 \\
                 \\#ifdef __cplusplus
                 \\#include "root.h"
-                \\#include "JavaScriptCore/JSClassRef.h"
+                \\#include <JavaScriptCore/JSClassRef.h>
                 \\#endif
                 \\#include "headers-handwritten.h"
                 \\

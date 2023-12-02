@@ -82,7 +82,7 @@ To see the precise commit of [oven-sh/bun](https://github.com/oven-sh/bun) that 
 
 ```sh
 $ bun --revision
-1.x.y+b7982ac1318937560f38e0f8eb18f45eaa43480f
+1.x.y+b7982ac13189
 ```
 
 If you've installed Bun but are seeing a `command not found` error, you may have to manually add the installation directory (`~/.bun/bin`) to your `PATH`.

@@ -1,0 +1,46 @@
+{
+	"name": "optional-native",
+	"versions": {
+		"1.0.0": {
+			"name": "optional-native",
+			"version": "1.0.0",
+			"optionalDependencies": {
+				"native-bar-x64": "1.0.0",
+				"native-foo-x64": "1.0.0",
+				"native-foo-x86": "1.0.0",
+				"native-libc-glibc": "1.0.0",
+				"native-libc-musl": "1.0.0"
+			},
+			"_id": "optional-native@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-E+XTkTpxRqU09BnKGkOkS9vk0sPDhPtArBw6FfL5ciYkb7k6EljnqXEQ1b9l0S1YCVZxZkOZIJCYZfCwj7AgSw==",
+				"shasum": "7fe11a6ab6f110702a9858a7366929680ebad6c7",
+				"tarball": "http://localhost:4873/optional-native/-/optional-native-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:26.952Z",
+		"created": "2023-11-01T22:05:26.952Z",
+		"1.0.0": "2023-11-01T22:05:26.952Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"optional-native-1.0.0.tgz": {
+			"shasum": "7fe11a6ab6f110702a9858a7366929680ebad6c7",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-f1a23a2ed2252604",
+	"_id": "optional-native",
+	"readme": "ERROR: No README data found!"
+}

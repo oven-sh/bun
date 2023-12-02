@@ -4,12 +4,21 @@ var WriteStream;
 const EventEmitter = require("node:events");
 const promises = require("node:fs/promises");
 const Stream = require("node:stream");
-const { isArrayBufferView } = require("node:util/types");
 
 var _writeStreamPathFastPathSymbol = Symbol.for("Bun.NodeWriteStreamFastPath");
 var _fs = Symbol.for("#fs");
 
 const constants = $processBindingConstants.fs;
+
+function ensureCallback(callback) {
+  if (!$isCallable(callback)) {
+    const err = new TypeError("Callback must be a function");
+    err.code = "ERR_INVALID_ARG_TYPE";
+    throw err;
+  }
+
+  return callback;
+}
 
 var fs = Bun.fs();
 class FSWatcher extends EventEmitter {
@@ -124,13 +133,7 @@ var access = function access(...args) {
     callbackify(fs.rmdir, args);
   },
   copyFile = function copyFile(...args) {
-    const callback = args[args.length - 1];
-    if (typeof callback !== "function") {
-      const err = new TypeError("Callback must be a function");
-      err.code = "ERR_INVALID_ARG_TYPE";
-      throw err;
-    }
-
+    const callback = ensureCallback(args[args.length - 1]);
     fs.copyFile(...args).then(result => callback(null, result), callback);
   },
   exists = function exists(path, callback) {
@@ -199,6 +202,7 @@ var access = function access(...args) {
         callback = length;
         params = offsetOrOptions;
       } else if (arguments.length === 3) {
+        const { isArrayBufferView } = require("node:util/types");
         // fs.read(fd, bufferOrParams, callback)
         if (!isArrayBufferView(buffer)) {
           // fs.read(fd, params, callback)
@@ -213,35 +217,31 @@ var access = function access(...args) {
       }
       ({ offset = 0, length = buffer?.byteLength - offset, position = null } = params ?? {});
     }
-    queueMicrotask(() => {
-      try {
-        var bytesRead = fs.readSync(fd, buffer, offset, length, position);
-      } catch (e) {
-        callback(e);
-      }
-      callback(null, bytesRead, buffer);
-    });
+    fs.read(fd, buffer, offset, length, position).then(
+      bytesRead => {
+        callback(null, bytesRead, buffer);
+      },
+      err => callback(err),
+    );
   },
   write = function write(...args) {
-    callbackify(fs.write, args);
+    const callback = ensureCallback(args[args.length - 1]);
+    const promise = fs.write(...args.slice(0, -1));
+    const bufferOrString = args[1];
+
+    promise.then(
+      bytesWritten => callback(null, bytesWritten, bufferOrString),
+      err => callback(err),
+    );
   },
   readdir = function readdir(...args) {
-    const callback = args[args.length - 1];
-    if (typeof callback !== "function") {
-      // TODO: set code
-      throw new TypeError("Callback must be a function");
-    }
+    const callback = ensureCallback(args[args.length - 1]);
 
-    fs.readdir(...args).then(result => callback(null, result), callback);
+    fs.readdir(...args.slice(0, -1)).then(result => callback(null, result), callback);
   },
   readFile = function readFile(...args) {
-    const callback = args[args.length - 1];
-    if (typeof callback !== "function") {
-      // TODO: set code
-      throw new TypeError("Callback must be a function");
-    }
-
-    fs.readFile(...args).then(result => callback(null, result), callback);
+    const callback = ensureCallback(args[args.length - 1]);
+    fs.readFile(...args.slice(0, -1)).then(result => callback(null, result), callback);
   },
   writeFile = function writeFile(...args) {
     callbackify(fs.writeFile, args);
@@ -250,34 +250,19 @@ var access = function access(...args) {
     callbackify(fs.readlink, args);
   },
   realpath = function realpath(...args) {
-    const callback = args[args.length - 1];
-    if (typeof callback !== "function") {
-      // TODO: set code
-      throw new TypeError("Callback must be a function");
-    }
-
-    fs.realpath(...args).then(result => callback(null, result), callback);
+    const callback = ensureCallback(args[args.length - 1]);
+    fs.realpath(...args.slice(0, -1)).then(result => callback(null, result), callback);
   },
   rename = function rename(...args) {
     callbackify(fs.rename, args);
   },
   lstat = function lstat(...args) {
-    const callback = args[args.length - 1];
-    if (typeof callback !== "function") {
-      // TODO: set code
-      throw new TypeError("Callback must be a function");
-    }
-
-    fs.lstat(...args).then(result => callback(null, result), callback);
+    const callback = ensureCallback(args[args.length - 1]);
+    fs.lstat(...args.slice(0, -1)).then(result => callback(null, result), callback);
   },
   stat = function stat(...args) {
-    const callback = args[args.length - 1];
-    if (typeof callback !== "function") {
-      // TODO: set code
-      throw new TypeError("Callback must be a function");
-    }
-
-    fs.stat(...args).then(result => callback(null, result), callback);
+    const callback = ensureCallback(args[args.length - 1]);
+    fs.stat(...args.slice(0, -1)).then(result => callback(null, result), callback);
   },
   symlink = function symlink(...args) {
     callbackify(fs.symlink, args);
@@ -369,6 +354,33 @@ var access = function access(...args) {
   watch = function watch(path, options, listener) {
     return new FSWatcher(path, options, listener);
   };
+
+// TODO: make symbols a separate export somewhere
+var kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
+
+read[kCustomPromisifiedSymbol] = async function (fd, bufferOrOptions, ...rest) {
+  const { isArrayBufferView } = require("node:util/types");
+  let buffer;
+
+  if (isArrayBufferView(bufferOrOptions)) {
+    buffer = bufferOrOptions;
+  } else {
+    buffer = bufferOrOptions?.buffer;
+  }
+
+  if (buffer == undefined) {
+    buffer = Buffer.alloc(16384);
+  }
+
+  const bytesRead = await fs.read(fd, buffer, ...rest);
+
+  return { bytesRead, buffer };
+};
+
+write[kCustomPromisifiedSymbol] = async function (fd, stringOrBuffer, ...rest) {
+  const bytesWritten = await fs.write(fd, stringOrBuffer, ...rest);
+  return { bytesWritten, buffer: stringOrBuffer };
+};
 
 // TODO: move this entire thing into native code.
 // the reason it's not done right now is because there isnt a great way to have multiple
@@ -1187,10 +1199,13 @@ function cpSync(src, dest, options) {
 }
 
 function cp(src, dest, options, callback) {
-  if (typeof options === "function") {
+  if ($isCallable(options)) {
     callback = options;
     options = undefined;
   }
+
+  ensureCallback(callback);
+
   promises.cp(src, dest, options).then(() => callback(), callback);
 }
 

@@ -2,8 +2,8 @@
 
 #include "root.h"
 
-#include "wtf/FastMalloc.h"
-#include "wtf/Noncopyable.h"
+#include <wtf/FastMalloc.h>
+#include <wtf/Noncopyable.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -18,6 +18,7 @@ public:
     /* --- bun --- */
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBufferList;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFFIFunction;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWrappingFunction;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiClass;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiPrototype;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSSQLStatement;
@@ -36,6 +37,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeVMScript;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCommonJSModuleRecord;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSMockImplementation;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSModuleMock;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSMockFunction;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForAsyncContextFrame;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMockWithImplementationCleanupData;

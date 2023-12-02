@@ -373,17 +373,17 @@ pub fn Channel(
 
         pub usingnamespace switch (buffer_type) {
             .Static => struct {
-                pub fn init() Self {
+                pub inline fn init() Self {
                     return Self.withBuffer(Buffer.init());
                 }
             },
             .Slice => struct {
-                pub fn init(buf: []T) Self {
+                pub inline fn init(buf: []T) Self {
                     return Self.withBuffer(Buffer.init(buf));
                 }
             },
             .Dynamic => struct {
-                pub fn init(allocator: std.mem.Allocator) Self {
+                pub inline fn init(allocator: std.mem.Allocator) Self {
                     return Self.withBuffer(Buffer.init(allocator));
                 }
             },

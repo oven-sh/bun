@@ -1,9 +1,9 @@
 #pragma once
 #include "root.h"
-#include "JavaScriptCore/JSInternalFieldObjectImpl.h"
-#include "JavaScriptCore/JSInternalFieldObjectImplInlines.h"
+#include <JavaScriptCore/JSInternalFieldObjectImpl.h>
+#include <JavaScriptCore/JSInternalFieldObjectImplInlines.h>
 #include "BunClientData.h"
-#include "../../../src/js/out/InternalModuleRegistry+numberOfModules.h"
+#include "InternalModuleRegistry+numberOfModules.h"
 
 namespace Bun {
 using namespace JSC;
@@ -28,7 +28,7 @@ public:
     }
 
     enum Field : uint8_t {
-#include "../../../src/js/out/InternalModuleRegistry+enum.h"
+#include "InternalModuleRegistry+enum.h"
     };
 
     const WriteBarrier<Unknown>& internalField(Field field) const { return Base::internalField(static_cast<uint32_t>(field)); }

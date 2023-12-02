@@ -169,3 +169,18 @@ describe("json imports", () => {
     expect((await import("./runtime-transpiler-fixture-duplicate-keys.json")).a).toBe("4");
   });
 });
+
+describe("with statement", () => {
+  test("works", () => {
+    const { exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), require.resolve("./with-statement-works.js")],
+      cwd: import.meta.dir,
+      env: bunEnv,
+      stderr: "inherit",
+      stdout: "inherit",
+      stdin: "inherit",
+    });
+
+    expect(exitCode).toBe(0);
+  });
+});

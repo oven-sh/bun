@@ -83,8 +83,9 @@ test("next build works", async () => {
   expect(nodeBuild.exitCode).toBe(0);
   expect(bunBuild.exitCode).toBe(0);
 
-  const bunCliOutput = await Bun.readableStreamToText(bunBuild.stdout);
-  const nodeCliOutput = await Bun.readableStreamToText(nodeBuild.stdout);
+  // remove timestamps from output
+  const bunCliOutput = (await Bun.readableStreamToText(bunBuild.stdout)).replace(/\(\d+(?:\.\d+)? m?s\)/gi, "");
+  const nodeCliOutput = (await Bun.readableStreamToText(nodeBuild.stdout)).replace(/\(\d+(?:\.\d+)? m?s\)/gi, "");
 
   expect(bunCliOutput).toBe(nodeCliOutput);
 

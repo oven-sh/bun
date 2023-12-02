@@ -1,0 +1,39 @@
+{
+	"name": "no-deps-exports",
+	"versions": {
+		"1.0.0": {
+			"name": "no-deps-exports",
+			"version": "1.0.0",
+			"_id": "no-deps-exports@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-yxFLDMZGvQvdJt+n25SW44P9yBqyhQjQ7CfjQqPwTR970hjg+h+l5KJpr9Ct5ScOgdz21zVqa/xEIPgiIJm15w==",
+				"shasum": "8feb030ef0e130d9973a63d028a751e14701df20",
+				"tarball": "http://localhost:4873/no-deps-exports/-/no-deps-exports-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:19.139Z",
+		"created": "2023-11-01T22:05:19.139Z",
+		"1.0.0": "2023-11-01T22:05:19.139Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"no-deps-exports-1.0.0.tgz": {
+			"shasum": "8feb030ef0e130d9973a63d028a751e14701df20",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-c1ff0c1dc6053a0d",
+	"_id": "no-deps-exports",
+	"readme": "ERROR: No README data found!"
+}

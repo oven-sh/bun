@@ -183,29 +183,16 @@ pub const ServerEntryPoint = struct {
         entry: *ServerEntryPoint,
         allocator: std.mem.Allocator,
         is_hot_reload_enabled: bool,
-        original_path: Fs.PathName,
+        path_to_use: string,
         name: string,
     ) !void {
-
-        // This is *extremely* naive.
-        // The basic idea here is this:
-        // --
-        // import * as EntryPoint from 'entry-point';
-        // import boot from 'framework';
-        // boot(EntryPoint);
-        // --
-        // We go through the steps of printing the code -- only to then parse/transpile it because
-        // we want it to go through the linker and the rest of the transpilation process
-
-        const dir_to_use: string = original_path.dirWithTrailingSlash();
-
         const code = brk: {
             if (is_hot_reload_enabled) {
                 break :brk try std.fmt.allocPrint(
                     allocator,
                     \\// @bun
                     \\var hmrSymbol = Symbol.for("BunServerHMR");
-                    \\import * as start from "{}{}";
+                    \\import * as start from '{}';
                     \\var entryNamespace = start;
                     \\if (typeof entryNamespace?.then === 'function') {{
                     \\   entryNamespace = entryNamespace.then((entryNamespace) => {{
@@ -231,15 +218,14 @@ pub const ServerEntryPoint = struct {
                     \\
                 ,
                     .{
-                        QuoteEscapeFormat{ .data = dir_to_use },
-                        QuoteEscapeFormat{ .data = original_path.filename },
+                        QuoteEscapeFormat{ .data = path_to_use },
                     },
                 );
             }
             break :brk try std.fmt.allocPrint(
                 allocator,
                 \\// @bun
-                \\import * as start from "{}{}";
+                \\import * as start from "{}";
                 \\var entryNamespace = start;
                 \\if (typeof entryNamespace?.then === 'function') {{
                 \\   entryNamespace = entryNamespace.then((entryNamespace) => {{
@@ -253,8 +239,7 @@ pub const ServerEntryPoint = struct {
                 \\
             ,
                 .{
-                    QuoteEscapeFormat{ .data = dir_to_use },
-                    QuoteEscapeFormat{ .data = original_path.filename },
+                    QuoteEscapeFormat{ .data = path_to_use },
                 },
             );
         };
@@ -301,37 +286,65 @@ pub const MacroEntryPoint = struct {
         macro_id: i32,
         macro_label_: string,
     ) !void {
-        const dir_to_use: string = import_path.dirWithTrailingSlash();
+        const dir_to_use: string = if (import_path.dir.len == 0) "" else import_path.dirWithTrailingSlash();
         bun.copy(u8, &entry.code_buffer, macro_label_);
         const macro_label = entry.code_buffer[0..macro_label_.len];
 
-        const code = try std.fmt.bufPrint(
-            entry.code_buffer[macro_label.len..],
-            \\//Auto-generated file
-            \\var Macros;
-            \\try {{
-            \\  Macros = await import('{s}{s}');
-            \\}} catch (err) {{
-            \\   console.error("Error importing macro");
-            \\   throw err;
-            \\}}
-            \\if (!('{s}' in Macros)) {{
-            \\  throw new Error("Macro '{s}' not found in '{s}{s}'");
-            \\}}
-            \\
-            \\Bun.registerMacro({d}, Macros['{s}']);
-        ,
-            .{
-                dir_to_use,
-                import_path.filename,
-                function_name,
-                function_name,
-                dir_to_use,
-                import_path.filename,
-                macro_id,
-                function_name,
-            },
-        );
+        const code = brk: {
+            if (strings.eqlComptime(import_path.base, "bun")) {
+                break :brk try std.fmt.bufPrint(
+                    entry.code_buffer[macro_label.len..],
+                    \\//Auto-generated file
+                    \\var Macros;
+                    \\try {{
+                    \\  Macros = globalThis.Bun;
+                    \\}} catch (err) {{
+                    \\   console.error("Error importing macro");
+                    \\   throw err;
+                    \\}}
+                    \\const macro = Macros['{s}'];
+                    \\if (!macro) {{
+                    \\  throw new Error("Macro '{s}' not found in 'bun'");
+                    \\}}
+                    \\
+                    \\Bun.registerMacro({d}, macro);
+                ,
+                    .{
+                        function_name,
+                        function_name,
+                        macro_id,
+                    },
+                );
+            }
+
+            break :brk try std.fmt.bufPrint(
+                entry.code_buffer[macro_label.len..],
+                \\//Auto-generated file
+                \\var Macros;
+                \\try {{
+                \\  Macros = await import('{s}{s}');
+                \\}} catch (err) {{
+                \\   console.error("Error importing macro");
+                \\   throw err;
+                \\}}
+                \\if (!('{s}' in Macros)) {{
+                \\  throw new Error("Macro '{s}' not found in '{s}{s}'");
+                \\}}
+                \\
+                \\Bun.registerMacro({d}, Macros['{s}']);
+            ,
+                .{
+                    dir_to_use,
+                    import_path.filename,
+                    function_name,
+                    function_name,
+                    dir_to_use,
+                    import_path.filename,
+                    macro_id,
+                    function_name,
+                },
+            );
+        };
 
         entry.source = logger.Source.initPathString(macro_label, code);
         entry.source.path.text = macro_label;

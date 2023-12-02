@@ -1,8 +1,8 @@
 #pragma once
 
 #include "root.h"
-#include "JavaScriptCore/LazyProperty.h"
-#include "JavaScriptCore/Strong.h"
+#include <JavaScriptCore/LazyProperty.h>
+#include <JavaScriptCore/Strong.h>
 
 namespace WebCore {
 }
@@ -23,13 +23,14 @@ public:
     LazyProperty<JSC::JSGlobalObject, Structure> mockResultStructure;
     LazyProperty<JSC::JSGlobalObject, Structure> mockImplementationStructure;
     LazyProperty<JSC::JSGlobalObject, Structure> mockObjectStructure;
+    LazyProperty<JSC::JSGlobalObject, Structure> mockModuleStructure;
     LazyProperty<JSC::JSGlobalObject, Structure> activeSpySetStructure;
     LazyProperty<JSC::JSGlobalObject, JSFunction> withImplementationCleanupFunction;
     LazyProperty<JSC::JSGlobalObject, JSC::Structure> mockWithImplementationCleanupDataStructure;
 
     static JSMockModule create(JSC::JSGlobalObject*);
 
-    JSC::Strong<Unknown> activeSpies;
+    JSC::Strong<JSC::Unknown> activeSpies;
 };
 
 class MockWithImplementationCleanupData : public JSC::JSInternalFieldObjectImpl<4> {

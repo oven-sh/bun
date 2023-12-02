@@ -1,0 +1,44 @@
+{
+	"name": "no-deps-scripted-bis",
+	"versions": {
+		"1.0.0": {
+			"name": "no-deps-scripted-bis",
+			"version": "1.0.0",
+			"scripts": {
+				"preinstall": "node scripts/preinstall",
+				"install": "node scripts/install",
+				"postinstall": "node scripts/postinstall"
+			},
+			"_id": "no-deps-scripted-bis@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-l9m2gtDBQlW+q16p7POnIC555MarakBGZZl2Z00sdh9IsNpj1S9f78Yfk7N4wDRv5m5Yue5P1e8aqlevZEcsbw==",
+				"shasum": "926bb62e7ed6a095abd2453b86430b442cae0717",
+				"tarball": "http://localhost:4873/no-deps-scripted-bis/-/no-deps-scripted-bis-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:20.633Z",
+		"created": "2023-11-01T22:05:20.633Z",
+		"1.0.0": "2023-11-01T22:05:20.633Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"no-deps-scripted-bis-1.0.0.tgz": {
+			"shasum": "926bb62e7ed6a095abd2453b86430b442cae0717",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-ccf0f5a05131cce3",
+	"_id": "no-deps-scripted-bis",
+	"readme": "ERROR: No README data found!"
+}

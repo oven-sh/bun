@@ -88,7 +88,6 @@ describe("util.promisify", () => {
 
       function promisifiedFn() {}
 
-      // TODO: register shared symbol promisify.custom
       // util.promisify.custom is a shared symbol which can be accessed
       // as `Symbol.for("nodejs.util.promisify.custom")`.
       const kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");

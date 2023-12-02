@@ -21,23 +21,23 @@
 #include "JSDOMWrapperCache.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
-#include "JavaScriptCore/FunctionPrototype.h"
-#include "JavaScriptCore/HeapAnalyzer.h"
+#include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/HeapAnalyzer.h>
 
-#include "JavaScriptCore/JSDestructibleObjectHeapCellType.h"
-#include "JavaScriptCore/SlotVisitorMacros.h"
-#include "JavaScriptCore/SubspaceInlines.h"
-#include "wtf/GetPtr.h"
-#include "wtf/PointerPreparations.h"
-#include "wtf/URL.h"
-#include "JavaScriptCore/BuiltinNames.h"
+#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
+#include <JavaScriptCore/SlotVisitorMacros.h>
+#include <JavaScriptCore/SubspaceInlines.h>
+#include <wtf/GetPtr.h>
+#include <wtf/PointerPreparations.h>
+#include <wtf/URL.h>
+#include <JavaScriptCore/BuiltinNames.h>
 
 #include "JSBufferEncodingType.h"
-#include "JavaScriptCore/JSBase.h"
+#include <JavaScriptCore/JSBase.h>
 
 #include "JSDOMURL.h"
-#include "JavaScriptCore/JSNativeStdFunction.h"
-#include "JavaScriptCore/GetterSetter.h"
+#include <JavaScriptCore/JSNativeStdFunction.h>
+#include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
@@ -47,7 +47,7 @@ namespace Zig {
 using namespace JSC;
 using namespace WebCore;
 
-static EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, const WTF::String& fromStr)
+static JSC::EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, const WTF::String& fromStr)
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -148,7 +148,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireResolve, (JSC::JSGlobalObject * global
     return functionRequireResolve(globalObject, callFrame, fromStr);
 }
 
-extern "C" EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -236,7 +236,7 @@ extern "C" EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObject* g
     return result;
 }
 
-extern "C" EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -363,7 +363,7 @@ Zig::ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* jslobalObje
     return Zig::ImportMetaObject::create(vm, globalObject, structure, view);
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_url, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName propertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_url, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     ImportMetaObject* thisObject = jsDynamicCast<ImportMetaObject*>(JSValue::decode(thisValue));
     if (UNLIKELY(!thisObject))
@@ -371,7 +371,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_url, (JSGlobalObject * globalO
 
     return JSValue::encode(thisObject->urlProperty.getInitializedOnMainThread(thisObject));
 }
-JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_dir, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName propertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_dir, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     ImportMetaObject* thisObject = jsDynamicCast<ImportMetaObject*>(JSValue::decode(thisValue));
     if (UNLIKELY(!thisObject))
@@ -379,7 +379,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_dir, (JSGlobalObject * globalO
 
     return JSValue::encode(thisObject->dirProperty.getInitializedOnMainThread(thisObject));
 }
-JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_file, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName propertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_file, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     ImportMetaObject* thisObject = jsDynamicCast<ImportMetaObject*>(JSValue::decode(thisValue));
     if (UNLIKELY(!thisObject))
@@ -387,7 +387,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_file, (JSGlobalObject * global
 
     return JSValue::encode(thisObject->fileProperty.getInitializedOnMainThread(thisObject));
 }
-JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_path, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName propertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_path, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     ImportMetaObject* thisObject = jsDynamicCast<ImportMetaObject*>(JSValue::decode(thisValue));
     if (UNLIKELY(!thisObject))
@@ -395,13 +395,18 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_path, (JSGlobalObject * global
 
     return JSValue::encode(thisObject->pathProperty.getInitializedOnMainThread(thisObject));
 }
-JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_require, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName propertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_require, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     ImportMetaObject* thisObject = jsDynamicCast<ImportMetaObject*>(JSValue::decode(thisValue));
     if (UNLIKELY(!thisObject))
         return JSValue::encode(jsUndefined());
 
     return JSValue::encode(thisObject->requireProperty.getInitializedOnMainThread(thisObject));
+}
+JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_env, (JSGlobalObject * jsGlobalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
+{
+    auto* globalObject = jsCast<Zig::GlobalObject*>(jsGlobalObject);
+    return JSValue::encode(globalObject->m_processEnvObject.getInitializedOnMainThread(globalObject));
 }
 
 static const HashTableValue ImportMetaObjectPrototypeValues[] = {
@@ -412,6 +417,7 @@ static const HashTableValue ImportMetaObjectPrototypeValues[] = {
     { "file"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_file, 0 } },
     { "path"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_path, 0 } },
     { "require"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_require, 0 } },
+    { "env"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_env, 0 } },
 };
 
 class ImportMetaObjectPrototype final : public JSC::JSNonFinalObject {

@@ -26,18 +26,6 @@ const import_record = @import("./import_record.zig");
 
 const ImportRecord = import_record.ImportRecord;
 
-pub const FsCacheEntry = struct {
-    contents: string,
-    fd: StoredFileDescriptorType = 0,
-
-    pub fn deinit(entry: *FsCacheEntry, allocator: std.mem.Allocator) void {
-        if (entry.contents.len > 0) {
-            allocator.free(entry.contents);
-            entry.contents = "";
-        }
-    }
-};
-
 pub const Set = struct {
     js: JavaScript,
     fs: Fs,
@@ -56,7 +44,27 @@ pub const Set = struct {
 };
 const debug = Output.scoped(.fs, false);
 pub const Fs = struct {
-    const Entry = FsCacheEntry;
+    pub const Entry = struct {
+        contents: string,
+        fd: StoredFileDescriptorType = bun.invalid_fd,
+
+        pub fn deinit(entry: *Entry, allocator: std.mem.Allocator) void {
+            if (entry.contents.len > 0) {
+                allocator.free(entry.contents);
+                entry.contents = "";
+            }
+        }
+
+        pub fn closeFD(entry: *Entry) ?bun.sys.Error {
+            if (entry.fd != bun.invalid_fd) {
+                defer {
+                    entry.fd = bun.invalid_fd;
+                }
+                return bun.sys.close(entry.fd);
+            }
+            return null;
+        }
+    };
 
     shared_buffer: MutableString,
     macro_shared_buffer: MutableString,
@@ -207,7 +215,7 @@ pub const Fs = struct {
 
         return Entry{
             .contents = file.contents,
-            .fd = if (FeatureFlags.store_file_descriptors and !will_close) file_handle.handle else 0,
+            .fd = if (FeatureFlags.store_file_descriptors and !will_close) file_handle.handle else bun.invalid_fd,
         };
     }
 };

@@ -368,8 +368,8 @@ describe("bundler", () => {
           console.log('observer', getValue());
         }
         setObserver(observer);
-        import('./out/a.js');
-        import('./out/b.js');
+        await import('./out/a.js');
+        await import('./out/b.js');
       `,
     },
     run: [

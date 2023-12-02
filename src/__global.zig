@@ -7,52 +7,48 @@ const StringTypes = @import("./string_types.zig");
 const Mimalloc = @import("root").bun.Mimalloc;
 const bun = @import("root").bun;
 
-pub const build_id = std.fmt.parseInt(u64, std.mem.trim(u8, @embedFile("./build-id"), "\n \r\t"), 10) catch unreachable;
+const version_string = Environment.version_string;
 
-pub const version: if (Environment.isWasm)
-    std.SemanticVersion
-else
-    @import("./install/semver.zig").Version = .{
-    .major = 1,
-    .minor = 0,
-    .patch = build_id,
-};
-
-const version_string = std.fmt.comptimePrint("{d}.{d}.{d}", .{ version.major, version.minor, version.patch });
-
+/// Does not have the canary tag, because it is exposed in `Bun.version`
+/// "1.0.0" or "1.0.0-debug"
 pub const package_json_version = if (Environment.isDebug)
-    version_string ++ "_debug"
+    version_string ++ "-debug"
 else
     version_string;
 
+/// This is used for `bun` without any arguments, it `package_json_version` but with canary if it is a canary build.
+/// like "1.0.0-canary.12"
+pub const package_json_version_with_canary = if (Environment.isDebug)
+    version_string ++ "-debug"
+else if (Environment.is_canary)
+    std.fmt.comptimePrint("{s}-canary.{d}", .{ version_string, Environment.canary_revision })
+else
+    version_string;
+
+/// The version and a short hash in parenthesis.
 pub const package_json_version_with_sha = if (Environment.git_sha.len == 0)
     package_json_version
 else if (Environment.isDebug)
-    std.fmt.comptimePrint("{s}_debug ({s})", .{ version_string, Environment.git_sha[0..@min(Environment.git_sha.len, 8)] })
+    std.fmt.comptimePrint("{s} ({s})", .{ version_string, Environment.git_sha[0..@min(Environment.git_sha.len, 8)] })
+else if (Environment.is_canary)
+    std.fmt.comptimePrint("{s}-canary.{d} ({s})", .{ version_string, Environment.canary_revision, Environment.git_sha[0..@min(Environment.git_sha.len, 8)] })
 else
     std.fmt.comptimePrint("{s} ({s})", .{ version_string, Environment.git_sha[0..@min(Environment.git_sha.len, 8)] });
 
+/// What is printed by `bun --revision`
+/// "1.0.0+abcdefghi" or "1.0.0-canary.12+abcdefghi"
 pub const package_json_version_with_revision = if (Environment.git_sha.len == 0)
     package_json_version
 else if (Environment.isDebug)
-    std.fmt.comptimePrint(version_string ++ "-debug+{s}", .{Environment.git_sha})
+    std.fmt.comptimePrint(version_string ++ "-debug+{s}", .{Environment.git_sha_short})
 else if (Environment.is_canary)
-    std.fmt.comptimePrint(version_string ++ "-canary+{s}", .{Environment.git_sha})
+    std.fmt.comptimePrint(version_string ++ "-canary.{d}+{s}", .{ Environment.canary_revision, Environment.git_sha_short })
 else if (Environment.isTest)
-    std.fmt.comptimePrint(version_string ++ "-test+{s}", .{Environment.git_sha})
+    std.fmt.comptimePrint(version_string ++ "-test+{s}", .{Environment.git_sha_short})
 else
-    std.fmt.comptimePrint(version_string ++ "+{s}", .{Environment.git_sha});
+    std.fmt.comptimePrint(version_string ++ "+{s}", .{Environment.git_sha_short});
 
-pub const os_name = if (Environment.isWindows)
-    "win32"
-else if (Environment.isMac)
-    "darwin"
-else if (Environment.isLinux)
-    "linux"
-else if (Environment.isWasm)
-    "wasm"
-else
-    "unknown";
+pub const os_name = Environment.os.nameString();
 
 pub const arch_name = if (Environment.isX64)
     "x64"
@@ -76,10 +72,28 @@ pub fn setThreadName(name: StringTypes.stringZ) void {
     }
 }
 
+const ExitFn = *const fn () callconv(.C) void;
+
+var on_exit_callbacks = std.ArrayListUnmanaged(ExitFn){};
+export fn Bun__atexit(function: ExitFn) void {
+    if (std.mem.indexOfScalar(ExitFn, on_exit_callbacks.items, function) == null) {
+        on_exit_callbacks.append(bun.default_allocator, function) catch {};
+    }
+}
+
+pub fn runExitCallbacks() void {
+    for (on_exit_callbacks.items) |callback| {
+        callback();
+    }
+    on_exit_callbacks.items.len = 0;
+}
+
 /// Flushes stdout and stderr and exits with the given code.
 pub fn exit(code: u8) noreturn {
+    runExitCallbacks();
     Output.flush();
-    std.os.exit(code);
+    std.mem.doNotOptimizeAway(&Bun__atexit);
+    std.c._exit(code);
 }
 
 pub const AllocatorConfiguration = struct {

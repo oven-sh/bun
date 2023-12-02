@@ -548,7 +548,7 @@ pub const NumberRenamer = struct {
         renamer.name_temp_allocator = renamer.name_stack_fallback.get();
         renamer.number_scope_pool = bun.HiveArray(NumberScope, 128).Fallback.init(renamer.arena.allocator());
         renamer.root.name_counts = root_names;
-        if (comptime Environment.allow_assert) {
+        if (comptime Environment.allow_assert and !Environment.isWindows) {
             if (std.os.getenv("BUN_DUMP_SYMBOLS") != null)
                 symbols.dump();
         }

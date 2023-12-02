@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterEach, beforeEach, expect, it } from "bun:test";
 import { bunExe, bunEnv as env } from "harness";
-import { mkdtemp, realpath, rm, writeFile } from "fs/promises";
+import { mkdtemp, realpath, rm, mkdir, stat } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -15,7 +15,7 @@ afterEach(async () => {
 });
 
 it("should create selected template with @ prefix", async () => {
-  const { stdout, stderr, exited } = spawn({
+  const { stderr } = spawn({
     cmd: [bunExe(), "create", "@quick-start/some-template"],
     cwd: x_dir,
     stdout: null,
@@ -28,4 +28,24 @@ it("should create selected template with @ prefix", async () => {
   expect(err.split(/\r?\n/)).toContain(
     `error: package "@quick-start/create-some-template" not found registry.npmjs.org/@quick-start%2fcreate-some-template 404`,
   );
+});
+
+it("should create template from local folder", async () => {
+  const bunCreateDir = join(x_dir, "bun-create");
+  const testTemplate = "test-template";
+
+  await mkdir(`${bunCreateDir}/${testTemplate}`, { recursive: true });
+  const { exited } = spawn({
+    cmd: [bunExe(), "create", testTemplate],
+    cwd: x_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env: { ...env, BUN_CREATE_DIR: bunCreateDir },
+  });
+
+  await exited;
+
+  const dirStat = await stat(`${x_dir}/${testTemplate}`);
+  expect(dirStat.isDirectory()).toBe(true);
 });

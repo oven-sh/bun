@@ -70,6 +70,137 @@ declare module "bun" {
     options?: { PATH?: string; cwd?: string },
   ): string | null;
 
+  export interface GlobScanOptions {
+    /**
+     * The root directory to start matching from. Defaults to `process.cwd()`
+     */
+    cwd?: string;
+
+    /**
+     * Allow patterns to match entries that begin with a period (`.`).
+     *
+     * @default false
+     */
+    dot?: boolean;
+
+    /**
+     * Return the absolute path for entries.
+     *
+     * @default false
+     */
+    absolute?: boolean;
+
+    /**
+     * Indicates whether to traverse descendants of symbolic link directories.
+     *
+     * @default false
+     */
+    followSymlinks?: boolean;
+
+    /**
+     * Throw an error when symbolic link is broken
+     *
+     * @default false
+     */
+    throwErrorOnBrokenSymlink?: boolean;
+
+    /**
+     * Return only files.
+     *
+     * @default true
+     */
+    onlyFiles?: boolean;
+  }
+
+  /**
+   * Match files using [glob patterns](https://en.wikipedia.org/wiki/Glob_(programming)).
+   *
+   * The supported pattern syntax for is:
+   *
+   * - `?`
+   *     Matches any single character.
+   * - `*`
+   *     Matches zero or more characters, except for path separators ('/' or '\').
+   * - `**`
+   *     Matches zero or more characters, including path separators.
+   *     Must match a complete path segment, i.e. followed by a path separator or
+   *     at the end of the pattern.
+   * - `[ab]`
+   *     Matches one of the characters contained in the brackets.
+   *     Character ranges (e.g. "[a-z]") are also supported.
+   *     Use "[!ab]" or "[^ab]" to match any character *except* those contained
+   *     in the brackets.
+   * - `{a,b}`
+   *     Match one of the patterns contained in the braces.
+   *     Any of the wildcards listed above can be used in the sub patterns.
+   *     Braces may be nested up to 10 levels deep.
+   * - `!`
+   *     Negates the result when at the start of the pattern.
+   *     Multiple "!" characters negate the pattern multiple times.
+   * - `\`
+   *     Used to escape any of the special characters above.
+   *
+   * @example
+   * ```js
+   * const glob = new Glob("*.{ts,tsx}");
+   * const scannedFiles = await Array.fromAsync(glob.scan({ cwd: './src' }))
+   * ```
+   */
+  export class Glob {
+    constructor(pattern: string);
+
+    /**
+     * Scan for files that match this glob pattern. Returns an async iterator.
+     *
+     * @example
+     * ```js
+     * const glob = new Glob("*.{ts,tsx}");
+     * const scannedFiles = await Array.fromAsync(glob.scan({ cwd: './src' }))
+     * ```
+     *
+     * @example
+     * ```js
+     * const glob = new Glob("*.{ts,tsx}");
+     * for await (const path of glob.scan()) {
+     *   // do something
+     * }
+     * ```
+     */
+    scan(
+      optionsOrCwd?: string | GlobScanOptions,
+    ): AsyncIterableIterator<string>;
+
+    /**
+     * Scan for files that match this glob pattern. Returns an iterator.
+     *
+     * @example
+     * ```js
+     * const glob = new Glob("*.{ts,tsx}");
+     * const scannedFiles = Array.from(glob.scan({ cwd: './src' }))
+     * ```
+     *
+     * @example
+     * ```js
+     * const glob = new Glob("*.{ts,tsx}");
+     * for (const path of glob.scan()) {
+     *   // do something
+     * }
+     * ```
+     */
+    scanSync(optionsOrCwd?: string | GlobScanOptions): IterableIterator<string>;
+
+    /**
+     * Match the glob against a string
+     *
+     * @example
+     * ```js
+     * const glob = new Glob("*.{ts,tsx}");
+     * expect(glob.match('foo.ts')).toBeTrue();
+     * ```
+     */
+    match(str: string): boolean;
+  }
+
   interface TOML {
     /**
      * Parse a TOML string into a JavaScript object.
@@ -2014,7 +2145,7 @@ declare module "bun" {
       this: Server,
       request: Request,
       server: Server,
-    ): Response | undefined | Promise<Response | undefined>;
+    ): Response | undefined | void | Promise<Response | undefined | void>;
   }
 
   export interface UnixWebSocketServeOptions<WebSocketDataType = undefined>
@@ -2075,7 +2206,7 @@ declare module "bun" {
       this: Server,
       request: Request,
       server: Server,
-    ): Response | undefined | Promise<Response | undefined>;
+    ): Response | undefined | void | Promise<Response | undefined | void>;
   }
 
   export interface TLSWebSocketServeOptions<WebSocketDataType = undefined>
@@ -2404,6 +2535,8 @@ declare module "bun" {
      */
     readonly pendingWebSockets: number;
 
+    readonly url: URL;
+
     readonly port: number;
     /**
      * The hostname the server is listening on. Does not include the port
@@ -2575,6 +2708,22 @@ declare module "bun" {
    * This is read-only
    */
   const stdin: BunFile;
+
+  type StringLike = string | { toString(): string };
+
+  interface semver {
+    /**
+     * Test if the version satisfies the range. Stringifies both arguments. Returns `true` or `false`.
+     */
+    satisfies(version: StringLike, range: StringLike): boolean;
+
+    /**
+     * Returns 0 if the versions are equal, 1 if `v1` is greater, or -1 if `v2` is greater.
+     * Throws an error if either version is invalid.
+     */
+    order(v1: StringLike, v2: StringLike): -1 | 0 | 1;
+  }
+  export const semver: semver;
 
   interface unsafe {
     /**
@@ -4077,7 +4226,7 @@ declare module "bun" {
    * Spawn a new process
    *
    * ```js
-   * const {stdout} = Bun.spawn(["echo", "hello"]));
+   * const {stdout} = Bun.spawn(["echo", "hello"]);
    * const text = await readableStreamToText(stdout);
    * console.log(text); // "hello\n"
    * ```
@@ -4139,7 +4288,7 @@ declare module "bun" {
    * Synchronously spawn a new process
    *
    * ```js
-   * const {stdout} = Bun.spawnSync(["echo", "hello"]));
+   * const {stdout} = Bun.spawnSync(["echo", "hello"]);
    * console.log(stdout.toString()); // "hello\n"
    * ```
    *

@@ -5056,31 +5056,25 @@ pub const NodeFS = struct {
             };
         }
 
-        // Handle Base64 encoding. Should fix:
-        // https://github.com/oven-sh/bun/issues/4845
-        // https://github.com/bpampuch/pdfmake/issues/2648
-        var base64_buffer = if (args.encoding == .base64)
-            bun.default_allocator.alloc(u8, Base64.encodeLen(buf.items)) catch @panic("oom")
-        else
-            undefined;
-
-        if (args.encoding == .base64) {
-            const result = Base64.encode(base64_buffer, buf.items);
-            if (result == 0) {
-                return .{ .err = Syscall.Error.oom };
-            }
-        }
-
         return switch (args.encoding) {
             .buffer => .{
                 .result = .{
                     .buffer = Buffer.fromBytes(buf.items, bun.default_allocator, .Uint8Array),
                 },
             },
-            .base64 => .{
-                .result = .{
-                    .string = base64_buffer,
-                },
+            // Handle Base64 encoding. Fixes:
+            // https://github.com/oven-sh/bun/issues/4845
+            // https://github.com/bpampuch/pdfmake/issues/2648
+            .base64 => string: {
+                const base64_buffer = bun.default_allocator.alloc(u8, Base64.encodeLen(buf.items)) catch @panic("oom");
+                const encoding_result = Base64.encode(base64_buffer, buf.items);
+
+                if (encoding_result == 0) {
+                    return .{ .err = Syscall.Error.oom };
+                }
+
+                defer bun.default_allocator.free(buf.items);
+                break :string .{ .result = .{ .string = base64_buffer } };
             },
             else => brk: {
                 if (comptime string_type == .default) {

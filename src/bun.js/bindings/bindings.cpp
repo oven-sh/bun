@@ -1812,6 +1812,8 @@ bool JSC__JSFunction__getSourceCode(JSC__JSValue JSValue0, ZigString* outSourceC
         }
         return false;
     }
+
+    return false;
 }
 
 void JSC__JSValue__jsonStringify(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, uint32_t arg2,

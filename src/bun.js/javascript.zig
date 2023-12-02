@@ -14,7 +14,7 @@ const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const ErrorableString = bun.JSC.ErrorableString;
 const Arena = @import("../mimalloc_arena.zig").Arena;
 const C = bun.C;
-const NetworkThread = @import("root").bun.HTTP.NetworkThread;
+const NetworkThread = @import("root").bun.http.NetworkThread;
 const IO = @import("root").bun.AsyncIO;
 const Allocator = std.mem.Allocator;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
@@ -32,7 +32,6 @@ const ServerEntryPoint = bun.bundler.ServerEntryPoint;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
-const http = @import("../bun_dev_http_server.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
 const Analytics = @import("../analytics/analytics_thread.zig");
@@ -150,13 +149,12 @@ pub const SavedSourceMap = struct {
                             Output.errorWriter(),
                             logger.Kind.warn,
                             true,
-                            false,
                         );
                     } else {
                         try fail.toData(path).writeFormat(
                             Output.errorWriter(),
                             logger.Kind.warn,
-                            false,
+
                             false,
                         );
                     }
@@ -629,7 +627,7 @@ pub const VirtualMachine = struct {
         return VMHolder.vm.?;
     }
 
-    pub fn mimeType(this: *VirtualMachine, str: []const u8) ?bun.HTTP.MimeType {
+    pub fn mimeType(this: *VirtualMachine, str: []const u8) ?bun.http.MimeType {
         return this.rareData().mimeTypeFromString(this.allocator, str);
     }
 
@@ -1233,7 +1231,7 @@ pub const VirtualMachine = struct {
 
     pub const Options = struct {
         allocator: std.mem.Allocator,
-        args: Api.TransformOptions = std.mem.zeroes(Api.TransformOptions),
+        args: Api.TransformOptions,
         log: ?*logger.Log = null,
         env_loader: ?*DotEnv.Loader = null,
         store_fd: bool = false,
@@ -2022,6 +2020,10 @@ pub const VirtualMachine = struct {
         if (!result.isEmptyOrUndefinedOrNull())
             this.last_reported_error_for_dedupe = result;
 
+        var prev_had_errors = this.had_errors;
+        this.had_errors = false;
+        defer this.had_errors = prev_had_errors;
+
         if (result.isException(this.global.vm())) {
             var exception = @as(*Exception, @ptrCast(result.asVoid()));
 
@@ -2067,7 +2069,7 @@ pub const VirtualMachine = struct {
                         null,
                         logger.Loc.Empty,
                         this.allocator,
-                        "{s} resolving preload {any}",
+                        "{s} resolving preload {}",
                         .{
                             @errorName(e),
                             js_printer.formatJSONString(preload),
@@ -2080,7 +2082,7 @@ pub const VirtualMachine = struct {
                         null,
                         logger.Loc.Empty,
                         this.allocator,
-                        "preload not found {any}",
+                        "preload not found {}",
                         .{
                             js_printer.formatJSONString(preload),
                         },
@@ -2429,9 +2431,12 @@ pub const VirtualMachine = struct {
             if (value.as(JSC.BuildMessage)) |build_error| {
                 defer Output.flush();
                 if (!build_error.logged) {
+                    if (this.had_errors) {
+                        writer.writeAll("\n") catch {};
+                    }
                     build_error.msg.writeFormat(writer, allow_ansi_color) catch {};
-                    writer.writeAll("\n") catch {};
                     build_error.logged = true;
+                    writer.writeAll("\n") catch {};
                 }
                 this.had_errors = this.had_errors or build_error.msg.kind == .err;
                 if (exception_list != null) {
@@ -2443,8 +2448,12 @@ pub const VirtualMachine = struct {
             } else if (value.as(JSC.ResolveMessage)) |resolve_error| {
                 defer Output.flush();
                 if (!resolve_error.logged) {
+                    if (this.had_errors) {
+                        writer.writeAll("\n") catch {};
+                    }
                     resolve_error.msg.writeFormat(writer, allow_ansi_color) catch {};
                     resolve_error.logged = true;
+                    writer.writeAll("\n") catch {};
                 }
 
                 this.had_errors = this.had_errors or resolve_error.msg.kind == .err;
@@ -2502,14 +2511,12 @@ pub const VirtualMachine = struct {
 
                 if (file.len == 0 and func.len == 0) continue;
 
-                const has_name = std.fmt.count("{any}", .{frame.nameFormatter(
-                    false,
-                )}) > 0;
+                const has_name = std.fmt.count("{}", .{frame.nameFormatter(false)}) > 0;
 
                 if (has_name) {
                     try writer.print(
                         comptime Output.prettyFmt(
-                            "<r>      <d>at <r>{any}<d> (<r>{any}<d>)<r>\n",
+                            "<r>      <d>at <r>{}<d> (<r>{}<d>)<r>\n",
                             allow_ansi_colors,
                         ),
                         .{
@@ -2527,7 +2534,7 @@ pub const VirtualMachine = struct {
                 } else {
                     try writer.print(
                         comptime Output.prettyFmt(
-                            "<r>      <d>at <r>{any}\n",
+                            "<r>      <d>at <r>{}\n",
                             allow_ansi_colors,
                         ),
                         .{
@@ -2563,6 +2570,7 @@ pub const VirtualMachine = struct {
                 frame.position.column_start = mapping.original.columns;
                 frame.remapped = true;
             } else {
+                // we don't want it to be remapped again
                 frame.remapped = true;
             }
         }
@@ -2592,6 +2600,12 @@ pub const VirtualMachine = struct {
                     start_index = i;
                     break;
                 }
+
+                // Workaround for being unable to hide that specific frame without also hiding the frame before it
+                if (frame.source_url.isEmpty() and frame.function_name.eqlComptime("moduleEvaluation")) {
+                    start_index = 0;
+                    break;
+                }
             }
 
             if (start_index) |k| {
@@ -2604,6 +2618,11 @@ pub const VirtualMachine = struct {
                     {
                         continue;
                     }
+
+                    // Workaround for being unable to hide that specific frame without also hiding the frame before it
+                    if (frame.source_url.isEmpty() and frame.function_name.eqlComptime("moduleEvaluation"))
+                        continue;
+
                     frames[j] = frame;
                     j += 1;
                 }
@@ -2615,13 +2634,37 @@ pub const VirtualMachine = struct {
         if (frames.len == 0) return;
 
         var top = &frames[0];
+        if (this.hide_bun_stackframes) {
+            for (frames) |*frame| {
+                if (frame.source_url.hasPrefixComptime("bun:") or frame.source_url.hasPrefixComptime("node:") or frame.source_url.isEmpty()) {
+                    continue;
+                }
+
+                top = frame;
+                break;
+            }
+        }
+
         var top_source_url = top.source_url.toUTF8(bun.default_allocator);
         defer top_source_url.deinit();
-        if (this.source_mappings.resolveMapping(
-            top_source_url.slice(),
-            @max(top.position.line, 0),
-            @max(top.position.column_start, 0),
-        )) |mapping| {
+
+        const mapping_ = if (top.remapped)
+            SourceMap.Mapping{
+                .generated = .{},
+                .original = .{
+                    .lines = @max(top.position.line, 0),
+                    .columns = @max(top.position.column_start, 0),
+                },
+                .source_index = 0,
+            }
+        else
+            this.source_mappings.resolveMapping(
+                top_source_url.slice(),
+                @max(top.position.line, 0),
+                @max(top.position.column_start, 0),
+            );
+
+        if (mapping_) |mapping| {
             var log = logger.Log.init(default_allocator);
             var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return;
             const code = original_source.source_code.toUTF8(bun.default_allocator);
@@ -2638,25 +2681,29 @@ pub const VirtualMachine = struct {
             top.position.expression_start = mapping.original.columns;
             top.position.expression_stop = mapping.original.columns + 1;
 
+            const last_line = @max(top.position.line, 0);
             if (strings.getLinesInText(
                 code.slice(),
-                @as(u32, @intCast(top.position.line)),
+                @intCast(last_line),
                 JSC.ZigException.Holder.source_lines_count,
-            )) |lines| {
+            )) |lines_buf| {
+                var lines = lines_buf.slice();
                 var source_lines = exception.stack.source_lines_ptr[0..JSC.ZigException.Holder.source_lines_count];
                 var source_line_numbers = exception.stack.source_lines_numbers[0..JSC.ZigException.Holder.source_lines_count];
                 @memset(source_lines, String.empty);
                 @memset(source_line_numbers, 0);
 
-                var lines_ = lines[0..@min(lines.len, source_lines.len)];
-                for (lines_, 0..) |line, j| {
-                    source_lines[(lines_.len - 1) - j] = String.init(line);
-                    source_line_numbers[j] = top.position.line - @as(i32, @intCast(j)) + 1;
+                lines = lines[0..@min(@as(usize, lines.len), source_lines.len)];
+                var current_line_number: i32 = @intCast(last_line);
+                for (lines, source_lines[0..lines.len], source_line_numbers[0..lines.len]) |line, *line_dest, *line_number| {
+                    line_dest.* = String.init(line);
+                    line_number.* = current_line_number;
+                    current_line_number -= 1;
                 }
 
-                exception.stack.source_lines_len = @as(u8, @intCast(lines_.len));
+                exception.stack.source_lines_len = @as(u8, @truncate(lines.len));
 
-                top.position.column_stop = @as(i32, @intCast(source_lines[lines_.len - 1].length()));
+                top.position.column_stop = @as(i32, @intCast(source_lines[lines.len - 1].length()));
                 top.position.line_stop = top.position.column_stop;
 
                 // This expression range is no longer accurate
@@ -2666,8 +2713,8 @@ pub const VirtualMachine = struct {
         }
 
         if (frames.len > 1) {
-            for (frames[1..]) |*frame| {
-                if (frame.position.isInvalid()) continue;
+            for (frames) |*frame| {
+                if (frame == top or frame.position.isInvalid()) continue;
                 const source_url = frame.source_url.toUTF8(bun.default_allocator);
                 defer source_url.deinit();
                 if (this.source_mappings.resolveMapping(
@@ -2683,12 +2730,14 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn printErrorInstance(this: *VirtualMachine, error_instance: JSValue, exception_list: ?*ExceptionList, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool, comptime allow_side_effects: bool) !void {
+    pub fn printErrorInstance(this: *VirtualMachine, error_instance: JSValue, exception_list: ?*ExceptionList, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool, comptime allow_side_effects: bool) anyerror!void {
         var exception_holder = ZigException.Holder.init();
         var exception = exception_holder.zigException();
         defer exception_holder.deinit();
         this.remapZigException(exception, error_instance, exception_list);
+        var prev_had_errors = this.had_errors;
         this.had_errors = true;
+        defer this.had_errors = prev_had_errors;
 
         if (allow_side_effects) {
             defer if (this.on_exception) |cb| {
@@ -2699,23 +2748,24 @@ pub const VirtualMachine = struct {
         var line_numbers = exception.stack.source_lines_numbers[0..exception.stack.source_lines_len];
         var max_line: i32 = -1;
         for (line_numbers) |line| max_line = @max(max_line, line);
-        const max_line_number_pad = std.fmt.count("{d}", .{max_line});
+        const max_line_number_pad = std.fmt.count("{d}", .{max_line + 1});
 
         var source_lines = exception.stack.sourceLineIterator();
         var last_pad: u64 = 0;
         while (source_lines.untilLast()) |source| {
             defer source.text.deinit();
+            const display_line = source.line + 1;
 
-            const int_size = std.fmt.count("{d}", .{source.line});
+            const int_size = std.fmt.count("{d}", .{display_line});
             const pad = max_line_number_pad - int_size;
             last_pad = pad;
             try writer.writeByteNTimes(' ', pad);
 
             try writer.print(
-                comptime Output.prettyFmt("<r><d>{d} | <r>{s}\n", allow_ansi_color),
+                comptime Output.prettyFmt("<r><d>{d} | <r>{}\n", allow_ansi_color),
                 .{
-                    source.line,
-                    std.mem.trim(u8, source.text.slice(), "\n"),
+                    display_line,
+                    bun.fmt.fmtJavaScript(std.mem.trimRight(u8, std.mem.trim(u8, source.text.slice(), "\n"), "\t "), allow_ansi_color),
                 },
             );
         }
@@ -2728,46 +2778,52 @@ pub const VirtualMachine = struct {
         if (source_lines.next()) |source| brk: {
             if (source.text.len == 0) break :brk;
 
-            const top_frame = if (exception.stack.frames_len > 0) exception.stack.frames()[0] else null;
+            var top_frame = if (exception.stack.frames_len > 0) &exception.stack.frames()[0] else null;
+
+            if (this.hide_bun_stackframes) {
+                for (exception.stack.frames()) |*frame| {
+                    if (frame.position.isInvalid() or frame.source_url.hasPrefixComptime("bun:") or frame.source_url.hasPrefixComptime("node:")) continue;
+                    top_frame = frame;
+                    break;
+                }
+            }
+
             if (top_frame == null or top_frame.?.position.isInvalid()) {
                 defer did_print_name = true;
                 defer source.text.deinit();
-                var text = std.mem.trim(u8, source.text.slice(), "\n");
+                const text = std.mem.trimRight(u8, std.mem.trim(u8, source.text.slice(), "\n"), "\t ");
 
                 try writer.print(
                     comptime Output.prettyFmt(
-                        "<r><d>- |<r> {s}\n",
+                        "<r><d>- |<r> {}\n",
                         allow_ansi_color,
                     ),
                     .{
-                        text,
+                        bun.fmt.fmtJavaScript(text, allow_ansi_color),
                     },
                 );
 
                 try this.printErrorNameAndMessage(name, message, Writer, writer, allow_ansi_color);
             } else if (top_frame) |top| {
                 defer did_print_name = true;
-                const int_size = std.fmt.count("{d}", .{source.line});
+                const display_line = source.line + 1;
+                const int_size = std.fmt.count("{d}", .{display_line});
                 const pad = max_line_number_pad - int_size;
                 try writer.writeByteNTimes(' ', pad);
                 defer source.text.deinit();
                 const text = source.text.slice();
-                var remainder = std.mem.trim(u8, text, "\n");
+                const remainder = std.mem.trimRight(u8, std.mem.trim(u8, text, "\n"), "\t ");
 
                 try writer.print(
                     comptime Output.prettyFmt(
-                        "<r><d>{d} |<r> {s}\n",
+                        "<r><b>{d} |<r> {}\n",
                         allow_ansi_color,
                     ),
-                    .{ source.line, remainder },
+                    .{ display_line, bun.fmt.fmtJavaScript(remainder, allow_ansi_color) },
                 );
 
                 if (!top.position.isInvalid()) {
-                    var first_non_whitespace = @as(u32, @intCast(top.position.column_start));
-                    while (first_non_whitespace < text.len and text[first_non_whitespace] == ' ') {
-                        first_non_whitespace += 1;
-                    }
-                    const indent = @as(usize, @intCast(pad)) + " | ".len + first_non_whitespace;
+                    const indent = max_line_number_pad + " | ".len + @as(u64, @intCast(top.position.column_start));
 
                     try writer.writeByteNTimes(' ', indent);
                     try writer.print(comptime Output.prettyFmt(
@@ -2807,27 +2863,41 @@ pub const VirtualMachine = struct {
             "info",
             "pkg",
             "errors",
+            "cause",
         };
+
+        // This is usually unsafe to do, but we are protecting them each time first
+        var errors_to_append = std.ArrayList(JSC.JSValue).init(this.allocator);
+        defer {
+            for (errors_to_append.items) |err| {
+                err.unprotect();
+            }
+            errors_to_append.deinit();
+        }
 
         if (error_instance != .zero and error_instance.isCell() and error_instance.jsType().canGet()) {
             inline for (extra_fields) |field| {
-                if (error_instance.get(this.global, field)) |value| {
-                    if (!value.isEmptyOrUndefinedOrNull()) {
-                        const kind = value.jsType();
-                        if (kind.isStringLike()) {
-                            if (value.toStringOrNull(this.global)) |str| {
-                                var zig_str = str.toSlice(this.global, bun.default_allocator);
-                                defer zig_str.deinit();
-                                try writer.print(comptime Output.prettyFmt(" {s}<d>: <r>\"{s}\"<r>\n", allow_ansi_color), .{ field, zig_str.slice() });
-                                add_extra_line = true;
-                            }
-                        } else if (kind.isObject() or kind.isArray()) {
-                            var bun_str = bun.String.empty;
-                            defer bun_str.deref();
-                            value.jsonStringify(this.global, 2, &bun_str); //2
-                            try writer.print(comptime Output.prettyFmt(" {s}<d>: <r>{any}<r>\n", allow_ansi_color), .{ field, bun_str });
+                if (error_instance.getTruthy(this.global, field)) |value| {
+                    const kind = value.jsType();
+                    if (kind.isStringLike()) {
+                        if (value.toStringOrNull(this.global)) |str| {
+                            var zig_str = str.toSlice(this.global, bun.default_allocator);
+                            defer zig_str.deinit();
+                            try writer.print(comptime Output.prettyFmt(" {s}<d>: <r>\"{s}\"<r>\n", allow_ansi_color), .{ field, zig_str.slice() });
                             add_extra_line = true;
                         }
+                    } else if (kind == .ErrorInstance and
+                        // avoid infinite recursion
+                        !prev_had_errors)
+                    {
+                        value.protect();
+                        try errors_to_append.append(value);
+                    } else if (kind.isObject() or kind.isArray()) {
+                        var bun_str = bun.String.empty;
+                        defer bun_str.deref();
+                        value.jsonStringify(this.global, 2, &bun_str); //2
+                        try writer.print(comptime Output.prettyFmt(" {s}<d>: <r>{}<r>\n", allow_ansi_color), .{ field, bun_str });
+                        add_extra_line = true;
                     }
                 }
             }
@@ -2878,13 +2948,18 @@ pub const VirtualMachine = struct {
         if (add_extra_line) try writer.writeAll("\n");
 
         try printStackTrace(@TypeOf(writer), writer, exception.stack, allow_ansi_color);
+
+        for (errors_to_append.items) |err| {
+            try writer.writeAll("\n");
+            try this.printErrorInstance(err, exception_list, Writer, writer, allow_ansi_color, allow_side_effects);
+        }
     }
 
     fn printErrorNameAndMessage(_: *VirtualMachine, name: String, message: String, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool) !void {
         if (!name.isEmpty() and !message.isEmpty()) {
             const display_name: String = if (name.eqlComptime("Error")) String.init("error") else name;
 
-            try writer.print(comptime Output.prettyFmt("<r><red>{any}<r><d>:<r> <b>{s}<r>\n", allow_ansi_color), .{
+            try writer.print(comptime Output.prettyFmt("<r><red>{}<r><d>:<r> <b>{s}<r>\n", allow_ansi_color), .{
                 display_name,
                 message,
             });

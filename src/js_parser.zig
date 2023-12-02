@@ -1,3 +1,7 @@
+/// ** IMPORTANT **
+/// ** When making changes to the JavaScript Parser that impact runtime behavior or fix bugs **
+/// ** you must also increment the `expected_version` in RuntimeTranspilerCache.zig **
+/// ** IMPORTANT **
 pub const std = @import("std");
 pub const logger = @import("root").bun.logger;
 pub const js_lexer = bun.js_lexer;
@@ -2798,7 +2802,6 @@ pub const Parser = struct {
         jsx: options.JSX.Pragma,
         ts: bool = false,
         keep_names: bool = true,
-        omit_runtime_for_tests: bool = false,
         ignore_dce_annotations: bool = false,
         preserve_unused_imports_ts: bool = false,
         use_define_for_class_fields: bool = false,
@@ -2819,6 +2822,31 @@ pub const Parser = struct {
         module_type: options.ModuleType = .unknown,
 
         transform_only: bool = false,
+
+        pub fn hashForRuntimeTranspiler(this: *const Options, hasher: *std.hash.Wyhash, did_use_jsx: bool) void {
+            std.debug.assert(!this.bundle);
+
+            if (did_use_jsx) {
+                if (this.jsx.parse) {
+                    this.jsx.hashForRuntimeTranspiler(hasher);
+                    const jsx_optimizations = [_]bool{
+                        this.features.jsx_optimization_inline,
+                        this.features.jsx_optimization_hoist,
+                    };
+                    hasher.update(std.mem.asBytes(&jsx_optimizations));
+                } else {
+                    hasher.update("NO_JSX");
+                }
+            }
+
+            if (this.ts) {
+                hasher.update("TS");
+            } else {
+                hasher.update("NO_TS");
+            }
+
+            this.features.hashForRuntimeTranspiler(hasher);
+        }
 
         pub fn init(jsx: options.JSX.Pragma, loader: options.Loader) Options {
             var opts = Options{
@@ -3052,8 +3080,10 @@ pub const Parser = struct {
         try ParserType.init(self.allocator, self.log, self.source, self.define, self.lexer, self.options, &p);
         p.should_fold_typescript_constant_expressions = self.options.features.should_fold_typescript_constant_expressions;
         defer p.lexer.deinit();
-        var result: js_ast.Result = undefined;
-        _ = result;
+
+        var binary_expression_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
+        p.binary_expression_stack = std.ArrayList(ParserType.BinaryExpressionVisitor).init(binary_expression_stack_heap.get());
+        defer p.binary_expression_stack.clearAndFree();
 
         // defer {
         //     if (p.allocated_names_pool) |pool| {
@@ -3070,10 +3100,24 @@ pub const Parser = struct {
             try p.lexer.next();
         }
 
+        // Detect a leading "// @bun" pragma
         if (p.lexer.bun_pragma and p.options.features.dont_bundle_twice) {
             return js_ast.Result{
                 .already_bundled = {},
             };
+        }
+
+        // We must check the cache only after we've consumed the hashbang and leading // @bun pragma
+        // We don't want to ever put files with `// @bun` into this cache, as that would be wasteful.
+        if (comptime Environment.isNative and bun.FeatureFlags.runtime_transpiler_cache) {
+            var runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = p.options.features.runtime_transpiler_cache;
+            if (runtime_transpiler_cache) |cache| {
+                if (cache.get(p.source, &p.options, p.options.jsx.parse and (!p.source.path.isNodeModule() or p.source.path.isJSXFile()))) {
+                    return js_ast.Result{
+                        .cached = {},
+                    };
+                }
+            }
         }
 
         // Parse the file in the first pass, but do not bind symbols
@@ -3271,45 +3315,57 @@ pub const Parser = struct {
         const postvisit_tracer = bun.tracy.traceNamed(@src(), "JSParser.postvisit");
         defer postvisit_tracer.end();
 
-        const uses_dirname = p.symbols.items[p.dirname_ref.innerIndex()].use_count_estimate > 0;
-        const uses_filename = p.symbols.items[p.filename_ref.innerIndex()].use_count_estimate > 0;
+        var uses_dirname = p.symbols.items[p.dirname_ref.innerIndex()].use_count_estimate > 0;
+        var uses_filename = p.symbols.items[p.filename_ref.innerIndex()].use_count_estimate > 0;
 
-        if (uses_dirname or uses_filename) {
-            const count = @as(usize, @intFromBool(uses_dirname)) + @as(usize, @intFromBool(uses_filename));
-            var declared_symbols = DeclaredSymbol.List.initCapacity(p.allocator, count) catch unreachable;
-            var decls = p.allocator.alloc(G.Decl, count) catch unreachable;
-            if (uses_dirname) {
-                decls[0] = .{
-                    .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty),
-                    .value = p.newExpr(
-                        // TODO: test UTF-8 file paths
-                        E.String.init(p.source.path.name.dir),
-                        logger.Loc.Empty,
-                    ),
-                };
-                declared_symbols.appendAssumeCapacity(.{ .ref = p.dirname_ref, .is_top_level = true });
-            }
-            if (uses_filename) {
-                decls[@as(usize, @intFromBool(uses_dirname))] = .{
-                    .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty),
-                    .value = p.newExpr(
-                        E.String.init(p.source.path.text),
-                        logger.Loc.Empty,
-                    ),
-                };
-                declared_symbols.appendAssumeCapacity(.{ .ref = p.filename_ref, .is_top_level = true });
-            }
+        // Handle dirname and filename at bundle-time
+        // We always inject it at the top of the module
+        //
+        // This inlines
+        //
+        //    var __dirname = "foo/bar"
+        //    var __filename = "foo/bar/baz.js"
+        //
+        if (p.options.bundle or !p.options.features.commonjs_at_runtime) {
+            if (uses_dirname or uses_filename) {
+                const count = @as(usize, @intFromBool(uses_dirname)) + @as(usize, @intFromBool(uses_filename));
+                var declared_symbols = DeclaredSymbol.List.initCapacity(p.allocator, count) catch unreachable;
+                var decls = p.allocator.alloc(G.Decl, count) catch unreachable;
+                if (uses_dirname) {
+                    decls[0] = .{
+                        .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty),
+                        .value = p.newExpr(
+                            // TODO: test UTF-8 file paths
+                            E.String.init(p.source.path.name.dir),
+                            logger.Loc.Empty,
+                        ),
+                    };
+                    declared_symbols.appendAssumeCapacity(.{ .ref = p.dirname_ref, .is_top_level = true });
+                }
+                if (uses_filename) {
+                    decls[@as(usize, @intFromBool(uses_dirname))] = .{
+                        .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty),
+                        .value = p.newExpr(
+                            E.String.init(p.source.path.text),
+                            logger.Loc.Empty,
+                        ),
+                    };
+                    declared_symbols.appendAssumeCapacity(.{ .ref = p.filename_ref, .is_top_level = true });
+                }
 
-            var part_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
-            part_stmts[0] = p.s(S.Local{
-                .kind = .k_var,
-                .decls = Decl.List.init(decls),
-            }, logger.Loc.Empty);
-            before.append(js_ast.Part{
-                .stmts = part_stmts,
-                .declared_symbols = declared_symbols,
-                .tag = .dirname_filename,
-            }) catch unreachable;
+                var part_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+                part_stmts[0] = p.s(S.Local{
+                    .kind = .k_var,
+                    .decls = Decl.List.init(decls),
+                }, logger.Loc.Empty);
+                before.append(js_ast.Part{
+                    .stmts = part_stmts,
+                    .declared_symbols = declared_symbols,
+                    .tag = .dirname_filename,
+                }) catch unreachable;
+                uses_dirname = false;
+                uses_filename = false;
+            }
         }
 
         var did_import_fast_refresh = false;
@@ -3635,6 +3691,52 @@ pub const Parser = struct {
                 wrapper_expr = .{
                     .bun_js = {},
                 };
+
+                const import_record: ?*const ImportRecord = brk: {
+                    for (p.import_records.items) |*import_record| {
+                        if (import_record.is_internal or import_record.is_unused) continue;
+                        if (import_record.kind == .stmt) break :brk import_record;
+                    }
+
+                    break :brk null;
+                };
+
+                // make it an error to use an import statement with a commonjs exports usage
+                if (import_record) |record| {
+                    // find the usage of the export symbol
+
+                    var notes = ListManaged(logger.Data).init(p.allocator);
+
+                    try notes.append(logger.Data{
+                        .text = try std.fmt.allocPrint(p.allocator, "Try require({}) instead", .{strings.QuotedFormatter{ .text = record.path.text }}),
+                    });
+
+                    if (uses_module_ref) {
+                        try notes.append(logger.Data{
+                            .text = "This file is CommonJS because 'module' was used",
+                        });
+                    }
+
+                    if (uses_exports_ref) {
+                        try notes.append(logger.Data{
+                            .text = "This file is CommonJS because 'exports' was used",
+                        });
+                    }
+
+                    if (p.has_top_level_return) {
+                        try notes.append(logger.Data{
+                            .text = "This file is CommonJS because top-level return was used",
+                        });
+                    }
+
+                    if (p.has_with_scope) {
+                        try notes.append(logger.Data{
+                            .text = "This file is CommonJS because a \"with\" statement is used",
+                        });
+                    }
+
+                    try p.log.addRangeErrorWithNotes(p.source, record.range, "Cannot use import statement with CommonJS-only features", notes.items);
+                }
             } else if (!p.options.bundle and !p.options.features.commonjs_at_runtime and (!p.options.transform_only or p.options.features.dynamic_require)) {
                 if (p.options.legacy_transform_require_to_import or p.options.features.dynamic_require) {
                     var args = p.allocator.alloc(Expr, 2) catch unreachable;
@@ -3706,6 +3808,62 @@ pub const Parser = struct {
             }
         }
 
+        // Handle dirname and filename at runtime.
+        //
+        // If we reach this point, it means:
+        //
+        // 1) we are building an ESM file that uses __dirname or __filename
+        // 2) we are targeting bun's runtime.
+        // 3) we are not bundling.
+        //
+        if (exports_kind == .esm and (uses_dirname or uses_filename)) {
+            std.debug.assert(!p.options.bundle);
+            const count = @as(usize, @intFromBool(uses_dirname)) + @as(usize, @intFromBool(uses_filename));
+            var declared_symbols = DeclaredSymbol.List.initCapacity(p.allocator, count) catch unreachable;
+            var decls = p.allocator.alloc(G.Decl, count) catch unreachable;
+            if (uses_dirname) {
+                // var __dirname = import.meta.dir
+                decls[0] = .{
+                    .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty),
+                    .value = p.newExpr(
+                        E.Dot{
+                            .name = "dir",
+                            .name_loc = logger.Loc.Empty,
+                            .target = p.newExpr(E.ImportMeta{}, logger.Loc.Empty),
+                        },
+                        logger.Loc.Empty,
+                    ),
+                };
+                declared_symbols.appendAssumeCapacity(.{ .ref = p.dirname_ref, .is_top_level = true });
+            }
+            if (uses_filename) {
+                // var __filename = import.meta.path
+                decls[@as(usize, @intFromBool(uses_dirname))] = .{
+                    .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty),
+                    .value = p.newExpr(
+                        E.Dot{
+                            .name = "path",
+                            .name_loc = logger.Loc.Empty,
+                            .target = p.newExpr(E.ImportMeta{}, logger.Loc.Empty),
+                        },
+                        logger.Loc.Empty,
+                    ),
+                };
+                declared_symbols.appendAssumeCapacity(.{ .ref = p.filename_ref, .is_top_level = true });
+            }
+
+            var part_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+            part_stmts[0] = p.s(S.Local{
+                .kind = .k_var,
+                .decls = Decl.List.init(decls),
+            }, logger.Loc.Empty);
+            before.append(js_ast.Part{
+                .stmts = part_stmts,
+                .declared_symbols = declared_symbols,
+                .tag = .dirname_filename,
+            }) catch unreachable;
+        }
+
         if (exports_kind == .esm and p.commonjs_named_exports.count() > 0 and !p.unwrap_all_requires and !force_esm) {
             exports_kind = .esm_with_dynamic_fallback_from_cjs;
         }
@@ -3717,6 +3875,13 @@ pub const Parser = struct {
             for (p.import_records.items) |*item| {
                 // skip if they did import it
                 if (strings.eqlComptime(item.path.text, "bun:test") or strings.eqlComptime(item.path.text, "@jest/globals") or strings.eqlComptime(item.path.text, "vitest")) {
+                    if (p.options.features.runtime_transpiler_cache) |cache| {
+                        // If we rewrote import paths, we need to disable the runtime transpiler cache
+                        if (!strings.eqlComptime(item.path.text, "bun:test")) {
+                            cache.input_hash = null;
+                        }
+                    }
+
                     break :outer;
                 }
             }
@@ -3773,6 +3938,11 @@ pub const Parser = struct {
                 .import_record_indices = bun.BabyList(u32).init(import_record_indices),
                 .tag = .bun_test,
             }) catch unreachable;
+
+            // If we injected jest globals, we need to disable the runtime transpiler cache
+            if (p.options.features.runtime_transpiler_cache) |cache| {
+                cache.input_hash = null;
+            }
         }
 
         if (p.legacy_cjs_import_stmts.items.len > 0 and p.options.legacy_transform_require_to_import) {
@@ -3890,6 +4060,19 @@ pub const Parser = struct {
 
         // Pop the module scope to apply the "ContainsDirectEval" rules
         // p.popScope();
+
+        if (comptime Environment.isNative and bun.FeatureFlags.runtime_transpiler_cache) {
+            var runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = p.options.features.runtime_transpiler_cache;
+            if (runtime_transpiler_cache) |cache| {
+                if (p.macro_call_count != 0) {
+                    // disable this for:
+                    // - macros
+                    cache.input_hash = null;
+                } else {
+                    cache.exports_kind = exports_kind;
+                }
+            }
+        }
 
         return js_ast.Result{ .ast = try p.toAST(parts_slice, exports_kind, wrapper_expr, hashbang) };
     }
@@ -4677,6 +4860,8 @@ fn NewParser_(
 
         const_values: js_ast.Ast.ConstValuesMap = .{},
 
+        binary_expression_stack: std.ArrayList(BinaryExpressionVisitor) = undefined,
+
         pub fn transposeImport(p: *P, arg: Expr, state: anytype) Expr {
             // The argument must be a string
             if (@as(Expr.Tag, arg.data) == .e_string) {
@@ -5351,7 +5536,7 @@ fn NewParser_(
                 var notes = try p.allocator.alloc(logger.Data, 1);
                 notes[0] = logger.Data{
                     .text = try std.fmt.allocPrint(p.allocator, "\"{s}\" was originally exported here", .{alias}),
-                    .location = logger.Location.init_or_nil(p.source, js_lexer.rangeOfIdentifier(p.source, name.alias_loc)),
+                    .location = logger.Location.initOrNull(p.source, js_lexer.rangeOfIdentifier(p.source, name.alias_loc)),
                 };
                 try p.log.addRangeErrorFmtWithNotes(
                     p.source,
@@ -6701,6 +6886,393 @@ fn NewParser_(
             }
             return ExprBindingTuple{ .binding = bind, .expr = initializer };
         }
+
+        const BinaryExpressionVisitor = struct {
+            e: *E.Binary,
+            loc: logger.Loc,
+            in: ExprIn,
+
+            /// Input for visiting the left child
+            left_in: ExprIn,
+
+            /// "Local variables" passed from "checkAndPrepare" to "visitRightAndFinish"
+            is_stmt_expr: bool = false,
+
+            pub fn visitRightAndFinish(
+                v: *BinaryExpressionVisitor,
+                p: *P,
+            ) Expr {
+                var e_ = v.e;
+                const is_call_target = @as(Expr.Tag, p.call_target) == .e_binary and e_ == p.call_target.e_binary;
+                // const is_stmt_expr = @as(Expr.Tag, p.stmt_expr_value) == .e_binary and expr.data.e_binary == p.stmt_expr_value.e_binary;
+                const was_anonymous_named_expr = e_.right.isAnonymousNamed();
+
+                // Mark the control flow as dead if the branch is never taken
+                switch (e_.op) {
+                    .bin_logical_or => {
+                        const side_effects = SideEffects.toBoolean(p, e_.left.data);
+                        if (side_effects.ok and side_effects.value) {
+                            // "true || dead"
+                            const old = p.is_control_flow_dead;
+                            p.is_control_flow_dead = true;
+                            e_.right = p.visitExpr(e_.right);
+                            p.is_control_flow_dead = old;
+                        } else {
+                            e_.right = p.visitExpr(e_.right);
+                        }
+                    },
+                    .bin_logical_and => {
+                        const side_effects = SideEffects.toBoolean(p, e_.left.data);
+                        if (side_effects.ok and !side_effects.value) {
+                            // "false && dead"
+                            const old = p.is_control_flow_dead;
+                            p.is_control_flow_dead = true;
+                            e_.right = p.visitExpr(e_.right);
+                            p.is_control_flow_dead = old;
+                        } else {
+                            e_.right = p.visitExpr(e_.right);
+                        }
+                    },
+                    .bin_nullish_coalescing => {
+                        const side_effects = SideEffects.toNullOrUndefined(p, e_.left.data);
+                        if (side_effects.ok and !side_effects.value) {
+                            // "notNullOrUndefined ?? dead"
+                            const old = p.is_control_flow_dead;
+                            p.is_control_flow_dead = true;
+                            e_.right = p.visitExpr(e_.right);
+                            p.is_control_flow_dead = old;
+                        } else {
+                            e_.right = p.visitExpr(e_.right);
+                        }
+                    },
+                    else => {
+                        e_.right = p.visitExpr(e_.right);
+                    },
+                }
+
+                // Always put constants on the right for equality comparisons to help
+                // reduce the number of cases we have to check during pattern matching. We
+                // can only reorder expressions that do not have any side effects.
+                switch (e_.op) {
+                    .bin_loose_eq, .bin_loose_ne, .bin_strict_eq, .bin_strict_ne => {
+                        if (SideEffects.isPrimitiveToReorder(e_.left.data) and !SideEffects.isPrimitiveToReorder(e_.right.data)) {
+                            const _left = e_.left;
+                            const _right = e_.right;
+                            e_.left = _right;
+                            e_.right = _left;
+                        }
+                    },
+                    else => {},
+                }
+
+                switch (e_.op) {
+                    .bin_comma => {
+                        // "(1, 2)" => "2"
+                        // "(sideEffects(), 2)" => "(sideEffects(), 2)"
+                        if (p.options.features.minify_syntax) {
+                            e_.left = SideEffects.simpifyUnusedExpr(p, e_.left) orelse return e_.right;
+                        }
+                    },
+                    .bin_loose_eq => {
+                        const equality = e_.left.data.eql(e_.right.data, p.allocator, .loose);
+                        if (equality.ok) {
+                            return p.newExpr(
+                                E.Boolean{ .value = equality.equal },
+                                v.loc,
+                            );
+                        }
+
+                        if (p.options.features.minify_syntax) {
+                            // "x == void 0" => "x == null"
+                            if (e_.left.data == .e_undefined) {
+                                e_.left.data = .{ .e_null = E.Null{} };
+                            } else if (e_.right.data == .e_undefined) {
+                                e_.right.data = .{ .e_null = E.Null{} };
+                            }
+                        }
+
+                        // const after_op_loc = locAfterOp(e_.);
+                        // TODO: warn about equality check
+                        // TODO: warn about typeof string
+
+                    },
+                    .bin_strict_eq => {
+                        const equality = e_.left.data.eql(e_.right.data, p.allocator, .strict);
+                        if (equality.ok) {
+                            return p.newExpr(E.Boolean{ .value = equality.equal }, v.loc);
+                        }
+
+                        // const after_op_loc = locAfterOp(e_.);
+                        // TODO: warn about equality check
+                        // TODO: warn about typeof string
+                    },
+                    .bin_loose_ne => {
+                        const equality = e_.left.data.eql(e_.right.data, p.allocator, .loose);
+                        if (equality.ok) {
+                            return p.newExpr(E.Boolean{ .value = !equality.equal }, v.loc);
+                        }
+                        // const after_op_loc = locAfterOp(e_.);
+                        // TODO: warn about equality check
+                        // TODO: warn about typeof string
+
+                        // "x != void 0" => "x != null"
+                        if (@as(Expr.Tag, e_.right.data) == .e_undefined) {
+                            e_.right = p.newExpr(E.Null{}, e_.right.loc);
+                        }
+                    },
+                    .bin_strict_ne => {
+                        const equality = e_.left.data.eql(e_.right.data, p.allocator, .strict);
+                        if (equality.ok) {
+                            return p.newExpr(E.Boolean{ .value = !equality.equal }, v.loc);
+                        }
+                    },
+                    .bin_nullish_coalescing => {
+                        const nullorUndefined = SideEffects.toNullOrUndefined(p, e_.left.data);
+                        if (nullorUndefined.ok) {
+                            if (!nullorUndefined.value) {
+                                return e_.left;
+                            } else if (nullorUndefined.side_effects == .no_side_effects) {
+                                // "(null ?? fn)()" => "fn()"
+                                // "(null ?? this.fn)" => "this.fn"
+                                // "(null ?? this.fn)()" => "(0, this.fn)()"
+                                if (is_call_target and e_.right.hasValueForThisInCall()) {
+                                    return Expr.joinWithComma(Expr{ .data = .{ .e_number = .{ .value = 0.0 } }, .loc = e_.left.loc }, e_.right, p.allocator);
+                                }
+
+                                return e_.right;
+                            }
+                        }
+                    },
+                    .bin_logical_or => {
+                        const side_effects = SideEffects.toBoolean(p, e_.left.data);
+                        if (side_effects.ok and side_effects.value) {
+                            return e_.left;
+                        } else if (side_effects.ok and side_effects.side_effects == .no_side_effects) {
+                            // "(0 || fn)()" => "fn()"
+                            // "(0 || this.fn)" => "this.fn"
+                            // "(0 || this.fn)()" => "(0, this.fn)()"
+                            if (is_call_target and e_.right.hasValueForThisInCall()) {
+                                return Expr.joinWithComma(Expr{ .data = Prefill.Data.Zero, .loc = e_.left.loc }, e_.right, p.allocator);
+                            }
+
+                            return e_.right;
+                        }
+                    },
+                    .bin_logical_and => {
+                        const side_effects = SideEffects.toBoolean(p, e_.left.data);
+                        if (side_effects.ok) {
+                            if (!side_effects.value) {
+                                return e_.left;
+                            } else if (side_effects.side_effects == .no_side_effects) {
+                                // "(1 && fn)()" => "fn()"
+                                // "(1 && this.fn)" => "this.fn"
+                                // "(1 && this.fn)()" => "(0, this.fn)()"
+                                if (is_call_target and e_.right.hasValueForThisInCall()) {
+                                    return Expr.joinWithComma(Expr{ .data = Prefill.Data.Zero, .loc = e_.left.loc }, e_.right, p.allocator);
+                                }
+
+                                return e_.right;
+                            }
+                        }
+                    },
+                    .bin_add => {
+                        if (p.should_fold_typescript_constant_expressions) {
+                            if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                                return p.newExpr(E.Number{ .value = vals[0] + vals[1] }, v.loc);
+                            }
+                        }
+
+                        if (foldStringAddition(e_.left, e_.right)) |res| {
+                            return res;
+                        }
+                    },
+                    .bin_sub => {
+                        if (p.should_fold_typescript_constant_expressions) {
+                            if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                                return p.newExpr(E.Number{ .value = vals[0] - vals[1] }, v.loc);
+                            }
+                        }
+                    },
+                    .bin_mul => {
+                        if (p.should_fold_typescript_constant_expressions) {
+                            if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                                return p.newExpr(E.Number{ .value = vals[0] * vals[1] }, v.loc);
+                            }
+                        }
+                    },
+                    .bin_div => {
+                        if (p.should_fold_typescript_constant_expressions) {
+                            if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                                return p.newExpr(E.Number{ .value = vals[0] / vals[1] }, v.loc);
+                            }
+                        }
+                    },
+                    .bin_rem => {
+                        if (p.should_fold_typescript_constant_expressions) {
+                            if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                                return p.newExpr(
+                                    // Use libc fmod here to be consistent with what JavaScriptCore does
+                                    // https://github.com/oven-sh/WebKit/blob/7a0b13626e5db69aa5a32d037431d381df5dfb61/Source/JavaScriptCore/runtime/MathCommon.cpp#L574-L597
+                                    E.Number{ .value = if (comptime Environment.isNative) bun.C.fmod(vals[0], vals[1]) else std.math.mod(f64, vals[0], vals[1]) catch 0 },
+                                    v.loc,
+                                );
+                            }
+                        }
+                    },
+                    .bin_pow => {
+                        if (p.should_fold_typescript_constant_expressions) {
+                            if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                                return p.newExpr(E.Number{ .value = std.math.pow(f64, vals[0], vals[1]) }, v.loc);
+                            }
+                        }
+                    },
+                    .bin_shl => {
+                        // TODO:
+                        // if (p.should_fold_typescript_constant_expressions) {
+                        //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                        //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) << @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
+                        //     }
+                        // }
+                    },
+                    .bin_shr => {
+                        // TODO:
+                        // if (p.should_fold_typescript_constant_expressions) {
+                        //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                        //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) >> @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
+                        //     }
+                        // }
+                    },
+                    .bin_u_shr => {
+                        // TODO:
+                        // if (p.should_fold_typescript_constant_expressions) {
+                        //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                        //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) >> @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
+                        //     }
+                        // }
+                    },
+                    .bin_bitwise_and => {
+                        // TODO:
+                        // if (p.should_fold_typescript_constant_expressions) {
+                        //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                        //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) >> @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
+                        //     }
+                        // }
+                    },
+                    .bin_bitwise_or => {
+                        // TODO:
+                        // if (p.should_fold_typescript_constant_expressions) {
+                        //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                        //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) >> @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
+                        //     }
+                        // }
+                    },
+                    .bin_bitwise_xor => {
+                        // TODO:
+                        // if (p.should_fold_typescript_constant_expressions) {
+                        //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                        //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) >> @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
+                        //     }
+                        // }
+                    },
+                    // ---------------------------------------------------------------------------------------------------
+                    // ---------------------------------------------------------------------------------------------------
+                    // ---------------------------------------------------------------------------------------------------
+                    // ---------------------------------------------------------------------------------------------------
+                    .bin_assign => {
+
+                        // Optionally preserve the name
+                        if (@as(Expr.Tag, e_.left.data) == .e_identifier) {
+                            e_.right = p.maybeKeepExprSymbolName(e_.right, p.symbols.items[e_.left.data.e_identifier.ref.innerIndex()].original_name, was_anonymous_named_expr);
+                        }
+                    },
+                    .bin_add_assign => {
+                        // notimpl();
+                    },
+                    .bin_sub_assign => {
+                        // notimpl();
+                    },
+                    .bin_mul_assign => {
+                        // notimpl();
+                    },
+                    .bin_div_assign => {
+                        // notimpl();
+                    },
+                    .bin_rem_assign => {
+                        // notimpl();
+                    },
+                    .bin_pow_assign => {
+                        // notimpl();
+                    },
+                    .bin_shl_assign => {
+                        // notimpl();
+                    },
+                    .bin_shr_assign => {
+                        // notimpl();
+                    },
+                    .bin_u_shr_assign => {
+                        // notimpl();
+                    },
+                    .bin_bitwise_or_assign => {
+                        // notimpl();
+                    },
+                    .bin_bitwise_and_assign => {
+                        // notimpl();
+                    },
+                    .bin_bitwise_xor_assign => {
+                        // notimpl();
+                    },
+                    .bin_nullish_coalescing_assign => {
+                        // notimpl();
+                    },
+                    .bin_logical_and_assign => {
+                        // notimpl();
+                    },
+                    .bin_logical_or_assign => {
+                        // notimpl();
+                    },
+                    else => {},
+                }
+
+                return Expr{ .loc = v.loc, .data = .{ .e_binary = e_ } };
+            }
+
+            pub fn checkAndPrepare(v: *BinaryExpressionVisitor, p: *P) ?Expr {
+                var e_ = v.e;
+                switch (e_.left.data) {
+                    // Special-case private identifiers
+                    .e_private_identifier => |_private| {
+                        if (e_.op == .bin_in) {
+                            var private = _private;
+                            const name = p.loadNameFromRef(private.ref);
+                            const result = p.findSymbol(e_.left.loc, name) catch unreachable;
+                            private.ref = result.ref;
+
+                            // Unlike regular identifiers, there are no unbound private identifiers
+                            const kind: Symbol.Kind = p.symbols.items[result.ref.innerIndex()].kind;
+                            if (!Symbol.isKindPrivate(kind)) {
+                                const r = logger.Range{ .loc = e_.left.loc, .len = @as(i32, @intCast(name.len)) };
+                                p.log.addRangeErrorFmt(p.source, r, p.allocator, "Private name \"{s}\" must be declared in an enclosing class", .{name}) catch unreachable;
+                            }
+
+                            e_.right = p.visitExpr(e_.right);
+                            e_.left = .{ .data = .{ .e_private_identifier = private }, .loc = e_.left.loc };
+
+                            // privateSymbolNeedsToBeLowered
+                            return Expr{ .loc = v.loc, .data = .{ .e_binary = e_ } };
+                        }
+                    },
+                    else => {},
+                }
+
+                v.is_stmt_expr = p.stmt_expr_value == .e_binary and p.stmt_expr_value.e_binary == e_;
+
+                v.left_in = ExprIn{
+                    .assign_target = e_.op.binaryAssignTarget(),
+                };
+
+                return null;
+            }
+        };
 
         fn forbidLexicalDecl(p: *P, loc: logger.Loc) anyerror!void {
             try p.log.addError(p.source, loc, "Cannot use a declaration in a single-statement context");
@@ -14346,14 +14918,18 @@ fn NewParser_(
                         // Use Next() instead of NextJSXElementChild() here since the next token is an expression
                         try p.lexer.next();
 
-                        // The "..." here is ignored (it's used to signal an array type in TypeScript)
-                        if (p.lexer.token == .t_dot_dot_dot and is_typescript_enabled) {
+                        const is_spread = p.lexer.token == .t_dot_dot_dot;
+                        if (is_spread) {
                             try p.lexer.next();
                         }
 
                         // The expression is optional, and may be absent
                         if (p.lexer.token != .t_close_brace) {
-                            try children.append(try p.parseExpr(.lowest));
+                            var item = try p.parseExpr(.lowest);
+                            if (is_spread) {
+                                item = p.newExpr(E.Spread{ .value = item }, loc);
+                            }
+                            try children.append(item);
                         }
 
                         // Use ExpectJSXElementChild() so we parse child strings
@@ -14844,7 +15420,7 @@ fn NewParser_(
                         var notes = p.allocator.alloc(logger.Data, 1) catch unreachable;
                         notes[0] = logger.Data{
                             .text = std.fmt.allocPrint(p.allocator, "The symbol \"{s}\" was declared a constant here:", .{name}) catch unreachable,
-                            .location = logger.Location.init_or_nil(p.source, js_lexer.rangeOfIdentifier(p.source, result.declare_loc.?)),
+                            .location = logger.Location.initOrNull(p.source, js_lexer.rangeOfIdentifier(p.source, result.declare_loc.?)),
                         };
 
                         const is_error = p.const_values.contains(result.ref) or p.options.bundle;
@@ -15041,28 +15617,23 @@ fn NewParser_(
                                         props = props.items[0].value.?.data.e_object.properties.list();
                                     }
 
-                                    // Babel defines static jsx as children.len > 1
-                                    const is_static_jsx = e_.children.len > 1;
+                                    // Typescript defines static jsx as children.len > 1 or single spread
+                                    // https://github.com/microsoft/TypeScript/blob/d4fbc9b57d9aa7d02faac9b1e9bb7b37c687f6e9/src/compiler/transformers/jsx.ts#L340
+                                    const is_static_jsx = e_.children.len > 1 or (e_.children.len == 1 and e_.children.ptr[0].data == .e_spread);
 
-                                    // if (p.options.jsx.development) {
-
-                                    switch (e_.children.len) {
-                                        0 => {},
-                                        1 => {
-                                            props.append(allocator, G.Property{
-                                                .key = children_key,
-                                                .value = e_.children.ptr[0],
-                                            }) catch unreachable;
-                                        },
-                                        else => {
-                                            props.append(allocator, G.Property{
-                                                .key = children_key,
-                                                .value = p.newExpr(E.Array{
-                                                    .items = e_.children,
-                                                    .is_single_line = e_.children.len < 2,
-                                                }, e_.close_tag_loc),
-                                            }) catch unreachable;
-                                        },
+                                    if (is_static_jsx) {
+                                        props.append(allocator, G.Property{
+                                            .key = children_key,
+                                            .value = p.newExpr(E.Array{
+                                                .items = e_.children,
+                                                .is_single_line = e_.children.len < 2,
+                                            }, e_.close_tag_loc),
+                                        }) catch bun.outOfMemory();
+                                    } else if (e_.children.len == 1) {
+                                        props.append(allocator, G.Property{
+                                            .key = children_key,
+                                            .value = e_.children.ptr[0],
+                                        }) catch bun.outOfMemory();
                                     }
                                     // --- These must be done in all cases --
 
@@ -15329,352 +15900,74 @@ fn NewParser_(
                 },
 
                 .e_binary => |e_| {
-                    switch (e_.left.data) {
-                        // Special-case private identifiers
-                        .e_private_identifier => |_private| {
-                            if (e_.op == .bin_in) {
-                                var private = _private;
-                                const name = p.loadNameFromRef(private.ref);
-                                const result = p.findSymbol(e_.left.loc, name) catch unreachable;
-                                private.ref = result.ref;
 
-                                // Unlike regular identifiers, there are no unbound private identifiers
-                                const kind: Symbol.Kind = p.symbols.items[result.ref.innerIndex()].kind;
-                                if (!Symbol.isKindPrivate(kind)) {
-                                    const r = logger.Range{ .loc = e_.left.loc, .len = @as(i32, @intCast(name.len)) };
-                                    p.log.addRangeErrorFmt(p.source, r, p.allocator, "Private name \"{s}\" must be declared in an enclosing class", .{name}) catch unreachable;
-                                }
+                    // The handling of binary expressions is convoluted because we're using
+                    // iteration on the heap instead of recursion on the call stack to avoid
+                    // stack overflow for deeply-nested ASTs.
+                    var v = BinaryExpressionVisitor{
+                        .e = e_,
+                        .loc = expr.loc,
+                        .in = in,
+                        .left_in = ExprIn{},
+                    };
 
-                                e_.right = p.visitExpr(e_.right);
-                                e_.left = .{ .data = .{ .e_private_identifier = private }, .loc = e_.left.loc };
+                    // Everything uses a single stack to reduce allocation overhead. This stack
+                    // should almost always be very small, and almost all visits should reuse
+                    // existing memory without allocating anything.
+                    const stack_bottom = p.binary_expression_stack.items.len;
 
-                                // privateSymbolNeedsToBeLowered
-                                return expr;
-                            }
-                        },
-                        else => {},
+                    var current = Expr{ .data = .{ .e_binary = e_ }, .loc = v.loc };
+
+                    // Iterate down into the AST along the left node of the binary operation.
+                    // Continue iterating until we encounter something that's not a binary node.
+
+                    while (true) {
+                        if (v.checkAndPrepare(p)) |out| {
+                            current = out;
+                            break;
+                        }
+
+                        // Grab the arguments to our nested "visitExprInOut" call for the left
+                        // node. We only care about deeply-nested left nodes because most binary
+                        // operators in JavaScript are left-associative and the problematic edge
+                        // cases we're trying to avoid crashing on have lots of left-associative
+                        // binary operators chained together without parentheses (e.g. "1+2+...").
+                        var left = v.e.left;
+                        const left_in = v.left_in;
+
+                        var left_binary: ?*E.Binary = if (left.data == .e_binary) left.data.e_binary else null;
+
+                        // Stop iterating if iteration doesn't apply to the left node. This checks
+                        // the assignment target because "visitExprInOut" has additional behavior
+                        // in that case that we don't want to miss (before the top-level "switch"
+                        // statement).
+                        if (left_binary == null or left_in.assign_target != .none) {
+                            v.e.left = p.visitExprInOut(left, left_in);
+                            current = v.visitRightAndFinish(p);
+                            break;
+                        }
+
+                        // Note that we only append to the stack (and therefore allocate memory
+                        // on the heap) when there are nested binary expressions. A single binary
+                        // expression doesn't add anything to the stack.
+                        p.binary_expression_stack.append(v) catch bun.outOfMemory();
+                        v = BinaryExpressionVisitor{
+                            .e = left_binary.?,
+                            .loc = left.loc,
+                            .in = left_in,
+                            .left_in = .{},
+                        };
                     }
 
-                    const is_call_target = @as(Expr.Tag, p.call_target) == .e_binary and expr.data.e_binary == p.call_target.e_binary;
-                    // const is_stmt_expr = @as(Expr.Tag, p.stmt_expr_value) == .e_binary and expr.data.e_binary == p.stmt_expr_value.e_binary;
-                    const was_anonymous_named_expr = e_.right.isAnonymousNamed();
-
-                    e_.left = p.visitExprInOut(e_.left, ExprIn{
-                        .assign_target = e_.op.binaryAssignTarget(),
-                    });
-
-                    // Mark the control flow as dead if the branch is never taken
-                    switch (e_.op) {
-                        .bin_logical_or => {
-                            const side_effects = SideEffects.toBoolean(p, e_.left.data);
-                            if (side_effects.ok and side_effects.value) {
-                                // "true || dead"
-                                const old = p.is_control_flow_dead;
-                                p.is_control_flow_dead = true;
-                                e_.right = p.visitExpr(e_.right);
-                                p.is_control_flow_dead = old;
-                            } else {
-                                e_.right = p.visitExpr(e_.right);
-                            }
-                        },
-                        .bin_logical_and => {
-                            const side_effects = SideEffects.toBoolean(p, e_.left.data);
-                            if (side_effects.ok and !side_effects.value) {
-                                // "false && dead"
-                                const old = p.is_control_flow_dead;
-                                p.is_control_flow_dead = true;
-                                e_.right = p.visitExpr(e_.right);
-                                p.is_control_flow_dead = old;
-                            } else {
-                                e_.right = p.visitExpr(e_.right);
-                            }
-                        },
-                        .bin_nullish_coalescing => {
-                            const side_effects = SideEffects.toNullOrUndefined(p, e_.left.data);
-                            if (side_effects.ok and !side_effects.value) {
-                                // "notNullOrUndefined ?? dead"
-                                const old = p.is_control_flow_dead;
-                                p.is_control_flow_dead = true;
-                                e_.right = p.visitExpr(e_.right);
-                                p.is_control_flow_dead = old;
-                            } else {
-                                e_.right = p.visitExpr(e_.right);
-                            }
-                        },
-                        else => {
-                            e_.right = p.visitExpr(e_.right);
-                        },
+                    // Process all binary operations from the deepest-visited node back toward
+                    // our original top-level binary operation.
+                    while (p.binary_expression_stack.items.len > stack_bottom) {
+                        v = p.binary_expression_stack.pop();
+                        v.e.left = current;
+                        current = v.visitRightAndFinish(p);
                     }
 
-                    // Always put constants on the right for equality comparisons to help
-                    // reduce the number of cases we have to check during pattern matching. We
-                    // can only reorder expressions that do not have any side effects.
-                    switch (e_.op) {
-                        .bin_loose_eq, .bin_loose_ne, .bin_strict_eq, .bin_strict_ne => {
-                            if (SideEffects.isPrimitiveToReorder(e_.left.data) and !SideEffects.isPrimitiveToReorder(e_.right.data)) {
-                                const _left = e_.left;
-                                const _right = e_.right;
-                                e_.left = _right;
-                                e_.right = _left;
-                            }
-                        },
-                        else => {},
-                    }
-
-                    switch (e_.op) {
-                        .bin_comma => {
-                            // notimpl();
-                        },
-                        .bin_loose_eq => {
-                            const equality = e_.left.data.eql(e_.right.data, p.allocator, .loose);
-                            if (equality.ok) {
-                                return p.newExpr(
-                                    E.Boolean{ .value = equality.equal },
-                                    expr.loc,
-                                );
-                            }
-
-                            // const after_op_loc = locAfterOp(e_.);
-                            // TODO: warn about equality check
-                            // TODO: warn about typeof string
-
-                        },
-                        .bin_strict_eq => {
-                            const equality = e_.left.data.eql(e_.right.data, p.allocator, .strict);
-                            if (equality.ok) {
-                                return p.newExpr(E.Boolean{ .value = equality.equal }, expr.loc);
-                            }
-
-                            // const after_op_loc = locAfterOp(e_.);
-                            // TODO: warn about equality check
-                            // TODO: warn about typeof string
-                        },
-                        .bin_loose_ne => {
-                            const equality = e_.left.data.eql(e_.right.data, p.allocator, .loose);
-                            if (equality.ok) {
-                                return p.newExpr(E.Boolean{ .value = !equality.equal }, expr.loc);
-                            }
-                            // const after_op_loc = locAfterOp(e_.);
-                            // TODO: warn about equality check
-                            // TODO: warn about typeof string
-
-                            // "x != void 0" => "x != null"
-                            if (@as(Expr.Tag, e_.right.data) == .e_undefined) {
-                                e_.right = p.newExpr(E.Null{}, e_.right.loc);
-                            }
-                        },
-                        .bin_strict_ne => {
-                            const equality = e_.left.data.eql(e_.right.data, p.allocator, .strict);
-                            if (equality.ok) {
-                                return p.newExpr(E.Boolean{ .value = !equality.equal }, expr.loc);
-                            }
-                        },
-                        .bin_nullish_coalescing => {
-                            const nullorUndefined = SideEffects.toNullOrUndefined(p, e_.left.data);
-                            if (nullorUndefined.ok) {
-                                if (!nullorUndefined.value) {
-                                    return e_.left;
-                                } else if (nullorUndefined.side_effects == .no_side_effects) {
-                                    // "(null ?? fn)()" => "fn()"
-                                    // "(null ?? this.fn)" => "this.fn"
-                                    // "(null ?? this.fn)()" => "(0, this.fn)()"
-                                    if (is_call_target and e_.right.hasValueForThisInCall()) {
-                                        return Expr.joinWithComma(Expr{ .data = .{ .e_number = .{ .value = 0.0 } }, .loc = e_.left.loc }, e_.right, p.allocator);
-                                    }
-
-                                    return e_.right;
-                                }
-                            }
-                        },
-                        .bin_logical_or => {
-                            const side_effects = SideEffects.toBoolean(p, e_.left.data);
-                            if (side_effects.ok and side_effects.value) {
-                                return e_.left;
-                            } else if (side_effects.ok and side_effects.side_effects == .no_side_effects) {
-                                // "(0 || fn)()" => "fn()"
-                                // "(0 || this.fn)" => "this.fn"
-                                // "(0 || this.fn)()" => "(0, this.fn)()"
-                                if (is_call_target and e_.right.hasValueForThisInCall()) {
-                                    return Expr.joinWithComma(Expr{ .data = Prefill.Data.Zero, .loc = e_.left.loc }, e_.right, p.allocator);
-                                }
-
-                                return e_.right;
-                            }
-                        },
-                        .bin_logical_and => {
-                            const side_effects = SideEffects.toBoolean(p, e_.left.data);
-                            if (side_effects.ok) {
-                                if (!side_effects.value) {
-                                    return e_.left;
-                                } else if (side_effects.side_effects == .no_side_effects) {
-                                    // "(1 && fn)()" => "fn()"
-                                    // "(1 && this.fn)" => "this.fn"
-                                    // "(1 && this.fn)()" => "(0, this.fn)()"
-                                    if (is_call_target and e_.right.hasValueForThisInCall()) {
-                                        return Expr.joinWithComma(Expr{ .data = Prefill.Data.Zero, .loc = e_.left.loc }, e_.right, p.allocator);
-                                    }
-
-                                    return e_.right;
-                                }
-                            }
-                        },
-                        .bin_add => {
-                            if (p.should_fold_typescript_constant_expressions) {
-                                if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                                    return p.newExpr(E.Number{ .value = vals[0] + vals[1] }, expr.loc);
-                                }
-                            }
-
-                            if (foldStringAddition(e_.left, e_.right)) |res| {
-                                return res;
-                            }
-                        },
-                        .bin_sub => {
-                            if (p.should_fold_typescript_constant_expressions) {
-                                if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                                    return p.newExpr(E.Number{ .value = vals[0] - vals[1] }, expr.loc);
-                                }
-                            }
-                        },
-                        .bin_mul => {
-                            if (p.should_fold_typescript_constant_expressions) {
-                                if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                                    return p.newExpr(E.Number{ .value = vals[0] * vals[1] }, expr.loc);
-                                }
-                            }
-                        },
-                        .bin_div => {
-                            if (p.should_fold_typescript_constant_expressions) {
-                                if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                                    return p.newExpr(E.Number{ .value = vals[0] / vals[1] }, expr.loc);
-                                }
-                            }
-                        },
-                        .bin_rem => {
-                            if (p.should_fold_typescript_constant_expressions) {
-                                if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                                    return p.newExpr(
-                                        // Use libc fmod here to be consistent with what JavaScriptCore does
-                                        // https://github.com/oven-sh/WebKit/blob/7a0b13626e5db69aa5a32d037431d381df5dfb61/Source/JavaScriptCore/runtime/MathCommon.cpp#L574-L597
-                                        E.Number{ .value = if (comptime Environment.isNative) bun.C.fmod(vals[0], vals[1]) else std.math.mod(f64, vals[0], vals[1]) catch 0 },
-                                        expr.loc,
-                                    );
-                                }
-                            }
-                        },
-                        .bin_pow => {
-                            if (p.should_fold_typescript_constant_expressions) {
-                                if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                                    return p.newExpr(E.Number{ .value = std.math.pow(f64, vals[0], vals[1]) }, expr.loc);
-                                }
-                            }
-                        },
-                        .bin_shl => {
-                            // TODO:
-                            // if (p.should_fold_typescript_constant_expressions) {
-                            //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                            //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) << @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
-                            //     }
-                            // }
-                        },
-                        .bin_shr => {
-                            // TODO:
-                            // if (p.should_fold_typescript_constant_expressions) {
-                            //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                            //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) >> @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
-                            //     }
-                            // }
-                        },
-                        .bin_u_shr => {
-                            // TODO:
-                            // if (p.should_fold_typescript_constant_expressions) {
-                            //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                            //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) >> @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
-                            //     }
-                            // }
-                        },
-                        .bin_bitwise_and => {
-                            // TODO:
-                            // if (p.should_fold_typescript_constant_expressions) {
-                            //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                            //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) >> @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
-                            //     }
-                            // }
-                        },
-                        .bin_bitwise_or => {
-                            // TODO:
-                            // if (p.should_fold_typescript_constant_expressions) {
-                            //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                            //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) >> @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
-                            //     }
-                            // }
-                        },
-                        .bin_bitwise_xor => {
-                            // TODO:
-                            // if (p.should_fold_typescript_constant_expressions) {
-                            //     if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                            //         return p.newExpr(E.Number{ .value = ((@intFromFloat(i32, vals[0]) >> @intFromFloat(u32, vals[1])) & 31) }, expr.loc);
-                            //     }
-                            // }
-                        },
-                        // ---------------------------------------------------------------------------------------------------
-                        // ---------------------------------------------------------------------------------------------------
-                        // ---------------------------------------------------------------------------------------------------
-                        // ---------------------------------------------------------------------------------------------------
-                        .bin_assign => {
-
-                            // Optionally preserve the name
-                            if (@as(Expr.Tag, e_.left.data) == .e_identifier) {
-                                e_.right = p.maybeKeepExprSymbolName(e_.right, p.symbols.items[e_.left.data.e_identifier.ref.innerIndex()].original_name, was_anonymous_named_expr);
-                            }
-                        },
-                        .bin_add_assign => {
-                            // notimpl();
-                        },
-                        .bin_sub_assign => {
-                            // notimpl();
-                        },
-                        .bin_mul_assign => {
-                            // notimpl();
-                        },
-                        .bin_div_assign => {
-                            // notimpl();
-                        },
-                        .bin_rem_assign => {
-                            // notimpl();
-                        },
-                        .bin_pow_assign => {
-                            // notimpl();
-                        },
-                        .bin_shl_assign => {
-                            // notimpl();
-                        },
-                        .bin_shr_assign => {
-                            // notimpl();
-                        },
-                        .bin_u_shr_assign => {
-                            // notimpl();
-                        },
-                        .bin_bitwise_or_assign => {
-                            // notimpl();
-                        },
-                        .bin_bitwise_and_assign => {
-                            // notimpl();
-                        },
-                        .bin_bitwise_xor_assign => {
-                            // notimpl();
-                        },
-                        .bin_nullish_coalescing_assign => {
-                            // notimpl();
-                        },
-                        .bin_logical_and_assign => {
-                            // notimpl();
-                        },
-                        .bin_logical_or_assign => {
-                            // notimpl();
-                        },
-                        else => {},
-                    }
+                    return current;
                 },
                 .e_index => |e_| {
                     const is_call_target = std.meta.activeTag(p.call_target) == .e_index and expr.data.e_index == p.call_target.e_index;
@@ -21258,19 +21551,11 @@ fn NewParser_(
                 //
                 //   (function (exports, require, module, __filename, __dirname) {
                 //      ...
-                //   }).call(
-                //      this.module.exports,
-                //      this.module.exports,
-                //      this.require,
-                //      this.module,
-                //      this.__filename,
-                //      this.__dirname,
-                //  );
+                //   })
                 //
-                //  `this` is a `CommonJSFunctionArgumentsStructure`
-                //  which is initialized in `evaluateCommonJSModuleOnce`
+                //  which is then called in `evaluateCommonJSModuleOnce`
                 .bun_js => {
-                    var args = allocator.alloc(Arg, 5) catch unreachable;
+                    var args = allocator.alloc(Arg, 5 + @as(usize, @intFromBool(p.has_import_meta))) catch bun.outOfMemory();
                     args[0..5].* = .{
                         Arg{ .binding = p.b(B.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty) },
                         Arg{ .binding = p.b(B.Identifier{ .ref = p.require_ref }, logger.Loc.Empty) },
@@ -21278,18 +21563,17 @@ fn NewParser_(
                         Arg{ .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty) },
                         Arg{ .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty) },
                     };
-
-                    const cjsArguments = Expr{
-                        .data = .{ .e_this = .{} },
-                        .loc = logger.Loc.Empty,
-                    };
+                    if (p.has_import_meta) {
+                        p.import_meta_ref = p.newSymbol(.other, "$Bun_import_meta") catch bun.outOfMemory();
+                        args[5] = Arg{ .binding = p.b(B.Identifier{ .ref = p.import_meta_ref }, logger.Loc.Empty) };
+                    }
 
                     var total_stmts_count: usize = 0;
                     for (parts) |part| {
                         total_stmts_count += part.stmts.len;
                     }
 
-                    var stmts_to_copy = allocator.alloc(Stmt, total_stmts_count) catch unreachable;
+                    var stmts_to_copy = allocator.alloc(Stmt, total_stmts_count) catch bun.outOfMemory();
                     {
                         var remaining_stmts = stmts_to_copy;
                         for (parts) |part| {
@@ -21305,7 +21589,7 @@ fn NewParser_(
                             .func = G.Fn{
                                 .name = null,
                                 .open_parens_loc = logger.Loc.Empty,
-                                .args = args[0..5],
+                                .args = args,
                                 .body = .{ .loc = logger.Loc.Empty, .stmts = stmts_to_copy },
                                 .flags = Flags.Function.init(.{ .is_export = false }),
                             },
@@ -21313,111 +21597,11 @@ fn NewParser_(
                         logger.Loc.Empty,
                     );
 
-                    const this_module = p.newExpr(
-                        E.Dot{
-                            .name = "module",
-                            .target = cjsArguments,
-                            .name_loc = logger.Loc.Empty,
-                        },
-                        logger.Loc.Empty,
-                    );
-
-                    const module_exports = p.newExpr(
-                        E.Dot{
-                            .name = "exports",
-                            .target = this_module,
-                            .name_loc = logger.Loc.Empty,
-                        },
-                        logger.Loc.Empty,
-                    );
-
-                    var call_args = allocator.alloc(Expr, 6) catch unreachable;
-                    call_args[0..6].* = .{
-                        module_exports, // this.module.exports (this value inside fn)
-                        module_exports, // this.module.exports (arg 1)
-                        p.newExpr(
-                            E.Dot{
-                                .name = "require",
-                                .target = cjsArguments,
-                                .name_loc = logger.Loc.Empty,
-                            },
-                            logger.Loc.Empty,
-                        ),
-                        this_module, // this.module
-                        p.newExpr(
-                            E.Dot{
-                                .name = "__filename",
-                                .target = cjsArguments,
-                                .name_loc = logger.Loc.Empty,
-                            },
-                            logger.Loc.Empty,
-                        ),
-                        p.newExpr(
-                            E.Dot{
-                                .name = "__dirname",
-                                .target = cjsArguments,
-                                .name_loc = logger.Loc.Empty,
-                            },
-                            logger.Loc.Empty,
-                        ),
-                    };
-
-                    const call = p.newExpr(
-                        E.Call{
-                            .target = p.newExpr(
-                                E.Dot{
-                                    .target = wrapper,
-                                    .name = "call",
-                                    .name_loc = logger.Loc.Empty,
-                                },
-                                logger.Loc.Empty,
-                            ),
-                            .args = ExprNodeList.init(call_args),
-                        },
-                        logger.Loc.Empty,
-                    );
-
-                    var top_level_stmts = p.allocator.alloc(Stmt, 1 + @as(usize, @intFromBool(p.has_import_meta))) catch unreachable;
+                    var top_level_stmts = p.allocator.alloc(Stmt, 1) catch bun.outOfMemory();
                     parts[0].stmts = top_level_stmts;
-
-                    // var $Bun_import_meta = this.createImportMeta(this.filename);
-                    if (p.has_import_meta) {
-                        p.import_meta_ref = p.newSymbol(.other, "$Bun_import_meta") catch unreachable;
-                        var decl = allocator.alloc(Decl, 1) catch unreachable;
-                        decl[0] = Decl{
-                            .binding = Binding.alloc(
-                                p.allocator,
-                                B.Identifier{
-                                    .ref = p.import_meta_ref,
-                                },
-                                logger.Loc.Empty,
-                            ),
-                            .value = p.newExpr(
-                                E.Call{
-                                    .target = p.newExpr(E.Dot{
-                                        .target = cjsArguments,
-                                        .name = "createImportMeta",
-                                        .name_loc = logger.Loc.Empty,
-                                    }, logger.Loc.Empty),
-                                    // reuse the `this.__filename` argument
-                                    .args = ExprNodeList.init(call_args[5..6]),
-                                },
-                                logger.Loc.Empty,
-                            ),
-                        };
-
-                        top_level_stmts[0] = p.s(
-                            S.Local{
-                                .decls = G.Decl.List.init(decl),
-                                .kind = .k_var,
-                            },
-                            logger.Loc.Empty,
-                        );
-                        top_level_stmts = top_level_stmts[1..];
-                    }
                     top_level_stmts[0] = p.s(
                         S.SExpr{
-                            .value = call,
+                            .value = wrapper,
                         },
                         logger.Loc.Empty,
                     );
@@ -22048,6 +22232,11 @@ fn NewParser_(
             if (opts.features.top_level_await or comptime only_scan_imports_and_do_not_visit) {
                 this.fn_or_arrow_data_parse.allow_await = .allow_expr;
                 this.fn_or_arrow_data_parse.is_top_level = true;
+            }
+
+            if (comptime !is_typescript_enabled) {
+                // This is so it doesn't impact runtime transpiler caching when not in use
+                this.options.features.emit_decorator_metadata = false;
             }
         }
     };

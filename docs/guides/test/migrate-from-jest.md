@@ -32,7 +32,6 @@ Some notable missing features:
 
 - `expect.extend()`
 - `expect().toMatchInlineSnapshot()`
-- `expect().toHaveBeenCalledWith()`
 - `expect().toHaveReturned()`
 
 ---

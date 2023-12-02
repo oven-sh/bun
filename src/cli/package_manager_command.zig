@@ -57,7 +57,7 @@ pub const PackageManagerCommand = struct {
 
         Output.flush();
         Output.disableBuffering();
-        try Output.writer().print("{}", .{load_lockfile.ok.fmtMetaHash()});
+        try Output.writer().print("{}", .{load_lockfile.ok.lockfile.fmtMetaHash()});
         Output.enableBuffering();
         Global.exit(0);
     }
@@ -155,7 +155,7 @@ pub const PackageManagerCommand = struct {
 
             Output.flush();
             Output.disableBuffering();
-            try Output.writer().print("{}", .{load_lockfile.ok.fmtMetaHash()});
+            try Output.writer().print("{}", .{load_lockfile.ok.lockfile.fmtMetaHash()});
             Output.enableBuffering();
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "hash-print")) {
@@ -164,7 +164,7 @@ pub const PackageManagerCommand = struct {
 
             Output.flush();
             Output.disableBuffering();
-            try Output.writer().print("{}", .{load_lockfile.ok.fmtMetaHash()});
+            try Output.writer().print("{}", .{load_lockfile.ok.lockfile.fmtMetaHash()});
             Output.enableBuffering();
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "hash-string")) {
@@ -197,7 +197,7 @@ pub const PackageManagerCommand = struct {
 
             Output.flush();
             Output.disableBuffering();
-            const lockfile = load_lockfile.ok;
+            const lockfile = load_lockfile.ok.lockfile;
             var iterator = Lockfile.Tree.Iterator.init(lockfile);
 
             var directories = std.ArrayList(NodeModulesFolder).init(ctx.allocator);
@@ -286,7 +286,7 @@ pub const PackageManagerCommand = struct {
                 Global.exit(1);
             }
             handleLoadLockfileErrors(load_lockfile, pm);
-            const lockfile = load_lockfile.ok;
+            const lockfile = load_lockfile.ok.lockfile;
             lockfile.saveToDisk(pm.options.lockfile_path);
             Global.exit(0);
         }

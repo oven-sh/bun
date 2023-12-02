@@ -654,7 +654,7 @@ static void loadSignalNumberMap()
         signalNameToNumberMap->add(signalNames[6], SIGIOT);
         signalNameToNumberMap->add(signalNames[7], SIGBUS);
         signalNameToNumberMap->add(signalNames[8], SIGFPE);
-        // signalNameToNumberMap->add(signalNames[9], SIGKILL);
+        signalNameToNumberMap->add(signalNames[9], SIGKILL);
         signalNameToNumberMap->add(signalNames[10], SIGUSR1);
         signalNameToNumberMap->add(signalNames[11], SIGSEGV);
         signalNameToNumberMap->add(signalNames[12], SIGUSR2);
@@ -663,7 +663,7 @@ static void loadSignalNumberMap()
         signalNameToNumberMap->add(signalNames[15], SIGTERM);
         signalNameToNumberMap->add(signalNames[16], SIGCHLD);
         signalNameToNumberMap->add(signalNames[17], SIGCONT);
-        // signalNameToNumberMap->add(signalNames[18], SIGSTOP);
+        signalNameToNumberMap->add(signalNames[18], SIGSTOP);
         signalNameToNumberMap->add(signalNames[19], SIGTSTP);
         signalNameToNumberMap->add(signalNames[20], SIGTTIN);
         signalNameToNumberMap->add(signalNames[21], SIGTTOU);
@@ -717,7 +717,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
         signalNumberToNameMap->add(SIGIOT, signalNames[6]);
         signalNumberToNameMap->add(SIGBUS, signalNames[7]);
         signalNumberToNameMap->add(SIGFPE, signalNames[8]);
-        // signalNumberToNameMap->add(SIGKILL, signalNames[9]);
+        signalNumberToNameMap->add(SIGKILL, signalNames[9]);
         signalNumberToNameMap->add(SIGUSR1, signalNames[10]);
         signalNumberToNameMap->add(SIGSEGV, signalNames[11]);
         signalNumberToNameMap->add(SIGUSR2, signalNames[12]);
@@ -726,7 +726,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
         signalNumberToNameMap->add(SIGTERM, signalNames[15]);
         signalNumberToNameMap->add(SIGCHLD, signalNames[16]);
         signalNumberToNameMap->add(SIGCONT, signalNames[17]);
-        // signalNumberToNameMap->add(SIGSTOP, signalNames[18]);
+        signalNumberToNameMap->add(SIGSTOP, signalNames[18]);
         signalNumberToNameMap->add(SIGTSTP, signalNames[19]);
         signalNumberToNameMap->add(SIGTTIN, signalNames[20]);
         signalNumberToNameMap->add(SIGTTOU, signalNames[21]);
@@ -747,68 +747,67 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
         signalToContextIdsMap = new HashMap<int, HashSet<uint32_t>>();
     }
 
-    if (isAdded) {
-        if (auto signalNumber = signalNameToNumberMap->get(eventName.string())) {
+    if (auto signalNumber = signalNameToNumberMap->get(eventName.string())) {
+        if (signalNumber != SIGKILL && signalNumber != SIGSTOP) {
             uint32_t contextId = eventEmitter.scriptExecutionContext()->identifier();
             Locker lock { signalToContextIdsMapLock };
-            if (!signalToContextIdsMap->contains(signalNumber)) {
-                HashSet<uint32_t> contextIds;
-                contextIds.add(contextId);
-                signalToContextIdsMap->set(signalNumber, contextIds);
 
-                lock.unlockEarly();
-
-                struct sigaction action;
-                memset(&action, 0, sizeof(struct sigaction));
-
-                // Set the handler in the action struct
-                action.sa_handler = [](int signalNumber) {
-                    if (UNLIKELY(signalNumberToNameMap->find(signalNumber) == signalNumberToNameMap->end()))
-                        return;
-
-                    Locker lock { signalToContextIdsMapLock };
-                    if (UNLIKELY(signalToContextIdsMap->find(signalNumber) == signalToContextIdsMap->end()))
-                        return;
-                    auto contextIds = signalToContextIdsMap->get(signalNumber);
-
-                    for (int contextId : contextIds) {
-                        auto* context = ScriptExecutionContext::getScriptExecutionContext(contextId);
-                        if (UNLIKELY(!context))
-                            continue;
-
-                        JSGlobalObject* lexicalGlobalObject = context->jsGlobalObject();
-                        Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
-
-                        Process* process = jsCast<Process*>(globalObject->processObject());
-
-                        context->postCrossThreadTask(*process, &Process::emitSignalEvent, signalNumber);
-                    }
-                };
-
-                // Clear the sa_mask
-                sigemptyset(&action.sa_mask);
-                sigaddset(&action.sa_mask, signalNumber);
-                action.sa_flags = SA_RESTART;
-
-                sigaction(signalNumber, &action, nullptr);
-            } else {
-                auto contextIds = signalToContextIdsMap->get(signalNumber);
-                contextIds.add(contextId);
-                signalToContextIdsMap->set(signalNumber, contextIds);
-            }
-        }
-    } else {
-        if (auto signalNumber = signalNameToNumberMap->get(eventName.string())) {
-            uint32_t contextId = eventEmitter.scriptExecutionContext()->identifier();
-            Locker lock { signalToContextIdsMapLock };
-            if (signalToContextIdsMap->find(signalNumber) != signalToContextIdsMap->end()) {
-                HashSet<uint32_t> contextIds = signalToContextIdsMap->get(signalNumber);
-                contextIds.remove(contextId);
-                if (contextIds.isEmpty()) {
-                    signal(signalNumber, SIG_DFL);
-                    signalToContextIdsMap->remove(signalNumber);
-                } else {
+            if (isAdded) {
+                if (!signalToContextIdsMap->contains(signalNumber)) {
+                    HashSet<uint32_t> contextIds;
+                    contextIds.add(contextId);
                     signalToContextIdsMap->set(signalNumber, contextIds);
+
+                    lock.unlockEarly();
+
+                    struct sigaction action;
+                    memset(&action, 0, sizeof(struct sigaction));
+
+                    // Set the handler in the action struct
+                    action.sa_handler = [](int signalNumber) {
+                        if (UNLIKELY(signalNumberToNameMap->find(signalNumber) == signalNumberToNameMap->end()))
+                            return;
+
+                        Locker lock { signalToContextIdsMapLock };
+                        if (UNLIKELY(signalToContextIdsMap->find(signalNumber) == signalToContextIdsMap->end()))
+                            return;
+                        auto contextIds = signalToContextIdsMap->get(signalNumber);
+
+                        for (int contextId : contextIds) {
+                            auto* context = ScriptExecutionContext::getScriptExecutionContext(contextId);
+                            if (UNLIKELY(!context))
+                                continue;
+
+                            JSGlobalObject* lexicalGlobalObject = context->jsGlobalObject();
+                            Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+
+                            Process* process = jsCast<Process*>(globalObject->processObject());
+
+                            context->postCrossThreadTask(*process, &Process::emitSignalEvent, signalNumber);
+                        }
+                    };
+
+                    // Clear the sa_mask
+                    sigemptyset(&action.sa_mask);
+                    sigaddset(&action.sa_mask, signalNumber);
+                    action.sa_flags = SA_RESTART;
+
+                    sigaction(signalNumber, &action, nullptr);
+                } else {
+                    auto contextIds = signalToContextIdsMap->get(signalNumber);
+                    contextIds.add(contextId);
+                    signalToContextIdsMap->set(signalNumber, contextIds);
+                }
+            } else {
+                if (signalToContextIdsMap->find(signalNumber) != signalToContextIdsMap->end()) {
+                    HashSet<uint32_t> contextIds = signalToContextIdsMap->get(signalNumber);
+                    contextIds.remove(contextId);
+                    if (contextIds.isEmpty()) {
+                        signal(signalNumber, SIG_DFL);
+                        signalToContextIdsMap->remove(signalNumber);
+                    } else {
+                        signalToContextIdsMap->set(signalNumber, contextIds);
+                    }
                 }
             }
         }

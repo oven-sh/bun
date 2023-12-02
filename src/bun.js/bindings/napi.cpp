@@ -53,6 +53,7 @@
 
 #include <JavaScriptCore/JSSourceCode.h>
 #include "napi_external.h"
+#include <JavaScriptCore/JSArrayBuffer.h>
 
 // #include <iostream>
 using namespace JSC;
@@ -443,6 +444,38 @@ extern "C" napi_status napi_set_named_property(napi_env env, napi_value object,
     target->putDirect(globalObject->vm(), name, jsValue, 0);
     RETURN_IF_EXCEPTION(scope, napi_generic_failure);
     scope.clearException();
+    return napi_ok;
+}
+
+extern "C" napi_status napi_create_arraybuffer(napi_env env,
+    size_t byte_length, void** data,
+    napi_value* result)
+
+{
+    JSC::JSGlobalObject* globalObject = toJS(env);
+    if (UNLIKELY(!globalObject || !result)) {
+        return napi_invalid_arg;
+    }
+
+    auto& vm = globalObject->vm();
+
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
+    // Node probably doesn't create uninitialized array buffers
+    // but the node-api docs don't specify whether memory is initialized or not.
+    RefPtr<ArrayBuffer> arrayBuffer = ArrayBuffer::tryCreateUninitialized(byte_length, 1);
+
+    if (!arrayBuffer) {
+        return napi_invalid_arg;
+    }
+
+    auto* jsArrayBuffer = JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(), WTFMove(arrayBuffer));
+    RETURN_IF_EXCEPTION(scope, napi_generic_failure);
+
+    if (LIKELY(data && jsArrayBuffer->impl())) {
+        *data = jsArrayBuffer->impl()->data();
+    }
+    *result = toNapi(jsArrayBuffer);
     return napi_ok;
 }
 

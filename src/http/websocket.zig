@@ -42,8 +42,7 @@ pub const WebsocketHeader = packed struct {
     len: u7,
     mask: bool,
     opcode: Opcode,
-    rsv3: u1 = 0,
-    rsv2: u1 = 0,
+    rsv: u2 = 0, //rsv2 and rsv3
     compressed: bool = false, // rsv1
     final: bool = true,
 
@@ -89,6 +88,16 @@ pub const WebsocketHeader = packed struct {
 
     pub fn frameSizeIncludingMask(byte_length: usize) usize {
         return frameSize(byte_length) + mask_length;
+    }
+
+    pub fn slice(self: WebsocketHeader) [2]u8 {
+        if (native_endian == .big) return @as([2]u8, @as(u16, @bitCast(self)));
+        return @as([2]u8, @bitCast(@byteSwap(@as(u16, @bitCast(self)))));
+    }
+
+    pub fn fromSlice(bytes: [2]u8) WebsocketHeader {
+        if (native_endian == .big) return @as(WebsocketHeader, @bitCast(@as(u16, @bitCast(bytes))));
+        return @as(WebsocketHeader, @bitCast(@byteSwap(@as(u16, @bitCast(bytes)))));
     }
 };
 

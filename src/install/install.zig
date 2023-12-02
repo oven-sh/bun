@@ -34,7 +34,7 @@ const Fs = @import("../fs.zig");
 const FileSystem = Fs.FileSystem;
 const Lock = @import("../lock.zig").Lock;
 const URL = @import("../url.zig").URL;
-const HTTP = bun.HTTP;
+const HTTP = bun.http;
 const AsyncHTTP = HTTP.AsyncHTTP;
 const HTTPChannel = HTTP.HTTPChannel;
 const NetworkThread = HTTP.NetworkThread;
@@ -2199,7 +2199,7 @@ pub const PackageManager = struct {
                 Global.crash();
             };
         };
-        var tmpbuf: ["18446744073709551615".len + 8]u8 = undefined;
+        var tmpbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
         const tmpname = Fs.FileSystem.instance.tmpname("hm", &tmpbuf, 999) catch unreachable;
         var timer: std.time.Timer = if (this.options.log_level != .silent) std.time.Timer.start() catch unreachable else undefined;
         brk: while (true) {
@@ -6055,7 +6055,7 @@ pub const PackageManager = struct {
                 log,
                 lockfile_path_z,
             )) {
-                .ok => |lockfile| manager.lockfile = lockfile,
+                .ok => |load| manager.lockfile = load.lockfile,
                 else => try manager.lockfile.initEmpty(allocator),
             }
         } else {
@@ -8165,7 +8165,9 @@ pub const PackageManager = struct {
 
         var root = Lockfile.Package{};
         var needs_new_lockfile = load_lockfile_result != .ok or
-            (load_lockfile_result.ok.buffers.dependencies.items.len == 0 and manager.package_json_updates.len > 0);
+            (load_lockfile_result.ok.lockfile.buffers.dependencies.items.len == 0 and manager.package_json_updates.len > 0);
+
+        manager.options.enable.force_save_lockfile = manager.options.enable.force_save_lockfile or (load_lockfile_result == .ok and load_lockfile_result.ok.was_migrated);
 
         // this defaults to false
         // but we force allowing updates to the lockfile when you do bun add
@@ -8213,7 +8215,7 @@ pub const PackageManager = struct {
             },
             .ok => {
                 differ: {
-                    root = load_lockfile_result.ok.rootPackage() orelse {
+                    root = load_lockfile_result.ok.lockfile.rootPackage() orelse {
                         needs_new_lockfile = true;
                         break :differ;
                     };

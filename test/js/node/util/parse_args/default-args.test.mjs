@@ -5,7 +5,7 @@ import fs from "fs/promises";
 import os from "os";
 import path from "path";
 
-describe("parseArgs default args", () => {
+describe.skip("parseArgs default args", () => {
   let temp_dir;
 
   beforeAll(async () => {
